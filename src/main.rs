@@ -4,29 +4,32 @@ mod difficulty;
 mod blockchain;
 mod config;
 mod transaction;
+mod address;
+mod emission;
 
-use block::Block;
 use globals::Hashable;
 use blockchain::Blockchain;
 use std::thread;
 use std::sync::{Arc, Mutex};
-use transaction::*;
+
+const ADDRESS: &str = "slixe";
 
 fn main() {
     println!("Xelis Blockchain - Pre-Alpha");
-    let mut blockchain = Blockchain::new();
-    let registration_address = Transaction::new(0, globals::get_current_time(), TransactionData::Registration, "test".to_owned(), 0);
-    let mut genesis_block = Block::new(0, globals::get_current_time(), [0; 32], config::MINIMUM_DIFFICULTY, [0; 32], vec![registration_address]);
+
+    let mut blockchain = Blockchain::new(ADDRESS.to_owned());
+    let mut genesis_block = blockchain.get_block_template(ADDRESS.to_owned());
+
     genesis_block.calculate_hash();
     blockchain.add_new_block(genesis_block);
 
-    for _ in 0..15 {
-        let mut block = blockchain.get_block_template();
+    loop {
+        let mut block = blockchain.get_block_template(ADDRESS.to_owned());
         block.calculate_hash();
         blockchain.add_new_block(block);
     }
 
-    println!("Blockchain ({} blocks, {} accounts) valid: {}", blockchain.get_current_height(), blockchain.get_mempool().len(), blockchain.check_validity());
+    println!("{} valid: {}", blockchain, blockchain.check_validity());
 }
 
 //dirty code
@@ -39,7 +42,7 @@ fn multi_thread(blockchain: Blockchain) {
         let handle = thread::spawn(move || {
             loop {
                 let blockchain = clone.lock().unwrap();
-                let mut block = blockchain.get_block_template();
+                let mut block = blockchain.get_block_template(ADDRESS.to_owned());
                 drop(blockchain);
                 
                 loop {

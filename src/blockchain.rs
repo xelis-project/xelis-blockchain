@@ -3,28 +3,37 @@ use crate::block::Block;
 use crate::difficulty::check_difficulty;
 use crate::config::*;
 use crate::transaction::*;
+use crate::emission::get_block_reward;
 use std::collections::HashMap;
 
 pub struct Blockchain {
     blocks: Vec<Block>,
     height: u64,
+    supply: u64,
     top_hash: Hash,
     difficulty: u64,
     mempool: HashMap<Hash, Transaction>,
-    accounts: HashMap<String, u64>
+    accounts: HashMap<String, u64>,
+    dev_address: String
 }
 
 impl Blockchain {
 
-    pub fn new() -> Self {
-        Blockchain {
+    pub fn new(dev_address: String) -> Self {
+        let mut blockchain = Blockchain {
             blocks: vec![],
             height: 0,
+            supply: 0,
             top_hash: [0; 32],
             difficulty: MINIMUM_DIFFICULTY,
             mempool: HashMap::new(),
             accounts: HashMap::new(),
-        }
+            dev_address: dev_address.clone()
+        };
+
+        blockchain.accounts.insert(dev_address, 0);
+
+        blockchain
     }
 
     pub fn get_current_height(&self) -> u64 {
@@ -66,9 +75,26 @@ impl Blockchain {
         *self.accounts.get(account).unwrap() >= amount
     }
 
-    pub fn get_block_template(&self) -> Block {
-        let txs = self.mempool.values().cloned().collect();
-        Block::new(self.height, get_current_time(), self.top_hash, self.difficulty, [0; 32], txs)
+    //chicken & egg problem
+    pub fn get_block_template(&self, address: String) -> Block {
+        let block_reward = get_block_reward(self.supply, 0); //TODO calculate fees
+        let coinbase_tx = Transaction::new(self.height, TransactionData::Coinbase(CoinbaseTx {
+            reward: block_reward
+        }), address);
+
+        let mut block = Block::new(self.height, get_current_time(), self.top_hash, self.difficulty, block_reward, [0; 32], vec![coinbase_tx]);
+        
+        let mut transactions: Vec<Transaction> = self.mempool.values().cloned().collect();
+        transactions.sort_by(| a, b | a.get_fee().cmp(&b.get_fee())); //TODO
+
+        let mut fee = 0;
+        while transactions.len() > 0 && block.size() + transactions[0].size() < MAX_BLOCK_SIZE {
+            let tx = transactions.remove(0);
+            fee = fee + tx.get_fee();
+            block.transactions.push(tx);
+        }
+
+        block
     }
 
     pub fn check_validity(&self) -> bool { //TODO use Result for error handling
@@ -100,7 +126,7 @@ impl Blockchain {
         true
     }
 
-    pub fn add_new_block(&mut self, mut block: Block) { //TODO use Result for error handling
+    pub fn add_new_block(&mut self, block: Block) { //TODO use Result for error handling
         let block_hash = block.hash();
         if self.height != block.height {
             panic!("Invalid block height, expected {} got {}", self.height, block.height);
@@ -125,36 +151,41 @@ impl Blockchain {
                 panic!("Timestamp is less than previous block: {}", block);
             }
 
+            let mut coinbase_count = 0;
             for tx in &block.transactions {
-                let tx = match self.mempool.remove(tx.get_hash()) {
-                    Some(v) => v,
-                    None => panic!("Tx {} not found", hex::encode(tx.get_hash()))
-                };
-    
-                match &tx.get_data() {
-                    TransactionData::Registration => {
-                        if self.is_registered(tx.get_sender()) {
-                            panic!("Address {} is already registered", tx.get_sender());
-                        }
-                    }
-                    _ => {
+                if !self.mempool.contains_key(tx.get_hash()) && !tx.is_coinbase() {
+                    panic!("Tx {} not found", hex::encode(tx.get_hash()));
+                }
+
+                match tx.get_data() {
+                    TransactionData::Coinbase(data) => {
                         if !self.is_registered(tx.get_sender()) {
                             panic!("Address {} is not registered!", tx.get_sender());
                         }
+        
+                        if data.reward != block.reward {
+                            panic!("Incorrect block reward, expected {} got {}", block.reward, data.reward);
+                        }
+
+                        coinbase_count = coinbase_count + 1;
                     }
+                    _ => self.verify_transaction(tx)
                 };
-                
-    
-                let hash = tx.hash();
-                if *tx.get_hash() != hash {
-                    panic!("Invalid Tx hash, expected {} got {}", hex::encode(hash), hex::encode(tx.get_hash()));
-                }
+            }
+
+            if coinbase_count != 1 {
+                panic!("Incorrect amount of Coinbase TX in this block, expected 1 got {}", coinbase_count);
             }
 
             println!("Block Time for this block is: {}s", block.timestamp - previous_block.timestamp);
         }
 
         for tx in &block.transactions {
+            if let None = self.mempool.remove(tx.get_hash()) {
+                if !tx.is_coinbase() {
+                    panic!("Tx {} is not anymore in the mempool! Why ?", hex::encode(tx.get_hash()));
+                }
+            }
             self.execute_transaction(&tx);
         }
 
@@ -164,30 +195,75 @@ impl Blockchain {
         self.blocks.push(block);
     }
 
+    fn verify_transaction(&self, tx: &Transaction) { //will be used by the mempool too
+        match tx.get_data() {
+            TransactionData::Registration => {
+                if self.is_registered(tx.get_sender()) {
+                    panic!("Address {} is already registered", tx.get_sender());
+                }
+            }
+            TransactionData::Burn(data) => {
+                if !self.is_registered(tx.get_sender()) {
+                    panic!("Address {} is not registered!", tx.get_sender());
+                }
+
+                if !self.has_enough_balance(tx.get_sender(), data.amount) {
+                    panic!("Cannot burn {}, not enough balance", data.amount);
+                }
+            }
+            TransactionData::Coinbase(_) => {
+                panic!("Coinbase transaction are not allowed!");
+            }
+            _ => {
+                if !self.is_registered(tx.get_sender()) {
+                    panic!("Address {} is not registered!", tx.get_sender());
+                }
+            }
+        };
+
+        let hash = tx.hash();
+        if *tx.get_hash() != hash {
+            panic!("Invalid Tx hash, expected {} got {}", hex::encode(hash), hex::encode(tx.get_hash()));
+        }
+    }
+
     fn execute_transaction(&mut self, transaction: &Transaction) { //TODO use Result for error handling
         match transaction.get_data() {
-            TransactionData::Coinbase(tx) => {
-                let balance = self.get_balance(transaction.get_sender()) + tx.reward;
-                self.update_balance(transaction.get_sender(), balance);
-            }
             TransactionData::Burn(tx) => {
-                let balance = self.get_balance(transaction.get_sender());
-                if *balance < tx.amount {
+                let balance = *self.get_balance(transaction.get_sender());
+                if balance < tx.amount {
                     panic!("Not enough balance, expected at least {} but have {}", tx.amount, balance);
                 }
 
                 self.update_balance(transaction.get_sender(), balance - tx.amount);
+                self.supply = self.supply - tx.amount;
             }
-            TransactionData::Normal(tx) => {
+            TransactionData::Normal(_) => {
                 //TODO
+                panic!("not implemented")
             }
             TransactionData::Registration => {
                 self.accounts.insert(transaction.get_sender().clone(), 0);
                 println!("Account {} has been registered", transaction.get_sender());
             }
-            TransactionData::SmartContract(tx) => {
+            TransactionData::SmartContract(_) => {
                 //TODO
+                panic!("not implemented")
+            }
+            TransactionData::Coinbase(tx) => {
+                let balance = self.get_balance(transaction.get_sender()) + tx.reward;
+                self.update_balance(transaction.get_sender(), balance);
+                self.supply = self.supply + tx.reward;
             }
         }
+    }
+}
+
+
+use std::fmt::{Result, Display, Formatter};
+
+impl Display for Blockchain {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        write!(f, "Blockchain[height: {}, top_hash: {}, accounts: {}, supply: {}]", self.height, hex::encode(self.top_hash), self.accounts.len(), self.supply)
     }
 }

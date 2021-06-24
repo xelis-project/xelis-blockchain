@@ -76,7 +76,6 @@ impl Hashable for TransactionData {
 pub struct Transaction { //TODO implement signature
     hash: Hash,
     nonce: u64,
-    timestamp: u64,
     data: TransactionData,
     sender: String,
     fee: u64
@@ -84,15 +83,17 @@ pub struct Transaction { //TODO implement signature
 
 impl Transaction {
 
-    pub fn new(nonce: u64, timestamp: u64, data: TransactionData, sender: String, fee: u64) -> Self {
-        Transaction {
+    pub fn new(nonce: u64, data: TransactionData, sender: String) -> Self {
+        let mut tx = Transaction {
             hash: [0; 32],
             nonce,
-            timestamp,
             data,
             sender,
-            fee
-        }
+            fee: 0
+        };
+        tx.fee = tx.size() as u64 / crate::config::FEE_PER_KB;
+        tx.hash = tx.hash();
+        tx
     }
 
     pub fn get_hash(&self) -> &Hash {
@@ -103,10 +104,6 @@ impl Transaction {
         &self.nonce
     }
 
-    pub fn get_timestamp(&self) -> &u64 {
-        &self.timestamp
-    }
-
     pub fn get_data(&self) -> &TransactionData {
         &self.data
     }
@@ -114,17 +111,28 @@ impl Transaction {
     pub fn get_sender(&self) -> &String {
         &self.sender
     }
+
+    pub fn get_fee(&self) -> &u64 {
+        &self.fee
+    }
+
+    pub fn is_coinbase(&self) -> bool {
+        match &self.data {
+            TransactionData::Coinbase(_) => true,
+            _ => false
+        }
+    }
 }
 
 impl Hashable for Transaction {
 
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![];
-        bytes.extend(&self.hash);
+
         bytes.extend(&self.nonce.to_be_bytes());
-        bytes.extend(&self.timestamp.to_be_bytes());
         bytes.extend(self.data.to_bytes());
         bytes.extend(self.sender.as_bytes());
+        bytes.extend(&self.fee.to_be_bytes());
 
         bytes
     }
