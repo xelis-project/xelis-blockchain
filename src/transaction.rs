@@ -21,7 +21,8 @@ pub struct BurnTx {
 
 #[derive(Clone)]
 pub struct CoinbaseTx {
-    pub reward: u64
+    pub block_reward: u64,
+    pub fee: u64
 }
 
 #[derive(Clone)]
@@ -65,7 +66,8 @@ impl Hashable for TransactionData {
             }
             TransactionData::Coinbase(tx) => {
                 bytes.push(4);
-                bytes.extend(&tx.reward.to_be_bytes());
+                bytes.extend(&tx.block_reward.to_be_bytes());
+                bytes.extend(&tx.fee.to_be_bytes());
             }
         }
         bytes
@@ -91,8 +93,7 @@ impl Transaction {
             sender,
             fee: 0
         };
-        tx.fee = tx.size() as u64 / crate::config::FEE_PER_KB;
-        tx.hash = tx.hash();
+        tx.fee = crate::blockchain::calculate_tx_fee(tx.size());
         tx
     }
 

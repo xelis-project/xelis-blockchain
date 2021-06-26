@@ -5,7 +5,6 @@ mod blockchain;
 mod config;
 mod transaction;
 mod address;
-mod emission;
 
 use globals::Hashable;
 use blockchain::Blockchain;
@@ -21,15 +20,23 @@ fn main() {
     let mut genesis_block = blockchain.get_block_template(ADDRESS.to_owned());
 
     genesis_block.calculate_hash();
-    blockchain.add_new_block(genesis_block);
-
-    loop {
-        let mut block = blockchain.get_block_template(ADDRESS.to_owned());
-        block.calculate_hash();
-        blockchain.add_new_block(block);
+    if let Err(e) = blockchain.add_new_block(genesis_block) {
+        println!("Error on genesis block: {}", e);
     }
 
-    println!("{} valid: {}", blockchain, blockchain.check_validity());
+    for _ in 0..20 {
+        let mut block = blockchain.get_block_template(ADDRESS.to_owned());
+        block.calculate_hash();
+        if let Err(e) = blockchain.add_new_block(block) {
+            println!("Error on block: {}", e);
+        }
+    }
+
+    if let Err(e) = blockchain.check_validity() {
+        panic!("{} valid: {}", blockchain, e);
+    }
+
+    println!("Success!");
 }
 
 //dirty code
