@@ -1,7 +1,9 @@
 use crate::globals::{Hash, Hashable, get_current_time};
 use crate::difficulty::check_difficulty;
 use crate::transaction::Transaction;
+use crate::blockchain::BlockchainError;
 
+#[derive(serde::Serialize)]
 pub struct Block {
     pub height: u64,
     pub timestamp: u64,
@@ -29,17 +31,19 @@ impl Block {
         }
     }
 
-    pub fn calculate_hash(&mut self) {
+    pub fn calculate_hash(&mut self) -> Result<(), BlockchainError> {
         loop {
             let hash = self.hash();
-            if check_difficulty(&hash, self.difficulty) {
+            if check_difficulty(&hash, self.difficulty)? {
                 self.hash = hash;
                 break;
             } else {
-                self.nonce = self.nonce + 1;
+                self.nonce += 1;
                 self.timestamp = get_current_time();
             }
         }
+
+        Ok(())
     }
 }
 
@@ -64,10 +68,10 @@ impl Hashable for Block {
     }
 }
 
-use std::fmt::{Result, Display, Formatter};
+use std::fmt::{Error, Display, Formatter};
 
 impl Display for Block {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         write!(f, "Block[height: {}, timestamp: {}, previous_hash: {}, hash: {}, nonce: {}, reward: {}, extra_nonce: {}, txs: {}]", self.height, self.timestamp, hex::encode(self.previous_hash), hex::encode(self.hash), self.nonce, self.reward, hex::encode(self.extra_nonce), self.transactions.len())
     }
 }

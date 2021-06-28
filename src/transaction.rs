@@ -1,31 +1,31 @@
 use crate::globals::{Hash, Hashable};
 use std::collections::HashMap;
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct Tx {
     pub amount: u64,
     pub to: String
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct SmartContractTx {
     pub contract: String,
     pub amount: u64,
     pub params: HashMap<String, String> //TODO
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct BurnTx {
     pub amount: u64
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct CoinbaseTx {
     pub block_reward: u64,
     pub fee: u64
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub enum TransactionData {
     Registration,
     Normal(Vec<Tx>),
@@ -74,7 +74,7 @@ impl Hashable for TransactionData {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct Transaction { //TODO implement signature
     hash: Hash,
     nonce: u64,
@@ -93,7 +93,7 @@ impl Transaction {
             sender,
             fee: 0
         };
-        tx.fee = crate::blockchain::calculate_tx_fee(tx.size());
+        tx.fee = if tx.is_coinbase() { 0 } else { crate::blockchain::calculate_tx_fee(tx.size()) };
         tx
     }
 
