@@ -14,18 +14,29 @@ use std::sync::{Arc, Mutex};
 
 const ADDRESS: &str = "slixe";
 
-fn main() {
-    println!("Xelis Blockchain - Pre-Alpha");
+use bech32::Bech32Error;
+
+fn address_example() -> Result<(), Bech32Error> {
     let data: [u8; 32] = rand::random();
     println!("Data generated: {}", hex::encode(data));
-    let result = crate::bech32::convert_bits(&data, 8, 5, true);
+    let result = crate::bech32::convert_bits(&data, 8, 5, true)?;
     println!("Result: {}", hex::encode(&result));
-    let test_encode = crate::bech32::encode(String::from("xls"), &result);
+    let test_encode = crate::bech32::encode(crate::config::PREFIX_ADDRESS.to_owned(), &result)?;
     println!("Address: {}", test_encode);
 
-    let (hrp, data2) = crate::bech32::decode(&test_encode);
-    let test = crate::bech32::convert_bits(&data2, 5, 8, false);
+    println!("Decoding generated address:");
+    let (hrp, data2) = crate::bech32::decode(&test_encode)?;
+    let test = crate::bech32::convert_bits(&data2, 5, 8, false)?;
     println!("HRP: {}, data: {}", hrp, hex::encode(&test));
+
+    Ok(())
+}
+
+fn main() {
+    println!("Xelis Blockchain - Pre-Alpha");
+    if let Err(e) = address_example() {
+        println!("Error: {}", e);
+    }
 
     let mut blockchain = Blockchain::new(ADDRESS.to_owned());
     let mut genesis_block = blockchain.get_block_template(ADDRESS.to_owned());

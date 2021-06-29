@@ -1,6 +1,20 @@
 const CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 const GENERATOR: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
 
+pub enum Bech32Error {
+    InvalidDataRange(u16, u16), //data, from bits
+    IllegalZeroPadding,
+    NonZeroPadding,
+    HrpEmpty,
+    HrpInvalidCharacter(u8),
+    HrpMixCase,
+    InvalidValue(u8, usize), //value, max
+    Separator1NotFound,
+    Separator1InvalidPosition(usize),
+    InvalidUTF8Sequence(String),
+    InvalidChecksum
+}
+
 fn polymod(values: &[u8]) -> u32 {
     let mut chk: u32 = 1;
     for value in values {
@@ -50,7 +64,7 @@ pub fn create_checksum(hrp: &String, data: &[u8]) -> [u8; 6] {
     result
 }
 
-pub fn convert_bits(data: &[u8], from: u16, to: u16, pad: bool) -> Vec<u8> {
+pub fn convert_bits(data: &[u8], from: u16, to: u16, pad: bool) -> Result<Vec<u8>, Bech32Error> {
     let mut acc: u16 = 0;
     let mut bits: u16 = 0;
     let mut result: Vec<u8> = vec![];
@@ -59,7 +73,7 @@ pub fn convert_bits(data: &[u8], from: u16, to: u16, pad: bool) -> Vec<u8> {
         let value = *v as u16;
 
         if value >> from != 0 {
-            panic!("Invalid data range: data: {}, from bits: {}", value, from);
+            return Err(Bech32Error::InvalidDataRange(value, from));
         }
 
         acc = (acc << from) | value;
@@ -75,27 +89,27 @@ pub fn convert_bits(data: &[u8], from: u16, to: u16, pad: bool) -> Vec<u8> {
             result.push(((acc << (to - bits)) & max_value) as u8);
         }
     } else if bits >= from {
-        panic!("Illegal zero padding");
+        return Err(Bech32Error::IllegalZeroPadding)
     } else if (acc << (to - bits)) & max_value != 0 {
-        panic!("Non zero padding");
+        return Err(Bech32Error::NonZeroPadding)
     }
 
-    result
+    Ok(result)
 }
 
-pub fn encode(mut hrp: String, data: &[u8]) -> String { //TODO use Result
+pub fn encode(mut hrp: String, data: &[u8]) -> Result<String, Bech32Error> {
     if hrp.len() == 0 {
-        panic!("hrp empty")
+        return Err(Bech32Error::HrpEmpty)
     }
 
     for value in hrp.bytes() {
         if value < 33 || value > 126 {
-            panic!("Invalid character human readable part: {}", value);
+            return Err(Bech32Error::HrpInvalidCharacter(value))
         }
     }
 
     if hrp.to_uppercase() != hrp && hrp.to_lowercase() != hrp {
-        panic!("Using mix case: {}", hrp);
+        return Err(Bech32Error::HrpMixCase)
     }
 
     hrp = hrp.to_lowercase();
@@ -109,60 +123,59 @@ pub fn encode(mut hrp: String, data: &[u8]) -> String { //TODO use Result
 
     for value in combined.iter() {
         if *value > CHARSET.len() as u8 {
-            panic!("Invalid value: {}, max is {}", value, CHARSET.len());
+            return Err(Bech32Error::InvalidValue(*value, CHARSET.len()))
         }
 
         result.push(CHARSET.bytes().nth(*value as usize).unwrap());
     }
 
     match String::from_utf8(result) {
-        Ok(value) => value,
-        Err(e) => panic!("Invalid UTF-8 sequence: {}", e)
+        Ok(value) => Ok(value),
+        Err(e) => Err(Bech32Error::InvalidUTF8Sequence(e.to_string()))
     }
 }
 
-pub fn decode(bech: &String) -> (String, Vec<u8>) {
+pub fn decode(bech: &String) -> Result<(String, Vec<u8>), Bech32Error> {
     if bech.to_uppercase() != *bech && bech.to_lowercase() != *bech {
-        panic!("mix case not allowed: {}", bech);
+        return Err(Bech32Error::HrpMixCase)
     }
 
     let pos = match bech.rfind("1") {
         Some(v) => v,
-        None => panic!("Separator '1' not found")
+        None => return Err(Bech32Error::Separator1NotFound)
     };
 
     if pos < 1 || pos + 7 > bech.len() {
-        panic!("Separator '1' at invalid position: {}", pos);
+        return Err(Bech32Error::Separator1InvalidPosition(pos))
     }
 
     let hrp = bech[0..pos].to_owned();
     for value in hrp.bytes() {
         if value < 33 || value > 126 {
-            panic!("invalid character human readable part: {}", value);
+            return Err(Bech32Error::HrpInvalidCharacter(value))
         }
     }
 
-    let mut data: Vec<u8> = vec![]; //mon vec concerné
+    let mut data: Vec<u8> = vec![];
     for i in pos + 1..bech.len() {
         let c = bech.chars().nth(i).unwrap();
         let value = match CHARSET.find(c) {
             Some(v) => v,
-            None => panic!("Invalid character part: {}", c)
+            None => return Err(Bech32Error::HrpInvalidCharacter(c as u8))
         };
 
         data.push(value as u8);
     }
 
     if !verify_checksum(&hrp, &data) {
-        panic!("Invalid checksum");
+        return Err(Bech32Error::InvalidChecksum)
     }
 
-    println!("size: {}", data.len());
     for _ in 0..6 {
         data.remove(data.len() - 1);
     }
 
-    (hrp, data)
+    Ok((hrp, data))
 }
 
 /*
@@ -207,3 +220,24 @@ pub fn segwit_address_decode(hrp: &String, address: &String) -> (u8, Vec<u8>) {
 
     (data[0], result)
 }*/
+
+use std::fmt::{Display, Error, Formatter};
+
+impl Display for Bech32Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        use Bech32Error::*;
+        match self {
+            InvalidDataRange(value, max) => write!(f, "Invalid data range: {}, max is {}", value, max),
+            IllegalZeroPadding => write!(f, "Illegal zero padding"),
+            NonZeroPadding => write!(f, "Non zero padding"),
+            HrpEmpty => write!(f, "human readable part is empty"),
+            HrpInvalidCharacter(value) => write!(f, "Invalid character value in human readable part: {}", value),
+            HrpMixCase => write!(f, "Mix case is not allowed in human readable part"),
+            InvalidValue(value, max) => write!(f, "Invalid value: {}, max is {}", value, max),
+            Separator1NotFound => write!(f, "Separator '1' not found"),
+            Separator1InvalidPosition(pos) => write!(f, "Invalid separator '1' position: {}", pos),
+            InvalidUTF8Sequence(value) => write!(f, "Invalid UTF-8 sequence: {}", value),
+            InvalidChecksum => write!(f, "Invalid checksum")
+        }
+    }
+}
