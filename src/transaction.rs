@@ -8,6 +8,11 @@ pub struct Tx {
 }
 
 #[derive(Clone, serde::Serialize)]
+pub struct UploadSmartContractTx {
+    pub code: String
+}
+
+#[derive(Clone, serde::Serialize)]
 pub struct SmartContractTx {
     pub contract: String,
     pub amount: u64,
@@ -32,6 +37,7 @@ pub enum TransactionData {
     SmartContract(SmartContractTx),
     Burn(BurnTx),
     Coinbase(CoinbaseTx),
+    UploadSmartContract(UploadSmartContractTx),
 }
 
 impl Hashable for TransactionData {
@@ -68,6 +74,10 @@ impl Hashable for TransactionData {
                 bytes.push(4);
                 bytes.extend(&tx.block_reward.to_be_bytes());
                 bytes.extend(&tx.fee.to_be_bytes());
+            }
+            TransactionData::UploadSmartContract(tx) => {
+                bytes.push(5);
+                bytes.extend(tx.code.as_bytes());
             }
         }
         bytes

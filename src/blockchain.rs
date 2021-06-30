@@ -1,7 +1,7 @@
 use crate::globals::{Hash, Hashable, get_current_time, format_coin};
 use crate::block::Block;
 use crate::difficulty::check_difficulty;
-use crate::config::*;
+use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY};
 use crate::transaction::*;
 use std::collections::HashMap;
 
@@ -46,7 +46,7 @@ impl Blockchain {
             height: 0,
             supply: 0,
             top_hash: [0; 32],
-            difficulty: MINIMUM_DIFFICULTY,
+            difficulty: 1,
             mempool: HashMap::new(),
             accounts: HashMap::new(),
             dev_address: dev_address.clone()
@@ -57,7 +57,7 @@ impl Blockchain {
         blockchain
     }
 
-    pub fn get_current_height(&self) -> u64 {
+    /*pub fn get_current_height(&self) -> u64 {
         self.height
     }
 
@@ -75,7 +75,7 @@ impl Blockchain {
 
     pub fn get_mempool(&self) -> &HashMap<Hash, Transaction> {
         &self.mempool
-    }
+    }*/
 
     pub fn is_registered(&self, account: &String) -> bool {
         self.accounts.contains_key(account)
@@ -101,7 +101,6 @@ impl Blockchain {
         Ok(*self.get_balance(account)? >= amount)
     }
 
-    //chicken & egg problem
     pub fn get_block_template(&self, address: String) -> Block {
         let block_reward = get_block_reward(self.supply); //TODO calculate fees
         let coinbase_tx = Transaction::new(self.height, TransactionData::Coinbase(CoinbaseTx {
@@ -305,6 +304,9 @@ impl Blockchain {
                 self.update_balance(transaction.get_sender(), balance)?;
                 self.supply = self.supply + tx.block_reward;
                 println!("Supply is now {}, block reward generated {} coins", format_coin(self.supply), format_coin(tx.block_reward));
+            }
+            TransactionData::UploadSmartContract(_) => {
+                panic!("not implemented")
             }
         };
 
