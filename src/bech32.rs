@@ -6,12 +6,12 @@ pub enum Bech32Error {
     IllegalZeroPadding,
     NonZeroPadding,
     HrpEmpty,
-    HrpInvalidCharacter(u8),
+    HrpInvalidCharacter(u8), //character as byte
     HrpMixCase,
     InvalidValue(u8, usize), //value, max
     Separator1NotFound,
-    Separator1InvalidPosition(usize),
-    InvalidUTF8Sequence(String),
+    Separator1InvalidPosition(usize), //position
+    InvalidUTF8Sequence(String), //error returned by 'String::from_utf8' as string
     InvalidChecksum
 }
 
@@ -26,7 +26,6 @@ fn polymod(values: &[u8]) -> u32 {
             }
         }
     }
-
     chk
 }
 
