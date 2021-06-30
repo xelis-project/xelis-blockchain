@@ -7,7 +7,7 @@ pub type Hash = [u8; 32];
 pub trait Hashable {
     fn to_bytes(&self) -> Vec<u8>;
 
-    fn size(&self) -> usize { //in byte
+    fn size(&self) -> usize {
         self.to_bytes().len()
     }
 
