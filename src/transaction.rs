@@ -1,36 +1,39 @@
 use crate::globals::{Hash, Hashable};
+use crate::config::REGISTRATION_DIFFICULTY;
+use crate::blockchain::BlockchainError;
+use crate::difficulty::check_difficulty;
 use std::collections::HashMap;
+use ed25519_dalek::{Signature, PublicKey, Keypair, Verifier, Signer};
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Eq, PartialEq, serde::Serialize)]
 pub struct Tx {
     pub amount: u64,
-    pub to: String
+    pub to: PublicKey
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Eq, PartialEq, serde::Serialize)]
 pub struct UploadSmartContractTx {
     pub code: String
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Eq, PartialEq, serde::Serialize)]
 pub struct SmartContractTx {
     pub contract: String,
     pub amount: u64,
     pub params: HashMap<String, String> //TODO
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Eq, PartialEq, serde::Serialize)]
 pub struct BurnTx {
     pub amount: u64
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Eq, PartialEq, serde::Serialize)]
 pub struct CoinbaseTx {
-    pub block_reward: u64,
-    pub fee: u64
+    pub amount: u64
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Eq, PartialEq, serde::Serialize)]
 pub enum TransactionData {
     Registration,
     Normal(Vec<Tx>),
@@ -53,7 +56,7 @@ impl Hashable for TransactionData {
                 bytes.extend(&txs.len().to_be_bytes());
                 for tx in txs {
                     bytes.extend(&tx.amount.to_be_bytes());
-                    bytes.extend(tx.to.as_bytes());
+                    bytes.extend(&tx.to.to_bytes());
                 }
             }
             TransactionData::Registration => {
@@ -72,8 +75,7 @@ impl Hashable for TransactionData {
             }
             TransactionData::Coinbase(tx) => {
                 bytes.push(4);
-                bytes.extend(&tx.block_reward.to_be_bytes());
-                bytes.extend(&tx.fee.to_be_bytes());
+                bytes.extend(&tx.amount.to_be_bytes());
             }
             TransactionData::UploadSmartContract(tx) => {
                 bytes.push(5);
@@ -85,26 +87,91 @@ impl Hashable for TransactionData {
 }
 
 #[derive(Clone, serde::Serialize)]
-pub struct Transaction { //TODO implement signature
+pub struct Transaction {
     hash: Hash,
     nonce: u64,
     data: TransactionData,
-    sender: String,
-    fee: u64
+    sender: PublicKey,
+    fee: u64,
+    signature: Option<Signature>
 }
 
 impl Transaction {
 
-    pub fn new(nonce: u64, data: TransactionData, sender: String) -> Self {
+    pub fn new(nonce: u64, data: TransactionData, sender: PublicKey) -> Self {
         let mut tx = Transaction {
-            hash: [0; 32],
+            hash: Hash::zero(),
             nonce,
             data,
             sender,
-            fee: 0
+            fee: 0,
+            signature: None,
         };
-        tx.fee = if tx.is_coinbase() { 0 } else { crate::blockchain::calculate_tx_fee(tx.size()) };
+
+        tx.fee = match &tx.data { //Registration & Coinbase tx have no fee
+            TransactionData::Registration | TransactionData::Coinbase(_) => 0,
+            _ => crate::blockchain::calculate_tx_fee(tx.size())
+        };
+        tx.hash = tx.hash();
         tx
+    }
+
+    pub fn new_registration(sender: PublicKey) -> Result<Self, BlockchainError> {
+        let mut tx = Transaction {
+            hash: Hash::zero(),
+            nonce: 0,
+            data: TransactionData::Registration,
+            sender,
+            fee: 0,
+            signature: None,
+        };
+
+        tx.calculate_hash()?;
+        Ok(tx)
+    }
+
+    pub fn is_valid_signature(&self) -> bool {
+        match self.signature {
+            Some(v) => self.sender.verify(&self.hash.as_bytes(), &v).is_ok(),
+            None => false
+        }
+    }
+
+    pub fn has_signature(&self) -> bool {
+        self.signature.is_some()
+    }
+
+    pub fn sign_transaction(&mut self, keypair: &Keypair) -> Result<(), BlockchainError> {
+        if keypair.public != self.sender {
+            return Err(BlockchainError::InvalidTransactionSignature);
+        }
+
+        self.signature = Some(keypair.sign(&self.hash.as_bytes()));
+
+        Ok(())
+    }
+
+    pub fn calculate_hash(&mut self) -> Result<(), BlockchainError> {
+        self.hash = match self.data {
+            TransactionData::Registration => { //mini PoW for registration TX to prevent spam
+                let mut hash: Hash;
+                loop {
+                    hash = self.hash();
+                    if check_difficulty(&hash, REGISTRATION_DIFFICULTY)? {
+                        break;
+                    } else {
+                        self.nonce += 1;
+                    }
+                }
+
+                hash
+            }
+            _ => {
+                self.hash()
+            }
+        };
+
+        Ok(())
     }
 
     pub fn get_hash(&self) -> &Hash {
@@ -119,7 +186,7 @@ impl Transaction {
         &self.data
     }
 
-    pub fn get_sender(&self) -> &String {
+    pub fn get_sender(&self) -> &PublicKey {
         &self.sender
     }
 
@@ -133,17 +200,34 @@ impl Transaction {
             _ => false
         }
     }
+
+    pub fn is_registration(&self) -> bool {
+        match &self.data {
+            TransactionData::Registration => true,
+            _ => false 
+        }
+    }
 }
 
 impl Hashable for Transaction {
+
+    fn size(&self) -> usize {
+        let size = self.to_bytes().len() + match &self.signature {
+            Some(v) => v.to_bytes().len(),
+            None => 0,
+        };
+        
+        size
+    }
 
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![];
 
         bytes.extend(&self.nonce.to_be_bytes());
         bytes.extend(self.data.to_bytes());
-        bytes.extend(self.sender.as_bytes());
+        bytes.extend(&self.sender.to_bytes());
         bytes.extend(&self.fee.to_be_bytes());
+        //TODO add signature
 
         bytes
     }

@@ -12,6 +12,7 @@ pub struct Block {
     pub nonce: u64,
     pub difficulty: u64,
     pub reward: u64,
+    #[serde(skip_serializing)]
     pub extra_nonce: [u8; 32],
     pub transactions: Vec<Transaction>, //TODO split Block into two structures: Block & CompleteBlock (include full TXs)
 }
@@ -22,7 +23,7 @@ impl Block {
             height,
             timestamp,
             previous_hash,
-            hash: [0; 32],
+            hash: Hash::zero(),
             nonce: 0,
             difficulty,
             reward,
@@ -53,7 +54,7 @@ impl Hashable for Block {
 
         bytes.extend(&self.height.to_be_bytes());
         bytes.extend(&self.timestamp.to_be_bytes());
-        bytes.extend(&self.previous_hash);
+        bytes.extend(self.previous_hash.as_bytes());
         bytes.extend(&self.nonce.to_be_bytes());
         bytes.extend(&self.difficulty.to_be_bytes());
         bytes.extend(&self.reward.to_be_bytes());
@@ -72,6 +73,6 @@ use std::fmt::{Error, Display, Formatter};
 
 impl Display for Block {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "Block[height: {}, timestamp: {}, previous_hash: {}, hash: {}, nonce: {}, reward: {}, extra_nonce: {}, txs: {}]", self.height, self.timestamp, hex::encode(self.previous_hash), hex::encode(self.hash), self.nonce, self.reward, hex::encode(self.extra_nonce), self.transactions.len())
+        write!(f, "Block[height: {}, timestamp: {}, previous_hash: {}, hash: {}, nonce: {}, reward: {}, extra_nonce: {}, txs: {}]", self.height, self.timestamp, self.previous_hash.to_hex(), self.hash.to_hex(), self.nonce, self.reward, hex::encode(self.extra_nonce), self.transactions.len())
     }
 }
