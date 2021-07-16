@@ -1,4 +1,4 @@
-use crate::globals::Hash;
+use crate::crypto::hash::Hash;
 use num_bigint::{BigUint, ToBigUint};
 use num_traits::{One};
 use crate::blockchain::BlockchainError;
@@ -27,7 +27,7 @@ fn difficulty_to_big(difficulty: u64) -> Result<BigUint, BlockchainError> {
 }
 
 fn hash_to_big(hash: &Hash) -> BigUint {
-    BigUint::from_bytes_be(&hash.as_bytes())
+    BigUint::from_bytes_be(hash.as_bytes())
 }
 
 pub fn calculate_difficulty(blocks: &Vec<Block>) -> u64 {

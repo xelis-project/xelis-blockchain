@@ -1,39 +1,41 @@
-use crate::globals::{Hash, Hashable};
+use crate::crypto::hash::{Hash, Hashable};
+use crate::crypto::key::{PublicKey, KeyPair, Signature, SIGNATURE_LENGTH};
 use crate::config::REGISTRATION_DIFFICULTY;
 use crate::blockchain::BlockchainError;
 use crate::difficulty::check_difficulty;
 use std::collections::HashMap;
-use ed25519_dalek::{Signature, PublicKey, Keypair, Verifier, Signer};
 
-#[derive(Clone, Eq, PartialEq, serde::Serialize)]
+//use ed25519_dalek::{Signature, PublicKey, Keypair, Verifier, Signer};
+
+#[derive(Clone, serde::Serialize)]
 pub struct Tx {
     pub amount: u64,
     pub to: PublicKey
 }
 
-#[derive(Clone, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 pub struct UploadSmartContractTx {
     pub code: String
 }
 
-#[derive(Clone, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 pub struct SmartContractTx {
     pub contract: String,
     pub amount: u64,
     pub params: HashMap<String, String> //TODO
 }
 
-#[derive(Clone, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 pub struct BurnTx {
     pub amount: u64
 }
 
-#[derive(Clone, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 pub struct CoinbaseTx {
     pub amount: u64
 }
 
-#[derive(Clone, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 pub enum TransactionData {
     Registration,
     Normal(Vec<Tx>),
@@ -88,7 +90,7 @@ impl Hashable for TransactionData {
 
 #[derive(Clone, serde::Serialize)]
 pub struct Transaction {
-    hash: Hash,
+    hash: Hash, //TODO delete this field and use hash() func 
     nonce: u64,
     data: TransactionData,
     sender: PublicKey,
@@ -131,8 +133,8 @@ impl Transaction {
     }
 
     pub fn is_valid_signature(&self) -> bool {
-        match self.signature {
-            Some(v) => self.sender.verify(&self.hash.as_bytes(), &v).is_ok(),
+        match &self.signature {
+            Some(v) => self.sender.verify_signature(&self.hash, &v),
             None => false
         }
     }
@@ -141,12 +143,8 @@ impl Transaction {
         self.signature.is_some()
     }
 
-    pub fn sign_transaction(&mut self, keypair: &Keypair) -> Result<(), BlockchainError> {
-        if keypair.public != self.sender {
-            return Err(BlockchainError::InvalidTransactionSignature);
-        }
-
-        self.signature = Some(keypair.sign(&self.hash.as_bytes()));
+    pub fn sign_transaction(&mut self, pair: &KeyPair) -> Result<(), BlockchainError> {
+        self.signature = Some(pair.sign(self.hash.as_bytes()));
 
         Ok(())
     }
@@ -213,10 +211,10 @@ impl Hashable for Transaction {
 
     fn size(&self) -> usize {
         let size = self.to_bytes().len() + match &self.signature {
-            Some(v) => v.to_bytes().len(),
+            Some(_) => SIGNATURE_LENGTH,
             None => 0,
         };
-        
+
         size
     }
 

@@ -1,4 +1,5 @@
-use crate::globals::{Hash, Hashable, get_current_time};
+use crate::globals::get_current_time;
+use crate::crypto::hash::{Hash, Hashable};
 use crate::difficulty::check_difficulty;
 use crate::transaction::Transaction;
 use crate::blockchain::BlockchainError;

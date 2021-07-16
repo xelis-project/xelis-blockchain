@@ -1,6 +1,7 @@
 const CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 const GENERATOR: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
 
+#[derive(Debug)]
 pub enum Bech32Error {
     InvalidDataRange(u16, u16), //data, from bits
     IllegalZeroPadding,
@@ -176,49 +177,6 @@ pub fn decode(bech: &String) -> Result<(String, Vec<u8>), Bech32Error> {
 
     Ok((hrp, data))
 }
-
-/*
-pub fn segwit_address_encode(hrp: String, version: u8, program: &[u8]) -> String {
-    if version > 16 {
-        panic!("invalid witness version: {}", version);
-    }
-    if program.len() < 2 || program.len() > 40 {
-        panic!("invalid program length: {}", program.len());
-    }
-    if version == 0 && program.len() != 20 && program.len() != 32 {
-        panic!("invalid program length for witness version 0: {}", program.len());
-    }
-
-    let data = convert_bits(program, 8, 5, true);
-    let mut combined = vec![];
-    combined.push(version);
-    combined.extend(data);
-
-    encode(hrp, &combined)
-}
-
-
-pub fn segwit_address_decode(hrp: &String, address: &String) -> (u8, Vec<u8>) {
-    let (decoded_hrp, data) = decode(address);
-    if decoded_hrp != *hrp {
-        panic!("Invalid human readable part: {} != {}", decoded_hrp, hrp);
-    }
-    if data.len() == 0 {
-        panic!("Invalid decode data length: {}", data.len())
-    }
-    if data[0] > 16 {
-        panic!("Invalid witness version: {}", data[0]);
-    }
-    let result = convert_bits(&data[1..], 5, 8, false);
-    if result.len() < 2 || result.len() > 40 {
-        panic!("Invalid convert bits length: {}", result.len());
-    }
-    if data[0] == 0 && result.len() != 20 && result.len() != 32 {
-        panic!("Invalid program length for witness version 0: {}", result.len());
-    }
-
-    (data[0], result)
-}*/
 
 use std::fmt::{Display, Error, Formatter};
 

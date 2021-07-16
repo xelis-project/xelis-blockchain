@@ -1,10 +1,12 @@
-use crate::globals::{Hash, Hashable, get_current_time, as_address};
+use crate::globals::get_current_time;
 use crate::block::Block;
 use crate::difficulty::{check_difficulty, calculate_difficulty};
 use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY};
 use crate::transaction::*;
 use std::collections::HashMap;
-use ed25519_dalek::{PUBLIC_KEY_LENGTH, PublicKey};
+use crate::crypto::key::{PUBLIC_KEY_LENGTH, PublicKey};
+use crate::crypto::hash::{Hash, Hashable};
+use crate::crypto::bech32::Bech32Error;
 
 pub enum BlockchainError {
     TimestampIsLessThanParent(u64),
@@ -29,6 +31,7 @@ pub enum BlockchainError {
     InvalidCirculatingSupply(u64, u64),
     InvalidTxRegistrationPoW(Hash),
     InvalidTransactionNonce(u64, u64),
+    ErrorOnBech32(Bech32Error),
     InvalidTransactionSignature,
     DifficultyCannotBeZero,
     DifficultyErrorOnConversion,
@@ -101,7 +104,7 @@ impl Blockchain {
         });
     }
 
-    pub fn is_registered(&self, account: &PublicKey) -> bool {
+    pub fn has_account(&self, account: &PublicKey) -> bool {
         self.accounts.contains_key(account.as_bytes())
     }
 
@@ -195,6 +198,7 @@ impl Blockchain {
         if circulating_supply != self.supply || total_supply_from_accounts != self.supply {
             return Err(BlockchainError::InvalidCirculatingSupply(circulating_supply, self.supply));
         }
+
         Ok(())
     }
 
@@ -236,7 +240,7 @@ impl Blockchain {
             for tx in &block.transactions {
                 match tx.get_data() {
                     TransactionData::Coinbase(data) => {
-                        if !self.is_registered(tx.get_sender()) {
+                        if !self.has_account(tx.get_sender()) {
                             return Err(BlockchainError::AddressNotRegistered(tx.get_sender().clone()));
                         }
 
@@ -317,8 +321,8 @@ impl Blockchain {
     }
 
     fn verify_transaction(&self, tx: &Transaction, disable_nonce_check: bool) -> Result<(), BlockchainError> {
-        if *tx.get_data() == TransactionData::Registration {
-            if self.is_registered(tx.get_sender()) {
+        if tx.is_registration() {
+            if self.has_account(tx.get_sender()) {
                 return Err(BlockchainError::AddressAlreadyRegistered(tx.get_sender().clone()))
             }
 
@@ -346,7 +350,7 @@ impl Blockchain {
                 let mut total_coins = *tx.get_fee();
                 for tx in txs {
                     total_coins += tx.amount;
-                    if !self.is_registered(&tx.to) { //verify that all receiver are registered
+                    if !self.has_account(&tx.to) { //verify that all receiver are registered
                         return Err(BlockchainError::AddressNotRegistered(tx.to.clone()))
                     }
                 }
@@ -453,8 +457,8 @@ impl Display for BlockchainError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         use BlockchainError::*;
         match self {
-            AddressAlreadyRegistered(address) => write!(f, "Address {} is already registered", as_address(address)),
-            AddressNotRegistered(address) => write!(f, "Address {} is not registered", as_address(address)),
+            AddressAlreadyRegistered(address) => write!(f, "Address {} is already registered", address.to_address().unwrap()),
+            AddressNotRegistered(address) => write!(f, "Address {} is not registered", address.to_address().unwrap()),
             InvalidBlockHeight(expected, got) => write!(f, "Block height mismatch, expected {}, got {}", expected, got),
             InvalidBlockSize(expected, got) => write!(f, "Block size is more than limit: {}, got {}", expected, got),
             InvalidDifficulty(expected, got) => write!(f, "Invalid difficulty, expected {}, got {}", expected, got),
@@ -466,8 +470,8 @@ impl Display for BlockchainError {
             TxNotFound(hash) => write!(f, "Tx {} not found in mempool", hash),
             TxAlreadyInMempool(hash) => write!(f, "Tx {} already in mempool", hash),
             TxEmpty(hash) => write!(f, "Normal Tx {} is empty", hash),
-            DuplicateRegistration(address) => write!(f, "Duplicate registration tx for address '{}' found in same block", as_address(address)),
-            NotEnoughFunds(address, amount) => write!(f, "Address {} should have at least {}", as_address(address), amount),
+            DuplicateRegistration(address) => write!(f, "Duplicate registration tx for address '{}' found in same block", address.to_address().unwrap()),
+            NotEnoughFunds(address, amount) => write!(f, "Address {} should have at least {}", address.to_address().unwrap(), amount),
             CoinbaseTxNotAllowed(hash) => write!(f, "Coinbase Tx not allowed: {}", hash),
             InvalidBlockReward(expected, got) => write!(f, "Invalid block reward, expected {}, got {}", expected, got),
             MultipleCoinbaseTx(value) => write!(f, "Incorrect amount of Coinbase TX in this block, expected 1, got {}", value),
@@ -475,6 +479,7 @@ impl Display for BlockchainError {
             InvalidCirculatingSupply(expected, got) => write!(f, "Invalid circulating supply, expected {}, got {} coins generated!", expected, got),
             InvalidTxRegistrationPoW(hash) => write!(f, "Invalid tx registration PoW: {}", hash),
             InvalidTransactionNonce(expected, got) => write!(f, "Invalid transaction nonce: {}, account nonce is: {}", got, expected),
+            ErrorOnBech32(e) => write!(f, "Error occured on bech32: {}", e),
             InvalidTransactionSignature => write!(f, "Invalid transaction signature"),
             DifficultyCannotBeZero => write!(f, "Difficulty cannot be zero!"),
             DifficultyErrorOnConversion => write!(f, "Difficulty error on conversion to BigUint"),
