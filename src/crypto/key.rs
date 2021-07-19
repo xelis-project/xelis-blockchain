@@ -5,10 +5,10 @@ use crate::config::PREFIX_ADDRESS;
 use crate::blockchain::BlockchainError;
 use super::hash::Hash;
 
-pub const PUBLIC_KEY_LENGTH: usize = 32;
+pub const KEY_LENGTH: usize = 32;
 pub const SIGNATURE_LENGTH: usize = 64;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Eq, Copy)]
 pub struct PublicKey(ed25519_dalek::PublicKey);
 pub struct PrivateKey(ed25519_dalek::SecretKey);
 
@@ -27,11 +27,11 @@ impl PublicKey {
         self.0.verify(hash.as_bytes(), &signature.0).is_ok()
     }
 
-    pub fn as_bytes(&self) -> &[u8; PUBLIC_KEY_LENGTH] {
+    pub fn as_bytes(&self) -> &[u8; KEY_LENGTH] {
         self.0.as_bytes()
     }
 
-    pub fn to_bytes(&self) -> [u8; PUBLIC_KEY_LENGTH] {
+    pub fn to_bytes(&self) -> [u8; KEY_LENGTH] {
         self.0.to_bytes()
     }
 
@@ -94,8 +94,13 @@ impl PrivateKey {
 impl KeyPair {
     pub fn new() -> Self {
         use rand::rngs::OsRng;
+        use rand::RngCore;
+
         let mut csprng = OsRng {};
-        let secret_key: ed25519_dalek::SecretKey = ed25519_dalek::SecretKey::generate(&mut csprng);
+
+        let mut bytes = [0u8; KEY_LENGTH];
+        csprng.fill_bytes(&mut bytes);
+        let secret_key: ed25519_dalek::SecretKey = ed25519_dalek::SecretKey::from_bytes(&bytes).unwrap();
         let public_key: ed25519_dalek::PublicKey = (&secret_key).into();
 
         KeyPair {
@@ -125,12 +130,24 @@ impl KeyPair {
 }
 
 impl Signature {
-    pub fn new(bytes: [u8; SIGNATURE_LENGTH]) -> Self {
+
+
+    pub fn from_hex(hex: String) -> Self {
+        use std::convert::TryInto;
+        let bytes = hex::decode(hex).unwrap().try_into().unwrap_or_else(|v: Vec<u8>| panic!("Expected a Signature of {} bytes but it was {} bytes", SIGNATURE_LENGTH, v.len()));
+        Signature::from_bytes(bytes)
+    }
+
+    pub fn from_bytes(bytes: [u8; SIGNATURE_LENGTH]) -> Self {
         Signature(ed25519_dalek::Signature::new(bytes))
     }
 
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
+    }
+
+    pub fn to_bytes(&self) -> [u8; SIGNATURE_LENGTH] {
+        self.0.to_bytes()
     }
 }
 

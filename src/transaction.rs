@@ -90,7 +90,6 @@ impl Hashable for TransactionData {
 
 #[derive(Clone, serde::Serialize)]
 pub struct Transaction {
-    hash: Hash, //TODO delete this field and use hash() func 
     nonce: u64,
     data: TransactionData,
     sender: PublicKey,
@@ -102,7 +101,6 @@ impl Transaction {
 
     pub fn new(nonce: u64, data: TransactionData, sender: PublicKey) -> Self {
         let mut tx = Transaction {
-            hash: Hash::zero(),
             nonce,
             data,
             sender,
@@ -114,13 +112,12 @@ impl Transaction {
             TransactionData::Registration | TransactionData::Coinbase(_) => 0,
             _ => crate::blockchain::calculate_tx_fee(tx.size())
         };
-        tx.hash = tx.hash();
+
         tx
     }
 
     pub fn new_registration(sender: PublicKey) -> Result<Self, BlockchainError> {
         let mut tx = Transaction {
-            hash: Hash::zero(),
             nonce: 0,
             data: TransactionData::Registration,
             sender,
@@ -132,11 +129,8 @@ impl Transaction {
         Ok(tx)
     }
 
-    pub fn is_valid_signature(&self) -> bool {
-        match &self.signature {
-            Some(v) => self.sender.verify_signature(&self.hash, &v),
-            None => false
-        }
+    pub fn get_signature(&self) -> &Option<Signature> {
+        &self.signature
     }
 
     pub fn has_signature(&self) -> bool {
@@ -144,14 +138,14 @@ impl Transaction {
     }
 
     pub fn sign_transaction(&mut self, pair: &KeyPair) -> Result<(), BlockchainError> {
-        self.signature = Some(pair.sign(self.hash.as_bytes()));
+        self.signature = Some(pair.sign(self.hash().as_bytes()));
 
         Ok(())
     }
 
-    pub fn calculate_hash(&mut self) -> Result<(), BlockchainError> {
-        self.hash = match self.data {
-            TransactionData::Registration => { //mini PoW for registration TX to prevent spam
+    pub fn calculate_hash(&mut self) -> Result<Hash, BlockchainError> {
+        let result = match self.data {
+            TransactionData::Registration => { //mini PoW for registration TX to prevent spam as we can't ask fee on newly created account
                 let mut hash: Hash;
                 loop {
                     hash = self.hash();
@@ -169,11 +163,7 @@ impl Transaction {
             }
         };
 
-        Ok(())
-    }
-
-    pub fn get_hash(&self) -> &Hash {
-        &self.hash
+        Ok(result)
     }
 
     pub fn get_nonce(&self) -> &u64 {

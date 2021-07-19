@@ -1,6 +1,6 @@
 const HASH_SIZE: usize = 32; //32 bytes / 256 bits
 
-#[derive(Eq, Clone, Copy)]
+#[derive(Eq, Clone)]
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
@@ -65,8 +65,8 @@ pub trait Hashable {
     }
 }
 
-use std::convert::TryInto;
 pub fn hash(value: &[u8]) -> Hash {
+    use std::convert::TryInto;
     let result: [u8; HASH_SIZE] = crypto_hash::digest(crypto_hash::Algorithm::SHA256, value).try_into().unwrap_or_else(|v: Vec<u8>| panic!("Expected a Hash of length {} but it was {}", HASH_SIZE, v.len()));
     Hash(result)
 }

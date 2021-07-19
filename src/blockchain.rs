@@ -4,7 +4,7 @@ use crate::difficulty::{check_difficulty, calculate_difficulty};
 use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY};
 use crate::transaction::*;
 use std::collections::HashMap;
-use crate::crypto::key::{PUBLIC_KEY_LENGTH, PublicKey};
+use crate::crypto::key::PublicKey;
 use crate::crypto::hash::{Hash, Hashable};
 use crate::crypto::bech32::Bech32Error;
 
@@ -31,6 +31,7 @@ pub enum BlockchainError {
     InvalidCirculatingSupply(u64, u64),
     InvalidTxRegistrationPoW(Hash),
     InvalidTransactionNonce(u64, u64),
+    InvalidTransactionToSender(Hash),
     ErrorOnBech32(Bech32Error),
     InvalidTransactionSignature,
     DifficultyCannotBeZero,
@@ -61,8 +62,7 @@ pub struct Blockchain {
     top_hash: Hash,
     difficulty: u64,
     mempool: HashMap<Hash, Transaction>,
-    #[serde(skip_serializing)]
-    accounts: HashMap<[u8; PUBLIC_KEY_LENGTH], Account>,
+    accounts: HashMap<PublicKey, Account>,
     dev_address: PublicKey
 }
 
@@ -85,38 +85,44 @@ impl Blockchain {
         blockchain
     }
 
+    pub fn get_height(&self) -> u64 {
+        self.height
+    }
+
     pub fn add_tx_to_mempool(&mut self, tx: Transaction) -> Result<(), BlockchainError> {
-        if self.mempool.contains_key(tx.get_hash()) {
-            return Err(BlockchainError::TxAlreadyInMempool(tx.get_hash().clone()))
+        let hash = tx.hash();
+        if self.mempool.contains_key(&hash) {
+            return Err(BlockchainError::TxAlreadyInMempool(hash))
         }
 
-        self.verify_transaction(&tx, false)?;
+        self.verify_transaction_with_hash(&tx, &hash, false)?;
 
-        println!("Adding new transaction to mempool: {}", tx.get_hash());
-        self.mempool.insert(tx.get_hash().clone(), tx);
+        println!("Adding new transaction to mempool: {}", hash);
+        self.mempool.insert(hash, tx);
+
         Ok(())
     }
 
     pub fn register_account(&mut self, pub_key: &PublicKey) {
-        self.accounts.insert(pub_key.to_bytes(), Account {
+        self.accounts.insert(pub_key.clone(), Account {
             balance: 0,
             nonce: 0
         });
     }
 
     pub fn has_account(&self, account: &PublicKey) -> bool {
-        self.accounts.contains_key(account.as_bytes())
+        self.accounts.contains_key(account)
     }
 
     pub fn get_account(&self, account: &PublicKey) -> Result<&Account, BlockchainError> {
-        match self.accounts.get(account.as_bytes()) {
+        match self.accounts.get(account) {
             Some(v) => Ok(v),
             None => Err(BlockchainError::AddressNotRegistered(account.clone()))
         }
     }
 
     pub fn get_mut_account(&mut self, account: &PublicKey) -> Result<&mut Account, BlockchainError> {
-        match self.accounts.get_mut(account.as_bytes()) {
+        match self.accounts.get_mut(account) {
             Some(v) => Ok(v),
             None => Err(BlockchainError::AddressNotRegistered(account.clone()))
         }
@@ -124,7 +130,7 @@ impl Blockchain {
 
     pub fn get_block_template(&self, address: PublicKey) -> Block {
         let mut block_reward = get_block_reward(self.supply);
-        let mut block = Block::new(self.height, get_current_time(), self.top_hash, self.difficulty, block_reward, [0; 32], vec![]);
+        let mut block = Block::new(self.height, get_current_time(), self.top_hash.clone(), self.difficulty, block_reward, [0; 32], vec![]);
         let mut transactions: Vec<Transaction> = self.mempool.values().cloned().collect();
         transactions.sort_by(| a, b | a.get_fee().cmp(&b.get_fee())); //TODO verify the result
 
@@ -161,7 +167,7 @@ impl Blockchain {
             let hash = block.hash();
             if hash != block.hash {
                 println!("invalid block hash for {}", block);
-                return Err(BlockchainError::InvalidHash(block.hash, hash))
+                return Err(BlockchainError::InvalidHash(block.hash.clone(), hash))
             }
 
             if block.height != height as u64 {
@@ -173,12 +179,12 @@ impl Blockchain {
                 let previous = &self.blocks[height - 1];
                 if previous.hash != block.previous_hash {
                     println!("Invalid previous block hash, expected {} got {}", previous.hash, block.previous_hash);
-                    return Err(BlockchainError::InvalidHash(previous.hash, block.previous_hash));
+                    return Err(BlockchainError::InvalidHash(previous.hash.clone(), block.previous_hash.clone()));
                 }
             }
 
             for tx in &block.transactions {
-                if !tx.is_coinbase() && !tx.is_registration() {
+                if !tx.is_coinbase() {
                     self.verify_transaction(tx, true)?;
                 }
 
@@ -217,7 +223,7 @@ impl Blockchain {
         } else if self.height != 0 {
             let previous_block = &self.blocks[(self.height as usize) - 1];
             if previous_block.hash != block.previous_hash {
-                return Err(BlockchainError::InvalidPreviousBlockHash(block.previous_hash, previous_block.hash));
+                return Err(BlockchainError::InvalidPreviousBlockHash(block.previous_hash, previous_block.hash.clone()));
             }
             if previous_block.timestamp > block.timestamp {
                 return Err(BlockchainError::TimestampIsLessThanParent(block.timestamp));
@@ -225,6 +231,8 @@ impl Blockchain {
             println!("Block Time for this block is: {}s", block.timestamp - previous_block.timestamp);
         }
 
+        let mut txs_hashes: Vec<Hash> = vec![];
+        let mut txs_coinbase: Vec<&Transaction> = vec![];
         {
             let block_reward = get_block_reward(self.supply); //block reward verification
             if block.reward != block_reward {
@@ -236,10 +244,10 @@ impl Blockchain {
             let mut expected_fee = 0;
             let mut coinbase_tx_fee = 0;
             let mut coinbase_reward = 0;
-            let mut registrations: HashMap<[u8; PUBLIC_KEY_LENGTH], bool> = HashMap::new();
+            let mut registrations: HashMap<PublicKey, bool> = HashMap::new();
             for tx in &block.transactions {
                 match tx.get_data() {
-                    TransactionData::Coinbase(data) => {
+                    TransactionData::Coinbase(data) => { //TODO rework coinbase system
                         if !self.has_account(tx.get_sender()) {
                             return Err(BlockchainError::AddressNotRegistered(tx.get_sender().clone()));
                         }
@@ -248,9 +256,8 @@ impl Blockchain {
                             return Err(BlockchainError::InvalidTxFee(0, *tx.get_fee()))
                         }
 
-                        let hash = tx.hash();
-                        if *tx.get_hash() != hash {
-                            return Err(BlockchainError::InvalidHash(hash, tx.get_hash().clone()));
+                        if tx.has_signature() {
+                            return Err(BlockchainError::InvalidTransactionSignature) //Coinbase tx should not be signed (there is no sender, why signing it ?)
                         }
 
                         coinbase_count += 1;
@@ -266,25 +273,28 @@ impl Blockchain {
                         }
 
                         coinbase_reward += data.amount;
+                        txs_coinbase.push(&tx);
                         continue;
                     }
                     TransactionData::Registration => {
-                        if registrations.contains_key(tx.get_sender().as_bytes()) {
+                        if registrations.contains_key(tx.get_sender()) {
                             return Err(BlockchainError::DuplicateRegistration(tx.get_sender().clone()))
                         }
-                        registrations.insert(tx.get_sender().to_bytes(), true);
+                        registrations.insert(tx.get_sender().clone(), true);
                     }
                     _ => {
                         expected_fee += tx.get_fee();
                     }
                 };
 
-
-                if !self.mempool.contains_key(tx.get_hash()) {
-                    return Err(BlockchainError::TxNotFound(tx.get_hash().clone()));
+                let hash = tx.hash();
+                if !self.mempool.contains_key(&hash) {
+                    return Err(BlockchainError::TxNotFound(hash));
                 }
 
-                self.verify_transaction(tx, false)?;
+                self.verify_transaction_with_hash(tx, &hash, false)?;
+                txs_hashes.push(hash);
+                
             }
 
             if (coinbase_count != 1 && DEV_FEE_PERCENT == 0) || (coinbase_count != 2 && DEV_FEE_PERCENT != 0) {
@@ -302,13 +312,16 @@ impl Blockchain {
         }
 
         //Transaction execution
-        for tx in &block.transactions {
-            if let None = self.mempool.remove(tx.get_hash()) {
-                if !tx.is_coinbase() {
-                    return Err(BlockchainError::TxNotFound(tx.get_hash().clone()));
-                }
+        for hash in txs_hashes {
+            if let Some(tx) = self.mempool.remove(&hash) {
+                self.execute_transaction(&tx)?;
+            } else {
+                return Err(BlockchainError::TxNotFound(hash));
             }
-            self.execute_transaction(&tx)?;
+        }
+
+        for coinbase in txs_coinbase {
+            self.execute_transaction(&coinbase)?;
         }
 
         self.height += 1;
@@ -321,21 +334,33 @@ impl Blockchain {
     }
 
     fn verify_transaction(&self, tx: &Transaction, disable_nonce_check: bool) -> Result<(), BlockchainError> {
+        self.verify_transaction_with_hash(tx, &tx.hash(), disable_nonce_check)
+    }
+
+    //We return the hash passed in argument to avoid the same hash calculation several times
+    fn verify_transaction_with_hash(&self, tx: &Transaction, hash: &Hash, disable_nonce_check: bool) -> Result<(), BlockchainError> {
         if tx.is_registration() {
-            if self.has_account(tx.get_sender()) {
+            if self.has_account(tx.get_sender()) && !disable_nonce_check {
                 return Err(BlockchainError::AddressAlreadyRegistered(tx.get_sender().clone()))
             }
 
-            if !check_difficulty(tx.get_hash(), REGISTRATION_DIFFICULTY)? {
-                return Err(BlockchainError::InvalidTxRegistrationPoW(tx.get_hash().clone()))
+            if !check_difficulty(&hash, REGISTRATION_DIFFICULTY)? {
+                return Err(BlockchainError::InvalidTxRegistrationPoW(hash.clone()))
             }
 
             return Ok(())
         }
 
-        if !tx.is_valid_signature() && !tx.is_coinbase() { //coinbase & registration don't have to sign it
-            return Err(BlockchainError::InvalidTransactionSignature)
-        }
+        match tx.get_signature() {
+            Some(signature) => {
+                if !tx.get_sender().verify_signature(&hash, signature) && !tx.is_coinbase() { //coinbase tx don't have to be signed 
+                    return Err(BlockchainError::InvalidTransactionSignature)
+                }
+            },
+            None => {
+                return Err(BlockchainError::InvalidTransactionSignature)
+            }
+        };
 
         let account = self.get_account(tx.get_sender())?;
         if !disable_nonce_check && account.nonce != *tx.get_nonce() {
@@ -345,13 +370,17 @@ impl Blockchain {
         match tx.get_data() {
             TransactionData::Normal(txs) => {
                 if txs.len() == 0 {
-                    return Err(BlockchainError::TxEmpty(tx.get_hash().clone()))
+                    return Err(BlockchainError::TxEmpty(hash.clone()))
                 }
                 let mut total_coins = *tx.get_fee();
-                for tx in txs {
-                    total_coins += tx.amount;
-                    if !self.has_account(&tx.to) { //verify that all receiver are registered
-                        return Err(BlockchainError::AddressNotRegistered(tx.to.clone()))
+                for output in txs {
+                    total_coins += output.amount;
+                    if output.to == *tx.get_sender() { //we can't transfer coins to ourself, why would you do that ?
+                        return Err(BlockchainError::InvalidTransactionToSender(hash.clone()))
+                    }
+
+                    if !self.has_account(&output.to) { //verify that all receivers are registered
+                        return Err(BlockchainError::AddressNotRegistered(output.to.clone()))
                     }
                 }
 
@@ -365,11 +394,7 @@ impl Blockchain {
                 }
             }
             TransactionData::Coinbase(_) => {
-                if tx.has_signature() {
-                    return Err(BlockchainError::InvalidTransactionSignature)
-                }
-
-                return Err(BlockchainError::CoinbaseTxNotAllowed(tx.get_hash().clone()));
+                return Err(BlockchainError::CoinbaseTxNotAllowed(hash.clone()));
             }
             _ => {
                 panic!("Not implemented yet")
@@ -379,11 +404,6 @@ impl Blockchain {
         let fee = calculate_tx_fee(tx.size());
         if *tx.get_fee() < fee { //minimum fee verification
             return Err(BlockchainError::InvalidTxFee(fee, *tx.get_fee()))
-        }
-
-        let hash = tx.hash();
-        if *tx.get_hash() != hash {
-            return Err(BlockchainError::InvalidHash(hash, tx.get_hash().clone()));
         }
 
         Ok(())
@@ -479,6 +499,7 @@ impl Display for BlockchainError {
             InvalidCirculatingSupply(expected, got) => write!(f, "Invalid circulating supply, expected {}, got {} coins generated!", expected, got),
             InvalidTxRegistrationPoW(hash) => write!(f, "Invalid tx registration PoW: {}", hash),
             InvalidTransactionNonce(expected, got) => write!(f, "Invalid transaction nonce: {}, account nonce is: {}", got, expected),
+            InvalidTransactionToSender(hash) => write!(f, "Invalid transaction, sender trying to send coins to himself: {}", hash),
             ErrorOnBech32(e) => write!(f, "Error occured on bech32: {}", e),
             InvalidTransactionSignature => write!(f, "Invalid transaction signature"),
             DifficultyCannotBeZero => write!(f, "Difficulty cannot be zero!"),
