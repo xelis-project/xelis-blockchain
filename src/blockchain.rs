@@ -1,7 +1,7 @@
 use crate::globals::get_current_time;
-use crate::block::Block;
+use crate::block::{Block, CompleteBlock};
 use crate::difficulty::{check_difficulty, calculate_difficulty};
-use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY};
+use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, /*DEV_FEE_PERCENT,*/ MINIMUM_DIFFICULTY};
 use crate::transaction::*;
 use std::collections::HashMap;
 use crate::crypto::key::PublicKey;
@@ -16,6 +16,8 @@ pub enum BlockchainError {
     InvalidHash(Hash, Hash),
     InvalidPreviousBlockHash(Hash, Hash),
     InvalidBlockSize(usize, usize),
+    InvalidBlockTxs(usize, usize),
+    InvalidTxInBlock(Hash),
     TxNotFound(Hash),
     TxAlreadyInMempool(Hash),
     TxEmpty(Hash),
@@ -36,6 +38,7 @@ pub enum BlockchainError {
     InvalidTransactionSignature,
     DifficultyCannotBeZero,
     DifficultyErrorOnConversion,
+    InvalidMinerTx
 }
 
 #[derive(serde::Serialize)]
@@ -56,7 +59,7 @@ impl Account {
 
 #[derive(serde::Serialize)]
 pub struct Blockchain {
-    blocks: Vec<Block>,
+    blocks: Vec<CompleteBlock>,
     height: u64,
     supply: u64,
     top_hash: Hash,
@@ -129,31 +132,28 @@ impl Blockchain {
     }
 
     pub fn get_block_template(&self, address: PublicKey) -> Block {
-        let mut block_reward = get_block_reward(self.supply);
-        let mut block = Block::new(self.height, get_current_time(), self.top_hash.clone(), self.difficulty, block_reward, [0; 32], vec![]);
-        let mut transactions: Vec<Transaction> = self.mempool.values().cloned().collect();
-        transactions.sort_by(| a, b | a.get_fee().cmp(&b.get_fee())); //TODO verify the result
-
-        if DEV_FEE_PERCENT != 0 {
-            let dev_reward = block_reward * DEV_FEE_PERCENT / 100;
-            let dev_fee_tx = Transaction::new(self.height, TransactionData::Coinbase(CoinbaseTx {
-                amount: dev_reward,
-            }), self.dev_address.clone());
-            block.transactions.push(dev_fee_tx);
-            block_reward -= dev_reward;
-        }
-
-        let mut fee = 0;
-        while transactions.len() > 0 && block.size() < MAX_BLOCK_SIZE { //TODO add coinbase tx in block size
-            let tx = transactions.remove(0);
-            fee += tx.get_fee();
-            block.transactions.push(tx);
-        }
-
-        let coinbase_tx = Transaction::new(self.height, TransactionData::Coinbase(CoinbaseTx {
-            amount: block_reward + fee,
+        let mut coinbase_tx = Transaction::new(0, TransactionData::Coinbase(CoinbaseTx {
+            block_reward: get_block_reward(self.supply),
+            fee_reward: 0, //FIXME !!
         }), address);
-        block.transactions.push(coinbase_tx);
+        let mut block = Block::new(self.height, get_current_time(), self.top_hash.clone(), self.difficulty, coinbase_tx, vec![]);
+        let mut txs: Vec<&Transaction> = self.mempool.values().collect();
+        txs.sort_by(| a, b | a.get_fee().cmp(&b.get_fee()));
+
+        let mut total_fee = 0;
+        while txs.len() > 0 && block.size() < MAX_BLOCK_SIZE {
+            let tx = txs.remove(0);
+            total_fee += tx.get_fee();
+            block.txs_hashes.push(tx.hash()); //TODO instead of hash the tx, clone the hash stored in mempool
+        }
+
+        match block.miner_tx.get_mut_data() {
+            TransactionData::Coinbase(ref mut data) => {
+                data.fee_reward = total_fee;
+            },
+            _ => {}
+        }
+
         block
     }
 
@@ -165,35 +165,51 @@ impl Blockchain {
         let mut circulating_supply = 0;
         for (height, block) in self.blocks.iter().enumerate() {
             let hash = block.hash();
-            if hash != block.hash {
+            if hash != *block.get_hash() {
                 println!("invalid block hash for {}", block);
-                return Err(BlockchainError::InvalidHash(block.hash.clone(), hash))
+                return Err(BlockchainError::InvalidHash(block.get_hash().clone(), hash))
             }
 
-            if block.height != height as u64 {
-                println!("Invalid block height for block {}, got {} but expected {}", block, block.height, height);
-                return Err(BlockchainError::InvalidBlockHeight(block.height, height as u64))
+            if block.get_height() != height as u64 {
+                println!("Invalid block height for block {}, got {} but expected {}", block, block.get_height(), height);
+                return Err(BlockchainError::InvalidBlockHeight(block.get_height(), height as u64))
             }
 
-            if block.height != 0 {
+            if block.get_height() != 0 {
                 let previous = &self.blocks[height - 1];
-                if previous.hash != block.previous_hash {
-                    println!("Invalid previous block hash, expected {} got {}", previous.hash, block.previous_hash);
-                    return Err(BlockchainError::InvalidHash(previous.hash.clone(), block.previous_hash.clone()));
+                if previous.get_hash() != block.get_previous_hash() {
+                    println!("Invalid previous block hash, expected {} got {}", previous.get_hash(), block.get_previous_hash());
+                    return Err(BlockchainError::InvalidHash(previous.get_hash().clone(), block.get_previous_hash().clone()));
                 }
             }
 
-            for tx in &block.transactions {
+            let coinbase_tx = match block.get_miner_tx().get_data() {
+                TransactionData::Coinbase(tx) => tx,
+                _ => return Err(BlockchainError::InvalidMinerTx)
+            };
+            let reward = get_block_reward(circulating_supply);
+            if coinbase_tx.block_reward != reward {
+                return Err(BlockchainError::InvalidBlockReward(coinbase_tx.block_reward, reward))
+            }
+
+            let mut fees: u64 = 0;
+            for tx in block.get_transactions() {
                 if !tx.is_coinbase() {
                     self.verify_transaction(tx, true)?;
                 }
 
-                if let TransactionData::Burn(data) = tx.get_data() {
-                    circulating_supply -= data.amount;
+                if let TransactionData::Burn(amount) = tx.get_data() {
+                    circulating_supply -= amount;
                 }
+
+                fees += tx.get_fee();
             }
 
-            circulating_supply += block.reward;
+            if fees != coinbase_tx.fee_reward {
+                return Err(BlockchainError::InvalidBlockReward(coinbase_tx.block_reward + coinbase_tx.fee_reward, reward + fees))
+            }
+
+            circulating_supply += reward;
         }
 
         let mut total_supply_from_accounts = 0;
@@ -214,122 +230,111 @@ impl Blockchain {
             return Err(BlockchainError::InvalidBlockHeight(block.height, block.height));
         } else if block.size() > MAX_BLOCK_SIZE {
             return Err(BlockchainError::InvalidBlockSize(MAX_BLOCK_SIZE, block.size()));
-        } else if block_hash != block.hash {
-            return Err(BlockchainError::InvalidHash(block_hash, block.hash));
         } else if !check_difficulty(&block_hash, block.difficulty)? || block.difficulty != self.difficulty {
             return Err(BlockchainError::InvalidDifficulty(self.difficulty, block.difficulty));
         } else if block.timestamp > get_current_time() {
             return Err(BlockchainError::TimestampIsInFuture(get_current_time(), block.timestamp));
         } else if self.height != 0 {
             let previous_block = &self.blocks[(self.height as usize) - 1];
-            if previous_block.hash != block.previous_hash {
-                return Err(BlockchainError::InvalidPreviousBlockHash(block.previous_hash, previous_block.hash.clone()));
+            if *previous_block.get_hash() != block.previous_hash {
+                return Err(BlockchainError::InvalidPreviousBlockHash(block.previous_hash, previous_block.get_hash().clone()));
             }
-            if previous_block.timestamp > block.timestamp {
+            if previous_block.get_timestamp() > block.timestamp {
                 return Err(BlockchainError::TimestampIsLessThanParent(block.timestamp));
             }
-            println!("Block Time for this block is: {}s", block.timestamp - previous_block.timestamp);
+            println!("Block Time for this block is: {}s", block.timestamp - previous_block.get_timestamp());
         }
 
-        let mut txs_hashes: Vec<Hash> = vec![];
-        let mut txs_coinbase: Vec<&Transaction> = vec![];
-        {
-            let block_reward = get_block_reward(self.supply); //block reward verification
-            if block.reward != block_reward {
-                return Err(BlockchainError::InvalidBlockReward(block_reward, block.reward));
+        let mut total_fees: u64 = 0;
+        {//Transaction verification
+            let mut txs: Vec<(&Hash, &Transaction)> = vec![]; //retrieve all txs in mempool for this block
+            let mut cache_tx: HashMap<&Hash, bool> = HashMap::new(); //avoid using a TX multiple times
+            for tx_hash in &block.txs_hashes {
+                if cache_tx.contains_key(tx_hash) {
+                    return Err(BlockchainError::InvalidTxInBlock(tx_hash.clone()))
+                }
+
+                let tx = match self.mempool.get(&tx_hash) { //we don't remove any tx until every test are passed
+                    Some(v) => v,
+                    None => return Err(BlockchainError::TxNotFound(tx_hash.clone()))
+                };
+    
+                cache_tx.insert(tx_hash, true);
+                total_fees += tx.get_fee();
+                txs.push((&tx_hash, tx));
             }
 
-            //Transaction verification
-            let mut coinbase_count = 0;
-            let mut expected_fee = 0;
-            let mut coinbase_tx_fee = 0;
-            let mut coinbase_reward = 0;
-            let mut registrations: HashMap<PublicKey, bool> = HashMap::new();
-            for tx in &block.transactions {
+            if cache_tx.len() != block.txs_hashes.len() || txs.len() != block.txs_hashes.len() {
+                return Err(BlockchainError::InvalidBlockTxs(block.txs_hashes.len(), cache_tx.len()))
+            }
+
+            let mut registrations: HashMap<&PublicKey, bool> = HashMap::new(); //avoid multiple registration of the same public key 
+            for (hash, tx) in &txs {
                 match tx.get_data() {
-                    TransactionData::Coinbase(data) => { //TODO rework coinbase system
-                        if !self.has_account(tx.get_sender()) {
-                            return Err(BlockchainError::AddressNotRegistered(tx.get_sender().clone()));
-                        }
-
-                        if *tx.get_fee() != 0 {
-                            return Err(BlockchainError::InvalidTxFee(0, *tx.get_fee()))
-                        }
-
-                        if tx.has_signature() {
-                            return Err(BlockchainError::InvalidTransactionSignature) //Coinbase tx should not be signed (there is no sender, why signing it ?)
-                        }
-
-                        coinbase_count += 1;
-                        if DEV_FEE_PERCENT != 0 {
-                            let calculated_reward = block_reward * DEV_FEE_PERCENT / 100;
-                            if calculated_reward != data.amount { //that's not devfee then
-                                let base_reward = block_reward - (block_reward * DEV_FEE_PERCENT / 100);
-                                if data.amount < base_reward {
-                                    return Err(BlockchainError::InvalidBlockReward(base_reward, data.amount))
-                                }
-                                coinbase_tx_fee = data.amount - base_reward;
-                            }
-                        }
-
-                        coinbase_reward += data.amount;
-                        txs_coinbase.push(&tx);
-                        continue;
+                    TransactionData::Coinbase(_) => {
+                        return Err(BlockchainError::InvalidTxInBlock(tx.hash()))
                     }
                     TransactionData::Registration => {
                         if registrations.contains_key(tx.get_sender()) {
                             return Err(BlockchainError::DuplicateRegistration(tx.get_sender().clone()))
                         }
-                        registrations.insert(tx.get_sender().clone(), true);
+                        registrations.insert(tx.get_sender(), true);
                     }
-                    _ => {
-                        expected_fee += tx.get_fee();
-                    }
+                    _ => {}
                 };
 
-                let hash = tx.hash();
-                if !self.mempool.contains_key(&hash) {
-                    return Err(BlockchainError::TxNotFound(hash));
-                }
-
-                self.verify_transaction_with_hash(tx, &hash, false)?;
-                txs_hashes.push(hash);
-                
-            }
-
-            if (coinbase_count != 1 && DEV_FEE_PERCENT == 0) || (coinbase_count != 2 && DEV_FEE_PERCENT != 0) {
-                return Err(BlockchainError::MultipleCoinbaseTx(coinbase_count));
-            }
-
-            if coinbase_tx_fee != expected_fee {
-                return Err(BlockchainError::InvalidFeeReward(expected_fee, coinbase_tx_fee));
-            }
-
-            let expected_reward = expected_fee + block.reward;
-            if expected_reward != coinbase_reward {
-                return Err(BlockchainError::InvalidBlockReward(expected_reward, coinbase_reward));
+                self.verify_transaction_with_hash(tx, hash, false)?;
             }
         }
 
         //Transaction execution
-        for hash in txs_hashes {
-            if let Some(tx) = self.mempool.remove(&hash) {
-                self.execute_transaction(&tx)?;
-            } else {
-                return Err(BlockchainError::TxNotFound(hash));
+        let mut transactions: Vec<Transaction> = vec![];
+        for hash in &block.txs_hashes {
+            match self.mempool.remove(hash) {
+                Some(v) => {
+                    self.execute_transaction(&v)?;
+                    transactions.push(v);
+                },
+                None => return Err(BlockchainError::TxNotFound(hash.clone()))
+            };
+        }
+
+        let block_reward = get_block_reward(self.supply);
+        match block.miner_tx.get_data() {
+            TransactionData::Coinbase(data) => { //reward contains block reward + fees from all txs included in this block
+                if !self.has_account(block.miner_tx.get_sender()) {
+                    return Err(BlockchainError::AddressNotRegistered(block.miner_tx.get_sender().clone()));
+                }
+
+                if *block.miner_tx.get_fee() != 0 { //coinbase tx don't pay fee, if we have fee, they try to generate unauthorized coins
+                    return Err(BlockchainError::InvalidTxFee(0, *block.miner_tx.get_fee()))
+                }
+
+                if block.miner_tx.has_signature() { //Coinbase tx should not be signed (there is no sender, why signing it ?)
+                    return Err(BlockchainError::InvalidTransactionSignature)
+                }
+
+                if data.block_reward != block_reward || data.fee_reward != total_fees || data.block_reward + data.fee_reward != block_reward + total_fees {
+                    return Err(BlockchainError::InvalidBlockReward(block_reward + total_fees, data.block_reward + data.fee_reward))
+                }
+
+                self.execute_transaction(&block.miner_tx)?;
+            }
+            _ => {
+                return Err(BlockchainError::InvalidMinerTx)
             }
         }
 
-        for coinbase in txs_coinbase {
-            self.execute_transaction(&coinbase)?;
-        }
-
         self.height += 1;
-        self.top_hash = block_hash;
-        self.supply += block.reward;
-        println!("New block added to blockchain: {}", block);
-        self.blocks.push(block);
+        self.top_hash = block_hash.clone();
+        self.supply += block_reward;
+
+        let complete_block: CompleteBlock = CompleteBlock::new(block_hash, block, transactions);
+        println!("New block added to blockchain: {}", complete_block);
+
+        self.blocks.push(complete_block);
         self.difficulty = calculate_difficulty(&self.blocks);
+
         Ok(())
     }
 
@@ -337,7 +342,6 @@ impl Blockchain {
         self.verify_transaction_with_hash(tx, &tx.hash(), disable_nonce_check)
     }
 
-    //We return the hash passed in argument to avoid the same hash calculation several times
     fn verify_transaction_with_hash(&self, tx: &Transaction, hash: &Hash, disable_nonce_check: bool) -> Result<(), BlockchainError> {
         if tx.is_registration() {
             if self.has_account(tx.get_sender()) && !disable_nonce_check {
@@ -353,12 +357,14 @@ impl Blockchain {
 
         match tx.get_signature() {
             Some(signature) => {
-                if !tx.get_sender().verify_signature(&hash, signature) && !tx.is_coinbase() { //coinbase tx don't have to be signed 
+                if tx.is_coinbase() || (!tx.is_coinbase() && !tx.get_sender().verify_signature(&hash, signature)) { //coinbase tx don't have to be signed 
                     return Err(BlockchainError::InvalidTransactionSignature)
                 }
             },
             None => {
-                return Err(BlockchainError::InvalidTransactionSignature)
+                if !tx.is_coinbase() {
+                    return Err(BlockchainError::InvalidTransactionSignature)
+                }
             }
         };
 
@@ -388,9 +394,9 @@ impl Blockchain {
                     return Err(BlockchainError::NotEnoughFunds(tx.get_sender().clone(), total_coins))
                 }
             }
-            TransactionData::Burn(data) => {
-                if account.balance < data.amount + tx.get_fee() {
-                    return Err(BlockchainError::NotEnoughFunds(tx.get_sender().clone(), data.amount + tx.get_fee()))
+            TransactionData::Burn(amount) => {
+                if account.balance < amount + tx.get_fee() {
+                    return Err(BlockchainError::NotEnoughFunds(tx.get_sender().clone(), amount + tx.get_fee()))
                 }
             }
             TransactionData::Coinbase(_) => {
@@ -412,9 +418,9 @@ impl Blockchain {
     fn execute_transaction(&mut self, transaction: &Transaction) -> Result<(), BlockchainError> {
         let mut amount = 0;
         match transaction.get_data() {
-            TransactionData::Burn(tx) => {
-                amount += tx.amount + transaction.get_fee();
-                self.supply = self.supply - tx.amount; //by burning an amount, this amount can still be regenerated through block reward, should we prevent this ?
+            TransactionData::Burn(burn_amount) => {
+                amount += burn_amount + transaction.get_fee();
+                //self.supply = self.supply - burn_amount; //by burning an amount, this amount can still be regenerated through block reward, should we prevent this ?
             }
             TransactionData::Normal(txs) => {
                 let mut total = *transaction.get_fee();
@@ -431,9 +437,9 @@ impl Blockchain {
 
                 return Ok(())
             }
-            TransactionData::Coinbase(tx) => {
+            TransactionData::Coinbase(data) => {
                 let account = self.get_mut_account(transaction.get_sender())?;
-                account.balance += tx.amount;
+                account.balance += data.block_reward + data.fee_reward;
 
                 return Ok(())
             }
@@ -481,6 +487,8 @@ impl Display for BlockchainError {
             AddressNotRegistered(address) => write!(f, "Address {} is not registered", address.to_address().unwrap()),
             InvalidBlockHeight(expected, got) => write!(f, "Block height mismatch, expected {}, got {}", expected, got),
             InvalidBlockSize(expected, got) => write!(f, "Block size is more than limit: {}, got {}", expected, got),
+            InvalidBlockTxs(expected, got) => write!(f, "Block contains invalid txs count: expected {}, got {} txs.", expected, got),
+            InvalidTxInBlock(hash) => write!(f, "Block contains an unknown tx: {}", hash),
             InvalidDifficulty(expected, got) => write!(f, "Invalid difficulty, expected {}, got {}", expected, got),
             InvalidHash(expected, got) => write!(f, "Invalid hash, expected {}, got {}", expected, got),
             InvalidPreviousBlockHash(expected, got) => write!(f, "Invalid previous block hash, expected {}, got {}", expected, got),
@@ -504,6 +512,7 @@ impl Display for BlockchainError {
             InvalidTransactionSignature => write!(f, "Invalid transaction signature"),
             DifficultyCannotBeZero => write!(f, "Difficulty cannot be zero!"),
             DifficultyErrorOnConversion => write!(f, "Difficulty error on conversion to BigUint"),
+            InvalidMinerTx => write!(f, "Invalid miner transaction in the block, only coinbase tx is allowed")
         }
     }
 }

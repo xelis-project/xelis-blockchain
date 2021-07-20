@@ -4,7 +4,6 @@ const HASH_SIZE: usize = 32; //32 bytes / 256 bits
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
-
     pub fn new(bytes: [u8; HASH_SIZE]) -> Self {
         Hash(bytes)
     }

@@ -131,7 +131,6 @@ impl KeyPair {
 
 impl Signature {
 
-
     pub fn from_hex(hex: String) -> Self {
         use std::convert::TryInto;
         let bytes = hex::decode(hex).unwrap().try_into().unwrap_or_else(|v: Vec<u8>| panic!("Expected a Signature of {} bytes but it was {} bytes", SIGNATURE_LENGTH, v.len()));

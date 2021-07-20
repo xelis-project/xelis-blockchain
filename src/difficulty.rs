@@ -3,7 +3,7 @@ use num_bigint::{BigUint, ToBigUint};
 use num_traits::{One};
 use crate::blockchain::BlockchainError;
 use crate::config::{MINIMUM_DIFFICULTY, BLOCK_TIME, WINDOW_DIFFICULTY_BLOCK};
-use crate::block::Block;
+use crate::block::CompleteBlock;
 
 pub fn check_difficulty(hash: &Hash, difficulty: u64) -> Result<bool, BlockchainError> {
     let big_diff = difficulty_to_big(difficulty)?;
@@ -30,6 +30,6 @@ fn hash_to_big(hash: &Hash) -> BigUint {
     BigUint::from_bytes_be(hash.as_bytes())
 }
 
-pub fn calculate_difficulty(blocks: &Vec<Block>) -> u64 {
+pub fn calculate_difficulty(blocks: &Vec<CompleteBlock>) -> u64 {
     MINIMUM_DIFFICULTY
 }

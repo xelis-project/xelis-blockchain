@@ -5,53 +5,42 @@ use crate::blockchain::BlockchainError;
 use crate::difficulty::check_difficulty;
 use std::collections::HashMap;
 
-//use ed25519_dalek::{Signature, PublicKey, Keypair, Verifier, Signer};
-
-#[derive(Clone, serde::Serialize)]
+#[derive(serde::Serialize)]
 pub struct Tx {
     pub amount: u64,
     pub to: PublicKey
 }
 
-#[derive(Clone, serde::Serialize)]
-pub struct UploadSmartContractTx {
-    pub code: String
+#[derive(serde::Serialize)]
+pub struct CoinbaseTx {
+    pub block_reward: u64,
+    pub fee_reward: u64
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(serde::Serialize)]
 pub struct SmartContractTx {
     pub contract: String,
     pub amount: u64,
     pub params: HashMap<String, String> //TODO
 }
 
-#[derive(Clone, serde::Serialize)]
-pub struct BurnTx {
-    pub amount: u64
-}
-
-#[derive(Clone, serde::Serialize)]
-pub struct CoinbaseTx {
-    pub amount: u64
-}
-
-#[derive(Clone, serde::Serialize)]
+#[derive(serde::Serialize)]
 pub enum TransactionData {
     Registration,
     Normal(Vec<Tx>),
     SmartContract(SmartContractTx),
-    Burn(BurnTx),
+    Burn(u64),
     Coinbase(CoinbaseTx),
-    UploadSmartContract(UploadSmartContractTx),
+    UploadSmartContract(String),
 }
 
 impl Hashable for TransactionData {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![];
         match self {
-            TransactionData::Burn(tx) => {
+            TransactionData::Burn(amount) => {
                 bytes.push(0);
-                bytes.extend(&tx.amount.to_be_bytes());
+                bytes.extend(&amount.to_be_bytes());
             }
             TransactionData::Normal(txs) => {
                 bytes.push(1);
@@ -77,33 +66,33 @@ impl Hashable for TransactionData {
             }
             TransactionData::Coinbase(tx) => {
                 bytes.push(4);
-                bytes.extend(&tx.amount.to_be_bytes());
+                bytes.extend(&tx.block_reward.to_be_bytes());
+                bytes.extend(&tx.fee_reward.to_be_bytes());
             }
-            TransactionData::UploadSmartContract(tx) => {
+            TransactionData::UploadSmartContract(code) => {
                 bytes.push(5);
-                bytes.extend(tx.code.as_bytes());
+                bytes.extend(code.as_bytes());
             }
         }
         bytes
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(serde::Serialize)]
 pub struct Transaction {
     nonce: u64,
     data: TransactionData,
-    sender: PublicKey,
+    owner: PublicKey,
     fee: u64,
     signature: Option<Signature>
 }
 
 impl Transaction {
-
-    pub fn new(nonce: u64, data: TransactionData, sender: PublicKey) -> Self {
+    pub fn new(nonce: u64, data: TransactionData, owner: PublicKey) -> Self {
         let mut tx = Transaction {
             nonce,
             data,
-            sender,
+            owner,
             fee: 0,
             signature: None,
         };
@@ -116,11 +105,11 @@ impl Transaction {
         tx
     }
 
-    pub fn new_registration(sender: PublicKey) -> Result<Self, BlockchainError> {
+    pub fn new_registration(owner: PublicKey) -> Result<Self, BlockchainError> {
         let mut tx = Transaction {
             nonce: 0,
             data: TransactionData::Registration,
-            sender,
+            owner,
             fee: 0,
             signature: None,
         };
@@ -174,8 +163,12 @@ impl Transaction {
         &self.data
     }
 
+    pub fn get_mut_data(&mut self) -> &mut TransactionData {
+        &mut self.data
+    }
+
     pub fn get_sender(&self) -> &PublicKey {
-        &self.sender
+        &self.owner
     }
 
     pub fn get_fee(&self) -> &u64 {
@@ -213,7 +206,7 @@ impl Hashable for Transaction {
 
         bytes.extend(&self.nonce.to_be_bytes());
         bytes.extend(self.data.to_bytes());
-        bytes.extend(&self.sender.to_bytes());
+        bytes.extend(&self.owner.to_bytes());
         bytes.extend(&self.fee.to_be_bytes());
         //TODO add signature
 
