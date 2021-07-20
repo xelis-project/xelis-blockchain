@@ -1,7 +1,7 @@
 use crate::globals::get_current_time;
 use crate::block::{Block, CompleteBlock};
 use crate::difficulty::{check_difficulty, calculate_difficulty};
-use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, /*DEV_FEE_PERCENT,*/ MINIMUM_DIFFICULTY};
+use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY};
 use crate::transaction::*;
 use std::collections::HashMap;
 use crate::crypto::key::PublicKey;
@@ -27,7 +27,6 @@ pub enum BlockchainError {
     AddressAlreadyRegistered(PublicKey),
     NotEnoughFunds(PublicKey, u64),
     CoinbaseTxNotAllowed(Hash),
-    MultipleCoinbaseTx(u64),
     InvalidBlockReward(u64, u64),
     InvalidFeeReward(u64, u64),
     InvalidCirculatingSupply(u64, u64),
@@ -131,10 +130,17 @@ impl Blockchain {
         }
     }
 
+    pub fn get_mut_dev_address(&mut self) -> Result<&mut Account, BlockchainError> {
+        match self.accounts.get_mut(&self.dev_address) {
+            Some(v) => Ok(v),
+            None => Err(BlockchainError::AddressNotRegistered(self.dev_address.clone()))
+        }
+    }
+
     pub fn get_block_template(&self, address: PublicKey) -> Block {
-        let mut coinbase_tx = Transaction::new(0, TransactionData::Coinbase(CoinbaseTx {
+        let coinbase_tx = Transaction::new(0, TransactionData::Coinbase(CoinbaseTx {
             block_reward: get_block_reward(self.supply),
-            fee_reward: 0, //FIXME !!
+            fee_reward: 0,
         }), address);
         let mut block = Block::new(self.height, get_current_time(), self.top_hash.clone(), self.difficulty, coinbase_tx, vec![]);
         let mut txs: Vec<&Transaction> = self.mempool.values().collect();
@@ -217,8 +223,12 @@ impl Blockchain {
             total_supply_from_accounts += account.balance;
         }
 
-        if circulating_supply != self.supply || total_supply_from_accounts != self.supply {
+        if circulating_supply != self.supply {
             return Err(BlockchainError::InvalidCirculatingSupply(circulating_supply, self.supply));
+        }
+
+        if total_supply_from_accounts != self.supply {
+            return Err(BlockchainError::InvalidCirculatingSupply(total_supply_from_accounts, self.supply));
         }
 
         Ok(())
@@ -314,8 +324,12 @@ impl Blockchain {
                     return Err(BlockchainError::InvalidTransactionSignature)
                 }
 
-                if data.block_reward != block_reward || data.fee_reward != total_fees || data.block_reward + data.fee_reward != block_reward + total_fees {
+                if data.block_reward != block_reward || data.block_reward + data.fee_reward != block_reward + total_fees {
                     return Err(BlockchainError::InvalidBlockReward(block_reward + total_fees, data.block_reward + data.fee_reward))
+                }
+
+                if data.fee_reward != total_fees {
+                    return Err(BlockchainError::InvalidFeeReward(total_fees, data.fee_reward))
                 }
 
                 self.execute_transaction(&block.miner_tx)?;
@@ -323,7 +337,7 @@ impl Blockchain {
             _ => {
                 return Err(BlockchainError::InvalidMinerTx)
             }
-        }
+        } 
 
         self.height += 1;
         self.top_hash = block_hash.clone();
@@ -438,8 +452,16 @@ impl Blockchain {
                 return Ok(())
             }
             TransactionData::Coinbase(data) => {
+                let mut block_reward = data.block_reward;
+                if DEV_FEE_PERCENT != 0 {
+                    let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
+                    let account = self.get_mut_dev_address()?;
+                    account.balance += dev_fee;
+                    block_reward -= dev_fee;
+                }
+
                 let account = self.get_mut_account(transaction.get_sender())?;
-                account.balance += data.block_reward + data.fee_reward;
+                account.balance += block_reward + data.fee_reward;
 
                 return Ok(())
             }
@@ -502,7 +524,6 @@ impl Display for BlockchainError {
             NotEnoughFunds(address, amount) => write!(f, "Address {} should have at least {}", address.to_address().unwrap(), amount),
             CoinbaseTxNotAllowed(hash) => write!(f, "Coinbase Tx not allowed: {}", hash),
             InvalidBlockReward(expected, got) => write!(f, "Invalid block reward, expected {}, got {}", expected, got),
-            MultipleCoinbaseTx(value) => write!(f, "Incorrect amount of Coinbase TX in this block, expected 1, got {}", value),
             InvalidFeeReward(expected, got) => write!(f, "Invalid fee reward for this block, expected {}, got {}", expected, got),
             InvalidCirculatingSupply(expected, got) => write!(f, "Invalid circulating supply, expected {}, got {} coins generated!", expected, got),
             InvalidTxRegistrationPoW(hash) => write!(f, "Invalid tx registration PoW: {}", hash),

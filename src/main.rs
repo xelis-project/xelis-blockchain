@@ -64,40 +64,8 @@ fn main() {
 
     sign_and_send_tx(&mut blockchain, normal_tx, &main_keypair);
 
-    /*let mut keys = vec![];
-    for _ in 0..5/*2000*/ {
-        let keypair: KeyPair = KeyPair::new();
-        create_registration_transaction(&mut blockchain, &keypair);
-        keys.push(keypair.get_public_key().clone());
-    }*/
-
     for _ in 0..5 {
-        /*let acc = match blockchain.get_account(&main_keypair.get_public_key()) {
-            Ok(v) => v,
-            Err(e) => panic!("Error while retrieving account: {}", e)
-        };
-        let nonce = acc.get_nonce();
-        if blockchain.get_height() > 0 {
-            use rand::Rng;
-            let mut rng = rand::thread_rng();
-            let r: u8 = rng.gen_range(0..20);
-            for _ in 0..r as u64 {
-                let to = keys[rng.gen_range(0..keys.len() - 1)];
-                let mut tx = Transaction::new(nonce, TransactionData::Normal(vec![Tx {
-                    amount: rng.gen_range(1..1000),
-                    to: to,
-                }]), main_keypair.get_public_key().clone());
-
-                if let Err(e) = tx.sign_transaction(&main_keypair) {
-                    println!("Error on signature: {}", e);
-                }
-    
-                if let Err(e) = blockchain.add_tx_to_mempool(tx) {
-                    println!("Error on tx: {}", e);
-                }
-            }
-        }*/
-        mine_block(&mut blockchain, main_keypair.get_public_key());
+        mine_block(&mut blockchain, dummy_keypair.get_public_key());
     }
 
     if let Err(e) = blockchain.check_validity() {
