@@ -1,15 +1,13 @@
-mod block;
 mod globals;
-mod difficulty;
-mod blockchain;
 mod config;
-mod transaction;
 mod crypto;
+mod wallet;
+mod core;
 
 use crate::crypto::hash::Hashable;
 use crate::crypto::key::{KeyPair, PublicKey};
-use blockchain::Blockchain;
-use transaction::*;
+use crate::core::blockchain::Blockchain;
+use crate::core::transaction::*;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;

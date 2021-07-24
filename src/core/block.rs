@@ -1,8 +1,8 @@
 use crate::globals::get_current_time;
 use crate::crypto::hash::{Hash, Hashable};
-use crate::difficulty::check_difficulty;
-use crate::transaction::Transaction;
-use crate::blockchain::BlockchainError;
+use super::difficulty::check_difficulty;
+use super::transaction::Transaction;
+use super::blockchain::BlockchainError;
 
 const EXTRA_NONCE_SIZE: usize = 32;
 
@@ -16,7 +16,7 @@ pub struct Block {
     pub miner_tx: Transaction,
     #[serde(skip_serializing)]
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE],
-    pub txs_hashes: Vec<Hash> 
+    pub txs_hashes: Vec<Hash>
 }
 
 #[derive(serde::Serialize)]

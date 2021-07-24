@@ -1,8 +1,8 @@
 use crate::globals::get_current_time;
-use crate::block::{Block, CompleteBlock};
-use crate::difficulty::{check_difficulty, calculate_difficulty};
+use super::block::{Block, CompleteBlock};
+use super::difficulty::{check_difficulty, calculate_difficulty};
 use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY};
-use crate::transaction::*;
+use super::transaction::*;
 use std::collections::HashMap;
 use crate::crypto::key::PublicKey;
 use crate::crypto::hash::{Hash, Hashable};
@@ -204,10 +204,6 @@ impl Blockchain {
                     self.verify_transaction(tx, true)?;
                 }
 
-                if let TransactionData::Burn(amount) = tx.get_data() {
-                    circulating_supply -= amount;
-                }
-
                 fees += tx.get_fee();
             }
 
@@ -344,11 +340,18 @@ impl Blockchain {
         self.supply += block_reward;
 
         let complete_block: CompleteBlock = CompleteBlock::new(block_hash, block, transactions);
-        println!("New block added to blockchain: {}", complete_block);
-
+        if self.blocks.len() != 0 {
+            self.difficulty = calculate_difficulty(&self.blocks[self.blocks.len() - 1], &complete_block);
+        }
         self.blocks.push(complete_block);
-        self.difficulty = calculate_difficulty(&self.blocks);
 
+        let mut total_block_time = 0;
+        for i in 1..self.blocks.len() - 1 {
+            let block_time = self.blocks[i].get_timestamp() - self.blocks[i - 1].get_timestamp();
+            total_block_time += block_time;
+        }
+
+        println!("Average block time ({}): {}s", self.blocks.len(), total_block_time / self.blocks.len() as u64);
         Ok(())
     }
 

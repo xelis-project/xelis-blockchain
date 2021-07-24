@@ -1,8 +1,8 @@
 use crate::crypto::hash::{Hash, Hashable};
 use crate::crypto::key::{PublicKey, KeyPair, Signature, SIGNATURE_LENGTH};
 use crate::config::REGISTRATION_DIFFICULTY;
-use crate::blockchain::BlockchainError;
-use crate::difficulty::check_difficulty;
+use crate::core::blockchain::BlockchainError;
+use crate::core::difficulty::check_difficulty;
 use std::collections::HashMap;
 
 #[derive(serde::Serialize)]
@@ -99,7 +99,7 @@ impl Transaction {
 
         tx.fee = match &tx.data { //Registration & Coinbase tx have no fee
             TransactionData::Registration | TransactionData::Coinbase(_) => 0,
-            _ => crate::blockchain::calculate_tx_fee(tx.size())
+            _ => crate::core::blockchain::calculate_tx_fee(tx.size())
         };
 
         tx
