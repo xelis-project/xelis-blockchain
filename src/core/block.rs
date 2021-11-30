@@ -1,43 +1,88 @@
-use crate::globals::get_current_time;
 use crate::crypto::hash::{Hash, Hashable};
-use super::difficulty::check_difficulty;
 use super::transaction::Transaction;
-use super::blockchain::BlockchainError;
 
 const EXTRA_NONCE_SIZE: usize = 32;
+const BLOCK_WORK_SIZE: usize = 152;
 
 #[derive(serde::Serialize)]
 pub struct Block {
-    pub height: u64,
-    pub timestamp: u64,
     pub previous_hash: Hash,
+    pub timestamp: u64,
+    pub height: u64,
     pub nonce: u64,
     pub difficulty: u64,
-    pub miner_tx: Transaction,
     #[serde(skip_serializing)]
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE],
+    pub miner_tx: Transaction,
     pub txs_hashes: Vec<Hash>
 }
 
+
 #[derive(serde::Serialize)]
 pub struct CompleteBlock {
-    hash: Hash, //hash of Block below
     #[serde(flatten)]
     block: Block,
     transactions: Vec<Transaction>
 }
 
-impl CompleteBlock {
-    pub fn new(hash: Hash, block: Block, transactions: Vec<Transaction>) -> Self {
-        CompleteBlock {
-            hash,
-            block,
-            transactions
+impl Block {
+    pub fn new(height: u64, timestamp: u64, previous_hash: Hash, difficulty: u64, miner_tx: Transaction, txs_hashes: Vec<Hash>) -> Self {
+        Block {
+            height,
+            timestamp,
+            previous_hash,
+            nonce: 0,
+            difficulty,
+            extra_nonce: [0; EXTRA_NONCE_SIZE],
+            miner_tx,
+            txs_hashes
         }
     }
 
-    pub fn get_hash(&self) -> &Hash {
-        &self.hash
+    /*pub fn deserialize(bytes: &[u8]) -> Result<(), BlockchainError> {
+        let mut buf_8: [u8; 8]; 
+        buf_8.copy_from_slice(&bytes[0..8]);
+        let height = u64::from_be_bytes(buf_8);
+
+        buf_8.copy_from_slice(&bytes[8..8+8]);
+        let timestamp = u64::from_be_bytes(buf_8);
+
+
+        let mut buf_32: [u8; 32];
+        buf_32.copy_from_slice(&bytes[16..16+32]);
+        let previous_hash = Hash::new(buf_32);
+
+
+        buf_8.copy_from_slice(&bytes[32..32+8]);
+        let nonce = u64::from_be_bytes(buf_8);
+
+
+        //bytes.extend(&self.miner_tx.to_bytes());
+        buf_32.copy_from_slice(&bytes[40..40+32]);
+        let extra_nonce = buf_32;
+
+        bytes.extend(self.get_txs_hash().as_bytes());
+
+        Ok(())
+    }*/
+
+    pub fn get_txs_hash(&self) -> Hash {
+        let mut bytes = vec![];
+
+        for tx in &self.txs_hashes {
+            bytes.extend(tx.as_bytes())
+        }
+
+        crate::crypto::hash::hash(&bytes)
+    }
+}
+
+impl CompleteBlock {
+    pub fn new(block: Block, transactions: Vec<Transaction>) -> Self {
+        CompleteBlock {
+            block,
+            transactions
+        }
     }
 
     pub fn get_height(&self) -> u64 {
@@ -56,10 +101,6 @@ impl CompleteBlock {
         self.block.nonce
     }
 
-    pub fn get_difficulty(&self) -> u64 {
-        self.block.difficulty
-    }
-
     pub fn get_miner_tx(&self) -> &Transaction {
         &self.block.miner_tx
     }
@@ -75,32 +116,9 @@ impl CompleteBlock {
     pub fn get_transactions(&self) -> &Vec<Transaction> {
         &self.transactions
     }
-}
 
-impl Block {
-    pub fn new(height: u64, timestamp: u64, previous_hash: Hash, difficulty: u64, miner_tx: Transaction, txs_hashes: Vec<Hash>) -> Self {
-        Block {
-            height,
-            timestamp,
-            previous_hash,
-            nonce: 0,
-            difficulty,
-            miner_tx,
-            extra_nonce: [0; EXTRA_NONCE_SIZE],
-            txs_hashes
-        }
-    }
-
-    pub fn calculate_hash(&mut self) -> Result<Hash, BlockchainError> {
-        loop {
-            let hash = self.hash();
-            if check_difficulty(&hash, self.difficulty)? {
-                return Ok(hash)
-            } else {
-                self.nonce += 1;
-                self.timestamp = get_current_time();
-            }
-        }
+    pub fn get_difficulty(&self) -> u64 {
+        self.block.difficulty
     }
 }
 
@@ -108,17 +126,16 @@ impl Hashable for Block {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes: Vec<u8> = vec![];
 
-        bytes.extend(&self.height.to_be_bytes());
-        bytes.extend(&self.timestamp.to_be_bytes());
-        bytes.extend(self.previous_hash.as_bytes());
-        bytes.extend(&self.nonce.to_be_bytes());
-        bytes.extend(&self.difficulty.to_be_bytes());
-        bytes.extend(&self.miner_tx.to_bytes());
-        bytes.extend(&self.extra_nonce);
+        bytes.extend(&self.height.to_be_bytes()); // 8
+        bytes.extend(&self.timestamp.to_be_bytes()); // 8 + 8 = 16
+        bytes.extend(self.previous_hash.as_bytes()); // 16 + 32 = 48
+        bytes.extend(&self.nonce.to_be_bytes()); // 48 + 8 = 56
+        bytes.extend(self.miner_tx.hash().as_bytes()); // 56 + 32 = 88
+        bytes.extend(&self.extra_nonce); // 88 + 32 = 120
+        bytes.extend(self.get_txs_hash().as_bytes()); // 120 + 32 = 152
 
-        bytes.extend(&self.txs_hashes.len().to_be_bytes());
-        for hash in &self.txs_hashes {
-            bytes.extend(hash.as_bytes());
+        if bytes.len() != BLOCK_WORK_SIZE {
+            panic!("Error, invalid block work size, got {} but expected {}", bytes.len(), BLOCK_WORK_SIZE)
         }
 
         bytes
@@ -135,6 +152,6 @@ use std::fmt::{Error, Display, Formatter};
 
 impl Display for CompleteBlock {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "Block[height: {}, previous_hash: {}, hash: {}, timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.block.height, self.block.previous_hash, self.hash, self.block.timestamp, self.block.nonce, hex::encode(self.block.extra_nonce), self.block.txs_hashes.len())
+        write!(f, "Block[height: {}, previous_hash: {}, timestamp: {}, nonce: {}, difficulty: {}, extra_nonce: {}, txs: {}]", self.block.height, self.block.previous_hash, self.block.timestamp, self.block.nonce, self.block.difficulty, hex::encode(self.block.extra_nonce), self.block.txs_hashes.len())
     }
 }

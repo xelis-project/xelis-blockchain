@@ -4,9 +4,11 @@ mod crypto;
 mod wallet;
 mod core;
 
+use crate::globals::get_current_time;
 use crate::crypto::hash::Hashable;
 use crate::crypto::key::{KeyPair, PublicKey};
 use crate::core::blockchain::Blockchain;
+use crate::core::difficulty::check_difficulty;
 use crate::core::transaction::*;
 use std::fs::File;
 use std::io::prelude::*;
@@ -14,23 +16,51 @@ use std::path::Path;
 
 fn mine_block(blockchain: &mut Blockchain, miner_key: &PublicKey) {
     let mut block = blockchain.get_block_template(miner_key.clone());
-    if let Err(e) = block.calculate_hash() {
-        panic!("Error while calculating hash for block {}: {}", block.height, e)
+
+    loop {
+        let hash = block.hash();
+
+        match check_difficulty(&hash, block.difficulty) {
+            Ok(result) => {
+                if result {
+                    break;
+                } else {
+                    block.nonce += 1;
+                    block.timestamp = get_current_time();
+                }
+            }
+            Err(e) => {
+                panic!("Error while calculating block hash PoW: {}", e);
+            }
+        }
     }
-    println!("Block size: {} octets", block.size());
-    if let Err(e) = blockchain.add_new_block(block) {
-        println!("Error on block: {}", e);
-    }
+
+    match blockchain.build_complete_block_from_block(block) {
+        Ok(complete_block) => {
+            if let Err(e) = blockchain.add_new_block(complete_block) {
+                println!("Error on block: {}", e);
+            }
+        },
+        Err(e) => {
+            println!("Error while building complete block: {}", e);
+        }
+    };
+
 }
 
 fn sign_and_send_tx(blockchain: &mut Blockchain, mut transaction: Transaction, keypair: &KeyPair) {
-    if let Err(e) = transaction.sign_transaction(keypair) {
-        println!("Error while signing transaction: {}", e);
+    println!("adding tx: {}, registration: {}", transaction.hash(), transaction.is_registration());
+
+    if !transaction.is_registration() {
+        if let Err(e) = transaction.sign_transaction(keypair) {
+            println!("Error while signing transaction: {}", e);
+        }
     }
 
     if let Err(e) = blockchain.add_tx_to_mempool(transaction) {
         println!("Error on adding tx to mempool: {}", e);
     }
+
 }
 
 fn create_registration_transaction(blockchain: &mut Blockchain, keypair: &KeyPair) {
@@ -68,6 +98,8 @@ fn main() {
 
     if let Err(e) = blockchain.check_validity() {
         println!("{} valid: {}", blockchain, e);
+    } else {
+        println!("Blockchain is valid!");
     }
     
     let path = Path::new("blockchain.json");

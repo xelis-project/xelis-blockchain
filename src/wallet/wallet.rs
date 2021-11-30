@@ -1,6 +1,6 @@
 use crate::crypto::key::KeyPair;
 use crate::core::transaction::{Transaction, TransactionData};
-use crate::core::blockchain::BlockchainError;
+use crate::core::error::BlockchainError;
 
 pub struct Wallet {
     keypair: KeyPair,

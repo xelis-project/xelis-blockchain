@@ -1,1 +1,1 @@
-mod wallet;
+pub mod wallet;

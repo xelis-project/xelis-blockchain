@@ -2,7 +2,7 @@ use std::fmt::{Display, Error, Formatter};
 use std::hash::Hasher;
 use super::bech32::{convert_bits, encode, decode, Bech32Error};
 use crate::config::PREFIX_ADDRESS;
-use crate::core::blockchain::BlockchainError;
+use crate::core::error::BlockchainError;
 use super::hash::Hash;
 
 pub const KEY_LENGTH: usize = 32;

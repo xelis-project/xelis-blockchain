@@ -1,30 +1,30 @@
 use crate::crypto::hash::{Hash, Hashable};
 use crate::crypto::key::{PublicKey, KeyPair, Signature, SIGNATURE_LENGTH};
 use crate::config::REGISTRATION_DIFFICULTY;
-use crate::core::blockchain::BlockchainError;
+use crate::core::error::BlockchainError;
 use crate::core::difficulty::check_difficulty;
 use std::collections::HashMap;
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct Tx {
     pub amount: u64,
     pub to: PublicKey
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct CoinbaseTx {
     pub block_reward: u64,
     pub fee_reward: u64
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct SmartContractTx {
     pub contract: String,
     pub amount: u64,
-    pub params: HashMap<String, String> //TODO
+    pub params: HashMap<String, String> // TODO
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub enum TransactionData {
     Registration,
     Normal(Vec<Tx>),
@@ -78,7 +78,7 @@ impl Hashable for TransactionData {
     }
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct Transaction {
     nonce: u64,
     data: TransactionData,
@@ -97,7 +97,7 @@ impl Transaction {
             signature: None,
         };
 
-        tx.fee = match &tx.data { //Registration & Coinbase tx have no fee
+        tx.fee = match &tx.data { // Registration & Coinbase tx have no fee
             TransactionData::Registration | TransactionData::Coinbase(_) => 0,
             _ => crate::core::blockchain::calculate_tx_fee(tx.size())
         };
@@ -122,7 +122,7 @@ impl Transaction {
         &self.signature
     }
 
-    pub fn has_signature(&self) -> bool {
+    pub fn has_signature(&self) -> bool { // registration & coinbase don't have signature.
         self.signature.is_some()
     }
 
@@ -155,8 +155,8 @@ impl Transaction {
         Ok(result)
     }
 
-    pub fn get_nonce(&self) -> &u64 {
-        &self.nonce
+    pub fn get_nonce(&self) -> u64 {
+        self.nonce
     }
 
     pub fn get_data(&self) -> &TransactionData {
@@ -171,8 +171,8 @@ impl Transaction {
         &self.owner
     }
 
-    pub fn get_fee(&self) -> &u64 {
-        &self.fee
+    pub fn get_fee(&self) -> u64 {
+        self.fee
     }
 
     pub fn is_coinbase(&self) -> bool {
@@ -204,10 +204,10 @@ impl Hashable for Transaction {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![];
 
-        bytes.extend(&self.nonce.to_be_bytes());
-        bytes.extend(self.data.to_bytes());
-        bytes.extend(&self.owner.to_bytes());
-        bytes.extend(&self.fee.to_be_bytes());
+        bytes.extend(&self.nonce.to_be_bytes()); // 8
+        bytes.extend(self.data.to_bytes()); // 16 + 1 (coinbase tx)
+        bytes.extend(&self.owner.to_bytes()); // 32
+        bytes.extend(&self.fee.to_be_bytes()); // 8
         //TODO add signature
 
         bytes

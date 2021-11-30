@@ -3,6 +3,7 @@ name = "xelis-blockchain"
 version = "0.1.0"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 edition = "2018"
+default-run = "default"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -17,3 +18,15 @@ serde = { version = "1.0.126", features = ["derive"] }
 serde_json = "1.0"
 rand = "0.8.4"
 ed25519-dalek = { version = "1.0.1", features = ["serde"] }
+
+[[bin]]
+name = "default"
+path = "src/main.rs"
+
+[[bin]]
+name = "wallet"
+path = "src/wallet/main.rs"
+
+[[bin]]
+name = "daemon"
+path = "src/daemon/main.rs"

@@ -1,7 +1,7 @@
 use crate::crypto::hash::Hash;
 use num_bigint::{BigUint, ToBigUint};
 use num_traits::{One};
-use super::blockchain::BlockchainError;
+use super::error::BlockchainError;
 use crate::config::{MINIMUM_DIFFICULTY, BLOCK_TIME};
 use super::block::CompleteBlock;
 
@@ -22,7 +22,6 @@ fn difficulty_to_big(difficulty: u64) -> Result<BigUint, BlockchainError> {
         None => return Err(BlockchainError::DifficultyErrorOnConversion)
     };
     let one_lsh_256 = BigUint::one() << 256;
-    //println!("difficulty: {} | 1 << 256: {} | diff: {} | result: {}", difficulty, one_lsh_256, big_diff, (&one_lsh_256 / &big_diff));
     Ok(one_lsh_256 / big_diff)
 }
 
