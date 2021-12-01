@@ -17,7 +17,6 @@ pub struct Block {
     pub txs_hashes: Vec<Hash>
 }
 
-
 #[derive(serde::Serialize)]
 pub struct CompleteBlock {
     #[serde(flatten)]

@@ -8,6 +8,7 @@ use crate::crypto::key::PublicKey;
 use crate::crypto::hash::{Hash, Hashable};
 use super::error::BlockchainError;
 use super::mempool::{Mempool, SortedTx};
+use crate::p2p::server::P2pServer;
 
 #[derive(serde::Serialize)]
 pub struct Account {
@@ -33,6 +34,8 @@ pub struct Blockchain {
     top_hash: Hash, // current block top hash
     difficulty: u64, // difficulty for next block
     mempool: Mempool, // mempool to retrieve/add all txs
+    #[serde(skip_serializing)]
+    p2p: P2pServer, // p2p to broadcast/receive new blocks
     accounts: HashMap<PublicKey, Account>, // all accounts registered on chain: TODO use storage
     dev_address: PublicKey // Dev address for block fee
 }
@@ -47,6 +50,7 @@ impl Blockchain {
             difficulty: MINIMUM_DIFFICULTY,
             mempool: Mempool::new(),
             accounts: HashMap::new(),
+            p2p: P2pServer::new(),
             dev_address: dev_key
         };
 
@@ -343,7 +347,8 @@ impl Blockchain {
         self.height += 1;
         self.top_hash = block_hash.clone();
         self.supply += block_reward;
-        self.blocks.push(block);
+        self.p2p.broadcast_block(&block); // Broadcast block to other nodes
+        self.blocks.push(block); // Add block to chain
 
         let mut total_block_time = 0;
         for i in 1..self.get_height() {

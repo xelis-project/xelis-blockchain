@@ -1,16 +1,24 @@
-use std::net::TcpStream;
-use std::io::Write;
+use std::net::{TcpStream, SocketAddr};
+use std::io::{Write, Read, Result};
 
 pub struct Connection {
-    id: usize, // TODO use a UUID
-    stream: TcpStream
+    id: u64, // TODO use a UUID
+    node_tag: Option<String>,
+    version: String,
+    block_height: u64, // current block height for this peer
+    stream: TcpStream,
+    addr: SocketAddr,
 }
 
 impl Connection {
-    pub fn new(id: usize, stream: TcpStream) -> Self {
+    pub fn new(id: u64, node_tag: Option<String>, version: String, block_height: u64, stream: TcpStream, addr: SocketAddr) -> Self {
         Connection {
             id,
-            stream
+            node_tag,
+            version,
+            block_height,
+            stream,
+            addr
         }
     }
 
@@ -20,8 +28,28 @@ impl Connection {
         }
     }
 
-    pub fn isAlive(&self) -> bool {
-        false
+    pub fn read_bytes(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.stream.read(buf)
+    }
+
+    pub fn get_peer_id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn get_node_tag(&self) -> &Option<String> {
+        &self.node_tag
+    }
+
+    pub fn get_version(&self) -> &String {
+        &self.version
+    }
+
+    pub fn get_block_height(&self) -> u64 {
+        self.block_height
+    }
+
+    pub fn get_peer_address(&self) -> &SocketAddr {
+        &self.addr
     }
 }
 

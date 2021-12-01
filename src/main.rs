@@ -75,6 +75,8 @@ fn create_registration_transaction(blockchain: &mut Blockchain, keypair: &KeyPai
 fn main() {
     println!("Xelis Blockchain - pre-alpha");
 
+    start_daemon();
+
     let main_keypair: KeyPair = KeyPair::new();
     println!("Generated main address: {}", main_keypair.get_public_key().to_address().unwrap());
     let mut blockchain = Blockchain::new(main_keypair.get_public_key().clone());
@@ -112,4 +114,10 @@ fn main() {
         Err(e) => panic!("Couldn't write to file: {}", e),
         Ok(_) => println!("blockchain.json has been saved")
     };
+}
+
+fn start_daemon() {
+    use crate::p2p::server::P2pServer;
+    let server = P2pServer::new();
+    server.start();
 }
