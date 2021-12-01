@@ -144,7 +144,7 @@ impl Blockchain {
             }
 
             if block.get_height() != 0 { // if not genesis, check parent block
-                let previous_hash = self.blocks[height - 1].hash();
+                let previous_hash = self.get_block_at_height(block.get_height() - 1)?.hash();
                 if previous_hash != *block.get_previous_hash() {
                     println!("Invalid previous block hash, expected {} got {}", previous_hash, block.get_previous_hash());
                     return Err(BlockchainError::InvalidHash(previous_hash, block.get_previous_hash().clone()));
@@ -228,7 +228,7 @@ impl Blockchain {
         } else if block.get_timestamp() > get_current_time() { // TODO accept a latency of max 30s
             return Err(BlockchainError::TimestampIsInFuture(get_current_time(), block.get_timestamp()));
         } else if self.height != 0 {
-            let previous_block = &self.blocks[(self.height as usize) - 1];
+            let previous_block = self.get_block_at_height(self.height - 1)?;
             let previous_hash = previous_block.hash();
             if previous_hash != *block.get_previous_hash() {
                 return Err(BlockchainError::InvalidPreviousBlockHash(block.get_previous_hash().clone(), previous_hash));
@@ -327,7 +327,7 @@ impl Blockchain {
                 Ok(_) => {
                     println!("Removing tx hash '{}' from mempool", hash);
                 },
-                Err(_) => {} //return Err(BlockchainError::TxNotFound(hash.clone()))
+                Err(_) => {}
             };
         }
 
@@ -336,22 +336,22 @@ impl Blockchain {
         }
         self.execute_transaction(block.get_miner_tx())?; // execute coinbase tx
 
+        if self.get_height() > 2 {
+            self.difficulty = calculate_difficulty(self.get_block_at_height(self.get_height() - 1)?, &block);
+        }
+
         self.height += 1;
         self.top_hash = block_hash.clone();
         self.supply += block_reward;
-
-        if self.blocks.len() > 2 {
-            self.difficulty = calculate_difficulty(&self.blocks[self.blocks.len() - 1], &block);
-        }
         self.blocks.push(block);
 
         let mut total_block_time = 0;
-        for i in 1..self.blocks.len() - 1 {
-            let block_time = self.blocks[i].get_timestamp() - self.blocks[i - 1].get_timestamp();
+        for i in 1..self.get_height() {
+            let block_time = self.get_block_at_height(i)?.get_timestamp() - self.get_block_at_height(i - 1)?.get_timestamp();
             total_block_time += block_time;
         }
 
-        println!("Average block time ({}): {}s", self.blocks.len(), total_block_time / self.blocks.len() as u64);
+        println!("Average block time ({}): {}s", self.get_height(), total_block_time / self.get_height() as u64);
         Ok(())
     }
 
@@ -449,7 +449,7 @@ impl Blockchain {
         match transaction.get_data() {
             TransactionData::Burn(burn_amount) => {
                 amount += burn_amount + transaction.get_fee();
-                //self.supply = self.supply - burn_amount; //by burning an amount, this amount can still be regenerated through block reward, should we prevent this ?
+                //self.supply = self.supply - burn_amount; // by burning an amount, this amount can still be regenerated through block reward, should we prevent this ?
             }
             TransactionData::Normal(txs) => {
                 let mut total = transaction.get_fee();
@@ -490,6 +490,24 @@ impl Blockchain {
         account.nonce += 1;
 
         Ok(())
+    }
+
+    pub fn get_block_at_height(&self, height: u64) -> Result<&CompleteBlock, BlockchainError> {
+        if height > self.get_height() {
+            return Err(BlockchainError::InvalidBlockHeight(self.get_height(), height))
+        }
+
+        Ok(&self.blocks[height as usize]) // TODO
+    }
+
+    pub fn get_block_by_hash(&self, hash: &Hash) -> Result<&CompleteBlock, BlockchainError> {
+        for block in &self.blocks {
+            if block.hash() == *hash {
+                return Ok(&block)
+            }
+        }
+
+        Err(BlockchainError::BlockNotFound(hash.clone()))
     }
 }
 

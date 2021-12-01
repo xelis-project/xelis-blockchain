@@ -3,6 +3,7 @@ mod config;
 mod crypto;
 mod wallet;
 mod core;
+mod p2p;
 
 use crate::globals::get_current_time;
 use crate::crypto::hash::Hashable;
@@ -60,7 +61,6 @@ fn sign_and_send_tx(blockchain: &mut Blockchain, mut transaction: Transaction, k
     if let Err(e) = blockchain.add_tx_to_mempool(transaction) {
         println!("Error on adding tx to mempool: {}", e);
     }
-
 }
 
 fn create_registration_transaction(blockchain: &mut Blockchain, keypair: &KeyPair) {
@@ -92,7 +92,7 @@ fn main() {
 
     sign_and_send_tx(&mut blockchain, normal_tx, &main_keypair);
 
-    for _ in 0..5 {
+    for _ in 0..50 {
         mine_block(&mut blockchain, dummy_keypair.get_public_key());
     }
 

@@ -31,10 +31,11 @@ pub enum BlockchainError {
     InvalidTransactionNonce(u64, u64),
     InvalidTransactionToSender(Hash),
     ErrorOnBech32(Bech32Error),
+    BlockNotFound(Hash),
     InvalidTransactionSignature,
     DifficultyCannotBeZero,
     DifficultyErrorOnConversion,
-    InvalidMinerTx
+    InvalidMinerTx,
 }
 
 use std::fmt::{Display, Error, Formatter};
@@ -70,6 +71,7 @@ impl Display for BlockchainError {
             InvalidTransactionNonce(expected, got) => write!(f, "Invalid transaction nonce: {}, account nonce is: {}", got, expected),
             InvalidTransactionToSender(hash) => write!(f, "Invalid transaction, sender trying to send coins to himself: {}", hash),
             ErrorOnBech32(e) => write!(f, "Error occured on bech32: {}", e),
+            BlockNotFound(hash) => write!(f, "Error while retrieving block by hash: {} not found", hash),
             InvalidTransactionSignature => write!(f, "Invalid transaction signature"),
             DifficultyCannotBeZero => write!(f, "Difficulty cannot be zero!"),
             DifficultyErrorOnConversion => write!(f, "Difficulty error on conversion to BigUint"),

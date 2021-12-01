@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use super::transaction::Transaction;
 use super::error::BlockchainError;
-use super::blockchain::calculate_tx_fee;
 use crate::crypto::hash::{Hash, Hashable};
 
 #[derive(serde::Serialize)]
@@ -54,7 +53,7 @@ impl Mempool {
     pub fn remove_tx(&mut self, hash: &Hash) -> Result<Transaction, BlockchainError> {
         match self.txs.remove(hash) {
             Some(v) => {
-                match self.txs_sorted.iter().position(|tx| tx.hash == *hash) {
+                match self.txs_sorted.iter().position(|tx| tx.hash == *hash) { // TODO Optimize
                     Some(index) => {
                         self.txs_sorted.remove(index);
                         Ok(v)
