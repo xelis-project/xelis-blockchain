@@ -39,9 +39,9 @@ impl Handshake {
         }
     }
 
-    pub fn create_connection(self, stream: TcpStream, addr: SocketAddr) -> Connection {
+    pub fn create_connection(self, stream: TcpStream, addr: SocketAddr, out: bool) -> Connection {
         let block_height = self.get_block_height();
-        Connection::new(self.get_peer_id(), self.node_tag, self.version, block_height, stream, addr)
+        Connection::new(self.get_peer_id(), self.node_tag, self.version, block_height, stream, addr, out)
     }
 
     // 1 + MAX(16) + 1 + MAX(16) + 16 + 8 + 8 + 8 + 32 + 1 + 24 * 16
@@ -51,7 +51,7 @@ impl Handshake {
         // daemon version
         bytes.push(self.version.len() as u8); // send string size
         bytes.extend(self.version.as_bytes()); // send string as bytes
-        
+
         // node tag
         match &self.node_tag {
             Some(tag) => {
@@ -106,7 +106,8 @@ impl Handshake {
         n += node_tag_len;
 
         let network_id: [u8; 16] = data[n..n+16].try_into().unwrap();
- 
+        n += 16;
+
         let peer_id = u64::from_be_bytes(data[n..n+8].try_into().unwrap());
         n += 8;
 
@@ -135,6 +136,7 @@ impl Handshake {
 
             n += 1;
             let peer = String::from_utf8(data[n..n+size].try_into().unwrap()).unwrap();
+            // TODO verify peer validity
             n += size;
 
             peers.push(peer);

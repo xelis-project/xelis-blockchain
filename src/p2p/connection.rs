@@ -8,17 +8,19 @@ pub struct Connection {
     block_height: u64, // current block height for this peer
     stream: TcpStream,
     addr: SocketAddr,
+    out: bool,
 }
 
 impl Connection {
-    pub fn new(id: u64, node_tag: Option<String>, version: String, block_height: u64, stream: TcpStream, addr: SocketAddr) -> Self {
+    pub fn new(id: u64, node_tag: Option<String>, version: String, block_height: u64, stream: TcpStream, addr: SocketAddr, out: bool) -> Self {
         Connection {
             id,
             node_tag,
             version,
             block_height,
             stream,
-            addr
+            addr,
+            out
         }
     }
 
@@ -51,5 +53,23 @@ impl Connection {
     pub fn get_peer_address(&self) -> &SocketAddr {
         &self.addr
     }
+
+    pub fn is_out(&self) -> bool {
+        self.out
+    }
 }
 
+use std::fmt::{Display, Error, Formatter};
+
+impl Display for Connection {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
+        let node_tag: String;
+        if let Some(value) = self.get_node_tag() {
+            node_tag = value.clone();
+        } else {
+            node_tag = String::from("None");
+        }
+
+        write!(f, "Connection[version: {}, node tag: {}, peer_id: {}, block_height: {}, out: {}]", self.get_version(), node_tag, self.get_peer_id(), self.get_block_height(), self.is_out())
+    }
+}

@@ -1,5 +1,6 @@
 pub const VERSION: &str = "alpha-0.0.1";
 pub const NETWORK_ID: [u8; 16] = [0xA, 0xB, 0xC, 0xD, 0xE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF];
+pub const SEED_NODES: [&str; 1] = ["127.0.0.1:2125"];
 
 pub const BLOCK_TIME: u64 = 15; // Block Time in seconds
 pub const MINIMUM_DIFFICULTY: u64 = BLOCK_TIME * 100_000;

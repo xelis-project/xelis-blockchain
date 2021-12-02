@@ -74,8 +74,7 @@ fn create_registration_transaction(blockchain: &mut Blockchain, keypair: &KeyPai
 
 fn main() {
     println!("Xelis Blockchain - pre-alpha");
-
-    start_daemon();
+    test_p2p();
 
     let main_keypair: KeyPair = KeyPair::new();
     println!("Generated main address: {}", main_keypair.get_public_key().to_address().unwrap());
@@ -116,8 +115,35 @@ fn main() {
     };
 }
 
-fn start_daemon() {
+fn test_p2p() {
+    use crate::config::{VERSION, NETWORK_ID, SEED_NODES};
+    use crate::crypto::hash::Hash;
+    use crate::p2p::handshake::Handshake;
+    use std::net::{TcpStream, SocketAddr};
+    use std::thread;
+    use std::time::Duration;
     use crate::p2p::server::P2pServer;
-    let server = P2pServer::new();
+
+    thread::spawn(move || {
+        let server = P2pServer::new(1, String::from("127.0.0.1:2126"));
+        server.start();
+    });
+
+    for i in 0..3 {
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(i * 1000));
+            let addr: SocketAddr = SEED_NODES[0].parse().unwrap();
+            match TcpStream::connect(addr) {
+                Ok(mut stream) => {
+                    let handshake = Handshake::new(VERSION.to_owned(), Some(format!("user #{}", i)), NETWORK_ID, 0, get_current_time(), 0, Hash::zero(), vec![String::from("127.0.0.1:2126")]);
+                    println!("Sending handshake!");
+                    let _ = stream.write(&handshake.to_bytes());
+                },
+                Err(e) => panic!("{}", e)
+            };
+        });
+    }
+
+    let server = P2pServer::new(1, String::from("127.0.0.1:2125"));
     server.start();
 }
