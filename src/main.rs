@@ -129,9 +129,9 @@ fn test_p2p() {
         server.start();
     });*/
 
-    for i in 0..3 {
+    for i in 0..4 {
         thread::spawn(move || {
-            thread::sleep(Duration::from_millis(i * 1000));
+            thread::sleep(Duration::from_millis((i + 1) * 1000));
             let addr: SocketAddr = SEED_NODES[0].parse().unwrap();
             match TcpStream::connect(addr) {
                 Ok(mut stream) => {
