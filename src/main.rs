@@ -124,10 +124,10 @@ fn test_p2p() {
     use std::time::Duration;
     use crate::p2p::server::P2pServer;
 
-    thread::spawn(move || {
+    /*thread::spawn(move || {
         let server = P2pServer::new(1, String::from("127.0.0.1:2126"));
         server.start();
-    });
+    });*/
 
     for i in 0..3 {
         thread::spawn(move || {
@@ -136,14 +136,19 @@ fn test_p2p() {
             match TcpStream::connect(addr) {
                 Ok(mut stream) => {
                     let handshake = Handshake::new(VERSION.to_owned(), Some(format!("user #{}", i)), NETWORK_ID, 0, get_current_time(), 0, Hash::zero(), vec![String::from("127.0.0.1:2126")]);
-                    println!("Sending handshake!");
                     let _ = stream.write(&handshake.to_bytes());
+                    let msg: String = format!("Hello world from client {}", i);
+                    loop {
+                        thread::sleep(Duration::from_millis(i + 1 * 500));
+                        println!("Sending handshake from client {}", i);
+                        let _ = stream.write(msg.as_bytes());
+                    }
                 },
                 Err(e) => panic!("{}", e)
             };
         });
     }
 
-    let server = P2pServer::new(1, String::from("127.0.0.1:2125"));
+    let server = P2pServer::new(8, String::from("127.0.0.1:2125"));
     server.start();
 }

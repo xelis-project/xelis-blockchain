@@ -2,7 +2,7 @@ use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream, SocketAddr};
 use crate::core::thread_pool::ThreadPool;
 use super::connection::Connection;
-use std::sync::{Mutex, Arc};
+use std::sync::{Arc, RwLock};
 use crate::core::block::CompleteBlock;
 use super::handshake::Handshake;
 use crate::config::{VERSION, NETWORK_ID, SEED_NODES};
@@ -12,7 +12,7 @@ use crate::globals::get_current_time;
 const MAX_PEERS: usize = 8;
 
 pub struct P2pServer {
-    thread_pool_size: usize,
+    thread_pool: ThreadPool,
     bind_address: String,
     connections: Vec<Connection>
 }
@@ -20,7 +20,7 @@ pub struct P2pServer {
 impl P2pServer {
     pub fn new(thread_pool_size: usize, bind_address: String) -> Self {
         P2pServer {
-            thread_pool_size,
+            thread_pool: ThreadPool::new(thread_pool_size),
             bind_address,
             connections: vec![],
         }
@@ -34,18 +34,18 @@ impl P2pServer {
         }
 
         println!("Starting p2p server...");
-        let thread_pool = ThreadPool::new(self.thread_pool_size); // use 4 threads to accept new connections
         let listener = TcpListener::bind(&self.bind_address).unwrap();
-        let arc_self = Arc::new(Mutex::new(self));
-
         println!("Waiting for connections...");
-        for stream in listener.incoming() {
+        for stream in listener.incoming() { // main thread verify all new connections
+            if self.get_peer_count() >= MAX_PEERS { // if we have already reached the limit, we ignore this new connection
+                continue;
+            }
+
+            println!("NEW STREAM!!");
             match stream {
                 Ok(stream) => {
-                    let zelf = Arc::clone(&arc_self);
-                    thread_pool.execute(move || {
-                        P2pServer::handle_new_connection(&zelf, stream);
-                    });
+                    //let zelf = Arc::clone(&arc_self);
+                    self.handle_new_connection(stream);
                 }
                 Err(e) => {
                     println!("Error while accepting new connection: {}", e);
@@ -58,6 +58,16 @@ impl P2pServer {
         self.connections.len()
     }
 
+    pub fn get_mut_connection_by_peer_id(&mut self, peer_id: u64) -> Option<&mut Connection> {
+        for connection in &mut self.connections {
+            if connection.get_peer_id() == peer_id {
+                return Some(connection);
+            }
+        }
+
+        None
+    }
+
     pub fn is_connected_to(&self, peer_addr: &SocketAddr, peer_id: u64) -> bool {
         for connection in &self.connections {
             if connection.get_peer_address() ==  peer_addr || connection.get_peer_id() == peer_id {
@@ -65,7 +75,7 @@ impl P2pServer {
             }
         }
 
-        return false;
+        false
     }
 
     pub fn broadcast_block(&mut self, block: &CompleteBlock) {
@@ -80,10 +90,23 @@ impl P2pServer {
         match TcpStream::connect(&peer_addr) {
             Ok(mut stream) => {
                 let handshake = Handshake::new(VERSION.to_owned(), None, NETWORK_ID, 0, get_current_time(), 0, Hash::zero(), vec![]);
-                println!("{}", format!("Sending handshake from server {}", self.bind_address));
-                let _ = stream.write(&handshake.to_bytes());
-                let connection = handshake.create_connection(stream, peer_addr, true);
-                self.add_connection(connection);
+                println!("Sending handshake from server {}", self.bind_address);
+                match stream.write(&handshake.to_bytes()) {
+                    Ok(_) => {
+                        match stream.flush() {
+                            Ok(_) => {
+                                let connection = handshake.create_connection(stream, peer_addr, true);
+                                self.add_connection(connection);
+                            },
+                            Err(e) => {
+                                println!("Error while flushing to a new peer {}: {}", peer_addr, e);
+                            }
+                        };
+                    },
+                    Err(e) => {
+                        println!("Error while sending handshake request to a new peer {}: {}", peer_addr, e);
+                    }
+                };
             },
             Err(e) => {
                 println!("Error while connecting to a new peer: {}", e);
@@ -93,10 +116,19 @@ impl P2pServer {
 
     fn add_connection(&mut self, connection: Connection) {
         self.connections.push(connection);
-        println!("{}: {} connections", self.bind_address, self.connections.len())
+        println!("add new connection (total {}): {}", self.connections.len(), self.bind_address);
     }
 
-    fn handle_new_connection(server_arc: &Arc<std::sync::Mutex<P2pServer>>, mut stream: TcpStream) {
+    fn remove_connection(&mut self, peer_id: u64) -> bool {
+        match self.connections.iter().position(|c| c.get_peer_id() == peer_id) {
+            Some(index) => self.connections.remove(index),
+            None => return false,
+        };
+
+        true
+    }
+
+    fn handle_new_connection(&mut self, mut stream: TcpStream) {
         match stream.peer_addr() {
             Ok(addr) => {
                 println!("New connection: {}", addr);
@@ -111,32 +143,45 @@ impl P2pServer {
                                 // TODO check block height, check if top hash is equal to block height
 
                                 println!("Handshake OK: {}", handshake);
-                                match server_arc.lock() {
-                                    Ok(mut server) => { 
-                                        let peers = handshake.get_peers();
-                                        let mut index = 0;
-                                        while peers.len() > index && server.get_peer_count() < MAX_PEERS {
-                                            let peer_addr: SocketAddr = match peers[index].parse() {
-                                                Ok(addr) => addr,
-                                                Err(e) => {
-                                                    println!("Invalid Peer address received: {}, error: {}", peers[index], e);
-                                                    return;
-                                                }
-                                            };
-
-                                            if !server.is_connected_to(&peer_addr, handshake.get_peer_id()) {
-                                                // We try to connect to it
-                                                server.connect_to_peer(peer_addr);
-                                            }
-
-                                            index += 1;
+                                let peers = handshake.get_peers();
+                                let mut index = 0;
+                                while peers.len() > index && self.get_peer_count() + 1 < MAX_PEERS {
+                                    let peer_addr: SocketAddr = match peers[index].parse() {
+                                        Ok(addr) => addr,
+                                        Err(e) => {
+                                            println!("Invalid Peer address received: {}, error: {}", peers[index], e);
+                                            return;
                                         }
-                                        let connection = handshake.create_connection(stream, addr, false);
-                                        server.add_connection(connection);
-                                        // TODO send handshake response
+                                    };
+
+                                    if !self.is_connected_to(&peer_addr, handshake.get_peer_id()) && addr != peer_addr {
+                                        // We try to connect to it
+                                        self.connect_to_peer(peer_addr);
                                     }
-                                    Err(e) => println!("Error while trying to lock server arc: {}", e)
-                                };
+                                    index += 1;
+                                }
+                                let connection = handshake.create_connection(stream, addr, false);
+                                let peer_id = connection.get_peer_id();
+                                self.add_connection(connection);
+                                // TODO send handshake response
+                                //self.thread_pool.execute(move || { // TODO read using thread pool
+                                    let mut buf: [u8; 512] = [0; 512];
+                                    loop {
+                                        match self.get_mut_connection_by_peer_id(peer_id).unwrap().read_bytes(&mut buf) {
+                                            Ok(0) => {
+                                                self.remove_connection(peer_id);
+                                                println!("closed!!!!");
+                                            },
+                                            Ok(n) => {
+                                                println!("Received from client: {}", String::from_utf8_lossy(&buf[0..n]));
+                                            }
+                                            Err(e) => {
+                                                self.remove_connection(peer_id);
+                                                println!("read error!!! {}", e);
+                                            }
+                                        }
+                                    }
+                                //});
                             },
                             Err(_) => println!("Invalid handshake request")
                         }

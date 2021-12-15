@@ -45,6 +45,10 @@ impl ThreadPool {
         let job = Box::new(f);
         self.sender.send(Message::NewJob(job)).unwrap();
     }
+
+    pub fn size(&self) -> usize {
+        self.workers.len()
+    }
 }
 
 impl Drop for ThreadPool {
