@@ -123,8 +123,10 @@ impl P2pServer {
     fn remove_connection(&mut self, peer_id: &u64) -> bool {
         match self.connections.remove(peer_id) {
             Some(connection) => {
-                if let Err(e) = connection.close() {
-                    println!("Error while closing connection: {}", e);
+                if !connection.is_closed() {
+                    if let Err(e) = connection.close() {
+                        println!("Error while closing connection: {}", e);
+                    }
                 }
                 true
             },
@@ -144,7 +146,7 @@ impl P2pServer {
             };
         }
 
-        // TODO
+        // TODO set correct params
         Handshake::new(VERSION.to_owned(), self.tag.clone(), NETWORK_ID, self.peer_id, get_current_time(), 0, Hash::zero(), peers)
     }
 
@@ -234,6 +236,7 @@ impl P2pServer {
                                 thread::spawn(move || {
                                     P2pServer::listen_connection(zelf_clone, connection);
                                 });
+
                                 // try to extend our peer list
                                 for peer in peers {
                                     P2pServer::connect_to_peer(zelf.clone(), peer);

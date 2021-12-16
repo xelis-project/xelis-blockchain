@@ -119,7 +119,7 @@ fn test_p2p() {
     use crate::config::{VERSION, NETWORK_ID, SEED_NODES};
     use crate::crypto::hash::Hash;
     use crate::p2p::handshake::Handshake;
-    use std::net::{TcpStream, SocketAddr};
+    use std::net::{TcpStream, SocketAddr, Shutdown};
     use std::thread;
     use std::time::Duration;
     use crate::p2p::server::P2pServer;
@@ -138,10 +138,11 @@ fn test_p2p() {
                     let handshake = Handshake::new(VERSION.to_owned(), Some(format!("user #{}", i)), NETWORK_ID, i, get_current_time(), 0, Hash::zero(), vec![String::from("127.0.0.1:2126")]);
                     let _ = stream.write(&handshake.to_bytes());
                     let msg: String = format!("Hello world from client {}", i);
-                    loop {
-                        thread::sleep(Duration::from_millis(i + 1 * 500));
+                    for i in 0..3 {
+                        thread::sleep(Duration::from_millis(i * 500));
                         let _ = stream.write(msg.as_bytes());
                     }
+                    let _ = stream.shutdown(Shutdown::Both);
                 },
                 Err(e) => panic!("{}", e)
             };

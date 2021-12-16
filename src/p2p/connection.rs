@@ -42,6 +42,9 @@ impl Connection {
     pub fn read_bytes(&self, buf: &mut [u8]) -> Result<usize> {
         let result = self.stream.lock().unwrap().read(buf);
         match &result {
+            Ok(0) => {
+                self.closed.store(true, Ordering::Relaxed);
+            }
             Ok(n) => {
                 self.bytes_in.fetch_add(*n, Ordering::Relaxed);
             }
@@ -51,7 +54,7 @@ impl Connection {
     }
 
     pub fn close(&self) -> Result<()> {
-        self.closed.store(false, Ordering::Relaxed);
+        self.closed.store(true, Ordering::Relaxed);
         self.stream.lock().unwrap().shutdown(Shutdown::Both)
     }
 
