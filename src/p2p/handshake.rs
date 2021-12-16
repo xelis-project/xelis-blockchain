@@ -11,8 +11,8 @@ pub struct Handshake {
     version: String, // daemon version
     node_tag: Option<String>, // node tag
     network_id: [u8; 16],
-    peer_id: u64,
-    utc_time: u64, // 
+    peer_id: u64, // unique peer id randomly generated 
+    utc_time: u64, // current time in seconds
     block_height: u64, // current block height
     block_top_hash: Hash, // current block top hash
     peers: Vec<String> // all peers that we are already connected to
@@ -22,7 +22,7 @@ impl Handshake {
     pub fn new(version: String, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, utc_time: u64, block_height: u64, block_top_hash: Hash, peers: Vec<String>) -> Self {
         assert!(version.len() > 0 && version.len() <= 16); // version cannot be greater than 16 chars
         if let Some(node_tag) = &node_tag {
-            assert!(node_tag.len() <= 16); // node tag cannot be greater than 16 chars
+            assert!(node_tag.len() > 0 && node_tag.len() <= 16); // node tag cannot be greater than 16 chars
         }
 
         assert!(peers.len() <= 16); // maximum 16 peers allowed

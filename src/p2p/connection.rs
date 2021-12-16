@@ -1,16 +1,19 @@
 use std::net::{TcpStream, SocketAddr, Shutdown};
 use std::io::{Write, Read, Result};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub struct Connection {
     id: u64, // TODO use a UUID
     node_tag: Option<String>, // Node tag if provided
     version: String, // daemon version
     block_height: u64, // current block height for this peer
-    stream: TcpStream, // Stream for read & write
+    stream: Mutex<TcpStream>, // Stream for read & write
     addr: SocketAddr, // TCP Address
     out: bool, // True mean we are the client
-    bytes_in: usize, // total bytes read
-    bytes_out: usize // total bytes sent
+    bytes_in: AtomicUsize, // total bytes read
+    bytes_out: AtomicUsize, // total bytes sent
+    closed: AtomicBool // if Connection#close() is called, close is set to true
 }
 
 impl Connection {
@@ -20,38 +23,36 @@ impl Connection {
             node_tag,
             version,
             block_height,
-            stream,
+            stream: Mutex::new(stream),
             addr,
             out,
-            bytes_in: 0,
-            bytes_out: 0
+            bytes_in: AtomicUsize::new(0),
+            bytes_out: AtomicUsize::new(0),
+            closed: AtomicBool::new(false)
         }
     }
 
-    pub fn send_bytes(&mut self, buf: &[u8]) {
-        if let Err(e) = self.stream.write(buf) {
+    pub fn send_bytes(&self, buf: &[u8]) {
+        if let Err(e) = self.stream.lock().unwrap().write(buf) {
             panic!("Error while sending bytes to connection {}: {}", self.id, e);
         }
-        self.bytes_out += buf.len();
+        self.bytes_out.fetch_add(buf.len(), Ordering::Relaxed);
     }
 
-    pub fn read_bytes(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let result = self.stream.read(buf);
+    pub fn read_bytes(&self, buf: &mut [u8]) -> Result<usize> {
+        let result = self.stream.lock().unwrap().read(buf);
         match &result {
             Ok(n) => {
-                self.bytes_in += n;
+                self.bytes_in.fetch_add(*n, Ordering::Relaxed);
             }
             _ => {}
         };
         result
     }
 
-    pub fn clone_stream(&mut self) -> TcpStream {
-        self.stream.try_clone().expect("Error while cloning stream")
-    }
-
-    pub fn close(&mut self) -> Result<()> {
-        self.stream.shutdown(Shutdown::Both)
+    pub fn close(&self) -> Result<()> {
+        self.closed.store(false, Ordering::Relaxed);
+        self.stream.lock().unwrap().shutdown(Shutdown::Both)
     }
 
     pub fn get_peer_id(&self) -> u64 {
@@ -79,11 +80,15 @@ impl Connection {
     }
 
     pub fn bytes_out(&self) -> usize {
-        self.bytes_out
+        self.bytes_out.load(Ordering::Relaxed)
     }
 
     pub fn bytes_in(&self) -> usize {
-        self.bytes_in
+        self.bytes_in.load(Ordering::Relaxed)
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Relaxed)
     }
 }
 
@@ -97,6 +102,6 @@ impl Display for Connection {
             String::from("None")
         };
 
-        write!(f, "Connection[version: {}, node tag: {}, peer_id: {}, block_height: {}, out: {}, read: {} kB, sent: {} kB]", self.get_version(), node_tag, self.get_peer_id(), self.get_block_height(), self.is_out(), self.bytes_in / 1024, self.bytes_out / 1024)
+        write!(f, "Connection[peer: {}, version: {}, node tag: {}, peer_id: {}, block_height: {}, out: {}, read: {} kB, sent: {} kB, closed: {}]", self.get_peer_address(), self.get_version(), node_tag, self.get_peer_id(), self.get_block_height(), self.is_out(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.is_closed())
     }
 }

@@ -50,7 +50,7 @@ impl Blockchain {
             difficulty: MINIMUM_DIFFICULTY,
             mempool: Mempool::new(),
             accounts: HashMap::new(),
-            p2p: P2pServer::new(4, String::from("127.0.0.1:2125")),
+            p2p: P2pServer::new(0, None, 8, String::from("127.0.0.1:2125")),
             dev_address: dev_key
         };
 

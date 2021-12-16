@@ -129,18 +129,17 @@ fn test_p2p() {
         server.start();
     });*/
 
-    for i in 0..4 {
+    for i in 1..=4 {
         thread::spawn(move || {
-            thread::sleep(Duration::from_millis((i + 1) * 1000));
+            thread::sleep(Duration::from_millis(i * 1000));
             let addr: SocketAddr = SEED_NODES[0].parse().unwrap();
             match TcpStream::connect(addr) {
                 Ok(mut stream) => {
-                    let handshake = Handshake::new(VERSION.to_owned(), Some(format!("user #{}", i)), NETWORK_ID, 0, get_current_time(), 0, Hash::zero(), vec![String::from("127.0.0.1:2126")]);
+                    let handshake = Handshake::new(VERSION.to_owned(), Some(format!("user #{}", i)), NETWORK_ID, i, get_current_time(), 0, Hash::zero(), vec![String::from("127.0.0.1:2126")]);
                     let _ = stream.write(&handshake.to_bytes());
                     let msg: String = format!("Hello world from client {}", i);
                     loop {
                         thread::sleep(Duration::from_millis(i + 1 * 500));
-                        println!("Sending handshake from client {}", i);
                         let _ = stream.write(msg.as_bytes());
                     }
                 },
@@ -149,6 +148,6 @@ fn test_p2p() {
         });
     }
 
-    let server = P2pServer::new(8, String::from("127.0.0.1:2125"));
+    let server = P2pServer::new(1337, Some(String::from("Server 1337")), 17, String::from("127.0.0.1:2125"));
     server.start();
 }
