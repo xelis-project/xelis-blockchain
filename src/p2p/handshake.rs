@@ -19,13 +19,15 @@ pub struct Handshake {
 } // Server reply with his own list of peers, but we remove all already known by requester for the response.
 
 impl Handshake {
+    pub const MAX_LEN: usize = 16;
+
     pub fn new(version: String, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, utc_time: u64, block_height: u64, block_top_hash: Hash, peers: Vec<String>) -> Self {
-        assert!(version.len() > 0 && version.len() <= 16); // version cannot be greater than 16 chars
+        assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN); // version cannot be greater than 16 chars
         if let Some(node_tag) = &node_tag {
-            assert!(node_tag.len() > 0 && node_tag.len() <= 16); // node tag cannot be greater than 16 chars
+            assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN); // node tag cannot be greater than 16 chars
         }
 
-        assert!(peers.len() <= 16); // maximum 16 peers allowed
+        assert!(peers.len() <= Handshake::MAX_LEN); // maximum 16 peers allowed
 
         Handshake {
             version,
@@ -39,9 +41,9 @@ impl Handshake {
         }
     }
 
-    pub fn create_connection(self, stream: TcpStream, addr: SocketAddr, out: bool) -> Connection {
+    pub fn create_connection(self, stream: TcpStream, addr: SocketAddr, out: bool) -> (Connection, Vec<String>) {
         let block_height = self.get_block_height();
-        Connection::new(self.get_peer_id(), self.node_tag, self.version, block_height, stream, addr, out)
+        (Connection::new(self.get_peer_id(), self.node_tag, self.version, block_height, stream, addr, out), self.peers)
     }
 
     // 1 + MAX(16) + 1 + MAX(16) + 16 + 8 + 8 + 8 + 32 + 1 + 24 * 16
@@ -82,11 +84,10 @@ impl Handshake {
 
     pub fn from_bytes(data: &[u8]) -> Result<Self, ()> {
         let mut n = 0;
-        
         // Daemon version
         let version_len = data[n] as usize;
         n += 1;
-        if version_len == 0 || version_len > 16 {
+        if version_len == 0 || version_len > Handshake::MAX_LEN {
             return Err(())
         }
         let version = String::from_utf8(data[n..n+version_len].try_into().unwrap()).unwrap();
@@ -95,7 +96,7 @@ impl Handshake {
         // Node Tag
         let node_tag_len = data[n] as usize;
         n += 1;
-        if version_len > 16 {
+        if version_len > Handshake::MAX_LEN {
             return Err(())
         }
         let node_tag = if node_tag_len == 0 {
@@ -121,7 +122,7 @@ impl Handshake {
         n += 32;
 
         let peers_len = data[n] as usize;
-        if peers_len > 16 {
+        if peers_len > Handshake::MAX_LEN {
             return Err(())
         }
 
@@ -130,13 +131,12 @@ impl Handshake {
         let mut peers = vec![];
         for _ in 0..peers_len {
             let size = data[n] as usize;
-            if size == 0 || size > 16 {
+            if size == 0 || size > Handshake::MAX_LEN {
                 return Err(())
             }
 
             n += 1;
             let peer = String::from_utf8(data[n..n+size].try_into().unwrap()).unwrap();
-            // TODO verify peer validity
             n += size;
 
             peers.push(peer);

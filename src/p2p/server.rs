@@ -36,11 +36,10 @@ impl P2pServer {
     pub fn start(self) {
         println!("Starting p2p server...");
         let listener = TcpListener::bind(&self.bind_address).unwrap();
-         // TODO configurable: max clients
         let arc = Arc::new(RwLock::new(self));
 
-        /*println!("Connecting to seed nodes..."); // TODO only if peerlist is empty
-        for peer in SEED_NODES {
+        println!("Connecting to seed nodes..."); // TODO only if peerlist is empty
+        /*for peer in SEED_NODES {
             let addr: SocketAddr = peer.parse().unwrap();
             let zelf = arc.clone();
             P2pServer::connect_to_peer(zelf, addr);
@@ -48,7 +47,7 @@ impl P2pServer {
 
         println!("Waiting for connections...");
         for stream in listener.incoming() { // main thread verify all new connections
-            println!("NEW STREAM!!");
+            println!("New incoming connection");
             match stream {
                 Ok(stream) => {
                     let zelf = arc.clone();
@@ -60,7 +59,7 @@ impl P2pServer {
                         continue;
                     }
 
-                    P2pServer::handle_new_connection(zelf, stream);
+                    P2pServer::handle_new_connection(zelf, stream, false);
                 }
                 Err(e) => {
                     println!("Error while accepting new connection: {}", e);
@@ -77,6 +76,10 @@ impl P2pServer {
         self.connections.len()
     }
 
+    pub fn get_slots_available(&self) -> usize {
+        self.max_peers - self.connections.len()
+    }
+
     pub fn is_connected_to(&self, peer_id: &u64) -> bool {
         self.peer_id != *peer_id && self.connections.contains_key(peer_id)
     }
@@ -87,14 +90,23 @@ impl P2pServer {
                 return true
             }
         }
-
         false
     }
 
-    pub fn broadcast_block(&mut self, block: &CompleteBlock) {
+    // Send a block too all connected peers (block propagation)
+    pub fn broadcast_block(&self, block: &CompleteBlock) {
         use crate::crypto::hash::Hashable;
-        for connection in &mut self.connections.values() {
+        for connection in self.connections.values() {
             connection.send_bytes(&block.to_bytes());
+        }
+    }
+
+    pub fn broadcast_block_except(&self, block: &CompleteBlock, peer_id: u64) {
+        use crate::crypto::hash::Hashable;
+        for connection in self.connections.values() {
+            if connection.get_peer_id() != peer_id {
+                connection.send_bytes(&block.to_bytes());
+            }
         }
     }
 
@@ -121,8 +133,55 @@ impl P2pServer {
     }
 
     fn build_handshake(&self) -> Handshake {
-        // TODO build peers list
-        Handshake::new(VERSION.to_owned(), self.tag.clone(), NETWORK_ID, self.peer_id, get_current_time(), 0, Hash::zero(), vec![])
+        let mut peers = vec![];
+        let mut iter = self.connections.values();
+        while peers.len() < Handshake::MAX_LEN {
+            match iter.next() {
+                Some(v) => {
+                    peers.push(format!("{}", v.get_peer_address()));
+                },
+                None => break
+            };
+        }
+
+        // TODO
+        Handshake::new(VERSION.to_owned(), self.tag.clone(), NETWORK_ID, self.peer_id, get_current_time(), 0, Hash::zero(), peers)
+    }
+
+    fn verify_handshake(&self, addr: SocketAddr, stream: TcpStream, handshake: Handshake, out: bool) -> Result<(Connection, Vec<SocketAddr>), ()> {
+        println!("Handshake: {}", handshake);
+        if *handshake.get_network_id() != NETWORK_ID {
+            println!("Invalid Network ID");
+            return Err(());
+        }
+
+        if self.is_connected_to(&handshake.get_peer_id()) {
+            println!("Peer ID '{}' is already used.", handshake.get_peer_id());
+            if let Err(e) = stream.shutdown(Shutdown::Both) {
+                println!("Error while rejecting peer: {}", e);
+            }
+            return Err(());
+        }
+
+        // TODO check block height, check if top hash is equal to block height
+        let (connection, str_peers) = handshake.create_connection(stream, addr, out);
+        let mut peers: Vec<SocketAddr> = vec![];
+        for peer in str_peers {
+            let peer_addr: SocketAddr = match peer.parse() {
+                Ok(addr) => addr,
+                Err(e) => {
+                    println!("Invalid Peer address received: '{}', error: {}", peer, e);
+                    let _ = connection.close(); // peer send us an invalid socket address, invalid handshake
+                    return Err(());
+                }
+            };
+
+            if !self.is_connected_to_addr(&peer_addr) { // prevent reconnecting to a known p2p server
+                peers.push(peer_addr);
+            }
+        }
+        peers = peers.into_iter().take(self.get_slots_available()).collect(); // limit to X slots available
+        Ok((connection, peers))
     }
 
     fn connect_to_peer(zelf: Arc<RwLock<P2pServer>>, peer_addr: SocketAddr) {
@@ -131,22 +190,13 @@ impl P2pServer {
             Ok(mut stream) => {
                 let handshake: Handshake = zelf.read().unwrap().build_handshake();
                 println!("Sending handshake from server");
-                match stream.write(&handshake.to_bytes()) {
-                    Ok(_) => {
-                        match stream.flush() {
-                            Ok(_) => {
-                                let connection = handshake.create_connection(stream, peer_addr, true);
-                                P2pServer::listen_connection(zelf, connection);
-                            },
-                            Err(e) => {
-                                println!("Error while flushing to a new peer {}: {}", peer_addr, e);
-                            }
-                        };
-                    },
-                    Err(e) => {
-                        println!("Error while sending handshake request to a new peer {}: {}", peer_addr, e);
-                    }
-                };
+                if let Err(e) = stream.write(&handshake.to_bytes()) {
+                    println!("Error while sending handshake to connection: {}", e);
+                    return;
+                }
+
+                // wait on Handshake reply & manage this new connection
+                P2pServer::handle_new_connection(zelf, stream, true);
             },
             Err(e) => {
                 println!("Error while connecting to a new peer: {}", e);
@@ -154,7 +204,8 @@ impl P2pServer {
         };
     }
 
-    fn handle_new_connection(zelf: Arc<RwLock<P2pServer>>, mut stream: TcpStream) {
+    // this function
+    fn handle_new_connection(zelf: Arc<RwLock<P2pServer>>, mut stream: TcpStream, out: bool) {
         match stream.peer_addr() {
             Ok(addr) => {
                 println!("New connection: {}", addr);
@@ -163,43 +214,30 @@ impl P2pServer {
                     Ok(n) => {
                         match Handshake::from_bytes(&buffer[0..n]) {
                             Ok(handshake) => {
-                                println!("Handshake: {}", handshake);
-                                if *handshake.get_network_id() != NETWORK_ID {
-                                    println!("Invalid Network ID");
-                                    return;
-                                }
-
-                                if zelf.read().unwrap().is_connected_to(&handshake.get_peer_id()) {
-                                    println!("Peer ID '{}' is already used.", handshake.get_peer_id());
-                                    if let Err(e) = stream.shutdown(Shutdown::Both) {
-                                        println!("Error while rejecting peer: {}", e);
+                                let (connection, peers) = match zelf.read().unwrap().verify_handshake(addr, stream, handshake, out) {
+                                    Ok(v) => v,
+                                    Err(_) => {
+                                        println!("Error while verifying handshake from {}", addr);
+                                        return;
                                     }
+                                };
 
-                                    return;
+                                // if it's a outgoing connection, don't send the handshake back
+                                // because we have already sent it
+                                if !out {
+                                    let handshake = zelf.read().unwrap().build_handshake(); // TODO don't send same peers list
+                                    connection.send_bytes(&handshake.to_bytes()); // send handshake back
                                 }
 
-                                // TODO check block height, check if top hash is equal to block height
-                                let peers = handshake.get_peers();
-                                let mut index = 0;
-                                while index < peers.len() && zelf.read().unwrap().accept_new_connections() {
-                                    let peer_addr: SocketAddr = match peers[index].parse() {
-                                        Ok(addr) => addr,
-                                        Err(e) => {
-                                            println!("Invalid Peer address received: {}, error: {}", peers[index], e);
-                                            return;
-                                        }
-                                    };
-
-                                    if addr != peer_addr /*&& !zelf.read().unwrap().is_connected_to(&peer_addr)*/ { // TODO
-                                        // We try to connect to it
-                                        P2pServer::connect_to_peer(zelf.clone(), peer_addr);
-                                    }
-                                    index += 1;
+                                // if we reach here, handshake is all good, we can start listening this new peer
+                                let zelf_clone = zelf.clone();
+                                thread::spawn(move || {
+                                    P2pServer::listen_connection(zelf_clone, connection);
+                                });
+                                // try to extend our peer list
+                                for peer in peers {
+                                    P2pServer::connect_to_peer(zelf.clone(), peer);
                                 }
-
-                                // TODO send handshake response
-                                let connection = handshake.create_connection(stream, addr, false);
-                                P2pServer::listen_connection(zelf, connection);
                             },
                             Err(_) => println!("Invalid handshake request")
                         }
@@ -214,26 +252,27 @@ impl P2pServer {
     fn listen_connection(zelf: Arc<RwLock<P2pServer>>, connection: Connection) {
         let peer_id = connection.get_peer_id();
         let connection = Arc::new(connection);
-        zelf.write().unwrap().add_connection(peer_id, connection.clone());
+        zelf.write().unwrap().add_connection(peer_id, connection.clone()); // register this connection to the server
 
-        let mut buf: [u8; 512] = [0; 512];
-        thread::spawn(move || {
-            loop {
-                match connection.read_bytes(&mut buf) {
-                    Ok(0) => {
-                        zelf.write().unwrap().remove_connection(&peer_id);
-                        println!("closed connection safely");
-                        break;
-                    },
-                    Ok(n) => {
-                        println!("Received from {}: {}", connection, String::from_utf8_lossy(&buf[0..n]));
-                    }
-                    Err(e) => {
-                        zelf.write().unwrap().remove_connection(&peer_id);
-                        println!("read error!!! {}", e);
-                    }
+        // TODO extend buffer as we have verified this peer
+        let mut buf: [u8; 512] = [0; 512]; // allocate this buffer only one time
+        loop {
+            match connection.read_bytes(&mut buf) {
+                Ok(0) => {
+                    zelf.write().unwrap().remove_connection(&peer_id);
+                    println!("{} disconnected", connection);
+                    break;
+                },
+                Ok(n) => {
+                    println!("Received from {}: {}", connection, String::from_utf8_lossy(&buf[0..n]));
+
+                    // TODO manage all packets here
+                }
+                Err(e) => {
+                    zelf.write().unwrap().remove_connection(&peer_id);
+                    println!("An error has occured while reading bytes from {}: {}", connection, e);
                 }
             }
-        });
+        }
     }
 }
