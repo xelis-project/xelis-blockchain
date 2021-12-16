@@ -1,14 +1,15 @@
-use std::io::prelude::{Write, Read};
-use std::net::{TcpListener, TcpStream, SocketAddr, Shutdown};
-use std::thread;
-use super::connection::Connection;
-use std::sync::{Arc, RwLock};
 use crate::core::block::CompleteBlock;
-use super::handshake::Handshake;
 use crate::config::{VERSION, NETWORK_ID, SEED_NODES};
 use crate::crypto::hash::Hash;
 use crate::globals::get_current_time;
+use super::connection::Connection;
+use super::handshake::Handshake;
+use super::error::P2pError;
+use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
+use std::io::prelude::{Write, Read};
+use std::net::{TcpListener, TcpStream, SocketAddr, Shutdown};
+use std::thread;
 
 pub struct P2pServer {
     peer_id: u64, // unique peer id
@@ -39,11 +40,13 @@ impl P2pServer {
         let arc = Arc::new(RwLock::new(self));
 
         println!("Connecting to seed nodes..."); // TODO only if peerlist is empty
-        /*for peer in SEED_NODES {
+        for peer in SEED_NODES {
             let addr: SocketAddr = peer.parse().unwrap();
             let zelf = arc.clone();
-            P2pServer::connect_to_peer(zelf, addr);
-        }*/
+            if peer != zelf.read().unwrap().bind_address {
+                P2pServer::connect_to_peer(zelf, addr);
+            }
+        }
 
         println!("Waiting for connections...");
         for stream in listener.incoming() { // main thread verify all new connections
@@ -150,19 +153,17 @@ impl P2pServer {
         Handshake::new(VERSION.to_owned(), self.tag.clone(), NETWORK_ID, self.peer_id, get_current_time(), 0, Hash::zero(), peers)
     }
 
-    fn verify_handshake(&self, addr: SocketAddr, stream: TcpStream, handshake: Handshake, out: bool) -> Result<(Connection, Vec<SocketAddr>), ()> {
+    fn verify_handshake(&self, addr: SocketAddr, stream: TcpStream, handshake: Handshake, out: bool) -> Result<(Connection, Vec<SocketAddr>), P2pError> {
         println!("Handshake: {}", handshake);
         if *handshake.get_network_id() != NETWORK_ID {
-            println!("Invalid Network ID");
-            return Err(());
+            return Err(P2pError::InvalidNetworkID);
         }
 
         if self.is_connected_to(&handshake.get_peer_id()) {
-            println!("Peer ID '{}' is already used.", handshake.get_peer_id());
             if let Err(e) = stream.shutdown(Shutdown::Both) {
                 println!("Error while rejecting peer: {}", e);
             }
-            return Err(());
+            return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }
 
         // TODO check block height, check if top hash is equal to block height
@@ -172,9 +173,8 @@ impl P2pServer {
             let peer_addr: SocketAddr = match peer.parse() {
                 Ok(addr) => addr,
                 Err(e) => {
-                    println!("Invalid Peer address received: '{}', error: {}", peer, e);
                     let _ = connection.close(); // peer send us an invalid socket address, invalid handshake
-                    return Err(());
+                    return Err(P2pError::InvalidPeerAddress(format!("{}", e)));
                 }
             };
 
@@ -242,7 +242,7 @@ impl P2pServer {
                                     P2pServer::connect_to_peer(zelf.clone(), peer);
                                 }
                             },
-                            Err(_) => println!("Invalid handshake request")
+                            Err(e) => println!("Invalid handshake request: {}", e)
                         }
                     },
                     Err(e) => println!("Error while reading handshake: {}", e)

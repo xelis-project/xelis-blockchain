@@ -1,6 +1,7 @@
 use crate::crypto::hash::Hash;
-use core::convert::TryInto;
 use super::connection::Connection;
+use super::error::P2pError;
+use core::convert::TryInto;
 use std::net::{TcpStream, SocketAddr};
 
 // this Handshake is the first data sent when connecting to the server
@@ -82,27 +83,44 @@ impl Handshake {
         bytes
     }
 
-    pub fn from_bytes(data: &[u8]) -> Result<Self, ()> {
+    pub fn from_bytes(data: &[u8]) -> Result<Self, P2pError> {
+        // Handshake have a static size + some part of dynamic size (node tag, version, peers list)
+        // we must verify the correct size each time we want to read from the data sent by the client
+        // if we don't verify each time, it can create a panic error and crash the node
+        let mut expected_size = 75; // 1 + 0 + 1 + 0 + 16 + 8 + 8 + 8 + 32 + 1 + 0
+        if data.len() < expected_size {
+            return Err(P2pError::InvalidMinSize(data.len()))
+        }
+
         let mut n = 0;
         // Daemon version
         let version_len = data[n] as usize;
+        expected_size += version_len;
         n += 1;
-        if version_len == 0 || version_len > Handshake::MAX_LEN {
-            return Err(())
+        if version_len == 0 || version_len > Handshake::MAX_LEN || data.len() < expected_size {
+            return Err(P2pError::InvalidVersionSize(version_len))
         }
+
         let version = String::from_utf8(data[n..n+version_len].try_into().unwrap()).unwrap();
         n += version_len;
 
         // Node Tag
         let node_tag_len = data[n] as usize;
+        expected_size += node_tag_len;
         n += 1;
-        if version_len > Handshake::MAX_LEN {
-            return Err(())
+        if node_tag_len > Handshake::MAX_LEN || data.len() < expected_size {
+            return Err(P2pError::InvalidTagSize(node_tag_len))
         }
         let node_tag = if node_tag_len == 0 {
             None
         } else {
-            Some(String::from_utf8(data[n..n+node_tag_len].try_into().unwrap()).unwrap())
+            match data[n..n+node_tag_len].try_into() {
+                Ok(v) => match String::from_utf8(v) {
+                    Ok(v) => Some(v),
+                    Err(e) => return Err(P2pError::InvalidUtf8Sequence(format!("{}", e)))
+                },
+                Err(e) => return Err(P2pError::InvalidUtf8Sequence(format!("{}", e)))
+            }
         };
         n += node_tag_len;
 
@@ -122,17 +140,18 @@ impl Handshake {
         n += 32;
 
         let peers_len = data[n] as usize;
-        if peers_len > Handshake::MAX_LEN {
-            return Err(())
+        expected_size += peers_len; // X strings size
+        if peers_len > Handshake::MAX_LEN || data.len() < expected_size {
+            return Err(P2pError::InvalidPeerSize(peers_len))
         }
-
         n += 1;
 
         let mut peers = vec![];
         for _ in 0..peers_len {
             let size = data[n] as usize;
-            if size == 0 || size > Handshake::MAX_LEN {
-                return Err(())
+            expected_size += size;
+            if size == 0 || size > Handshake::MAX_LEN || data.len() < expected_size {
+                return Err(P2pError::InvalidPeerSize(expected_size))
             }
 
             n += 1;
