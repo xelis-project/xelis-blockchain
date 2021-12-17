@@ -12,6 +12,14 @@ use std::collections::HashMap;
 use std::io::prelude::{Write, Read};
 use std::io::ErrorKind;
 use std::net::{TcpListener, TcpStream, SocketAddr, Shutdown};
+use std::sync::mpsc::{Sender, Receiver, channel};
+
+enum Message {
+    SendBytes(u64, Vec<u8>), // peer id, bytes
+    AddConnection(Arc<Connection>),
+    RemoveConnection(u64),
+    Exit,
+}
 
 pub struct P2pServer {
     peer_id: u64, // unique peer id
@@ -20,7 +28,8 @@ pub struct P2pServer {
     multi_threaded: bool,
     bind_address: String,
     thread_pool: Mutex<ThreadPool>,
-    connections: HashMap<u64, Arc<Connection>>
+    connections: HashMap<u64, Arc<Connection>>,
+    channels: HashMap<u64, Mutex<Sender<Message>>>
 }
 
 impl P2pServer {
@@ -43,6 +52,7 @@ impl P2pServer {
             bind_address,
             thread_pool: Mutex::new(ThreadPool::new(threads)),
             connections: HashMap::new(),
+            channels: HashMap::new()
         }
     }
 
@@ -94,15 +104,41 @@ impl P2pServer {
 
         // listening connections thread
         {
-            let lock = arc.read().unwrap();
+            let mut lock = arc.write().unwrap();
             if !lock.is_multi_threaded() {
+                let (sender, receiver) = channel();
+                let peer_id = lock.peer_id;
+                lock.channels.insert(peer_id, Mutex::new(sender));
                 let arc_clone = arc.clone();
                 println!("Starting single thread connection listener...");
                 lock.thread_pool.lock().unwrap().execute(move || {
                     // TODO extend buffer as we have verified this peer
+                    let mut connections: HashMap<u64, Arc<Connection>> = HashMap::new();
                     let mut buf: [u8; 512] = [0; 512]; // allocate this buffer only one time
                     loop {
-                        for connection in arc_clone.read().unwrap().get_connections() { // TODO Lock occure here! 
+                        while let Ok(msg) = receiver.try_recv() {
+                            match msg {
+                                Message::Exit => {
+                                    return;
+                                },
+                                Message::AddConnection(connection) => {
+                                    connections.insert(connection.get_peer_id(), connection);
+                                }
+                                Message::RemoveConnection(peer_id) => {
+                                    connections.remove(&peer_id);
+                                }
+                                Message::SendBytes(peer_id, bytes) => {
+                                    if let Some(connection) = connections.get(&peer_id) {
+                                        if let Err(e) = connection.send_bytes(&bytes) {
+                                            println!("Error on sending bytes: {}", e);
+                                            connections.remove(&peer_id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        for connection in connections.values() {
                             P2pServer::listen_connection(&arc_clone, &mut buf, &connection)
                         }
                     }
@@ -124,7 +160,7 @@ impl P2pServer {
     }
 
     pub fn is_connected_to(&self, peer_id: &u64) -> bool {
-        self.peer_id != *peer_id && self.connections.contains_key(peer_id)
+        self.peer_id == *peer_id || self.connections.contains_key(peer_id)
     }
 
     pub fn is_connected_to_addr(&self, peer_addr: &SocketAddr) -> bool {
@@ -146,24 +182,46 @@ impl P2pServer {
 
     // Send a block too all connected peers (block propagation)
     pub fn broadcast_block(&self, block: &CompleteBlock) -> Result<(), P2pError> {
-        for connection in self.get_connections() {
+        /*for connection in self.get_connections() {
             connection.send_bytes(&block.to_bytes())?;
-        }
+        }*/ // TODO Refactor
 
         Ok(())
     }
 
-    pub fn broadcast_block_except(&self, block: &CompleteBlock, peer_id: u64) -> Result<(), P2pError> {
+    pub fn broadcast_bytes(&self, buf: &[u8]) {
         for connection in self.get_connections() {
-            if connection.get_peer_id() != peer_id {
-                connection.send_bytes(&block.to_bytes())?;
+            self.send_to_peer(connection.get_peer_id(),buf.to_vec());
+        }
+    }
+
+    // notify the thread that own the target peer through channel
+    pub fn send_to_peer(&self, peer_id: u64, bytes: Vec<u8>) -> bool {
+        match self.get_channel_for_connection(&peer_id) { // get channel for connection thread, so the thread owner send it
+            Some(chan) => {
+                if let Err(e) = chan.lock().unwrap().send(Message::SendBytes(peer_id, bytes)) {
+                    println!("Error while trying to send message 'SendBytes': {}", e);
+                }
+                true
+            },
+            None => {
+                println!("No channel found for peer {}", peer_id);
+                false
             }
         }
-
-        Ok(())
     }
 
-    fn add_connection(&mut self, connection: Arc<Connection>) {
+    fn get_channel_for_connection(&self, peer_id: &u64) -> Option<&Mutex<Sender<Message>>> {
+        if self.is_multi_threaded() {
+            self.channels.get(peer_id)
+        } else {
+            self.channels.get(&self.peer_id)
+        }
+    }
+
+    // return a 'Receiver' struct if we are in multi thread mode
+    // in single mode, we only have one channel
+    fn add_connection(&mut self, connection: Arc<Connection>) -> Option<Receiver<Message>> {
         let peer_id = connection.get_peer_id();
         match self.connections.insert(peer_id, connection) {
             Some(_) => {
@@ -172,10 +230,17 @@ impl P2pServer {
             None => {}
         }
         println!("add new connection (total {}): {}", self.connections.len(), self.bind_address);
+
+        if self.is_multi_threaded() {
+            let (sender, receiver) = channel();
+            self.channels.insert(peer_id, Mutex::new(sender));
+            return Some(receiver);
+        }
+
+        None
     }
 
     fn remove_connection(&mut self, peer_id: &u64) -> bool {
-        println!("removing peer {}", peer_id);
         match self.connections.remove(peer_id) {
             Some(connection) => {
                 if !connection.is_closed() {
@@ -183,6 +248,22 @@ impl P2pServer {
                         println!("Error while closing connection: {}", e);
                     }
                 }
+
+                if self.is_multi_threaded() {
+                    match self.channels.remove(peer_id) {
+                        Some(channel) => {
+                            if let Err(e) = channel.lock().unwrap().send(Message::Exit) {
+                                println!("Error while trying to send exit command: {}", e);
+                            }
+                        },
+                        None => {}
+                    }
+                } else {
+                    if let Err(e) = self.get_channel_for_connection(peer_id).unwrap().lock().unwrap().send(Message::RemoveConnection(*peer_id)) {
+                        println!("Error while trying to send remove connection {} command: {}", peer_id, e);
+                    }
+                }
+
                 println!("{} disconnected", connection);
 
                 true
@@ -295,32 +376,61 @@ impl P2pServer {
 
                         // handle connection
                         {
-                            let lock = zelf.read().unwrap(); 
-                            if lock.is_multi_threaded() {
-                                let zelf_clone = zelf.clone();
-                                // 1 thread = 1 client
-                                lock.thread_pool.lock().unwrap().execute(move || {
-                                    println!("Adding connection to multithread mode!");
-                                    // TODO extend buffer as we have verified this peer
-                                    let mut connection_buf: [u8; 512] = [0; 512]; // allocate this buffer only one time
-                                    while !arc_connection.is_closed() {
-                                        // if this is considered as disconnected, stop looping on it
-                                        P2pServer::listen_connection(&zelf_clone, &mut connection_buf, &arc_connection);
+                            // set stream no-blocking
+                            match arc_connection.set_blocking(false) {
+                                Ok(_) => {
+                                    let mut lock = zelf.write().unwrap(); 
+                                    // multi threading
+                                    if let Some(receiver) = lock.add_connection(arc_connection.clone()) {
+                                        let zelf_clone = zelf.clone();
+                                        // 1 thread = 1 client
+                                        lock.thread_pool.lock().unwrap().execute(move || {
+                                            println!("Adding connection to multithread mode!");
+                                            // TODO extend buffer as we have verified this peer
+                                            let mut connection_buf: [u8; 512] = [0; 512]; // allocate this buffer only one time
+                                            while !arc_connection.is_closed() {
+                                                while let Ok(msg) = receiver.try_recv() {
+                                                    match msg {
+                                                        Message::Exit => {
+                                                            println!("EXIT!!");
+                                                            return;
+                                                        },
+                                                        Message::SendBytes(_, bytes) => {
+                                                            println!("SEND BYTES!");
+                                                            if let Err(e) = arc_connection.send_bytes(&bytes) {
+                                                                println!("Error on trying to send bytes: {}", e);
+                                                                return;
+                                                            }
+                                                        }
+                                                        _ => {
+                                                            panic!("Not supported!");
+                                                        }
+                                                    }
+                                                }
+                                                // if this is considered as disconnected, stop looping on it
+                                                P2pServer::listen_connection(&zelf_clone, &mut connection_buf, &arc_connection);
+                                            }
+                                        });
+                                    } else {
+                                        if match lock.get_channel_for_connection(&lock.peer_id) {
+                                            Some(channel) => {
+                                                if let Err(e) = channel.lock().unwrap().send(Message::AddConnection(arc_connection)) {
+                                                    println!("Error on adding new connection in single thread mode: {}", e);
+                                                    true
+                                                } else {
+                                                    false
+                                                }
+                                            },
+                                            None => {
+                                                panic!("Something is wrong: no channel for single thread??");
+                                            }
+                                        } {
+                                            lock.remove_connection(&peer_id);
+                                        }
                                     }
-                                });
-                            } else {
-                                drop(lock);
-                                // set stream no-blocking for single thread
-                                match arc_connection.set_blocking(false) {
-                                    Ok(_) => {
-                                        // register this connection to the server
-                                        zelf.write().unwrap().add_connection(arc_connection.clone());
-                                        println!("Connection added in singlethread mode!");
-                                    },
-                                    Err(e) => {
-                                        println!("Error while trying to set Connection to no-blocking: {}", e);
-                                        let _ = arc_connection.close(); // can't support non blocking ? remove connection
-                                    }
+                                },
+                                Err(e) => {
+                                    println!("Error while trying to set Connection to no-blocking: {}", e);
                                 }
                             }
                         }
@@ -342,22 +452,14 @@ impl P2pServer {
     }
 
     // Listen to incoming packets from a connection
-    // return true if it should be considered as disconnected
     fn listen_connection(zelf: &Arc<RwLock<P2pServer>>, buf: &mut [u8], connection: &Arc<Connection>) {
         match connection.read_bytes(buf) {
             Ok(0) => {
                 zelf.write().unwrap().remove_connection(&connection.get_peer_id());
-                println!("{} disconnected", connection);
             },
             Ok(n) => {
-                //println!("{}: {}", connection, String::from_utf8_lossy(&buf[0..n]));
-                for connection in zelf.read().unwrap().get_connections() {
-                    if let Err(e) = connection.send_bytes(&buf[0..n]) {
-                        println!("Error while trying to send bytes: {}", e);
-                         // Peer have maybe disconnected
-                        zelf.write().unwrap().remove_connection(&connection.get_peer_id());
-                    }
-                }
+                println!("{}: {}", connection, String::from_utf8_lossy(&buf[0..n]));
+                zelf.read().unwrap().broadcast_bytes(&buf[0..n]);
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => { // shouldn't happens if server is multithreaded
                 // Don't do anything
