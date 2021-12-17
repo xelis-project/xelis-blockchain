@@ -133,10 +133,11 @@ fn test_p2p() {
                     let handshake = Handshake::new(VERSION.to_owned(), Some(format!("user #{}", i)), NETWORK_ID, i, get_current_time(), 0, Hash::zero(), vec![String::from("127.0.0.1:2126")]);
                     let _ = stream.write(&handshake.to_bytes());
                     let msg: String = format!("Hello world from client {}", i);
-                    for i in 0..10 {
-                        thread::sleep(Duration::from_millis(i * 500));
+                    for _ in 0..30 {
+                        thread::sleep(Duration::from_millis(150));
                         let _ = stream.write(msg.as_bytes());
                     }
+                    println!("DISCONNECTED!");
                     let _ = stream.shutdown(Shutdown::Both);
                 },
                 Err(e) => panic!("{}", e)
@@ -144,6 +145,8 @@ fn test_p2p() {
         });
     }
 
-    let server = P2pServer::new(1337, Some(String::from("Server 1337")), 17, String::from("127.0.0.1:2125"));
+    let server = P2pServer::new(1337, Some(String::from("Server 1337")), 17, false, String::from("127.0.0.1:2125"));
     server.start();
+
+    loop {}
 }

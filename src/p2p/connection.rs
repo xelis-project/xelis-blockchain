@@ -1,7 +1,10 @@
+use super::error::P2pError;
 use std::net::{TcpStream, SocketAddr, Shutdown};
-use std::io::{Write, Read, Result};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::io::{Write, Read, Result, ErrorKind};
+
+type P2pResult<T> = std::result::Result<T, P2pError>;
 
 pub struct Connection {
     id: u64, // TODO use a UUID
@@ -13,7 +16,8 @@ pub struct Connection {
     out: bool, // True mean we are the client
     bytes_in: AtomicUsize, // total bytes read
     bytes_out: AtomicUsize, // total bytes sent
-    closed: AtomicBool // if Connection#close() is called, close is set to true
+    closed: AtomicBool, // if Connection#close() is called, close is set to true
+    blocking: AtomicBool // blocking until something is sent or not
 }
 
 impl Connection {
@@ -28,26 +32,50 @@ impl Connection {
             out,
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
-            closed: AtomicBool::new(false)
+            closed: AtomicBool::new(false),
+            blocking: AtomicBool::new(true)
         }
     }
 
-    pub fn send_bytes(&self, buf: &[u8]) {
-        if let Err(e) = self.stream.lock().unwrap().write(buf) {
-            panic!("Error while sending bytes to connection {}: {}", self.id, e);
-        }
-        self.bytes_out.fetch_add(buf.len(), Ordering::Relaxed);
+    // Set the connection thread blocking or not
+    pub fn set_blocking(&self, blocking: bool) -> Result<()> {
+        let result = self.stream.lock().unwrap().set_nonblocking(!blocking);
+        match &result {
+            Ok(_) => {
+                self.blocking.store(blocking, Ordering::Relaxed);
+            }
+            _ => {}
+        };
+        result
     }
 
+    pub fn send_bytes(&self, buf: &[u8]) -> P2pResult<()> {
+        match self.stream.lock() {
+            Ok(mut lock) => match lock.write(buf) {
+                Ok(_) => {
+                    self.bytes_out.fetch_add(buf.len(), Ordering::Relaxed);
+                    Ok(())
+                },
+                Err(e) => Err(P2pError::OnWrite(format!("{}", e)))
+            },
+            Err(e) => Err(P2pError::OnLock(format!("{}", e)))
+        }
+    }
+
+    // this function will wait until something is sent to the socket
+    // this return the size of data read & set in the buffer.
     pub fn read_bytes(&self, buf: &mut [u8]) -> Result<usize> {
         let result = self.stream.lock().unwrap().read(buf);
         match &result {
             Ok(0) => {
-                self.closed.store(true, Ordering::Relaxed);
+                if let Err(e) = self.close() {
+                    return Err(e);
+                }
+                //self.closed.store(true, Ordering::Relaxed);
             }
             Ok(n) => {
                 self.bytes_in.fetch_add(*n, Ordering::Relaxed);
-            }
+            },
             _ => {}
         };
         result
@@ -93,6 +121,10 @@ impl Connection {
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
+
+    pub fn is_blocking(&self) -> bool {
+        self.blocking.load(Ordering::Relaxed)
+    }
 }
 
 use std::fmt::{Display, Error, Formatter};
@@ -105,6 +137,6 @@ impl Display for Connection {
             String::from("None")
         };
 
-        write!(f, "Connection[peer: {}, version: {}, node tag: {}, peer_id: {}, block_height: {}, out: {}, read: {} kB, sent: {} kB, closed: {}]", self.get_peer_address(), self.get_version(), node_tag, self.get_peer_id(), self.get_block_height(), self.is_out(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.is_closed())
+        write!(f, "Connection[peer: {}, version: {}, node tag: {}, peer_id: {}, block_height: {}, out: {}, read: {} kB, sent: {} kB, closed: {},  blocking: {}]", self.get_peer_address(), self.get_version(), node_tag, self.get_peer_id(), self.get_block_height(), self.is_out(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.is_closed(), self.is_blocking())
     }
 }

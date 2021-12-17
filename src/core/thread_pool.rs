@@ -1,5 +1,5 @@
 use std::thread;
-use std::sync::mpsc;
+use std::sync::mpsc::{Sender, Receiver, channel};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -10,11 +10,10 @@ enum Message {
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    sender: mpsc::Sender<Message>
+    sender: Sender<Message>
 }
 
 struct Worker {
-    id: usize,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -24,12 +23,12 @@ impl ThreadPool {
     pub fn new(size: usize) -> Self {
         assert!(size > 0);
 
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = channel();
         let receiver = Arc::new(Mutex::new(receiver));
         let mut workers = Vec::with_capacity(size);
 
-        for id in 0..size {
-            workers.push(Worker::new(id, Arc::clone(&receiver)));
+        for _ in 0..size {
+            workers.push(Worker::new(Arc::clone(&receiver)));
         }
 
         ThreadPool {
@@ -66,7 +65,7 @@ impl Drop for ThreadPool {
 }
 
 impl Worker {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Self {
+    fn new(receiver: Arc<Mutex<Receiver<Message>>>) -> Self {
         let thread = thread::spawn(move || loop {
             let message = receiver.lock().unwrap().recv().unwrap();
             match message {
@@ -78,12 +77,7 @@ impl Worker {
         });
 
         Worker {
-            id,
             thread: Some(thread)
         }
-    }
-
-    pub fn get_id(&self) -> usize {
-        self.id
     }
 }

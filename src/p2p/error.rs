@@ -1,8 +1,12 @@
+use std::fmt::{Display, Error, Formatter};
+
 pub enum P2pError {
     InvalidHandshake,
     InvalidPeerAddress(String), // peer address from handshake
     InvalidNetworkID,
     PeerIdAlreadyUsed(u64),
+    OnWrite(String),
+    OnLock(String),
     // Handshake
     InvalidMinSize(usize),
     InvalidVersionSize(usize),
@@ -10,9 +14,6 @@ pub enum P2pError {
     InvalidPeerSize(usize),
     InvalidUtf8Sequence(String)
 }
-
-
-use std::fmt::{Display, Error, Formatter};
 
 impl Display for P2pError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
@@ -23,6 +24,8 @@ impl Display for P2pError {
             InvalidNetworkID => write!(f, "Invalid network ID"),
             PeerIdAlreadyUsed(id) => write!(f, "Peer id {} is already used!", id),
             InvalidMinSize(got) => write!(f, "Invalid minimum handshake bytes size, got {} bytes", got),
+            OnWrite(msg) => write!(f, "Bytes were not sent, error: {}", msg),
+            OnLock(msg) => write!(f, "Error while trying to lock: {}", msg),
             InvalidVersionSize(got) => write!(f, "Invalid version size, got {} bytes", got),
             InvalidTagSize(got) => write!(f, "Invalid tag size, got {} bytes", got),
             InvalidPeerSize(got) => write!(f, "Invalid peer size, got {} bytes", got),
