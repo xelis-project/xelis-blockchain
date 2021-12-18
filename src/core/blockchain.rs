@@ -27,7 +27,7 @@ impl Account {
 }
 
 #[derive(serde::Serialize)]
-pub struct Blockchain {
+pub struct Blockchain<T: P2pServer> {
     blocks: Vec<CompleteBlock>, // all blocks in blockchain: TODO use storage
     height: u64, // current block height 
     supply: u64, // current circulating supply based on coins already emitted
@@ -35,12 +35,12 @@ pub struct Blockchain {
     difficulty: u64, // difficulty for next block
     mempool: Mempool, // mempool to retrieve/add all txs
     #[serde(skip_serializing)]
-    p2p: P2pServer, // p2p to broadcast/receive new blocks
+    p2p: T, // p2p to broadcast/receive new blocks
     accounts: HashMap<PublicKey, Account>, // all accounts registered on chain: TODO use storage
     dev_address: PublicKey // Dev address for block fee
 }
 
-impl Blockchain {
+impl<T: P2pServer> Blockchain<T> {
     pub fn new(dev_key: PublicKey) -> Self {
         let mut blockchain = Blockchain {
             blocks: vec![],
@@ -50,7 +50,7 @@ impl Blockchain {
             difficulty: MINIMUM_DIFFICULTY,
             mempool: Mempool::new(),
             accounts: HashMap::new(),
-            p2p: P2pServer::new(0, None, 8, false, String::from("127.0.0.1:2125")),
+            p2p: P2pServer::new(0, None, 8, String::from("127.0.0.1:2125")),
             dev_address: dev_key
         };
 
@@ -347,7 +347,9 @@ impl Blockchain {
         self.height += 1;
         self.top_hash = block_hash.clone();
         self.supply += block_reward;
-        self.p2p.broadcast_block(&block); // Broadcast block to other nodes
+        if let Err(e) = self.p2p.broadcast_bytes(&block.to_bytes()) { // Broadcast block to other nodes
+            println!("Error while broadcasting block: {}", e);
+        }
         self.blocks.push(block); // Add block to chain
 
         let mut total_block_time = 0;
@@ -533,7 +535,7 @@ pub fn calculate_tx_fee(tx_size: usize) -> u64 {
 
 use std::fmt::{Display, Error, Formatter};
 
-impl Display for Blockchain {
+impl<T: P2pServer> Display for Blockchain<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         write!(f, "Blockchain[height: {}, top_hash: {}, accounts: {}, supply: {}]", self.height, self.top_hash, self.accounts.len(), self.supply)
     }

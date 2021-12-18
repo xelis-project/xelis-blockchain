@@ -2,7 +2,7 @@ use super::error::P2pError;
 use std::net::{TcpStream, SocketAddr, Shutdown};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::io::{Write, Read, Result, ErrorKind};
+use std::io::{Write, Read, Result};
 
 type P2pResult<T> = std::result::Result<T, P2pError>;
 
@@ -38,15 +38,19 @@ impl Connection {
     }
 
     // Set the connection thread blocking or not
-    pub fn set_blocking(&self, blocking: bool) -> Result<()> {
-        let result = self.stream.lock().unwrap().set_nonblocking(!blocking);
-        match &result {
-            Ok(_) => {
-                self.blocking.store(blocking, Ordering::Relaxed);
-            }
-            _ => {}
-        };
-        result
+    pub fn set_blocking(&self, blocking: bool) -> P2pResult<()> {
+        match self.stream.lock() {
+            Ok(stream) => {
+                match stream.set_nonblocking(!blocking) {
+                    Ok(_) => {
+                        self.blocking.store(blocking, Ordering::Relaxed);
+                        Ok(())
+                    }
+                    Err(e) => Err(P2pError::OnStreamBlocking(blocking, format!("{}", e)))
+                }
+            },
+            Err(e) => Err(P2pError::OnLock(format!("set_blocking: {}", e)))
+        }
     }
 
     pub fn send_bytes(&self, buf: &[u8]) -> P2pResult<()> {

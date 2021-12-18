@@ -14,8 +14,10 @@ use crate::core::transaction::*;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
+use crate::p2p::server::P2pServer;
+use crate::p2p::single_thread_server::SingleThreadServer;
 
-fn mine_block(blockchain: &mut Blockchain, miner_key: &PublicKey) {
+fn mine_block(blockchain: &mut Blockchain<SingleThreadServer>, miner_key: &PublicKey) {
     let mut block = blockchain.get_block_template(miner_key.clone());
 
     loop {
@@ -49,7 +51,7 @@ fn mine_block(blockchain: &mut Blockchain, miner_key: &PublicKey) {
 
 }
 
-fn sign_and_send_tx(blockchain: &mut Blockchain, mut transaction: Transaction, keypair: &KeyPair) {
+fn sign_and_send_tx(blockchain: &mut Blockchain<SingleThreadServer>, mut transaction: Transaction, keypair: &KeyPair) {
     println!("adding tx: {}, registration: {}", transaction.hash(), transaction.is_registration());
 
     if !transaction.is_registration() {
@@ -63,7 +65,7 @@ fn sign_and_send_tx(blockchain: &mut Blockchain, mut transaction: Transaction, k
     }
 }
 
-fn create_registration_transaction(blockchain: &mut Blockchain, keypair: &KeyPair) {
+fn create_registration_transaction(blockchain: &mut Blockchain<SingleThreadServer>, keypair: &KeyPair) {
     let tx_registration = match Transaction::new_registration(keypair.get_public_key().clone()) {
         Err(e) => panic!("Error on tx registration creation: {}", e),
         Ok(value) => value
@@ -122,7 +124,6 @@ fn test_p2p() {
     use std::net::{TcpStream, SocketAddr, Shutdown};
     use std::thread;
     use std::time::Duration;
-    use crate::p2p::server::P2pServer;
 
     for i in 1..=4 {
         thread::spawn(move || {
@@ -145,7 +146,7 @@ fn test_p2p() {
         });
     }
 
-    let server = P2pServer::new(1337, Some(String::from("Server 1337")), 17, false, String::from("127.0.0.1:2125"));
+    let server: SingleThreadServer = P2pServer::new(1337, Some(String::from("Server 1337")), 17, String::from("127.0.0.1:2125"));
     server.start();
 
     loop {}
