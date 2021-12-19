@@ -35,26 +35,31 @@ impl SingleThreadServer {
         let mut connections: HashMap<u64, Arc<Connection>> = HashMap::new();
         let mut buf: [u8; 512] = [0; 512]; // allocate this buffer only one time
         loop {
-            while let Ok(msg) = self.receiver.lock().unwrap().try_recv() { // read all messages from channel
-                match msg {
-                    Message::Exit => {
-                        return;
-                    },
-                    Message::AddConnection(connection) => {
-                        connections.insert(connection.get_peer_id(), connection);
-                    }
-                    Message::RemoveConnection(peer_id) => {
-                        connections.remove(&peer_id);
-                    }
-                    Message::SendBytes(peer_id, bytes) => {
-                        if let Some(connection) = connections.get(&peer_id) {
-                            if let Err(e) = connection.send_bytes(&bytes) {
-                                println!("Error on sending bytes: {}", e);
+            match self.receiver.lock() {
+                Ok(receiver) => {
+                    while let Ok(msg) = receiver.try_recv() { // read all messages from channel
+                        match msg {
+                            Message::Exit => {
+                                return;
+                            },
+                            Message::AddConnection(connection) => {
+                                connections.insert(connection.get_peer_id(), connection);
+                            }
+                            Message::RemoveConnection(peer_id) => {
                                 connections.remove(&peer_id);
+                            }
+                            Message::SendBytes(peer_id, bytes) => {
+                                if let Some(connection) = connections.get(&peer_id) {
+                                    if let Err(e) = connection.send_bytes(&bytes) {
+                                        println!("Error on sending bytes: {}", e);
+                                        connections.remove(&peer_id);
+                                    }
+                                }
                             }
                         }
                     }
-                }
+                },
+                Err(e) => panic!("Couldn't lock receiver! {}", e)
             }
 
             for connection in connections.values() {
@@ -115,8 +120,15 @@ impl P2pServer for SingleThreadServer {
             Err(e) => println!("error while getting ids: {}", e)
         };
 
-        if let Err(e) = self.sender.lock().unwrap().send(Message::Exit) {
-            println!("Error while sending message to exit: {}", e);
+        match self.sender.lock() {
+            Ok(sender) => {
+                if let Err(e) = sender.send(Message::Exit) {
+                    println!("Error while sending message to exit: {}", e);
+                }
+            },
+            Err(e) => {
+                panic!("Couldn't get lock on sender! {}", e);
+            }
         }
     } 
 
@@ -137,7 +149,10 @@ impl P2pServer for SingleThreadServer {
     }
 
     fn get_peer_count(&self) -> usize {
-        self.connections.lock().unwrap().len()
+        match self.connections.lock() {
+            Ok(connections) => connections.len(),
+            Err(_) => 0
+        }
     }
 
     fn get_slots_available(&self) -> usize {
@@ -154,12 +169,17 @@ impl P2pServer for SingleThreadServer {
     }
 
     fn is_connected_to_addr(&self, peer_addr: &SocketAddr) -> Result<bool, P2pError> {
-        for connection in self.get_connections()? {
-            if *connection.get_peer_address() == *peer_addr {
-                return Ok(true)
-            }
+        match self.connections.lock() {
+            Ok(connections) => {
+                for connection in connections.values() {
+                    if *connection.get_peer_address() == *peer_addr {
+                        return Ok(true)
+                    }
+                }
+                Ok(false)
+            },
+            Err(e) => Err(P2pError::OnLock(format!("is connected to {}: {}", peer_addr, e)))
         }
-        Ok(false)
     }
 
     fn is_multi_threaded(&self) -> bool {
@@ -215,29 +235,32 @@ impl P2pServer for SingleThreadServer {
     }
 
     fn remove_connection(&self, peer_id: &u64) -> Result<(), P2pError> {
-        match self.connections.lock().unwrap().remove(peer_id) {
-            Some(connection) => {
-                if !connection.is_closed() {
-                    if let Err(e) = connection.close() {
-                        return Err(P2pError::OnConnectionClose(format!("trying to remove {}: {}", peer_id, e)));
-                    }
-                }
-                println!("{} disconnected", connection);
-
-                match self.sender.lock() {
-                    Ok(channel) => {
-                        if let Err(e) = channel.send(Message::RemoveConnection(*peer_id)) {
-                            Err(P2pError::OnChannelMessage(*peer_id, format!("{}", e)))
-                        } else {
-                            Ok(())
+        match self.connections.lock() {
+            Ok(mut connections) => match connections.remove(peer_id) {
+                Some(connection) => {
+                    if !connection.is_closed() {
+                        if let Err(e) = connection.close() {
+                            return Err(P2pError::OnConnectionClose(format!("trying to remove {}: {}", peer_id, e)));
                         }
                     }
-                    Err(e) => {
-                        Err(P2pError::OnLock(format!("trying to remove {}: {}", peer_id, e)))
+                    println!("{} disconnected", connection);
+    
+                    match self.sender.lock() {
+                        Ok(channel) => {
+                            if let Err(e) = channel.send(Message::RemoveConnection(*peer_id)) {
+                                Err(P2pError::OnChannelMessage(*peer_id, format!("{}", e)))
+                            } else {
+                                Ok(())
+                            }
+                        }
+                        Err(e) => {
+                            Err(P2pError::OnLock(format!("trying to remove {}: {}", peer_id, e)))
+                        }
                     }
-                }
+                },
+                None => Err(P2pError::PeerNotFound(*peer_id)),
             },
-            None => Err(P2pError::PeerNotFound(*peer_id)),
+            Err(e) => Err(P2pError::OnLock(format!("trying to remove {}: {}", peer_id, e)))
         }
     }
 

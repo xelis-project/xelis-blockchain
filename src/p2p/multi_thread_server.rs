@@ -1,4 +1,3 @@
-//use crate::core::thread_pool::ThreadPool;
 use super::server::P2pServer;
 use super::connection::Connection;
 use super::error::P2pError;
@@ -70,19 +69,19 @@ impl P2pServer for MultiThreadServer {
                 s.spawn(move |_| {
                     let mut buf: [u8; 512] = [0; 512];
                     let (sender, receiver) = channel();
-                    match self.thread_channels.lock() {
+                    match self.thread_channels.lock() { // register our unique channel
                         Ok(mut channels) => {
                             channels.insert(id, sender);
                         },
                         Err(e) => panic!("Error while trying to lock thread_channels: {}", e)
                     };
 
-                    'main: loop {
+                    loop {
                         let connection = match self.receiver.lock() {
                             Ok(chan) => match chan.recv() {
                                 Ok(msg) => {
                                     match msg {
-                                        ThreadMessage::Stop => break 'main,
+                                        ThreadMessage::Stop => return,
                                         ThreadMessage::Listen(connection) => connection
                                     }
                                 },
@@ -159,7 +158,10 @@ impl P2pServer for MultiThreadServer {
     }
 
     fn get_peer_count(&self) -> usize {
-        self.connections.lock().unwrap().len()
+        match self.connections.lock() {
+            Ok(connections) => connections.len(),
+            Err(_) => 0
+        }
     }
 
     fn get_slots_available(&self) -> usize {
@@ -176,12 +178,17 @@ impl P2pServer for MultiThreadServer {
     }
 
     fn is_connected_to_addr(&self, peer_addr: &SocketAddr) -> Result<bool, P2pError> {
-        for connection in self.get_connections()? {
-            if *connection.get_peer_address() == *peer_addr {
-                return Ok(true)
-            }
+        match self.connections.lock() {
+            Ok(connections) => {
+                for connection in connections.values() {
+                    if *connection.get_peer_address() == *peer_addr {
+                        return Ok(true)
+                    }
+                }
+                Ok(false)
+            },
+            Err(e) => Err(P2pError::OnLock(format!("is connected to {}: {}", peer_addr, e)))
         }
-        Ok(false)
     }
 
     fn is_multi_threaded(&self) -> bool {
@@ -235,39 +242,42 @@ impl P2pServer for MultiThreadServer {
     }
 
     fn remove_connection(&self, peer_id: &u64) -> Result<(), P2pError> {
-        match self.connections.lock().unwrap().remove(peer_id) {
-            Some(connection) => {
-                if !connection.is_closed() {
-                    if let Err(e) = connection.close() {
-                        return Err(P2pError::OnConnectionClose(format!("trying to remove {}: {}", peer_id, e)));
-                    }
-                }
-                println!("{} disconnected", connection);
-                match self.channels.lock() {
-                    Ok(mut channels) => {
-                        match channels.remove(peer_id) {
-                            Some(thread_id) => match self.thread_channels.lock() {
-                                Ok(channels) => match channels.get(&thread_id) {
-                                    Some(sender) => {
-                                        if let Err(e) = sender.send(Message::Exit) {
-                                            Err(P2pError::OnChannelMessage(*peer_id, format!("{}", e)))
-                                        } else {
-                                            Ok(())
-                                        }
-                                    }
-                                    None => panic!("No thread found for id {}", thread_id) // shouldn't happens
-                                },
-                                Err(e) => Err(P2pError::OnLock(format!("trying to get thread channels for thread {}: {}", thread_id, e)))
-                            },
-                            None => panic!("No channel found for a connection found!") // Shouldn't happen
+        match self.connections.lock() {
+            Ok(mut connections) => match connections.remove(peer_id) {
+                Some(connection) => {
+                    if !connection.is_closed() {
+                        if let Err(e) = connection.close() {
+                            return Err(P2pError::OnConnectionClose(format!("trying to remove {}: {}", peer_id, e)));
                         }
                     }
-                    Err(e) => {
-                        Err(P2pError::OnLock(format!("trying to get channels for {}: {}", peer_id, e)))
+                    println!("{} disconnected", connection);
+                    match self.channels.lock() {
+                        Ok(mut channels) => {
+                            match channels.remove(peer_id) {
+                                Some(thread_id) => match self.thread_channels.lock() {
+                                    Ok(channels) => match channels.get(&thread_id) {
+                                        Some(sender) => {
+                                            if let Err(e) = sender.send(Message::Exit) {
+                                                Err(P2pError::OnChannelMessage(*peer_id, format!("{}", e)))
+                                            } else {
+                                                Ok(())
+                                            }
+                                        }
+                                        None => panic!("No thread found for id {}", thread_id) // shouldn't happens
+                                    },
+                                    Err(e) => Err(P2pError::OnLock(format!("trying to get thread channels for thread {}: {}", thread_id, e)))
+                                },
+                                None => panic!("No channel found for a connection found!") // Shouldn't happen
+                            }
+                        }
+                        Err(e) => {
+                            Err(P2pError::OnLock(format!("trying to get channels for {}: {}", peer_id, e)))
+                        }
                     }
-                }
+                },
+                None => Err(P2pError::PeerNotFound(*peer_id)),
             },
-            None => Err(P2pError::PeerNotFound(*peer_id)),
+            Err(e) => Err(P2pError::OnLock(format!("trying to remove {}: {}", peer_id, e)))
         }
     }
 
@@ -283,7 +293,7 @@ impl P2pServer for MultiThreadServer {
     fn get_connections_id(&self) -> Result<Vec<u64>, P2pError> {
         match self.connections.lock() {
             Ok(connections) => {
-                Ok(connections.values().map(|arc| { arc.get_peer_id() }).collect()) // TODO Found a better way instead of cloning
+                Ok(connections.values().map(|arc| { arc.get_peer_id() }).collect())
             },
             Err(e) => Err(P2pError::OnLock(format!("trying to get connections id: {}", e)))
         }
