@@ -16,6 +16,7 @@ use std::io::prelude::*;
 use std::path::Path;
 use crate::p2p::server::P2pServer;
 use crate::p2p::single_thread_server::SingleThreadServer;
+use crate::p2p::multi_thread_server::MultiThreadServer;
 
 fn mine_block(blockchain: &mut Blockchain<SingleThreadServer>, miner_key: &PublicKey) {
     let mut block = blockchain.get_block_template(miner_key.clone());
@@ -146,7 +147,7 @@ fn test_p2p() {
         });
     }
 
-    let server: SingleThreadServer = P2pServer::new(1337, Some(String::from("Server 1337")), 17, String::from("127.0.0.1:2125"));
+    let server: MultiThreadServer = P2pServer::new(1337, Some(String::from("Server 1337")), 17, String::from("127.0.0.1:2125"));
     server.start();
 
     loop {}

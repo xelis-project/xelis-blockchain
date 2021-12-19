@@ -3,7 +3,7 @@ use super::connection::Connection;
 use super::error::P2pError;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
-use std::net::{TcpListener, SocketAddr, Shutdown};
+use std::net::SocketAddr;
 use std::sync::mpsc::{Sender, Receiver, channel};
 
 enum Message {
@@ -27,41 +27,6 @@ pub struct SingleThreadServer {
 }
 
 impl SingleThreadServer {
-
-    fn listen_new_connections(&self) {
-        println!("Connecting to seed nodes..."); // TODO only if peerlist is empty
-        // allocate this buffer only one time, because we are using the same thread
-        let mut buffer: [u8; 512] = [0; 512]; // maximum 512 bytes for handshake
-        if let Err(e) = self.connect_to_seed_nodes(&mut buffer) {
-            println!("Error while connecting to seed nodes: {}", e);
-        }
-
-        println!("Starting p2p server...");
-        let listener = TcpListener::bind(self.get_bind_address()).unwrap();
-
-        println!("Waiting for connections...");
-        for stream in listener.incoming() { // main thread verify all new connections
-            println!("New incoming connection");
-            match stream {
-                Ok(stream) => {
-                    if !self.accept_new_connections() { // if we have already reached the limit, we ignore this new connection
-                        println!("Max peers reached, rejecting connection");
-                        if let Err(e) = stream.shutdown(Shutdown::Both) {
-                            println!("Error while closing & ignoring incoming connection: {}", e);
-                        }
-                        continue;
-                    }
-
-                    if let Err(e) = self.handle_new_connection(&mut buffer, stream, false) {
-                        println!("Error on new connection: {}", e);
-                    }
-                }
-                Err(e) => {
-                    println!("Error while accepting new connection: {}", e);
-                }
-            }
-        }
-    }
 
     // listening connections thread
     fn listen_existing_connections(&self) {
@@ -100,8 +65,8 @@ impl SingleThreadServer {
 }
 
 impl Drop for SingleThreadServer {
-    fn drop(&mut self) { // TODO
-        let _ = self.sender.lock().unwrap().send(Message::Exit);
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
@@ -127,7 +92,7 @@ impl P2pServer for SingleThreadServer {
 
     fn start(&self) {
         use crossbeam::thread;
-        thread::scope(|s| {
+        thread::scope(|s| { // spawn a scope with 2 threads inside 
             s.spawn(|_| {
                 self.listen_new_connections();
             });
@@ -138,8 +103,21 @@ impl P2pServer for SingleThreadServer {
         }).unwrap();
     }
 
-    fn stop(self) {
-        // TODO close connections & stop threads,
+    fn stop(&self) {
+        match self.get_connections_id() {
+            Ok(peers) => {
+                for peer in peers {
+                    if let Err(e) = self.remove_connection(&peer) {
+                        println!("Error occured wile removing connection {}: {}", peer, e);
+                    }
+                }
+            },
+            Err(e) => println!("error while getting ids: {}", e)
+        };
+
+        if let Err(e) = self.sender.lock().unwrap().send(Message::Exit) {
+            println!("Error while sending message to exit: {}", e);
+        }
     } 
 
     fn get_tag(&self) -> &Option<String> {
@@ -206,8 +184,6 @@ impl P2pServer for SingleThreadServer {
         }
     }
 
-    // return a 'Receiver' struct if we are in multi thread mode
-    // in single mode, we only have one channel
     fn add_connection(&self, connection: Connection) -> Result<(), P2pError> {
         match self.connections.lock() {
             Ok(mut connections) => {
@@ -271,6 +247,15 @@ impl P2pServer for SingleThreadServer {
                 Ok(connections.values().map(|arc| { arc.clone() }).collect()) // TODO Found a better way instead of cloning
             },
             Err(e) => Err(P2pError::OnLock(format!("trying to get connections: {}", e)))
+        }
+    }
+
+    fn get_connections_id(&self) -> Result<Vec<u64>, P2pError> {
+        match self.connections.lock() {
+            Ok(connections) => {
+                Ok(connections.values().map(|arc| { arc.get_peer_id() }).collect()) // TODO Found a better way instead of cloning
+            },
+            Err(e) => Err(P2pError::OnLock(format!("trying to get connections id: {}", e)))
         }
     }
 

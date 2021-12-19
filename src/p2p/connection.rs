@@ -75,7 +75,6 @@ impl Connection {
                 if let Err(e) = self.close() {
                     return Err(e);
                 }
-                //self.closed.store(true, Ordering::Relaxed);
             }
             Ok(n) => {
                 self.bytes_in.fetch_add(*n, Ordering::Relaxed);

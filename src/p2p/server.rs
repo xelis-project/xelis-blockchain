@@ -7,12 +7,12 @@ use super::error::P2pError;
 use std::sync::{Arc};
 use std::io::prelude::{Write, Read};
 use std::io::ErrorKind;
-use std::net::{TcpStream, SocketAddr, Shutdown};
+use std::net::{TcpListener, TcpStream, SocketAddr, Shutdown};
 
 pub trait P2pServer {
     fn new(peer_id: u64, tag: Option<String>, max_peers: usize, bind_address: String) -> Self;
     fn start(&self);
-    fn stop(self);
+    fn stop(&self);
     fn get_peer_id(&self) -> u64;
     fn get_tag(&self) -> &Option<String>;
     fn get_max_peers(&self) -> usize;
@@ -25,6 +25,7 @@ pub trait P2pServer {
     fn add_connection(&self, connection: Connection) -> Result<(), P2pError>;
     fn remove_connection(&self, peer_id: &u64) -> Result<(), P2pError>;
     fn get_connections(&self) -> Result<Vec<Arc<Connection>>, P2pError>;
+    fn get_connections_id(&self) -> Result<Vec<u64>, P2pError>;
     fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError>;
     fn is_connected_to_addr(&self, peer_addr: &SocketAddr) -> Result<bool, P2pError>;
     fn send_to_peer(&self, peer_id: u64, bytes: Vec<u8>) -> Result<(), P2pError>;
@@ -45,6 +46,44 @@ pub trait P2pServer {
         }
 
         Ok(())
+    }
+
+
+    // connect to seed nodes, start p2p server
+    // and wait on all new connections
+    fn listen_new_connections(&self) {
+        println!("Connecting to seed nodes..."); // TODO only if peerlist is empty
+        // allocate this buffer only one time, because we are using the same thread
+        let mut buffer: [u8; 512] = [0; 512]; // maximum 512 bytes for handshake
+        if let Err(e) = self.connect_to_seed_nodes(&mut buffer) {
+            println!("Error while connecting to seed nodes: {}", e);
+        }
+
+        println!("Starting p2p server...");
+        let listener = TcpListener::bind(self.get_bind_address()).unwrap();
+
+        println!("Waiting for connections...");
+        for stream in listener.incoming() { // main thread verify all new connections
+            println!("New incoming connection");
+            match stream {
+                Ok(stream) => {
+                    if !self.accept_new_connections() { // if we have already reached the limit, we ignore this new connection
+                        println!("Max peers reached, rejecting connection");
+                        if let Err(e) = stream.shutdown(Shutdown::Both) {
+                            println!("Error while closing & ignoring incoming connection: {}", e);
+                        }
+                        continue;
+                    }
+
+                    if let Err(e) = self.handle_new_connection(&mut buffer, stream, false) {
+                        println!("Error on new connection: {}", e);
+                    }
+                }
+                Err(e) => {
+                    println!("Error while accepting new connection: {}", e);
+                }
+            }
+        }
     }
 
     // send bytes in param to all connected peers
