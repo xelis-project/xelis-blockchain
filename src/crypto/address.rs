@@ -1,5 +1,5 @@
 use super::key::PublicKey;
-use super::hash::Hashable;
+use crate::core::serializer::Serializer;
 
 const PAYMENT_ID_SIZE: usize = 8; //8 bytes for paymentID
 
@@ -20,7 +20,7 @@ impl Address {
     }
 }
 
-impl Hashable for AddressType {
+impl Serializer for AddressType {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes: Vec<u8> = vec![];
         match self {
@@ -34,9 +34,13 @@ impl Hashable for AddressType {
         };
         bytes
     }
+
+    fn from_bytes(buf: &[u8]) -> Option<Box<AddressType>> {
+        None // TODO
+    }
 }
 
-impl Hashable for Address {
+impl Serializer for Address {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes: Vec<u8> = vec![];
         bytes.push(if self.mainnet { 1 } else { 0 });
@@ -44,5 +48,9 @@ impl Hashable for Address {
         bytes.extend(&self.pub_key.to_bytes());
 
         bytes
+    }
+
+    fn from_bytes(buf: &[u8]) -> Option<Box<Address>> {
+        None // TODO
     }
 }

@@ -4,6 +4,7 @@ pub enum P2pError {
     InvalidHandshake,
     InvalidPeerAddress(String), // peer address from handshake
     InvalidNetworkID,
+    TryInto(String),
     ChannelNotFound(u64),
     PeerNotFound(u64),
     PeerIdAlreadyUsed(u64),
@@ -27,6 +28,7 @@ impl Display for P2pError {
             InvalidHandshake => write!(f, "Invalid handshake"),
             InvalidPeerAddress(msg) => write!(f, "Invalid peer address, {}", msg),
             InvalidNetworkID => write!(f, "Invalid network ID"),
+            TryInto(err) => write!(f, "Error on try into: {}", err),
             ChannelNotFound(peer_id) => write!(f, "No channel found for peer {}", peer_id),
             PeerNotFound(peer_id) => write!(f, "Peer {} not found", peer_id),
             PeerIdAlreadyUsed(id) => write!(f, "Peer id {} is already used!", id),

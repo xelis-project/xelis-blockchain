@@ -65,6 +65,7 @@ impl P2pServer for MultiThreadServer {
                 self.listen_new_connections();
             });
 
+            println!("Generating {} threads...", self.get_max_peers());
             for id in 0..self.get_max_peers() {
                 s.spawn(move |_| {
                     let mut buf: [u8; 512] = [0; 512];

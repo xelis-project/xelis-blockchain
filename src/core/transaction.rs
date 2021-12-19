@@ -1,8 +1,9 @@
-use crate::crypto::hash::{Hash, Hashable};
+use crate::crypto::hash::{Hash, Hashable, hash};
 use crate::crypto::key::{PublicKey, KeyPair, Signature, SIGNATURE_LENGTH};
 use crate::config::REGISTRATION_DIFFICULTY;
-use crate::core::error::BlockchainError;
-use crate::core::difficulty::check_difficulty;
+use super::error::BlockchainError;
+use super::difficulty::check_difficulty;
+use super::serializer::Serializer;
 use std::collections::HashMap;
 
 #[derive(serde::Serialize, Clone)]
@@ -34,7 +35,7 @@ pub enum TransactionData {
     UploadSmartContract(String),
 }
 
-impl Hashable for TransactionData {
+impl Serializer for TransactionData {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![];
         match self {
@@ -76,6 +77,10 @@ impl Hashable for TransactionData {
         }
         bytes
     }
+
+    fn from_bytes(buf: &[u8]) -> Option<Box<TransactionData>> {
+        None // TODO
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -116,6 +121,17 @@ impl Transaction {
 
         tx.calculate_hash()?;
         Ok(tx)
+    }
+
+    pub fn verify_signature(&self) -> bool {
+        match &self.signature {
+            Some(signature) => {
+                let bytes = self.to_bytes();
+                let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
+                self.get_sender().verify_signature(&hash(bytes), signature)
+            },
+            None => false
+        }
     }
 
     pub fn get_signature(&self) -> &Option<Signature> {
@@ -188,19 +204,14 @@ impl Transaction {
             _ => false 
         }
     }
+
+    pub fn from_bytes(buf: &[u8]) -> Option<Transaction> {
+        let nonce = u64::from_be_bytes([0u8; 8]);
+        None
+    }
 }
 
-impl Hashable for Transaction {
-
-    fn size(&self) -> usize {
-        let size = self.to_bytes().len() + match &self.signature {
-            Some(_) => SIGNATURE_LENGTH,
-            None => 0,
-        };
-
-        size
-    }
-
+impl Serializer for Transaction {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![];
 
@@ -208,8 +219,19 @@ impl Hashable for Transaction {
         bytes.extend(self.data.to_bytes()); // 16 + 1 (coinbase tx)
         bytes.extend(&self.owner.to_bytes()); // 32
         bytes.extend(&self.fee.to_be_bytes()); // 8
-        //TODO add signature
+        match &self.signature {
+            Some(signature) => {
+                bytes.extend(&signature.to_bytes())
+            },
+            None => {}
+        }
 
         bytes
     }
+
+    fn from_bytes(buf: &[u8]) -> Option<Box<Transaction>> {
+        None // TODO
+    }
 }
+
+impl Hashable for Transaction {}

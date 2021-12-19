@@ -1,6 +1,9 @@
 use crate::config::{VERSION, NETWORK_ID, SEED_NODES};
 use crate::crypto::hash::Hash;
 use crate::globals::get_current_time;
+use crate::core::serializer::Serializer;
+use crate::core::transaction::Transaction;
+use crate::core::block::CompleteBlock;
 use super::connection::Connection;
 use super::handshake::Handshake;
 use super::error::P2pError;
@@ -88,10 +91,22 @@ pub trait P2pServer {
 
     // send bytes in param to all connected peers
     fn broadcast_bytes(&self, buf: &[u8]) -> Result<(), P2pError> {
-        for connection in self.get_connections()? {
-            self.send_to_peer(connection.get_peer_id(),buf.to_vec())?;
+        for connection in self.get_connections_id()? {
+            self.send_to_peer(connection, buf.to_vec())?;
         }
         Ok(())
+    }
+
+    fn broadcast_tx(&self, tx: &Transaction) -> Result<(), P2pError> {
+        let mut bytes: Vec<u8> = tx.to_bytes();
+        bytes.insert(0, 0); // id 0 for tx
+        self.broadcast_bytes(&bytes)
+    }
+
+    fn broadcast_block(&self, block: &CompleteBlock) -> Result<(), P2pError> {
+        let mut bytes = block.to_bytes();
+        bytes.insert(0, 1); // id 1 for block
+        self.broadcast_bytes(&bytes)
     }
 
     // Verify handshake send by a new connection
@@ -218,8 +233,16 @@ pub trait P2pServer {
                 let _ = self.remove_connection(&connection.get_peer_id());
             },
             Ok(n) => {
-                println!("{}: {}", connection, String::from_utf8_lossy(&buf[0..n]));
-                let _ = self.broadcast_bytes(&buf[0..n]);
+                let id = buf[0];
+                match id {
+                    0 => { // TODO tx from bytes
+
+                    },
+                    1 => { // TODO block from bytes
+
+                    },
+                    _ => println!("Not implemented!")
+                }
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => { // shouldn't happens if server is multithreaded
                 // Don't do anything

@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use crate::crypto::hash::Hash;
+use super::serializer::Serializer;
 use super::transaction::Transaction;
 use super::error::BlockchainError;
-use crate::crypto::hash::{Hash, Hashable};
+use std::collections::HashMap;
 
 #[derive(serde::Serialize)]
 pub struct SortedTx {

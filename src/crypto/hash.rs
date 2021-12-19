@@ -51,13 +51,8 @@ impl serde::Serialize for Hash {
     }
 }
 
-pub trait Hashable {
-    fn to_bytes(&self) -> Vec<u8>;
-
-    fn size(&self) -> usize {
-        self.to_bytes().len()
-    }
-
+use crate::core::serializer::Serializer;
+pub trait Hashable: Serializer {
     fn hash(&self) -> Hash {
         let bytes = self.to_bytes();
         hash(&bytes)

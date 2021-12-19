@@ -18,7 +18,7 @@ use crate::p2p::server::P2pServer;
 use crate::p2p::single_thread_server::SingleThreadServer;
 use crate::p2p::multi_thread_server::MultiThreadServer;
 
-fn mine_block(blockchain: &mut Blockchain<SingleThreadServer>, miner_key: &PublicKey) {
+fn mine_block<T: P2pServer>(blockchain: &mut Blockchain<T>, miner_key: &PublicKey) {
     let mut block = blockchain.get_block_template(miner_key.clone());
 
     loop {
@@ -52,7 +52,7 @@ fn mine_block(blockchain: &mut Blockchain<SingleThreadServer>, miner_key: &Publi
 
 }
 
-fn sign_and_send_tx(blockchain: &mut Blockchain<SingleThreadServer>, mut transaction: Transaction, keypair: &KeyPair) {
+fn sign_and_send_tx<T: P2pServer>(blockchain: &mut Blockchain<T>, mut transaction: Transaction, keypair: &KeyPair) {
     println!("adding tx: {}, registration: {}", transaction.hash(), transaction.is_registration());
 
     if !transaction.is_registration() {
@@ -66,7 +66,7 @@ fn sign_and_send_tx(blockchain: &mut Blockchain<SingleThreadServer>, mut transac
     }
 }
 
-fn create_registration_transaction(blockchain: &mut Blockchain<SingleThreadServer>, keypair: &KeyPair) {
+fn create_registration_transaction<T: P2pServer>(blockchain: &mut Blockchain<T>, keypair: &KeyPair) {
     let tx_registration = match Transaction::new_registration(keypair.get_public_key().clone()) {
         Err(e) => panic!("Error on tx registration creation: {}", e),
         Ok(value) => value
@@ -77,11 +77,11 @@ fn create_registration_transaction(blockchain: &mut Blockchain<SingleThreadServe
 
 fn main() {
     println!("Xelis Blockchain - pre-alpha");
-    test_p2p();
+    //test_p2p();
 
     let main_keypair: KeyPair = KeyPair::new();
     println!("Generated main address: {}", main_keypair.get_public_key().to_address().unwrap());
-    let mut blockchain = Blockchain::new(main_keypair.get_public_key().clone());
+    let mut blockchain = Blockchain::new(main_keypair.get_public_key().clone(), MultiThreadServer::new(0, None, 8, String::from("127.0.0.1:2125")));
 
     let dummy_keypair: KeyPair = KeyPair::new();
     println!("Generated address: {}", dummy_keypair.get_public_key().to_address().unwrap());
@@ -147,8 +147,6 @@ fn test_p2p() {
         });
     }
 
-    let server: MultiThreadServer = P2pServer::new(1337, Some(String::from("Server 1337")), 17, String::from("127.0.0.1:2125"));
+    let server: SingleThreadServer = P2pServer::new(1337, Some(String::from("Server 1337")), 17, String::from("127.0.0.1:2125"));
     server.start();
-
-    loop {}
 }

@@ -1,5 +1,6 @@
 use crate::crypto::hash::{Hash, Hashable};
 use super::transaction::Transaction;
+use super::serializer::Serializer;
 
 const EXTRA_NONCE_SIZE: usize = 32;
 const BLOCK_WORK_SIZE: usize = 152;
@@ -121,7 +122,7 @@ impl CompleteBlock {
     }
 }
 
-impl Hashable for Block {
+impl Serializer for Block {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes: Vec<u8> = vec![];
 
@@ -139,13 +140,25 @@ impl Hashable for Block {
 
         bytes
     }
+
+    fn from_bytes(buf: &[u8]) -> Option<Box<Block>> {
+        None // TODO
+    }
 }
 
-impl Hashable for CompleteBlock {
+impl Hashable for Block {}
+
+impl Serializer for CompleteBlock {
     fn to_bytes(&self) -> Vec<u8> {
         self.block.to_bytes()
     }
+
+    fn from_bytes(buf: &[u8]) -> Option<Box<CompleteBlock>> {
+        None // TODO
+    }
 }
+
+impl Hashable for CompleteBlock {}
 
 use std::fmt::{Error, Display, Formatter};
 

@@ -101,7 +101,10 @@ impl Handshake {
             return Err(P2pError::InvalidVersionSize(version_len))
         }
 
-        let version = String::from_utf8(data[n..n+version_len].try_into().unwrap()).unwrap();
+        let version = match String::from_utf8(data[n..n+version_len].to_vec()) {
+            Ok(v) => v,
+            Err(e) => return Err(P2pError::InvalidUtf8Sequence(format!("version: {}", e)))
+        };
         n += version_len;
 
         // Node Tag
@@ -124,19 +127,34 @@ impl Handshake {
         };
         n += node_tag_len;
 
-        let network_id: [u8; 16] = data[n..n+16].try_into().unwrap();
+        let network_id: [u8; 16] = match data[n..n+16].try_into() {
+            Ok(v) => v,
+            Err(e) => return Err(P2pError::TryInto(format!("network id: {}", e)))
+        };
         n += 16;
 
-        let peer_id = u64::from_be_bytes(data[n..n+8].try_into().unwrap());
+        let peer_id = u64::from_be_bytes(match data[n..n+8].try_into() {
+            Ok(v) => v,
+            Err(e) => return Err(P2pError::TryInto(format!("peer id: {}", e)))
+        });
         n += 8;
 
-        let utc_time = u64::from_be_bytes(data[n..n+8].try_into().unwrap());
+        let utc_time = u64::from_be_bytes(match data[n..n+8].try_into() {
+            Ok(v) => v,
+            Err(e) => return Err(P2pError::TryInto(format!("UTC time: {}", e)))
+        });
         n += 8;
 
-        let block_height = u64::from_be_bytes(data[n..n+8].try_into().unwrap());
+        let block_height = u64::from_be_bytes(match data[n..n+8].try_into() {
+            Ok(v) => v,
+            Err(e) => return Err(P2pError::TryInto(format!("block height: {}", e)))
+        });
         n += 8;
 
-        let block_top_hash = Hash::new(data[n..n+32].try_into().unwrap());
+        let block_top_hash = Hash::new(match data[n..n+32].try_into() {
+            Ok(v) => v,
+            Err(e) => return Err(P2pError::TryInto(format!("block top hash: {}", e)))
+        });
         n += 32;
 
         let peers_len = data[n] as usize;
@@ -155,7 +173,10 @@ impl Handshake {
             }
 
             n += 1;
-            let peer = String::from_utf8(data[n..n+size].try_into().unwrap()).unwrap();
+            let peer = match String::from_utf8(data[n..n+size].to_vec()) {
+                Ok(v) => v,
+                Err(e) => return Err(P2pError::InvalidUtf8Sequence(format!("peer: {}", e)))
+            };
             n += size;
 
             peers.push(peer);

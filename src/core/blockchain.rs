@@ -1,14 +1,15 @@
-use crate::globals::get_current_time;
-use super::block::{Block, CompleteBlock};
-use super::difficulty::{check_difficulty, calculate_difficulty};
 use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY};
-use super::transaction::*;
-use std::collections::HashMap;
+use crate::globals::get_current_time;
 use crate::crypto::key::PublicKey;
 use crate::crypto::hash::{Hash, Hashable};
+use crate::p2p::server::P2pServer;
+use super::block::{Block, CompleteBlock};
+use super::difficulty::{check_difficulty, calculate_difficulty};
+use super::transaction::*;
+use super::serializer::Serializer;
 use super::error::BlockchainError;
 use super::mempool::{Mempool, SortedTx};
-use crate::p2p::server::P2pServer;
+use std::collections::HashMap;
 
 #[derive(serde::Serialize)]
 pub struct Account {
@@ -41,7 +42,7 @@ pub struct Blockchain<T: P2pServer> {
 }
 
 impl<T: P2pServer> Blockchain<T> {
-    pub fn new(dev_key: PublicKey) -> Self {
+    pub fn new(dev_key: PublicKey, p2p_server: T) -> Self {
         let mut blockchain = Blockchain {
             blocks: vec![],
             height: 0,
@@ -50,12 +51,12 @@ impl<T: P2pServer> Blockchain<T> {
             difficulty: MINIMUM_DIFFICULTY,
             mempool: Mempool::new(),
             accounts: HashMap::new(),
-            p2p: P2pServer::new(0, None, 8, String::from("127.0.0.1:2125")),
+            p2p: p2p_server,
             dev_address: dev_key
         };
 
         blockchain.register_account(&dev_key);
-
+        blockchain.p2p.start();
         blockchain
     }
 
@@ -70,6 +71,10 @@ impl<T: P2pServer> Blockchain<T> {
         }
 
         self.verify_transaction_with_hash(&tx, &hash, false)?;
+        if let Err(e) = self.p2p.broadcast_tx(&tx) {
+            return Err(BlockchainError::ErrorOnP2p(e))
+        }
+
         self.mempool.add_tx(hash, tx)
     }
 
@@ -347,7 +352,7 @@ impl<T: P2pServer> Blockchain<T> {
         self.height += 1;
         self.top_hash = block_hash.clone();
         self.supply += block_reward;
-        if let Err(e) = self.p2p.broadcast_bytes(&block.to_bytes()) { // Broadcast block to other nodes
+        if let Err(e) = self.p2p.broadcast_block(&block) { // Broadcast block to other nodes
             println!("Error while broadcasting block: {}", e);
         }
         self.blocks.push(block); // Add block to chain
@@ -396,18 +401,9 @@ impl<T: P2pServer> Blockchain<T> {
             return Ok(())
         }
 
-        match tx.get_signature() {
-            Some(signature) => {
-                if tx.is_coinbase() || (!tx.is_coinbase() && !tx.get_sender().verify_signature(&hash, signature)) { //coinbase tx don't have to be signed 
-                    return Err(BlockchainError::InvalidTransactionSignature)
-                }
-            },
-            None => {
-                if !tx.is_coinbase() {
-                    return Err(BlockchainError::InvalidTransactionSignature)
-                }
-            }
-        };
+        if !tx.is_coinbase() && !tx.verify_signature() { // coinbase tx don't have to be signed 
+            return Err(BlockchainError::InvalidTransactionSignature)
+        }
 
         let account = self.get_account(tx.get_sender())?;
         if !disable_nonce_check && account.nonce != tx.get_nonce() {

@@ -1,4 +1,4 @@
-
+use crate::p2p::error::P2pError;
 use crate::crypto::hash::Hash;
 use crate::crypto::key::PublicKey;
 use crate::crypto::bech32::Bech32Error;
@@ -32,6 +32,7 @@ pub enum BlockchainError {
     InvalidTransactionToSender(Hash),
     ErrorOnBech32(Bech32Error),
     BlockNotFound(Hash),
+    ErrorOnP2p(P2pError),
     InvalidTransactionSignature,
     DifficultyCannotBeZero,
     DifficultyErrorOnConversion,
@@ -72,6 +73,7 @@ impl Display for BlockchainError {
             InvalidTransactionToSender(hash) => write!(f, "Invalid transaction, sender trying to send coins to himself: {}", hash),
             ErrorOnBech32(e) => write!(f, "Error occured on bech32: {}", e),
             BlockNotFound(hash) => write!(f, "Error while retrieving block by hash: {} not found", hash),
+            ErrorOnP2p(p2p) => write!(f, "Error on p2p: {}", p2p),
             InvalidTransactionSignature => write!(f, "Invalid transaction signature"),
             DifficultyCannotBeZero => write!(f, "Difficulty cannot be zero!"),
             DifficultyErrorOnConversion => write!(f, "Difficulty error on conversion to BigUint"),
