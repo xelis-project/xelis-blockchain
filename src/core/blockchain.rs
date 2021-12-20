@@ -10,6 +10,7 @@ use super::serializer::Serializer;
 use super::error::BlockchainError;
 use super::mempool::{Mempool, SortedTx};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(serde::Serialize)]
 pub struct Account {
@@ -28,7 +29,7 @@ impl Account {
 }
 
 #[derive(serde::Serialize)]
-pub struct Blockchain<T: P2pServer> {
+pub struct Blockchain<P: P2pServer> {
     blocks: Vec<CompleteBlock>, // all blocks in blockchain: TODO use storage
     height: u64, // current block height 
     supply: u64, // current circulating supply based on coins already emitted
@@ -36,13 +37,13 @@ pub struct Blockchain<T: P2pServer> {
     difficulty: u64, // difficulty for next block
     mempool: Mempool, // mempool to retrieve/add all txs
     #[serde(skip_serializing)]
-    p2p: T, // p2p to broadcast/receive new blocks
+    p2p: Arc<P>, // p2p to broadcast/receive new blocks
     accounts: HashMap<PublicKey, Account>, // all accounts registered on chain: TODO use storage
     dev_address: PublicKey // Dev address for block fee
 }
 
-impl<T: P2pServer> Blockchain<T> {
-    pub fn new(dev_key: PublicKey, p2p_server: T) -> Self {
+impl<P: P2pServer> Blockchain<P> {
+    pub fn new(dev_key: PublicKey, p2p_server: Arc<P>) -> Self {
         let mut blockchain = Blockchain {
             blocks: vec![],
             height: 0,
@@ -56,7 +57,8 @@ impl<T: P2pServer> Blockchain<T> {
         };
 
         blockchain.register_account(&dev_key);
-        blockchain.p2p.start();
+        P2pServer::start(blockchain.p2p.clone());
+
         blockchain
     }
 

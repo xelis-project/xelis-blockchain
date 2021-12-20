@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::mpsc::{Sender, Receiver, channel};
+use std::thread;
 
 enum Message {
     SendBytes(u64, Vec<u8>), // peer id, bytes
@@ -95,17 +96,16 @@ impl P2pServer for SingleThreadServer {
         }
     }
 
-    fn start(&self) {
-        use crossbeam::thread;
-        thread::scope(|s| { // spawn a scope with 2 threads inside 
-            s.spawn(|_| {
-                self.listen_new_connections();
-            });
+    fn start(self: Arc<Self>) {
+        // spawn threads
+        let clone = self.clone();
+        thread::spawn(move || {
+            clone.listen_new_connections();
+        });
 
-            s.spawn(|_| {
-                self.listen_existing_connections();
-            });
-        }).unwrap();
+        thread::spawn(move || {
+            self.listen_existing_connections();
+        });
     }
 
     fn stop(&self) {

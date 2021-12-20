@@ -14,7 +14,7 @@ use std::net::{TcpListener, TcpStream, SocketAddr, Shutdown};
 
 pub trait P2pServer {
     fn new(peer_id: u64, tag: Option<String>, max_peers: usize, bind_address: String) -> Self;
-    fn start(&self);
+    fn start(self: Arc<Self>);
     fn stop(&self);
     fn get_peer_id(&self) -> u64;
     fn get_tag(&self) -> &Option<String>;
@@ -183,12 +183,12 @@ pub trait P2pServer {
                             connection.send_bytes(&handshake.to_bytes())?; // send handshake back
                         }
 
-                        // if we reach here, handshake is all good, we can start listening this new peer
-                        let peer_id = connection.get_peer_id(); // keep in memory the peer_id outside connection (because of moved value)
-
                         // handle connection
                         // set stream no-blocking
                         connection.set_blocking(false)?;
+
+                        // if we reach here, handshake is all good, we can start listening this new peer
+                        let peer_id = connection.get_peer_id(); // keep in memory the peer_id outside connection (because of moved value)
                         self.add_connection(connection)?;
 
                         // try to extend our peer list

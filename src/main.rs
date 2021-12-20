@@ -17,6 +17,7 @@ use std::path::Path;
 use crate::p2p::server::P2pServer;
 use crate::p2p::single_thread_server::SingleThreadServer;
 use crate::p2p::multi_thread_server::MultiThreadServer;
+use std::sync::Arc;
 
 fn mine_block<T: P2pServer>(blockchain: &mut Blockchain<T>, miner_key: &PublicKey) {
     let mut block = blockchain.get_block_template(miner_key.clone());
@@ -81,7 +82,9 @@ fn main() {
 
     let main_keypair: KeyPair = KeyPair::new();
     println!("Generated main address: {}", main_keypair.get_public_key().to_address().unwrap());
-    let mut blockchain = Blockchain::new(main_keypair.get_public_key().clone(), MultiThreadServer::new(0, None, 8, String::from("127.0.0.1:2125")));
+    println!("Starting multi threaded server...");
+    let server = MultiThreadServer::new(0, None, 8, String::from("127.0.0.1:2125"));
+    let mut blockchain = Blockchain::new(main_keypair.get_public_key().clone(), Arc::new(server));
 
     let dummy_keypair: KeyPair = KeyPair::new();
     println!("Generated address: {}", dummy_keypair.get_public_key().to_address().unwrap());
@@ -148,5 +151,6 @@ fn test_p2p() {
     }
 
     let server: SingleThreadServer = P2pServer::new(1337, Some(String::from("Server 1337")), 17, String::from("127.0.0.1:2125"));
-    server.start();
+    let arc = Arc::new(server);
+    P2pServer::start(arc);
 }

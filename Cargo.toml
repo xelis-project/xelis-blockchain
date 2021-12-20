@@ -18,7 +18,6 @@ serde = { version = "1.0.126", features = ["derive"] }
 serde_json = "1.0"
 rand = "0.8.4"
 ed25519-dalek = { version = "1.0.1", features = ["serde"] }
-crossbeam = "0.8.1"
 
 [[bin]]
 name = "default"

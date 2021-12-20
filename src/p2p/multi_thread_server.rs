@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::mpsc::{Sender, Receiver, channel};
+use std::thread;
 
 enum ThreadMessage {
     Listen(Arc<Connection>), // listen to this connection
@@ -58,64 +59,62 @@ impl P2pServer for MultiThreadServer {
         }
     }
 
-    fn start(&self) {
-        use crossbeam::thread;
-        thread::scope(|s| {
-            s.spawn(|_| {
-                self.listen_new_connections();
-            });
+    fn start(self: Arc<Self>) {
+        println!("Generating {} threads...", self.get_max_peers() + 1);
+        for id in 0..self.get_max_peers() {
+            let clone = self.clone();
+            thread::spawn(move || {
+                let mut buf: [u8; 512] = [0; 512];
+                let (sender, receiver) = channel();
+                match clone.thread_channels.lock() { // register our unique channel
+                    Ok(mut channels) => {
+                        channels.insert(id, sender);
+                    },
+                    Err(e) => panic!("Error while trying to lock thread_channels: {}", e)
+                };
 
-            println!("Generating {} threads...", self.get_max_peers());
-            for id in 0..self.get_max_peers() {
-                s.spawn(move |_| {
-                    let mut buf: [u8; 512] = [0; 512];
-                    let (sender, receiver) = channel();
-                    match self.thread_channels.lock() { // register our unique channel
-                        Ok(mut channels) => {
-                            channels.insert(id, sender);
+                loop {
+                    let connection = match clone.receiver.lock() {
+                        Ok(chan) => match chan.recv() {
+                            Ok(msg) => {
+                                match msg {
+                                    ThreadMessage::Stop => return,
+                                    ThreadMessage::Listen(connection) => connection
+                                }
+                            },
+                            Err(e) => panic!("Error while trying to get new connection: {}", e)
                         },
-                        Err(e) => panic!("Error while trying to lock thread_channels: {}", e)
+                        Err(e) => panic!("Error while trying to get new connection: {}", e) 
                     };
 
-                    loop {
-                        let connection = match self.receiver.lock() {
-                            Ok(chan) => match chan.recv() {
-                                Ok(msg) => {
-                                    match msg {
-                                        ThreadMessage::Stop => return,
-                                        ThreadMessage::Listen(connection) => connection
-                                    }
-                                },
-                                Err(e) => panic!("Error while trying to get new connection: {}", e)
-                            },
-                            Err(e) => panic!("Error while trying to get new connection: {}", e) 
-                        };
+                    match clone.channels.lock() {
+                        Ok(mut channels) => {
+                            channels.insert(connection.get_peer_id(), id);
+                        },
+                        Err(e) => panic!("Error while trying to get channels lock: {}", e)
+                    }
 
-                        match self.channels.lock() {
-                            Ok(mut channels) => {
-                                channels.insert(connection.get_peer_id(), id);
-                            },
-                            Err(e) => panic!("Error while trying to get channels lock: {}", e)
-                        }
-
-                        'con: while !connection.is_closed() {
-                            while let Ok(msg) = receiver.try_recv() {
-                                match msg {
-                                    Message::Exit => break 'con,
-                                    Message::SendBytes(bytes) => {
-                                        if let Err(e) = connection.send_bytes(&bytes) {
-                                            println!("Error while trying to send bytes to {}: {}", connection, e);
-                                            break;
-                                        }
+                    'con: while !connection.is_closed() {
+                        while let Ok(msg) = receiver.try_recv() {
+                            match msg {
+                                Message::Exit => break 'con,
+                                Message::SendBytes(bytes) => {
+                                    if let Err(e) = connection.send_bytes(&bytes) {
+                                        println!("Error while trying to send bytes to {}: {}", connection, e);
+                                        break;
                                     }
                                 }
                             }
-                            self.listen_connection(&mut buf, &connection);
                         }
-                    };
-                });
-            }
-        }).unwrap();
+                        clone.listen_connection(&mut buf, &connection);
+                    }
+                };
+            });
+        }
+
+        thread::spawn(move || {
+            self.listen_new_connections();
+        });
     }
 
     fn stop(&self) {
