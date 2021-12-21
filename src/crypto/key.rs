@@ -1,9 +1,11 @@
-use std::fmt::{Display, Error, Formatter};
-use std::hash::Hasher;
-use super::bech32::{convert_bits, encode, decode, Bech32Error};
 use crate::config::PREFIX_ADDRESS;
 use crate::core::error::BlockchainError;
+use crate::core::serializer::Serializer;
+use super::bech32::{convert_bits, encode, decode, Bech32Error};
 use super::hash::Hash;
+use std::fmt::{Display, Error, Formatter};
+use std::hash::Hasher;
+use std::convert::TryInto;
 
 pub const KEY_LENGTH: usize = 32;
 pub const SIGNATURE_LENGTH: usize = 64;
@@ -31,10 +33,6 @@ impl PublicKey {
         self.0.as_bytes()
     }
 
-    pub fn to_bytes(&self) -> [u8; KEY_LENGTH] {
-        self.0.to_bytes()
-    }
-
     pub fn to_address(&self) -> Result<String, Bech32Error> {
         let bits = convert_bits(self.as_bytes(), 8, 5, true)?;
         let result = encode(PREFIX_ADDRESS.to_owned(), &bits)?;
@@ -54,6 +52,21 @@ impl PublicKey {
         let key = ed25519_dalek::PublicKey::from_bytes(&bits).unwrap();
 
         Ok(PublicKey(key))
+    }
+}
+
+impl Serializer for PublicKey {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend(self.as_bytes());
+        bytes
+    }
+
+    fn from_bytes(buf: &[u8]) -> Option<(Box<PublicKey>, usize)> {
+        match ed25519_dalek::PublicKey::from_bytes(&buf[0..32]) {
+            Ok(v) => Some((Box::new(PublicKey(v)), 32)),
+            Err(_) => None
+        }
     }
 }
 
@@ -130,23 +143,26 @@ impl KeyPair {
 }
 
 impl Signature {
-
-    pub fn from_hex(hex: String) -> Self {
-        use std::convert::TryInto;
-        let bytes = hex::decode(hex).unwrap().try_into().unwrap_or_else(|v: Vec<u8>| panic!("Expected a Signature of {} bytes but it was {} bytes", SIGNATURE_LENGTH, v.len()));
-        Signature::from_bytes(bytes)
-    }
-
-    pub fn from_bytes(bytes: [u8; SIGNATURE_LENGTH]) -> Self {
-        Signature(ed25519_dalek::Signature::new(bytes))
-    }
-
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
     }
+}
 
-    pub fn to_bytes(&self) -> [u8; SIGNATURE_LENGTH] {
-        self.0.to_bytes()
+impl Serializer for Signature {
+
+    fn to_bytes(&self) -> Vec<u8> {
+        self.0.to_bytes().to_vec()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<(Box<Signature>, usize)> {
+        if bytes.len() != 64 {
+            return None
+        }
+
+        let signature = Signature(ed25519_dalek::Signature::new(bytes.try_into().unwrap()));
+        Some(
+            (Box::new(signature), 64)
+        )
     }
 }
 

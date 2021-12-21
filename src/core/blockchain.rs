@@ -354,6 +354,7 @@ impl<P: P2pServer> Blockchain<P> {
         self.height += 1;
         self.top_hash = block_hash.clone();
         self.supply += block_reward;
+        println!("Broadcast block {}", block);
         if let Err(e) = self.p2p.broadcast_block(&block) { // Broadcast block to other nodes
             println!("Error while broadcasting block: {}", e);
         }

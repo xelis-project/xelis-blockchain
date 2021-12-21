@@ -35,7 +35,7 @@ impl Serializer for AddressType {
         bytes
     }
 
-    fn from_bytes(buf: &[u8]) -> Option<Box<AddressType>> {
+    fn from_bytes(buf: &[u8]) -> Option<(Box<AddressType>, usize)> {
         None // TODO
     }
 }
@@ -50,7 +50,7 @@ impl Serializer for Address {
         bytes
     }
 
-    fn from_bytes(buf: &[u8]) -> Option<Box<Address>> {
+    fn from_bytes(buf: &[u8]) -> Option<(Box<Address>, usize)> {
         None // TODO
     }
 }

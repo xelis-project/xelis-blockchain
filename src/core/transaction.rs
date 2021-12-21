@@ -5,6 +5,7 @@ use super::error::BlockchainError;
 use super::difficulty::check_difficulty;
 use super::serializer::Serializer;
 use std::collections::HashMap;
+use std::convert::TryInto;
 
 #[derive(serde::Serialize, Clone)]
 pub struct Tx {
@@ -45,7 +46,8 @@ impl Serializer for TransactionData {
             }
             TransactionData::Normal(txs) => {
                 bytes.push(1);
-                bytes.extend(&txs.len().to_be_bytes());
+                let len: u8 = txs.len() as u8; // max 255 txs
+                bytes.push(len);
                 for tx in txs {
                     bytes.extend(&tx.amount.to_be_bytes());
                     bytes.extend(&tx.to.to_bytes());
@@ -78,8 +80,77 @@ impl Serializer for TransactionData {
         bytes
     }
 
-    fn from_bytes(buf: &[u8]) -> Option<Box<TransactionData>> {
-        None // TODO
+    fn from_bytes(buf: &[u8]) -> Option<(Box<TransactionData>, usize)> {
+        if buf.len() == 0 {
+            return None
+        }
+
+        let mut n = 1;
+        let data: TransactionData = match buf[0] {
+            0 => {
+                if buf.len() < n + 8 {
+                    return None
+                }
+
+                let amount = u64::from_be_bytes(buf[n..n+8].try_into().unwrap());
+                n += 8;
+                TransactionData::Burn(amount)
+            },
+            1 => { // Normal
+                if buf.len() < n + 1 {
+                    return None
+                }
+
+                let mut txs = vec![];
+                let len = buf[n];
+                n += 1;
+                for _ in 0..len {
+                    if buf.len() < n + 8 + 32 {
+                        return None
+                    }
+                    let amount = u64::from_be_bytes(buf[n..n+8].try_into().unwrap());
+                    n += 8;
+                    let (to, size) = PublicKey::from_bytes(buf[n..n+32].try_into().unwrap())?;
+                    n += size;
+
+                    txs.push(Tx {
+                        amount,
+                        to: *to
+                    });
+                }
+                TransactionData::Normal(txs)
+            },
+            2 => { // Registration
+                TransactionData::Registration
+            },
+            3 => { // TODO SC
+                TransactionData::SmartContract(SmartContractTx {
+                    contract: String::from(""),
+                    amount: 0,
+                    params: HashMap::new()
+                })
+            },
+            4 => {
+                if buf.len() < n + 16 {
+                    return None
+                }
+
+                let block_reward = u64::from_be_bytes(buf[n..n+8].try_into().unwrap());
+                n += 8;
+                let fee_reward = u64::from_be_bytes(buf[n..n+8].try_into().unwrap());
+                n += 8;
+
+                TransactionData::Coinbase(CoinbaseTx {
+                    block_reward,
+                    fee_reward
+                })
+            }
+            _ => {
+                return None
+            }
+        };
+
+        Some((Box::new(data), n))
     }
 }
 
@@ -204,11 +275,6 @@ impl Transaction {
             _ => false 
         }
     }
-
-    pub fn from_bytes(buf: &[u8]) -> Option<Transaction> {
-        let nonce = u64::from_be_bytes([0u8; 8]);
-        None
-    }
 }
 
 impl Serializer for Transaction {
@@ -229,8 +295,41 @@ impl Serializer for Transaction {
         bytes
     }
 
-    fn from_bytes(buf: &[u8]) -> Option<Box<Transaction>> {
-        None // TODO
+    fn from_bytes(buf: &[u8]) -> Option<(Box<Transaction>, usize)> {
+        if buf.len() < 8 {
+            return None
+        }
+        let mut n = 0;
+        let nonce = u64::from_be_bytes(buf[n..8].try_into().unwrap());
+        let (data, read) = TransactionData::from_bytes(buf)?;
+        n += read;
+        if buf.len() < read + 32 + 8 {
+            return None
+        }
+        let (owner, read) = PublicKey::from_bytes(buf[n..n+32].try_into().unwrap())?;
+        n += read;
+        let fee = u64::from_be_bytes(buf[n..n+8].try_into().unwrap());
+        n += 8;
+
+        // TODO prevent that it doesn't read more than it should
+        let signature: Option<Signature> = if buf.len() < read + 64 {
+            None
+        } else {
+            let (signature, read) = Signature::from_bytes(&buf[n..n+64])?;
+            n += read;
+            Some(*signature)
+        };
+
+        let tx = Transaction {
+            nonce,
+            data: *data,
+            owner: *owner,
+            fee,
+            signature
+        };
+        Some(
+            (Box::new(tx), n)
+        )
     }
 }
 

@@ -5,5 +5,5 @@ pub trait Serializer {
         self.to_bytes().len()
     }
 
-    fn from_bytes(bytes: &[u8]) -> Option<Box<Self>>;
+    fn from_bytes(bytes: &[u8]) -> Option<(Box<Self>, usize)>;
 }

@@ -236,10 +236,24 @@ pub trait P2pServer {
                 let id = buf[0];
                 match id {
                     0 => { // TODO tx from bytes
-
+                        match Transaction::from_bytes(&buf[1..]) {
+                            Some(_) => {
+                                // TODO
+                            },
+                            None => { // TODO Fail count
+                                println!("Peer sent an invalid Tx.")
+                            }
+                        };
                     },
                     1 => { // TODO block from bytes
-
+                        match CompleteBlock::from_bytes(&buf[1..]) {
+                            Some(_) => {
+                                // TODO
+                            },
+                            None => { // TODO Fail count
+                                println!("Peer sent an invalid block.")
+                            }
+                        }
                     },
                     _ => println!("Not implemented!")
                 }
