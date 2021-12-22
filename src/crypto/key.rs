@@ -1,11 +1,11 @@
 use crate::config::PREFIX_ADDRESS;
 use crate::core::error::BlockchainError;
 use crate::core::serializer::Serializer;
+use crate::core::reader::{Reader, ReaderError};
 use super::bech32::{convert_bits, encode, decode, Bech32Error};
 use super::hash::Hash;
 use std::fmt::{Display, Error, Formatter};
 use std::hash::Hasher;
-use std::convert::TryInto;
 
 pub const KEY_LENGTH: usize = 32;
 pub const SIGNATURE_LENGTH: usize = 64;
@@ -62,10 +62,10 @@ impl Serializer for PublicKey {
         bytes
     }
 
-    fn from_bytes(buf: &[u8]) -> Option<(Box<PublicKey>, usize)> {
-        match ed25519_dalek::PublicKey::from_bytes(&buf[0..32]) {
-            Ok(v) => Some((Box::new(PublicKey(v)), 32)),
-            Err(_) => None
+    fn from_bytes(reader: &mut Reader) -> Result<Box<Self>, ReaderError> {
+        match ed25519_dalek::PublicKey::from_bytes(&reader.read_bytes_32()?) {
+            Ok(v) => Ok(Box::new(PublicKey(v))),
+            Err(e) => return Err(ReaderError::ErrorTryInto)
         }
     }
 }
@@ -154,14 +154,10 @@ impl Serializer for Signature {
         self.0.to_bytes().to_vec()
     }
 
-    fn from_bytes(bytes: &[u8]) -> Option<(Box<Signature>, usize)> {
-        if bytes.len() != 64 {
-            return None
-        }
-
-        let signature = Signature(ed25519_dalek::Signature::new(bytes.try_into().unwrap()));
-        Some(
-            (Box::new(signature), 64)
+    fn from_bytes(reader: &mut Reader) -> Result<Box<Self>, ReaderError> {
+        let signature = Signature(ed25519_dalek::Signature::new(reader.read_bytes_64()?));
+        Ok(
+            Box::new(signature)
         )
     }
 }

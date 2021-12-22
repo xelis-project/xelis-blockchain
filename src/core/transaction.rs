@@ -4,8 +4,8 @@ use crate::config::REGISTRATION_DIFFICULTY;
 use super::error::BlockchainError;
 use super::difficulty::check_difficulty;
 use super::serializer::Serializer;
+use super::reader::{Reader, ReaderError};
 use std::collections::HashMap;
-use std::convert::TryInto;
 
 #[derive(serde::Serialize, Clone)]
 pub struct Tx {
@@ -80,38 +80,17 @@ impl Serializer for TransactionData {
         bytes
     }
 
-    fn from_bytes(buf: &[u8]) -> Option<(Box<TransactionData>, usize)> {
-        if buf.len() == 0 {
-            return None
-        }
-
-        let mut n = 1;
-        let data: TransactionData = match buf[0] {
+    fn from_bytes(reader: &mut Reader) -> Result<Box<TransactionData>, ReaderError> {
+        let data: TransactionData = match reader.read_u8()? {
             0 => {
-                if buf.len() < n + 8 {
-                    return None
-                }
-
-                let amount = u64::from_be_bytes(buf[n..n+8].try_into().unwrap());
-                n += 8;
+                let amount = reader.read_u64()?;
                 TransactionData::Burn(amount)
             },
             1 => { // Normal
-                if buf.len() < n + 1 {
-                    return None
-                }
-
                 let mut txs = vec![];
-                let len = buf[n];
-                n += 1;
-                for _ in 0..len {
-                    if buf.len() < n + 8 + 32 {
-                        return None
-                    }
-                    let amount = u64::from_be_bytes(buf[n..n+8].try_into().unwrap());
-                    n += 8;
-                    let (to, size) = PublicKey::from_bytes(buf[n..n+32].try_into().unwrap())?;
-                    n += size;
+                for _ in 0..reader.read_u8()? {
+                    let amount = reader.read_u64()?;
+                    let to = PublicKey::from_bytes(reader)?;
 
                     txs.push(Tx {
                         amount,
@@ -131,14 +110,8 @@ impl Serializer for TransactionData {
                 })
             },
             4 => {
-                if buf.len() < n + 16 {
-                    return None
-                }
-
-                let block_reward = u64::from_be_bytes(buf[n..n+8].try_into().unwrap());
-                n += 8;
-                let fee_reward = u64::from_be_bytes(buf[n..n+8].try_into().unwrap());
-                n += 8;
+                let block_reward = reader.read_u64()?;
+                let fee_reward = reader.read_u64()?;
 
                 TransactionData::Coinbase(CoinbaseTx {
                     block_reward,
@@ -146,11 +119,11 @@ impl Serializer for TransactionData {
                 })
             }
             _ => {
-                return None
+                return Err(ReaderError::InvalidValue)
             }
         };
 
-        Some((Box::new(data), n))
+        Ok(Box::new(data))
     }
 }
 
@@ -295,41 +268,26 @@ impl Serializer for Transaction {
         bytes
     }
 
-    fn from_bytes(buf: &[u8]) -> Option<(Box<Transaction>, usize)> {
-        if buf.len() < 8 {
-            return None
-        }
-        let mut n = 0;
-        let nonce = u64::from_be_bytes(buf[n..8].try_into().unwrap());
-        let (data, read) = TransactionData::from_bytes(buf)?;
-        n += read;
-        if buf.len() < read + 32 + 8 {
-            return None
-        }
-        let (owner, read) = PublicKey::from_bytes(buf[n..n+32].try_into().unwrap())?;
-        n += read;
-        let fee = u64::from_be_bytes(buf[n..n+8].try_into().unwrap());
-        n += 8;
+    fn from_bytes(reader: &mut Reader) -> Result<Box<Transaction>, ReaderError> {
+        let nonce = reader.read_u64()?;
+        let data = TransactionData::from_bytes(reader)?;
+        let owner = PublicKey::from_bytes(reader)?;
+        let fee = reader.read_u64()?;
 
         // TODO prevent that it doesn't read more than it should
-        let signature: Option<Signature> = if buf.len() < read + 64 {
+        let signature: Option<Signature> = if reader.size() < 64 {
             None
         } else {
-            let (signature, read) = Signature::from_bytes(&buf[n..n+64])?;
-            n += read;
-            Some(*signature)
+            Some(*Signature::from_bytes(reader)?)
         };
 
-        let tx = Transaction {
+        Ok(Box::new(Transaction {
             nonce,
             data: *data,
             owner: *owner,
             fee,
             signature
-        };
-        Some(
-            (Box::new(tx), n)
-        )
+        }))
     }
 }
 

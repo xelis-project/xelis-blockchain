@@ -1,5 +1,6 @@
-use super::key::PublicKey;
 use crate::core::serializer::Serializer;
+use crate::core::reader::{Reader, ReaderError};
+use super::key::PublicKey;
 
 const PAYMENT_ID_SIZE: usize = 8; //8 bytes for paymentID
 
@@ -35,8 +36,17 @@ impl Serializer for AddressType {
         bytes
     }
 
-    fn from_bytes(buf: &[u8]) -> Option<(Box<AddressType>, usize)> {
-        None // TODO
+    fn from_bytes(reader: &mut Reader) -> Result<Box<AddressType>, ReaderError> {
+        let _type = match reader.read_u8()? {
+            0 => AddressType::Normal,
+            1 => {
+                let id: [u8; PAYMENT_ID_SIZE] = reader.try_into(PAYMENT_ID_SIZE)?;
+                AddressType::PaymentId(id)
+            }
+            _ => return Err(ReaderError::InvalidValue)
+        };
+
+        Ok(Box::new(_type))
     }
 }
 
@@ -50,7 +60,19 @@ impl Serializer for Address {
         bytes
     }
 
-    fn from_bytes(buf: &[u8]) -> Option<(Box<Address>, usize)> {
-        None // TODO
+    fn from_bytes(reader: &mut Reader) -> Result<Box<Address>, ReaderError> {
+        let mainnet = match reader.read_u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(ReaderError::InvalidValue)
+        };
+        let addr_type = *AddressType::from_bytes(reader)?;
+        let pub_key = *PublicKey::from_bytes(reader)?;
+
+        Ok(Box::new(Address {
+            mainnet,
+            addr_type,
+            pub_key
+        }))
     }
 }

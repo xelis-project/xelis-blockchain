@@ -2,6 +2,7 @@ use crate::config::{VERSION, NETWORK_ID, SEED_NODES};
 use crate::crypto::hash::Hash;
 use crate::globals::get_current_time;
 use crate::core::serializer::Serializer;
+use crate::core::reader::Reader;
 use crate::core::transaction::Transaction;
 use crate::core::block::CompleteBlock;
 use super::connection::Connection;
@@ -233,29 +234,32 @@ pub trait P2pServer {
                 let _ = self.remove_connection(&connection.get_peer_id());
             },
             Ok(n) => {
-                let id = buf[0];
-                match id {
-                    0 => { // TODO tx from bytes
-                        match Transaction::from_bytes(&buf[1..]) {
-                            Some(_) => {
-                                // TODO
-                            },
-                            None => { // TODO Fail count
-                                println!("Peer sent an invalid Tx.")
+                let mut reader = Reader::new(buf[0..n].to_vec());
+                match reader.read_u8() {
+                    Ok(id) => match id {
+                        0 => { // TODO tx from bytes
+                            match Transaction::from_bytes(&mut reader) {
+                                Ok(_) => {
+                                    // TODO
+                                },
+                                Err(e) => { // TODO Fail count
+                                    println!("Peer sent an invalid Tx.")
+                                }
+                            };
+                        },
+                        1 => { // TODO block from bytes
+                            match CompleteBlock::from_bytes(&mut reader) {
+                                Ok(_) => {
+                                    // TODO
+                                },
+                                Err(e) => { // TODO Fail count
+                                    println!("Peer sent an invalid block.")
+                                }
                             }
-                        };
+                        },
+                        _ => println!("Not implemented!")
                     },
-                    1 => { // TODO block from bytes
-                        match CompleteBlock::from_bytes(&buf[1..]) {
-                            Some(_) => {
-                                // TODO
-                            },
-                            None => { // TODO Fail count
-                                println!("Peer sent an invalid block.")
-                            }
-                        }
-                    },
-                    _ => println!("Not implemented!")
+                    Err(e) => println!("Error while reading byte id")
                 }
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => { // shouldn't happens if server is multithreaded

@@ -1,3 +1,6 @@
+use super::reader::{Reader, ReaderError};
+
+
 pub trait Serializer {
     fn to_bytes(&self) -> Vec<u8>;
 
@@ -5,5 +8,5 @@ pub trait Serializer {
         self.to_bytes().len()
     }
 
-    fn from_bytes(bytes: &[u8]) -> Option<(Box<Self>, usize)>;
+    fn from_bytes(reader: &mut Reader) -> Result<Box<Self>, ReaderError>;
 }

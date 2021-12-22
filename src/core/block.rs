@@ -1,7 +1,7 @@
 use crate::crypto::hash::{Hash, Hashable, hash};
 use super::transaction::Transaction;
 use super::serializer::Serializer;
-use core::convert::TryInto;
+use super::reader::{Reader, ReaderError};
 
 const EXTRA_NONCE_SIZE: usize = 32;
 const BLOCK_WORK_SIZE: usize = 160;
@@ -139,38 +139,21 @@ impl Serializer for Block {
         bytes
     }
 
-    fn from_bytes(bytes: &[u8]) -> Option<(Box<Block>, usize)> {
-        if bytes.len() < BLOCK_WORK_SIZE {
-            return None
-        }
-
-        let mut n = 0;
-        let height = u64::from_be_bytes(bytes[n..n+8].try_into().unwrap());
-        n += 8;
-        let timestamp = u64::from_be_bytes(bytes[n..n+8].try_into().unwrap());
-        n += 8;
-        let previous_hash = Hash::new(bytes[n..n+32].try_into().unwrap());
-        n += 32;
-        let nonce = u64::from_be_bytes(bytes[n..n+8].try_into().unwrap());
-        n += 8;
-        let difficulty = u64::from_be_bytes(bytes[n..n+8].try_into().unwrap());
-        n += 8;
-        let extra_nonce: [u8; 32] = bytes[n..n+32].try_into().unwrap();
-        let (miner_tx, size) = Transaction::from_bytes(&bytes[n..])?; // n should be at 128
-        n += size;
-        let txs_count = u16::from_be_bytes(bytes[n..n+2].try_into().unwrap()) as usize;
-        n += 2;
-        if bytes.len() < (n + txs_count * 32)  {
-            return None
-        }
-        n += 32 * txs_count;
-
+    fn from_bytes(reader: &mut Reader) -> Result<Box<Block>, ReaderError> {
+        let height = reader.read_u64()?;
+        let timestamp = reader.read_u64()?;
+        let previous_hash = Hash::new(reader.read_bytes_32()?);
+        let nonce = reader.read_u64()?;
+        let difficulty = reader.read_u64()?;
+        let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
+        let miner_tx = Transaction::from_bytes(reader)?;
+        let txs_count = reader.read_u16()?;
         let mut txs_hashes = vec![];
         for _ in 0..txs_count {
-            txs_hashes.push(Hash::new(bytes[n..n+32].try_into().unwrap()));
+            txs_hashes.push(Hash::new(reader.read_bytes_32()?));
         }
 
-        Some((Box::new(
+        Ok(Box::new(
             Block {
                 difficulty,
                 extra_nonce,
@@ -181,7 +164,7 @@ impl Serializer for Block {
                 nonce,
                 txs_hashes
             }
-        ), n))
+        ))
     }
 }
 
@@ -200,22 +183,15 @@ impl Serializer for CompleteBlock {
         bytes
     }
 
-    fn from_bytes(buf: &[u8]) -> Option<(Box<CompleteBlock>, usize)> {
-        let mut n = 0;
-        let (block, read) = Block::from_bytes(&buf)?;
-        n += read;
-        let block: Block = *block;
+    fn from_bytes(reader: &mut Reader) -> Result<Box<CompleteBlock>, ReaderError> {
+        let block = *Block::from_bytes(reader)?;
         let mut txs: Vec<Transaction> = Vec::new();
-
         for _ in 0..block.get_txs_count() {
-            let (tx, read) = Transaction::from_bytes(&buf[n..])?;
-            txs.push(*tx);
-            n += read;            
+            let tx = Transaction::from_bytes(reader)?;
+            txs.push(*tx);     
         }
 
-        Some((Box::new(
-            CompleteBlock::new(block, txs)
-        ), n))
+        Ok(Box::new(CompleteBlock::new(block, txs)))
     }
 }
 
