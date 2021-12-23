@@ -2,7 +2,7 @@ use crate::config::{VERSION, NETWORK_ID, SEED_NODES};
 use crate::crypto::hash::Hash;
 use crate::globals::get_current_time;
 use crate::core::serializer::Serializer;
-use crate::core::reader::Reader;
+use crate::core::reader::{Reader, ReaderError};
 use crate::core::transaction::Transaction;
 use crate::core::block::CompleteBlock;
 use super::connection::Connection;
@@ -227,42 +227,44 @@ pub trait P2pServer {
         }
     }
 
+    fn handle_connection(&self, buf: &mut [u8], connection: &Arc<Connection>) {
+        if let Err(e) = self.listen_connection(buf, connection) {
+            println!("Error occured while listening {}: {}", connection, e);
+            if connection.increment_and_get_fail_count() >= 20 {
+                println!("High fail count detected, remove connection!");
+                if let Err(e) = self.remove_connection(&connection.get_peer_id()) {
+                    println!("Error while trying to remove {} due to high fail count: {}", connection, e);
+                }
+            }
+        }
+    }
+
     // Listen to incoming packets from a connection
-    fn listen_connection(&self, buf: &mut [u8], connection: &Arc<Connection>) {
+    fn listen_connection(&self, buf: &mut [u8], connection: &Arc<Connection>) -> Result<(), ReaderError> {
         match connection.read_bytes(buf) {
-            Ok(0) => {
+            Ok(0) => { // peer disconnected
                 let _ = self.remove_connection(&connection.get_peer_id());
             },
             Ok(n) => {
                 let mut reader = Reader::new(buf[0..n].to_vec());
-                match reader.read_u8() {
-                    Ok(id) => match id {
-                        0 => { // TODO tx from bytes
-                            match Transaction::from_bytes(&mut reader) {
-                                Ok(_) => {
-                                    // TODO
-                                },
-                                Err(e) => { // TODO Fail count
-                                    println!("Peer sent an invalid Tx.")
-                                }
-                            };
-                        },
-                        1 => { // TODO block from bytes
-                            match CompleteBlock::from_bytes(&mut reader) {
-                                Ok(_) => {
-                                    // TODO
-                                },
-                                Err(e) => { // TODO Fail count
-                                    println!("Peer sent an invalid block.")
-                                }
-                            }
-                        },
-                        _ => println!("Not implemented!")
+                let id = reader.read_u8()?;
+                match id {
+                    0 => {
+                        let tx = Transaction::from_bytes(&mut reader)?;
+                        // TODO add TX to mempool
                     },
-                    Err(e) => println!("Error while reading byte id")
+                    1 => {
+                        let block = CompleteBlock::from_bytes(&mut reader)?;
+                        // TODO add CompleteBlock to chain
+                    },
+                    _ => return Err(ReaderError::InvalidValue)
+                };
+
+                if n != reader.total_read() {
+                    println!("{} sent {} bytes but read only {} bytes", connection, n, reader.total_read());
                 }
             }
-            Err(ref e) if e.kind() == ErrorKind::WouldBlock => { // shouldn't happens if server is multithreaded
+            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                 // Don't do anything
             },
             Err(e) => {
@@ -270,5 +272,7 @@ pub trait P2pServer {
                 println!("An error has occured while reading bytes from {}: {}", connection, e);
             }
         };
+
+        Ok(())
     }
 }

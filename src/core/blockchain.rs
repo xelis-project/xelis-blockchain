@@ -73,6 +73,7 @@ impl<P: P2pServer> Blockchain<P> {
         }
 
         self.verify_transaction_with_hash(&tx, &hash, false)?;
+        println!("Broadcast Transaction!");
         if let Err(e) = self.p2p.broadcast_tx(&tx) {
             return Err(BlockchainError::ErrorOnP2p(e))
         }
@@ -375,8 +376,11 @@ impl<P: P2pServer> Blockchain<P> {
     }
 
     fn verify_transaction_with_hash(&self, tx: &Transaction, hash: &Hash, disable_nonce_check: bool) -> Result<(), BlockchainError> {
-        let is_registration = tx.is_registration();
+        if tx.require_signature() && (!tx.has_signature() || !tx.verify_signature()) { // signature verification for tx types required
+            return Err(BlockchainError::InvalidTransactionSignature)
+        }
 
+        let is_registration = tx.is_registration();
         if is_registration || tx.is_coinbase() {
             if tx.get_fee() != 0 { // coinbase & registration tx cannot have fee
                 return Err(BlockchainError::InvalidTxFee(0, tx.get_fee()))
@@ -389,10 +393,6 @@ impl<P: P2pServer> Blockchain<P> {
         }
 
         if is_registration {
-            if tx.has_signature() {
-                return Err(BlockchainError::InvalidTxRegistrationSignature(hash.clone()));
-            }
-
             if self.has_account(tx.get_sender()) && !disable_nonce_check {
                 return Err(BlockchainError::AddressAlreadyRegistered(tx.get_sender().clone()))
             }
@@ -402,10 +402,6 @@ impl<P: P2pServer> Blockchain<P> {
             }
 
             return Ok(())
-        }
-
-        if !tx.is_coinbase() && !tx.verify_signature() { // coinbase tx don't have to be signed 
-            return Err(BlockchainError::InvalidTransactionSignature)
         }
 
         let account = self.get_account(tx.get_sender())?;
@@ -484,7 +480,7 @@ impl<P: P2pServer> Blockchain<P> {
                 let account = self.get_mut_account(transaction.get_sender())?;
                 account.balance += block_reward + data.fee_reward;
 
-                return Ok(())
+                return Ok(()) // return now to prevent the nonce increment
             }
             _ => {
                 panic!("not implemented")

@@ -69,3 +69,15 @@ impl Reader {
         self.total
     }
 }
+
+use std::fmt::{Display, Error, Formatter};
+
+impl Display for ReaderError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
+        match self {
+            ReaderError::ErrorTryInto => write!(f, "Error on try into"),
+            ReaderError::InvalidSize => write!(f, "Invalid size"),
+            ReaderError::InvalidValue => write!(f, "Invalid value"),
+        }
+    }
+}

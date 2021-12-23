@@ -53,8 +53,12 @@ impl SingleThreadServer {
                                 if let Some(connection) = connections.get(&peer_id) {
                                     if let Err(e) = connection.send_bytes(&bytes) {
                                         println!("Error on sending bytes: {}", e);
-                                        connections.remove(&peer_id);
+                                        if let Err(e) = self.remove_connection(&peer_id) {
+                                            println!("Error while trying to remove {}: {}", connection, e);
+                                        }
                                     }
+                                } else {
+                                    println!("Unknown peer {} to send bytes!", peer_id);
                                 }
                             }
                         }
@@ -64,7 +68,7 @@ impl SingleThreadServer {
             }
 
             for connection in connections.values() {
-                self.listen_connection(&mut buf, &connection)
+                self.handle_connection(&mut buf, &connection);
             }
         }
     }

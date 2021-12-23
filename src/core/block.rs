@@ -133,8 +133,11 @@ impl Serializer for Block {
         bytes.extend(&self.nonce.to_be_bytes()); // 48 + 8 = 56
         bytes.extend(&self.difficulty.to_be_bytes()); // 56 + 8 = 64
         bytes.extend(&self.extra_nonce); // 64 + 32 = 96
-        bytes.extend(self.get_txs_hash().as_bytes()); // 96 + 32 = 128
-        bytes.extend(self.miner_tx.to_bytes()); // Dynamic
+        bytes.extend((self.txs_hashes.len() as u16).to_be_bytes()); // 96 + 2 = 98
+        for hash in &self.txs_hashes {
+            bytes.extend(hash.as_bytes());
+        }
+        bytes.extend(self.miner_tx.to_bytes());
 
         bytes
     }
@@ -146,12 +149,12 @@ impl Serializer for Block {
         let nonce = reader.read_u64()?;
         let difficulty = reader.read_u64()?;
         let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
-        let miner_tx = Transaction::from_bytes(reader)?;
         let txs_count = reader.read_u16()?;
         let mut txs_hashes = vec![];
         for _ in 0..txs_count {
             txs_hashes.push(Hash::new(reader.read_bytes_32()?));
         }
+        let miner_tx = Transaction::from_bytes(reader)?;
 
         Ok(Box::new(
             Block {
@@ -195,7 +198,11 @@ impl Serializer for CompleteBlock {
     }
 }
 
-impl Hashable for CompleteBlock {}
+impl Hashable for CompleteBlock {
+    fn hash(&self) -> Hash {
+        self.block.hash()
+    }
+}
 
 use std::fmt::{Error, Display, Formatter};
 

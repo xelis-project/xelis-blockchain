@@ -86,6 +86,11 @@ fn main() {
     let server = MultiThreadServer::new(0, None, 8, String::from("127.0.0.1:2125"));
     let mut blockchain = Blockchain::new(main_keypair.get_public_key().clone(), Arc::new(server));
 
+    std::thread::spawn(|| {
+        std::thread::sleep_ms(1500);
+        let server = MultiThreadServer::new(1, None, 8, String::from("127.0.0.1:2126"));
+        P2pServer::start(Arc::new(server));
+    });
     let dummy_keypair: KeyPair = KeyPair::new();
     println!("Generated address: {}", dummy_keypair.get_public_key().to_address().unwrap());
     create_registration_transaction(&mut blockchain, &dummy_keypair);

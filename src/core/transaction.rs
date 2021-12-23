@@ -248,6 +248,13 @@ impl Transaction {
             _ => false 
         }
     }
+
+    pub fn require_signature(&self) -> bool {
+        match &self.data {
+            TransactionData::Registration | TransactionData::Coinbase(_) => false,
+            _ => true
+        }
+    }
 }
 
 impl Serializer for Transaction {
@@ -273,12 +280,9 @@ impl Serializer for Transaction {
         let data = TransactionData::from_bytes(reader)?;
         let owner = PublicKey::from_bytes(reader)?;
         let fee = reader.read_u64()?;
-
-        // TODO prevent that it doesn't read more than it should
-        let signature: Option<Signature> = if reader.size() < 64 {
-            None
-        } else {
-            Some(*Signature::from_bytes(reader)?)
+        let signature: Option<Signature> = match data.as_ref() {
+            TransactionData::Registration | TransactionData::Coinbase(_) => None,
+            _ => Some(*Signature::from_bytes(reader)?)
         };
 
         Ok(Box::new(Transaction {

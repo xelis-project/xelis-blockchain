@@ -65,7 +65,7 @@ impl Serializer for PublicKey {
     fn from_bytes(reader: &mut Reader) -> Result<Box<Self>, ReaderError> {
         match ed25519_dalek::PublicKey::from_bytes(&reader.read_bytes_32()?) {
             Ok(v) => Ok(Box::new(PublicKey(v))),
-            Err(e) => return Err(ReaderError::ErrorTryInto)
+            Err(_) => return Err(ReaderError::ErrorTryInto)
         }
     }
 }
@@ -131,10 +131,6 @@ impl KeyPair {
 
     pub fn get_public_key(&self) -> &PublicKey {
         &self.public_key
-    }
-
-    pub fn get_private_key(&self) -> &PrivateKey {
-        &self.private_key
     }
 
     pub fn sign(&self, data: &[u8]) -> Signature {

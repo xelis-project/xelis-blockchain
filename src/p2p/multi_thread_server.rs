@@ -101,12 +101,14 @@ impl P2pServer for MultiThreadServer {
                                 Message::SendBytes(bytes) => {
                                     if let Err(e) = connection.send_bytes(&bytes) {
                                         println!("Error while trying to send bytes to {}: {}", connection, e);
-                                        break;
+                                        if let Err(e) = clone.remove_connection(&connection.get_peer_id()) {
+                                            println!("Error while trying to remove {}: {}", connection, e);
+                                        }
                                     }
                                 }
                             }
                         }
-                        clone.listen_connection(&mut buf, &connection);
+                        clone.handle_connection(&mut buf, &connection);
                     }
                 };
             });

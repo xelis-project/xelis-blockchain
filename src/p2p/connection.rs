@@ -1,7 +1,7 @@
 use super::error::P2pError;
 use std::net::{TcpStream, SocketAddr, Shutdown};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU8, Ordering};
 use std::io::{Write, Read, Result};
 
 type P2pResult<T> = std::result::Result<T, P2pError>;
@@ -16,6 +16,8 @@ pub struct Connection {
     out: bool, // True mean we are the client
     bytes_in: AtomicUsize, // total bytes read
     bytes_out: AtomicUsize, // total bytes sent
+    // TODO last_fail_count
+    fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
     closed: AtomicBool, // if Connection#close() is called, close is set to true
     blocking: AtomicBool // blocking until something is sent or not
 }
@@ -32,6 +34,7 @@ impl Connection {
             out,
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
+            fail_count: AtomicU8::new(0),
             closed: AtomicBool::new(false),
             blocking: AtomicBool::new(true)
         }
@@ -89,6 +92,11 @@ impl Connection {
         self.stream.lock().unwrap().shutdown(Shutdown::Both)
     }
 
+    // TODO verify last fail count
+    pub fn increment_and_get_fail_count(&self) -> u8 {
+        self.fail_count.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
     pub fn get_peer_id(&self) -> u64 {
         self.id
     }
@@ -121,6 +129,10 @@ impl Connection {
         self.bytes_in.load(Ordering::Relaxed)
     }
 
+    pub fn fail_count(&self) -> u8 {
+        self.fail_count.load(Ordering::Relaxed)
+    }
+
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
@@ -140,6 +152,6 @@ impl Display for Connection {
             String::from("None")
         };
 
-        write!(f, "Connection[peer: {}, version: {}, node tag: {}, peer_id: {}, block_height: {}, out: {}, read: {} kB, sent: {} kB, closed: {},  blocking: {}]", self.get_peer_address(), self.get_version(), node_tag, self.get_peer_id(), self.get_block_height(), self.is_out(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.is_closed(), self.is_blocking())
+        write!(f, "Connection[peer: {}, version: {}, node tag: {}, peer_id: {}, block_height: {}, out: {}, read: {} kB, sent: {} kB, fail count: {}, closed: {},  blocking: {}]", self.get_peer_address(), self.get_version(), node_tag, self.get_peer_id(), self.get_block_height(), self.is_out(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.fail_count(), self.is_closed(), self.is_blocking())
     }
 }
