@@ -1,4 +1,5 @@
 use crate::crypto::hash::{Hash, Hashable, hash};
+use crate::crypto::key::PublicKey;
 use super::transaction::Transaction;
 use super::serializer::Serializer;
 use super::reader::{Reader, ReaderError};
@@ -102,6 +103,10 @@ impl CompleteBlock {
         &self.block.miner_tx
     }
 
+    pub fn get_miner(&self) -> &PublicKey {
+        &self.block.miner_tx.get_sender()
+    }
+
     pub fn get_extra_nonce(&self) -> &[u8; EXTRA_NONCE_SIZE] {
         &self.block.extra_nonce
     }
@@ -134,7 +139,7 @@ impl Serializer for Block {
         bytes.extend(&self.difficulty.to_be_bytes()); // 56 + 8 = 64
         bytes.extend(&self.extra_nonce); // 64 + 32 = 96
         bytes.extend((self.txs_hashes.len() as u16).to_be_bytes()); // 96 + 2 = 98
-        for hash in &self.txs_hashes {
+        for hash in &self.txs_hashes { // 98 + X * 32
             bytes.extend(hash.as_bytes());
         }
         bytes.extend(self.miner_tx.to_bytes());

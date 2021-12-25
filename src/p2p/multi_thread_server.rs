@@ -29,35 +29,10 @@ pub struct MultiThreadServer {
     thread_channels: Mutex<HashMap<usize, Sender<Message>>>, // all unique channels for each thread
     channels: Mutex<HashMap<u64, usize>>, // all peers id linked to a thread (channel)
     sender: Mutex<Sender<ThreadMessage>>, // sender for all threads to send a new connection to handle for available thread
-    receiver: Mutex<Receiver<ThreadMessage>> // receiver used in all threads to get new connection to handle
+    receiver: Mutex<Receiver<ThreadMessage>>, // receiver used in all threads to get new connection to handle
 }
 
-impl Drop for MultiThreadServer {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-
-impl P2pServer for MultiThreadServer {
-    fn new(peer_id: u64, tag: Option<String>, max_peers: usize, bind_address: String) -> Self {
-        if let Some(tag) = &tag {
-            assert!(tag.len() > 0 && tag.len() <= 16);
-        }
-
-        // main channel used by ALL threads to receive new connections
-        let (sender, receiver) = channel();
-        MultiThreadServer {
-            peer_id,
-            tag,
-            max_peers,
-            bind_address,
-            connections: Mutex::new(HashMap::new()),
-            thread_channels: Mutex::new(HashMap::new()),
-            channels: Mutex::new(HashMap::new()),
-            sender: Mutex::new(sender),
-            receiver: Mutex::new(receiver)
-        }
-    }
+impl MultiThreadServer {
 
     fn start(self: Arc<Self>) {
         println!("Generating {} threads...", self.get_max_peers() + 1);
@@ -117,6 +92,38 @@ impl P2pServer for MultiThreadServer {
         thread::spawn(move || {
             self.listen_new_connections();
         });
+    }
+}
+
+impl Drop for MultiThreadServer {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+impl P2pServer for MultiThreadServer {
+    fn new(peer_id: u64, tag: Option<String>, max_peers: usize, bind_address: String) -> Arc<Self> {
+        if let Some(tag) = &tag {
+            assert!(tag.len() > 0 && tag.len() <= 16);
+        }
+
+        // main channel used by ALL threads to receive new connections
+        let (sender, receiver) = channel();
+        let server = MultiThreadServer {
+            peer_id,
+            tag,
+            max_peers,
+            bind_address,
+            connections: Mutex::new(HashMap::new()),
+            thread_channels: Mutex::new(HashMap::new()),
+            channels: Mutex::new(HashMap::new()),
+            sender: Mutex::new(sender),
+            receiver: Mutex::new(receiver)
+        };
+
+        let arc = Arc::new(server);
+        Self::start(arc.clone());
+        arc
     }
 
     fn stop(&self) {
@@ -295,7 +302,7 @@ impl P2pServer for MultiThreadServer {
     fn get_connections_id(&self) -> Result<Vec<u64>, P2pError> {
         match self.connections.lock() {
             Ok(connections) => {
-                Ok(connections.values().map(|arc| { arc.get_peer_id() }).collect())
+                Ok(connections.keys().cloned().collect())
             },
             Err(e) => Err(P2pError::OnLock(format!("trying to get connections id: {}", e)))
         }
@@ -325,6 +332,19 @@ impl P2pServer for MultiThreadServer {
             Err(e) => {
                 Err(P2pError::OnLock(format!("send_to_peer: {}", e))) 
             }
+        }
+    }
+
+    // send bytes in param to all connected peers
+    fn broadcast_bytes(&self, buf: &[u8]) -> Result<(), P2pError> {
+        match self.connections.lock() {
+            Ok(connections) => {
+                for connection in connections.keys() {
+                    self.send_to_peer(*connection, buf.to_vec())?;
+                }
+                Ok(())
+            },
+            Err(e) => Err(P2pError::OnLock(format!("broadcast: {}", e)))
         }
     }
 }

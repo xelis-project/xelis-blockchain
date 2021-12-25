@@ -1,8 +1,7 @@
-use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY};
+use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY, GENESIS_BLOCK, DEV_ADDRESS};
 use crate::globals::get_current_time;
 use crate::crypto::key::PublicKey;
 use crate::crypto::hash::{Hash, Hashable};
-use crate::p2p::server::P2pServer;
 use super::block::{Block, CompleteBlock};
 use super::difficulty::{check_difficulty, calculate_difficulty};
 use super::transaction::*;
@@ -10,7 +9,7 @@ use super::serializer::Serializer;
 use super::error::BlockchainError;
 use super::mempool::{Mempool, SortedTx};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{Ordering, AtomicU64};
 
 #[derive(serde::Serialize)]
 pub struct Account {
@@ -29,41 +28,99 @@ impl Account {
 }
 
 #[derive(serde::Serialize)]
-pub struct Blockchain<P: P2pServer> {
+pub struct Blockchain {
     blocks: Vec<CompleteBlock>, // all blocks in blockchain: TODO use storage
-    height: u64, // current block height 
-    supply: u64, // current circulating supply based on coins already emitted
+    height: AtomicU64, // current block height 
+    supply: AtomicU64, // current circulating supply based on coins already emitted
     top_hash: Hash, // current block top hash
-    difficulty: u64, // difficulty for next block
+    difficulty: AtomicU64, // difficulty for next block
     mempool: Mempool, // mempool to retrieve/add all txs
     #[serde(skip_serializing)]
-    p2p: Arc<P>, // p2p to broadcast/receive new blocks
     accounts: HashMap<PublicKey, Account>, // all accounts registered on chain: TODO use storage
     dev_address: PublicKey // Dev address for block fee
 }
 
-impl<P: P2pServer> Blockchain<P> {
-    pub fn new(dev_key: PublicKey, p2p_server: Arc<P>) -> Self {
-        let mut blockchain = Blockchain {
-            blocks: vec![],
-            height: 0,
-            supply: 0,
-            top_hash: Hash::zero(),
-            difficulty: MINIMUM_DIFFICULTY,
-            mempool: Mempool::new(),
-            accounts: HashMap::new(),
-            p2p: p2p_server,
-            dev_address: dev_key
+impl Blockchain {
+
+    pub fn new() -> Self {
+        let dev_address = match PublicKey::from_address(&DEV_ADDRESS.to_owned()) {
+            Ok(addr) => addr,
+            Err(e) => panic!("Invalid dev address: {}", e)
         };
 
-        blockchain.register_account(&dev_key);
-        P2pServer::start(blockchain.p2p.clone());
+        let mut blockchain = Blockchain {
+            blocks: vec![],
+            height: AtomicU64::new(0),
+            supply: AtomicU64::new(0),
+            top_hash: Hash::zero(),
+            difficulty: AtomicU64::new(MINIMUM_DIFFICULTY),
+            mempool: Mempool::new(),
+            accounts: HashMap::new(),
+            //p2p: P::new(1, None, 8, String::from("127.0.0.1:2126")),
+            dev_address: dev_address.clone()
+        };
+
+        if let Err(e) = blockchain.create_genesis_block() {
+            panic!("Error on genesis block: {}", e);
+        }
 
         blockchain
     }
 
+    // function to include the genesis block and register the public dev key.
+    fn create_genesis_block(&mut self) -> Result<(), BlockchainError> {
+        if GENESIS_BLOCK.len() != 0 {
+            println!("De-serializing genesis block...");
+            match CompleteBlock::from_hex(GENESIS_BLOCK.to_owned()) {
+                Ok(block) => {
+                    let dev_address = self.dev_address.clone();
+                    if *block.get_miner() != dev_address {
+                        panic!("Genesis block is not mined by dev address!");
+                    }
+                    self.register_account(dev_address);
+                    self.add_new_block(*block)?;
+                },
+                Err(e) => panic!("Error while de-serializing genesis block: {}", e)
+            }
+        } else {
+            println!("No genesis block found...");
+        }
+
+        Ok(())
+    }
+
+    // mine a block for current difficulty
+    pub fn mine_block(&mut self, key: PublicKey) -> Result<(), BlockchainError> {
+        let mut block = self.get_block_template(key);
+        let mut hash = block.hash();
+        while !check_difficulty(&hash, self.get_difficulty())? {
+            block.nonce += 1;
+            block.timestamp = get_current_time();
+            hash = block.hash();
+        }
+
+        let complete_block = self.build_complete_block_from_block(block)?;
+        self.add_new_block(complete_block)
+    }
+
     pub fn get_height(&self) -> u64 {
-        self.height
+        self.height.load(Ordering::Relaxed)
+    }
+
+    pub fn get_difficulty(&self) -> u64 {
+        self.difficulty.load(Ordering::Relaxed)
+    }
+
+    pub fn get_supply(&self) -> u64 {
+        self.supply.load(Ordering::Relaxed)
+    }
+
+    pub fn get_dev_address(&self) -> &PublicKey {
+        &self.dev_address
+    }
+
+    pub fn get_top_hash(&self) -> &Hash {
+        &self.top_hash
     }
 
     pub fn add_tx_to_mempool(&mut self, tx: Transaction) -> Result<(), BlockchainError> {
@@ -73,19 +130,11 @@ impl<P: P2pServer> Blockchain<P> {
         }
 
         self.verify_transaction_with_hash(&tx, &hash, false)?;
-        println!("Broadcast Transaction!");
-        if let Err(e) = self.p2p.broadcast_tx(&tx) {
+        /*if let Err(e) = self.get_p2p().broadcast_tx(&tx) {
             return Err(BlockchainError::ErrorOnP2p(e))
-        }
+        }*/
 
         self.mempool.add_tx(hash, tx)
-    }
-
-    pub fn register_account(&mut self, pub_key: &PublicKey) {
-        self.accounts.insert(pub_key.clone(), Account {
-            balance: 0,
-            nonce: 0
-        });
     }
 
     pub fn has_account(&self, account: &PublicKey) -> bool {
@@ -97,6 +146,13 @@ impl<P: P2pServer> Blockchain<P> {
             Some(v) => Ok(v),
             None => Err(BlockchainError::AddressNotRegistered(account.clone()))
         }
+    }
+
+    fn register_account(&mut self, pub_key: PublicKey) {
+        self.accounts.insert(pub_key, Account {
+            balance: 0,
+            nonce: 0
+        });
     }
 
     pub fn get_mut_account(&mut self, account: &PublicKey) -> Result<&mut Account, BlockchainError> {
@@ -115,10 +171,10 @@ impl<P: P2pServer> Blockchain<P> {
 
     pub fn get_block_template(&self, address: PublicKey) -> Block {
         let coinbase_tx = Transaction::new(0, TransactionData::Coinbase(CoinbaseTx {
-            block_reward: get_block_reward(self.supply),
+            block_reward: get_block_reward(self.get_supply()),
             fee_reward: 0,
         }), address);
-        let mut block = Block::new(self.height, get_current_time(), self.top_hash.clone(), self.difficulty, coinbase_tx, vec![]);
+        let mut block = Block::new(self.get_height(), get_current_time(), self.top_hash.clone(), self.get_difficulty(), coinbase_tx, vec![]);
         let txs: &Vec<SortedTx> = self.mempool.get_sorted_txs();
 
         let mut total_fee = 0;
@@ -142,9 +198,19 @@ impl<P: P2pServer> Blockchain<P> {
         block
     }
 
+    pub fn build_complete_block_from_block(&self, block: Block) -> Result<CompleteBlock, BlockchainError> {
+        let mut transactions: Vec<Transaction> = vec![];
+        for hash in &block.txs_hashes {
+            let tx = self.mempool.view_tx(hash)?; // at this point, we don't want to lose/remove any tx, we clone it only
+            transactions.push(tx.clone());
+        }
+        let complete_block = CompleteBlock::new(block, transactions);
+        Ok(complete_block)
+    }
+
     pub fn check_validity(&self) -> Result<(), BlockchainError> {
-        if self.height != self.blocks.len() as u64 {
-            return Err(BlockchainError::InvalidBlockHeight(self.height, self.blocks.len() as u64))
+        if self.get_height() != self.blocks.len() as u64 {
+            return Err(BlockchainError::InvalidBlockHeight(self.get_height(), self.blocks.len() as u64))
         }
 
         let mut circulating_supply = 0;
@@ -210,37 +276,30 @@ impl<P: P2pServer> Blockchain<P> {
             total_supply_from_accounts += account.balance;
         }
 
-        if circulating_supply != self.supply {
-            return Err(BlockchainError::InvalidCirculatingSupply(circulating_supply, self.supply));
+        if circulating_supply != self.get_supply() {
+            return Err(BlockchainError::InvalidCirculatingSupply(circulating_supply, self.get_supply()));
         }
 
-        if total_supply_from_accounts != self.supply {
-            return Err(BlockchainError::InvalidCirculatingSupply(total_supply_from_accounts, self.supply));
+        if total_supply_from_accounts != self.get_supply() {
+            return Err(BlockchainError::InvalidCirculatingSupply(total_supply_from_accounts, self.get_supply()));
         }
 
         Ok(())
     }
 
-    pub fn build_complete_block_from_block(&self, block: Block) -> Result<CompleteBlock, BlockchainError> {
-        let mut transactions: Vec<Transaction> = vec![];
-        for hash in &block.txs_hashes {
-            let tx = self.mempool.view_tx(hash)?; // at this point, we don't want to lose/remove any tx, we clone it only
-            transactions.push(tx.clone());
-        }
-        let complete_block = CompleteBlock::new(block, transactions);
-        Ok(complete_block)
-    }
-
     pub fn add_new_block(&mut self, block: CompleteBlock) -> Result<(), BlockchainError> {
+        // TODO Lock it to be sure to have only one block at a time!!
+        let current_height = self.get_height();
+        let current_difficulty = self.get_difficulty();
         let block_hash = block.hash();
-        if self.height != block.get_height() {
-            return Err(BlockchainError::InvalidBlockHeight(block.get_height(), block.get_height()));
-        } else if self.difficulty != block.get_difficulty() || !check_difficulty(&block_hash, self.difficulty)? {
-            return Err(BlockchainError::InvalidDifficulty(self.difficulty, block.get_difficulty()));
+        if current_height != block.get_height() {
+            return Err(BlockchainError::InvalidBlockHeight(current_height, block.get_height()));
+        } else if current_difficulty != block.get_difficulty() || !check_difficulty(&block_hash, current_difficulty)? {
+            return Err(BlockchainError::InvalidDifficulty(current_difficulty, block.get_difficulty()));
         } else if block.get_timestamp() > get_current_time() { // TODO accept a latency of max 30s
             return Err(BlockchainError::TimestampIsInFuture(get_current_time(), block.get_timestamp()));
-        } else if self.height != 0 {
-            let previous_block = self.get_block_at_height(self.height - 1)?;
+        } else if current_height != 0 {
+            let previous_block = self.get_block_at_height(current_height - 1)?;
             let previous_hash = previous_block.hash();
             if previous_hash != *block.get_previous_hash() {
                 return Err(BlockchainError::InvalidPreviousBlockHash(block.get_previous_hash().clone(), previous_hash));
@@ -285,19 +344,15 @@ impl<P: P2pServer> Blockchain<P> {
                     _ => {}
                 };
 
-                let hash = tx.hash();
-                self.verify_transaction_with_hash(tx, &hash, false)?;
-
-                //let tx = self.mempool.view_tx(&tx_hash)?; // we don't remove any tx until every test are passed
-    
-                cache_tx.insert(tx_hash.clone(), true);
+                self.verify_transaction_with_hash(tx, &tx_hash, false)?;
+                cache_tx.insert(tx_hash, true);
                 total_fees += tx.get_fee();
                 total_tx_size += tx.size();
             }
 
             if block.size() + total_tx_size > MAX_BLOCK_SIZE {
                 return Err(BlockchainError::InvalidBlockSize(MAX_BLOCK_SIZE, block.size() + total_tx_size));
-            } 
+            }
 
             if cache_tx.len() != block.get_transactions().len() || cache_tx.len() != block.get_txs_hashes().len() {
                 return Err(BlockchainError::InvalidBlockTxs(block.get_txs_hashes().len(), cache_tx.len()))
@@ -305,18 +360,18 @@ impl<P: P2pServer> Blockchain<P> {
         }
 
         // Miner Tx verification
-        let block_reward = get_block_reward(self.supply);
+        let block_reward = get_block_reward(self.get_supply());
         match block.get_miner_tx().get_data() {
-            TransactionData::Coinbase(data) => { //reward contains block reward + fees from all txs included in this block
+            TransactionData::Coinbase(data) => { // reward contains block reward + fees from all txs included in this block
                 if !self.has_account(block.get_miner_tx().get_sender()) {
                     return Err(BlockchainError::AddressNotRegistered(block.get_miner_tx().get_sender().clone()));
                 }
 
-                if block.get_miner_tx().get_fee() != 0 { //coinbase tx don't pay fee, if we have fee, they try to generate unauthorized coins
+                if block.get_miner_tx().get_fee() != 0 { // coinbase tx don't pay fee, if we have fee, they try to generate unauthorized coins
                     return Err(BlockchainError::InvalidTxFee(0, block.get_miner_tx().get_fee()))
                 }
 
-                if block.get_miner_tx().has_signature() { //Coinbase tx should not be signed (there is no sender, why signing it ?)
+                if block.get_miner_tx().has_signature() { // Coinbase tx should not be signed (there is no sender, why signing it ?)
                     return Err(BlockchainError::InvalidTransactionSignature)
                 }
 
@@ -348,21 +403,22 @@ impl<P: P2pServer> Blockchain<P> {
         }
         self.execute_transaction(block.get_miner_tx())?; // execute coinbase tx
 
-        if self.get_height() > 2 {
-            self.difficulty = calculate_difficulty(self.get_block_at_height(self.get_height() - 1)?, &block);
+        if self.get_height() > 2 { // re calculate difficulty
+            let difficulty = calculate_difficulty(self.get_block_at_height(current_height - 1)?, &block);
+            self.difficulty.store(difficulty, Ordering::Relaxed);
         }
 
-        self.height += 1;
-        self.top_hash = block_hash.clone();
-        self.supply += block_reward;
-        println!("Broadcast block {}", block);
-        if let Err(e) = self.p2p.broadcast_block(&block) { // Broadcast block to other nodes
+        self.height.fetch_add(1, Ordering::Relaxed);
+        self.top_hash = block_hash;
+        self.supply.fetch_add(block_reward, Ordering::Relaxed);
+
+        /*if let Err(e) = self.broadcast_block(&block) { // Broadcast block to other nodes
             println!("Error while broadcasting block: {}", e);
-        }
+        }*/
         self.blocks.push(block); // Add block to chain
 
         let mut total_block_time = 0;
-        for i in 1..self.get_height() {
+        for i in 2..self.get_height() {
             let block_time = self.get_block_at_height(i)?.get_timestamp() - self.get_block_at_height(i - 1)?.get_timestamp();
             total_block_time += block_time;
         }
@@ -417,11 +473,11 @@ impl<P: P2pServer> Blockchain<P> {
                 let mut total_coins = tx.get_fee();
                 for output in txs {
                     total_coins += output.amount;
-                    if output.to == *tx.get_sender() { //we can't transfer coins to ourself, why would you do that ?
+                    if output.to == *tx.get_sender() { // we can't transfer coins to ourself, why would you do that ?
                         return Err(BlockchainError::InvalidTransactionToSender(hash.clone()))
                     }
 
-                    if !self.has_account(&output.to) { //verify that all receivers are registered
+                    if !self.has_account(&output.to) { // verify that all receivers are registered
                         return Err(BlockchainError::AddressNotRegistered(output.to.clone()))
                     }
                 }
@@ -464,7 +520,7 @@ impl<P: P2pServer> Blockchain<P> {
                 amount += total;
             }
             TransactionData::Registration => {
-                self.register_account(transaction.get_sender());
+                self.register_account(transaction.get_sender().clone());
 
                 return Ok(())
             }
@@ -530,8 +586,8 @@ pub fn calculate_tx_fee(tx_size: usize) -> u64 {
 
 use std::fmt::{Display, Error, Formatter};
 
-impl<T: P2pServer> Display for Blockchain<T> {
+impl Display for Blockchain {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "Blockchain[height: {}, top_hash: {}, accounts: {}, supply: {}]", self.height, self.top_hash, self.accounts.len(), self.supply)
+        write!(f, "Blockchain[height: {}, top_hash: {}, accounts: {}, supply: {}]", self.get_height(), self.top_hash, self.accounts.len(), self.get_supply())
     }
 }

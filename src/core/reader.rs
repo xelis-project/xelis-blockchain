@@ -3,9 +3,12 @@ use std::convert::TryInto;
 pub enum ReaderError {
     InvalidSize,
     InvalidValue,
+    InvalidHex,
     ErrorTryInto
 }
 
+// Reader help us to read safely from bytes
+// Mostly used when de-serializing an object from Serializer trait 
 pub struct Reader {
     bytes: Vec<u8>, // bytes to read
     total: usize // total read bytes
@@ -78,6 +81,7 @@ impl Display for ReaderError {
             ReaderError::ErrorTryInto => write!(f, "Error on try into"),
             ReaderError::InvalidSize => write!(f, "Invalid size"),
             ReaderError::InvalidValue => write!(f, "Invalid value"),
+            ReaderError::InvalidHex => write!(f, "Invalid hex"),
         }
     }
 }

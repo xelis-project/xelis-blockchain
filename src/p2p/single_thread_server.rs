@@ -24,10 +24,22 @@ pub struct SingleThreadServer {
     bind_address: String, // ip:port address to receive connections
     connections: Mutex<HashMap<u64, Arc<Connection>>>, // all connections accepted
     sender: Mutex<Sender<Message>>, // sender to send messages to the thread #2
-    receiver: Mutex<Receiver<Message>> // only used by the thread #2
+    receiver: Mutex<Receiver<Message>>, // only used by the thread #2
 }
 
 impl SingleThreadServer {
+
+    fn start(self: Arc<Self>) {
+        // spawn threads
+        let clone = self.clone();
+        thread::spawn(move || {
+            clone.listen_new_connections();
+        });
+
+        thread::spawn(move || {
+            self.listen_existing_connections();
+        });
+    }
 
     // listening connections thread
     fn listen_existing_connections(&self) {
@@ -81,7 +93,7 @@ impl Drop for SingleThreadServer {
 }
 
 impl P2pServer for SingleThreadServer {
-    fn new(peer_id: u64, tag: Option<String>, max_peers: usize, bind_address: String) -> Self {
+    fn new(peer_id: u64, tag: Option<String>, max_peers: usize, bind_address: String) -> Arc<Self> {
         if let Some(tag) = &tag {
             assert!(tag.len() > 0 && tag.len() <= 16);
         }
@@ -89,7 +101,7 @@ impl P2pServer for SingleThreadServer {
         // set channel to communicate with listener thread
         let (sender, receiver) = channel();
 
-        SingleThreadServer {
+        let server = SingleThreadServer {
             peer_id,
             tag,
             max_peers,
@@ -97,19 +109,11 @@ impl P2pServer for SingleThreadServer {
             connections: Mutex::new(HashMap::new()),
             sender: Mutex::new(sender),
             receiver: Mutex::new(receiver)
-        }
-    }
+        };
 
-    fn start(self: Arc<Self>) {
-        // spawn threads
-        let clone = self.clone();
-        thread::spawn(move || {
-            clone.listen_new_connections();
-        });
-
-        thread::spawn(move || {
-            self.listen_existing_connections();
-        });
+        let arc = Arc::new(server);
+        Self::start(arc.clone());
+        arc
     }
 
     fn stop(&self) {
@@ -280,7 +284,7 @@ impl P2pServer for SingleThreadServer {
     fn get_connections_id(&self) -> Result<Vec<u64>, P2pError> {
         match self.connections.lock() {
             Ok(connections) => {
-                Ok(connections.values().map(|arc| { arc.get_peer_id() }).collect()) // TODO Found a better way instead of cloning
+                Ok(connections.keys().cloned().collect())
             },
             Err(e) => Err(P2pError::OnLock(format!("trying to get connections id: {}", e)))
         }
@@ -299,6 +303,19 @@ impl P2pServer for SingleThreadServer {
             Err(e) => {
                 Err(P2pError::OnLock(format!("send_to_peer: {}", e))) 
             }
+        }
+    }
+
+    // send bytes in param to all connected peers
+    fn broadcast_bytes(&self, buf: &[u8]) -> Result<(), P2pError> {
+        match self.connections.lock() {
+            Ok(connections) => {
+                for connection in connections.keys() {
+                    self.send_to_peer(*connection, buf.to_vec())?;
+                }
+                Ok(())
+            },
+            Err(e) => Err(P2pError::OnLock(format!("broadcast: {}", e)))
         }
     }
 }

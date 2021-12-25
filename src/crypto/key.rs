@@ -10,7 +10,7 @@ use std::hash::Hasher;
 pub const KEY_LENGTH: usize = 32;
 pub const SIGNATURE_LENGTH: usize = 64;
 
-#[derive(Clone, Eq, Copy)]
+#[derive(Clone, Eq)]
 pub struct PublicKey(ed25519_dalek::PublicKey);
 pub struct PrivateKey(ed25519_dalek::SecretKey);
 

@@ -1,21 +1,20 @@
 use crate::config::{VERSION, NETWORK_ID, SEED_NODES};
-use crate::crypto::hash::Hash;
 use crate::globals::get_current_time;
 use crate::core::serializer::Serializer;
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::transaction::Transaction;
 use crate::core::block::CompleteBlock;
+use crate::crypto::hash::Hash;
 use super::connection::Connection;
 use super::handshake::Handshake;
 use super::error::P2pError;
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::io::prelude::{Write, Read};
 use std::io::ErrorKind;
 use std::net::{TcpListener, TcpStream, SocketAddr, Shutdown};
 
 pub trait P2pServer {
-    fn new(peer_id: u64, tag: Option<String>, max_peers: usize, bind_address: String) -> Self;
-    fn start(self: Arc<Self>);
+    fn new(peer_id: u64, tag: Option<String>, max_peers: usize, bind_address: String) -> Arc<Self>;
     fn stop(&self);
     fn get_peer_id(&self) -> u64;
     fn get_tag(&self) -> &Option<String>;
@@ -33,7 +32,7 @@ pub trait P2pServer {
     fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError>;
     fn is_connected_to_addr(&self, peer_addr: &SocketAddr) -> Result<bool, P2pError>;
     fn send_to_peer(&self, peer_id: u64, bytes: Vec<u8>) -> Result<(), P2pError>;
-
+    fn broadcast_bytes(&self, buf: &[u8]) -> Result<(), P2pError>;
     // defaults functions
 
     // Connect to all seed nodes from constant
@@ -88,14 +87,6 @@ pub trait P2pServer {
                 }
             }
         }
-    }
-
-    // send bytes in param to all connected peers
-    fn broadcast_bytes(&self, buf: &[u8]) -> Result<(), P2pError> {
-        for connection in self.get_connections_id()? {
-            self.send_to_peer(connection, buf.to_vec())?;
-        }
-        Ok(())
     }
 
     fn broadcast_tx(&self, tx: &Transaction) -> Result<(), P2pError> {
@@ -161,8 +152,7 @@ pub trait P2pServer {
             };
         }
 
-        // TODO set correct params: block height, top block hash
-        Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), get_current_time(), 0, Hash::zero(), peers))
+        Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), get_current_time(), 0, Hash::new([0u8; 32]), peers))
     }
 
     // this function handle all new connection on main thread
@@ -230,11 +220,13 @@ pub trait P2pServer {
     fn handle_connection(&self, buf: &mut [u8], connection: &Arc<Connection>) {
         if let Err(e) = self.listen_connection(buf, connection) {
             println!("Error occured while listening {}: {}", connection, e);
-            if connection.increment_and_get_fail_count() >= 20 {
-                println!("High fail count detected, remove connection!");
-                if let Err(e) = self.remove_connection(&connection.get_peer_id()) {
-                    println!("Error while trying to remove {} due to high fail count: {}", connection, e);
-                }
+            connection.increment_fail_count();
+        }
+
+        if connection.fail_count() >= 20 {
+            println!("High fail count detected, remove connection!");
+            if let Err(e) = self.remove_connection(&connection.get_peer_id()) {
+                println!("Error while trying to remove {} due to high fail count: {}", connection, e);
             }
         }
     }
@@ -250,17 +242,17 @@ pub trait P2pServer {
                 let id = reader.read_u8()?;
                 match id {
                     0 => {
-                        let tx = Transaction::from_bytes(&mut reader)?;
+                        let tx = Transaction::from_bytes(&mut reader)?;                        
                         // TODO add TX to mempool
                     },
                     1 => {
                         let block = CompleteBlock::from_bytes(&mut reader)?;
-                        // TODO add CompleteBlock to chain
                     },
                     _ => return Err(ReaderError::InvalidValue)
                 };
 
-                if n != reader.total_read() {
+                if n != reader.total_read() { // request was valid, but peer send more than expected
+                    connection.increment_fail_count();
                     println!("{} sent {} bytes but read only {} bytes", connection, n, reader.total_read());
                 }
             }

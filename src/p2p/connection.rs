@@ -93,8 +93,8 @@ impl Connection {
     }
 
     // TODO verify last fail count
-    pub fn increment_and_get_fail_count(&self) -> u8 {
-        self.fail_count.fetch_add(1, Ordering::Relaxed) + 1
+    pub fn increment_fail_count(&self) {
+        self.fail_count.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn get_peer_id(&self) -> u64 {
