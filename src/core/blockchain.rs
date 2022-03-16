@@ -2,6 +2,7 @@ use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPL
 use crate::globals::get_current_time;
 use crate::crypto::key::PublicKey;
 use crate::crypto::hash::{Hash, Hashable};
+use crate::p2p::server::P2pServer;
 use super::block::{Block, CompleteBlock};
 use super::difficulty::{check_difficulty, calculate_difficulty};
 use super::transaction::*;
@@ -10,6 +11,7 @@ use super::error::BlockchainError;
 use super::mempool::{Mempool, SortedTx};
 use std::collections::HashMap;
 use std::sync::atomic::{Ordering, AtomicU64};
+use std::sync::Arc;
 
 #[derive(serde::Serialize)]
 pub struct Account {
@@ -37,6 +39,8 @@ pub struct Blockchain {
     mempool: Mempool, // mempool to retrieve/add all txs
     #[serde(skip_serializing)]
     accounts: HashMap<PublicKey, Account>, // all accounts registered on chain: TODO use storage
+    #[serde(skip_serializing)]
+    p2p: Arc<P2pServer>,
     dev_address: PublicKey // Dev address for block fee
 }
 
@@ -56,7 +60,7 @@ impl Blockchain {
             difficulty: AtomicU64::new(MINIMUM_DIFFICULTY),
             mempool: Mempool::new(),
             accounts: HashMap::new(),
-            //p2p: P::new(1, None, 8, String::from("127.0.0.1:2126")),
+            p2p: P2pServer::new(1, None, 8, String::from("127.0.0.1:2126")),
             dev_address: dev_address.clone()
         };
 
@@ -121,6 +125,10 @@ impl Blockchain {
 
     pub fn get_top_hash(&self) -> &Hash {
         &self.top_hash
+    }
+
+    pub fn get_top_block(&self) -> Result<&CompleteBlock, BlockchainError> {
+        self.get_block_at_height(self.get_height() - 1)
     }
 
     pub fn add_tx_to_mempool(&mut self, tx: Transaction) -> Result<(), BlockchainError> {
@@ -375,7 +383,7 @@ impl Blockchain {
                     return Err(BlockchainError::InvalidTransactionSignature)
                 }
 
-                if data.block_reward != block_reward || data.block_reward + data.fee_reward != block_reward + total_fees {
+                if data.block_reward != block_reward || data.fee_reward != total_fees {
                     return Err(BlockchainError::InvalidBlockReward(block_reward + total_fees, data.block_reward + data.fee_reward))
                 }
 
@@ -403,27 +411,28 @@ impl Blockchain {
         }
         self.execute_transaction(block.get_miner_tx())?; // execute coinbase tx
 
-        if self.get_height() > 2 { // re calculate difficulty
+        let current_height = self.get_height();
+        if current_height > 2 { // re calculate difficulty
             let difficulty = calculate_difficulty(self.get_block_at_height(current_height - 1)?, &block);
             self.difficulty.store(difficulty, Ordering::Relaxed);
         }
 
-        self.height.fetch_add(1, Ordering::Relaxed);
-        self.top_hash = block_hash;
-        self.supply.fetch_add(block_reward, Ordering::Relaxed);
-
-        /*if let Err(e) = self.broadcast_block(&block) { // Broadcast block to other nodes
-            println!("Error while broadcasting block: {}", e);
-        }*/
-        self.blocks.push(block); // Add block to chain
-
-        let mut total_block_time = 0;
-        for i in 2..self.get_height() {
-            let block_time = self.get_block_at_height(i)?.get_timestamp() - self.get_block_at_height(i - 1)?.get_timestamp();
-            total_block_time += block_time;
+        if current_height > 0 {
+            let block_time = block.get_timestamp() - self.get_top_block()?.get_timestamp();
+            println!("Average block time ({}): {}s", self.get_height(), block_time);
         }
 
-        println!("Average block time ({}): {}s", self.get_height(), total_block_time / self.get_height() as u64);
+        if current_height != 0 {
+            if let Err(e) = self.p2p.broadcast_block(&block) { // Broadcast block to other nodes
+                println!("Error while broadcasting block: {}", e);
+            }
+        }
+
+        println!("Adding new block '{}' at height {}", block_hash, current_height + 1);
+        self.height.store(current_height + 1, Ordering::Relaxed);
+        self.top_hash = block_hash;
+        self.supply.fetch_add(block_reward, Ordering::Relaxed);
+        self.blocks.push(block); // Add block to chain
         Ok(())
     }
 

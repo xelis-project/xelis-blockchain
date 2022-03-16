@@ -1,3 +1,4 @@
+use std::fmt::{Display, Error, Formatter};
 use std::convert::TryInto;
 
 pub enum ReaderError {
@@ -72,8 +73,6 @@ impl Reader {
         self.total
     }
 }
-
-use std::fmt::{Display, Error, Formatter};
 
 impl Display for ReaderError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
