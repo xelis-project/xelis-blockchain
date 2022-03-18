@@ -40,7 +40,7 @@ impl Serializer for AddressType {
         let _type = match reader.read_u8()? {
             0 => AddressType::Normal,
             1 => {
-                let id: [u8; PAYMENT_ID_SIZE] = reader.try_into(PAYMENT_ID_SIZE)?;
+                let id: [u8; PAYMENT_ID_SIZE] = reader.read_bytes(PAYMENT_ID_SIZE)?;
                 AddressType::PaymentId(id)
             }
             _ => return Err(ReaderError::InvalidValue)

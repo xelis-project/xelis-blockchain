@@ -4,7 +4,8 @@ use crate::core::serializer::Serializer;
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::transaction::Transaction;
 use crate::core::block::CompleteBlock;
-use crate::crypto::hash::Hash;
+use crate::core::blockchain::Blockchain;
+use crate::core::error::BlockchainError;
 use super::connection::Connection;
 use super::handshake::Handshake;
 use super::error::P2pError;
@@ -15,6 +16,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::io::ErrorKind;
 use std::thread;
+use rand::Rng;
+
+macro_rules! lock {
+    ($e: expr) => {
+        match $e.lock() {
+            Ok(v) => v,
+            Err(_) => return Err(ReaderError::InvalidValue)
+        }
+    };
+}
 
 enum Message {
     SendBytes(u64, Vec<u8>), // peer id, bytes
@@ -34,16 +45,19 @@ pub struct P2pServer {
     connections: Mutex<HashMap<u64, Arc<Connection>>>, // all connections accepted
     sender: Mutex<Sender<Message>>, // sender to send messages to the thread #2
     receiver: Mutex<Receiver<Message>>, // only used by the thread #2
+    blockchain: Arc<Blockchain>
 }
 
 impl P2pServer {
-    pub fn new(peer_id: u64, tag: Option<String>, max_peers: usize, bind_address: String) -> Arc<Self> {
+    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain>) -> Arc<Self> {
         if let Some(tag) = &tag {
             assert!(tag.len() > 0 && tag.len() <= 16);
         }
 
         // set channel to communicate with listener thread
         let (sender, receiver) = channel();
+        let mut rng = rand::thread_rng();
+        let peer_id: u64 = rng.gen();
 
         let server = Self {
             peer_id,
@@ -52,7 +66,8 @@ impl P2pServer {
             bind_address,
             connections: Mutex::new(HashMap::new()),
             sender: Mutex::new(sender),
-            receiver: Mutex::new(receiver)
+            receiver: Mutex::new(receiver),
+            blockchain
         };
 
         let arc = Arc::new(server);
@@ -158,9 +173,9 @@ impl P2pServer {
         // TODO extend buffer as we have verified this peer
         let mut connections: HashMap<u64, Arc<Connection>> = HashMap::new();
         let mut buf: [u8; 512] = [0; 512]; // allocate this buffer only one time
-        loop {
-            match self.receiver.lock() {
-                Ok(receiver) => {
+        match self.receiver.lock() {
+            Ok(receiver) => {
+                loop {
                     while let Ok(msg) = receiver.try_recv() { // read all messages from channel
                         match msg {
                             Message::Exit => {
@@ -186,13 +201,12 @@ impl P2pServer {
                             }
                         }
                     }
-                },
-                Err(e) => panic!("Couldn't lock receiver! {}", e)
-            }
-
-            for connection in connections.values() {
-                self.handle_connection(&mut buf, &connection);
-            }
+                    for connection in connections.values() {
+                        self.handle_connection(&mut buf, &connection);
+                    }
+                }
+            },
+            Err(e) => panic!("Couldn't lock receiver! {}", e)
         }
     }
 
@@ -263,8 +277,12 @@ impl P2pServer {
             Err(e) => return Err(P2pError::OnLock(format!("{}", e)))
         };
 
-        // TODO Handshake hash
-        Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), get_current_time(), 0, Hash::new([0u8; 32]), peers))
+        let block_height = self.blockchain.get_height();
+        let top_hash = match self.blockchain.get_top_block_hash() {
+            Ok(v) => v,
+            Err(e) => return Err(P2pError::ErrorOnLock)
+        };
+        Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), get_current_time(), block_height, top_hash, peers))
     }
 
     // this function handle all new connection on main thread
@@ -276,9 +294,12 @@ impl P2pServer {
                 println!("New connection: {}", addr);
                 match stream.read(buffer) {
                     Ok(n) => {
-                        let handshake = Handshake::from_bytes(&buffer[0..n])?;
+                        let mut reader = Reader::new(&buffer[0..n]);
+                        let handshake = match Handshake::from_bytes(&mut reader) {
+                            Ok(v) => *v,
+                            Err(_) => return Err(P2pError::InvalidHandshake)
+                        };
                         let (connection, peers) = self.verify_handshake(addr, stream, handshake, out)?;
-
                         // if it's a outgoing connection, don't send the handshake back
                         // because we have already sent it
                         if !out {
@@ -292,7 +313,17 @@ impl P2pServer {
 
                         // if we reach here, handshake is all good, we can start listening this new peer
                         let peer_id = connection.get_peer_id(); // keep in memory the peer_id outside connection (because of moved value)
-                        self.add_connection(connection)?;
+                        let connection = self.add_connection(connection)?;
+
+                        let peer_height = connection.get_block_height();
+                        let our_height = self.blockchain.get_height();
+                        println!("{:?} peer: {} our: {}", self.tag, peer_height, our_height);
+                        for height in our_height..=peer_height { // request missing blocks
+                            println!("requesting height {}", height);
+                            let mut bytes = vec![2];
+                            bytes.extend_from_slice(&height.to_be_bytes());
+                            self.send_to_peer(peer_id, bytes)?;
+                        }
 
                         // try to extend our peer list
                         for peer in peers {
@@ -350,16 +381,41 @@ impl P2pServer {
                 let _ = self.remove_connection(&connection.get_peer_id());
             },
             Ok(n) => {
-                let mut reader = Reader::new(buf[0..n].to_vec());
-                let id = reader.read_u8()?;
-                match id {
+                let mut reader = Reader::new(&buf[0..n]);
+                match reader.read_u8()? {
                     0 => {
-                        let tx = Transaction::from_bytes(&mut reader)?;                        
-                        // TODO add TX to mempool
+                        let tx = Transaction::from_bytes(&mut reader)?;
+                        if let Err(e) = self.blockchain.add_tx_to_mempool(*tx) {
+                            println!("Error while adding TX to mempool: {}", e);
+                            match e {
+                                BlockchainError::TxAlreadyInMempool(_) => {},
+                                _ => {
+                                    connection.increment_fail_count();
+                                }
+                            };
+                        }
                     },
                     1 => {
                         let block = CompleteBlock::from_bytes(&mut reader)?;
+                        if let Err(e) = self.blockchain.add_new_block(*block) {
+                            println!("Error while adding new block: {}", e);
+                        }
                     },
+                    2 => {
+                        let height = reader.read_u64()?;
+                        match lock!(self.blockchain.get_storage()).get_block_at_height(height) {
+                            Ok(block) => {
+                                let mut bytes = block.to_bytes();
+                                bytes.insert(0, 1);
+                                if let Err(e) = self.send_to_peer(connection.get_peer_id(), bytes) {
+                                    println!("Error while sending requested block to peer '{}': {}", connection.get_peer_id(), e);
+                                }
+                            },
+                            Err(_) => {
+                                println!("Peer requested an invalid block height.");
+                            }
+                        };
+                    }
                     _ => return Err(ReaderError::InvalidValue)
                 };
 
@@ -367,7 +423,7 @@ impl P2pServer {
                     connection.increment_fail_count();
                     println!("{} sent {} bytes but read only {} bytes", connection, n, reader.total_read());
                 }
-            }
+            },
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                 // Don't do anything
             },
@@ -434,7 +490,7 @@ impl P2pServer {
         &self.bind_address
     }
 
-    fn add_connection(&self, connection: Connection) -> Result<(), P2pError> {
+    fn add_connection(&self, connection: Connection) -> Result<Arc<Connection>, P2pError> {
         match self.connections.lock() {
             Ok(mut connections) => {
                 let peer_id = connection.get_peer_id();
@@ -446,10 +502,10 @@ impl P2pServer {
                     },
                     None => match self.sender.lock() {
                         Ok(ref channel) => {
-                            match channel.send(Message::AddConnection(arc_connection)) {
+                            match channel.send(Message::AddConnection(arc_connection.clone())) {
                                 Ok(_) => {
                                     println!("add new connection (total {}): {}", connections.len(), self.bind_address);
-                                    Ok(())
+                                    Ok(arc_connection)
                                 }
                                 Err(e) => Err(P2pError::OnChannelMessage(peer_id, format!("{}", e)))
                             }
@@ -516,6 +572,7 @@ impl P2pServer {
 
     // send bytes in param to all connected peers
     fn broadcast_bytes(&self, buf: &[u8]) -> Result<(), P2pError> {
+        println!("Broadcast bytes");
         match self.connections.lock() {
             Ok(connections) => {
                 for connection in connections.keys() {

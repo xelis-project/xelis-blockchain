@@ -61,7 +61,10 @@ impl Connection {
             Ok(mut lock) => match lock.write(buf) {
                 Ok(_) => {
                     self.bytes_out.fetch_add(buf.len(), Ordering::Relaxed);
-                    Ok(())
+                    match lock.flush() {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(P2pError::OnWrite(format!("{}", e)))
+                    }
                 },
                 Err(e) => Err(P2pError::OnWrite(format!("{}", e)))
             },

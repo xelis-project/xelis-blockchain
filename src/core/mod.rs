@@ -7,3 +7,4 @@ pub mod error;
 pub mod thread_pool;
 pub mod serializer;
 pub mod reader;
+pub mod storage;

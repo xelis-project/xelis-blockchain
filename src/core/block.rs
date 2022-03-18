@@ -7,7 +7,7 @@ use super::reader::{Reader, ReaderError};
 const EXTRA_NONCE_SIZE: usize = 32;
 const BLOCK_WORK_SIZE: usize = 160;
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct Block {
     pub previous_hash: Hash,
     pub timestamp: u64,
@@ -20,7 +20,7 @@ pub struct Block {
     pub txs_hashes: Vec<Hash>
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct CompleteBlock {
     #[serde(flatten)]
     block: Block,

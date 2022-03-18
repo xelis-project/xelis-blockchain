@@ -2,10 +2,11 @@ use crate::p2p::error::P2pError;
 use crate::crypto::hash::Hash;
 use crate::crypto::key::PublicKey;
 use crate::crypto::bech32::Bech32Error;
+use super::reader::ReaderError;
 
 pub enum BlockchainError {
     TimestampIsLessThanParent(u64),
-    TimestampIsInFuture(u64, u64), //left is expected, right is got
+    TimestampIsInFuture(u64, u64), // left is expected, right is got
     InvalidBlockHeight(u64, u64),
     InvalidDifficulty(u64, u64),
     InvalidHash(Hash, Hash),
@@ -17,7 +18,7 @@ pub enum BlockchainError {
     TxAlreadyInMempool(Hash),
     TxEmpty(Hash),
     TxAlreadyInBlock(Hash),
-    DuplicateRegistration(PublicKey), //address
+    DuplicateRegistration(PublicKey), // address
     InvalidTxFee(u64, u64),
     AddressNotRegistered(PublicKey),
     AddressAlreadyRegistered(PublicKey),
@@ -32,12 +33,16 @@ pub enum BlockchainError {
     InvalidTransactionToSender(Hash),
     ErrorOnBech32(Bech32Error),
     BlockNotFound(Hash),
+    BlockHeightNotFound(u64),
     ErrorOnP2p(P2pError),
     ErrorOnLock(String),
+    ErrorOnReader(ReaderError),
     InvalidTransactionSignature,
     DifficultyCannotBeZero,
     DifficultyErrorOnConversion,
     InvalidMinerTx,
+    GenesisBlockMiner,
+    InvalidGenesisBlock
 }
 
 use std::fmt::{Display, Error, Formatter};
@@ -74,12 +79,16 @@ impl Display for BlockchainError {
             InvalidTransactionToSender(hash) => write!(f, "Invalid transaction, sender trying to send coins to himself: {}", hash),
             ErrorOnBech32(e) => write!(f, "Error occured on bech32: {}", e),
             BlockNotFound(hash) => write!(f, "Error while retrieving block by hash: {} not found", hash),
+            BlockHeightNotFound(height) => write!(f, "Error while retrieving block by height: {} not found", height),
             ErrorOnP2p(p2p) => write!(f, "Error on p2p: {}", p2p),
             ErrorOnLock(msg) => write!(f, "Error on lock: {}", msg),
+            ErrorOnReader(e) => write!(f, "Error on reader: {}", e),
             InvalidTransactionSignature => write!(f, "Invalid transaction signature"),
             DifficultyCannotBeZero => write!(f, "Difficulty cannot be zero!"),
             DifficultyErrorOnConversion => write!(f, "Difficulty error on conversion to BigUint"),
-            InvalidMinerTx => write!(f, "Invalid miner transaction in the block, only coinbase tx is allowed")
+            InvalidMinerTx => write!(f, "Invalid miner transaction in the block, only coinbase tx is allowed"),
+            GenesisBlockMiner => write!(f, "Genesis block is not mined by dev address!"),
+            InvalidGenesisBlock => write!(f, "Invalid genesis block")
         }
     }
 }

@@ -14,11 +14,12 @@ pub trait Serializer {
     fn from_bytes(reader: &mut Reader) -> Result<Box<Self>, ReaderError>;
 
     fn from_hex(hex: String) -> Result<Box<Self>, ReaderError> {
-        let mut reader = match hex::decode(&hex) {
-            Ok(bytes) => Reader::new(bytes),
-            Err(_) => return Err(ReaderError::InvalidHex)
-        };
-
-        Serializer::from_bytes(&mut reader)
+        match hex::decode(&hex) {
+            Ok(bytes) => {
+                let mut reader = Reader::new(&bytes);
+                Serializer::from_bytes(&mut reader)
+            },
+            Err(_) => Err(ReaderError::InvalidHex)
+        }
     }
 }
