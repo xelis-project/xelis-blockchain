@@ -23,24 +23,18 @@ impl<'a> Serializer for PacketOut<'a> {
 
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        match self {
-            PacketOut::Handshake(handshake) => {
-                bytes.push(HANDSHAKE_ID);
-                bytes.extend(handshake.to_bytes());
-            },
-            PacketOut::Transaction(tx) => {
-                bytes.push(TX_ID);
-                bytes.extend(tx.to_bytes());
-            },
-            PacketOut::Block(block) => {
-                bytes.push(BLOCK_ID);
-                bytes.extend(block.to_bytes());
-            },
-            PacketOut::RequestBlock(height) => {
-                bytes.push(REQUEST_BLOCK_ID);
-                bytes.extend(height.to_be_bytes());
-            }
+        let (id, packet) = match self {
+            PacketOut::Handshake(handshake) => (HANDSHAKE_ID, handshake.to_bytes()),
+            PacketOut::Transaction(tx) => (TX_ID, tx.to_bytes()),
+            PacketOut::Block(block) => (BLOCK_ID, block.to_bytes()),
+            PacketOut::RequestBlock(height) => (REQUEST_BLOCK_ID, height.to_be_bytes().to_vec())
         };
+
+        let packet_len: u32 = packet.len() as u32 + 1;
+        bytes.extend(packet_len.to_be_bytes());
+        bytes.push(id);
+        bytes.extend(packet);
+
         bytes
     }
 }
@@ -65,25 +59,6 @@ impl Serializer for PacketIn {
     }
 
     fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        match self {
-            PacketIn::Handshake(handshake) => {
-                bytes.push(HANDSHAKE_ID);
-                bytes.extend(handshake.to_bytes());
-            },
-            PacketIn::Transaction(tx) => {
-                bytes.push(TX_ID);
-                bytes.extend(tx.to_bytes());
-            },
-            PacketIn::Block(block) => {
-                bytes.push(BLOCK_ID);
-                bytes.extend(block.to_bytes());
-            },
-            PacketIn::RequestBlock(height) => {
-                bytes.push(REQUEST_BLOCK_ID);
-                bytes.extend(height.to_be_bytes());
-            }
-        };
-        bytes
+        panic!("Packet Incoming can't be serialized.")
     }
 }

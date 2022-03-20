@@ -1,10 +1,11 @@
 use std::fmt::{Display, Error, Formatter};
+use std::error::Error as TraitError;
 
+#[derive(Debug)]
 pub enum P2pError {
     InvalidHandshake,
     InvalidPeerAddress(String), // peer address from handshake
     InvalidNetworkID,
-    ErrorOnLock,
     TryInto(String),
     ChannelNotFound(u64),
     PeerNotFound(u64),
@@ -14,8 +15,11 @@ pub enum P2pError {
     OnStreamBlocking(bool, String),
     OnConnectionClose(String),
     OnChannelMessage(u64, String),
-    OnBroadcast(String)
+    OnBroadcast(String),
+    ReadTimeout(String)
 }
+
+impl TraitError for P2pError {}
 
 impl Display for P2pError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
@@ -33,8 +37,8 @@ impl Display for P2pError {
             OnStreamBlocking(value, msg) => write!(f, "Error while trying to set stream blocking mode to {}: {}", value, msg),
             OnConnectionClose(msg) => write!(f, "Error while trying to close connection: {}", msg),
             OnChannelMessage(peer, msg) => write!(f, "Error while trying to send message for peer {} through channel: {}", peer, msg),
-            ErrorOnLock => write!(f, "Error on lock"),
-            OnBroadcast(msg) => write!(f, "Error while trying to broadcast: {}", msg)
+            OnBroadcast(msg) => write!(f, "Error while trying to broadcast: {}", msg),
+            ReadTimeout(msg) => write!(f, "Error while trying to set read timeout: {}", msg)
         }
     }
 }

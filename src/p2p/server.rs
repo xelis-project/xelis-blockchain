@@ -1,4 +1,4 @@
-use crate::config::{VERSION, NETWORK_ID, SEED_NODES};
+use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE};
 use crate::globals::get_current_time;
 use crate::core::serializer::Serializer;
 use crate::core::reader::{Reader, ReaderError};
@@ -15,6 +15,7 @@ use std::sync::mpsc::{Sender, Receiver, channel};
 use std::io::prelude::{Write, Read};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::io::ErrorKind;
 use std::thread;
 use rand::Rng;
@@ -167,7 +168,7 @@ impl P2pServer {
     fn listen_existing_connections(&self) {
         println!("Starting single thread connection listener...");
         let mut connections: HashMap<u64, Arc<Connection>> = HashMap::new();
-        let mut buf: [u8; 1024 * 10] = [0; 1024 * 10]; // allocate 10 MB this buffer only one time
+        let mut buf: [u8; 1024] = [0; 1024]; // allocate this buffer only one time
         // TODO every 10 seconds, broadcast a Handshake packet
         match self.receiver.lock() {
             Ok(receiver) => {
@@ -282,7 +283,7 @@ impl P2pServer {
         let block_height = self.blockchain.get_height();
         let top_hash = match self.blockchain.get_top_block_hash() {
             Ok(v) => v,
-            Err(_) => return Err(P2pError::ErrorOnLock)
+            Err(_) => return Err(P2pError::OnLock)
         };
         Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), get_current_time(), block_height, top_hash, peers))
     }
@@ -291,6 +292,9 @@ impl P2pServer {
     // A new connection have to send an Handshake
     // if the handshake is valid, we accept it & register it on server
     fn handle_new_connection(&self, buffer: &mut [u8], mut stream: TcpStream, out: bool) -> Result<(), P2pError> {
+        if let Err(e) = stream.set_read_timeout(Some(Duration::from_millis(300))) {
+            return Err(P2pError::ReadTimeout(format!("{}", e)))
+        }
         match stream.peer_addr() {
             Ok(addr) => {
                 println!("New connection: {}", addr);
@@ -380,13 +384,26 @@ impl P2pServer {
 
     // Listen to incoming packets from a connection
     fn listen_connection(&self, buf: &mut [u8], connection: &Arc<Connection>) -> Result<(), ReaderError> {
-        match connection.read_bytes(buf) {
-            Ok(0) => { // peer disconnected
-                let _ = self.remove_connection(&connection.get_peer_id());
-            },
-            Ok(n) => {
-                let mut reader = Reader::new(&buf[0..n]);
-                while n != reader.total_read() { // read ALL packets
+        loop {
+            match connection.read_packet_size(buf) {
+                Ok((0, _)) => { // peer disconnected
+                    let _ = self.remove_connection(&connection.get_peer_id());
+                    break;
+                },
+                Ok((_, size)) => {
+                    if size == 0 || size > MAX_BLOCK_SIZE as u32 { // If packet size is bigger than a full block, then reject it
+                        return Err(ReaderError::InvalidSize)
+                    }
+    
+                    let bytes = match connection.read_all_bytes(buf, size) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            println!("Error while reading all bytes: {}", e);
+                            return Err(ReaderError::InvalidSize);
+                        }
+                    };
+
+                    let mut reader = Reader::new(&bytes);
                     match PacketIn::from_bytes(&mut reader)? {
                         PacketIn::Handshake(handshake) => {
                             // TODO update connection based on handshake packet (ping)
@@ -420,7 +437,7 @@ impl P2pServer {
                                     if connection.get_block_height() < height { // node are allowed to request old blocks from network
                                         connection.set_block_height(height);
                                     }
-
+    
                                     println!("Peer {} request block {} at height {}", connection, block, height);
                                     if let Err(e) = self.send_to_peer(connection.get_peer_id(), PacketOut::Block(block)) {
                                         println!("Error while sending requested block to peer '{}': {}", connection.get_peer_id(), e);
@@ -433,16 +450,19 @@ impl P2pServer {
                             };
                         }
                     };
+                },
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                    break;
+                },
+                Err(e) => {
+                    if let Err(e) = self.remove_connection(&connection.get_peer_id()) {
+                        println!("Error while removing connection: {}", e);
+                    }
+                    println!("An error has occured while reading bytes from {}: {}", connection, e);
+                    break;
                 }
-            },
-            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                // Don't do anything
-            },
-            Err(e) => {
-                let _ = self.remove_connection(&connection.get_peer_id());
-                println!("An error has occured while reading bytes from {}: {}", connection, e);
-            }
-        };
+            };
+        }
 
         Ok(())
     }
@@ -519,18 +539,18 @@ impl P2pServer {
         let mut connections = lock!(self.connections);
         match connections.remove(peer_id) {
             Some(connection) => {
+                let sender = lock!(self.sender);
+                if let Err(e) = sender.send(Message::RemoveConnection(*peer_id)) {
+                    return Err(P2pError::OnChannelMessage(*peer_id, format!("{}", e)))
+                }
+
                 if !connection.is_closed() {
                     if let Err(e) = connection.close() {
                         return Err(P2pError::OnConnectionClose(format!("trying to remove {}: {}", peer_id, e)));
                     }
                 }
                 println!("{} disconnected", connection);
-                let sender = lock!(self.sender);
-                if let Err(e) = sender.send(Message::RemoveConnection(*peer_id)) {
-                    Err(P2pError::OnChannelMessage(*peer_id, format!("{}", e)))
-                } else {
-                    Ok(())
-                }
+                Ok(())
             },
             None => Err(P2pError::PeerNotFound(*peer_id)),
         }

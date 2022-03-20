@@ -421,7 +421,7 @@ impl Blockchain {
         self.height.store(block.get_height(), Ordering::Relaxed);
         self.supply.fetch_add(block_reward, Ordering::Relaxed);
         println!("Adding new block '{}' at height {}", block_hash, block.get_height());
-        if current_height != 0 && broadcast {
+        if block.get_height() != 0 && broadcast {
             if let Some(p2p) = lock!(self.p2p).as_ref() {
                 if let Err(e) = p2p.broadcast_block(&block) { // Broadcast block to other nodes
                     println!("Error while broadcasting block: {}", e);

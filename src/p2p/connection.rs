@@ -3,6 +3,7 @@ use std::net::{TcpStream, SocketAddr, Shutdown};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU8, AtomicU64, Ordering};
 use std::io::{Write, Read, Result};
+use std::convert::TryInto;
 
 type P2pResult<T> = std::result::Result<T, P2pError>;
 
@@ -52,7 +53,7 @@ impl Connection {
                     Err(e) => Err(P2pError::OnStreamBlocking(blocking, format!("{}", e)))
                 }
             },
-            Err(e) => Err(P2pError::OnLock)
+            Err(_) => Err(P2pError::OnLock)
         }
     }
 
@@ -68,8 +69,38 @@ impl Connection {
                 },
                 Err(e) => Err(P2pError::OnWrite(format!("{}", e)))
             },
-            Err(e) => Err(P2pError::OnLock)
+            Err(_) => Err(P2pError::OnLock)
         }
+    }
+
+    pub fn read_packet_size(&self, buf: &mut [u8]) -> Result<(usize, u32)> {
+        let read = self.read_bytes(&mut buf[0..4])?;
+        let array: [u8; 4] = match buf[0..4].try_into() {
+            Ok(v) => v,
+            Err(_) => panic!("TODO") // TODO
+        };
+        let size = u32::from_be_bytes(array);
+        Ok((read, size))
+    }
+
+    pub fn read_all_bytes(&self, buf: &mut [u8], mut left: u32) -> Result<Vec<u8>> {
+        let buf_size = buf.len();
+        let mut bytes = Vec::new();
+        while left > 0 {
+            let max = if buf_size as u32 > left {
+                left as usize
+            } else {
+                buf_size
+            };
+
+            let read = self.read_bytes(&mut buf[0..max])?;
+            if read == 0 {
+                break; // TODO error
+            }
+            left -= read as u32;
+            bytes.extend(&buf[0..read]);
+        }
+        Ok(bytes)
     }
 
     // this function will wait until something is sent to the socket
@@ -78,9 +109,7 @@ impl Connection {
         let result = self.stream.lock().unwrap().read(buf);
         match &result {
             Ok(0) => {
-                if let Err(e) = self.close() {
-                    return Err(e);
-                }
+                self.close()?;
             }
             Ok(n) => {
                 self.bytes_in.fetch_add(*n, Ordering::Relaxed);
