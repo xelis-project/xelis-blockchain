@@ -1,7 +1,7 @@
 use super::error::P2pError;
 use std::net::{TcpStream, SocketAddr, Shutdown};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU8, AtomicU64, Ordering};
 use std::io::{Write, Read, Result};
 
 type P2pResult<T> = std::result::Result<T, P2pError>;
@@ -10,7 +10,7 @@ pub struct Connection {
     id: u64, // TODO use a UUID
     node_tag: Option<String>, // Node tag if provided
     version: String, // daemon version
-    block_height: u64, // current block height for this peer
+    block_height: AtomicU64, // current block height for this peer
     stream: Mutex<TcpStream>, // Stream for read & write
     addr: SocketAddr, // TCP Address
     out: bool, // True mean we are the client
@@ -28,7 +28,7 @@ impl Connection {
             id,
             node_tag,
             version,
-            block_height,
+            block_height: AtomicU64::new(block_height),
             stream: Mutex::new(stream),
             addr,
             out,
@@ -52,7 +52,7 @@ impl Connection {
                     Err(e) => Err(P2pError::OnStreamBlocking(blocking, format!("{}", e)))
                 }
             },
-            Err(e) => Err(P2pError::OnLock(format!("set_blocking: {}", e)))
+            Err(e) => Err(P2pError::OnLock)
         }
     }
 
@@ -68,7 +68,7 @@ impl Connection {
                 },
                 Err(e) => Err(P2pError::OnWrite(format!("{}", e)))
             },
-            Err(e) => Err(P2pError::OnLock(format!("{}", e)))
+            Err(e) => Err(P2pError::OnLock)
         }
     }
 
@@ -113,7 +113,11 @@ impl Connection {
     }
 
     pub fn get_block_height(&self) -> u64 {
-        self.block_height
+        self.block_height.load(Ordering::Relaxed)
+    }
+
+    pub fn set_block_height(&self, height: u64) {
+        self.block_height.store(height, Ordering::Relaxed);
     }
 
     pub fn get_peer_address(&self) -> &SocketAddr {

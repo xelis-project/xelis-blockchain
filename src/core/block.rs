@@ -147,7 +147,7 @@ impl Serializer for Block {
         bytes
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Box<Block>, ReaderError> {
+    fn from_bytes(reader: &mut Reader) -> Result<Block, ReaderError> {
         let height = reader.read_u64()?;
         let timestamp = reader.read_u64()?;
         let previous_hash = Hash::new(reader.read_bytes_32()?);
@@ -161,18 +161,18 @@ impl Serializer for Block {
         }
         let miner_tx = Transaction::from_bytes(reader)?;
 
-        Ok(Box::new(
+        Ok(
             Block {
                 difficulty,
                 extra_nonce,
                 height,
                 timestamp,
                 previous_hash,
-                miner_tx: *miner_tx,
+                miner_tx: miner_tx,
                 nonce,
                 txs_hashes
             }
-        ))
+        )
     }
 }
 
@@ -191,15 +191,15 @@ impl Serializer for CompleteBlock {
         bytes
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Box<CompleteBlock>, ReaderError> {
-        let block = *Block::from_bytes(reader)?;
+    fn from_bytes(reader: &mut Reader) -> Result<CompleteBlock, ReaderError> {
+        let block = Block::from_bytes(reader)?;
         let mut txs: Vec<Transaction> = Vec::new();
         for _ in 0..block.get_txs_count() {
             let tx = Transaction::from_bytes(reader)?;
-            txs.push(*tx);     
+            txs.push(tx);     
         }
 
-        Ok(Box::new(CompleteBlock::new(block, txs)))
+        Ok(CompleteBlock::new(block, txs))
     }
 }
 

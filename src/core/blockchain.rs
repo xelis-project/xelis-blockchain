@@ -55,7 +55,7 @@ pub struct Blockchain {
     #[serde(skip_serializing)]
     storage: Mutex<Storage>,
     #[serde(skip_serializing)]
-    p2p: Option<Arc<P2pServer>>,
+    p2p: Mutex<Option<Arc<P2pServer>>>,
     dev_address: PublicKey // Dev address for block fee
 }
 
@@ -68,7 +68,7 @@ impl Blockchain {
             difficulty: AtomicU64::new(MINIMUM_DIFFICULTY),
             mempool: Mutex::new(Mempool::new()),
             storage: Mutex::new(Storage::new()),
-            p2p: None,
+            p2p: Mutex::new(None),
             dev_address: dev_address
         };
         blockchain.create_genesis_block()?;
@@ -76,8 +76,7 @@ impl Blockchain {
         let arc = Arc::new(blockchain);
         {
             let p2p = P2pServer::new(tag, 8, p2p_address, arc.clone());
-            //let mut blockchain = arc.lock().unwrap();
-            //blockchain.p2p = Some(p2p);
+            *lock!(arc.p2p) = Some(p2p);
         }
 
         Ok(arc)
@@ -94,7 +93,7 @@ impl Blockchain {
                         return Err(BlockchainError::GenesisBlockMiner)
                     }
                     lock!(self.storage).register_account(dev_address);
-                    self.add_new_block(*block)?;
+                    self.add_new_block(block, true)?;
                 },
                 Err(_) => return Err(BlockchainError::InvalidGenesisBlock)
             }
@@ -116,7 +115,7 @@ impl Blockchain {
         }
 
         let complete_block = self.build_complete_block_from_block(block)?;
-        self.add_new_block(complete_block)
+        self.add_new_block(complete_block, true)
     }
 
     pub fn get_height(&self) -> u64 {
@@ -143,7 +142,7 @@ impl Blockchain {
         Ok(lock!(self.storage).get_top_block_hash().clone())
     }
 
-    pub fn add_tx_to_mempool(&self, tx: Transaction) -> Result<(), BlockchainError> {
+    pub fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
         let mut mempool = lock!(self.mempool);
         if mempool.contains_tx(&hash) {
@@ -152,9 +151,11 @@ impl Blockchain {
 
         let storage = lock!(self.storage);
         self.verify_transaction_with_hash(&storage, &tx, &hash, false)?;
-        if let Some(p2p) = &self.p2p {
-            if let Err(e) = p2p.broadcast_tx(&tx) {
-                return Err(BlockchainError::ErrorOnP2p(e))
+        if broadcast {
+            if let Some(p2p) = lock!(self.p2p).as_ref() {
+                if let Err(e) = p2p.broadcast_tx(&tx) {
+                    return Err(BlockchainError::ErrorOnP2p(e))
+                }
             }
         }
 
@@ -291,7 +292,7 @@ impl Blockchain {
         Ok(())
     }
 
-    pub fn add_new_block(&self, block: CompleteBlock) -> Result<(), BlockchainError> {
+    pub fn add_new_block(&self, block: CompleteBlock, broadcast: bool) -> Result<(), BlockchainError> {
         let mut storage = lock!(self.storage);
         let current_height = self.get_height();
         let current_difficulty = self.get_difficulty();
@@ -302,7 +303,7 @@ impl Blockchain {
             return Err(BlockchainError::InvalidDifficulty(current_difficulty, block.get_difficulty()));
         } else if block.get_timestamp() > get_current_time() { // TODO accept a latency of max 30s
             return Err(BlockchainError::TimestampIsInFuture(get_current_time(), block.get_timestamp()));
-        } else if current_height != 0 {
+        } else if current_height != 0 && storage.has_blocks() {
             let previous_block = storage.get_block_at_height(current_height)?;
             let previous_hash = previous_block.hash();
             if previous_hash != *block.get_previous_hash() {
@@ -417,11 +418,11 @@ impl Blockchain {
             self.difficulty.store(difficulty, Ordering::Relaxed);
         }
 
-        self.height.store(current_height + 1, Ordering::Relaxed);
+        self.height.store(block.get_height(), Ordering::Relaxed);
         self.supply.fetch_add(block_reward, Ordering::Relaxed);
-        println!("Adding new block '{}' at height {}", block_hash, current_height);
-        if current_height != 0 {
-            if let Some(p2p) = &self.p2p {
+        println!("Adding new block '{}' at height {}", block_hash, block.get_height());
+        if current_height != 0 && broadcast {
+            if let Some(p2p) = lock!(self.p2p).as_ref() {
                 if let Err(e) = p2p.broadcast_block(&block) { // Broadcast block to other nodes
                     println!("Error while broadcasting block: {}", e);
                 }

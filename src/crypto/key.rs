@@ -62,9 +62,9 @@ impl Serializer for PublicKey {
         bytes
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Box<Self>, ReaderError> {
+    fn from_bytes(reader: &mut Reader) -> Result<Self, ReaderError> {
         match ed25519_dalek::PublicKey::from_bytes(&reader.read_bytes_32()?) {
-            Ok(v) => Ok(Box::new(PublicKey(v))),
+            Ok(v) => Ok(PublicKey(v)),
             Err(_) => return Err(ReaderError::ErrorTryInto)
         }
     }
@@ -150,11 +150,9 @@ impl Serializer for Signature {
         self.0.to_bytes().to_vec()
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Box<Self>, ReaderError> {
+    fn from_bytes(reader: &mut Reader) -> Result<Self, ReaderError> {
         let signature = Signature(ed25519_dalek::Signature::new(reader.read_bytes_64()?));
-        Ok(
-            Box::new(signature)
-        )
+        Ok(signature)
     }
 }
 

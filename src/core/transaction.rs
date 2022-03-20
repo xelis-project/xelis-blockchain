@@ -80,7 +80,7 @@ impl Serializer for TransactionData {
         bytes
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Box<TransactionData>, ReaderError> {
+    fn from_bytes(reader: &mut Reader) -> Result<TransactionData, ReaderError> {
         let data: TransactionData = match reader.read_u8()? {
             0 => {
                 let amount = reader.read_u64()?;
@@ -94,7 +94,7 @@ impl Serializer for TransactionData {
 
                     txs.push(Tx {
                         amount,
-                        to: *to
+                        to: to
                     });
                 }
                 TransactionData::Normal(txs)
@@ -123,7 +123,7 @@ impl Serializer for TransactionData {
             }
         };
 
-        Ok(Box::new(data))
+        Ok(data)
     }
 }
 
@@ -275,23 +275,23 @@ impl Serializer for Transaction {
         bytes
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Box<Transaction>, ReaderError> {
+    fn from_bytes(reader: &mut Reader) -> Result<Transaction, ReaderError> {
         let nonce = reader.read_u64()?;
         let data = TransactionData::from_bytes(reader)?;
         let owner = PublicKey::from_bytes(reader)?;
         let fee = reader.read_u64()?;
-        let signature: Option<Signature> = match data.as_ref() {
+        let signature: Option<Signature> = match &data {
             TransactionData::Registration | TransactionData::Coinbase(_) => None,
-            _ => Some(*Signature::from_bytes(reader)?)
+            _ => Some(Signature::from_bytes(reader)?)
         };
 
-        Ok(Box::new(Transaction {
+        Ok(Transaction {
             nonce,
-            data: *data,
-            owner: *owner,
+            data: data,
+            owner: owner,
             fee,
             signature
-        }))
+        })
     }
 }
 

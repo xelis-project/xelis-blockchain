@@ -7,9 +7,15 @@ mod p2p;
 
 use crate::core::blockchain::Blockchain;
 use std::thread;
+use std::env;
 
 fn main() {
-    nodeB();
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 && args[1] == "a" {
+        nodeA();
+    } else {
+        nodeB();
+    }
 }
 
 fn nodeA() {
@@ -19,12 +25,11 @@ fn nodeA() {
         Err(e) => panic!("Error occured on blockchain: {}", e)
     };
     let key = blockchain.get_dev_address().clone();
-    for _ in 0..10 {
+    loop {
         if let Err(e) = blockchain.mine_block(key.clone()) {
             println!("Error while mining block: {}", e);
         }
     }
-    loop {}
 }
 
 fn nodeB() {

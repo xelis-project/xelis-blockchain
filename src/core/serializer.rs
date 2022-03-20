@@ -1,4 +1,5 @@
 use super::reader::{Reader, ReaderError};
+use std::marker::Sized;
 
 pub trait Serializer {
     fn to_bytes(&self) -> Vec<u8>;
@@ -11,9 +12,11 @@ pub trait Serializer {
         self.to_bytes().len()
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Box<Self>, ReaderError>;
+    fn from_bytes(reader: &mut Reader) -> Result<Self, ReaderError>
+    where Self: Sized;
 
-    fn from_hex(hex: String) -> Result<Box<Self>, ReaderError> {
+    fn from_hex(hex: String) -> Result<Self, ReaderError>
+    where Self: Sized {
         match hex::decode(&hex) {
             Ok(bytes) => {
                 let mut reader = Reader::new(&bytes);

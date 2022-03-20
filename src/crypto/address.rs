@@ -36,7 +36,7 @@ impl Serializer for AddressType {
         bytes
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Box<AddressType>, ReaderError> {
+    fn from_bytes(reader: &mut Reader) -> Result<AddressType, ReaderError> {
         let _type = match reader.read_u8()? {
             0 => AddressType::Normal,
             1 => {
@@ -45,8 +45,7 @@ impl Serializer for AddressType {
             }
             _ => return Err(ReaderError::InvalidValue)
         };
-
-        Ok(Box::new(_type))
+        Ok(_type)
     }
 }
 
@@ -60,19 +59,19 @@ impl Serializer for Address {
         bytes
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Box<Address>, ReaderError> {
+    fn from_bytes(reader: &mut Reader) -> Result<Address, ReaderError> {
         let mainnet = match reader.read_u8()? {
             0 => false,
             1 => true,
             _ => return Err(ReaderError::InvalidValue)
         };
-        let addr_type = *AddressType::from_bytes(reader)?;
-        let pub_key = *PublicKey::from_bytes(reader)?;
+        let addr_type = AddressType::from_bytes(reader)?;
+        let pub_key = PublicKey::from_bytes(reader)?;
 
-        Ok(Box::new(Address {
+        Ok(Address {
             mainnet,
             addr_type,
             pub_key
-        }))
+        })
     }
 }

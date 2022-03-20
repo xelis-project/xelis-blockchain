@@ -119,7 +119,7 @@ impl Serializer for Handshake {
         bytes
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Box<Self>, ReaderError> {
+    fn from_bytes(reader: &mut Reader) -> Result<Self, ReaderError> {
         // Handshake have a static size + some part of dynamic size (node tag, version, peers list)
         // we must verify the correct size each time we want to read from the data sent by the client
         // if we don't verify each time, it can create a panic error and crash the node
@@ -156,7 +156,7 @@ impl Serializer for Handshake {
             }
             peers.push(peer);
         }
-        Ok(Box::new(Handshake::new(version, node_tag, network_id, peer_id, utc_time, block_height, block_top_hash, peers)))
+        Ok(Handshake::new(version, node_tag, network_id, peer_id, utc_time, block_height, block_top_hash, peers))
     }
 }
 

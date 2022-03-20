@@ -10,10 +10,11 @@ pub enum P2pError {
     PeerNotFound(u64),
     PeerIdAlreadyUsed(u64),
     OnWrite(String),
-    OnLock(String),
+    OnLock,
     OnStreamBlocking(bool, String),
     OnConnectionClose(String),
-    OnChannelMessage(u64, String)
+    OnChannelMessage(u64, String),
+    OnBroadcast(String)
 }
 
 impl Display for P2pError {
@@ -28,11 +29,12 @@ impl Display for P2pError {
             PeerNotFound(peer_id) => write!(f, "Peer {} not found", peer_id),
             PeerIdAlreadyUsed(id) => write!(f, "Peer id {} is already used!", id),
             OnWrite(msg) => write!(f, "Bytes were not sent, error: {}", msg),
-            OnLock(msg) => write!(f, "Error while trying to lock: {}", msg),
+            OnLock => write!(f, "Error while trying to lock"),
             OnStreamBlocking(value, msg) => write!(f, "Error while trying to set stream blocking mode to {}: {}", value, msg),
             OnConnectionClose(msg) => write!(f, "Error while trying to close connection: {}", msg),
             OnChannelMessage(peer, msg) => write!(f, "Error while trying to send message for peer {} through channel: {}", peer, msg),
-            ErrorOnLock => write!(f, "Error on lock")
+            ErrorOnLock => write!(f, "Error on lock"),
+            OnBroadcast(msg) => write!(f, "Error while trying to broadcast: {}", msg)
         }
     }
 }
