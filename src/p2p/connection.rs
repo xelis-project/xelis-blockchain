@@ -19,6 +19,7 @@ pub struct Connection {
     bytes_in: AtomicUsize, // total bytes read
     bytes_out: AtomicUsize, // total bytes sent
     connected_on: u64,
+    last_chain_sync: AtomicU64,
     // TODO last_fail_count
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
     closed: AtomicBool, // if Connection#close() is called, close is set to true
@@ -40,7 +41,8 @@ impl Connection {
             bytes_out: AtomicUsize::new(0),
             fail_count: AtomicU8::new(0),
             closed: AtomicBool::new(false),
-            blocking: AtomicBool::new(true)
+            blocking: AtomicBool::new(true),
+            last_chain_sync: AtomicU64::new(0),
         }
     }
 
@@ -182,6 +184,14 @@ impl Connection {
 
     pub fn is_blocking(&self) -> bool {
         self.blocking.load(Ordering::Relaxed)
+    }
+
+    pub fn get_last_chain_sync(&self) -> u64 {
+        self.last_chain_sync.load(Ordering::Relaxed)
+    }
+
+    pub fn update_last_chain_sync(&self) {
+        self.last_chain_sync.store(get_current_time(), Ordering::Relaxed);
     }
 }
 

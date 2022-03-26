@@ -18,3 +18,6 @@ pub const GENESIS_BLOCK: &str = "00000000000000000000000061c5d99c000000000000000
 pub const DEV_ADDRESS: &str = "xel167x5gq697cyhdacn740mpukr8staamcnyys74sjpp868ztr56vns8fs7d6"; // Dev address
 
 pub const MAX_BLOCK_REWIND: usize = 5; // maximum 5 blocks can be rewinded
+pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = 3; // wait maximum between each chain sync request to peers
+pub const CHAIN_SYNC_MAX_BLOCK: u64 = 20; // maximal number of blocks per chain sync request to peers
+pub const CHAIN_SYNC_DELAY: u64 = 1; // minimum 1s between each chain sync request per peer
