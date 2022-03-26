@@ -14,7 +14,7 @@ use super::packet::request_chain::RequestChain;
 use super::connection::Connection;
 use super::error::P2pError;
 use std::net::{TcpListener, TcpStream, SocketAddr, Shutdown};
-use std::sync::mpsc::{Sender, Receiver, channel};
+use std::sync::mpsc::{Sender, Receiver, TryRecvError, channel};
 use num_bigint::BigUint;
 use std::io::prelude::{Write, Read};
 use std::collections::{HashMap, HashSet};
@@ -360,7 +360,11 @@ impl P2pServer {
         match self.receiver.lock() {
             Ok(receiver) => {
                 loop {
-                    while let Ok(msg) = receiver.try_recv() { // read all messages from channel
+                    while let Ok(msg) = if connections.len() == 0 {
+                        receiver.recv().or(Err(TryRecvError::Empty))
+                    } else {
+                        receiver.try_recv()
+                    } { // read all messages from channel
                         match msg {
                             Message::Exit => {
                                 return;
@@ -442,6 +446,9 @@ impl P2pServer {
                     for connection in connections.values() {
                         self.handle_connection(&mut buf, &connection);
                     }
+
+                    // wait 25ms between each iteration
+                    thread::sleep(Duration::from_millis(25));
                 }
             },
             Err(e) => panic!("Couldn't lock receiver! {}", e)
@@ -679,6 +686,7 @@ impl P2pServer {
                                     Ok(block) => {
                                         if let Err(e) = self.send_to_peer(connection.get_peer_id(), PacketOut::Block(block)) {
                                             println!("Error while sending requested block to peer '{}': {}", connection.get_peer_id(), e);
+                                            return Err(ReaderError::InvalidValue)
                                         }
                                     },
                                     Err(_) => {
