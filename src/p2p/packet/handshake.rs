@@ -1,4 +1,4 @@
-use super::connection::Connection;
+use crate::p2p::connection::Connection;
 use crate::core::serializer::Serializer;
 use crate::core::reader::{Reader, ReaderError};
 use crate::crypto::hash::Hash;

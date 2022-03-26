@@ -1,19 +1,25 @@
+pub mod handshake;
+pub mod request_chain;
+
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::transaction::Transaction;
 use crate::core::serializer::Serializer;
 use crate::core::block::CompleteBlock;
-use super::handshake::Handshake;
+use super::packet::handshake::Handshake;
+use super::packet::request_chain::RequestChain;
 
 const HANDSHAKE_ID: u8 = 0;
 const TX_ID: u8 = 1;
 const BLOCK_ID: u8 = 2;
-const REQUEST_BLOCK_ID: u8 = 3;
+const REQUEST_CHAIN_ID: u8 = 3;
+
+// TODO Rework this
 
 pub enum PacketOut<'a> { // Outgoing Packet
     Handshake(&'a Handshake),
     Transaction(&'a Transaction),
     Block(&'a CompleteBlock),
-    RequestBlock(u64)
+    RequestChain(&'a RequestChain)
 }
 
 impl<'a> Serializer for PacketOut<'a> {
@@ -27,7 +33,7 @@ impl<'a> Serializer for PacketOut<'a> {
             PacketOut::Handshake(handshake) => (HANDSHAKE_ID, handshake.to_bytes()),
             PacketOut::Transaction(tx) => (TX_ID, tx.to_bytes()),
             PacketOut::Block(block) => (BLOCK_ID, block.to_bytes()),
-            PacketOut::RequestBlock(height) => (REQUEST_BLOCK_ID, height.to_be_bytes().to_vec())
+            PacketOut::RequestChain(request) => (REQUEST_CHAIN_ID, request.to_bytes())
         };
 
         let packet_len: u32 = packet.len() as u32 + 1;
@@ -43,7 +49,7 @@ pub enum PacketIn { // Incoming Packet
     Handshake(Handshake),
     Transaction(Transaction),
     Block(CompleteBlock),
-    RequestBlock(u64)
+    RequestChain(RequestChain)
 }
 
 impl Serializer for PacketIn {
@@ -52,7 +58,7 @@ impl Serializer for PacketIn {
             HANDSHAKE_ID => PacketIn::Handshake(Handshake::from_bytes(reader)?),
             TX_ID => PacketIn::Transaction(Transaction::from_bytes(reader)?),
             BLOCK_ID => PacketIn::Block(CompleteBlock::from_bytes(reader)?),
-            REQUEST_BLOCK_ID => PacketIn::RequestBlock(reader.read_u64()?),
+            REQUEST_CHAIN_ID => PacketIn::RequestChain(RequestChain::from_bytes(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         };
         Ok(res)

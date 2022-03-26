@@ -1,3 +1,4 @@
+use crate::globals::get_current_time;
 use super::error::P2pError;
 use std::net::{TcpStream, SocketAddr, Shutdown};
 use std::sync::Mutex;
@@ -17,6 +18,7 @@ pub struct Connection {
     out: bool, // True mean we are the client
     bytes_in: AtomicUsize, // total bytes read
     bytes_out: AtomicUsize, // total bytes sent
+    connected_on: u64,
     // TODO last_fail_count
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
     closed: AtomicBool, // if Connection#close() is called, close is set to true
@@ -33,6 +35,7 @@ impl Connection {
             stream: Mutex::new(stream),
             addr,
             out,
+            connected_on: get_current_time(),
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
             fail_count: AtomicU8::new(0),
@@ -165,6 +168,10 @@ impl Connection {
         self.bytes_in.load(Ordering::Relaxed)
     }
 
+    pub fn connected_on(&self) -> u64 {
+        self.connected_on
+    }
+
     pub fn fail_count(&self) -> u8 {
         self.fail_count.load(Ordering::Relaxed)
     }
@@ -188,6 +195,6 @@ impl Display for Connection {
             String::from("None")
         };
 
-        write!(f, "Connection[peer: {}, version: {}, node tag: {}, peer_id: {}, block_height: {}, out: {}, read: {} kB, sent: {} kB, fail count: {}, closed: {},  blocking: {}]", self.get_peer_address(), self.get_version(), node_tag, self.get_peer_id(), self.get_block_height(), self.is_out(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.fail_count(), self.is_closed(), self.is_blocking())
+        write!(f, "Connection[peer: {}, version: {}, node tag: {}, peer_id: {}, block_height: {}, out: {}, read: {} kB, sent: {} kB, connected on: {}, fail count: {}, closed: {},  blocking: {}]", self.get_peer_address(), self.get_version(), node_tag, self.get_peer_id(), self.get_block_height(), self.is_out(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.connected_on(), self.fail_count(), self.is_closed(), self.is_blocking())
     }
 }

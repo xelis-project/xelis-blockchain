@@ -297,7 +297,7 @@ impl Blockchain {
         let current_height = self.get_height();
         let current_difficulty = self.get_difficulty();
         let block_hash = block.hash();
-        if current_height != 0 && current_height + 1 != block.get_height() {
+        if storage.has_blocks() && current_height + 1 != block.get_height() {
             return Err(BlockchainError::InvalidBlockHeight(current_height + 1, block.get_height()));
         } else if current_difficulty != block.get_difficulty() || !check_difficulty(&block_hash, current_difficulty)? {
             return Err(BlockchainError::InvalidDifficulty(current_difficulty, block.get_difficulty()));

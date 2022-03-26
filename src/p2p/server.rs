@@ -1,25 +1,29 @@
 use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE};
-use crate::globals::get_current_time;
-use crate::core::serializer::Serializer;
 use crate::core::reader::{Reader, ReaderError};
+use crate::core::difficulty::check_difficulty;
 use crate::core::transaction::Transaction;
-use crate::core::block::CompleteBlock;
 use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
+use crate::core::serializer::Serializer;
+use crate::core::block::CompleteBlock;
+use crate::globals::get_current_time;
+use crate::crypto::hash::{Hash, Hashable};
 use super::packet::{PacketIn, PacketOut};
+use super::packet::handshake::Handshake;
+use super::packet::request_chain::RequestChain;
 use super::connection::Connection;
-use super::handshake::Handshake;
 use super::error::P2pError;
 use std::net::{TcpListener, TcpStream, SocketAddr, Shutdown};
 use std::sync::mpsc::{Sender, Receiver, channel};
+use num_bigint::BigUint;
 use std::io::prelude::{Write, Read};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::io::ErrorKind;
+use num_traits::Zero;
 use std::thread;
 use rand::Rng;
-
 macro_rules! lock {
     ($e: expr, $err: expr) => {
         match $e.lock() {
@@ -28,9 +32,10 @@ macro_rules! lock {
         }
     };
     ($e: expr) => {
-        lock!($e, P2pError::OnLock)//ReaderError::InvalidValue)
+        lock!($e, P2pError::OnLock)
     }
 }
+
 enum Message {
     SendBytes(u64, Vec<u8>), // peer id, Packet
     MultipleSend(Vec<u64>, Vec<u8>),
@@ -40,7 +45,173 @@ enum Message {
     Exit,
 }
 
-// SingleThreadServer only use 2 threads: one for incoming new connections
+struct ChainSync {
+    current_top_hash: Hash,
+    blocks: HashMap<Hash, CompleteBlock>,
+    asked_peers: HashMap<u64, u64> // Peer id, Blocks asked
+}
+
+impl ChainSync {
+    pub fn new() -> Self {
+        Self {
+            current_top_hash: Hash::zero(),
+            blocks: HashMap::new(),
+            asked_peers: HashMap::new()
+        }
+    }
+
+    pub fn set_current_top_hash(&mut self, hash: Hash) {
+        self.current_top_hash = hash;
+    }
+
+    pub fn contains_peer(&self, peer: &u64) -> bool {
+        self.asked_peers.contains_key(peer)
+    }
+
+    pub fn add_peer(&mut self, peer: u64, asked: u64) {
+        self.asked_peers.insert(peer, asked);
+    }
+
+    pub fn remove_peer(&mut self, peer: &u64) -> bool {
+        self.asked_peers.remove(peer).is_some()
+    }
+
+    pub fn is_ready(&self) -> bool { // TODO check for malicious peers that don't send response to request chain
+        self.asked_peers.len() == 0 && self.blocks.len() > 0
+    }
+
+    pub fn is_syncing(&self) -> bool {
+        self.asked_peers.len() != 0 || self.blocks.len() != 0
+    }
+
+    pub fn to_chain(&mut self, blockchain: &Arc<Blockchain>) -> Result<(), BlockchainError> {
+        let mut branch: HashSet<Hash> = HashSet::new();
+        {
+            let mut total_diff: BigUint = BigUint::zero();
+            let top_blocks = self.get_top_blocks()?;
+            println!("Total branches: {}", top_blocks.len());
+            for block_hash in top_blocks {
+                let mut current_total_diff = BigUint::zero();
+                let mut current_block = self.get_block(&block_hash)?;
+                let mut hash = &block_hash;
+                let mut branch_hashes = HashSet::new(); // all hashes for this top block
+                loop { // add all blocks until our local top block hash
+                    branch_hashes.insert(hash.clone());
+                    current_total_diff += current_block.get_difficulty();
+                    hash = current_block.get_previous_hash(); // get previous hash of previous block
+                    if *hash == self.current_top_hash {
+                        break;
+                    }
+                    current_block = match self.get_block(hash) {
+                        Ok(b) => b,
+                        Err(e) => panic!("{}", e)
+                    }; // get previous block
+                }
+
+                if current_total_diff >= total_diff { // get heaviest chain
+                    total_diff = current_total_diff;
+                    branch = branch_hashes;
+                }
+            }
+        }
+
+        println!("Branches: {}, blocks: {}", branch.len(), self.blocks.len());
+        let mut blocks: Vec<CompleteBlock> = Vec::with_capacity(branch.len());
+        for (k, v) in self.blocks.drain() {
+            if branch.contains(&k) {
+                branch.remove(&k);
+                blocks.push(v);
+            }
+        }
+
+        blocks.sort_by(|a,b| a.get_height().cmp(&b.get_height()));
+
+        for block in blocks {
+            println!("Trying to add block to blockchain: {}", block.get_height());
+            blockchain.add_new_block(block, false)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_top_blocks(&self) -> Result<Vec<Hash>, BlockchainError> {
+        let blocks: Vec<&CompleteBlock> = self.blocks.values().collect();
+        let mut top_blocks = Vec::new();
+        for block in blocks { // check all next blocks for each block
+            let block_hash = block.hash();
+            let next_blocks = self.get_next_blocks(&block_hash)?;
+            if next_blocks.len() > 1 { // we have more than one branch at this block
+                for block in next_blocks { // search top blocks from all these branches
+                    let hash = block.hash();
+                    let top_block_hash = self.get_top_block_hash(&hash)?;
+                    let top_block = self.get_block(&top_block_hash)?;
+                    top_blocks.push(top_block_hash);
+                }
+            } else if next_blocks.len() == 0 {
+                top_blocks.push(block_hash);
+            }
+        }
+
+        Ok(top_blocks)
+    }
+
+    pub fn get_top_block_hash(&self, hash: &Hash) -> Result<Hash, BlockchainError> {
+        for (h, block) in &self.blocks {
+            if *block.get_previous_hash() == *hash {
+                return self.get_top_block_hash(h);
+            }
+        }
+
+        Ok(hash.clone())
+    }
+
+    pub fn get_next_blocks(&self, hash: &Hash) -> Result<Vec<&CompleteBlock>, BlockchainError> {
+        let mut blocks = Vec::new();
+        for (_, block) in &self.blocks {
+            if *block.get_previous_hash() == *hash {
+                blocks.push(block);
+            }
+        }
+
+        Ok(blocks)
+    }
+
+    pub fn block_exist(&self, hash: &Hash) -> bool {
+        *hash == self.current_top_hash || self.get_block(hash).is_ok()
+    }
+
+    pub fn get_block(&self, hash: &Hash) -> Result<&CompleteBlock, BlockchainError> {
+        match self.blocks.get(hash) {
+            Some(v) => Ok(v),
+            None => return Err(BlockchainError::BlockNotFound(hash.clone()))
+        }
+    }
+
+    pub fn insert_block(&mut self, block: CompleteBlock, peer: &u64) -> Result<(), BlockchainError> {
+        let block_hash = block.hash();
+        if !self.block_exist(&block_hash) { // no need to re verify/insert block
+            if !self.block_exist(block.get_previous_hash()) {
+                return Err(BlockchainError::BlockNotFound(block.get_previous_hash().clone()))
+            }
+            if !check_difficulty(&block_hash, block.get_difficulty())? {
+                return Err(BlockchainError::InvalidDifficulty(block.get_difficulty(), 0))
+            }
+        }
+
+        if let Some(left) = self.asked_peers.get_mut(peer) {
+            if *left <= 1 {
+                self.asked_peers.remove(peer);
+            } else {
+                *left -= 1;
+            }
+        }
+
+        self.blocks.insert(block_hash, block);
+        Ok(())
+    }
+}
+
+// P2pServer only use 2 threads: one for incoming new connections
 // and one for listening/sending data to all connections already accepted
 // useful for low end hardware
 pub struct P2pServer {
@@ -51,7 +222,8 @@ pub struct P2pServer {
     connections: Mutex<HashMap<u64, Arc<Connection>>>, // all connections accepted
     sender: Mutex<Sender<Message>>, // sender to send messages to the thread #2
     receiver: Mutex<Receiver<Message>>, // only used by the thread #2
-    blockchain: Arc<Blockchain>
+    blockchain: Arc<Blockchain>,
+    sync: Mutex<ChainSync>
 }
 
 impl P2pServer {
@@ -73,7 +245,8 @@ impl P2pServer {
             connections: Mutex::new(HashMap::new()),
             sender: Mutex::new(sender),
             receiver: Mutex::new(receiver),
-            blockchain
+            blockchain,
+            sync: Mutex::new(ChainSync::new())
         };
 
         let arc = Arc::new(server);
@@ -319,20 +492,7 @@ impl P2pServer {
 
                         // if we reach here, handshake is all good, we can start listening this new peer
                         let peer_id = connection.get_peer_id(); // keep in memory the peer_id outside connection (because of moved value)
-                        let connection = self.add_connection(connection)?;
-
-                        let mut peer_height = connection.get_block_height();
-                        let our_height = self.blockchain.get_height();
-                        println!("{:?} peer: {} our: {}", self.tag, peer_height, our_height);
-                        if peer_height > our_height + 20 {
-                            peer_height = our_height + 20;   
-                        }
-
-                        for height in our_height + 1..=peer_height { // request missing blocks
-                            println!("requesting height {}", height);
-                            self.send_to_peer(peer_id, PacketOut::RequestBlock(height))?;
-                        }
-
+                        self.add_connection(connection)?;
                         // try to extend our peer list
                         for peer in peers {
                             if let Err(e) = self.connect_to_peer(buffer, peer) {
@@ -369,6 +529,37 @@ impl P2pServer {
     }
 
     fn handle_connection(&self, buf: &mut [u8], connection: &Arc<Connection>) {
+        let peer_id = connection.get_peer_id();
+        let our_height = self.blockchain.get_height();
+        let peer_height = connection.get_block_height();
+        if peer_height > our_height {
+            match self.sync.try_lock() {
+                Ok(mut sync) => {
+                    if !sync.is_syncing() && !sync.contains_peer(&peer_id) {
+                        match self.blockchain.get_top_block_hash() {
+                            Ok(top_hash) => {
+                                let diff = peer_height - our_height;
+                                let max_diff = if diff > 20 { 20 } else { diff };
+                                println!("Requesting {} blocks ({} to {}) to peer!", max_diff, our_height, our_height + max_diff);
+                                sync.add_peer(peer_id, max_diff);
+                                sync.set_current_top_hash(top_hash.clone());
+                                let request = RequestChain::new(our_height + 1, our_height + max_diff, top_hash);
+                                if let Err(e) = self.send_to_peer(peer_id, PacketOut::RequestChain(&request)) {
+                                    println!("Error while requesting chain to peer '{}': {}", peer_id, e);
+                                }
+                            },
+                            Err(e) => {
+                                println!("Couldn't get top block hash from Blockchain: {}", e);
+                            }
+                        };
+                    }
+                },
+                Err(e) => {
+                    println!("Error while trying to lock ChainSync: {}", e);
+                }
+            }
+        }
+
         if let Err(e) = self.listen_connection(buf, connection) {
             connection.increment_fail_count();
             println!("Error occured while listening {}: {}", connection, e);
@@ -420,34 +611,61 @@ impl P2pServer {
                             }
                         },
                         PacketIn::Block(block) => {
-                            println!("Received block '{}' from {}", block, connection);
                             let block_height = block.get_height();
                             if connection.get_block_height() < block_height {
                                 connection.set_block_height(block_height);
                             }
-    
-                            if let Err(e) = self.blockchain.add_new_block(block, false) {
-                                println!("Error while adding new block: {}", e);
-                                connection.increment_fail_count();
+
+                            let peer_id = connection.get_peer_id();
+                            let mut sync = lock!(self.sync, ReaderError::InvalidValue);
+                            // check if it's a new propagated block, or if it's from a RequestSync
+                            if sync.contains_peer(&peer_id) {
+                                if !sync.contains_peer(&peer_id) {
+                                    println!("Peer send us an not-request block, why ?");
+                                    return Err(ReaderError::InvalidValue)
+                                }
+
+                                if let Err(e) = sync.insert_block(block, &peer_id) {
+                                    println!("Error while adding block to chain sync: {}", e);
+                                    connection.increment_fail_count();
+                                }
+                                self.try_sync_chain(&mut sync);
+                            } else { // add immediately the block to chain as we are synced with
+                                if let Err(e) = self.blockchain.add_new_block(block, false) {
+                                    println!("Error while adding new block: {}", e);
+                                    connection.increment_fail_count();
+                                }
                             }
                         },
-                        PacketIn::RequestBlock(height) => {
-                            match lock!(self.blockchain.get_storage(), ReaderError::InvalidValue).get_block_at_height(height) {
-                                Ok(block) => {
-                                    if connection.get_block_height() < height { // node are allowed to request old blocks from network
-                                        connection.set_block_height(height);
+                        PacketIn::RequestChain(request) => {
+                            let our_height = self.blockchain.get_height();
+                            let start = request.get_start_height();
+                            let end = request.get_end_height();
+                            if start > our_height || end > our_height || start > end || end - start > 20 { // only 20 blocks max per request
+                                println!("Peer requested an invalid block height range!");
+                                return Err(ReaderError::InvalidValue)
+                            }
+
+
+                            println!("Peer {} request block from {} to {}", connection, start, end);
+                            if end > connection.get_block_height() {
+                                connection.set_block_height(end);
+                            }
+
+                            let storage = lock!(self.blockchain.get_storage(), ReaderError::InvalidValue);
+                            for i in start..=end {
+                                match storage.get_block_at_height(i) {
+                                    Ok(block) => {
+                                        if let Err(e) = self.send_to_peer(connection.get_peer_id(), PacketOut::Block(block)) {
+                                            println!("Error while sending requested block to peer '{}': {}", connection.get_peer_id(), e);
+                                        }
+                                    },
+                                    Err(_) => {
+                                        connection.increment_fail_count();
+                                        println!("Peer requested an invalid block height.");
                                     }
-    
-                                    println!("Peer {} request block {} at height {}", connection, block, height);
-                                    if let Err(e) = self.send_to_peer(connection.get_peer_id(), PacketOut::Block(block)) {
-                                        println!("Error while sending requested block to peer '{}': {}", connection.get_peer_id(), e);
-                                    }
-                                },
-                                Err(_) => {
-                                    connection.increment_fail_count();
-                                    println!("Peer requested an invalid block height.");
-                                }
-                            };
+                                };
+                            }
                         }
                     };
                 },
@@ -465,6 +683,15 @@ impl P2pServer {
         }
 
         Ok(())
+    }
+
+    // Called when a node is disconnected or when a new block is submitted
+    fn try_sync_chain(&self, sync: &mut ChainSync) {
+        if sync.is_ready() {
+            if let Err(e) = sync.to_chain(&self.blockchain) {
+                println!("Error while adding sync chain to blockchain: {}", e);
+            }
+        }
     }
 
     pub fn get_tag(&self) -> &Option<String> {
@@ -513,7 +740,7 @@ impl P2pServer {
         &self.bind_address
     }
 
-    fn add_connection(&self, connection: Connection) -> Result<Arc<Connection>, P2pError> {
+    fn add_connection(&self, connection: Connection) -> Result<(), P2pError> {
         let mut connections = lock!(self.connections);
         let peer_id = connection.get_peer_id();
         let arc_connection = Arc::new(connection);
@@ -524,10 +751,10 @@ impl P2pServer {
             },
             None => {
                 let sender = lock!(self.sender);
-                match sender.send(Message::AddConnection(arc_connection.clone())) {
+                match sender.send(Message::AddConnection(arc_connection)) {
                     Ok(_) => {
                         println!("add new connection (total {}): {}", connections.len(), self.bind_address);
-                        Ok(arc_connection)
+                        Ok(())
                     }
                     Err(e) => Err(P2pError::OnChannelMessage(peer_id, format!("{}", e)))
                 }
@@ -550,6 +777,10 @@ impl P2pServer {
                     }
                 }
                 println!("{} disconnected", connection);
+                let mut sync = lock!(self.sync);
+                if sync.remove_peer(peer_id) {
+                    self.try_sync_chain(&mut sync);
+                }
                 Ok(())
             },
             None => Err(P2pError::PeerNotFound(*peer_id)),

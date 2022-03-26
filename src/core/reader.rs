@@ -1,3 +1,4 @@
+use crate::crypto::hash::Hash;
 use std::fmt::{Display, Error, Formatter};
 use std::convert::TryInto;
 
@@ -46,6 +47,10 @@ impl<'a> Reader<'a> {
 
     pub fn read_bytes_64(&mut self) -> Result<[u8; 64], ReaderError> {
         self.read_bytes(64)
+    }
+
+    pub fn read_hash(&mut self) -> Result<Hash, ReaderError> {
+        Ok(Hash::new(self.read_bytes_32()?))
     }
 
     pub fn read_u8(&mut self) -> Result<u8, ReaderError> {
