@@ -51,6 +51,14 @@ impl Storage {
         self.top_block_hash = hash;
     }
 
+    pub fn remove_last_n_blocks(&mut self, n: usize) -> Result<(), BlockchainError> {
+        if self.blocks.len() < n {
+            return Err(BlockchainError::NotEnoughBlocks);
+        }
+        self.blocks.truncate(self.blocks.len() - n);
+        Ok(())
+    }
+
     pub fn has_blocks(&self) -> bool {
         self.blocks.len() != 0
     }

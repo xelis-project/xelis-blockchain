@@ -46,7 +46,7 @@ impl Handshake {
 
     pub fn create_connection(self, stream: TcpStream, addr: SocketAddr, out: bool) -> (Connection, Vec<String>) {
         let block_height = self.get_block_height();
-        (Connection::new(self.get_peer_id(), self.node_tag, self.version, block_height, stream, addr, out), self.peers)
+        (Connection::new(self.get_peer_id(), self.node_tag, self.version, self.block_top_hash, block_height, stream, addr, out), self.peers)
     }
 
     pub fn get_version(&self) -> &String {

@@ -37,12 +37,14 @@ pub enum BlockchainError {
     ErrorOnP2p(P2pError),
     ErrorOnLock(String),
     ErrorOnReader(ReaderError),
+    IsSyncing,
     InvalidTransactionSignature,
     DifficultyCannotBeZero,
     DifficultyErrorOnConversion,
     InvalidMinerTx,
     GenesisBlockMiner,
-    InvalidGenesisBlock
+    InvalidGenesisBlock,
+    NotEnoughBlocks
 }
 
 use std::fmt::{Display, Error, Formatter};
@@ -83,12 +85,14 @@ impl Display for BlockchainError {
             ErrorOnP2p(p2p) => write!(f, "Error on p2p: {}", p2p),
             ErrorOnLock(msg) => write!(f, "Error on lock: {}", msg),
             ErrorOnReader(e) => write!(f, "Error on reader: {}", e),
+            IsSyncing => write!(f, "Blockchain is syncing"),
             InvalidTransactionSignature => write!(f, "Invalid transaction signature"),
             DifficultyCannotBeZero => write!(f, "Difficulty cannot be zero!"),
             DifficultyErrorOnConversion => write!(f, "Difficulty error on conversion to BigUint"),
             InvalidMinerTx => write!(f, "Invalid miner transaction in the block, only coinbase tx is allowed"),
             GenesisBlockMiner => write!(f, "Genesis block is not mined by dev address!"),
-            InvalidGenesisBlock => write!(f, "Invalid genesis block")
+            InvalidGenesisBlock => write!(f, "Invalid genesis block"),
+            NotEnoughBlocks => write!(f, "Not enough blocks"),
         }
     }
 }

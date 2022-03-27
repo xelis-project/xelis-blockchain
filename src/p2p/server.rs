@@ -1,4 +1,4 @@
-use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_TIMEOUT_SECS, CHAIN_SYNC_MAX_BLOCK, CHAIN_SYNC_DELAY};
+use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_TIMEOUT_SECS, CHAIN_SYNC_MAX_BLOCK, CHAIN_SYNC_DELAY, P2P_PING_DELAY};
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::difficulty::check_difficulty;
 use crate::crypto::hash::{Hash, Hashable};
@@ -12,6 +12,7 @@ use super::packet::{PacketIn, PacketOut};
 use super::packet::handshake::Handshake;
 use super::packet::request_chain::RequestChain;
 use super::connection::Connection;
+use super::packet::ping::Ping;
 use super::error::P2pError;
 use std::net::{TcpListener, TcpStream, SocketAddr, Shutdown};
 use std::sync::mpsc::{Sender, Receiver, TryRecvError, channel};
@@ -92,7 +93,7 @@ impl ChainSync {
 
     // allow only one request every 1s
     pub fn can_sync(&self) -> bool {
-        self.start_at + CHAIN_SYNC_DELAY <= get_current_time()
+        self.start_at + CHAIN_SYNC_DELAY < get_current_time()
     }
 
     pub fn start_sync(&mut self, hash: Hash) {
@@ -357,6 +358,7 @@ impl P2pServer {
         let mut connections: HashMap<u64, Arc<Connection>> = HashMap::new();
         let mut buf: [u8; 1024] = [0; 1024]; // allocate this buffer only one time
         // TODO every 10 seconds, broadcast a Handshake packet
+        let mut last_ping = get_current_time();
         match self.receiver.lock() {
             Ok(receiver) => {
                 loop {
@@ -443,7 +445,25 @@ impl P2pServer {
                         }
                     };
 
+                    let current_time = get_current_time();
+                    let ping: Option<Ping> = if current_time - last_ping > P2P_PING_DELAY {
+                        match self.blockchain.get_top_block_hash() {
+                            Ok(v) => Some(Ping::new(v, self.blockchain.get_height())),
+                            Err(e) => {
+                                println!("Error while getting block top hash: {}", e);
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
                     for connection in connections.values() {
+                        if let Some(ping) = &ping {
+                            if let Err(e) = connection.send_bytes(&PacketOut::Ping(ping).to_bytes()) {
+                                println!("Error while sending ping to peer '{}': {}", connection, e);
+                            }
+                        }
                         self.handle_connection(&mut buf, &connection);
                     }
 
@@ -618,8 +638,8 @@ impl P2pServer {
 
                     let mut reader = Reader::new(&bytes);
                     match PacketIn::from_bytes(&mut reader)? {
-                        PacketIn::Handshake(handshake) => {
-                            // TODO update connection based on handshake packet (ping)
+                        PacketIn::Handshake(_) => {
+                            return Err(ReaderError::InvalidValue)
                         },
                         PacketIn::Transaction(tx) => {
                             if let Err(e) = self.blockchain.add_tx_to_mempool(tx, false) {
@@ -662,7 +682,7 @@ impl P2pServer {
                         PacketIn::RequestChain(request) => {
                             let last_request = connection.get_last_chain_sync();
                             connection.update_last_chain_sync();
-                            if  last_request + CHAIN_SYNC_DELAY >= get_current_time() {
+                            if  last_request + CHAIN_SYNC_DELAY > get_current_time() {
                                 println!("Peer request too fast chain");
                                 return Err(ReaderError::InvalidValue)
                             }
@@ -676,10 +696,6 @@ impl P2pServer {
                             }
 
                             println!("Peer {} request block from {} to {}", connection, start, end);
-                            if end > connection.get_block_height() {
-                                connection.set_block_height(end);
-                            }
-
                             let storage = lock!(self.blockchain.get_storage(), ReaderError::InvalidValue);
                             for i in start..=end {
                                 match storage.get_block_at_height(i) {
@@ -696,6 +712,14 @@ impl P2pServer {
                                 };
                             }
                         }
+                        PacketIn::Ping(ping) => {
+                            ping.update_connection(connection);
+                            let peer_height = connection.get_block_height();
+                            let our_height = self.blockchain.get_height();
+                            if peer_height < our_height {
+
+                            }
+                        },
                     };
                 },
                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
@@ -720,6 +744,31 @@ impl P2pServer {
             if let Err(e) = sync.to_chain(&self.blockchain) {
                 println!("Error while adding sync chain to blockchain: {}", e);
             }
+        }
+    }
+
+    pub fn is_on_same_chain(&self, connection: &Arc<Connection>) -> Result<bool, P2pError> {
+        let top_hash = lock!(connection.get_top_block_hash());
+        if connection.get_block_height() <= self.blockchain.get_height() {
+            let storage = lock!(self.blockchain.get_storage());
+            Ok(storage.get_block_by_hash(&top_hash).is_ok())
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn get_highest_height(&self) -> u64 {
+        match self.connections.lock() {
+            Ok(connections) => {
+                let mut max = 0;
+                for connection in connections.values() {
+                    if connection.get_block_height() > max {
+                        max = connection.get_block_height();
+                    }
+                }
+                max
+            },
+            Err(_) => 0
         }
     }
 

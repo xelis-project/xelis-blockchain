@@ -1,3 +1,4 @@
+use crate::crypto::hash::Hash;
 use crate::globals::get_current_time;
 use super::error::P2pError;
 use std::net::{TcpStream, SocketAddr, Shutdown};
@@ -12,6 +13,7 @@ pub struct Connection {
     id: u64, // TODO use a UUID
     node_tag: Option<String>, // Node tag if provided
     version: String, // daemon version
+    block_top_hash: Mutex<Hash>, // current block top hash for this peer
     block_height: AtomicU64, // current block height for this peer
     stream: Mutex<TcpStream>, // Stream for read & write
     addr: SocketAddr, // TCP Address
@@ -27,11 +29,12 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(id: u64, node_tag: Option<String>, version: String, block_height: u64, stream: TcpStream, addr: SocketAddr, out: bool) -> Self {
+    pub fn new(id: u64, node_tag: Option<String>, version: String, block_top_hash: Hash, block_height: u64, stream: TcpStream, addr: SocketAddr, out: bool) -> Self {
         Connection {
             id,
             node_tag,
             version,
+            block_top_hash: Mutex::new(block_top_hash),
             block_height: AtomicU64::new(block_height),
             stream: Mutex::new(stream),
             addr,
@@ -152,6 +155,20 @@ impl Connection {
 
     pub fn set_block_height(&self, height: u64) {
         self.block_height.store(height, Ordering::Relaxed);
+    }
+
+    pub fn set_block_top_hash(&self, hash: Hash) -> P2pResult<()> {
+        match self.block_top_hash.lock() {
+            Ok(mut h) => {
+                *h = hash;
+                Ok(())
+            },
+            Err(_) => Err(P2pError::OnLock)
+        }
+    }
+
+    pub fn get_top_block_hash(&self) -> &Mutex<Hash> {
+        &self.block_top_hash
     }
 
     pub fn get_peer_address(&self) -> &SocketAddr {

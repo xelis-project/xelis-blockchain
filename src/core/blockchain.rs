@@ -105,10 +105,15 @@ impl Blockchain {
     }
 
     // mine a block for current difficulty
-    pub fn mine_block(&self, key: PublicKey) -> Result<(), BlockchainError> {
-        let mut block = self.get_block_template(key)?;
+    pub fn mine_block(&self, key: &PublicKey) -> Result<(), BlockchainError> {
+        let mut block = self.get_block_template(key.clone())?;
         let mut hash = block.hash();
+        let mut current_height = self.get_height();
         while !check_difficulty(&hash, self.get_difficulty())? {
+            if self.get_height() != current_height {
+                current_height = self.get_height();
+                block = self.get_block_template(key.clone())?;
+            }
             block.nonce += 1;
             block.timestamp = get_current_time();
             hash = block.hash();
@@ -116,6 +121,16 @@ impl Blockchain {
 
         let complete_block = self.build_complete_block_from_block(block)?;
         self.add_new_block(complete_block, true)
+    }
+
+    pub fn is_synced(&self) -> bool {
+        match self.p2p.lock() {
+            Ok(p2p) => match p2p.as_ref() {
+                Some(p2p) => self.get_height() >= p2p.get_highest_height(),
+                None => false
+            },
+            Err(_) => false
+        }
     }
 
     pub fn get_height(&self) -> u64 {
