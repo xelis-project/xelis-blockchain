@@ -1,6 +1,7 @@
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::serializer::Serializer;
 use crate::p2p::connection::Connection;
+use crate::core::writer::Writer;
 use crate::crypto::hash::Hash;
 use std::sync::Arc;
 
@@ -24,14 +25,12 @@ impl Ping {
 }
 
 impl Serializer for Ping {
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend(self.block_top_hash.as_bytes());
-        bytes.extend(self.block_height.to_be_bytes());
-        bytes
+    fn write(&self, writer: &mut Writer) {
+        writer.write_hash(&self.block_top_hash);
+        writer.write_u64(&self.block_height);
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Self, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let block_top_hash = reader.read_hash()?;
         let block_height = reader.read_u64()?;
 

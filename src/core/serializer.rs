@@ -1,18 +1,29 @@
 use super::reader::{Reader, ReaderError};
+use super::writer::Writer;
 use std::marker::Sized;
 
 pub trait Serializer {
-    fn to_bytes(&self) -> Vec<u8>;
+    fn write(&self, writer: &mut Writer);
+
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut writer = Writer::new();
+        self.write(&mut writer);
+        writer.bytes()
+    }
 
     fn to_hex(&self) -> String {
-        hex::encode(&self.to_bytes())
+        let mut writer = Writer::new();
+        self.write(&mut writer);
+        hex::encode(writer.bytes())
     }
 
     fn size(&self) -> usize {
-        self.to_bytes().len()
+        let mut writer = Writer::new();
+        self.write(&mut writer);
+        writer.total_write()
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Self, ReaderError>
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError>
     where Self: Sized;
 
     fn from_hex(hex: String) -> Result<Self, ReaderError>
@@ -20,7 +31,7 @@ pub trait Serializer {
         match hex::decode(&hex) {
             Ok(bytes) => {
                 let mut reader = Reader::new(&bytes);
-                Serializer::from_bytes(&mut reader)
+                Serializer::read(&mut reader)
             },
             Err(_) => Err(ReaderError::InvalidHex)
         }

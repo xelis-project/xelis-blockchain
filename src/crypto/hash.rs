@@ -16,6 +16,10 @@ impl Hash {
         &self.0
     }
 
+    pub fn to_bytes(self) -> [u8; HASH_SIZE] {
+        self.0
+    }
+
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
     }

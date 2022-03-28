@@ -553,7 +553,7 @@ impl P2pServer {
                 match stream.read(buffer) {
                     Ok(n) => {
                         let mut reader = Reader::new(&buffer[0..n]);
-                        let handshake = match Handshake::from_bytes(&mut reader) {
+                        let handshake = match Handshake::read(&mut reader) {
                             Ok(v) => v,
                             Err(_) => return Err(P2pError::InvalidHandshake)
                         };
@@ -647,7 +647,7 @@ impl P2pServer {
                     };
 
                     let mut reader = Reader::new(&bytes);
-                    match PacketIn::from_bytes(&mut reader)? {
+                    match PacketIn::read(&mut reader)? {
                         PacketIn::Handshake(_) => {
                             return Err(ReaderError::InvalidValue)
                         },

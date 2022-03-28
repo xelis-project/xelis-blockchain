@@ -1,6 +1,7 @@
 use crate::p2p::connection::Connection;
 use crate::core::serializer::Serializer;
 use crate::core::reader::{Reader, ReaderError};
+use crate::core::writer::Writer;
 use crate::crypto::hash::Hash;
 use std::fmt::{Display, Error, Formatter};
 use std::net::{TcpStream, SocketAddr};
@@ -84,42 +85,27 @@ impl Handshake {
 
 impl Serializer for Handshake {
     // 1 + MAX(16) + 1 + MAX(16) + 16 + 8 + 8 + 8 + 32 + 1 + 24 * 16
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![];
-
+    fn write(&self, writer: &mut Writer) {
         // daemon version
-        bytes.push(self.version.len() as u8); // send string size
-        bytes.extend(self.version.as_bytes()); // send string as bytes
+        writer.write_string(&self.version);
 
         // node tag
-        match &self.node_tag {
-            Some(tag) => {
-                bytes.push(tag.len() as u8);
-                if tag.len() > 0 {
-                    bytes.extend(tag.as_bytes());
-                }
-            }
-            None => {
-                bytes.push(0);
-            }
-        }
+        writer.write_optional_string(&self.node_tag);
 
-        bytes.extend(self.network_id); // network ID
-        bytes.extend(self.peer_id.to_be_bytes()); // transform peer ID to bytes
-        bytes.extend(self.utc_time.to_be_bytes()); // UTC Time
-        bytes.extend(self.block_height.to_be_bytes()); // Block Height
-        bytes.extend(self.block_top_hash.as_bytes()); // Block Top Hash (32 bytes)
+        writer.write_bytes(&self.network_id); // network ID
+        writer.write_u64(&self.peer_id); // transform peer ID to bytes
+        writer.write_u64(&self.utc_time); // UTC Time
+        writer.write_u64(&self.block_height); // Block Height
+        writer.write_hash(&self.block_top_hash); // Block Top Hash (32 bytes)
 
-        bytes.push(self.peers.len() as u8);
+        writer.write_u8(self.peers.len() as u8);
         for peer in &self.peers {
-            bytes.push(peer.len() as u8);
-            bytes.extend(peer.as_bytes());
+            writer.write_u8(peer.len() as u8);
+            writer.write_bytes(peer.as_bytes());
         }
-
-        bytes
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Self, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         // Handshake have a static size + some part of dynamic size (node tag, version, peers list)
         // we must verify the correct size each time we want to read from the data sent by the client
         // if we don't verify each time, it can create a panic error and crash the node

@@ -1,7 +1,8 @@
-use crate::config::PREFIX_ADDRESS;
-use crate::core::error::BlockchainError;
-use crate::core::serializer::Serializer;
 use crate::core::reader::{Reader, ReaderError};
+use crate::core::serializer::Serializer;
+use crate::core::error::BlockchainError;
+use crate::config::PREFIX_ADDRESS;
+use crate::core::writer::Writer;
 use super::bech32::{convert_bits, encode, decode, Bech32Error};
 use super::hash::Hash;
 use std::fmt::{Display, Error, Formatter};
@@ -56,13 +57,11 @@ impl PublicKey {
 }
 
 impl Serializer for PublicKey {
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![];
-        bytes.extend(self.as_bytes());
-        bytes
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bytes(self.as_bytes());
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Self, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         match ed25519_dalek::PublicKey::from_bytes(&reader.read_bytes_32()?) {
             Ok(v) => Ok(PublicKey(v)),
             Err(_) => return Err(ReaderError::ErrorTryInto)
@@ -146,11 +145,11 @@ impl Signature {
 
 impl Serializer for Signature {
 
-    fn to_bytes(&self) -> Vec<u8> {
-        self.0.to_bytes().to_vec()
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bytes(&self.0.to_bytes());
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Self, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let signature = Signature(ed25519_dalek::Signature::new(reader.read_bytes_64()?));
         Ok(signature)
     }

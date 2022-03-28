@@ -1,10 +1,11 @@
-use crate::crypto::hash::{Hash, Hashable, hash};
 use crate::crypto::key::{PublicKey, KeyPair, Signature, SIGNATURE_LENGTH};
+use crate::crypto::hash::{Hash, Hashable, hash};
 use crate::config::REGISTRATION_DIFFICULTY;
-use super::error::BlockchainError;
-use super::difficulty::check_difficulty;
-use super::serializer::Serializer;
 use super::reader::{Reader, ReaderError};
+use super::difficulty::check_difficulty;
+use super::error::BlockchainError;
+use super::serializer::Serializer;
+use super::writer::Writer;
 use std::collections::HashMap;
 
 #[derive(serde::Serialize, Clone)]
@@ -37,50 +38,48 @@ pub enum TransactionData {
 }
 
 impl Serializer for TransactionData {
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![];
+    fn write(&self, writer: &mut Writer) {
         match self {
             TransactionData::Burn(amount) => {
-                bytes.push(0);
-                bytes.extend(&amount.to_be_bytes());
+                writer.write_u8(0);
+                writer.write_u64(amount);
             }
             TransactionData::Normal(txs) => {
-                bytes.push(1);
+                writer.write_u8(1);
                 let len: u8 = txs.len() as u8; // max 255 txs
-                bytes.push(len);
+                writer.write_u8(len);
                 for tx in txs {
-                    bytes.extend(&tx.amount.to_be_bytes());
-                    bytes.extend(&tx.to.to_bytes());
+                    writer.write_u64(&tx.amount);
+                    tx.to.write(writer);
                 }
             }
             TransactionData::Registration => {
-                bytes.push(2);
+                writer.write_u8(2);
             }
             TransactionData::SmartContract(tx) => {
-                bytes.push(3);
-                bytes.extend(tx.contract.as_bytes());
-                bytes.extend(&tx.amount.to_be_bytes());
+                writer.write_u8(3);
+                writer.write_string(&tx.contract);
+                writer.write_u64(&tx.amount);
 
-                bytes.extend(&tx.params.len().to_be_bytes());
+                writer.write_u8(tx.params.len() as u8); // maximum 255 params supported
                 for (key, value) in &tx.params {
-                    bytes.extend(key.as_bytes());
-                    bytes.extend(value.as_bytes())
+                    writer.write_string(key);
+                    writer.write_string(value); // TODO real value type
                 }
             }
             TransactionData::Coinbase(tx) => {
-                bytes.push(4);
-                bytes.extend(&tx.block_reward.to_be_bytes());
-                bytes.extend(&tx.fee_reward.to_be_bytes());
+                writer.write_u8(4);
+                writer.write_u64(&tx.block_reward);
+                writer.write_u64(&tx.fee_reward);
             }
             TransactionData::UploadSmartContract(code) => {
-                bytes.push(5);
-                bytes.extend(code.as_bytes());
+                writer.write_u8(5);
+                writer.write_string(code);
             }
-        }
-        bytes
+        };
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<TransactionData, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<TransactionData, ReaderError> {
         let data: TransactionData = match reader.read_u8()? {
             0 => {
                 let amount = reader.read_u64()?;
@@ -90,7 +89,7 @@ impl Serializer for TransactionData {
                 let mut txs = vec![];
                 for _ in 0..reader.read_u8()? {
                     let amount = reader.read_u64()?;
-                    let to = PublicKey::from_bytes(reader)?;
+                    let to = PublicKey::read(reader)?;
 
                     txs.push(Tx {
                         amount,
@@ -258,31 +257,24 @@ impl Transaction {
 }
 
 impl Serializer for Transaction {
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![];
-
-        bytes.extend(&self.nonce.to_be_bytes()); // 8
-        bytes.extend(self.data.to_bytes()); // 16 + 1 (coinbase tx)
-        bytes.extend(&self.owner.to_bytes()); // 32
-        bytes.extend(&self.fee.to_be_bytes()); // 8
-        match &self.signature {
-            Some(signature) => {
-                bytes.extend(&signature.to_bytes())
-            },
-            None => {}
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u64(&self.nonce); // 8
+        self.data.write(writer); // 16 + 1 (coinbase tx)
+        self.owner.write(writer); // 32
+        writer.write_u64(&self.fee); // 8
+        if let Some(signature) = &self.signature {
+            signature.write(writer);
         }
-
-        bytes
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Transaction, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
         let nonce = reader.read_u64()?;
-        let data = TransactionData::from_bytes(reader)?;
-        let owner = PublicKey::from_bytes(reader)?;
+        let data = TransactionData::read(reader)?;
+        let owner = PublicKey::read(reader)?;
         let fee = reader.read_u64()?;
         let signature: Option<Signature> = match &data {
             TransactionData::Registration | TransactionData::Coinbase(_) => None,
-            _ => Some(Signature::from_bytes(reader)?)
+            _ => Some(Signature::read(reader)?)
         };
 
         Ok(Transaction {

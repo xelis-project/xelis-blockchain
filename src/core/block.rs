@@ -3,6 +3,7 @@ use crate::crypto::key::PublicKey;
 use super::transaction::Transaction;
 use super::serializer::Serializer;
 use super::reader::{Reader, ReaderError};
+use super::writer::Writer;
 
 const EXTRA_NONCE_SIZE: usize = 32;
 const BLOCK_WORK_SIZE: usize = 160;
@@ -129,25 +130,21 @@ impl CompleteBlock {
 }
 
 impl Serializer for Block {
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes: Vec<u8> = vec![];
-
-        bytes.extend(&self.height.to_be_bytes()); // 8
-        bytes.extend(&self.timestamp.to_be_bytes()); // 8 + 8 = 16
-        bytes.extend(self.previous_hash.as_bytes()); // 16 + 32 = 48
-        bytes.extend(&self.nonce.to_be_bytes()); // 48 + 8 = 56
-        bytes.extend(&self.difficulty.to_be_bytes()); // 56 + 8 = 64
-        bytes.extend(&self.extra_nonce); // 64 + 32 = 96
-        bytes.extend((self.txs_hashes.len() as u16).to_be_bytes()); // 96 + 2 = 98
-        for hash in &self.txs_hashes { // 98 + X * 32
-            bytes.extend(hash.as_bytes());
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u64(&self.height); // 8
+        writer.write_u64(&self.timestamp); // 8 + 8 = 16
+        writer.write_hash(&self.previous_hash); // 16 + 32 = 48
+        writer.write_u64(&self.nonce); // 48 + 8 = 56
+        writer.write_u64(&self.difficulty); // 56 + 8 = 64
+        writer.write_bytes(&self.extra_nonce); // 64 + 32 = 96
+        writer.write_u16(&(self.txs_hashes.len() as u16)); // 96 + 2 = 98
+        for tx in &self.txs_hashes {
+            writer.write_hash(tx);
         }
-        bytes.extend(self.miner_tx.to_bytes());
-
-        bytes
+        self.miner_tx.write(writer);
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Block, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<Block, ReaderError> {
         let height = reader.read_u64()?;
         let timestamp = reader.read_u64()?;
         let previous_hash = Hash::new(reader.read_bytes_32()?);
@@ -159,7 +156,7 @@ impl Serializer for Block {
         for _ in 0..txs_count {
             txs_hashes.push(Hash::new(reader.read_bytes_32()?));
         }
-        let miner_tx = Transaction::from_bytes(reader)?;
+        let miner_tx = Transaction::read(reader)?;
 
         Ok(
             Block {
@@ -183,19 +180,18 @@ impl Hashable for Block {
 }
 
 impl Serializer for CompleteBlock {
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = self.block.to_bytes();
+    fn write(&self, writer: &mut Writer) {
+        self.block.write(writer);
         for tx in &self.transactions {
-            bytes.extend(tx.to_bytes());
+            tx.write(writer);
         }
-        bytes
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<CompleteBlock, ReaderError> {
-        let block = Block::from_bytes(reader)?;
+    fn read(reader: &mut Reader) -> Result<CompleteBlock, ReaderError> {
+        let block = Block::read(reader)?;
         let mut txs: Vec<Transaction> = Vec::new();
         for _ in 0..block.get_txs_count() {
-            let tx = Transaction::from_bytes(reader)?;
+            let tx = Transaction::read(reader)?;
             txs.push(tx);     
         }
 

@@ -1,8 +1,9 @@
 use crate::core::serializer::Serializer;
 use crate::core::reader::{Reader, ReaderError};
+use crate::core::writer::Writer;
 use super::key::PublicKey;
 
-const PAYMENT_ID_SIZE: usize = 8; //8 bytes for paymentID
+const PAYMENT_ID_SIZE: usize = 8; // 8 bytes for paymentID
 
 pub enum AddressType {
     Normal,
@@ -22,21 +23,19 @@ impl Address {
 }
 
 impl Serializer for AddressType {
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes: Vec<u8> = vec![];
+    fn write(&self, writer: &mut Writer) {
         match self {
             AddressType::Normal => {
-                bytes.push(0);
+                writer.write_u8(0);
             },
             AddressType::PaymentId(id) => {
-                bytes.push(1);
-                bytes.extend(id)
+                writer.write_u8(1);
+                writer.write_bytes(id);
             }
         };
-        bytes
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<AddressType, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<AddressType, ReaderError> {
         let _type = match reader.read_u8()? {
             0 => AddressType::Normal,
             1 => {
@@ -50,23 +49,20 @@ impl Serializer for AddressType {
 }
 
 impl Serializer for Address {
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes: Vec<u8> = vec![];
-        bytes.push(if self.mainnet { 1 } else { 0 });
-        bytes.extend(&self.addr_type.to_bytes());
-        bytes.extend(&self.pub_key.to_bytes());
-
-        bytes
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bool(&self.mainnet);
+        self.addr_type.write(writer);
+        self.pub_key.write(writer);
     }
 
-    fn from_bytes(reader: &mut Reader) -> Result<Address, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<Address, ReaderError> {
         let mainnet = match reader.read_u8()? {
             0 => false,
             1 => true,
             _ => return Err(ReaderError::InvalidValue)
         };
-        let addr_type = AddressType::from_bytes(reader)?;
-        let pub_key = PublicKey::from_bytes(reader)?;
+        let addr_type = AddressType::read(reader)?;
+        let pub_key = PublicKey::read(reader)?;
 
         Ok(Address {
             mainnet,
