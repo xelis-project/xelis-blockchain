@@ -16,7 +16,8 @@ pub enum P2pError {
     OnConnectionClose(String),
     OnChannelMessage(u64, String),
     OnBroadcast(String),
-    ReadTimeout(String)
+    ReadTimeout(String),
+    PeerAlreadyConnected(String)
 }
 
 impl TraitError for P2pError {}
@@ -38,7 +39,8 @@ impl Display for P2pError {
             OnConnectionClose(msg) => write!(f, "Error while trying to close connection: {}", msg),
             OnChannelMessage(peer, msg) => write!(f, "Error while trying to send message for peer {} through channel: {}", peer, msg),
             OnBroadcast(msg) => write!(f, "Error while trying to broadcast: {}", msg),
-            ReadTimeout(msg) => write!(f, "Error while trying to set read timeout: {}", msg)
+            ReadTimeout(msg) => write!(f, "Error while trying to set read timeout: {}", msg),
+            PeerAlreadyConnected(msg) => write!(f, "Peer already connected: {}", msg)
         }
     }
 }

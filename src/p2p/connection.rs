@@ -10,7 +10,7 @@ use std::convert::TryInto;
 type P2pResult<T> = std::result::Result<T, P2pError>;
 
 pub struct Connection {
-    id: u64, // TODO use a UUID
+    id: u64,
     node_tag: Option<String>, // Node tag if provided
     version: String, // daemon version
     block_top_hash: Mutex<Hash>, // current block top hash for this peer
@@ -18,6 +18,7 @@ pub struct Connection {
     stream: Mutex<TcpStream>, // Stream for read & write
     addr: SocketAddr, // TCP Address
     out: bool, // True mean we are the client
+    priority: bool,
     bytes_in: AtomicUsize, // total bytes read
     bytes_out: AtomicUsize, // total bytes sent
     connected_on: u64,
@@ -29,8 +30,8 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(id: u64, node_tag: Option<String>, version: String, block_top_hash: Hash, block_height: u64, stream: TcpStream, addr: SocketAddr, out: bool) -> Self {
-        Connection {
+    pub fn new(id: u64, node_tag: Option<String>, version: String, block_top_hash: Hash, block_height: u64, stream: TcpStream, addr: SocketAddr, out: bool, priority: bool) -> Self {
+        Self {
             id,
             node_tag,
             version,
@@ -39,6 +40,7 @@ impl Connection {
             stream: Mutex::new(stream),
             addr,
             out,
+            priority,
             connected_on: get_current_time(),
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
@@ -92,13 +94,13 @@ impl Connection {
     }
 
     pub fn read_all_bytes(&self, buf: &mut [u8], mut left: u32) -> Result<Vec<u8>> {
-        let buf_size = buf.len();
+        let buf_size = buf.len() as u32;
         let mut bytes = Vec::new();
         while left > 0 {
-            let max = if buf_size as u32 > left {
+            let max = if buf_size > left {
                 left as usize
             } else {
-                buf_size
+                buf_size as usize
             };
 
             let read = self.read_bytes(&mut buf[0..max])?;
@@ -114,7 +116,7 @@ impl Connection {
     // this function will wait until something is sent to the socket
     // this return the size of data read & set in the buffer.
     pub fn read_bytes(&self, buf: &mut [u8]) -> Result<usize> {
-        let result = self.stream.lock().unwrap().read(buf);
+        let result = self.stream.lock().unwrap().read(buf); // TODO remove unwrap()
         match &result {
             Ok(0) => {
                 self.close()?;
@@ -129,7 +131,7 @@ impl Connection {
 
     pub fn close(&self) -> Result<()> {
         self.closed.store(true, Ordering::Relaxed);
-        self.stream.lock().unwrap().shutdown(Shutdown::Both)
+        self.stream.lock().unwrap().shutdown(Shutdown::Both) // TODO remove unwrap()
     }
 
     // TODO verify last fail count
@@ -179,6 +181,10 @@ impl Connection {
         self.out
     }
 
+    pub fn is_priority(&self) -> bool {
+        self.priority
+    }
+
     pub fn bytes_out(&self) -> usize {
         self.bytes_out.load(Ordering::Relaxed)
     }
@@ -207,8 +213,8 @@ impl Connection {
         self.last_chain_sync.load(Ordering::Relaxed)
     }
 
-    pub fn update_last_chain_sync(&self) {
-        self.last_chain_sync.store(get_current_time(), Ordering::Relaxed);
+    pub fn set_last_chain_sync(&self, time: u64) {
+        self.last_chain_sync.store(time, Ordering::Relaxed);
     }
 }
 

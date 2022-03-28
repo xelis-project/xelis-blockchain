@@ -307,7 +307,7 @@ impl P2pServer {
                 Ok(addr) => addr,
                 Err(e) => return Err(P2pError::InvalidPeerAddress(format!("seed node {}: {}", peer, e)))
             };
-            if let Err(e) = self.connect_to_peer(buffer, addr) {
+            if let Err(e) = self.connect_to_peer(buffer, addr, true) {
                 println!("Error while trying to connect to seed node '{}': {}", peer, e);
             }
         }
@@ -341,7 +341,7 @@ impl P2pServer {
                         continue;
                     }
 
-                    if let Err(e) = self.handle_new_connection(&mut buffer, stream, false) {
+                    if let Err(e) = self.handle_new_connection(&mut buffer, stream, false, false) {
                         println!("Error on new connection: {}", e);
                     }
                 }
@@ -362,6 +362,12 @@ impl P2pServer {
         match self.receiver.lock() {
             Ok(receiver) => {
                 loop {
+                    if connections.len() == 0 { // maintains connection to seed nodes
+                        if let Err(e) = self.connect_to_seed_nodes(&mut buf) {
+                            println!("Error while connecting to seed nodes: {}", e);
+                        }
+                    }
+
                     while let Ok(msg) = if connections.len() == 0 {
                         receiver.recv().or(Err(TryRecvError::Empty))
                     } else {
@@ -448,7 +454,10 @@ impl P2pServer {
                     let current_time = get_current_time();
                     let ping: Option<Ping> = if current_time - last_ping > P2P_PING_DELAY {
                         match self.blockchain.get_top_block_hash() {
-                            Ok(v) => Some(Ping::new(v, self.blockchain.get_height())),
+                            Ok(v) => {
+                                last_ping = current_time;
+                                Some(Ping::new(v, self.blockchain.get_height()))
+                            },
                             Err(e) => {
                                 println!("Error while getting block top hash: {}", e);
                                 None
@@ -478,7 +487,7 @@ impl P2pServer {
     // Verify handshake send by a new connection
     // based on data size, network ID, peers address validity
     // block height and block top hash of this peer (to know if we are on the same chain)
-    fn verify_handshake(&self, addr: SocketAddr, stream: TcpStream, handshake: Handshake, out: bool) -> Result<(Connection, Vec<SocketAddr>), P2pError> {
+    fn verify_handshake(&self, addr: SocketAddr, stream: TcpStream, handshake: Handshake, out: bool, priority: bool) -> Result<(Connection, Vec<SocketAddr>), P2pError> {
         if *handshake.get_network_id() != NETWORK_ID {
             return Err(P2pError::InvalidNetworkID);
         }
@@ -491,20 +500,17 @@ impl P2pServer {
         }
 
         // TODO check block height, check if top hash is equal to block height
-        let (connection, str_peers) = handshake.create_connection(stream, addr, out);
+        let (connection, str_peers) = handshake.create_connection(stream, addr, out, priority);
         let mut peers: Vec<SocketAddr> = vec![];
         for peer in str_peers {
-            let peer_addr: SocketAddr = match peer.parse() {
+            let addr = match peer.parse::<SocketAddr>() {
                 Ok(addr) => addr,
                 Err(e) => {
                     let _ = connection.close(); // peer send us an invalid socket address, invalid handshake
                     return Err(P2pError::InvalidPeerAddress(format!("{}", e)));
                 }
             };
-
-            if !self.is_connected_to_addr(&peer_addr)? { // prevent reconnecting to a known p2p server
-                peers.push(peer_addr);
-            }
+            peers.push(addr);
         }
         peers = peers.into_iter().take(self.get_slots_available()).collect(); // limit to X slots available
         Ok((connection, peers))
@@ -537,7 +543,7 @@ impl P2pServer {
     // this function handle all new connection on main thread
     // A new connection have to send an Handshake
     // if the handshake is valid, we accept it & register it on server
-    fn handle_new_connection(&self, buffer: &mut [u8], mut stream: TcpStream, out: bool) -> Result<(), P2pError> {
+    fn handle_new_connection(&self, buffer: &mut [u8], mut stream: TcpStream, out: bool, priority: bool) -> Result<(), P2pError> {
         if let Err(e) = stream.set_read_timeout(Some(Duration::from_millis(300))) {
             return Err(P2pError::ReadTimeout(format!("{}", e)))
         }
@@ -551,7 +557,7 @@ impl P2pServer {
                             Ok(v) => v,
                             Err(_) => return Err(P2pError::InvalidHandshake)
                         };
-                        let (connection, peers) = self.verify_handshake(addr, stream, handshake, out)?;
+                        let (connection, peers) = self.verify_handshake(addr, stream, handshake, out, priority)?;
                         // if it's a outgoing connection, don't send the handshake back
                         // because we have already sent it
                         if !out {
@@ -568,7 +574,7 @@ impl P2pServer {
                         self.add_connection(connection)?;
                         // try to extend our peer list
                         for peer in peers {
-                            if let Err(e) = self.connect_to_peer(buffer, peer) {
+                            if let Err(e) = self.connect_to_peer(buffer, peer, false) {
                                 println!("Error while trying to connect to a peer from {}: {}", peer_id, e);
                             }
                         }
@@ -584,7 +590,11 @@ impl P2pServer {
 
     // Connect to a specific peer address
     // Buffer is passed in parameter to prevent the re-allocation each time
-    pub fn connect_to_peer(&self, buffer: &mut [u8], peer_addr: SocketAddr) -> Result<(), P2pError> {
+    pub fn connect_to_peer(&self, buffer: &mut [u8], peer_addr: SocketAddr, priority: bool) -> Result<(), P2pError> {
+        if self.is_connected_to_addr(&peer_addr)? {
+            return Err(P2pError::PeerAlreadyConnected(format!("{}", peer_addr)));
+        }
+
         println!("Trying to connect to {}", peer_addr);
         match TcpStream::connect(&peer_addr) {
             Ok(mut stream) => {
@@ -595,7 +605,7 @@ impl P2pServer {
                 }
 
                 // wait on Handshake reply & manage this new connection
-                self.handle_new_connection(buffer, stream, true)
+                self.handle_new_connection(buffer, stream, true, priority)
             },
             Err(e) => Err(P2pError::InvalidPeerAddress(format!("Can't connect to a new peer: {}", e)))
         }
@@ -662,11 +672,6 @@ impl P2pServer {
                             let mut sync = lock!(self.sync, ReaderError::InvalidValue);
                             // check if it's a new propagated block, or if it's from a RequestSync
                             if sync.contains_peer(&peer_id) {
-                                if !sync.contains_peer(&peer_id) {
-                                    println!("Peer send us an not-request block, why ?");
-                                    return Err(ReaderError::InvalidValue)
-                                }
-
                                 if let Err(e) = sync.insert_block(block, &peer_id) {
                                     println!("Error while adding block to chain sync: {}", e);
                                     connection.increment_fail_count();
@@ -681,8 +686,9 @@ impl P2pServer {
                         },
                         PacketIn::RequestChain(request) => {
                             let last_request = connection.get_last_chain_sync();
-                            connection.update_last_chain_sync();
-                            if  last_request + CHAIN_SYNC_DELAY > get_current_time() {
+                            let time = get_current_time();
+                            connection.set_last_chain_sync(time);
+                            if  last_request + CHAIN_SYNC_DELAY > time {
                                 println!("Peer request too fast chain");
                                 return Err(ReaderError::InvalidValue)
                             }
@@ -714,11 +720,6 @@ impl P2pServer {
                         }
                         PacketIn::Ping(ping) => {
                             ping.update_connection(connection);
-                            let peer_height = connection.get_block_height();
-                            let our_height = self.blockchain.get_height();
-                            if peer_height < our_height {
-
-                            }
                         },
                     };
                 },
@@ -744,16 +745,6 @@ impl P2pServer {
             if let Err(e) = sync.to_chain(&self.blockchain) {
                 println!("Error while adding sync chain to blockchain: {}", e);
             }
-        }
-    }
-
-    pub fn is_on_same_chain(&self, connection: &Arc<Connection>) -> Result<bool, P2pError> {
-        let top_hash = lock!(connection.get_top_block_hash());
-        if connection.get_block_height() <= self.blockchain.get_height() {
-            let storage = lock!(self.blockchain.get_storage());
-            Ok(storage.get_block_by_hash(&top_hash).is_ok())
-        } else {
-            Ok(false)
         }
     }
 
