@@ -13,6 +13,7 @@ use super::transaction::*;
 use std::sync::atomic::{Ordering, AtomicU64};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use log::{info, error, debug};
 
 #[derive(serde::Serialize)]
 pub struct Account {
@@ -76,7 +77,7 @@ impl Blockchain {
     // function to include the genesis block and register the public dev key.
     fn create_genesis_block(&self) -> Result<(), BlockchainError> {
         if GENESIS_BLOCK.len() != 0 {
-            println!("De-serializing genesis block...");
+            info!("De-serializing genesis block...");
             match CompleteBlock::from_hex(GENESIS_BLOCK.to_owned()) {
                 Ok(block) => {
                     let dev_address = self.dev_address.clone();
@@ -89,7 +90,7 @@ impl Blockchain {
                 Err(_) => return Err(BlockchainError::InvalidGenesisBlock)
             }
         } else {
-            println!("No genesis block found...");
+            error!("No genesis block found...");
         }
 
         Ok(())
@@ -220,14 +221,14 @@ impl Blockchain {
         for (height, block) in blocks.iter().enumerate() {
             let hash = block.hash();
             if block.get_height() != height as u64 {
-                println!("Invalid block height for block {}, got {} but expected {}", block, block.get_height(), height);
+                debug!("Invalid block height for block {}, got {} but expected {}", block, block.get_height(), height);
                 return Err(BlockchainError::InvalidBlockHeight(block.get_height(), height as u64))
             }
 
             if block.get_height() != 0 { // if not genesis, check parent block
                 let previous_hash = storage.get_block_at_height(block.get_height() - 1)?.hash();
                 if previous_hash != *block.get_previous_hash() {
-                    println!("Invalid previous block hash, expected {} got {}", previous_hash, block.get_previous_hash());
+                    debug!("Invalid previous block hash, expected {} got {}", previous_hash, block.get_previous_hash());
                     return Err(BlockchainError::InvalidHash(previous_hash, block.get_previous_hash().clone()));
                 }
             }
@@ -310,7 +311,7 @@ impl Blockchain {
             if previous_block.get_timestamp() > block.get_timestamp() { // block timestamp can't be less than previous block.
                 return Err(BlockchainError::TimestampIsLessThanParent(block.get_timestamp()));
             }
-            println!("Block Time for this block is: {}s", block.get_timestamp() - previous_block.get_timestamp());
+            debug!("Block Time for this block is: {}s", block.get_timestamp() - previous_block.get_timestamp());
         }
 
         let mut total_fees: u64 = 0;
@@ -396,7 +397,7 @@ impl Blockchain {
         for hash in block.get_txs_hashes() { // remove all txs present in mempool
             match mempool.remove_tx(hash) {
                 Ok(_) => {
-                    println!("Removing tx hash '{}' from mempool", hash);
+                    debug!("Removing tx hash '{}' from mempool", hash);
                 },
                 Err(_) => {}
             };
@@ -414,11 +415,11 @@ impl Blockchain {
 
         self.height.store(block.get_height(), Ordering::Relaxed);
         self.supply.fetch_add(block_reward, Ordering::Relaxed);
-        println!("Adding new block '{}' at height {}", block_hash, block.get_height());
+        debug!("Adding new block '{}' at height {}", block_hash, block.get_height());
         if block.get_height() != 0 && broadcast {
             if let Some(p2p) = self.p2p.lock()?.as_ref() {
                 if let Err(e) = p2p.broadcast_block(&block) { // Broadcast block to other nodes
-                    println!("Error while broadcasting block: {}", e);
+                    debug!("Error while broadcasting block: {}", e);
                 }
             }
         }
