@@ -1,5 +1,5 @@
 use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_TIMEOUT_SECS, CHAIN_SYNC_MAX_BLOCK, CHAIN_SYNC_DELAY, P2P_PING_DELAY};
-use crate::core::reader::{Reader, ReaderError};
+use crate::core::reader::Reader;
 use crate::core::difficulty::check_difficulty;
 use crate::crypto::hash::{Hash, Hashable};
 use crate::core::transaction::Transaction;
@@ -7,7 +7,7 @@ use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
 use crate::core::serializer::Serializer;
 use crate::core::block::CompleteBlock;
-use crate::globals::{get_current_time};
+use crate::globals::get_current_time;
 use super::packet::{PacketIn, PacketOut};
 use super::packet::handshake::Handshake;
 use super::packet::request_chain::RequestChain;
@@ -343,7 +343,6 @@ impl P2pServer {
         println!("Starting single thread connection listener...");
         let mut connections: HashMap<u64, Arc<Connection>> = HashMap::new();
         let mut buf: [u8; 1024] = [0; 1024]; // allocate this buffer only one time
-        // TODO every 10 seconds, broadcast a Handshake packet
         let mut last_ping = get_current_time();
         match self.receiver.lock() {
             Ok(receiver) => {
@@ -479,9 +478,7 @@ impl P2pServer {
         }
 
         if self.is_connected_to(&handshake.get_peer_id())? {
-            if let Err(e) = stream.shutdown(Shutdown::Both) {
-                println!("Error while rejecting peer: {}", e);
-            }
+            stream.shutdown(Shutdown::Both)?;
             return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }
 
@@ -519,7 +516,7 @@ impl P2pServer {
         }
 
         let block_height = self.blockchain.get_height();
-        let top_hash = Hash::zero(); //self.blockchain.get_top_block_hash()?;
+        let top_hash = self.blockchain.get_storage().lock()?.get_top_block_hash().clone();
         Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), get_current_time(), block_height, top_hash, peers))
     }
 
@@ -649,7 +646,6 @@ impl P2pServer {
                             let time = get_current_time();
                             connection.set_last_chain_sync(time);
                             if  last_request + CHAIN_SYNC_DELAY > time {
-                                println!("Peer request too fast chain");
                                 return Err(P2pError::RequestSyncChainTooFast)
                             }
 
@@ -657,7 +653,6 @@ impl P2pServer {
                             let start = request.get_start_height();
                             let end = request.get_end_height();
                             if start > our_height || end > our_height || start > end || end - start > CHAIN_SYNC_MAX_BLOCK { // only 20 blocks max per request
-                                println!("Peer requested an invalid block height range!");
                                 return Err(P2pError::InvalidHeightRange)
                             }
 

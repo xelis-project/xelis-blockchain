@@ -18,7 +18,7 @@ pub struct Connection {
     stream: Mutex<TcpStream>, // Stream for read & write
     addr: SocketAddr, // TCP Address
     out: bool, // True mean we are the client
-    priority: bool,
+    priority: bool, // if this node can be trusted (seed node or added manually by user)
     bytes_in: AtomicUsize, // total bytes read
     bytes_out: AtomicUsize, // total bytes sent
     connected_on: u64,
@@ -85,9 +85,6 @@ impl Connection {
             };
 
             let read = self.read_bytes(&mut buf[0..max])?;
-            if read == 0 {
-                return Err(P2pError::Disconnected)
-            }
             left -= read as u32;
             bytes.extend(&buf[0..read]);
         }
@@ -96,23 +93,24 @@ impl Connection {
 
     // this function will wait until something is sent to the socket
     // this return the size of data read & set in the buffer.
-    pub fn read_bytes(&self, buf: &mut [u8]) -> Result<usize> {
-        let result = self.stream.lock().unwrap().read(buf); // TODO remove unwrap()
-        match &result {
-            Ok(0) => {
+    pub fn read_bytes(&self, buf: &mut [u8]) -> P2pResult<usize> {
+        let result = self.stream.lock()?.read(buf)?;
+        match result {
+            0 => {
                 self.close()?;
+                Err(P2pError::Disconnected)
             }
-            Ok(n) => {
-                self.bytes_in.fetch_add(*n, Ordering::Relaxed);
-            },
-            _ => {}
-        };
-        result
+            n => {
+                self.bytes_in.fetch_add(n, Ordering::Relaxed);
+                Ok(n)
+            }
+        }
     }
 
-    pub fn close(&self) -> Result<()> {
+    pub fn close(&self) -> P2pResult<()> {
         self.closed.store(true, Ordering::Relaxed);
-        self.stream.lock().unwrap().shutdown(Shutdown::Both) // TODO remove unwrap()
+        self.stream.lock()?.shutdown(Shutdown::Both)?;
+        Ok(())
     }
 
     // TODO verify last fail count
