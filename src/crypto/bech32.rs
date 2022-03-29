@@ -1,7 +1,9 @@
+use thiserror::Error;
+
 const CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 const GENERATOR: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum Bech32Error {
     InvalidDataRange(u16, u16), //data, from bits
     IllegalZeroPadding,

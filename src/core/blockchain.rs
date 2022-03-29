@@ -14,15 +14,6 @@ use std::sync::atomic::{Ordering, AtomicU64};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-macro_rules! lock {
-    ($e: expr) => {
-        match $e.lock() {
-            Ok(v) => v,
-            Err(e) => return Err(BlockchainError::ErrorOnLock(format!("{}", e)))
-        }
-    };
-}
-
 #[derive(serde::Serialize)]
 pub struct Account {
     balance: u64,
@@ -76,7 +67,7 @@ impl Blockchain {
         let arc = Arc::new(blockchain);
         {
             let p2p = P2pServer::new(tag, 8, p2p_address, arc.clone());
-            *lock!(arc.p2p) = Some(p2p);
+            *arc.p2p.lock()? = Some(p2p);
         }
 
         Ok(arc)
@@ -92,7 +83,7 @@ impl Blockchain {
                     if *block.get_miner() != dev_address {
                         return Err(BlockchainError::GenesisBlockMiner)
                     }
-                    lock!(self.storage).register_account(dev_address);
+                    self.storage.lock()?.register_account(dev_address);
                     self.add_new_block(block, true)?;
                 },
                 Err(_) => return Err(BlockchainError::InvalidGenesisBlock)
@@ -154,20 +145,20 @@ impl Blockchain {
     }
 
     pub fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
-        Ok(lock!(self.storage).get_top_block_hash().clone())
+        Ok(self.storage.lock()?.get_top_block_hash().clone())
     }
 
     pub fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
-        let mut mempool = lock!(self.mempool);
+        let mut mempool = self.mempool.lock()?;
         if mempool.contains_tx(&hash) {
             return Err(BlockchainError::TxAlreadyInMempool(hash))
         }
 
-        let storage = lock!(self.storage);
+        let storage = self.storage.lock()?;
         self.verify_transaction_with_hash(&storage, &tx, &hash, false)?;
         if broadcast {
-            if let Some(p2p) = lock!(self.p2p).as_ref() {
+            if let Some(p2p) = self.p2p.lock()?.as_ref() {
                 if let Err(e) = p2p.broadcast_tx(&tx) {
                     return Err(BlockchainError::ErrorOnP2p(e))
                 }
@@ -184,22 +175,18 @@ impl Blockchain {
         }), address);
         let mut block = Block::new(self.get_height() + 1, get_current_time(), self.get_top_block_hash()?, self.get_difficulty(), coinbase_tx, Vec::new());
         let mut total_fee = 0;
-        match self.mempool.lock() {
-            Ok(mempool) => {
-                let txs: &Vec<SortedTx> = mempool.get_sorted_txs();
-                let mut tx_size = 0;
-                for tx in txs {
-                    tx_size += tx.get_size();
-                    if block.size() + tx_size > MAX_BLOCK_SIZE {
-                        break;
-                    }
-
-                    total_fee += tx.get_fee();
-                    block.txs_hashes.push(tx.get_hash().clone());
-                }
+        let mempool = self.mempool.lock()?;
+        let txs: &Vec<SortedTx> = mempool.get_sorted_txs();
+        let mut tx_size = 0;
+        for tx in txs {
+            tx_size += tx.get_size();
+            if block.size() + tx_size > MAX_BLOCK_SIZE {
+                break;
             }
-            Err(e) => return Err(BlockchainError::ErrorOnLock(format!("{}", e)))
-        };
+
+            total_fee += tx.get_fee();
+            block.txs_hashes.push(tx.get_hash().clone());
+        }
 
         match block.miner_tx.get_mut_data() {
             TransactionData::Coinbase(ref mut data) => {
@@ -213,21 +200,17 @@ impl Blockchain {
 
     pub fn build_complete_block_from_block(&self, block: Block) -> Result<CompleteBlock, BlockchainError> {
         let mut transactions: Vec<Transaction> = vec![];
-        match self.mempool.lock() {
-            Ok(mempool) => {
-                for hash in &block.txs_hashes {
-                    let tx = mempool.view_tx(hash)?; // at this point, we don't want to lose/remove any tx, we clone it only
-                    transactions.push(tx.clone());
-                }
-            },
-            Err(e) => return Err(BlockchainError::ErrorOnLock(format!("{}", e)))
-        };
+        let mempool = self.mempool.lock()?;
+        for hash in &block.txs_hashes {
+            let tx = mempool.view_tx(hash)?; // at this point, we don't want to lose/remove any tx, we clone it only
+            transactions.push(tx.clone());
+        }
         let complete_block = CompleteBlock::new(block, transactions);
         Ok(complete_block)
     }
 
     pub fn check_validity(&self) -> Result<(), BlockchainError> {
-        let storage = lock!(self.storage);
+        let storage = self.storage.lock()?;
         let blocks = storage.get_blocks();
         if self.get_height() != blocks.len() as u64 {
             return Err(BlockchainError::InvalidBlockHeight(self.get_height(), blocks.len() as u64))
@@ -308,7 +291,7 @@ impl Blockchain {
     }
 
     pub fn add_new_block(&self, block: CompleteBlock, broadcast: bool) -> Result<(), BlockchainError> {
-        let mut storage = lock!(self.storage);
+        let mut storage = self.storage.lock()?;
         let current_height = self.get_height();
         let current_difficulty = self.get_difficulty();
         let block_hash = block.hash();
@@ -409,19 +392,15 @@ impl Blockchain {
         }
 
         // Transaction execution
-        match self.mempool.lock() {
-            Ok(mut mempool) => {
-                for hash in block.get_txs_hashes() { // remove all txs present in mempool
-                    match mempool.remove_tx(hash) {
-                        Ok(_) => {
-                            println!("Removing tx hash '{}' from mempool", hash);
-                        },
-                        Err(_) => {}
-                    };
-                }       
-            },
-            Err(e) => return Err(BlockchainError::ErrorOnLock(format!("{}", e)))
-        };
+        let mut mempool = self.mempool.lock()?;
+        for hash in block.get_txs_hashes() { // remove all txs present in mempool
+            match mempool.remove_tx(hash) {
+                Ok(_) => {
+                    println!("Removing tx hash '{}' from mempool", hash);
+                },
+                Err(_) => {}
+            };
+        }
 
         for tx in block.get_transactions() { // execute all txs
             self.execute_transaction(&mut storage, tx)?;
@@ -437,7 +416,7 @@ impl Blockchain {
         self.supply.fetch_add(block_reward, Ordering::Relaxed);
         println!("Adding new block '{}' at height {}", block_hash, block.get_height());
         if block.get_height() != 0 && broadcast {
-            if let Some(p2p) = lock!(self.p2p).as_ref() {
+            if let Some(p2p) = self.p2p.lock()?.as_ref() {
                 if let Err(e) = p2p.broadcast_block(&block) { // Broadcast block to other nodes
                     println!("Error while broadcasting block: {}", e);
                 }

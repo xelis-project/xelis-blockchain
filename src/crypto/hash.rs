@@ -1,6 +1,6 @@
 pub const HASH_SIZE: usize = 32; //32 bytes / 256 bits
 
-#[derive(Eq, Clone)]
+#[derive(Eq, Clone, Debug)]
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {

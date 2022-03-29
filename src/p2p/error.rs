@@ -1,46 +1,56 @@
-use std::fmt::{Display, Error, Formatter};
-use std::error::Error as TraitError;
+use crate::core::reader::ReaderError;
+use std::array::TryFromSliceError;
+use std::sync::mpsc::SendError;
+use std::io::Error as IOError;
+use std::sync::PoisonError;
+use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Peer disconnected")]
+    Disconnected,
+    #[error("Invalid handshake")]
     InvalidHandshake,
+    #[error("Invalid peer address, {}", _0)]
     InvalidPeerAddress(String), // peer address from handshake
+    #[error("Invalid network ID")]
     InvalidNetworkID,
-    TryInto(String),
+    #[error("No channel found for peer {}", _0)]
     ChannelNotFound(u64),
+    #[error("Peer {} not found", _0)]
     PeerNotFound(u64),
+    #[error("Peer id {} is already used!", _0)]
     PeerIdAlreadyUsed(u64),
-    OnWrite(String),
-    OnLock,
-    OnStreamBlocking(bool, String),
-    OnConnectionClose(String),
-    OnChannelMessage(u64, String),
-    OnBroadcast(String),
-    ReadTimeout(String),
-    PeerAlreadyConnected(String)
+    #[error("Peer already connected: {}", _0)]
+    PeerAlreadyConnected(String),
+    #[error(transparent)]
+    ErrorStd(#[from] IOError),
+    #[error("Poison Error: {}", _0)]
+    PoisonError(String),
+    #[error("Send Error: {}", _0)]
+    SendError(String),
+    #[error(transparent)]
+    TryInto(#[from] TryFromSliceError),
+    #[error(transparent)]
+    ReaderError(#[from] ReaderError),
+    #[error("Invalid packet ID")]
+    InvalidPacket,
+    #[error("Packet size exceed limit")]
+    InvalidPacketSize,
+    #[error("Request sync chain too fast")]
+    RequestSyncChainTooFast,
+    #[error("Invalid height range")]
+    InvalidHeightRange
 }
 
-impl TraitError for P2pError {}
+impl<T> From<PoisonError<T>> for P2pError {
+    fn from(err: PoisonError<T>) -> Self {
+        Self::PoisonError(format!("{}", err))
+    }
+}
 
-impl Display for P2pError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        use P2pError::*;
-        match self {
-            InvalidHandshake => write!(f, "Invalid handshake"),
-            InvalidPeerAddress(msg) => write!(f, "Invalid peer address, {}", msg),
-            InvalidNetworkID => write!(f, "Invalid network ID"),
-            TryInto(err) => write!(f, "Error on try into: {}", err),
-            ChannelNotFound(peer_id) => write!(f, "No channel found for peer {}", peer_id),
-            PeerNotFound(peer_id) => write!(f, "Peer {} not found", peer_id),
-            PeerIdAlreadyUsed(id) => write!(f, "Peer id {} is already used!", id),
-            OnWrite(msg) => write!(f, "Bytes were not sent, error: {}", msg),
-            OnLock => write!(f, "Error while trying to lock"),
-            OnStreamBlocking(value, msg) => write!(f, "Error while trying to set stream blocking mode to {}: {}", value, msg),
-            OnConnectionClose(msg) => write!(f, "Error while trying to close connection: {}", msg),
-            OnChannelMessage(peer, msg) => write!(f, "Error while trying to send message for peer {} through channel: {}", peer, msg),
-            OnBroadcast(msg) => write!(f, "Error while trying to broadcast: {}", msg),
-            ReadTimeout(msg) => write!(f, "Error while trying to set read timeout: {}", msg),
-            PeerAlreadyConnected(msg) => write!(f, "Peer already connected: {}", msg)
-        }
+impl<T> From<SendError<T>> for P2pError {
+    fn from(err: SendError<T>) -> Self {
+        Self::SendError(format!("{}", err))
     }
 }

@@ -53,47 +53,28 @@ impl Connection {
 
     // Set the connection thread blocking or not
     pub fn set_blocking(&self, blocking: bool) -> P2pResult<()> {
-        match self.stream.lock() {
-            Ok(stream) => {
-                match stream.set_nonblocking(!blocking) {
-                    Ok(_) => {
-                        self.blocking.store(blocking, Ordering::Relaxed);
-                        Ok(())
-                    }
-                    Err(e) => Err(P2pError::OnStreamBlocking(blocking, format!("{}", e)))
-                }
-            },
-            Err(_) => Err(P2pError::OnLock)
-        }
+        let stream = self.stream.lock()?;
+        stream.set_nonblocking(!blocking)?;
+        self.blocking.store(blocking, Ordering::Relaxed);
+        Ok(())
     }
 
     pub fn send_bytes(&self, buf: &[u8]) -> P2pResult<()> {
-        match self.stream.lock() {
-            Ok(mut lock) => match lock.write(buf) {
-                Ok(_) => {
-                    self.bytes_out.fetch_add(buf.len(), Ordering::Relaxed);
-                    match lock.flush() {
-                        Ok(_) => Ok(()),
-                        Err(e) => Err(P2pError::OnWrite(format!("{}", e)))
-                    }
-                },
-                Err(e) => Err(P2pError::OnWrite(format!("{}", e)))
-            },
-            Err(_) => Err(P2pError::OnLock)
-        }
+        let mut stream = self.stream.lock()?;
+        stream.write(buf)?;
+        self.bytes_out.fetch_add(buf.len(), Ordering::Relaxed);
+        stream.flush()?;
+        Ok(())
     }
 
-    pub fn read_packet_size(&self, buf: &mut [u8]) -> Result<(usize, u32)> {
+    pub fn read_packet_size(&self, buf: &mut [u8]) -> P2pResult<(usize, u32)> {
         let read = self.read_bytes(&mut buf[0..4])?;
-        let array: [u8; 4] = match buf[0..4].try_into() {
-            Ok(v) => v,
-            Err(_) => panic!("TODO") // TODO
-        };
+        let array: [u8; 4] = buf[0..4].try_into()?;
         let size = u32::from_be_bytes(array);
         Ok((read, size))
     }
 
-    pub fn read_all_bytes(&self, buf: &mut [u8], mut left: u32) -> Result<Vec<u8>> {
+    pub fn read_all_bytes(&self, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
         let buf_size = buf.len() as u32;
         let mut bytes = Vec::new();
         while left > 0 {
@@ -105,7 +86,7 @@ impl Connection {
 
             let read = self.read_bytes(&mut buf[0..max])?;
             if read == 0 {
-                break; // TODO error
+                return Err(P2pError::Disconnected)
             }
             left -= read as u32;
             bytes.extend(&buf[0..read]);
@@ -160,13 +141,8 @@ impl Connection {
     }
 
     pub fn set_block_top_hash(&self, hash: Hash) -> P2pResult<()> {
-        match self.block_top_hash.lock() {
-            Ok(mut h) => {
-                *h = hash;
-                Ok(())
-            },
-            Err(_) => Err(P2pError::OnLock)
-        }
+        *self.block_top_hash.lock()? = hash;
+        Ok(())
     }
 
     pub fn get_top_block_hash(&self) -> &Mutex<Hash> {

@@ -1,7 +1,9 @@
 use crate::crypto::hash::Hash;
 use std::fmt::{Display, Error, Formatter};
 use std::convert::TryInto;
+use thiserror::Error;
 
+#[derive(Error, Debug)]
 pub enum ReaderError {
     InvalidSize,
     InvalidValue,
