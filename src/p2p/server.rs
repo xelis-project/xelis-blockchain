@@ -259,6 +259,8 @@ impl P2pServer {
     }
 
     fn start(self: Arc<Self>) {
+        info!("Starting P2p...");
+
         // spawn threads
         let clone = self.clone();
         thread::spawn(move || {
@@ -312,7 +314,6 @@ impl P2pServer {
             error!("Error while connecting to seed nodes: {}", e);
         }
 
-        info!("Starting p2p server...");
         let listener = match TcpListener::bind(self.get_bind_address()) {
             Ok(listener) => listener,
             Err(e) => {
@@ -320,8 +321,8 @@ impl P2pServer {
                 return;
             }
         };
-
-        info!("Waiting for connections...");
+        info!("P2p Server will listen on: {}", self.get_bind_address());
+        debug!("Waiting for connections...");
         for stream in listener.incoming() { // main thread verify all new connections
             debug!("New incoming connection");
             match stream {
@@ -347,19 +348,13 @@ impl P2pServer {
 
     // listening connections thread
     fn listen_existing_connections(&self) {
-        info!("Starting single thread connection listener...");
+        info!("Starting connection listener thread...");
         let mut connections: HashMap<u64, Arc<Connection>> = HashMap::new();
         let mut buf: [u8; 1024] = [0; 1024]; // allocate this buffer only one time
         let mut last_ping = get_current_time();
         match self.receiver.lock() {
             Ok(receiver) => {
                 loop {
-                    if connections.len() == 0 { // maintains connection to seed nodes
-                        if let Err(e) = self.connect_to_seed_nodes(&mut buf) {
-                            debug!("Error while connecting to seed nodes: {}", e);
-                        }
-                    }
-
                     while let Ok(msg) = if connections.len() == 0 {
                         receiver.recv().or(Err(TryRecvError::Empty))
                     } else {
@@ -408,6 +403,12 @@ impl P2pServer {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    if connections.len() == 0 { // maintains connection to seed nodes
+                        if let Err(e) = self.connect_to_seed_nodes(&mut buf) {
+                            debug!("Error while connecting to seed nodes: {}", e);
                         }
                     }
 
@@ -536,13 +537,17 @@ impl P2pServer {
     fn handle_new_connection(&self, buffer: &mut [u8], mut stream: TcpStream, out: bool, priority: bool) -> Result<(), P2pError> {
         stream.set_read_timeout(Some(Duration::from_millis(300)))?;
         let addr = stream.peer_addr()?;
-        info!("New connection: {}", addr);
+        debug!("New connection: {}", addr);
         let n = stream.read(buffer)?;
         let mut reader = Reader::new(&buffer[0..n]);
         let handshake = match Handshake::read(&mut reader) {
             Ok(v) => v,
             Err(_) => return Err(P2pError::InvalidHandshake)
         };
+
+        if reader.total_read() != n { // prevent a node to send useless bytes after the handshake
+            return Err(P2pError::InvalidHandshake);
+        }
         let (connection, peers) = self.verify_handshake(addr, stream, handshake, out, priority)?;
         // if it's a outgoing connection, don't send the handshake back
         // because we have already sent it
@@ -560,6 +565,7 @@ impl P2pServer {
         self.add_connection(connection)?;
         // try to extend our peer list
         for peer in peers {
+            debug!("Trying to extend peer list with {}", peer);
             if let Err(e) = self.connect_to_peer(buffer, peer, false) {
                 debug!("Error while trying to connect to a peer from {}: {}", peer_id, e);
             }
@@ -690,10 +696,10 @@ impl P2pServer {
                             return Ok(())
                         } 
                     }
+                    debug!("An error has occured while reading bytes from {}: {}", connection, e);
                     if let Err(e) = self.remove_connection(&connection.get_peer_id()) {
                         error!("Error while removing connection: {}", e);
                     }
-                    debug!("An error has occured while reading bytes from {}: {}", connection, e);
                     break;
                 }
             };
@@ -758,6 +764,10 @@ impl P2pServer {
     }
 
     pub fn is_connected_to_addr(&self, peer_addr: &SocketAddr) -> Result<bool, P2pError> {
+        if format!("{}", peer_addr) == *self.get_bind_address() { // don't try to connect to ourself
+            debug!("Trying to connect to ourself, ignoring.");
+            return Ok(true)
+        }
         let connections = self.connections.lock()?;
         for connection in connections.values() {
             if *connection.get_peer_address() == *peer_addr {
@@ -777,13 +787,14 @@ impl P2pServer {
         let arc_connection = Arc::new(connection);
         match connections.insert(peer_id, arc_connection.clone()) {
             Some(c) => {  // should not happen (check is done in verify_handshake)
+                error!("Peer id {} already exists in connections.", peer_id);
                 connections.insert(peer_id, c);
                 return Err(P2pError::PeerIdAlreadyUsed(peer_id))
             },
             None => {
                 let sender = self.sender.lock()?;
+                debug!("add connection ({}/{}): {}", connections.len(), self.get_max_peers(), arc_connection);
                 sender.send(Message::AddConnection(arc_connection))?;
-                debug!("add new connection (total {}): {}", connections.len(), self.bind_address);
                 Ok(())
             }
         }
