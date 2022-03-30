@@ -44,10 +44,10 @@ impl<'a> Serializer for PacketOut<'a> {
         };
 
         let packet_len: u32 = packet.len() as u32 + 1;
-        debug!("Packet ID: {}, size: {}", id, packet_len);
         writer.write_u32(&packet_len);
         writer.write_u8(id);
         writer.write_bytes(&packet);
+        debug!("Packet ID: {}, size: {}", id, writer.total_write());
     }
 }
 

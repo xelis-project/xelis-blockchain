@@ -37,11 +37,11 @@ enum Message {
 }
 
 struct ChainSync { // TODO, receive Block Header only
-    current_top_hash: Hash,
+    current_top_hash: Hash, // top hash of our current blockchain
     blocks: HashMap<Hash, CompleteBlock>,
     asked_peers: HashMap<u64, u64>, // Peer id, Blocks asked
     syncing: bool,
-    start_at: u64
+    start_at: u64 // timestamp in seconds
 }
 
 impl ChainSync {
@@ -538,11 +538,17 @@ impl P2pServer {
         stream.set_read_timeout(Some(Duration::from_millis(300)))?;
         let addr = stream.peer_addr()?;
         debug!("New connection: {}", addr);
-        let n = stream.read(buffer)?; // total read
-        if n == 0 {
+        let read = stream.read(&mut buffer[0..2])?; // read handshake packet size
+        if read == 0 {
             debug!("Connection closed by peer {}", addr);
             return Err(P2pError::Disconnected);
         }
+        let packet_size: u16 = u16::from_be_bytes([buffer[0], buffer[1]]); // convert to u16
+        if packet_size > buffer.len() as u16 {
+            error!("Packet size ({} bytes) is bigger than buffer size ({} bytes)", packet_size, buffer.len());
+            return Err(P2pError::InvalidHandshake) 
+        }
+        let n = stream.read(&mut buffer[0..packet_size as usize])?; // read only our handshake packet
         let mut reader = Reader::new(&buffer[0..n]);
         let handshake = match Handshake::read(&mut reader) {
             Ok(v) => v,
@@ -550,15 +556,19 @@ impl P2pServer {
         };
 
         if reader.total_read() != n { // prevent a node to send useless bytes after the handshake
-            debug!("Peer sent us {} bytes but read only {} bytes", n, reader.total_read());
-            //return Err(P2pError::InvalidHandshake);
+            error!("Peer sent us {} bytes but read only {} bytes", n, reader.total_read());
+            return Err(P2pError::InvalidHandshake);
         }
         let (connection, peers) = self.verify_handshake(addr, stream, handshake, out, priority)?;
         // if it's a outgoing connection, don't send the handshake back
         // because we have already sent it
         if !out {
             let handshake = self.build_handshake()?; // TODO don't send same peers list
-            connection.send_bytes(&handshake.to_bytes())?; // send handshake back
+            let bytes = handshake.to_bytes();
+            let mut packet: Vec<u8> = (bytes.len() as u16).to_be_bytes().to_vec();
+            packet.extend(bytes);
+            debug!("Reply handshake (size: {} bytes) to peer {}", packet.len(), addr);
+            connection.send_bytes(&packet)?; // send handshake back
         }
 
         // handle connection
@@ -585,11 +595,14 @@ impl P2pServer {
         if self.is_connected_to_addr(&peer_addr)? {
             return Err(P2pError::PeerAlreadyConnected(format!("{}", peer_addr)));
         }
-        debug!("Trying to connect to {}", peer_addr);
         let mut stream = TcpStream::connect(&peer_addr)?;
         let handshake: Handshake = self.build_handshake()?;
-        debug!("Sending handshake from server");
-        stream.write(&handshake.to_bytes())?;
+        let bytes = handshake.to_bytes();
+        let mut packet: Vec<u8> = (bytes.len() as u16).to_be_bytes().to_vec();
+        packet.extend(bytes);
+        debug!("Sending handshake (size: {} bytes) to {}", packet.len(), peer_addr);
+        stream.write(&packet)?;
+        stream.flush()?;
 
         // wait on Handshake reply & manage this new connection
         self.handle_new_connection(buffer, stream, true, priority)

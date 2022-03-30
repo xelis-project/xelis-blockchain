@@ -25,6 +25,7 @@ impl<T> From<PoisonError<T>> for PromptError {
     }
 }
 
+// TODO build & use history using arrow keys & create a command manager
 pub struct Prompt {
     receiver: Mutex<Receiver<String>>,
     prompt: Mutex<Option<String>>,

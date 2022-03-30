@@ -44,10 +44,8 @@ fn main() {
             return
         }
     };
-
     info!("Xelis Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
-
     let blockchain = match Blockchain::new(config.tag, config.bind_address) {
         Ok(blockchain) => blockchain,
         Err(e) => {
@@ -68,7 +66,6 @@ fn main() {
             }
         }
     }
-
     if let Err(e) = run_prompt(prompt, blockchain) { // block main thread
         error!("Error while running prompt: {}", e);
     }
@@ -86,10 +83,11 @@ fn build_prompt_message(height: u64, peers_count: usize) -> String {
         Prompt::colorize_string(Color::Green, &format!("{}", peers_count))
     );
     format!(
-        "{} | {} | {} >> ",
+        "{} | {} | {} {} ",
         Prompt::colorize_str(Color::Blue, "XELIS"),
         height_str,
-        peers_str
+        peers_str,
+        Prompt::colorize_str(Color::BrightBlack, ">>")
     )
 }
 
@@ -114,6 +112,13 @@ fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), Pr
             debug!("calling command '{}'", cmd);
             match cmd.as_ref() {
                 "exit" => break,
+                "validity" => {
+                    if let Err(e) = blockchain.check_validity() {
+                        error!("Blockchain is not valid: {}", e);
+                    } else {
+                        info!("Blockchain is valid");
+                    }
+                },
                 "peer_list" => {
                     match blockchain.get_p2p().lock()?.as_ref() {
                         Some(p2p) => {
@@ -122,7 +127,7 @@ fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), Pr
                             });
                         }
                         None => {
-                            info!("No p2p instance found");
+                            error!("No p2p instance found");
                         }
                     };
                 }

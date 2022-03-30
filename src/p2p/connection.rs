@@ -4,7 +4,7 @@ use super::error::P2pError;
 use std::net::{TcpStream, SocketAddr, Shutdown};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU8, AtomicU64, Ordering};
-use std::io::{Write, Read, Result};
+use std::io::{Write, Read};
 use std::convert::TryInto;
 
 type P2pResult<T> = std::result::Result<T, P2pError>;
