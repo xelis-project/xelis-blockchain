@@ -67,10 +67,6 @@ impl Handshake {
         self.peer_id
     }
 
-    pub fn get_local_port(&self) -> u16 {
-        self.local_port
-    }
-
     pub fn get_utc_time(&self) -> u64 {
         self.utc_time
     }

@@ -6,7 +6,7 @@ use super::reader::{Reader, ReaderError};
 use super::writer::Writer;
 
 const EXTRA_NONCE_SIZE: usize = 32;
-const BLOCK_WORK_SIZE: usize = 160;
+const BLOCK_WORK_SIZE: usize = 152;
 
 #[derive(serde::Serialize, Clone)]
 pub struct Block {
@@ -14,7 +14,6 @@ pub struct Block {
     pub timestamp: u64,
     pub height: u64,
     pub nonce: u64,
-    pub difficulty: u64,
     #[serde(skip_serializing)]
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE],
     pub miner_tx: Transaction,
@@ -29,13 +28,12 @@ pub struct CompleteBlock {
 }
 
 impl Block {
-    pub fn new(height: u64, timestamp: u64, previous_hash: Hash, difficulty: u64, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner_tx: Transaction, txs_hashes: Vec<Hash>) -> Self {
+    pub fn new(height: u64, timestamp: u64, previous_hash: Hash, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner_tx: Transaction, txs_hashes: Vec<Hash>) -> Self {
         Block {
             height,
             timestamp,
             previous_hash,
             nonce: 0,
-            difficulty,
             extra_nonce,
             miner_tx,
             txs_hashes
@@ -63,10 +61,9 @@ impl Block {
         bytes.extend(&self.timestamp.to_be_bytes()); // 8 + 8 = 16
         bytes.extend(self.previous_hash.as_bytes()); // 16 + 32 = 48
         bytes.extend(&self.nonce.to_be_bytes()); // 48 + 8 = 56
-        bytes.extend(&self.difficulty.to_be_bytes()); // 56 + 8 = 64
-        bytes.extend(self.miner_tx.hash().as_bytes()); // 64 + 32 = 96
-        bytes.extend(&self.extra_nonce); // 96 + 32 = 128
-        bytes.extend(self.get_txs_hash().as_bytes()); // 128 + 32 = 160
+        bytes.extend(self.miner_tx.hash().as_bytes()); // 56 + 32 = 88
+        bytes.extend(&self.extra_nonce); // 88 + 32 = 120
+        bytes.extend(self.get_txs_hash().as_bytes()); // 120 + 32 = 152
 
         if bytes.len() != BLOCK_WORK_SIZE {
             panic!("Error, invalid block work size, got {} but expected {}", bytes.len(), BLOCK_WORK_SIZE)
@@ -123,10 +120,6 @@ impl CompleteBlock {
     pub fn get_transactions(&self) -> &Vec<Transaction> {
         &self.transactions
     }
-
-    pub fn get_difficulty(&self) -> u64 {
-        self.block.difficulty
-    }
 }
 
 impl Serializer for Block {
@@ -135,9 +128,8 @@ impl Serializer for Block {
         writer.write_u64(&self.timestamp); // 8 + 8 = 16
         writer.write_hash(&self.previous_hash); // 16 + 32 = 48
         writer.write_u64(&self.nonce); // 48 + 8 = 56
-        writer.write_u64(&self.difficulty); // 56 + 8 = 64
-        writer.write_bytes(&self.extra_nonce); // 64 + 32 = 96
-        writer.write_u16(&(self.txs_hashes.len() as u16)); // 96 + 2 = 98
+        writer.write_bytes(&self.extra_nonce); // 56 + 32 = 88
+        writer.write_u16(&(self.txs_hashes.len() as u16)); // 88 + 2 = 90
         for tx in &self.txs_hashes {
             writer.write_hash(tx);
         }
@@ -149,7 +141,6 @@ impl Serializer for Block {
         let timestamp = reader.read_u64()?;
         let previous_hash = Hash::new(reader.read_bytes_32()?);
         let nonce = reader.read_u64()?;
-        let difficulty = reader.read_u64()?;
         let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
         let txs_count = reader.read_u16()?;
         let mut txs_hashes = vec![];
@@ -160,7 +151,6 @@ impl Serializer for Block {
 
         Ok(
             Block {
-                difficulty,
                 extra_nonce,
                 height,
                 timestamp,
@@ -209,6 +199,6 @@ use std::fmt::{Error, Display, Formatter};
 
 impl Display for CompleteBlock {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "Block[height: {}, previous_hash: {}, timestamp: {}, nonce: {}, difficulty: {}, extra_nonce: {}, txs: {}]", self.block.height, self.block.previous_hash, self.block.timestamp, self.block.nonce, self.block.difficulty, hex::encode(self.block.extra_nonce), self.block.txs_hashes.len())
+        write!(f, "Block[height: {}, previous_hash: {}, timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.block.height, self.block.previous_hash, self.block.timestamp, self.block.nonce, hex::encode(self.block.extra_nonce), self.block.txs_hashes.len())
     }
 }

@@ -14,8 +14,8 @@ pub enum BlockchainError {
     TimestampIsInFuture(u64, u64), // left is expected, right is got
     #[error("Block height mismatch, expected {}, got {}.", _0, _1)]
     InvalidBlockHeight(u64, u64),
-    #[error("Invalid difficulty, expected {}, got {}", _0, _1)]
-    InvalidDifficulty(u64, u64),
+    #[error("Invalid difficulty")]
+    InvalidDifficulty,
     #[error("Invalid hash, expected {}, got {}", _0, _1)]
     InvalidHash(Hash, Hash),
     #[error("Invalid previous block hash, expected {}, got {}", _0, _1)]

@@ -29,8 +29,7 @@ pub fn hash_to_big(hash: &Hash) -> BigUint {
     BigUint::from_bytes_be(hash.as_bytes())
 }
 
-pub fn calculate_difficulty(parent_block: &CompleteBlock, new_block: &CompleteBlock) -> u64 {
-    let parent_diff: u64 = new_block.get_difficulty();
+pub fn calculate_difficulty(parent_diff: u64, parent_block: &CompleteBlock, new_block: &CompleteBlock) -> u64 {
     let timestamp_diff: u64 = new_block.get_timestamp() - parent_block.get_timestamp();
 
     // (parent_diff + (parent_diff / 100 * max(1 - (block_timestamp - parent_timestamp) / (expected_block_time * 2 / 3), -99))

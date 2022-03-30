@@ -92,6 +92,21 @@ impl Blockchain {
             }
         } else {
             error!("No genesis block found...");
+            info!("Generating a new genesis block...");
+            let coinbase = CoinbaseTx {
+                block_reward: get_block_reward(0),
+                fee_reward: 0
+            };
+            let miner_tx = Transaction::new(0, TransactionData::Coinbase(coinbase), self.get_dev_address().clone());
+            let mut block = Block::new(0, get_current_time(), Hash::zero(), [0u8; 32], miner_tx, Vec::new());
+            let mut hash = block.hash();
+            while !check_difficulty(&hash, self.get_difficulty())? {
+                block.nonce += 1;
+                block.timestamp = get_current_time();
+                hash = block.hash();
+            }
+            let complete_block = CompleteBlock::new(block, Vec::new());
+            info!("Genesis: {}", complete_block.to_hex());
         }
 
         Ok(())
@@ -173,7 +188,7 @@ impl Blockchain {
             fee_reward: 0,
         }), address);
         let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>();
-        let mut block = Block::new(self.get_height() + 1, get_current_time(), self.get_top_block_hash()?, self.get_difficulty(), extra_nonce, coinbase_tx, Vec::new());
+        let mut block = Block::new(self.get_height() + 1, get_current_time(), self.get_top_block_hash()?, extra_nonce, coinbase_tx, Vec::new());
         let mut total_fee = 0;
         let mempool = self.mempool.lock()?;
         let txs: &Vec<SortedTx> = mempool.get_sorted_txs();
@@ -238,8 +253,8 @@ impl Blockchain {
                 return Err(BlockchainError::InvalidBlockTxs(txs_hashes_len, txs_len));
             }
 
-            if !check_difficulty(&hash, block.get_difficulty())? {
-                return Err(BlockchainError::InvalidDifficulty(block.get_difficulty(), 0))
+            if !check_difficulty(&hash, self.get_difficulty())? {
+                return Err(BlockchainError::InvalidDifficulty)
             }
 
             let coinbase_tx = match block.get_miner_tx().get_data() {
@@ -297,11 +312,11 @@ impl Blockchain {
         let block_hash = block.hash();
         if storage.has_blocks() && current_height + 1 != block.get_height() {
             return Err(BlockchainError::InvalidBlockHeight(current_height + 1, block.get_height()));
-        } else if current_difficulty != block.get_difficulty() || !check_difficulty(&block_hash, current_difficulty)? {
-            return Err(BlockchainError::InvalidDifficulty(current_difficulty, block.get_difficulty()));
+        } else if !check_difficulty(&block_hash, current_difficulty)? {
+            return Err(BlockchainError::InvalidDifficulty);
         } else if block.get_timestamp() > get_current_time() { // TODO accept a latency of max 30s
             return Err(BlockchainError::TimestampIsInFuture(get_current_time(), block.get_timestamp()));
-        } else if current_height != 0 && storage.has_blocks() {
+        } else if current_height != 0 && storage.has_blocks() { // TODO Block exist
             let previous_block = storage.get_block_at_height(current_height)?;
             let previous_hash = previous_block.hash();
             if previous_hash != *block.get_previous_hash() {
@@ -408,7 +423,7 @@ impl Blockchain {
         self.execute_transaction(&mut storage, block.get_miner_tx())?; // execute coinbase tx
 
         if current_height > 2 { // re calculate difficulty
-            let difficulty = calculate_difficulty(storage.get_top_block()?, &block);
+            let difficulty = calculate_difficulty(current_difficulty, storage.get_top_block()?, &block);
             self.difficulty.store(difficulty, Ordering::Relaxed);
         }
 

@@ -8,6 +8,7 @@ use crate::core::error::BlockchainError;
 use crate::core::serializer::Serializer;
 use crate::core::block::CompleteBlock;
 use crate::globals::get_current_time;
+use crate::core::difficulty::hash_to_big;
 use super::packet::{PacketIn, PacketOut};
 use super::packet::handshake::Handshake;
 use super::packet::request_chain::RequestChain;
@@ -95,6 +96,7 @@ impl ChainSync {
         self.asked_peers.clear();
         let mut branch: HashSet<Hash> = HashSet::new();
         {
+            let max_hash = hash_to_big(&Hash::max());
             let mut total_diff: BigUint = BigUint::zero();
             let top_blocks = self.get_top_blocks()?;
             debug!("Total branches: {}", top_blocks.len());
@@ -105,7 +107,7 @@ impl ChainSync {
                 let mut branch_hashes = HashSet::new(); // all hashes for this top block
                 loop { // add all blocks until our local top block hash
                     branch_hashes.insert(hash.clone());
-                    current_total_diff += current_block.get_difficulty();
+                    current_total_diff += max_hash.clone() - hash_to_big(&hash);
                     hash = current_block.get_previous_hash(); // get previous hash of previous block
                     if *hash == self.current_top_hash {
                         break;
@@ -155,7 +157,6 @@ impl ChainSync {
                 top_blocks.push(block_hash);
             }
         }
-
         Ok(top_blocks)
     }
 
@@ -165,7 +166,6 @@ impl ChainSync {
                 return self.get_top_block_hash(h);
             }
         }
-
         Ok(hash.clone())
     }
 
@@ -176,7 +176,6 @@ impl ChainSync {
                 blocks.push(block);
             }
         }
-
         Ok(blocks)
     }
 
@@ -197,9 +196,10 @@ impl ChainSync {
             if !self.block_exist(block.get_previous_hash()) {
                 return Err(BlockchainError::BlockNotFound(block.get_previous_hash().clone()))
             }
-            if !check_difficulty(&block_hash, block.get_difficulty())? {
-                return Err(BlockchainError::InvalidDifficulty(block.get_difficulty(), 0))
-            }
+            // TODO difficulty
+            /*if !check_difficulty(&block_hash, block.get_difficulty())? {
+                return Err(BlockchainError::InvalidDifficulty)
+            }*/
         }
 
         if let Some(left) = self.asked_peers.get_mut(peer) {

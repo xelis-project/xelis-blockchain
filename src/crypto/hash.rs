@@ -12,6 +12,10 @@ impl Hash {
         Hash::new([0; HASH_SIZE])
     }
 
+    pub fn max() -> Self {
+        Hash::new([u8::MAX; HASH_SIZE])
+    }
+
     pub fn as_bytes(&self) -> &[u8; HASH_SIZE] {
         &self.0
     }
