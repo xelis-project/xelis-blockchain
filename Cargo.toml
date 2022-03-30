@@ -3,7 +3,7 @@ name = "xelis-blockchain"
 version = "0.1.0"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 edition = "2018"
-default-run = "blockchain"
+default-run = "daemon"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -24,13 +24,9 @@ chrono = "0.4.19"
 argh = "0.1.7"
 
 [[bin]]
-name = "blockchain"
-path = "src/main.rs"
-
-[[bin]]
 name = "wallet"
-path = "src/wallet/main.rs"
+path = "src/cmd/wallet/main.rs"
 
 [[bin]]
 name = "daemon"
-path = "src/daemon/main.rs"
+path = "src/main.rs"

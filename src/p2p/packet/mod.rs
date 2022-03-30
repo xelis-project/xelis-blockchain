@@ -11,6 +11,7 @@ use crate::core::writer::Writer;
 use super::packet::handshake::Handshake;
 use super::packet::request_chain::RequestChain;
 use super::packet::ping::Ping;
+use log::debug;
 
 const HANDSHAKE_ID: u8 = 0;
 const TX_ID: u8 = 1;
@@ -43,6 +44,7 @@ impl<'a> Serializer for PacketOut<'a> {
         };
 
         let packet_len: u32 = packet.len() as u32 + 1;
+        debug!("Packet ID: {}, size: {}", id, packet_len);
         writer.write_u32(&packet_len);
         writer.write_u8(id);
         writer.write_bytes(&packet);

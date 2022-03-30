@@ -538,7 +538,11 @@ impl P2pServer {
         stream.set_read_timeout(Some(Duration::from_millis(300)))?;
         let addr = stream.peer_addr()?;
         debug!("New connection: {}", addr);
-        let n = stream.read(buffer)?;
+        let n = stream.read(buffer)?; // total read
+        if n == 0 {
+            debug!("Connection closed by peer {}", addr);
+            return Err(P2pError::Disconnected);
+        }
         let mut reader = Reader::new(&buffer[0..n]);
         let handshake = match Handshake::read(&mut reader) {
             Ok(v) => v,
@@ -546,7 +550,8 @@ impl P2pServer {
         };
 
         if reader.total_read() != n { // prevent a node to send useless bytes after the handshake
-            return Err(P2pError::InvalidHandshake);
+            debug!("Peer sent us {} bytes but read only {} bytes", n, reader.total_read());
+            //return Err(P2pError::InvalidHandshake);
         }
         let (connection, peers) = self.verify_handshake(addr, stream, handshake, out, priority)?;
         // if it's a outgoing connection, don't send the handshake back

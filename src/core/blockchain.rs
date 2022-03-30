@@ -129,6 +129,10 @@ impl Blockchain {
         self.height.load(Ordering::Relaxed)
     }
 
+    pub fn get_p2p(&self) -> &Mutex<Option<Arc<P2pServer>>> {
+        &self.p2p
+    }
+
     pub fn get_difficulty(&self) -> u64 {
         self.difficulty.load(Ordering::Relaxed)
     }
