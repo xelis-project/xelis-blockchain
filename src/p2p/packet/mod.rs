@@ -47,7 +47,7 @@ impl<'a> Serializer for PacketOut<'a> {
         writer.write_u32(&packet_len);
         writer.write_u8(id);
         writer.write_bytes(&packet);
-        debug!("Packet ID: {}, size: {}", id, writer.total_write());
+        //debug!("Packet ID: {}, size: {}", id, writer.total_write());
     }
 }
 
@@ -73,5 +73,5 @@ impl Serializer for PacketIn {
     }
 
     // not serializable
-    fn write(&self, writer: &mut Writer) {}
+    fn write(&self, _: &mut Writer) {}
 }

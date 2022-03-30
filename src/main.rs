@@ -55,17 +55,17 @@ fn main() {
     };
 
     if config.mining {
-        let key = blockchain.get_dev_address().clone();
-        loop {
-            if blockchain.is_synced() {
+        let blockchain = blockchain.clone();
+        thread::spawn(move || {
+            let key = blockchain.get_dev_address().clone();
+            loop {
                 if let Err(e) = blockchain.mine_block(&key) {
                     error!("Error while mining block: {}", e);
                 }
-            } else {
-                thread::sleep(Duration::from_millis(1000));
             }
-        }
+        });
     }
+
     if let Err(e) = run_prompt(prompt, blockchain) { // block main thread
         error!("Error while running prompt: {}", e);
     }

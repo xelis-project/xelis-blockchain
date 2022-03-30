@@ -29,14 +29,14 @@ pub struct CompleteBlock {
 }
 
 impl Block {
-    pub fn new(height: u64, timestamp: u64, previous_hash: Hash, difficulty: u64, miner_tx: Transaction, txs_hashes: Vec<Hash>) -> Self {
+    pub fn new(height: u64, timestamp: u64, previous_hash: Hash, difficulty: u64, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner_tx: Transaction, txs_hashes: Vec<Hash>) -> Self {
         Block {
             height,
             timestamp,
             previous_hash,
             nonce: 0,
             difficulty,
-            extra_nonce: [0; EXTRA_NONCE_SIZE],
+            extra_nonce,
             miner_tx,
             txs_hashes
         }

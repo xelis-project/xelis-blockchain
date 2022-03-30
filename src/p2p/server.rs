@@ -653,6 +653,7 @@ impl P2pServer {
                             }
                         },
                         PacketIn::Block(block) => {
+                            debug!("Received block at height {} from {}", block.get_height(), connection.get_peer_address());
                             let block_height = block.get_height();
                             if connection.get_block_height() < block_height {
                                 connection.set_block_height(block_height);
@@ -663,13 +664,13 @@ impl P2pServer {
                             // check if it's a new propagated block, or if it's from a RequestSync
                             if sync.contains_peer(&peer_id) {
                                 if let Err(e) = sync.insert_block(block, &peer_id) {
-                                    debug!("Error while adding block to chain sync: {}", e);
+                                    error!("Error while adding block to chain sync: {}", e);
                                     connection.increment_fail_count();
                                 }
                                 self.try_sync_chain(&mut sync);
                             } else { // add immediately the block to chain as we are synced with
                                 if let Err(e) = self.blockchain.add_new_block(block, false) {
-                                    debug!("Error while adding new block: {}", e);
+                                    error!("Error while adding new block: {}", e);
                                     connection.increment_fail_count();
                                 }
                             }

@@ -14,6 +14,7 @@ use std::sync::atomic::{Ordering, AtomicU64};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use log::{info, error, debug};
+use rand::Rng;
 
 #[derive(serde::Serialize)]
 pub struct Account {
@@ -112,17 +113,10 @@ impl Blockchain {
         }
 
         let complete_block = self.build_complete_block_from_block(block)?;
-        self.add_new_block(complete_block, true)
-    }
-
-    pub fn is_synced(&self) -> bool {
-        match self.p2p.lock() {
-            Ok(p2p) => match p2p.as_ref() {
-                Some(p2p) => self.get_height() >= p2p.get_highest_height(),
-                None => false
-            },
-            Err(_) => false
-        }
+        let block_height = complete_block.get_height();
+        self.add_new_block(complete_block, true)?;
+        info!("Block {} at height {} found!!", hash, block_height);
+        Ok(())
     }
 
     pub fn get_height(&self) -> u64 {
@@ -178,7 +172,8 @@ impl Blockchain {
             block_reward: get_block_reward(self.get_supply()),
             fee_reward: 0,
         }), address);
-        let mut block = Block::new(self.get_height() + 1, get_current_time(), self.get_top_block_hash()?, self.get_difficulty(), coinbase_tx, Vec::new());
+        let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>();
+        let mut block = Block::new(self.get_height() + 1, get_current_time(), self.get_top_block_hash()?, self.get_difficulty(), extra_nonce, coinbase_tx, Vec::new());
         let mut total_fee = 0;
         let mempool = self.mempool.lock()?;
         let txs: &Vec<SortedTx> = mempool.get_sorted_txs();
