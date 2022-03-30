@@ -6,7 +6,6 @@ use crate::crypto::hash::Hash;
 use std::fmt::{Display, Error, Formatter};
 use std::net::{TcpStream, SocketAddr};
 
-
 // this Handshake is the first data sent when connecting to the server
 // If handshake is valid, server reply with his own handshake
 // We just have to repeat this request to all peers until we reach max connection
@@ -15,7 +14,8 @@ pub struct Handshake {
     version: String, // daemon version
     node_tag: Option<String>, // node tag
     network_id: [u8; 16],
-    peer_id: u64, // unique peer id randomly generated 
+    peer_id: u64, // unique peer id randomly generated
+    local_port: u16, // local P2p Server port
     utc_time: u64, // current time in seconds
     block_height: u64, // current block height
     block_top_hash: Hash, // current block top hash
@@ -25,7 +25,7 @@ pub struct Handshake {
 impl Handshake {
     pub const MAX_LEN: usize = 16;
 
-    pub fn new(version: String, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, utc_time: u64, block_height: u64, block_top_hash: Hash, peers: Vec<String>) -> Self {
+    pub fn new(version: String, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, block_height: u64, block_top_hash: Hash, peers: Vec<String>) -> Self {
         assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN); // version cannot be greater than 16 chars
         if let Some(node_tag) = &node_tag {
             assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN); // node tag cannot be greater than 16 chars
@@ -38,6 +38,7 @@ impl Handshake {
             node_tag,
             network_id,
             peer_id,
+            local_port,
             utc_time,
             block_height,
             block_top_hash,
@@ -47,7 +48,7 @@ impl Handshake {
 
     pub fn create_connection(self, stream: TcpStream, addr: SocketAddr, out: bool, priority: bool) -> (Connection, Vec<String>) {
         let block_height = self.get_block_height();
-        (Connection::new(self.get_peer_id(), self.node_tag, self.version, self.block_top_hash, block_height, stream, addr, out, priority), self.peers)
+        (Connection::new(self.get_peer_id(), self.node_tag, self.local_port, self.version, self.block_top_hash, block_height, stream, addr, out, priority), self.peers)
     }
 
     pub fn get_version(&self) -> &String {
@@ -64,6 +65,10 @@ impl Handshake {
 
     pub fn get_peer_id(&self) -> u64 {
         self.peer_id
+    }
+
+    pub fn get_local_port(&self) -> u16 {
+        self.local_port
     }
 
     pub fn get_utc_time(&self) -> u64 {
@@ -94,6 +99,7 @@ impl Serializer for Handshake {
 
         writer.write_bytes(&self.network_id); // network ID
         writer.write_u64(&self.peer_id); // transform peer ID to bytes
+        writer.write_u16(&self.local_port); // local port
         writer.write_u64(&self.utc_time); // UTC Time
         writer.write_u64(&self.block_height); // Block Height
         writer.write_hash(&self.block_top_hash); // Block Top Hash (32 bytes)
@@ -126,6 +132,7 @@ impl Serializer for Handshake {
 
         let network_id: [u8; 16] = reader.read_bytes(16)?;
         let peer_id = reader.read_u64()?;
+        let local_port = reader.read_u16()?;
         let utc_time = reader.read_u64()?;
         let block_height = reader.read_u64()?;
         let block_top_hash = Hash::new(reader.read_bytes_32()?);
@@ -136,13 +143,13 @@ impl Serializer for Handshake {
 
         let mut peers = vec![];
         for _ in 0..peers_len {
-            let peer = reader.read_string()?;
-            if peer.len() > Handshake::MAX_LEN {
+            let peer = reader.read_string()?; // TODO parse from bytes, not string.
+            /*if peer.len() > Handshake::MAX_LEN {
                 return Err(ReaderError::InvalidSize)
-            }
+            }*/
             peers.push(peer);
         }
-        Ok(Handshake::new(version, node_tag, network_id, peer_id, utc_time, block_height, block_top_hash, peers))
+        Ok(Handshake::new(version, node_tag, network_id, peer_id, local_port, utc_time, block_height, block_top_hash, peers))
     }
 }
 

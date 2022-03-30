@@ -222,7 +222,7 @@ pub struct P2pServer {
     peer_id: u64, // unique peer id
     tag: Option<String>, // node tag sent on handshake
     max_peers: usize, // max peers accepted by this server
-    bind_address: String, // ip:port address to receive connections
+    bind_address: SocketAddr, // ip:port address to receive connections
     connections: Mutex<HashMap<u64, Arc<Connection>>>, // all connections accepted
     sender: Mutex<Sender<Message>>, // sender to send messages to the thread #2
     receiver: Mutex<Receiver<Message>>, // only used by the thread #2
@@ -239,13 +239,13 @@ impl P2pServer {
         // set channel to communicate with listener thread
         let (sender, receiver) = channel();
         let mut rng = rand::thread_rng();
-        let peer_id: u64 = rng.gen();
-
+        let peer_id: u64 = rng.gen(); // generate a random peer id for network
+        let addr: SocketAddr = bind_address.parse().unwrap();
         let server = Self {
             peer_id,
             tag,
             max_peers,
-            bind_address,
+            bind_address: addr,
             connections: Mutex::new(HashMap::new()),
             sender: Mutex::new(sender),
             receiver: Mutex::new(receiver),
@@ -260,13 +260,11 @@ impl P2pServer {
 
     fn start(self: Arc<Self>) {
         info!("Starting P2p...");
-
         // spawn threads
         let clone = self.clone();
         thread::spawn(move || {
             clone.listen_new_connections();
         });
-
         thread::spawn(move || {
             self.listen_existing_connections();
         });
@@ -516,11 +514,13 @@ impl P2pServer {
         let mut iter = connections.iter();
         while peers.len() < Handshake::MAX_LEN {
             match iter.next() {
-                Some((_, v)) => {
-                    if !v.is_out() { // don't send our clients
-                        // TODO send IP in bytes format
-                        peers.push(format!("{}", v.get_peer_address()));
-                    }
+                Some((_, v)) => { // TODO send IP in bytes format
+                    let addr: String = if v.is_out() {
+                        format!("{}", v.get_peer_address())
+                    } else { // TODO verify if port is opened! If not opened -> don't share his IP
+                        format!("{}:{}", v.get_peer_address().ip(), v.get_local_port())
+                    };
+                    peers.push(addr);
                 },
                 None => break
             };
@@ -528,7 +528,7 @@ impl P2pServer {
 
         let block_height = self.blockchain.get_height();
         let top_hash = self.blockchain.get_storage().lock()?.get_top_block_hash().clone();
-        Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), get_current_time(), block_height, top_hash, peers))
+        Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), block_height, top_hash, peers))
     }
 
     // this function handle all new connection on main thread
@@ -546,13 +546,16 @@ impl P2pServer {
         let packet_size: u16 = u16::from_be_bytes([buffer[0], buffer[1]]); // convert to u16
         if packet_size > buffer.len() as u16 {
             error!("Packet size ({} bytes) is bigger than buffer size ({} bytes)", packet_size, buffer.len());
-            return Err(P2pError::InvalidHandshake) 
+            return Err(P2pError::InvalidHandshake)
         }
         let n = stream.read(&mut buffer[0..packet_size as usize])?; // read only our handshake packet
         let mut reader = Reader::new(&buffer[0..n]);
         let handshake = match Handshake::read(&mut reader) {
             Ok(v) => v,
-            Err(_) => return Err(P2pError::InvalidHandshake)
+            Err(e) => {
+                error!("Invalid handshake packet: {}", e);
+                return Err(P2pError::InvalidHandshake)
+            }
         };
 
         if reader.total_read() != n { // prevent a node to send useless bytes after the handshake
@@ -592,10 +595,11 @@ impl P2pServer {
     // Connect to a specific peer address
     // Buffer is passed in parameter to prevent the re-allocation each time
     pub fn connect_to_peer(&self, buffer: &mut [u8], peer_addr: SocketAddr, priority: bool) -> Result<(), P2pError> {
+        debug!("Trying to connect to {}", peer_addr);
         if self.is_connected_to_addr(&peer_addr)? {
             return Err(P2pError::PeerAlreadyConnected(format!("{}", peer_addr)));
         }
-        let mut stream = TcpStream::connect(&peer_addr)?;
+        let mut stream = TcpStream::connect_timeout(&peer_addr, Duration::from_millis(500))?;
         let handshake: Handshake = self.build_handshake()?;
         let bytes = handshake.to_bytes();
         let mut packet: Vec<u8> = (bytes.len() as u16).to_be_bytes().to_vec();
@@ -783,7 +787,7 @@ impl P2pServer {
     }
 
     pub fn is_connected_to_addr(&self, peer_addr: &SocketAddr) -> Result<bool, P2pError> {
-        if format!("{}", peer_addr) == *self.get_bind_address() { // don't try to connect to ourself
+        if *peer_addr == *self.get_bind_address() { // don't try to connect to ourself
             debug!("Trying to connect to ourself, ignoring.");
             return Ok(true)
         }
@@ -796,7 +800,7 @@ impl P2pServer {
         Ok(false)
     }
 
-    pub fn get_bind_address(&self) -> &String {
+    pub fn get_bind_address(&self) -> &SocketAddr {
         &self.bind_address
     }
 

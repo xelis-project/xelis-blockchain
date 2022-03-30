@@ -22,7 +22,7 @@ struct NodeConfig {
     #[argh(option)]
     tag: Option<String>,
     /// bind address for p2p
-    #[argh(option)]
+    #[argh(option, default = "config::DEFAULT_BIND_ADDRESS.to_string()")]
     bind_address: String,
     /// enable debug logging
     #[argh(switch)]

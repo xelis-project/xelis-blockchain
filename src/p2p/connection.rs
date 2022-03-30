@@ -12,6 +12,7 @@ type P2pResult<T> = std::result::Result<T, P2pError>;
 pub struct Connection {
     id: u64,
     node_tag: Option<String>, // Node tag if provided
+    local_port: u16,
     version: String, // daemon version
     block_top_hash: Mutex<Hash>, // current block top hash for this peer
     block_height: AtomicU64, // current block height for this peer
@@ -30,10 +31,11 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(id: u64, node_tag: Option<String>, version: String, block_top_hash: Hash, block_height: u64, stream: TcpStream, addr: SocketAddr, out: bool, priority: bool) -> Self {
+    pub fn new(id: u64, node_tag: Option<String>, local_port: u16, version: String, block_top_hash: Hash, block_height: u64, stream: TcpStream, addr: SocketAddr, out: bool, priority: bool) -> Self {
         Self {
             id,
             node_tag,
+            local_port,
             version,
             block_top_hash: Mutex::new(block_top_hash),
             block_height: AtomicU64::new(block_height),
@@ -124,6 +126,10 @@ impl Connection {
 
     pub fn get_node_tag(&self) -> &Option<String> {
         &self.node_tag
+    }
+
+    pub fn get_local_port(&self) -> u16 {
+        self.local_port
     }
 
     pub fn get_version(&self) -> &String {
