@@ -629,101 +629,91 @@ impl P2pServer {
     // Listen to incoming packets from a connection
     fn listen_connection(&self, buf: &mut [u8], connection: &Arc<Connection>) -> Result<(), P2pError> {
         loop {
-            match connection.read_packet_size(buf) {
-                Ok((0, _)) => { // peer disconnected
-                    let _ = self.remove_connection(&connection.get_peer_id());
-                    break;
-                },
-                Ok((_, size)) => {
-                    if size == 0 || size > MAX_BLOCK_SIZE as u32 { // If packet size is bigger than a full block, then reject it
-                        return Err(P2pError::InvalidPacketSize)
-                    }
-    
-                    let bytes = connection.read_all_bytes(buf, size)?;
-                    let mut reader = Reader::new(&bytes);
-                    match PacketIn::read(&mut reader)? {
-                        PacketIn::Handshake(_) => {
-                            return Err(P2pError::InvalidPacket)
-                        },
-                        PacketIn::Transaction(tx) => {
-                            if let Err(e) = self.blockchain.add_tx_to_mempool(tx, false) {
-                                match e {
-                                    BlockchainError::TxAlreadyInMempool(_) => {},
-                                    e => {
-                                        error!("Error while adding TX to mempool: {}", e);
-                                        connection.increment_fail_count();
-                                    }
-                                };
-                            }
-                        },
-                        PacketIn::Block(block) => {
-                            debug!("Received block at height {} from {}", block.get_height(), connection.get_peer_address());
-                            let block_height = block.get_height();
-                            if connection.get_block_height() < block_height {
-                                connection.set_block_height(block_height);
-                            }
-
-                            let peer_id = connection.get_peer_id();
-                            let mut sync = self.sync.lock()?;
-                            // check if it's a new propagated block, or if it's from a RequestSync
-                            if sync.contains_peer(&peer_id) {
-                                if let Err(e) = sync.insert_block(block, &peer_id) {
-                                    error!("Error while adding block to chain sync: {}", e);
+            match connection.read_packet(buf, MAX_BLOCK_SIZE as u32) {
+                Ok(packet) => match packet {
+                    PacketIn::Handshake(_) => {
+                        return Err(P2pError::InvalidPacket)
+                    },
+                    PacketIn::Transaction(tx) => {
+                        if let Err(e) = self.blockchain.add_tx_to_mempool(tx, false) {
+                            match e {
+                                BlockchainError::TxAlreadyInMempool(_) => {},
+                                e => {
+                                    error!("Error while adding TX to mempool: {}", e);
                                     connection.increment_fail_count();
                                 }
-                                self.try_sync_chain(&mut sync);
-                            } else { // add immediately the block to chain as we are synced with
-                                if let Err(e) = self.blockchain.add_new_block(block, false) {
-                                    error!("Error while adding new block: {}", e);
-                                    connection.increment_fail_count();
-                                }
-                            }
-                        },
-                        PacketIn::RequestChain(request) => {
-                            let last_request = connection.get_last_chain_sync();
-                            let time = get_current_time();
-                            connection.set_last_chain_sync(time);
-                            if  last_request + CHAIN_SYNC_DELAY > time {
-                                return Err(P2pError::RequestSyncChainTooFast)
-                            }
+                            };
+                        }
+                    },
+                    PacketIn::Block(block) => {
+                        debug!("Received block at height {} from {}", block.get_height(), connection.get_peer_address());
+                        let block_height = block.get_height();
+                        if connection.get_block_height() < block_height {
+                            connection.set_block_height(block_height);
+                        }
 
-                            let our_height = self.blockchain.get_height();
-                            let start = request.get_start_height();
-                            let end = request.get_end_height();
-                            if start > our_height || end > our_height || start > end || end - start > CHAIN_SYNC_MAX_BLOCK { // only 20 blocks max per request
-                                return Err(P2pError::InvalidHeightRange)
+                        let peer_id = connection.get_peer_id();
+                        let mut sync = self.sync.lock()?;
+                        // check if it's a new propagated block, or if it's from a RequestSync
+                        if sync.contains_peer(&peer_id) {
+                            if let Err(e) = sync.insert_block(block, &peer_id) {
+                                error!("Error while adding block to chain sync: {}", e);
+                                connection.increment_fail_count();
                             }
-
-                            debug!("Peer {} request block from {} to {}", connection, start, end);
-                            let storage = self.blockchain.get_storage().lock()?;
-                            for i in start..=end {
-                                match storage.get_block_at_height(i) {
-                                    Ok(block) => {
-                                        self.send_to_peer(connection.get_peer_id(), PacketOut::Block(block))?;
-                                    },
-                                    Err(_) => { // shouldn't happens as we verify range before
-                                        debug!("Peer {} requested an invalid block height.", connection);
-                                        connection.increment_fail_count();
-                                    }
-                                };
+                            self.try_sync_chain(&mut sync);
+                        } else { // add immediately the block to chain as we are synced with
+                            if let Err(e) = self.blockchain.add_new_block(block, false) {
+                                error!("Error while adding new block: {}", e);
+                                connection.increment_fail_count();
                             }
                         }
-                        PacketIn::Ping(ping) => {
-                            ping.update_connection(connection);
-                        },
-                    };
+                    },
+                    PacketIn::RequestChain(request) => {
+                        let last_request = connection.get_last_chain_sync();
+                        let time = get_current_time();
+                        connection.set_last_chain_sync(time);
+                        if  last_request + CHAIN_SYNC_DELAY > time {
+                            return Err(P2pError::RequestSyncChainTooFast)
+                        }
+
+                        let our_height = self.blockchain.get_height();
+                        let start = request.get_start_height();
+                        let end = request.get_end_height();
+                        if start > our_height || end > our_height || start > end || end - start > CHAIN_SYNC_MAX_BLOCK { // only 20 blocks max per request
+                            return Err(P2pError::InvalidHeightRange)
+                        }
+
+                        debug!("Peer {} request block from {} to {}", connection, start, end);
+                        let storage = self.blockchain.get_storage().lock()?;
+                        for i in start..=end {
+                            match storage.get_block_at_height(i) {
+                                Ok(block) => {
+                                    self.send_to_peer(connection.get_peer_id(), PacketOut::Block(block))?;
+                                },
+                                Err(_) => { // shouldn't happens as we verify range before
+                                    debug!("Peer {} requested an invalid block height.", connection);
+                                    connection.increment_fail_count();
+                                }
+                            };
+                        }
+                    }
+                    PacketIn::Ping(ping) => {
+                        ping.update_connection(connection);
+                    },
                 },
-                Err(e) => {
-                    if let P2pError::ErrorStd(e) = &e {
-                        if e.kind() == ErrorKind::WouldBlock {
-                            return Ok(())
-                        } 
+                Err(e) => match e {
+                    P2pError::Disconnected => {
+                        self.remove_connection(&connection.get_peer_id())?;
+                        break;
+                    },
+                    P2pError::ErrorStd(e) if e.kind() == ErrorKind::WouldBlock => break,
+                    e => {
+                        error!("An error has occured while reading bytes from {}: {}", connection, e);
+                        /*if let Err(e) = self.remove_connection(&connection.get_peer_id()) {
+                            error!("Error while removing connection: {}", e);
+                        }*/
+                        break;
                     }
-                    debug!("An error has occured while reading bytes from {}: {}", connection, e);
-                    if let Err(e) = self.remove_connection(&connection.get_peer_id()) {
-                        error!("Error while removing connection: {}", e);
-                    }
-                    break;
                 }
             };
         }

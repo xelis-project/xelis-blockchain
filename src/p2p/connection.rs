@@ -1,11 +1,15 @@
-use crate::crypto::hash::Hash;
+use crate::core::serializer::Serializer;
 use crate::globals::get_current_time;
+use crate::core::reader::Reader;
+use crate::crypto::hash::Hash;
 use super::error::P2pError;
+use super::packet::PacketIn;
 use std::net::{TcpStream, SocketAddr, Shutdown};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU8, AtomicU64, Ordering};
 use std::io::{Write, Read};
 use std::convert::TryInto;
+use log::warn;
 
 type P2pResult<T> = std::result::Result<T, P2pError>;
 
@@ -69,14 +73,35 @@ impl Connection {
         Ok(())
     }
 
-    pub fn read_packet_size(&self, buf: &mut [u8]) -> P2pResult<(usize, u32)> {
-        let read = self.read_bytes(&mut buf[0..4])?;
-        let array: [u8; 4] = buf[0..4].try_into()?;
-        let size = u32::from_be_bytes(array);
-        Ok((read, size))
+    pub fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<PacketIn> {
+        let size = self.read_packet_size(buf)?;
+        if size == 0 || size > max_size { // TODO If packet size is bigger than limit, then reject it
+            warn!("Received invalid packet size: {} bytes (max: {} bytes) from peer {}", size, max_size, self.get_peer_id());
+            return Err(P2pError::InvalidPacketSize)
+        }
+
+        let bytes = self.read_all_bytes(buf, size)?;
+        let mut reader = Reader::new(&bytes);
+        let packet = PacketIn::read(&mut reader)?;
+        if reader.total_read() != bytes.len() {
+            warn!("read only {}/{} on bytes available", reader.total_read(), bytes.len());
+            return Err(P2pError::InvalidPacketNotFullRead)
+        }
+        Ok(packet)
     }
 
-    pub fn read_all_bytes(&self, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
+    fn read_packet_size(&self, buf: &mut [u8]) -> P2pResult<u32> {
+        let read = self.read_bytes(&mut buf[0..4])?;
+        if read != 4 {
+            warn!("Received invalid packet size: expected to read 4 bytes but read only {} bytes from peer {}", read, self.get_peer_id());
+            return Err(P2pError::InvalidPacketSize)
+        }
+        let array: [u8; 4] = buf[0..4].try_into()?;
+        let size = u32::from_be_bytes(array);
+        Ok(size)
+    }
+
+    fn read_all_bytes(&self, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
         let buf_size = buf.len() as u32;
         let mut bytes = Vec::new();
         while left > 0 {
@@ -85,7 +110,6 @@ impl Connection {
             } else {
                 buf_size as usize
             };
-
             let read = self.read_bytes(&mut buf[0..max])?;
             left -= read as u32;
             bytes.extend(&buf[0..read]);

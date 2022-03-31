@@ -37,6 +37,8 @@ pub enum P2pError {
     InvalidPacket,
     #[error("Packet size exceed limit")]
     InvalidPacketSize,
+    #[error("Received valid packet with not used bytes")]
+    InvalidPacketNotFullRead,
     #[error("Request sync chain too fast")]
     RequestSyncChainTooFast,
     #[error("Invalid height range")]
