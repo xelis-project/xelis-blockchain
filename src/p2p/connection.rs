@@ -232,6 +232,6 @@ impl Display for Connection {
             String::from("None")
         };
 
-        write!(f, "Connection[peer: {}, version: {}, node tag: {}, peer_id: {}, block_height: {}, out: {}, read: {} kB, sent: {} kB, connected on: {}, fail count: {}, closed: {},  blocking: {}]", self.get_peer_address(), self.get_version(), node_tag, self.get_peer_id(), self.get_block_height(), self.is_out(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.connected_on(), self.fail_count(), self.is_closed(), self.is_blocking())
+        write!(f, "Connection[peer: {}, version: {}, node tag: {}, peer_id: {}, block_height: {}, priority: {}, out: {}, read: {} kB, sent: {} kB, connected on: {}, fail count: {}, closed: {},  blocking: {}]", self.get_peer_address(), self.get_version(), node_tag, self.get_peer_id(), self.get_block_height(), self.is_priority(), self.is_out(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.connected_on(), self.fail_count(), self.is_closed(), self.is_blocking())
     }
 }

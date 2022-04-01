@@ -709,9 +709,9 @@ impl P2pServer {
                     P2pError::ErrorStd(e) if e.kind() == ErrorKind::WouldBlock => break,
                     e => {
                         error!("An error has occured while reading bytes from {}: {}", connection, e);
-                        /*if let Err(e) = self.remove_connection(&connection.get_peer_id()) {
+                        if let Err(e) = self.remove_connection(&connection.get_peer_id()) {
                             error!("Error while removing connection: {}", e);
-                        }*/
+                        }
                         break;
                     }
                 }
