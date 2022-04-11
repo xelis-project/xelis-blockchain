@@ -583,10 +583,16 @@ impl P2pServer {
         let peer_id = connection.get_peer_id(); // keep in memory the peer_id outside connection (because of moved value)
         self.add_connection(connection)?;
         // try to extend our peer list
-        for peer in peers {
-            debug!("Trying to extend peer list with {}", peer);
-            if let Err(e) = self.connect_to_peer(buffer, peer, false) {
-                debug!("Error while trying to connect to a peer from {}: {}", peer_id, e);
+        for peer in peers { // should we limit to X peers only ?
+            if self.get_slots_available() == 0 {
+                break
+            }
+
+            if !self.is_connected_to_addr(&peer)? {
+                debug!("Trying to extend peer list with {}", peer);
+                if let Err(e) = self.connect_to_peer(buffer, peer, false) {
+                    debug!("Error while trying to connect to a peer from {}: {}", peer_id, e);
+                }
             }
         }
 
