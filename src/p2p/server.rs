@@ -584,7 +584,7 @@ impl P2pServer {
         self.add_connection(connection)?;
         // try to extend our peer list
         for peer in peers { // should we limit to X peers only ?
-            if self.get_slots_available() == 0 {
+            if !self.accept_new_connections() {
                 break
             }
 
@@ -772,10 +772,6 @@ impl P2pServer {
             Ok(connections) => connections.len(),
             Err(_) => 0
         }
-    }
-
-    pub fn get_slots_available(&self) -> usize {
-        self.max_peers - self.get_peer_count()
     }
 
     pub fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError> {
