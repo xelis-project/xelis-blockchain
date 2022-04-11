@@ -26,6 +26,10 @@ impl<'a> Reader<'a> {
         }
     }
 
+    pub fn read_bool(&mut self) -> Result<bool, ReaderError> {
+        Ok(self.read_u8()? == 1)
+    }
+
     pub fn read_bytes<T>(&mut self, n: usize) -> Result<T, ReaderError>
     where T: for<'b> std::convert::TryFrom<&'b[u8]> {
         if n > self.size() {

@@ -105,7 +105,7 @@ impl Blockchain {
                 block.timestamp = get_current_time();
                 hash = block.hash();
             }
-            let complete_block = CompleteBlock::new(block, Vec::new());
+            let complete_block = CompleteBlock::new(block, self.get_difficulty(), Vec::new());
             info!("Genesis: {}", complete_block.to_hex());
         }
 
@@ -220,7 +220,7 @@ impl Blockchain {
             let tx = mempool.view_tx(hash)?; // at this point, we don't want to lose/remove any tx, we clone it only
             transactions.push(tx.clone());
         }
-        let complete_block = CompleteBlock::new(block, transactions);
+        let complete_block = CompleteBlock::new(block, self.get_difficulty(), transactions);
         Ok(complete_block)
     }
 
@@ -423,7 +423,7 @@ impl Blockchain {
         self.execute_transaction(&mut storage, block.get_miner_tx())?; // execute coinbase tx
 
         if current_height > 2 { // re calculate difficulty
-            let difficulty = calculate_difficulty(current_difficulty, storage.get_top_block()?, &block);
+            let difficulty = calculate_difficulty(storage.get_top_block()?, &block);
             self.difficulty.store(difficulty, Ordering::Relaxed);
         }
 

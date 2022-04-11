@@ -3,6 +3,7 @@ use crate::core::serializer::Serializer;
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::writer::Writer;
 use crate::crypto::hash::Hash;
+use crate::globals::{ip_from_bytes, ip_to_bytes};
 use std::fmt::{Display, Error, Formatter};
 use std::net::{TcpStream, SocketAddr};
 
@@ -19,13 +20,13 @@ pub struct Handshake {
     utc_time: u64, // current time in seconds
     block_height: u64, // current block height
     block_top_hash: Hash, // current block top hash
-    peers: Vec<String> // all peers that we are already connected to
+    peers: Vec<SocketAddr> // all peers that we are already connected to
 } // Server reply with his own list of peers, but we remove all already known by requester for the response.
 
 impl Handshake {
     pub const MAX_LEN: usize = 16;
 
-    pub fn new(version: String, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, block_height: u64, block_top_hash: Hash, peers: Vec<String>) -> Self {
+    pub fn new(version: String, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, block_height: u64, block_top_hash: Hash, peers: Vec<SocketAddr>) -> Self {
         assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN); // version cannot be greater than 16 chars
         if let Some(node_tag) = &node_tag {
             assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN); // node tag cannot be greater than 16 chars
@@ -46,7 +47,7 @@ impl Handshake {
         }
     }
 
-    pub fn create_connection(self, stream: TcpStream, addr: SocketAddr, out: bool, priority: bool) -> (Connection, Vec<String>) {
+    pub fn create_connection(self, stream: TcpStream, addr: SocketAddr, out: bool, priority: bool) -> (Connection, Vec<SocketAddr>) {
         let block_height = self.get_block_height();
         (Connection::new(self.get_peer_id(), self.node_tag, self.local_port, self.version, self.block_top_hash, block_height, stream, addr, out, priority), self.peers)
     }
@@ -79,7 +80,7 @@ impl Handshake {
         &self.block_top_hash
     }
 
-    pub fn get_peers(&self) -> &Vec<String> {
+    pub fn get_peers(&self) -> &Vec<SocketAddr> {
         &self.peers
     }
 }
@@ -102,8 +103,7 @@ impl Serializer for Handshake {
 
         writer.write_u8(self.peers.len() as u8);
         for peer in &self.peers {
-            writer.write_u8(peer.len() as u8);
-            writer.write_bytes(peer.as_bytes());
+            writer.write_bytes(&ip_to_bytes(peer));
         }
     }
 
@@ -139,10 +139,7 @@ impl Serializer for Handshake {
 
         let mut peers = vec![];
         for _ in 0..peers_len {
-            let peer = reader.read_string()?; // TODO parse from bytes, not string.
-            /*if peer.len() > Handshake::MAX_LEN {
-                return Err(ReaderError::InvalidSize)
-            }*/
+            let peer = ip_from_bytes(reader)?;
             peers.push(peer);
         }
         Ok(Handshake::new(version, node_tag, network_id, peer_id, local_port, utc_time, block_height, block_top_hash, peers))
@@ -158,6 +155,6 @@ impl Display for Handshake {
             node_tag = String::from("None");
         }
 
-        write!(f, "Handshake[version: {}, node tag: {}, network_id: {}, peer_id: {}, utc_time: {}, block_height: {}, block_top_hash: {}, peers: ({})]", self.get_version(), node_tag, hex::encode(self.get_network_id()), self.get_peer_id(), self.get_utc_time(), self.get_block_height(), self.get_block_top_hash(), self.get_peers().join(","))
+        write!(f, "Handshake[version: {}, node tag: {}, network_id: {}, peer_id: {}, utc_time: {}, block_height: {}, block_top_hash: {}, peers: ({})]", self.get_version(), node_tag, hex::encode(self.get_network_id()), self.get_peer_id(), self.get_utc_time(), self.get_block_height(), self.get_block_top_hash(), self.get_peers().len())
     }
 }

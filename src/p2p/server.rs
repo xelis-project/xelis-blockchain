@@ -1,14 +1,14 @@
 use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_TIMEOUT_SECS, CHAIN_SYNC_MAX_BLOCK, CHAIN_SYNC_DELAY, P2P_PING_DELAY};
-use crate::core::reader::Reader;
 use crate::core::difficulty::check_difficulty;
 use crate::crypto::hash::{Hash, Hashable};
 use crate::core::transaction::Transaction;
+use crate::core::difficulty::hash_to_big;
 use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
 use crate::core::serializer::Serializer;
 use crate::core::block::CompleteBlock;
 use crate::globals::get_current_time;
-use crate::core::difficulty::hash_to_big;
+use crate::core::reader::Reader;
 use super::packet::{PacketIn, PacketOut};
 use super::packet::handshake::Handshake;
 use super::packet::request_chain::RequestChain;
@@ -196,10 +196,10 @@ impl ChainSync {
             if !self.block_exist(block.get_previous_hash()) {
                 return Err(BlockchainError::BlockNotFound(block.get_previous_hash().clone()))
             }
-            // TODO difficulty
-            /*if !check_difficulty(&block_hash, block.get_difficulty())? {
+
+            if !check_difficulty(&block_hash, block.get_difficulty())? {
                 return Err(BlockchainError::InvalidDifficulty)
-            }*/
+            }
         }
 
         if let Some(left) = self.asked_peers.get_mut(peer) {
@@ -491,35 +491,36 @@ impl P2pServer {
             return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }
 
-        // TODO check block height, check if top hash is equal to block height
-        let (connection, str_peers) = handshake.create_connection(stream, addr, out, priority);
-        let mut peers: Vec<SocketAddr> = vec![];
-        for peer in str_peers {
-            let addr = match peer.parse::<SocketAddr>() {
-                Ok(addr) => addr,
-                Err(e) => {
-                    let _ = connection.close(); // peer send us an invalid socket address, invalid handshake
-                    return Err(P2pError::InvalidPeerAddress(format!("{}", e)));
+        if handshake.get_block_height() <= self.blockchain.get_height() { // peer is not greater than us
+            let storage = self.blockchain.get_storage().lock()?;
+            let block = match storage.get_block_by_hash(handshake.get_block_top_hash()) {
+                Ok(block) => block,
+                Err(_) => {
+                    warn!("Block '{}' not found at height '{}'.", handshake.get_block_top_hash(), handshake.get_block_height());
+                    return Err(P2pError::InvalidHandshake)
                 }
             };
-            peers.push(addr);
+            if block.get_height() != handshake.get_block_height() {
+                error!("Peer is not on the same chain!");
+                return Err(P2pError::InvalidHandshake)
+            }
         }
-        peers = peers.into_iter().take(self.get_slots_available()).collect(); // limit to X slots available
+
+        let (connection, peers) = handshake.create_connection(stream, addr, out, priority);
         Ok((connection, peers))
     }
 
     fn build_handshake(&self) -> Result<Handshake, P2pError> {
-        let mut peers = vec![];
+        let mut peers: Vec<SocketAddr> = Vec::new();
         let connections = self.connections.lock()?;
         let mut iter = connections.iter();
         while peers.len() < Handshake::MAX_LEN {
             match iter.next() {
-                Some((_, v)) => { // TODO send IP in bytes format
-                    let addr: String = if v.is_out() {
-                        format!("{}", v.get_peer_address())
-                    } else { // TODO verify if port is opened! If not opened -> don't share his IP
-                        format!("{}:{}", v.get_peer_address().ip(), v.get_local_port())
-                    };
+                Some((_, v)) => {
+                    let mut addr: SocketAddr = v.get_peer_address().clone();
+                    if !v.is_out() {
+                        addr.set_port(v.get_local_port());
+                    }
                     peers.push(addr);
                 },
                 None => break
