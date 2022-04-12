@@ -305,7 +305,7 @@ impl P2pServer {
     // connect to seed nodes, start p2p server
     // and wait on all new connections
     fn listen_new_connections(&self) {
-        info!("Connecting to seed nodes..."); // TODO only if peerlist is empty
+        info!("Connecting to seed nodes...");
         // allocate this buffer only one time, because we are using the same thread
         let mut buffer: [u8; 512] = [0; 512]; // maximum 512 bytes for handshake
         if let Err(e) = self.connect_to_seed_nodes(&mut buffer) {

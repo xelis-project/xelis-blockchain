@@ -4,11 +4,12 @@ use crate::core::reader::Reader;
 use crate::crypto::hash::Hash;
 use super::error::P2pError;
 use super::packet::PacketIn;
-use std::net::{TcpStream, SocketAddr, Shutdown};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU8, AtomicU64, Ordering};
+use std::net::{TcpStream, SocketAddr, Shutdown};
+use std::fmt::{Display, Error, Formatter};
 use std::io::{Write, Read};
 use std::convert::TryInto;
+use std::sync::Mutex;
 use log::warn;
 
 type P2pResult<T> = std::result::Result<T, P2pError>;
@@ -75,7 +76,7 @@ impl Connection {
 
     pub fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<PacketIn> {
         let size = self.read_packet_size(buf)?;
-        if size == 0 || size > max_size { // TODO If packet size is bigger than limit, then reject it
+        if size == 0 || size > max_size {
             warn!("Received invalid packet size: {} bytes (max: {} bytes) from peer {}", size, max_size, self.get_peer_id());
             return Err(P2pError::InvalidPacketSize)
         }
@@ -104,23 +105,23 @@ impl Connection {
     fn read_all_bytes(&self, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
         let buf_size = buf.len() as u32;
         let mut bytes = Vec::new();
+        let mut stream = self.stream.lock()?;
         while left > 0 {
             let max = if buf_size > left {
                 left as usize
             } else {
                 buf_size as usize
             };
-            let read = self.read_bytes(&mut buf[0..max])?;
+            let read = self.read_bytes_from_stream(&mut stream, &mut buf[0..max])?;
             left -= read as u32;
             bytes.extend(&buf[0..read]);
         }
         Ok(bytes)
     }
 
-    // this function will wait until something is sent to the socket
-    // this return the size of data read & set in the buffer.
-    pub fn read_bytes(&self, buf: &mut [u8]) -> P2pResult<usize> {
-        let result = self.stream.lock()?.read(buf)?;
+    // used to only lock one time the stream and read on it
+    fn read_bytes_from_stream(&self, stream: &mut TcpStream, buf: &mut [u8]) -> P2pResult<usize> {
+        let result = stream.read(buf)?;
         match result {
             0 => {
                 self.close()?;
@@ -131,6 +132,13 @@ impl Connection {
                 Ok(n)
             }
         }
+    }
+
+    // this function will wait until something is sent to the socket if it's in blocking mode
+    // this return the size of data read & set in the buffer.
+    pub fn read_bytes(&self, buf: &mut [u8]) -> P2pResult<usize> {
+        let mut stream = self.stream.lock()?;
+        self.read_bytes_from_stream(&mut stream, buf)
     }
 
     pub fn close(&self) -> P2pResult<()> {
@@ -221,8 +229,6 @@ impl Connection {
         self.last_chain_sync.store(time, Ordering::Relaxed);
     }
 }
-
-use std::fmt::{Display, Error, Formatter};
 
 impl Display for Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
