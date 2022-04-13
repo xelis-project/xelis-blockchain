@@ -30,6 +30,7 @@ use std::time::Duration;
 use std::io::ErrorKind;
 use num_traits::Zero;
 use std::sync::Arc;
+use bytes::Bytes;
 use rand::Rng;
 
 struct ChainSync { // TODO, receive Block Header only
@@ -130,7 +131,7 @@ impl ChainSync {
 
         for block in blocks {
             debug!("Trying to add block from chain sync to blockchain: {}", block.get_height());
-            blockchain.add_new_block(block, false)?;
+            // TODO blockchain.add_new_block(block, false)?;
         }
         self.syncing = false;
         Ok(())
@@ -325,7 +326,7 @@ impl P2pServer {
         }
 
         if handshake.get_block_height() <= self.blockchain.get_height() { // peer is not greater than us
-            let storage = self.blockchain.get_storage().lock()?;
+            let storage = self.blockchain.get_storage().lock().await;
             let block = match storage.get_block_by_hash(handshake.get_block_top_hash()) {
                 Ok(block) => block,
                 Err(_) => {
@@ -362,7 +363,7 @@ impl P2pServer {
         }
 
         let block_height = self.blockchain.get_height();
-        let top_hash = self.blockchain.get_storage().lock()?.get_top_block_hash().clone();
+        let top_hash = self.blockchain.get_storage().lock().await.get_top_block_hash().clone();
         Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), block_height, top_hash, peers))
     }
 
@@ -465,8 +466,8 @@ impl P2pServer {
             PacketIn::Handshake(_) => {
                 return Err(P2pError::InvalidPacket)
             },
-            PacketIn::Transaction(tx) => {
-                if let Err(e) = self.blockchain.add_tx_to_mempool(tx, false) {
+            PacketIn::Transaction(tx) => { // TODO broadcast TX to our peers
+                if let Err(e) = self.blockchain.add_tx_to_mempool(tx, false).await {
                     match e {
                         BlockchainError::TxAlreadyInMempool(_) => {},
                         e => {
@@ -493,7 +494,7 @@ impl P2pServer {
                     }
                     self.try_sync_chain(&mut sync);
                 } else { // add immediately the block to chain as we are synced with
-                    if let Err(e) = self.blockchain.add_new_block(block, false) {
+                    if let Err(e) = self.blockchain.add_new_block(block, false).await {
                         error!("Error while adding new block: {}", e);
                         peer.increment_fail_count();
                     }
@@ -515,11 +516,11 @@ impl P2pServer {
                 }
 
                 debug!("Peer {} request block from {} to {}", peer.get_connection().get_address(), start, end);
-                let storage = self.blockchain.get_storage().lock()?;
+                let storage = self.blockchain.get_storage().lock().await;
                 for i in start..=end {
                     match storage.get_block_at_height(i) {
                         Ok(block) => {
-                            // TODO peer.send_packet(&PacketOut::Block(block)).await?;
+                            peer.send_packet(PacketOut::Block(block)).await?;
                         },
                         Err(_) => { // shouldn't happens as we verify range before
                             debug!("Peer {} requested an invalid block height.", peer);
@@ -610,6 +611,20 @@ impl P2pServer {
 
     pub fn get_peer_list(&self) -> &SharedPeerList {
         &self.peer_list
+    }
+
+    // TODO Improve
+    pub async fn broadcast_tx(&self, tx: &Transaction) -> Result<(), P2pError> {
+        let peer_list = self.peer_list.lock().await;
+        peer_list.broadcast(Bytes::from(PacketOut::Transaction(tx).to_bytes())).await;
+        Ok(())
+    }
+
+    // TODO Improve
+    pub async fn broadcast_block(&self, block: &CompleteBlock) -> Result<(), P2pError> {
+        let peer_list = self.peer_list.lock().await;
+        peer_list.broadcast(Bytes::from(PacketOut::Block(block).to_bytes())).await;
+        Ok(())
     }
 }
 

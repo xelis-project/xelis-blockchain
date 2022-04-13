@@ -11,8 +11,9 @@ use super::serializer::Serializer;
 use super::storage::Storage;
 use super::transaction::*;
 use std::sync::atomic::{Ordering, AtomicU64};
+use tokio::sync::Mutex;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use log::{info, error, debug};
 use rand::Rng;
 
@@ -44,16 +45,17 @@ pub struct Blockchain {
     height: AtomicU64, // current block height 
     supply: AtomicU64, // current circulating supply based on coins already emitted
     difficulty: AtomicU64, // difficulty for next block
+    #[serde(skip_serializing)]
     mempool: Mutex<Mempool>, // mempool to retrieve/add all txs
     #[serde(skip_serializing)]
-    storage: Mutex<Storage>,
+    storage: Mutex<Storage>, // storage to retrieve/add blocks
     #[serde(skip_serializing)]
     p2p: Mutex<Option<Arc<P2pServer>>>,
     dev_address: PublicKey // Dev address for block fee
 }
 
 impl Blockchain {
-    pub fn new(tag: Option<String>, p2p_address: String) -> Result<Arc<Self>, BlockchainError> {
+    pub async fn new(tag: Option<String>, p2p_address: String) -> Result<Arc<Self>, BlockchainError> {
         let dev_address = PublicKey::from_address(&DEV_ADDRESS.to_owned())?;
         let blockchain = Self {
             height: AtomicU64::new(0),
@@ -64,19 +66,19 @@ impl Blockchain {
             p2p: Mutex::new(None),
             dev_address: dev_address
         };
-        blockchain.create_genesis_block()?;
+        blockchain.create_genesis_block().await?;
 
         let arc = Arc::new(blockchain);
         {
             let p2p = P2pServer::new(tag, 8, p2p_address, arc.clone());
-            *arc.p2p.lock()? = Some(p2p);
+            *arc.p2p.lock().await = Some(p2p);
         }
 
         Ok(arc)
     }
 
     // function to include the genesis block and register the public dev key.
-    fn create_genesis_block(&self) -> Result<(), BlockchainError> {
+    async fn create_genesis_block(&self) -> Result<(), BlockchainError> {
         if GENESIS_BLOCK.len() != 0 {
             info!("De-serializing genesis block...");
             match CompleteBlock::from_hex(GENESIS_BLOCK.to_owned()) {
@@ -85,8 +87,8 @@ impl Blockchain {
                     if *block.get_miner() != dev_address {
                         return Err(BlockchainError::GenesisBlockMiner)
                     }
-                    self.storage.lock()?.register_account(dev_address);
-                    self.add_new_block(block, true)?;
+                    self.storage.lock().await.register_account(dev_address);
+                    self.add_new_block(block, true).await?;
                 },
                 Err(_) => return Err(BlockchainError::InvalidGenesisBlock)
             }
@@ -100,36 +102,37 @@ impl Blockchain {
             let miner_tx = Transaction::new(0, TransactionData::Coinbase(coinbase), self.get_dev_address().clone());
             let mut block = Block::new(0, get_current_time(), Hash::zero(), [0u8; 32], miner_tx, Vec::new());
             let mut hash = block.hash();
-            while !check_difficulty(&hash, self.get_difficulty())? {
+            while self.get_height() == 0 && !check_difficulty(&hash, self.get_difficulty())? {
                 block.nonce += 1;
                 block.timestamp = get_current_time();
                 hash = block.hash();
             }
             let complete_block = CompleteBlock::new(block, self.get_difficulty(), Vec::new());
-            info!("Genesis: {}", complete_block.to_hex());
+            info!("Genesis generated & added: {}", complete_block.to_hex());
+            self.add_new_block(complete_block, true).await?;
         }
 
         Ok(())
     }
 
     // mine a block for current difficulty
-    pub fn mine_block(&self, key: &PublicKey) -> Result<(), BlockchainError> {
-        let mut block = self.get_block_template(key.clone())?;
+    pub async fn mine_block(&self, key: &PublicKey) -> Result<(), BlockchainError> {
+        let mut block = self.get_block_template(key.clone()).await?;
         let mut hash = block.hash();
         let mut current_height = self.get_height();
         while !check_difficulty(&hash, self.get_difficulty())? {
             if self.get_height() != current_height {
                 current_height = self.get_height();
-                block = self.get_block_template(key.clone())?;
+                block = self.get_block_template(key.clone()).await?;
             }
             block.nonce += 1;
             block.timestamp = get_current_time();
             hash = block.hash();
         }
 
-        let complete_block = self.build_complete_block_from_block(block)?;
+        let complete_block = self.build_complete_block_from_block(block).await?;
         let block_height = complete_block.get_height();
-        self.add_new_block(complete_block, true)?;
+        self.add_new_block(complete_block, true).await?;
         info!("Block {} at height {} found!!", hash, block_height);
         Ok(())
     }
@@ -158,39 +161,39 @@ impl Blockchain {
         &self.storage
     }
 
-    pub fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
-        Ok(self.storage.lock()?.get_top_block_hash().clone())
+    pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
+        Ok(self.storage.lock().await.get_top_block_hash().clone())
     }
 
-    pub fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
+    pub async fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
-        let mut mempool = self.mempool.lock()?;
+        let mut mempool = self.mempool.lock().await;
         if mempool.contains_tx(&hash) {
             return Err(BlockchainError::TxAlreadyInMempool(hash))
         }
 
-        let storage = self.storage.lock()?;
+        let storage = self.storage.lock().await;
         self.verify_transaction_with_hash(&storage, &tx, &hash, false)?;
         if broadcast {
-            if let Some(p2p) = self.p2p.lock()?.as_ref() {
-                /*if let Err(e) = p2p.broadcast_tx(&tx) {
+            if let Some(p2p) = self.p2p.lock().await.as_ref() {
+                if let Err(e) = p2p.broadcast_tx(&tx).await {
                     return Err(BlockchainError::ErrorOnP2p(e))
-                }*/
+                }
             }
         }
 
         mempool.add_tx(hash, tx)
     }
 
-    pub fn get_block_template(&self, address: PublicKey) -> Result<Block, BlockchainError> {
+    pub async fn get_block_template(&self, address: PublicKey) -> Result<Block, BlockchainError> {
         let coinbase_tx = Transaction::new(0, TransactionData::Coinbase(CoinbaseTx {
             block_reward: get_block_reward(self.get_supply()),
             fee_reward: 0,
         }), address);
         let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>();
-        let mut block = Block::new(self.get_height() + 1, get_current_time(), self.get_top_block_hash()?, extra_nonce, coinbase_tx, Vec::new());
+        let mut block = Block::new(self.get_height() + 1, get_current_time(), self.get_top_block_hash().await?, extra_nonce, coinbase_tx, Vec::new());
         let mut total_fee = 0;
-        let mempool = self.mempool.lock()?;
+        let mempool = self.mempool.lock().await;
         let txs: &Vec<SortedTx> = mempool.get_sorted_txs();
         let mut tx_size = 0;
         for tx in txs {
@@ -213,9 +216,9 @@ impl Blockchain {
         Ok(block)
     }
 
-    pub fn build_complete_block_from_block(&self, block: Block) -> Result<CompleteBlock, BlockchainError> {
+    pub async fn build_complete_block_from_block(&self, block: Block) -> Result<CompleteBlock, BlockchainError> {
         let mut transactions: Vec<Transaction> = vec![];
-        let mempool = self.mempool.lock()?;
+        let mempool = self.mempool.lock().await;
         for hash in &block.txs_hashes {
             let tx = mempool.view_tx(hash)?; // at this point, we don't want to lose/remove any tx, we clone it only
             transactions.push(tx.clone());
@@ -224,8 +227,8 @@ impl Blockchain {
         Ok(complete_block)
     }
 
-    pub fn check_validity(&self) -> Result<(), BlockchainError> {
-        let storage = self.storage.lock()?;
+    pub async fn check_validity(&self) -> Result<(), BlockchainError> {
+        let storage = self.storage.lock().await;
         let blocks = storage.get_blocks();
         if self.get_height() != blocks.len() as u64 {
             return Err(BlockchainError::InvalidBlockHeight(self.get_height(), blocks.len() as u64))
@@ -305,8 +308,8 @@ impl Blockchain {
         Ok(())
     }
 
-    pub fn add_new_block(&self, block: CompleteBlock, broadcast: bool) -> Result<(), BlockchainError> {
-        let mut storage = self.storage.lock()?;
+    pub async fn add_new_block(&self, block: CompleteBlock, broadcast: bool) -> Result<(), BlockchainError> {
+        let mut storage = self.storage.lock().await;
         let current_height = self.get_height();
         let current_difficulty = self.get_difficulty();
         let block_hash = block.hash();
@@ -407,7 +410,7 @@ impl Blockchain {
         }
 
         // Transaction execution
-        let mut mempool = self.mempool.lock()?;
+        let mut mempool = self.mempool.lock().await;
         for hash in block.get_txs_hashes() { // remove all txs present in mempool
             match mempool.remove_tx(hash) {
                 Ok(_) => {
@@ -431,10 +434,11 @@ impl Blockchain {
         self.supply.fetch_add(block_reward, Ordering::Relaxed);
         debug!("Adding new block '{}' at height {}", block_hash, block.get_height());
         if block.get_height() != 0 && broadcast {
-            if let Some(p2p) = self.p2p.lock()?.as_ref() {
-                /*if let Err(e) = p2p.broadcast_block(&block) { // Broadcast block to other nodes
+            if let Some(p2p) = self.p2p.lock().await.as_ref() {
+                debug!("broadcast block to peers");
+                if let Err(e) = p2p.broadcast_block(&block).await { // Broadcast block to other nodes
                     debug!("Error while broadcasting block: {}", e);
-                }*/
+                }
             }
         }
 

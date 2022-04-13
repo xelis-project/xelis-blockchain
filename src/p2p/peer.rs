@@ -111,9 +111,13 @@ impl Peer {
         Ok(())
     }
 
-    pub async fn send_packet<'a>(&self, packet: &PacketOut<'a>) -> Result<(), P2pError> {
+    pub async fn send_packet(&self, packet: PacketOut<'_>) -> Result<(), P2pError> {
+        self.send_bytes(Bytes::from(packet.to_bytes())).await
+    }
+
+    pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), P2pError> {
         let tx = self.connection.get_tx().lock().await;
-        tx.send(Bytes::from(packet.to_bytes()))?;
+        tx.send(bytes)?;
         Ok(())
     }
 }

@@ -57,10 +57,20 @@ impl PeerList {
         self.peers.clear();
     }
 
-    pub fn broadcast(&self, peer_id: u64, bytes: Bytes) {
+    pub async fn broadcast(&self, bytes: Bytes) {
+        for (_, peer) in self.peers.iter() {
+            if let Err(e) = peer.send_bytes(bytes.clone()).await {
+                error!("Error while trying to broadcast to peer {}: {}", peer.get_connection().get_address(), e);
+            }
+        }
+    }
+
+    pub async fn broadcast_except(&self, peer_id: u64, bytes: Bytes) {
         for (_, peer) in self.peers.iter() {
             if peer.get_id() != peer_id {
-                // TODO
+                if let Err(e) = peer.send_bytes(bytes.clone()).await {
+                    error!("Error while trying to broadcast to peer {}: {}", peer.get_connection().get_address(), e);
+                }
             }
         }
     }

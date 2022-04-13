@@ -150,7 +150,11 @@ impl Serializer for Signature {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let signature = Signature(ed25519_dalek::Signature::new(reader.read_bytes_64()?));
+        let signature = match ed25519_dalek::Signature::from_bytes(&reader.read_bytes_64()?) {
+            Ok(v) => v,
+            Err(_) => return Err(ReaderError::ErrorTryInto)
+        };
+        let signature = Signature(signature);
         Ok(signature)
     }
 }

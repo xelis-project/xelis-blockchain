@@ -47,7 +47,7 @@ async fn main() {
     };
     info!("Xelis Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
-    let blockchain = match Blockchain::new(config.tag, config.bind_address) {
+    let blockchain = match Blockchain::new(config.tag, config.bind_address).await {
         Ok(blockchain) => blockchain,
         Err(e) => {
             error!("Couldn't create blockchain: {}", e);
@@ -57,17 +57,17 @@ async fn main() {
 
     if config.mining {
         let blockchain = blockchain.clone();
-        thread::spawn(move || {
+        tokio::spawn(async move {
             let key = blockchain.get_dev_address().clone();
             loop {
-                if let Err(e) = blockchain.mine_block(&key) {
+                if let Err(e) = blockchain.mine_block(&key).await {
                     error!("Error while mining block: {}", e);
                 }
             }
         });
     }
 
-    if let Err(e) = run_prompt(prompt, blockchain) { // block main thread
+    if let Err(e) = run_prompt(prompt, blockchain).await { // block main thread
         error!("Error while running prompt: {}", e);
     }
 }
@@ -92,16 +92,16 @@ fn build_prompt_message(height: u64, peers_count: usize) -> String {
     )
 }
 
-fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
+async fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
     prompt.update_prompt(Some(build_prompt_message(0, 0)))?;
     let mut display_height = 0;
     let mut display_peers = 0;
     loop {
         let height = blockchain.get_height();
-        let peers_count = 0; /*match blockchain.get_p2p().lock()?.as_ref() {
-            Some(p2p) => p2p.get_peer_count(),
+        let peers_count = 0; match blockchain.get_p2p().lock().await.as_ref() {
+            Some(p2p) => p2p.get_peer_count().await,
             None => 0
-        };*/
+        };
         if display_height != height || display_peers != peers_count {
             display_height = height;
             display_peers = peers_count;
@@ -114,18 +114,18 @@ fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), Pr
             match cmd.as_ref() {
                 "exit" => break,
                 "validity" => {
-                    if let Err(e) = blockchain.check_validity() {
+                    if let Err(e) = blockchain.check_validity().await {
                         error!("Blockchain is not valid: {}", e);
                     } else {
                         info!("Blockchain is valid");
                     }
                 },
                 "peer_list" => {
-                    match blockchain.get_p2p().lock()?.as_ref() {
+                    match blockchain.get_p2p().lock().await.as_ref() {
                         Some(p2p) => {
-                            /*p2p.get_peer_list().lock()?.get_peers().iter().for_each(|(_,peer)| {
+                            p2p.get_peer_list().lock().await.get_peers().iter().for_each(|(_,peer)| {
                                 info!("{}", peer);
-                            });*/
+                            });
                         }
                         None => {
                             error!("No p2p instance found");
