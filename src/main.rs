@@ -122,7 +122,7 @@ fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), Pr
                 "peer_list" => {
                     match blockchain.get_p2p().lock()?.as_ref() {
                         Some(p2p) => {
-                            p2p.get_connections().lock()?.iter().for_each(|(_,peer)| {
+                            p2p.get_peer_list().lock()?.get_peers().iter().for_each(|(_,peer)| {
                                 info!("{}", peer);
                             });
                         }

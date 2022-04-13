@@ -11,6 +11,8 @@ pub enum P2pError {
     Disconnected,
     #[error("Invalid handshake")]
     InvalidHandshake,
+    #[error("Expected Handshake packet")]
+    ExpectedHandshake,
     #[error("Invalid peer address, {}", _0)]
     InvalidPeerAddress(String), // peer address from handshake
     #[error("Invalid network ID")]

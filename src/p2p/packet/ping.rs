@@ -1,9 +1,10 @@
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::serializer::Serializer;
-use crate::p2p::connection::Connection;
+use crate::p2p::peer::Peer;
 use crate::core::writer::Writer;
 use crate::crypto::hash::Hash;
 use std::sync::Arc;
+use log::warn;
 
 pub struct Ping {
     block_top_hash: Hash,
@@ -18,9 +19,11 @@ impl Ping {
         }
     }
 
-    pub fn update_connection(self, connection: &Arc<Connection>) {
-        let _ = connection.set_block_top_hash(self.block_top_hash);
-        connection.set_block_height(self.block_height);
+    pub fn update_peer(self, peer: &Arc<Peer>) {
+        if let Err(e) = peer.set_block_top_hash(self.block_top_hash) {
+            warn!("Error occured in Ping handle: {}", e);
+        }
+        peer.set_block_height(self.block_height);
     }
 }
 

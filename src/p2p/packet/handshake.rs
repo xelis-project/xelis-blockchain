@@ -1,11 +1,13 @@
-use crate::p2p::connection::Connection;
-use crate::core::serializer::Serializer;
+use crate::globals::{ip_from_bytes, ip_to_bytes};
 use crate::core::reader::{Reader, ReaderError};
+use crate::p2p::peer_list::SharedPeerList;
+use crate::core::serializer::Serializer;
+use crate::p2p::connection::Connection;
 use crate::core::writer::Writer;
 use crate::crypto::hash::Hash;
-use crate::globals::{ip_from_bytes, ip_to_bytes};
+use crate::p2p::peer::Peer;
 use std::fmt::{Display, Error, Formatter};
-use std::net::{TcpStream, SocketAddr};
+use std::net::SocketAddr;
 
 // this Handshake is the first data sent when connecting to the server
 // If handshake is valid, server reply with his own handshake
@@ -47,9 +49,9 @@ impl Handshake {
         }
     }
 
-    pub fn create_connection(self, stream: TcpStream, addr: SocketAddr, out: bool, priority: bool) -> (Connection, Vec<SocketAddr>) {
+    pub fn create_peer(self, connection: Connection, out: bool, priority: bool, peer_list: SharedPeerList) -> (Peer, Vec<SocketAddr>) {
         let block_height = self.get_block_height();
-        (Connection::new(self.get_peer_id(), self.node_tag, self.local_port, self.version, self.block_top_hash, block_height, stream, addr, out, priority), self.peers)
+        (Peer::new(connection, self.get_peer_id(), self.node_tag, self.local_port, self.version, self.block_top_hash, block_height, out, priority, peer_list), self.peers)
     }
 
     pub fn get_version(&self) -> &String {

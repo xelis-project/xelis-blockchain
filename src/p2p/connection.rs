@@ -1,60 +1,51 @@
 use crate::core::serializer::Serializer;
 use crate::globals::get_current_time;
 use crate::core::reader::Reader;
-use crate::crypto::hash::Hash;
 use super::error::P2pError;
 use super::packet::PacketIn;
-use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::net::{TcpStream, SocketAddr, Shutdown};
 use std::fmt::{Display, Error, Formatter};
+use std::sync::mpsc::Sender;
 use std::io::{Write, Read};
 use std::convert::TryInto;
 use std::sync::Mutex;
+use bytes::Bytes;
 use log::warn;
 
+pub type Tx = Sender<Bytes>; // TODO Use Tokio unbounded channel
 type P2pResult<T> = std::result::Result<T, P2pError>;
 
+pub enum State {
+    Pending, // connection is new, no handshake received
+    Handshake, // handshake received, not checked
+    Success // handshake is valid
+}
+
 pub struct Connection {
-    id: u64,
-    node_tag: Option<String>, // Node tag if provided
-    local_port: u16,
-    version: String, // daemon version
-    block_top_hash: Mutex<Hash>, // current block top hash for this peer
-    block_height: AtomicU64, // current block height for this peer
+    state: State,
     stream: Mutex<TcpStream>, // Stream for read & write
     addr: SocketAddr, // TCP Address
-    out: bool, // True mean we are the client
-    priority: bool, // if this node can be trusted (seed node or added manually by user)
+    tx: Mutex<Tx>, // Tx to send bytes
     bytes_in: AtomicUsize, // total bytes read
     bytes_out: AtomicUsize, // total bytes sent
     connected_on: u64,
-    last_chain_sync: AtomicU64,
-    // TODO last_fail_count
-    fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
     closed: AtomicBool, // if Connection#close() is called, close is set to true
     blocking: AtomicBool // blocking until something is sent or not
 }
 
 impl Connection {
-    pub fn new(id: u64, node_tag: Option<String>, local_port: u16, version: String, block_top_hash: Hash, block_height: u64, stream: TcpStream, addr: SocketAddr, out: bool, priority: bool) -> Self {
+    pub fn new(stream: TcpStream, addr: SocketAddr, tx: Tx) -> Self {
         Self {
-            id,
-            node_tag,
-            local_port,
-            version,
-            block_top_hash: Mutex::new(block_top_hash),
-            block_height: AtomicU64::new(block_height),
+            state: State::Pending,
             stream: Mutex::new(stream),
             addr,
-            out,
-            priority,
+            tx: Mutex::new(tx),
             connected_on: get_current_time(),
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
-            fail_count: AtomicU8::new(0),
             closed: AtomicBool::new(false),
-            blocking: AtomicBool::new(true),
-            last_chain_sync: AtomicU64::new(0),
+            blocking: AtomicBool::new(true)
         }
     }
 
@@ -64,6 +55,10 @@ impl Connection {
         stream.set_nonblocking(!blocking)?;
         self.blocking.store(blocking, Ordering::Relaxed);
         Ok(())
+    }
+
+    pub fn get_stream(&self) -> &Mutex<TcpStream> {
+        &self.stream
     }
 
     pub fn send_bytes(&self, buf: &[u8]) -> P2pResult<()> {
@@ -77,7 +72,7 @@ impl Connection {
     pub fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<PacketIn> {
         let size = self.read_packet_size(buf)?;
         if size == 0 || size > max_size {
-            warn!("Received invalid packet size: {} bytes (max: {} bytes) from peer {}", size, max_size, self.get_peer_id());
+            warn!("Received invalid packet size: {} bytes (max: {} bytes) from peer {}", size, max_size, self.get_address());
             return Err(P2pError::InvalidPacketSize)
         }
 
@@ -94,7 +89,7 @@ impl Connection {
     fn read_packet_size(&self, buf: &mut [u8]) -> P2pResult<u32> {
         let read = self.read_bytes(&mut buf[0..4])?;
         if read != 4 {
-            warn!("Received invalid packet size: expected to read 4 bytes but read only {} bytes from peer {}", read, self.get_peer_id());
+            warn!("Received invalid packet size: expected to read 4 bytes but read only {} bytes from peer {}", read, self.get_address());
             return Err(P2pError::InvalidPacketSize)
         }
         let array: [u8; 4] = buf[0..4].try_into()?;
@@ -119,6 +114,8 @@ impl Connection {
         Ok(bytes)
     }
 
+    // this function will wait until something is sent to the socket if it's in blocking mode
+    // this return the size of data read & set in the buffer.
     // used to only lock one time the stream and read on it
     fn read_bytes_from_stream(&self, stream: &mut TcpStream, buf: &mut [u8]) -> P2pResult<usize> {
         let result = stream.read(buf)?;
@@ -134,8 +131,6 @@ impl Connection {
         }
     }
 
-    // this function will wait until something is sent to the socket if it's in blocking mode
-    // this return the size of data read & set in the buffer.
     pub fn read_bytes(&self, buf: &mut [u8]) -> P2pResult<usize> {
         let mut stream = self.stream.lock()?;
         self.read_bytes_from_stream(&mut stream, buf)
@@ -147,54 +142,16 @@ impl Connection {
         Ok(())
     }
 
-    // TODO verify last fail count
-    pub fn increment_fail_count(&self) {
-        self.fail_count.fetch_add(1, Ordering::Relaxed);
+    pub fn set_state(&mut self, state: State) {
+        self.state = state;
     }
 
-    pub fn get_peer_id(&self) -> u64 {
-        self.id
+    pub fn get_state(&self) -> &State {
+        &self.state
     }
 
-    pub fn get_node_tag(&self) -> &Option<String> {
-        &self.node_tag
-    }
-
-    pub fn get_local_port(&self) -> u16 {
-        self.local_port
-    }
-
-    pub fn get_version(&self) -> &String {
-        &self.version
-    }
-
-    pub fn get_block_height(&self) -> u64 {
-        self.block_height.load(Ordering::Relaxed)
-    }
-
-    pub fn set_block_height(&self, height: u64) {
-        self.block_height.store(height, Ordering::Relaxed);
-    }
-
-    pub fn set_block_top_hash(&self, hash: Hash) -> P2pResult<()> {
-        *self.block_top_hash.lock()? = hash;
-        Ok(())
-    }
-
-    pub fn get_top_block_hash(&self) -> &Mutex<Hash> {
-        &self.block_top_hash
-    }
-
-    pub fn get_peer_address(&self) -> &SocketAddr {
+    pub fn get_address(&self) -> &SocketAddr {
         &self.addr
-    }
-
-    pub fn is_out(&self) -> bool {
-        self.out
-    }
-
-    pub fn is_priority(&self) -> bool {
-        self.priority
     }
 
     pub fn bytes_out(&self) -> usize {
@@ -209,10 +166,6 @@ impl Connection {
         self.connected_on
     }
 
-    pub fn fail_count(&self) -> u8 {
-        self.fail_count.load(Ordering::Relaxed)
-    }
-
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
@@ -220,24 +173,10 @@ impl Connection {
     pub fn is_blocking(&self) -> bool {
         self.blocking.load(Ordering::Relaxed)
     }
-
-    pub fn get_last_chain_sync(&self) -> u64 {
-        self.last_chain_sync.load(Ordering::Relaxed)
-    }
-
-    pub fn set_last_chain_sync(&self, time: u64) {
-        self.last_chain_sync.store(time, Ordering::Relaxed);
-    }
 }
 
 impl Display for Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
-        let node_tag: String = if let Some(value) = self.get_node_tag() {
-            value.clone()
-        } else {
-            String::from("None")
-        };
-
-        write!(f, "Connection[peer: {}, version: {}, node tag: {}, peer_id: {}, block_height: {}, priority: {}, out: {}, read: {} kB, sent: {} kB, connected on: {}, fail count: {}, closed: {},  blocking: {}]", self.get_peer_address(), self.get_version(), node_tag, self.get_peer_id(), self.get_block_height(), self.is_priority(), self.is_out(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.connected_on(), self.fail_count(), self.is_closed(), self.is_blocking())
+        write!(f, "Connection[peer: {}, read: {} kB, sent: {} kB, connected on: {}, closed: {},  blocking: {}]", self.get_address(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.connected_on(), self.is_closed(), self.is_blocking())
     }
 }
