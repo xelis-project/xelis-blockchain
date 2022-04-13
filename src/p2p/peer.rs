@@ -1,10 +1,13 @@
+use crate::core::serializer::Serializer;
 use crate::crypto::hash::Hash;
-use super::connection::Connection;
-use super::error::P2pError;
 use super::peer_list::SharedPeerList;
+use super::connection::Connection;
+use super::packet::PacketOut;
+use super::error::P2pError;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::fmt::{Display, Error, Formatter};
 use std::sync::Mutex;
+use bytes::Bytes;
 
 pub struct Peer {
     connection: Connection,
@@ -105,6 +108,12 @@ impl Peer {
     pub async fn close(&self) -> Result<(), P2pError> {
         self.peer_list.lock().await.remove_peer(&self);
         self.get_connection().close().await?;
+        Ok(())
+    }
+
+    pub async fn send_packet<'a>(&self, packet: &PacketOut<'a>) -> Result<(), P2pError> {
+        let tx = self.connection.get_tx().lock().await;
+        tx.send(Bytes::from(packet.to_bytes()))?;
         Ok(())
     }
 }

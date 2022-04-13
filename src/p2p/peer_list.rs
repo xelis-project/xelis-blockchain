@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tokio::sync::Mutex;
 use std::sync::Arc;
 use bytes::Bytes;
-use log::error;
+use log::{info, error};
 
 pub type SharedPeerList = Arc<Mutex<PeerList>>;
 
@@ -26,11 +26,13 @@ impl PeerList {
 
     pub fn remove_peer(&mut self, peer: &Peer) {
         self.peers.remove(&peer.get_id());
+        info!("Peer disconnected: {}", peer);
     }
 
     pub fn add_peer(&mut self, id: u64, peer: Peer) -> Arc<Peer> {
         let peer = Arc::new(peer);
         self.peers.insert(id, peer.clone());
+        info!("New peer connected: {}", peer);
         peer
     }
 

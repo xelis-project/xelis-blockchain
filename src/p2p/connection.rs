@@ -13,7 +13,9 @@ use std::convert::TryInto;
 use bytes::Bytes;
 use log::warn;
 
-pub type Tx = mpsc::UnboundedSender<Bytes>; // TODO Use Tokio unbounded channel
+pub type Tx = mpsc::UnboundedSender<Bytes>;
+pub type Rx = mpsc::UnboundedReceiver<Bytes>;
+
 type P2pResult<T> = std::result::Result<T, P2pError>;
 
 pub enum State {
@@ -31,7 +33,6 @@ pub struct Connection {
     bytes_out: AtomicUsize, // total bytes sent
     connected_on: u64,
     closed: AtomicBool, // if Connection#close() is called, close is set to true
-    blocking: AtomicBool // blocking until something is sent or not
 }
 
 impl Connection {
@@ -45,20 +46,15 @@ impl Connection {
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
             closed: AtomicBool::new(false),
-            blocking: AtomicBool::new(true)
         }
     }
 
-    /*// Set the connection thread blocking or not
-    pub async fn set_blocking(&self, blocking: bool) -> P2pResult<()> {
-        let stream = self.stream.lock().await;
-        stream.set_nonblocking(!blocking)?;
-        self.blocking.store(blocking, Ordering::Relaxed);
-        Ok(())
-    }*/
-
     pub fn get_stream(&self) -> &Mutex<TcpStream> {
         &self.stream
+    }
+
+    pub fn get_tx(&self) -> &Mutex<Tx> {
+        &self.tx
     }
 
     pub async fn send_bytes(&self, buf: &[u8]) -> P2pResult<()> {
@@ -170,14 +166,10 @@ impl Connection {
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
-
-    pub fn is_blocking(&self) -> bool {
-        self.blocking.load(Ordering::Relaxed)
-    }
 }
 
 impl Display for Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
-        write!(f, "Connection[peer: {}, read: {} kB, sent: {} kB, connected on: {}, closed: {},  blocking: {}]", self.get_address(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.connected_on(), self.is_closed(), self.is_blocking())
+        write!(f, "Connection[peer: {}, read: {} kB, sent: {} kB, connected on: {}, closed: {}]", self.get_address(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.connected_on(), self.is_closed())
     }
 }

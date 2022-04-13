@@ -1,5 +1,7 @@
 use crate::core::reader::ReaderError;
+use tokio::sync::mpsc::error::SendError as TSendError;
 use std::array::TryFromSliceError;
+use tokio::time::error::Elapsed;
 use std::sync::mpsc::SendError;
 use std::io::Error as IOError;
 use std::sync::PoisonError;
@@ -44,7 +46,9 @@ pub enum P2pError {
     #[error("Request sync chain too fast")]
     RequestSyncChainTooFast,
     #[error("Invalid height range")]
-    InvalidHeightRange
+    InvalidHeightRange,
+    #[error(transparent)]
+    AsyncTimeOut(#[from] Elapsed)
 }
 
 impl<T> From<PoisonError<T>> for P2pError {
@@ -55,6 +59,12 @@ impl<T> From<PoisonError<T>> for P2pError {
 
 impl<T> From<SendError<T>> for P2pError {
     fn from(err: SendError<T>) -> Self {
+        Self::SendError(format!("{}", err))
+    }
+}
+
+impl<T> From<TSendError<T>> for P2pError {
+    fn from(err: TSendError<T>) -> Self {
         Self::SendError(format!("{}", err))
     }
 }
