@@ -102,9 +102,9 @@ impl Peer {
         self.last_chain_sync.store(time, Ordering::Relaxed);
     }
 
-    pub fn close(&self) -> Result<(), P2pError> {
-        self.get_connection().close()?;
-        self.peer_list.lock()?.remove_peer(&self);
+    pub async fn close(&self) -> Result<(), P2pError> {
+        self.peer_list.lock().await.remove_peer(&self);
+        self.get_connection().close().await?;
         Ok(())
     }
 }

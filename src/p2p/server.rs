@@ -16,27 +16,19 @@ use super::packet::ping::Ping;
 use super::error::P2pError;
 use super::peer::Peer;
 use super::peer_list::{SharedPeerList, PeerList};
-use std::net::{TcpListener, TcpStream, SocketAddr, Shutdown};
-use std::sync::mpsc::{Sender, Receiver, TryRecvError, channel};
-use num_bigint::BigUint;
-use std::io::prelude::{Write};
+use tokio::net::{TcpListener, TcpStream};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use async_recursion::async_recursion;
+use log::{info, warn, error, debug};
+use tokio::sync::{mpsc, Mutex};
+use tokio::io::AsyncWriteExt;
+use std::sync::Arc;
+use std::net::SocketAddr;
+use num_bigint::BigUint;
 use std::time::Duration;
 use std::io::ErrorKind;
 use num_traits::Zero;
-use std::thread;
 use rand::Rng;
-use log::{info, warn, error, debug};
-
-enum Message {
-    SendBytes(u64, Vec<u8>), // peer id, Packet
-    MultipleSend(Vec<u64>, Vec<u8>),
-    Broadcast(Vec<u8>),
-    AddConnection(Arc<Peer>),
-    RemoveConnection(u64),
-    Exit,
-}
 
 struct ChainSync { // TODO, receive Block Header only
     current_top_hash: Hash, // top hash of our current blockchain
@@ -250,89 +242,70 @@ impl P2pServer {
         };
 
         let arc = Arc::new(server);
-        Self::start(arc.clone());
+        let instance = arc.clone();
+        tokio::spawn(async move {
+            if let Err(e) = Self::start(&instance).await {
+                error!("Unexpected error on P2p module: {}", e);
+            }
+        });
+
         arc
     }
 
-    fn start(self: Arc<Self>) {
-        info!("Starting P2p module...");
-        // spawn threads
-        let clone = self.clone();
-        thread::spawn(move || {
-            clone.listen_new_connections();
-        });
-        /*thread::spawn(move || {
-            self.listen_existing_connections();
-        });*/
-    }
-
-    pub fn stop(&self) -> Result<(), P2pError> {
+    pub async fn stop(&self) -> Result<(), P2pError> {
         info!("Stopping P2p Server...");
-        let peers = self.peer_list.lock()?;
-        peers.close_all()
+        let mut peers = self.peer_list.lock().await;
+        peers.close_all().await;
+        Ok(())
     }
 
     // Connect to all seed nodes from constant
     // buffer parameter is to prevent the re-allocation
-    fn connect_to_seed_nodes(&self, buffer: &mut [u8]) -> Result<(), P2pError> {
+    async fn connect_to_seed_nodes(self: &Arc<Self>) -> Result<(), P2pError> {
         for peer in SEED_NODES {
             let addr: SocketAddr = match peer.parse() {
                 Ok(addr) => addr,
                 Err(e) => return Err(P2pError::InvalidPeerAddress(format!("seed node {}: {}", peer, e)))
             };
-            if let Err(e) = self.connect_to_peer(buffer, addr, true) {
-                debug!("Error while trying to connect to seed node '{}': {}", peer, e);
-            }
+            Arc::clone(self).try_to_connect_to_peer(addr, true).await;
         }
         Ok(())
     }
 
     // connect to seed nodes, start p2p server
     // and wait on all new connections
-    fn listen_new_connections(&self) {
+    async fn start(self: &Arc<Self>) -> Result<(), P2pError> {
         info!("Connecting to seed nodes...");
         // allocate this buffer only one time, because we are using the same thread
-        let mut buffer: [u8; 512] = [0; 512]; // maximum 512 bytes for handshake
-        if let Err(e) = self.connect_to_seed_nodes(&mut buffer) {
+        if let Err(e) = self.connect_to_seed_nodes().await {
             error!("Error while connecting to seed nodes: {}", e);
         }
 
-        let listener = match TcpListener::bind(self.get_bind_address()) {
-            Ok(listener) => listener,
-            Err(e) => {
-                error!("Error while starting p2p server: {}", e);
-                return;
-            }
-        };
+        let listener = TcpListener::bind(self.get_bind_address()).await?;
         info!("P2p Server will listen on: {}", self.get_bind_address());
-        for stream in listener.incoming() { // main thread verify all new connections
-            debug!("New incoming connection");
-            match stream {
-                Ok(stream) => {
-                    if !self.accept_new_connections() { // if we have already reached the limit, we ignore this new connection
-                        debug!("Max peers reached, rejecting connection");
-                        if let Err(e) = stream.shutdown(Shutdown::Both) {
-                            debug!("Error while closing & ignoring incoming connection: {}", e);
-                        }
-                        continue;
-                    }
-
-                    let addr = stream.peer_addr().unwrap(); // TODO Remove unwrap
-                    let connection = self.create_connection(addr, stream);
-                    if let Err(e) = self.handle_new_connection(&mut buffer, connection, false, false) {
-                        debug!("Error on new connection: {}", e);
-                    }
+        loop {
+            let (mut stream, addr) = listener.accept().await?;
+            if !self.accept_new_connections().await { // if we have already reached the limit, we ignore this new connection
+                debug!("Max peers reached, rejecting connection");
+                if let Err(e) = stream.shutdown().await {
+                    debug!("Error while closing & ignoring incoming connection {}: {}", addr, e);
                 }
-                Err(e) => {
-                    debug!("Error while accepting new connection: {}", e);
-                }
+                continue;
             }
+
+            let connection = self.create_connection(addr.clone(), stream);
+            let zelf = Arc::clone(self);
+            tokio::spawn(async move {
+                if let Err(e) = zelf.handle_new_connection(connection, false, false).await {
+                    debug!("Error on {}: {}", addr, e);
+                }
+            });
         }
     }
 
     fn create_connection(&self, addr: SocketAddr, stream: TcpStream) -> Connection {
-        let (sender, receiver) = channel(); // TODO
-        let mut connection = Connection::new(stream, addr, sender);
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut connection = Connection::new(stream, addr, tx);
         connection
     }
 
@@ -474,13 +447,13 @@ impl P2pServer {
     // Verify handshake send by a new connection
     // based on data size, network ID, peers address validity
     // block height and block top hash of this peer (to know if we are on the same chain)
-    fn verify_handshake(&self, mut connection: Connection, handshake: Handshake, out: bool, priority: bool) -> Result<(Peer, Vec<SocketAddr>), P2pError> {
+    async fn verify_handshake(&self, mut connection: Connection, handshake: Handshake, out: bool, priority: bool) -> Result<(Peer, Vec<SocketAddr>), P2pError> {
         if *handshake.get_network_id() != NETWORK_ID {
             return Err(P2pError::InvalidNetworkID);
         }
 
-        if self.is_connected_to(&handshake.get_peer_id())? {
-            connection.close()?;
+        if self.is_connected_to(&handshake.get_peer_id()).await? {
+            connection.close().await?;
             return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }
 
@@ -504,9 +477,9 @@ impl P2pServer {
         Ok((peer, peers))
     }
 
-    fn build_handshake(&self) -> Result<Handshake, P2pError> {
+    async fn build_handshake(&self) -> Result<Handshake, P2pError> {
         let mut peers: Vec<SocketAddr> = Vec::new();
-        let peer_list = self.peer_list.lock()?;
+        let peer_list = self.peer_list.lock().await;
         let mut iter = peer_list.get_peers().iter();
         while peers.len() < Handshake::MAX_LEN {
             match iter.next() {
@@ -529,24 +502,27 @@ impl P2pServer {
     // this function handle all new connections
     // A new connection have to send an Handshake
     // if the handshake is valid, we accept it & register it on server
-    fn handle_new_connection(&self, buffer: &mut [u8], mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
+    async fn handle_new_connection(self: Arc<Self>, mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
         debug!("New connection: {}", connection);
-        connection.get_stream().lock()?.set_read_timeout(Some(Duration::from_millis(300)))?; // wait maximum 300ms when reading from stream
-        let handshake: Handshake = match connection.read_packet(buffer, 1024)? {
+        //connection.get_stream().lock().await.set_read_timeout(Some(Duration::from_millis(300)))?; // wait maximum 300ms when reading from stream
+        // TODO only wait 300 max
+        let mut buf = [0u8; 1024];
+        let handshake: Handshake = match connection.read_packet(&mut buf, 1024).await? {
             PacketIn::Handshake(h) => h, // only allow handshake packet
             _ => return Err(P2pError::ExpectedHandshake)
         };
+        debug!("received handshake packet!");
         connection.set_state(State::Handshake);
-        let (peer, peers) = self.verify_handshake(connection, handshake, out, priority)?;
+        let (peer, peers) = self.verify_handshake(connection, handshake, out, priority).await?;
         // if it's a outgoing connection, don't send the handshake back
         // because we have already sent it
         if !out { // TODO
-            let handshake = self.build_handshake()?; // TODO don't send same peers list
+            let handshake = self.build_handshake().await?; // TODO don't send same peers list
             let bytes = handshake.to_bytes();
             let mut packet: Vec<u8> = (bytes.len() as u16).to_be_bytes().to_vec();
             packet.extend(bytes);
-            debug!("Reply handshake (size: {} bytes) to peer {}", packet.len(), connection.get_address());
-            peer.get_connection().send_bytes(&packet)?; // send handshake back
+            debug!("Reply handshake (size: {} bytes) to peer {}", packet.len(), peer.get_connection().get_address());
+            peer.get_connection().send_bytes(&packet).await?; // send handshake back
         }
 
         // handle connection
@@ -555,20 +531,18 @@ impl P2pServer {
 
         // if we reach here, handshake is all good, we can start listening this new peer
         let peer_id = peer.get_id(); // keep in memory the peer_id outside connection (because of moved value)
-        let peer = self.peer_list.lock()?.add_peer(peer_id, peer);
+        let peer = self.peer_list.lock().await.add_peer(peer_id, peer);
         // TODO handle this peer (async tokio)
 
         // try to extend our peer list
         for peer_addr in peers { // should we limit to X peers only ?
-            if !self.accept_new_connections() {
+            if !self.accept_new_connections().await {
                 break
             }
 
-            if !self.is_connected_to_addr(&peer_addr)? {
+            if !self.is_connected_to_addr(&peer_addr).await? {
                 debug!("Trying to extend peer list with {}", peer_addr);
-                if let Err(e) = self.connect_to_peer(buffer, peer_addr, false) {
-                    debug!("Error while trying to connect to a peer from {}: {}", peer_id, e);
-                }
+                Arc::clone(&self).try_to_connect_to_peer(peer_addr, false).await;
             }
         }
         Ok(())
@@ -576,132 +550,140 @@ impl P2pServer {
 
     // Connect to a specific peer address
     // Buffer is passed in parameter to prevent the re-allocation each time
-    pub fn connect_to_peer(&self, buffer: &mut [u8], peer_addr: SocketAddr, priority: bool) -> Result<(), P2pError> {
-        debug!("Trying to connect to {}", peer_addr);
-        if self.is_connected_to_addr(&peer_addr)? {
-            return Err(P2pError::PeerAlreadyConnected(format!("{}", peer_addr)));
-        }
-        let mut stream = TcpStream::connect_timeout(&peer_addr, Duration::from_millis(500))?;
-        let connection = self.create_connection(peer_addr, stream);
+    #[async_recursion]
+    async fn try_to_connect_to_peer(self: Arc<Self>, addr: SocketAddr, priority: bool) {
+        tokio::spawn(async move {
+            if let Err(e) = self.connect_to_peer(addr, priority).await {
+                debug!("Error while trying to connect: {}", e);
+            }
+        });
+    }
 
-        let handshake: Handshake = self.build_handshake()?; // TODO
-        let bytes = handshake.to_bytes();
+    pub async fn connect_to_peer(self: Arc<Self>, addr: SocketAddr, priority: bool) -> Result<(), P2pError> {
+        debug!("Trying to connect to {}", addr);
+        if self.is_connected_to_addr(&addr).await? {
+            return Err(P2pError::PeerAlreadyConnected(format!("{}", addr)));
+        }
+        let stream = TcpStream::connect(&addr).await?; // TODO timeout
+        let connection = self.create_connection(addr, stream);
+        let handshake: Handshake = self.build_handshake().await?; // TODO create a function
+        /*let bytes = handshake.to_bytes();
         let mut packet: Vec<u8> = (bytes.len() as u16).to_be_bytes().to_vec();
         packet.extend(bytes);
         debug!("Sending handshake (size: {} bytes) to {}", packet.len(), peer_addr);
         stream.write(&packet)?;
-        stream.flush()?;
-
-        // wait on Handshake reply & manage this new connection
-        self.handle_new_connection(buffer, connection, true, priority)
+        stream.flush()?;*/
+        self.handle_new_connection(connection, true, priority).await
     }
 
-    fn handle_connection(&self, buf: &mut [u8], peer: &Arc<Peer>) {
-        if let Err(e) = self.listen_connection(buf, peer) {
+    async fn handle_connection(&self, buf: &mut [u8], peer: &Arc<Peer>) {
+        if let Err(e) = self.listen_connection(buf, peer).await {
             peer.increment_fail_count();
             debug!("Error occured while listening {}: {}", peer, e);
         }
 
         if peer.get_fail_count() >= 20 {
             error!("High fail count detected for {}!", peer);
-            if let Err(e) = peer.close() {
+            if let Err(e) = peer.close().await {
                 error!("Error while trying to close connection {} due to high fail count: {}", peer.get_connection().get_address(), e);
             }
         }
     }
 
-    // Listen to incoming packets from a connection
-    fn listen_connection(&self, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
-        loop {
-            match peer.get_connection().read_packet(buf, MAX_BLOCK_SIZE as u32) {
-                Ok(packet) => match packet {
-                    PacketIn::Handshake(_) => {
-                        return Err(P2pError::InvalidPacket)
-                    },
-                    PacketIn::Transaction(tx) => {
-                        if let Err(e) = self.blockchain.add_tx_to_mempool(tx, false) {
-                            match e {
-                                BlockchainError::TxAlreadyInMempool(_) => {},
-                                e => {
-                                    error!("Error while adding TX to mempool: {}", e);
-                                    peer.increment_fail_count();
-                                }
-                            };
+    async fn handle_incoming_packet(&self, peer: &Arc<Peer>, packet: PacketIn) -> Result<(), P2pError> {
+        match packet {
+            PacketIn::Handshake(_) => {
+                return Err(P2pError::InvalidPacket)
+            },
+            PacketIn::Transaction(tx) => {
+                if let Err(e) = self.blockchain.add_tx_to_mempool(tx, false) {
+                    match e {
+                        BlockchainError::TxAlreadyInMempool(_) => {},
+                        e => {
+                            error!("Error while adding TX to mempool: {}", e);
+                            peer.increment_fail_count();
                         }
-                    },
-                    PacketIn::Block(block) => {
-                        debug!("Received block at height {} from {}", block.get_height(), peer.get_connection().get_address());
-                        let block_height = block.get_height();
-                        if peer.get_block_height() < block_height {
-                            peer.set_block_height(block_height);
-                        }
+                    };
+                }
+            },
+            PacketIn::Block(block) => {
+                debug!("Received block at height {} from {}", block.get_height(), peer.get_connection().get_address());
+                let block_height = block.get_height();
+                if peer.get_block_height() < block_height {
+                    peer.set_block_height(block_height);
+                }
 
-                        let peer_id = peer.get_id();
-                        let mut sync = self.sync.lock()?;
-                        // check if it's a new propagated block, or if it's from a RequestSync
-                        if sync.contains_peer(&peer_id) {
-                            if let Err(e) = sync.insert_block(block, &peer_id) {
-                                error!("Error while adding block to chain sync: {}", e);
-                                peer.increment_fail_count();
-                            }
-                            self.try_sync_chain(&mut sync);
-                        } else { // add immediately the block to chain as we are synced with
-                            if let Err(e) = self.blockchain.add_new_block(block, false) {
-                                error!("Error while adding new block: {}", e);
-                                peer.increment_fail_count();
-                            }
-                        }
-                    },
-                    PacketIn::RequestChain(request) => {
-                        let last_request = peer.get_last_chain_sync();
-                        let time = get_current_time();
-                        peer.set_last_chain_sync(time);
-                        if  last_request + CHAIN_SYNC_DELAY > time {
-                            return Err(P2pError::RequestSyncChainTooFast)
-                        }
-
-                        let our_height = self.blockchain.get_height();
-                        let start = request.get_start_height();
-                        let end = request.get_end_height();
-                        if start > our_height || end > our_height || start > end || end - start > CHAIN_SYNC_MAX_BLOCK { // only 20 blocks max per request
-                            return Err(P2pError::InvalidHeightRange)
-                        }
-
-                        debug!("Peer {} request block from {} to {}", peer.get_connection().get_address(), start, end);
-                        let storage = self.blockchain.get_storage().lock()?;
-                        for i in start..=end {
-                            match storage.get_block_at_height(i) {
-                                Ok(block) => {
-                                    // TODO
-                                    //self.send_to_peer(peer.get_id(), PacketOut::Block(block))?;
-                                },
-                                Err(_) => { // shouldn't happens as we verify range before
-                                    debug!("Peer {} requested an invalid block height.", peer);
-                                    peer.increment_fail_count();
-                                }
-                            };
-                        }
+                let peer_id = peer.get_id();
+                let mut sync = self.sync.lock().await;
+                // check if it's a new propagated block, or if it's from a RequestSync
+                if sync.contains_peer(&peer_id) {
+                    if let Err(e) = sync.insert_block(block, &peer_id) {
+                        error!("Error while adding block to chain sync: {}", e);
+                        peer.increment_fail_count();
                     }
-                    PacketIn::Ping(ping) => {
-                        ping.update_peer(peer);
-                    },
-                },
-                Err(e) => match e {
-                    P2pError::Disconnected => {
-                        self.peer_list.lock()?.remove_peer(&peer);
-                        break;
-                    },
-                    P2pError::ErrorStd(e) if e.kind() == ErrorKind::WouldBlock => break,
-                    e => {
-                        error!("An error has occured while reading bytes from {}: {}", peer, e);
-                        if let Err(e) = peer.close() {
-                            error!("Error while removing {}: {}", peer.get_connection().get_address(), e);
-                        }
-                        break;
+                    self.try_sync_chain(&mut sync);
+                } else { // add immediately the block to chain as we are synced with
+                    if let Err(e) = self.blockchain.add_new_block(block, false) {
+                        error!("Error while adding new block: {}", e);
+                        peer.increment_fail_count();
                     }
                 }
-            };
-        }
+            },
+            PacketIn::RequestChain(request) => {
+                let last_request = peer.get_last_chain_sync();
+                let time = get_current_time();
+                peer.set_last_chain_sync(time);
+                if  last_request + CHAIN_SYNC_DELAY > time {
+                    return Err(P2pError::RequestSyncChainTooFast)
+                }
+
+                let our_height = self.blockchain.get_height();
+                let start = request.get_start_height();
+                let end = request.get_end_height();
+                if start > our_height || end > our_height || start > end || end - start > CHAIN_SYNC_MAX_BLOCK { // only 20 blocks max per request
+                    return Err(P2pError::InvalidHeightRange)
+                }
+
+                debug!("Peer {} request block from {} to {}", peer.get_connection().get_address(), start, end);
+                let storage = self.blockchain.get_storage().lock()?;
+                for i in start..=end {
+                    match storage.get_block_at_height(i) {
+                        Ok(block) => {
+                            // TODO
+                            //self.send_to_peer(peer.get_id(), PacketOut::Block(block))?;
+                        },
+                        Err(_) => { // shouldn't happens as we verify range before
+                            debug!("Peer {} requested an invalid block height.", peer);
+                            peer.increment_fail_count();
+                        }
+                    };
+                }
+            }
+            PacketIn::Ping(ping) => {
+                ping.update_peer(peer);
+            },
+        };
+        Ok(())
+    }
+
+    // Listen to incoming packets from a connection
+    async fn listen_connection(&self, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
+        match peer.get_connection().read_packet(buf, MAX_BLOCK_SIZE as u32).await {
+            Ok(packet) => self.handle_incoming_packet(peer, packet).await?,
+            Err(e) => match e {
+                P2pError::Disconnected => {
+                    // connection already catched the disconnection, just remove it from peer_list
+                    self.peer_list.lock().await.remove_peer(&peer);
+                },
+                P2pError::ErrorStd(e) if e.kind() == ErrorKind::WouldBlock => {},
+                e => {
+                    error!("An error has occured while reading bytes from {}: {}", peer, e);
+                    if let Err(e) = peer.close().await {
+                        error!("Error while removing {}: {}", peer.get_connection().get_address(), e);
+                    }
+                }
+            }
+        };
         Ok(())
     }
 
@@ -711,21 +693,6 @@ impl P2pServer {
             if let Err(e) = sync.to_chain(&self.blockchain) {
                 warn!("Error while adding sync chain to blockchain: {}", e);
             }
-        }
-    }
-
-    pub fn get_highest_height(&self) -> u64 {
-        match self.peer_list.lock() {
-            Ok(peers) => {
-                let mut max = 0;
-                for peer in peers.get_peers().values() {
-                    if peer.get_block_height() > max {
-                        max = peer.get_block_height();
-                    }
-                }
-                max
-            },
-            Err(_) => 0
         }
     }
 
@@ -741,28 +708,25 @@ impl P2pServer {
         self.peer_id
     }
 
-    pub fn accept_new_connections(&self) -> bool {
-        self.get_peer_count() < self.get_max_peers()
+    pub async fn accept_new_connections(&self) -> bool {
+        self.get_peer_count().await < self.get_max_peers()
     }
 
-    pub fn get_peer_count(&self) -> usize {
-        match self.peer_list.lock() {
-            Ok(peer_list) => peer_list.size(),
-            Err(_) => 0
-        }
+    pub async fn get_peer_count(&self) -> usize {
+        self.peer_list.lock().await.size()
     }
 
-    pub fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError> {
-        let peer_list = self.peer_list.lock()?;
+    pub async fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError> {
+        let peer_list = self.peer_list.lock().await;
         Ok(self.peer_id == *peer_id || peer_list.has_peer(peer_id))
     }
 
-    pub fn is_connected_to_addr(&self, peer_addr: &SocketAddr) -> Result<bool, P2pError> {
+    pub async fn is_connected_to_addr(&self, peer_addr: &SocketAddr) -> Result<bool, P2pError> {
         if *peer_addr == *self.get_bind_address() { // don't try to connect to ourself
             debug!("Trying to connect to ourself, ignoring.");
             return Ok(true)
         }
-        let peer_list = self.peer_list.lock()?;
+        let peer_list = self.peer_list.lock().await;
         for peer in peer_list.get_peers().values() {
             if *peer.get_connection().get_address() == *peer_addr {
                 return Ok(true)
@@ -780,10 +744,11 @@ impl P2pServer {
     }
 }
 
+/*
 impl Drop for P2pServer {
     fn drop(&mut self) {
         if let Err(e) = self.stop() {
             error!("Error on drop: {}", e);
         }
     }
-}
+}*/

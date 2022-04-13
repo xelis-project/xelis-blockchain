@@ -1,8 +1,9 @@
-use super::error::P2pError;
 use super::peer::Peer;
 use std::collections::HashMap;
-use std::sync::{Mutex, Arc};
+use tokio::sync::Mutex;
+use std::sync::Arc;
 use bytes::Bytes;
+use log::error;
 
 pub type SharedPeerList = Arc<Mutex<PeerList>>;
 
@@ -45,11 +46,13 @@ impl PeerList {
         self.peers.len()
     }
 
-    pub fn close_all(&mut self) -> Result<(), P2pError> {
-        for (_, peer) in self.peers.into_iter() { // TODO verify if peers is cleaned after that
-            peer.get_connection().close()?;
+    pub async fn close_all(&mut self) {
+        for (_, peer) in self.peers.iter() {
+            if let Err(e) = peer.get_connection().close().await {
+                error!("Error while trying to close peer {}: {}", peer.get_connection().get_address(), e);
+            }
         }
-        Ok(())
+        self.peers.clear();
     }
 
     pub fn broadcast(&self, peer_id: u64, bytes: Bytes) {
