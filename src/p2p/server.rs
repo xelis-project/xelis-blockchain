@@ -23,6 +23,7 @@ use async_recursion::async_recursion;
 use log::{info, warn, error, debug};
 use tokio::sync::{mpsc, Mutex};
 use tokio::io::AsyncWriteExt;
+use tokio::time::interval;
 use tokio::time::timeout;
 use std::net::SocketAddr;
 use num_bigint::BigUint;
@@ -429,15 +430,34 @@ impl P2pServer {
         connection.send_bytes(&writer.bytes()).await
     }
 
+    async fn send_ping(&self, connection: &Connection) -> Result<(), P2pError> {
+        let mut writer = Writer::new();        
+        let block_top_hash = self.blockchain.get_top_block_hash().await;
+        let block_height = self.blockchain.get_height();
+        PacketOut::Ping(&Ping::new(block_top_hash, block_height)).write(&mut writer);
+        connection.send_bytes(&writer.bytes()).await
+    }
+
+
     async fn handle_connection(&self, buf: &mut [u8], peer: Arc<Peer>) -> Result<(), P2pError> {
         let mut rx = peer.get_connection().get_rx().lock().await;
+        //let mut ping_interval = interval(Duration::from_secs(10));
         loop {
             tokio::select! {
+                /*_ = ping_interval.tick() => {
+                    debug!("Ping interval!");
+                    self.send_ping(peer.get_connection()).await?;
+                }*/
                 Err(e) = self.listen_connection(buf, &peer) => {
-                    peer.increment_fail_count();
-                    debug!("Error occured while listening {}: {}", peer, e);
+                    if let P2pError::Disconnected = e {
+                        peer.close().await?;
+                        break;
+                    } else {
+                        peer.increment_fail_count();
+                        debug!("Error occured while listening {}: {}", peer, e);
+                    }
                 }
-                Some(data) = rx.recv() => { // TODO recv don't return anything and block forever
+                Some(data) = rx.recv() => {
                     debug!("Data to send to {} received!", peer.get_connection().get_address());
                     peer.get_connection().send_bytes(&data).await?;
                 }
@@ -449,11 +469,9 @@ impl P2pServer {
                     error!("Error while trying to close connection {} due to high fail count: {}", peer.get_connection().get_address(), e);
                 }
             }
-
-            if peer.get_connection().is_closed() {
-                break;
-            }
         }
+        rx.close(); // clean shutdown
+
         Ok(())
     }
 
@@ -542,23 +560,8 @@ impl P2pServer {
 
     // Listen to incoming packets from a connection
     async fn listen_connection(&self, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
-        match peer.get_connection().read_packet(buf, MAX_BLOCK_SIZE as u32).await {
-            Ok(packet) => self.handle_incoming_packet(peer, packet).await?,
-            Err(e) => match e {
-                P2pError::Disconnected => {
-                    // connection already catched the disconnection, just remove it from peer_list
-                    self.peer_list.lock().await.remove_peer(&peer);
-                },
-                P2pError::ErrorStd(e) if e.kind() == ErrorKind::WouldBlock => {},
-                e => {
-                    error!("An error has occured while reading bytes from {}: {}", peer, e);
-                    if let Err(e) = peer.close().await {
-                        error!("Error while removing {}: {}", peer.get_connection().get_address(), e);
-                    }
-                }
-            }
-        };
-        Ok(())
+        let packet = peer.get_connection().read_packet(buf, MAX_BLOCK_SIZE as u32).await?;
+        self.handle_incoming_packet(peer, packet).await
     }
 
     // Called when a node is disconnected or when a new block is submitted

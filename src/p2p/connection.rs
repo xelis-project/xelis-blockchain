@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use std::convert::TryInto;
 use bytes::Bytes;
-use log::warn;
+use log::{debug, warn};
 
 pub type Tx = mpsc::UnboundedSender<Bytes>;
 pub type Rx = mpsc::UnboundedReceiver<Bytes>;
@@ -39,7 +39,6 @@ pub struct Connection {
 impl Connection {
     pub fn new(stream: TcpStream, addr: SocketAddr) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
-
         Self {
             state: State::Pending,
             stream: Mutex::new(stream),
@@ -53,10 +52,6 @@ impl Connection {
         }
     }
 
-    pub fn get_stream(&self) -> &Mutex<TcpStream> {
-        &self.stream
-    }
-
     pub fn get_tx(&self) -> &Mutex<Tx> {
         &self.tx
     }
@@ -67,20 +62,21 @@ impl Connection {
 
     pub async fn send_bytes(&self, buf: &[u8]) -> P2pResult<()> {
         let mut stream = self.stream.lock().await;
-        stream.write(buf).await?;
+        stream.write_all(buf).await?;
         self.bytes_out.fetch_add(buf.len(), Ordering::Relaxed);
         stream.flush().await?;
         Ok(())
     }
 
     pub async fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<PacketIn> {
-        let size = self.read_packet_size(buf).await?;
+        let mut stream = self.stream.lock().await;
+        let size = self.read_packet_size(&mut stream, buf).await?;
         if size == 0 || size > max_size {
             warn!("Received invalid packet size: {} bytes (max: {} bytes) from peer {}", size, max_size, self.get_address());
             return Err(P2pError::InvalidPacketSize)
         }
 
-        let bytes = self.read_all_bytes(buf, size).await?;
+        let bytes = self.read_all_bytes(&mut stream, buf, size).await?;
         let mut reader = Reader::new(&bytes);
         let packet = PacketIn::read(&mut reader)?;
         if reader.total_read() != bytes.len() {
@@ -90,8 +86,8 @@ impl Connection {
         Ok(packet)
     }
 
-    async fn read_packet_size(&self, buf: &mut [u8]) -> P2pResult<u32> {
-        let read = self.read_bytes(&mut buf[0..4]).await?;
+    async fn read_packet_size(&self, stream: &mut TcpStream, buf: &mut [u8]) -> P2pResult<u32> {
+        let read = self.read_bytes_from_stream(stream, &mut buf[0..4]).await?;
         if read != 4 {
             warn!("Received invalid packet size: expected to read 4 bytes but read only {} bytes from peer {}", read, self.get_address());
             return Err(P2pError::InvalidPacketSize)
@@ -101,17 +97,16 @@ impl Connection {
         Ok(size)
     }
 
-    async fn read_all_bytes(&self, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
+    async fn read_all_bytes(&self, stream: &mut TcpStream, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
         let buf_size = buf.len() as u32;
         let mut bytes = Vec::new();
-        let mut stream = self.stream.lock().await;
         while left > 0 {
             let max = if buf_size > left {
                 left as usize
             } else {
                 buf_size as usize
             };
-            let read = self.read_bytes_from_stream(&mut stream, &mut buf[0..max]).await?;
+            let read = self.read_bytes_from_stream(stream, &mut buf[0..max]).await?;
             left -= read as u32;
             bytes.extend(&buf[0..read]);
         }
@@ -125,7 +120,6 @@ impl Connection {
         let result = stream.read(buf).await?;
         match result {
             0 => {
-                self.close().await?;
                 Err(P2pError::Disconnected)
             }
             n => {
@@ -133,11 +127,6 @@ impl Connection {
                 Ok(n)
             }
         }
-    }
-
-    pub async fn read_bytes(&self, buf: &mut [u8]) -> P2pResult<usize> {
-        let mut stream = self.stream.lock().await;
-        self.read_bytes_from_stream(&mut stream, buf).await
     }
 
     pub async fn close(&self) -> P2pResult<()> {
@@ -149,10 +138,6 @@ impl Connection {
 
     pub fn set_state(&mut self, state: State) {
         self.state = state;
-    }
-
-    pub fn get_state(&self) -> &State {
-        &self.state
     }
 
     pub fn get_address(&self) -> &SocketAddr {

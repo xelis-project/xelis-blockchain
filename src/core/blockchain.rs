@@ -161,8 +161,8 @@ impl Blockchain {
         &self.storage
     }
 
-    pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
-        Ok(self.storage.lock().await.get_top_block_hash().clone())
+    pub async fn get_top_block_hash(&self) -> Hash {
+        self.storage.lock().await.get_top_block_hash().clone()
     }
 
     pub async fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
@@ -191,7 +191,7 @@ impl Blockchain {
             fee_reward: 0,
         }), address);
         let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>();
-        let mut block = Block::new(self.get_height() + 1, get_current_time(), self.get_top_block_hash().await?, extra_nonce, coinbase_tx, Vec::new());
+        let mut block = Block::new(self.get_height() + 1, get_current_time(), self.get_top_block_hash().await, extra_nonce, coinbase_tx, Vec::new());
         let mut total_fee = 0;
         let mempool = self.mempool.lock().await;
         let txs: &Vec<SortedTx> = mempool.get_sorted_txs();

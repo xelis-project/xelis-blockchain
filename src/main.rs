@@ -121,6 +121,12 @@ async fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<
                         info!("Blockchain is valid");
                     }
                 },
+                "mine" => {
+                    let key = blockchain.get_dev_address().clone();
+                    if let Err(e) = blockchain.mine_block(&key).await {
+                        error!("Error while mining block: {}", e);
+                    }
+                },
                 "peer_list" => {
                     match blockchain.get_p2p().lock().await.as_ref() {
                         Some(p2p) => {
