@@ -29,6 +29,7 @@ pub struct Connection {
     stream: Mutex<TcpStream>, // Stream for read & write
     addr: SocketAddr, // TCP Address
     tx: Mutex<Tx>, // Tx to send bytes
+    rx: Mutex<Rx>, // Rx to read bytes to send
     bytes_in: AtomicUsize, // total bytes read
     bytes_out: AtomicUsize, // total bytes sent
     connected_on: u64,
@@ -36,12 +37,15 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream, addr: SocketAddr, tx: Tx) -> Self {
+    pub fn new(stream: TcpStream, addr: SocketAddr) -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+
         Self {
             state: State::Pending,
             stream: Mutex::new(stream),
             addr,
             tx: Mutex::new(tx),
+            rx: Mutex::new(rx),
             connected_on: get_current_time(),
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
@@ -55,6 +59,10 @@ impl Connection {
 
     pub fn get_tx(&self) -> &Mutex<Tx> {
         &self.tx
+    }
+
+    pub fn get_rx(&self) -> &Mutex<Rx> {
+        &self.rx
     }
 
     pub async fn send_bytes(&self, buf: &[u8]) -> P2pResult<()> {

@@ -296,21 +296,16 @@ impl P2pServer {
                 continue;
             }
 
-            let (connection, rx) = self.create_connection(addr.clone(), stream);
+            let connection = Connection::new(stream, addr.clone());
             let zelf = Arc::clone(self);
             tokio::spawn(async move {
-                if let Err(e) = zelf.handle_new_connection(connection, rx, false, false).await {
+                if let Err(e) = zelf.handle_new_connection(connection, false, false).await {
                     debug!("Error on {}: {}", addr, e);
                 }
             });
         }
     }
 
-    fn create_connection(&self, addr: SocketAddr, stream: TcpStream) -> (Connection, Rx) {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let connection = Connection::new(stream, addr, tx);
-        (connection, rx)
-    }
 
     // Verify handshake send by a new connection
     // based on data size, network ID, peers address validity
@@ -370,7 +365,7 @@ impl P2pServer {
     // this function handle all new connections
     // A new connection have to send an Handshake
     // if the handshake is valid, we accept it & register it on server
-    async fn handle_new_connection(self: Arc<Self>,mut connection: Connection, rx: Rx, out: bool, priority: bool) -> Result<(), P2pError> {
+    async fn handle_new_connection(self: Arc<Self>,mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
         debug!("New connection: {}", connection);
         let mut buf = [0u8; 1024];
         let handshake: Handshake = match timeout(Duration::from_millis(300), connection.read_packet(&mut buf, 1024)).await?? {
@@ -402,7 +397,7 @@ impl P2pServer {
             }
         }
 
-        self.handle_connection(&mut buf, peer, rx).await
+        self.handle_connection(&mut buf, peer).await
     }
 
     // Connect to a specific peer address
@@ -422,9 +417,9 @@ impl P2pServer {
             return Err(P2pError::PeerAlreadyConnected(format!("{}", addr)));
         }
         let stream = timeout(Duration::from_millis(800), TcpStream::connect(&addr)).await??; // allow maximum 800ms of latency
-        let (connection, rx) = self.create_connection(addr, stream);
+        let connection = Connection::new(stream, addr);
         self.send_handshake(&connection).await?;
-        self.handle_new_connection(connection, rx, true, priority).await
+        self.handle_new_connection(connection, true, priority).await
     }
 
     async fn send_handshake(&self, connection: &Connection) -> Result<(), P2pError> {
@@ -434,14 +429,15 @@ impl P2pServer {
         connection.send_bytes(&writer.bytes()).await
     }
 
-    async fn handle_connection(&self, buf: &mut [u8], peer: Arc<Peer>, mut rx: Rx) -> Result<(), P2pError> {
+    async fn handle_connection(&self, buf: &mut [u8], peer: Arc<Peer>) -> Result<(), P2pError> {
+        let mut rx = peer.get_connection().get_rx().lock().await;
         loop {
             tokio::select! {
                 Err(e) = self.listen_connection(buf, &peer) => {
                     peer.increment_fail_count();
                     debug!("Error occured while listening {}: {}", peer, e);
                 }
-                Some(data) = rx.recv() => {
+                Some(data) = rx.recv() => { // TODO recv don't return anything and block forever
                     debug!("Data to send to {} received!", peer.get_connection().get_address());
                     peer.get_connection().send_bytes(&data).await?;
                 }
@@ -466,7 +462,8 @@ impl P2pServer {
             PacketIn::Handshake(_) => {
                 return Err(P2pError::InvalidPacket)
             },
-            PacketIn::Transaction(tx) => { // TODO broadcast TX to our peers
+            PacketIn::Transaction(tx) => {
+                let packet = Bytes::from(PacketOut::Transaction(&tx).to_bytes());
                 if let Err(e) = self.blockchain.add_tx_to_mempool(tx, false).await {
                     match e {
                         BlockchainError::TxAlreadyInMempool(_) => {},
@@ -475,6 +472,9 @@ impl P2pServer {
                             peer.increment_fail_count();
                         }
                     };
+                } else {
+                    let peer_list = self.peer_list.lock().await;
+                    peer_list.broadcast_except(peer.get_id(), packet).await; // broadcast tx to our peers
                 }
             },
             PacketIn::Block(block) => {
@@ -494,9 +494,13 @@ impl P2pServer {
                     }
                     self.try_sync_chain(&mut sync);
                 } else { // add immediately the block to chain as we are synced with
+                    let packet = Bytes::from(PacketOut::Block(&block).to_bytes());
                     if let Err(e) = self.blockchain.add_new_block(block, false).await {
                         error!("Error while adding new block: {}", e);
                         peer.increment_fail_count();
+                    } else { // broadcast new block to peers
+                        let peer_list = self.peer_list.lock().await;
+                        peer_list.broadcast_except(peer.get_id(), packet).await;
                     }
                 }
             },
@@ -583,7 +587,8 @@ impl P2pServer {
     }
 
     pub async fn get_peer_count(&self) -> usize {
-        self.peer_list.lock().await.size()
+        let peer_list = self.peer_list.lock().await;
+        peer_list.size()
     }
 
     pub async fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError> {

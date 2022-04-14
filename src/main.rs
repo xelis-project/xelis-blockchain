@@ -98,10 +98,11 @@ async fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<
     let mut display_peers = 0;
     loop {
         let height = blockchain.get_height();
-        let peers_count = 0; match blockchain.get_p2p().lock().await.as_ref() {
+        let peers_count = match blockchain.get_p2p().lock().await.as_ref() {
             Some(p2p) => p2p.get_peer_count().await,
             None => 0
         };
+
         if display_height != height || display_peers != peers_count {
             display_height = height;
             display_peers = peers_count;
