@@ -438,7 +438,6 @@ impl P2pServer {
         connection.send_bytes(&writer.bytes()).await
     }
 
-
     async fn handle_connection(&self, buf: &mut [u8], peer: Arc<Peer>) -> Result<(), P2pError> {
         let mut rx = peer.get_connection().get_rx().lock().await;
         //let mut ping_interval = interval(Duration::from_secs(10));
@@ -448,18 +447,26 @@ impl P2pServer {
                     debug!("Ping interval!");
                     self.send_ping(peer.get_connection()).await?;
                 }*/
-                Err(e) = self.listen_connection(buf, &peer) => {
-                    if let P2pError::Disconnected = e {
-                        peer.close().await?;
-                        break;
-                    } else {
-                        peer.increment_fail_count();
-                        debug!("Error occured while listening {}: {}", peer, e);
+                res = self.listen_connection(buf, &peer) => {
+                    match res {
+                        Ok(_) => {
+                            debug!("received a valid packet from peer {}", peer.get_connection().get_address());
+                        }
+                        Err(e) => {
+                            if let P2pError::Disconnected = e {
+                                peer.close().await?;
+                                break;
+                            } else {
+                                peer.increment_fail_count();
+                                debug!("Error occured while listening {}: {}", peer, e);
+                            }
+                        }
                     }
                 }
                 Some(data) = rx.recv() => {
                     debug!("Data to send to {} received!", peer.get_connection().get_address());
                     peer.get_connection().send_bytes(&data).await?;
+                    debug!("data sucessfully sent!");
                 }
             }
 
@@ -517,6 +524,7 @@ impl P2pServer {
                         error!("Error while adding new block: {}", e);
                         peer.increment_fail_count();
                     } else { // broadcast new block to peers
+                        debug!("broadcast received block to peers!");
                         let peer_list = self.peer_list.lock().await;
                         peer_list.broadcast_except(peer.get_id(), packet).await;
                     }
