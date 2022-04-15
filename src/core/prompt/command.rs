@@ -71,7 +71,6 @@ impl Command {
         &self.optional_arg
     }
 
-    // TODO Refactor
     pub fn get_usage(&self) -> String {
         let required_args: Vec<String> = self.get_required_args().iter().map(|arg| format!("<{}>", arg.get_name())).collect();
         let optional_arg: String = match self.get_optional_arg() {

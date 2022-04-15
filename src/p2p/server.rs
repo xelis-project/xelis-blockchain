@@ -11,7 +11,7 @@ use crate::globals::get_current_time;
 use crate::core::writer::Writer;
 use super::peer_list::{SharedPeerList, PeerList};
 use super::packet::request_chain::RequestChain;
-use super::connection::{Rx, Tx, State, Connection};
+use super::connection::{State, Connection};
 use super::packet::{PacketIn, PacketOut};
 use super::packet::handshake::Handshake;
 use super::packet::ping::Ping;
@@ -19,16 +19,14 @@ use super::error::P2pError;
 use super::peer::Peer;
 use tokio::net::{TcpListener, TcpStream};
 use std::collections::{HashMap, HashSet};
-use async_recursion::async_recursion;
 use log::{info, warn, error, debug};
-use tokio::sync::{mpsc, Mutex};
 use tokio::io::AsyncWriteExt;
 use tokio::time::interval;
 use tokio::time::timeout;
 use std::net::SocketAddr;
 use num_bigint::BigUint;
 use std::time::Duration;
-use std::io::ErrorKind;
+use tokio::sync::Mutex;
 use num_traits::Zero;
 use std::sync::Arc;
 use bytes::Bytes;
@@ -431,7 +429,7 @@ impl P2pServer {
 
     // send a ping packet to specific peer every 10s
     fn loop_ping(self: Arc<Self>, peer: Arc<Peer>) {
-        let mut ping_interval = interval(Duration::from_secs(10));
+        let mut ping_interval = interval(Duration::from_secs(P2P_PING_DELAY));
         tokio::spawn(async move {
             loop {
                 ping_interval.tick().await;
