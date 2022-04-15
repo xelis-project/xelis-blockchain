@@ -447,19 +447,10 @@ impl P2pServer {
                     self.send_ping(peer.get_connection()).await?;
                 }*/
                 res = self.listen_connection(buf, &peer) => {
-                    match res {
-                        Ok(_) => {
-                            debug!("received a valid packet from peer {}", peer.get_connection().get_address());
-                        }
-                        Err(e) => {
-                            if let P2pError::Disconnected = e {
-                                peer.close().await?;
-                                break;
-                            } else {
-                                peer.increment_fail_count();
-                                debug!("Error occured while listening {}: {}", peer, e);
-                            }
-                        }
+                    if let Err(e) = res { // close on any error
+                        debug!("Error while reading packet from peer {}: {}", peer.get_connection().get_address(), e);
+                        peer.close().await?;
+                        break;
                     }
                 }
                 Some(data) = rx.recv() => {
@@ -569,7 +560,11 @@ impl P2pServer {
     // Listen to incoming packets from a connection
     async fn listen_connection(&self, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
         let packet = peer.get_connection().read_packet(buf, MAX_BLOCK_SIZE as u32).await?;
-        self.handle_incoming_packet(peer, packet).await
+        if let Err(e) = self.handle_incoming_packet(peer, packet).await {
+            debug!("Error occured while handling incoming packet: {}", e);
+            peer.increment_fail_count();
+        }
+        Ok(())
     }
 
     // Called when a node is disconnected or when a new block is submitted
