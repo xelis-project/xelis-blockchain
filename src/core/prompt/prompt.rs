@@ -1,11 +1,13 @@
-use std::io::{Write, stdin, stdout, Error as IOError};
-use log::{debug, error, Level};
+use super::command::CommandManager;
+use std::io::{Write, stdout, Error as IOError};
+use log::{debug, info, error, Level};
 use fern::colors::{ColoredLevelConfig, Color};
 use std::sync::{Arc, Mutex};
 use std::sync::PoisonError;
 use thiserror::Error;
-use std::sync::mpsc::{Sender, Receiver, TryRecvError, channel};
-use std::thread;
+use tokio::io::stdin;
+use tokio::io::AsyncReadExt;
+
 
 #[derive(Error, Debug)]
 pub enum PromptError {
@@ -13,8 +15,6 @@ pub enum PromptError {
     FernError(#[from] fern::InitError),
     #[error(transparent)]
     IOError(#[from] IOError),
-    #[error(transparent)]
-    ReaderError(#[from] TryRecvError),
     #[error("Poison Error: {}", _0)]
     PoisonError(String),
 }
@@ -27,43 +27,25 @@ impl<T> From<PoisonError<T>> for PromptError {
 
 // TODO build & use history using arrow keys & create a command manager
 pub struct Prompt {
-    receiver: Mutex<Receiver<String>>,
     prompt: Mutex<Option<String>>,
-    history: Mutex<Vec<String>>
+    history: Mutex<Vec<String>>,
 }
 
 impl Prompt {
-    pub fn new(debug: bool, disable_file_logging: bool) -> Result<Arc<Self>, PromptError>  {
-        let (sender, receiver) = channel();
+    pub fn new(debug: bool, disable_file_logging: bool, command_manager: CommandManager) -> Result<Arc<Self>, PromptError>  {
         let v = Self {
-            receiver: Mutex::new(receiver),
             prompt: Mutex::new(None),
-            history: Mutex::new(Vec::new())
+            history: Mutex::new(Vec::new()),
         };
-        v.start_thread(sender);
         let prompt = Arc::new(v);
         prompt.clone().setup_logger(debug, disable_file_logging)?;
-        Ok(prompt)
-    }
-
-    fn start_thread(&self, sender: Sender<String>) {
-        debug!("Starting prompt thread");
-        thread::spawn(move || {
-            loop {
-                let mut input = String::new();
-                if let Err(e) = stdin().read_line(&mut input) {
-                    error!("Error while reading input: {}", e);
-                    return;
-                }
-                let input = input.trim().to_string();
-                if input.len() > 0 {
-                    if let Err(e) = sender.send(input) {
-                        error!("Error while sending input: {}", e);
-                        return;
-                    }
-                }
+        let zelf = Arc::clone(&prompt);
+        tokio::spawn(async move {
+            if let Err(e) = zelf.handle_commands(command_manager).await {
+                error!("Error while handling commands: {}", e);
             }
         });
+        Ok(prompt)
     }
 
     pub fn update_prompt(&self, prompt: Option<String>) -> Result<(), PromptError> {
@@ -71,15 +53,27 @@ impl Prompt {
         self.show()
     }
 
-    pub fn read_command(&self) -> Result<Option<String>, PromptError> {
-        match self.receiver.lock()?.try_recv() {
-            Ok(cmd) => {
-                self.history.lock()?.push(cmd.clone());
-                Ok(Some(cmd))
-            },
-            Err(e) if e == TryRecvError::Empty => Ok(None),
-            Err(e) => return Err(PromptError::ReaderError(e))
+    async fn handle_commands(&self, command_manager: CommandManager) -> Result<(), PromptError> {
+        let mut stdin = stdin();
+        let mut buf: [u8; 256] = [0; 256];
+        loop {
+            let n = stdin.read(&mut buf).await?;
+            if n == 0 {
+                info!("read 0 bytes, exiting");
+                break;
+            }
+
+            if n > 1 { // don't waste time on empty cmds
+                debug!("read {} bytes: {:?}", n, &buf[0..n]);
+                let cmd = String::from_utf8_lossy(&buf[0..n-1]); // - 1 is for enter key
+                if let Err(e) = command_manager.handle_command(cmd.to_string()) {
+                    error!("Error on command: {}", e);
+                }
+            } else {
+                self.show()?;
+            }
         }
+        Ok(())
     }
 
     pub fn show(&self) -> Result<(), PromptError> {

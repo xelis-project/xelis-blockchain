@@ -429,23 +429,30 @@ impl P2pServer {
         connection.send_bytes(&writer.bytes()).await
     }
 
-    async fn send_ping(&self, connection: &Connection) -> Result<(), P2pError> {
-        let mut writer = Writer::new();        
-        let block_top_hash = self.blockchain.get_top_block_hash().await;
-        let block_height = self.blockchain.get_height();
-        PacketOut::Ping(&Ping::new(block_top_hash, block_height)).write(&mut writer);
-        connection.send_bytes(&writer.bytes()).await
+    // send a ping packet to specific peer every 10s
+    fn loop_ping(self: Arc<Self>, peer: Arc<Peer>) {
+        let mut ping_interval = interval(Duration::from_secs(10));
+        tokio::spawn(async move {
+            loop {
+                ping_interval.tick().await;
+                let block_top_hash = self.blockchain.get_top_block_hash().await;
+                let block_height = self.blockchain.get_height();
+                let ping = &Ping::new(block_top_hash, block_height);
+                let packet = PacketOut::Ping(ping);
+                debug!("Sending ping packet to peer: {}", peer.get_connection().get_address());
+                if let Err(e) = peer.send_packet(packet).await {
+                    debug!("Error occured on ping: {}", e);
+                    break
+                }
+            }
+        });
     }
 
-    async fn handle_connection(&self, buf: &mut [u8], peer: Arc<Peer>) -> Result<(), P2pError> {
+    async fn handle_connection(self: Arc<Self>, buf: &mut [u8], peer: Arc<Peer>) -> Result<(), P2pError> {
         let mut rx = peer.get_connection().get_rx().lock().await;
-        //let mut ping_interval = interval(Duration::from_secs(10));
+        Arc::clone(&self).loop_ping(peer.clone());
         loop {
             tokio::select! {
-                /*_ = ping_interval.tick() => {
-                    debug!("Ping interval!");
-                    self.send_ping(peer.get_connection()).await?;
-                }*/
                 res = self.listen_connection(buf, &peer) => {
                     if let Err(e) = res { // close on any error
                         debug!("Error while reading packet from peer {}: {}", peer.get_connection().get_address(), e);

@@ -22,7 +22,7 @@ log = "0.4"
 fern = { version = "0.6", features = ["colored"] }
 chrono = "0.4.19"
 argh = "0.1.7"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "time", "macros", "sync", "net"] }
 bytes = "1"
 async-recursion = "1.0.0"
 

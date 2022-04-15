@@ -6,10 +6,13 @@ mod core;
 mod p2p;
 
 use crate::core::blockchain::Blockchain;
-use crate::core::prompt::{Prompt, PromptError};
+use crate::core::prompt::command::CommandManager;
+use crate::core::prompt::prompt::{Prompt, PromptError};
+use crate::core::prompt::argument::*;
+use crate::core::prompt::command::{Command, CommandError};
 use crate::config::VERSION;
 use fern::colors::Color;
-use log::{debug, info, error};
+use log::{info, error};
 use std::thread;
 use argh::FromArgs;
 use std::time::Duration;
@@ -38,7 +41,8 @@ struct NodeConfig {
 #[tokio::main]
 async fn main() {
     let config: NodeConfig = argh::from_env();
-    let prompt = match Prompt::new(config.debug, config.disable_file_logging) {
+    let command_manager = create_command_manager();
+    let prompt = match Prompt::new(config.debug, config.disable_file_logging, command_manager) {
         Ok(prompt) => prompt,
         Err(e) => {
             println!("Error while initializing prompt: {}", e);
@@ -92,6 +96,27 @@ fn build_prompt_message(height: u64, peers_count: usize) -> String {
     )
 }
 
+fn help(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    if args.has_argument("command") {
+        let arg_value = args.get_value("command")?.to_string_value()?;
+        let cmd = manager.get_command(&arg_value).ok_or(CommandError::CommandNotFound)?;
+        manager.message(&format!("Usage: {}", cmd.get_usage()));
+    } else {
+        manager.message("Available commands:");
+        for cmd in manager.get_commands() {
+            manager.message(&format!("- {}: {}", cmd.get_name(), cmd.get_description()));
+        }
+    }
+    Ok(())
+}
+
+
+fn create_command_manager() -> CommandManager {
+    let mut manager = CommandManager::new();
+    manager.add_command(Command::new("help", "Show this help", Some(Arg::new("command", ArgType::String)), help));
+    manager
+}
+
 async fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
     prompt.update_prompt(Some(build_prompt_message(0, 0)))?;
     let mut display_height = 0;
@@ -109,7 +134,7 @@ async fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<
             prompt.update_prompt(Some(build_prompt_message(height, peers_count)))?;
         }
 
-        if let Some(cmd) = prompt.read_command()? {
+        /*if let Some(cmd) = prompt.read_command()? {
             println!();
             debug!("calling command '{}'", cmd);
             match cmd.as_ref() {
@@ -141,7 +166,7 @@ async fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<
                 }
                 cmd => info!("You said: {}", cmd)
             };
-        }
+        }*/
         thread::sleep(Duration::from_millis(100)); // update every 100ms
     }
 

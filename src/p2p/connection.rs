@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use std::convert::TryInto;
 use bytes::Bytes;
-use log::{debug, warn};
+use log::warn;
 
 pub type Tx = mpsc::UnboundedSender<Bytes>;
 pub type Rx = mpsc::UnboundedReceiver<Bytes>;
