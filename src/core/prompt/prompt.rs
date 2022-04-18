@@ -1,16 +1,15 @@
 use super::command::CommandManager;
 use std::io::{Write, stdout, Error as IOError};
-use log::{debug, info, error, Level};
 use fern::colors::{ColoredLevelConfig, Color};
+use log::{debug, info, error, Level};
 use std::sync::{Arc, Mutex};
 use std::sync::PoisonError;
 use thiserror::Error;
-use tokio::io::stdin;
-use tokio::io::AsyncReadExt;
-
 
 #[derive(Error, Debug)]
 pub enum PromptError {
+    #[error("End of stream")]
+    EndOfStream,
     #[error(transparent)]
     FernError(#[from] fern::InitError),
     #[error(transparent)]
@@ -25,53 +24,40 @@ impl<T> From<PoisonError<T>> for PromptError {
     }
 }
 
-// TODO build & use history using arrow keys & create a command manager
 pub struct Prompt {
     prompt: Mutex<Option<String>>,
-    history: Mutex<Vec<String>>,
+    command_manager: CommandManager
 }
 
 impl Prompt {
     pub fn new(debug: bool, disable_file_logging: bool, command_manager: CommandManager) -> Result<Arc<Self>, PromptError>  {
         let v = Self {
             prompt: Mutex::new(None),
-            history: Mutex::new(Vec::new()),
+            command_manager
         };
         let prompt = Arc::new(v);
-        prompt.clone().setup_logger(debug, disable_file_logging)?;
-        let zelf = Arc::clone(&prompt);
-        tokio::spawn(async move {
-            if let Err(e) = zelf.handle_commands(command_manager).await {
-                error!("Error while handling commands: {}", e);
-            }
-        });
+        Arc::clone(&prompt).setup_logger(debug, disable_file_logging)?;
         Ok(prompt)
     }
 
-    pub fn update_prompt(&self, prompt: Option<String>) -> Result<(), PromptError> {
-        *self.prompt.lock()? = prompt;
+    pub fn update_prompt(&self, prompt: String) -> Result<(), PromptError> {
+        self.prompt.lock()?.replace(prompt);
         self.show()
     }
 
-    async fn handle_commands(&self, command_manager: CommandManager) -> Result<(), PromptError> {
-        let mut stdin = stdin();
-        let mut buf: [u8; 256] = [0; 256];
-        loop {
-            let n = stdin.read(&mut buf).await?;
-            if n == 0 {
-                info!("read 0 bytes, exiting");
-                break;
-            }
+    pub fn handle_commands(&self, n: usize, buf: &mut [u8]) -> Result<(), PromptError> {
+        if n == 0 {
+            return Err(PromptError::EndOfStream);
+        }
 
-            if n > 1 { // don't waste time on empty cmds
-                debug!("read {} bytes: {:?}", n, &buf[0..n]);
-                let cmd = String::from_utf8_lossy(&buf[0..n-1]); // - 1 is for enter key
-                if let Err(e) = command_manager.handle_command(cmd.to_string()) {
-                    error!("Error on command: {}", e);
-                }
-            } else {
-                self.show()?;
+        if n > 1 { // don't waste time on empty cmds
+            debug!("read {} bytes: {:?}", n, &buf[0..n]);
+            let cmd = String::from_utf8_lossy(&buf[0..n-1]); // - 1 is for enter key
+            if let Err(e) = self.command_manager.handle_command(cmd.to_string()) {
+                error!("Error on command: {}", e);
             }
+        } else {
+            self.show()?;
         }
         Ok(())
     }

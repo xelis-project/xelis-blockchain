@@ -5,18 +5,20 @@ mod wallet;
 mod core;
 mod p2p;
 
-use crate::core::blockchain::Blockchain;
-use crate::core::prompt::command::CommandManager;
-use crate::core::prompt::prompt::{Prompt, PromptError};
-use crate::core::prompt::argument::*;
 use crate::core::prompt::command::{Command, CommandError};
+use crate::core::prompt::prompt::{Prompt, PromptError};
+use crate::core::prompt::command::CommandManager;
+use crate::core::blockchain::Blockchain;
+use crate::core::prompt::argument::*;
 use crate::config::VERSION;
+use tokio::io::{AsyncReadExt, stdin};
+use tokio::time::interval;
+use std::time::Duration;
 use fern::colors::Color;
 use log::{info, error};
-use std::thread;
 use argh::FromArgs;
-use std::time::Duration;
 use std::sync::Arc;
+use std::thread;
 
 #[derive(FromArgs)]
 /// Xelis Blockchain daemon
@@ -71,8 +73,40 @@ async fn main() {
         });
     }
 
-    if let Err(e) = run_prompt(prompt, blockchain).await { // block main thread
+    if let Err(e) = run_prompt(prompt, blockchain).await {
         error!("Error while running prompt: {}", e);
+    }
+}
+
+async fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
+    let mut interval = interval(Duration::from_millis(100));
+    let mut display_height = 0;
+    let mut display_peers = 0;
+    prompt.update_prompt(build_prompt_message(display_height, display_peers))?;
+
+    let mut stdin = stdin();
+    let mut buf: [u8; 256] = [0; 256];
+    loop {
+        tokio::select! {
+            res = stdin.read(&mut buf) => {
+                let n = res?;
+                prompt.handle_commands(n, &mut buf)?;
+            },
+            _ = interval.tick() => { // TODO best way would be to wrap this in a fn and call it from the prompt
+                let height = blockchain.get_height();
+                let peers_count = match blockchain.get_p2p().lock().await.as_ref() {
+                    Some(p2p) => p2p.get_peer_count().await,
+                    None => 0
+                };
+
+                if display_height != height || display_peers != peers_count {
+                    display_height = height;
+                    display_peers = peers_count;
+                    error!("{} {}", height, peers_count);
+                    prompt.update_prompt(build_prompt_message(height, peers_count))?;
+                }
+            }
+        }
     }
 }
 
@@ -109,66 +143,9 @@ fn help(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), Comma
     }
     Ok(())
 }
-
-
+ 
 fn create_command_manager() -> CommandManager {
     let mut manager = CommandManager::new();
     manager.add_command(Command::new("help", "Show this help", Some(Arg::new("command", ArgType::String)), help));
     manager
-}
-
-async fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
-    prompt.update_prompt(Some(build_prompt_message(0, 0)))?;
-    let mut display_height = 0;
-    let mut display_peers = 0;
-    loop {
-        let height = blockchain.get_height();
-        let peers_count = match blockchain.get_p2p().lock().await.as_ref() {
-            Some(p2p) => p2p.get_peer_count().await,
-            None => 0
-        };
-
-        if display_height != height || display_peers != peers_count {
-            display_height = height;
-            display_peers = peers_count;
-            prompt.update_prompt(Some(build_prompt_message(height, peers_count)))?;
-        }
-
-        /*if let Some(cmd) = prompt.read_command()? {
-            println!();
-            debug!("calling command '{}'", cmd);
-            match cmd.as_ref() {
-                "exit" => break,
-                "validity" => {
-                    if let Err(e) = blockchain.check_validity().await {
-                        error!("Blockchain is not valid: {}", e);
-                    } else {
-                        info!("Blockchain is valid");
-                    }
-                },
-                "mine" => {
-                    let key = blockchain.get_dev_address().clone();
-                    if let Err(e) = blockchain.mine_block(&key).await {
-                        error!("Error while mining block: {}", e);
-                    }
-                },
-                "peer_list" => {
-                    match blockchain.get_p2p().lock().await.as_ref() {
-                        Some(p2p) => {
-                            p2p.get_peer_list().lock().await.get_peers().iter().for_each(|(_,peer)| {
-                                info!("{}", peer);
-                            });
-                        }
-                        None => {
-                            error!("No p2p instance found");
-                        }
-                    };
-                }
-                cmd => info!("You said: {}", cmd)
-            };
-        }*/
-        thread::sleep(Duration::from_millis(100)); // update every 100ms
-    }
-
-    Ok(())
 }
