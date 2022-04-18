@@ -1,9 +1,13 @@
 use super::command::CommandManager;
+use std::future::Future;
 use std::io::{Write, stdout, Error as IOError};
 use fern::colors::{ColoredLevelConfig, Color};
-use log::{debug, info, error, Level};
+use tokio::io::{AsyncReadExt, stdin};
+use log::{debug, error, Level};
 use std::sync::{Arc, Mutex};
 use std::sync::PoisonError;
+use tokio::time::interval;
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -40,26 +44,45 @@ impl Prompt {
         Ok(prompt)
     }
 
-    pub fn update_prompt(&self, prompt: String) -> Result<(), PromptError> {
-        self.prompt.lock()?.replace(prompt);
-        self.show()
-    }
-
-    pub fn handle_commands(&self, n: usize, buf: &mut [u8]) -> Result<(), PromptError> {
-        if n == 0 {
-            return Err(PromptError::EndOfStream);
-        }
-
-        if n > 1 { // don't waste time on empty cmds
-            debug!("read {} bytes: {:?}", n, &buf[0..n]);
-            let cmd = String::from_utf8_lossy(&buf[0..n-1]); // - 1 is for enter key
-            if let Err(e) = self.command_manager.handle_command(cmd.to_string()) {
-                error!("Error on command: {}", e);
-            }
-        } else {
+    pub fn update_prompt(&self, msg: String) -> Result<(), PromptError> {
+        let mut prompt = self.prompt.lock()?;
+        let old = prompt.replace(msg);
+        if *prompt != old {
+            drop(prompt);
             self.show()?;
         }
         Ok(())
+    }
+
+    pub async fn handle_commands<Fut>(&self, fn_message: &dyn Fn() -> Fut) -> Result<(), PromptError>
+    where Fut: Future<Output = String> {
+        let mut interval = interval(Duration::from_millis(100));
+        let mut stdin = stdin();
+        let mut buf = [0u8; 256]; // alow up to 256 characters
+        loop {
+            tokio::select! {
+                res = stdin.read(&mut buf) => {
+                    let n = res?;
+                    if n == 0 {
+                        return Err(PromptError::EndOfStream);
+                    }
+
+                    if n > 1 { // don't waste time on empty cmds
+                        debug!("read {} bytes: {:?}", n, &buf[0..n]);
+                        let cmd = String::from_utf8_lossy(&buf[0..n-1]); // - 1 is for enter key
+                        if let Err(e) = self.command_manager.handle_command(cmd.to_string()) {
+                            error!("Error on command: {}", e);
+                        }
+                    } else {
+                        self.show()?;
+                    }
+                }
+                _ = interval.tick() => {
+                    let prompt = (fn_message)().await;
+                    self.update_prompt(prompt)?;
+                }
+            }
+        }
     }
 
     pub fn show(&self) -> Result<(), PromptError> {

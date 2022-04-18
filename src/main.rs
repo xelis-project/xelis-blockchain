@@ -18,7 +18,6 @@ use fern::colors::Color;
 use log::{info, error};
 use argh::FromArgs;
 use std::sync::Arc;
-use std::thread;
 
 #[derive(FromArgs)]
 /// Xelis Blockchain daemon
@@ -79,35 +78,17 @@ async fn main() {
 }
 
 async fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
-    let mut interval = interval(Duration::from_millis(100));
-    let mut display_height = 0;
-    let mut display_peers = 0;
-    prompt.update_prompt(build_prompt_message(display_height, display_peers))?;
+let closure = || async {
+        let height = blockchain.get_height();
+        let peers = match blockchain.get_p2p().lock().await.as_ref() {
+            Some(p2p) => p2p.get_peer_count().await,
+            None => 0
+        };
+        build_prompt_message(height, peers)
+    };
 
-    let mut stdin = stdin();
-    let mut buf: [u8; 256] = [0; 256];
-    loop {
-        tokio::select! {
-            res = stdin.read(&mut buf) => {
-                let n = res?;
-                prompt.handle_commands(n, &mut buf)?;
-            },
-            _ = interval.tick() => { // TODO best way would be to wrap this in a fn and call it from the prompt
-                let height = blockchain.get_height();
-                let peers_count = match blockchain.get_p2p().lock().await.as_ref() {
-                    Some(p2p) => p2p.get_peer_count().await,
-                    None => 0
-                };
-
-                if display_height != height || display_peers != peers_count {
-                    display_height = height;
-                    display_peers = peers_count;
-                    error!("{} {}", height, peers_count);
-                    prompt.update_prompt(build_prompt_message(height, peers_count))?;
-                }
-            }
-        }
-    }
+    prompt.handle_commands(&closure).await?;
+    Ok(())
 }
 
 fn build_prompt_message(height: u64, peers_count: usize) -> String {
