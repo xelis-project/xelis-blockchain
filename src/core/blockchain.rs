@@ -314,6 +314,10 @@ impl Blockchain {
 
     pub async fn add_new_block(&self, block: CompleteBlock, broadcast: bool) -> Result<(), BlockchainError> {
         let mut storage = self.storage.lock().await;
+        self.add_new_block_for_storage(&mut storage, block, broadcast).await
+    }
+
+    pub async fn add_new_block_for_storage(&self, storage: &mut Storage, block: CompleteBlock, broadcast: bool) -> Result<(), BlockchainError> {
         let current_height = self.get_height();
         let current_difficulty = self.get_difficulty();
         let block_hash = block.hash();
@@ -425,9 +429,9 @@ impl Blockchain {
         }
 
         for tx in block.get_transactions() { // execute all txs
-            self.execute_transaction(&mut storage, tx)?;
+            self.execute_transaction(storage, tx)?;
         }
-        self.execute_transaction(&mut storage, block.get_miner_tx())?; // execute coinbase tx
+        self.execute_transaction(storage, block.get_miner_tx())?; // execute coinbase tx
 
         if current_height > 2 { // re calculate difficulty
             let difficulty = calculate_difficulty(storage.get_top_block()?, &block);
@@ -448,12 +452,15 @@ impl Blockchain {
         Ok(())
     }
 
-    // TODO Rewind chain
     pub async fn rewind_chain(&self, count: usize) -> Result<(), BlockchainError> {
         let mut storage = self.storage.lock().await;
+        self.rewind_chain_for_storage(&mut storage, count).await
+    }
+
+    pub async fn rewind_chain_for_storage(&self, storage: &mut Storage, count: usize) -> Result<(), BlockchainError> {
         let top_height = storage.pop_blocks(count)?;
         self.height.store(top_height, Ordering::Relaxed);
-
+        self.supply.store(get_supply_at_height(top_height), Ordering::Relaxed); // recaculate supply
         Ok(())
     }
 
@@ -579,6 +586,14 @@ impl Blockchain {
 
         Ok(())
     }
+}
+
+pub fn get_supply_at_height(height: u64) -> u64 {
+    let mut supply = 0;
+    for _ in 0..=height {
+        supply += get_block_reward(supply);
+    }
+    supply
 }
 
 pub fn get_block_reward(supply: u64) -> u64 {

@@ -126,7 +126,6 @@ impl CommandManager {
             return Err(CommandError::TooManyArguments);
         }
 
-
         command.execute(self, ArgumentManager::new(arguments))
     }
 

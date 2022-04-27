@@ -65,13 +65,23 @@ impl PeerList {
         }
     }
 
-    pub async fn broadcast_except(&self, peer_id: u64, bytes: Bytes) {
-        for (_, peer) in self.peers.iter() {
-            if peer.get_id() != peer_id {
-                if let Err(e) = peer.send_bytes(bytes.clone()).await {
-                    error!("Error while trying to broadcast to peer {}: {}", peer.get_connection().get_address(), e);
-                }
+    pub async fn broadcast_filter<P>(&self, predicate: P, bytes: Bytes)
+    where P: FnMut(&(&u64, &Arc<Peer>)) -> bool {
+        for (_, peer) in self.peers.iter().filter(predicate) {
+            if let Err(e) = peer.send_bytes(bytes.clone()).await {
+                error!("Error while trying to broadcast to peer {}: {}", peer.get_connection().get_address(), e);
             }
         }
+    }
+
+    pub fn get_best_height(&self) -> u64 { // TODO: Calculate median of all peers
+        let mut best_height = 0;
+        for (_, peer) in self.peers.iter() {
+            let height = peer.get_block_height();
+            if height > best_height {
+                best_height = height;
+            }
+        }
+        best_height
     }
 }

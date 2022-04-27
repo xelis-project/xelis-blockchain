@@ -1,6 +1,6 @@
 pub const VERSION: &str = "alpha-0.0.1";
 pub const NETWORK_ID: [u8; 16] = [0xA, 0xB, 0xC, 0xD, 0xE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF];
-pub const SEED_NODES: [&str; 1] = ["127.0.0.1:2125"]; // ["127.0.0.1:2125", "127.0.0.1:2126", "127.0.0.1:2127", "127.0.0.1:2128"];
+pub const SEED_NODES: [&str; 1] = ["127.0.0.1:2129"]; // ["127.0.0.1:2125", "127.0.0.1:2126", "127.0.0.1:2127", "127.0.0.1:2128"];
 pub const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:2125";
 
 pub const BLOCK_TIME: u64 = 15; // Block Time in seconds
@@ -20,6 +20,6 @@ pub const DEV_ADDRESS: &str = "xel167x5gq697cyhdacn740mpukr8staamcnyys74sjpp868z
 
 pub const MAX_BLOCK_REWIND: u64 = 5; // maximum 5 blocks can be rewinded
 pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = 3; // wait maximum between each chain sync request to peers
-pub const CHAIN_SYNC_DELAY: u64 = 1; // minimum 1s between each chain sync request per peer
+pub const CHAIN_SYNC_DELAY: u64 = 3; // minimum 3s between each chain sync request per peer
 pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to 64 blocks id (hash + height) 
 pub const P2P_PING_DELAY: u64 = 10; // 10s between each handshake update

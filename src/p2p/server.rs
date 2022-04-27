@@ -63,12 +63,13 @@ impl P2pServer {
         };
 
         let arc = Arc::new(server);
-        let instance = arc.clone();
+        let zelf = arc.clone();
         tokio::spawn(async move {
-            if let Err(e) = Self::start(&instance).await {
+            if let Err(e) = zelf.start().await {
                 error!("Unexpected error on P2p module: {}", e);
             }
         });
+        tokio::spawn(Arc::clone(&arc).chain_sync_loop());
 
         arc
     }
@@ -246,37 +247,51 @@ impl P2pServer {
     }
 
     // send a ping packet to specific peer every 10s
-    fn loop_ping(self: Arc<Self>, peer: Arc<Peer>) {
+    async fn loop_ping(self: Arc<Self>, peer: Arc<Peer>) {
         let mut ping_interval = interval(Duration::from_secs(P2P_PING_DELAY));
-        tokio::spawn(async move {
-            loop {
-                ping_interval.tick().await;
-                if peer.get_connection().is_closed() {
-                    break;
-                }
+        loop {
+            ping_interval.tick().await;
+            if peer.get_connection().is_closed() {
+                break;
+            }
 
-                let block_top_hash = self.blockchain.get_top_block_hash().await;
-                let block_height = self.blockchain.get_height();
-                let ping = Ping::new(block_top_hash, block_height);
-                let packet = Packet::Ping(Cow::Owned(ping));
-                debug!("Sending ping packet to peer: {}", peer.get_connection().get_address());
-                if let Err(e) = peer.send_packet(packet).await {
-                    debug!("Error occured on ping: {}", e);
-                    break
-                }
+            let block_top_hash = self.blockchain.get_top_block_hash().await;
+            let block_height = self.blockchain.get_height();
+            let ping = Ping::new(block_top_hash, block_height);
+            let packet = Packet::Ping(Cow::Owned(ping));
+            debug!("Sending ping packet to peer: {}", peer.get_connection().get_address());
+            if let Err(e) = peer.send_packet(packet).await {
+                debug!("Error occured on ping: {}", e);
+                break;
+            }
+        }
+    }
 
-                if self.blockchain.get_height() < peer.get_block_height() {
-                    if let Err(e) = self.request_sync_chain_for(&peer).await {
-                        error!("Error no request sync: {}", e);
-                    };
+    async fn chain_sync_loop(self: Arc<Self>) {
+        let mut interval = interval(Duration::from_secs(CHAIN_SYNC_DELAY));
+        //let mut rng = rand::thread_rng();
+        loop {
+            interval.tick().await;
+            let peer_list = self.peer_list.lock().await;
+            let our_height = self.blockchain.get_height();
+            let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p| p.get_block_height() > our_height).collect();
+            let count = peers.len();
+            if count > 0 {
+                debug!("Trying to sync chain, peers available: {}", count);
+                let selected = rand::thread_rng().gen_range(0..count);
+                if let Some(peer) = peers.get(selected) {
+                    debug!("Peer selected for chain sync: {}", peer.get_connection().get_address());
+                    if let Err(e) = self.request_sync_chain_for(peer).await {
+                        debug!("Error occured on chain sync: {}", e);
+                    }
                 }
             }
-        });
+        }
     }
 
     async fn handle_connection(self: Arc<Self>, buf: &mut [u8], peer: Arc<Peer>) -> Result<(), P2pError> {
+        tokio::spawn(Arc::clone(&self).loop_ping(peer.clone()));
         let mut rx = peer.get_connection().get_rx().lock().await;
-        Arc::clone(&self).loop_ping(peer.clone());
         loop {
             tokio::select! {
                 res = self.listen_connection(buf, &peer) => {
@@ -302,7 +317,6 @@ impl P2pServer {
             }
         }
         rx.close(); // clean shutdown
-
         Ok(())
     }
 
@@ -324,7 +338,7 @@ impl P2pServer {
                     };
                 } else {
                     let peer_list = self.peer_list.lock().await;
-                    peer_list.broadcast_except(peer.get_id(), packet).await; // broadcast tx to our peers
+                    peer_list.broadcast_filter(|(id, _)| **id != peer.get_id(), packet).await; // broadcast tx to our peers
                 }
             },
             Packet::Block(block) => {
@@ -343,7 +357,7 @@ impl P2pServer {
                     } else { // broadcast new block to peers
                         debug!("broadcast received block to peers!");
                         let peer_list = self.peer_list.lock().await;
-                        peer_list.broadcast_except(peer.get_id(), packet).await;
+                        peer_list.broadcast_filter(|(id, _)| **id != peer.get_id() && peer.get_block_height() == block_height - 1, packet).await;
                     }
                 }
             },
@@ -404,8 +418,8 @@ impl P2pServer {
 
                 if let Some(common_point) = response.get_common_point() {
                     debug!("Peer found a common point for sync, received {} blocks", response.size());
+                    let mut storage = self.blockchain.get_storage().lock().await; // keep the lock until finished
                     let pop_count = {
-                        let storage = self.blockchain.get_storage().lock().await;
                         let common_block = match storage.get_block_by_hash(common_point) {
                             Ok(block) => block,
                             Err(e) => {
@@ -421,14 +435,15 @@ impl P2pServer {
                     }
 
                     if pop_count > 0 && (pop_count <= MAX_BLOCK_REWIND || peer.is_priority()) {
-                        if let Err(e) = self.blockchain.rewind_chain(pop_count as usize).await {
+                        warn!("Rewinding chain because of peer {} (priority: {}, pop count: {})", peer.get_connection().get_address(), peer.is_priority(), pop_count);
+                        if let Err(e) = self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
                             error!("Error on rewind chain: pop count: {}, error: {}", pop_count, e);
                         }
                     }
 
                     let blocks = response.get_blocks();
                     for block in blocks {
-                        if let Err(e) = self.blockchain.add_new_block(block.into_owned(), false).await {
+                        if let Err(e) = self.blockchain.add_new_block_for_storage(&mut storage, block.into_owned(), false).await {
                             error!("Error while syncing: {}", e);
                             break;
                         }
@@ -511,7 +526,9 @@ impl P2pServer {
     }
 
     pub async fn broadcast_block(&self, block: &CompleteBlock) {
-        self.broadcast_packet(Packet::Block(Cow::Borrowed(block))).await;
+        let peer_list = self.peer_list.lock().await;
+        let packet = Packet::Block(Cow::Borrowed(block));
+        peer_list.broadcast_filter(|(_, peer)| peer.get_block_height() == block.get_height() - 1, Bytes::from(packet.to_bytes())).await;
     }
 
     pub async fn broadcast_packet(&self, packet: Packet<'_>) {
@@ -526,7 +543,7 @@ impl P2pServer {
         let mut request = ChainRequest::new();
         while i < height && request.size() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
             let block = storage.get_block_at_height(height - i)?;
-            request.add_block_id(block.hash(), height); // TODO get hash from DB
+            request.add_block_id(block.hash(), height - i); // TODO get hash from DB
             match request.size() {
                 0..=19 => {
                     i += 1;
