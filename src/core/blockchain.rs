@@ -116,7 +116,7 @@ impl Blockchain {
     }
 
     // mine a block for current difficulty
-    pub async fn mine_block(&self, key: &PublicKey) -> Result<(), BlockchainError> {
+    pub async fn mine_block(self: &Arc<Self>, key: &PublicKey) -> Result<(), BlockchainError> {
         let mut block = self.get_block_template(key.clone()).await?;
         let mut hash = block.hash();
         let mut current_height = self.get_height();
@@ -131,9 +131,15 @@ impl Blockchain {
         }
 
         let complete_block = self.build_complete_block_from_block(block).await?;
-        let block_height = complete_block.get_height();
-        self.add_new_block(complete_block, true).await?;
-        info!("Block {} at height {} found!!", hash, block_height);
+        let zelf = Arc::clone(self);
+        tokio::spawn(async move {
+            let block_height = complete_block.get_height();
+            if let Err(e) = zelf.add_new_block(complete_block, true).await {
+                error!("Error adding new mined block: {}", e);
+            } else {
+                info!("Block mined at height {}", block_height);
+            }
+        });
         Ok(())
     }
 
@@ -439,6 +445,15 @@ impl Blockchain {
         }
 
         storage.add_new_block(block, block_hash); // Add block to chain
+        Ok(())
+    }
+
+    // TODO Rewind chain
+    pub async fn rewind_chain(&self, count: usize) -> Result<(), BlockchainError> {
+        let mut storage = self.storage.lock().await;
+        let top_height = storage.pop_blocks(count)?;
+        self.height.store(top_height, Ordering::Relaxed);
+
         Ok(())
     }
 

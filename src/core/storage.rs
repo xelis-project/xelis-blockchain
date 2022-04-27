@@ -51,16 +51,31 @@ impl Storage {
         self.top_block_hash = hash;
     }
 
-    pub fn remove_last_n_blocks(&mut self, n: usize) -> Result<(), BlockchainError> {
-        if self.blocks.len() < n {
+    pub fn pop_blocks(&mut self, n: usize) -> Result<u64, BlockchainError> {
+        if self.blocks.len() <= n { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
         }
         self.blocks.truncate(self.blocks.len() - n);
-        Ok(())
+        let top_height = if let Some(block) = self.blocks.get(self.blocks.len() - 1) {
+            let hash = block.hash();
+            let height = block.get_height();
+            self.top_block_hash = hash;
+            // TODO Reverse txs
+            height
+        } else { // shouldn't happens
+            self.top_block_hash = Hash::zero();
+            0
+        };
+
+        Ok(top_height)
     }
 
     pub fn has_blocks(&self) -> bool {
         self.blocks.len() != 0
+    }
+
+    pub fn has_block(&self, hash: &Hash) -> bool {
+        self.get_block_by_hash(hash).is_ok()
     }
 
     pub fn get_block_at_height(&self, height: u64) -> Result<&CompleteBlock, BlockchainError> {

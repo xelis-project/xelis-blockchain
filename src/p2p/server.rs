@@ -1,4 +1,4 @@
-use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_TIMEOUT_SECS, CHAIN_SYNC_MAX_BLOCK, CHAIN_SYNC_DELAY, P2P_PING_DELAY};
+use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_TIMEOUT_SECS, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND};
 use crate::core::transaction::Transaction;
 use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
@@ -7,8 +7,8 @@ use crate::core::block::CompleteBlock;
 use crate::globals::get_current_time;
 use crate::crypto::hash::Hashable;
 use crate::core::writer::Writer;
+use super::packet::chain::{ChainRequest, ChainResponse};
 use super::peer_list::{SharedPeerList, PeerList};
-use super::packet::request_chain::RequestChain;
 use super::connection::{State, Connection};
 use super::packet::handshake::Handshake;
 use super::chain_sync::ChainSync;
@@ -185,7 +185,7 @@ impl P2pServer {
     async fn handle_new_connection(self: Arc<Self>,mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
         debug!("New connection: {}", connection);
         let mut buf = [0u8; 1024];
-        let handshake: Handshake = match timeout(Duration::from_millis(300), connection.read_packet(&mut buf, 1024)).await?? {
+        let handshake: Handshake = match timeout(Duration::from_millis(800), connection.read_packet(&mut buf, 1024)).await?? {
             Packet::Handshake(h) => h.into_owned(), // only allow handshake packet
             _ => return Err(P2pError::ExpectedHandshake)
         };
@@ -222,7 +222,7 @@ impl P2pServer {
     fn try_to_connect_to_peer(self: Arc<Self>, addr: SocketAddr, priority: bool) {
         tokio::spawn(async move {
             if let Err(e) = self.connect_to_peer(addr, priority).await {
-                debug!("Error occured on outgoing peer: {}", e);
+                debug!("Error occured on outgoing peer {}: {}", addr, e);
             }
         });
     }
@@ -251,6 +251,10 @@ impl P2pServer {
         tokio::spawn(async move {
             loop {
                 ping_interval.tick().await;
+                if peer.get_connection().is_closed() {
+                    break;
+                }
+
                 let block_top_hash = self.blockchain.get_top_block_hash().await;
                 let block_height = self.blockchain.get_height();
                 let ping = Ping::new(block_top_hash, block_height);
@@ -259,6 +263,12 @@ impl P2pServer {
                 if let Err(e) = peer.send_packet(packet).await {
                     debug!("Error occured on ping: {}", e);
                     break
+                }
+
+                if self.blockchain.get_height() < peer.get_block_height() {
+                    if let Err(e) = self.request_sync_chain_for(&peer).await {
+                        error!("Error no request sync: {}", e);
+                    };
                 }
             }
         });
@@ -337,35 +347,100 @@ impl P2pServer {
                     }
                 }
             },
-            Packet::RequestChain(request) => {
+            Packet::ChainRequest(request) => {
+                let request = request.into_owned();
                 let last_request = peer.get_last_chain_sync();
                 let time = get_current_time();
                 peer.set_last_chain_sync(time);
+                // Node is trying to ask too fast chain
                 if  last_request + CHAIN_SYNC_DELAY > time {
+                    debug!("Peer requested sync chain too fast!");
                     return Err(P2pError::RequestSyncChainTooFast)
                 }
 
-                let our_height = self.blockchain.get_height();
-                let start = 0; // TODO request.get_start_height();
-                let end = 0; // request.get_end_height();
-                if start > our_height || end > our_height || start > end || end - start > CHAIN_SYNC_MAX_BLOCK { // only 20 blocks max per request
-                    return Err(P2pError::InvalidHeightRange)
+                // at least one block necessary (genesis block)
+                if request.size() == 0 || request.size() > CHAIN_SYNC_REQUEST_MAX_BLOCKS { // allows maximum 64 blocks id (2560 bytes max)
+                    warn!("Peer {} sent us a malformed chain request!", peer.get_connection().get_address());
+                    return Err(P2pError::InvalidPacket)
                 }
 
-                debug!("Peer {} request block from {} to {}", peer.get_connection().get_address(), start, end);
+                let blocks = request.get_blocks();
                 let storage = self.blockchain.get_storage().lock().await;
-                for i in start..=end {
-                    match storage.get_block_at_height(i) {
-                        Ok(block) => {
-                            peer.send_packet(Packet::Block(Cow::Borrowed(&block))).await?;
-                        },
-                        Err(_) => { // shouldn't happens as we verify range before
-                            debug!("Peer {} requested an invalid block height.", peer);
-                            peer.increment_fail_count();
+                let mut response_blocks = Vec::new();
+                let mut common_point = None;
+                for block_id in blocks { // search a common point
+                    if let Ok(block) = storage.get_block_by_hash(block_id.get_hash()) {
+                        let (hash, height) = block_id.consume();
+                        debug!("Block {} found for height: {}", hash, height);
+                        if block.get_height() == height {
+                            debug!("common point with peer found at block {} hash: {}", height, hash);
+                            common_point = Some(hash);
+                            let top_height = self.blockchain.get_height();
+                            let mut height = block.get_height() + 1;
+                            while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && height <= top_height {
+                                let block = storage.get_block_at_height(height).unwrap(); // TODO
+                                response_blocks.push(Cow::Borrowed(block));
+                                height += 1;
+                            }
+                            break;
                         }
-                    };
+                    }
                 }
-            }
+
+                peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, response_blocks))).await?;
+            },
+            Packet::ChainResponse(response) => {
+                debug!("Received a chain response from {}", peer.get_connection().get_address());
+                if !peer.chain_sync_requested() {
+                    warn!("Peer {} sent us a chain response but we haven't requested any.", peer.get_connection().get_address());
+                    return Err(P2pError::InvalidPacket)
+                }
+                peer.set_chain_sync_requested(false);
+
+                if response.size() > CHAIN_SYNC_REQUEST_MAX_BLOCKS { // peer is trying to spam us
+                    warn!("Peer {} is maybe trying to spam us", peer.get_connection().get_address());
+                    return Err(P2pError::InvalidPacket)
+                }
+
+                if let Some(common_point) = response.get_common_point() {
+                    debug!("Peer found a common point for sync, received {} blocks", response.size());
+                    let pop_count = {
+                        let storage = self.blockchain.get_storage().lock().await;
+                        let common_block = match storage.get_block_by_hash(common_point) {
+                            Ok(block) => block,
+                            Err(e) => {
+                                warn!("Peer {} sent us an invalid common point: {}", peer.get_connection().get_address(), e);
+                                return Err(P2pError::InvalidPacket)
+                            }
+                        };
+                        self.blockchain.get_height() - common_block.get_height()
+                    };
+
+                    if pop_count > MAX_BLOCK_REWIND {
+                        error!("We may have deviated too much! Pop count: {}", pop_count);
+                    }
+
+                    if pop_count > 0 && (pop_count <= MAX_BLOCK_REWIND || peer.is_priority()) {
+                        if let Err(e) = self.blockchain.rewind_chain(pop_count as usize).await {
+                            error!("Error on rewind chain: pop count: {}, error: {}", pop_count, e);
+                        }
+                    }
+
+                    let blocks = response.get_blocks();
+                    for block in blocks {
+                        if let Err(e) = self.blockchain.add_new_block(block.into_owned(), false).await {
+                            error!("Error while syncing: {}", e);
+                            break;
+                        }
+                    }
+                } else {
+                    warn!("No common block was found with peer {}", peer.get_connection().get_address());
+                    if response.size() > 0 {
+                        debug!("Peer have no common block but send us {} blocks!", response.size());
+                        return Err(P2pError::InvalidPacket)
+                    }
+                }
+            },
             Packet::Ping(ping) => {
                 ping.into_owned().update_peer(peer);
             },
@@ -448,8 +523,8 @@ impl P2pServer {
         let storage = self.blockchain.get_storage().lock().await;
         let height = self.blockchain.get_height();
         let mut i = 0;
-        let mut request = RequestChain::new();
-        while i < height {
+        let mut request = ChainRequest::new();
+        while i < height && request.size() < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
             let block = storage.get_block_at_height(height - i)?;
             request.add_block_id(block.hash(), height); // TODO get hash from DB
             match request.size() {
@@ -470,8 +545,12 @@ impl P2pServer {
                 }
             };
         }
-        // TODO Add Genesis block
-        peer.send_packet(Packet::RequestChain(Cow::Owned(request))).await?;
+
+        let genesis_block = storage.get_block_at_height(0)?;
+        request.add_block_id(genesis_block.hash(), 0);
+        debug!("Sending a chain request with {} blocks", request.size());
+        peer.set_chain_sync_requested(true);
+        peer.send_packet(Packet::ChainRequest(Cow::Owned(request))).await?;
         Ok(())
     }
 }

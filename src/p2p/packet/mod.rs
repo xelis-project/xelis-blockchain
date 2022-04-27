@@ -1,5 +1,5 @@
 pub mod handshake;
-pub mod request_chain;
+pub mod chain;
 pub mod ping;
 pub mod packet;
 
@@ -9,22 +9,23 @@ use crate::core::serializer::Serializer;
 use crate::core::block::CompleteBlock;
 use crate::core::writer::Writer;
 use super::packet::handshake::Handshake;
-use super::packet::request_chain::RequestChain;
+use super::packet::chain::{ChainRequest, ChainResponse};
 use super::packet::ping::Ping;
 use std::borrow::Cow;
-use log::debug;
 
 const HANDSHAKE_ID: u8 = 0;
 const TX_ID: u8 = 1;
 const BLOCK_ID: u8 = 2;
-const REQUEST_CHAIN_ID: u8 = 3;
-const PING_ID: u8 = 4;
+const CHAIN_REQUEST_ID: u8 = 3;
+const CHAIN_RESPONSE_ID: u8 = 4;
+const PING_ID: u8 = 5;
 
 pub enum Packet<'a> {
     Handshake(Cow<'a, Handshake>),
     Transaction(Cow<'a, Transaction>),
     Block(Cow<'a, CompleteBlock>),
-    RequestChain(Cow<'a, RequestChain>),
+    ChainRequest(Cow<'a, ChainRequest>),
+    ChainResponse(ChainResponse<'a>),
     Ping(Cow<'a, Ping>)
 }
 
@@ -34,7 +35,8 @@ impl<'a> Serializer for Packet<'a> {
             HANDSHAKE_ID => Packet::Handshake(Cow::Owned(Handshake::read(reader)?)),
             TX_ID => Packet::Transaction(Cow::Owned(Transaction::read(reader)?)),
             BLOCK_ID => Packet::Block(Cow::Owned(CompleteBlock::read(reader)?)),
-            REQUEST_CHAIN_ID => Packet::RequestChain(Cow::Owned(RequestChain::read(reader)?)),
+            CHAIN_REQUEST_ID => Packet::ChainRequest(Cow::Owned(ChainRequest::read(reader)?)),
+            CHAIN_RESPONSE_ID => Packet::ChainResponse(ChainResponse::read(reader)?),
             PING_ID => Packet::Ping(Cow::Owned(Ping::read(reader)?)),
             _ => return Err(ReaderError::InvalidValue)
         };
@@ -46,8 +48,9 @@ impl<'a> Serializer for Packet<'a> {
             Packet::Handshake(handshake) => (HANDSHAKE_ID, handshake.to_bytes()),
             Packet::Transaction(tx) => (TX_ID, tx.to_bytes()),
             Packet::Block(block) => (BLOCK_ID, block.to_bytes()),
-            Packet::RequestChain(request) => (REQUEST_CHAIN_ID, request.to_bytes()),
-            Packet::Ping(ping) => (PING_ID, ping.to_bytes())
+            Packet::ChainRequest(request) => (CHAIN_REQUEST_ID, request.to_bytes()),
+            Packet::ChainResponse(response) => (CHAIN_RESPONSE_ID, response.to_bytes()),
+            Packet::Ping(ping) => (PING_ID, ping.to_bytes()),
         };
 
         let packet_len: u32 = packet.len() as u32 + 1;

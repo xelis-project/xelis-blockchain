@@ -4,7 +4,7 @@ use super::peer_list::SharedPeerList;
 use super::connection::Connection;
 use super::packet::Packet;
 use super::error::P2pError;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, AtomicBool, Ordering};
 use std::fmt::{Display, Error, Formatter};
 use std::sync::Mutex;
 use bytes::Bytes;
@@ -22,7 +22,8 @@ pub struct Peer {
     last_chain_sync: AtomicU64,
     // TODO last_fail_count
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
-    peer_list: SharedPeerList
+    peer_list: SharedPeerList,
+    chain_requested: AtomicBool
 }
 
 impl Peer {
@@ -39,7 +40,8 @@ impl Peer {
             priority,
             fail_count: AtomicU8::new(0),
             last_chain_sync: AtomicU64::new(0),
-            peer_list
+            peer_list,
+            chain_requested: AtomicBool::new(false)
         }
     }
 
@@ -103,6 +105,14 @@ impl Peer {
 
     pub fn set_last_chain_sync(&self, time: u64) {
         self.last_chain_sync.store(time, Ordering::Relaxed);
+    }
+
+    pub fn chain_sync_requested(&self) -> bool {
+        self.chain_requested.load(Ordering::Relaxed)
+    }
+
+    pub fn set_chain_sync_requested(&self, value: bool) {
+        self.chain_requested.store(value, Ordering::Relaxed);
     }
 
     pub async fn close(&self) -> Result<(), P2pError> {
