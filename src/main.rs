@@ -15,6 +15,7 @@ use fern::colors::Color;
 use log::{info, error};
 use argh::FromArgs;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(FromArgs)]
 /// Xelis Blockchain daemon
@@ -65,6 +66,8 @@ async fn main() {
                 if let Err(e) = blockchain.mine_block(&key).await {
                     error!("Error while mining block: {}", e);
                 }
+
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
         });
     }

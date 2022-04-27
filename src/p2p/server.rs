@@ -360,7 +360,7 @@ impl P2pServer {
 
                 // at least one block necessary (genesis block)
                 if request.size() == 0 || request.size() > CHAIN_SYNC_REQUEST_MAX_BLOCKS { // allows maximum 64 blocks id (2560 bytes max)
-                    warn!("Peer {} sent us a malformed chain request!", peer.get_connection().get_address());
+                    warn!("Peer {} sent us a malformed chain request ({} blocks)!", peer.get_connection().get_address(), request.size());
                     return Err(P2pError::InvalidPacket)
                 }
 
@@ -524,7 +524,7 @@ impl P2pServer {
         let height = self.blockchain.get_height();
         let mut i = 0;
         let mut request = ChainRequest::new();
-        while i < height && request.size() < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
+        while i < height && request.size() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
             let block = storage.get_block_at_height(height - i)?;
             request.add_block_id(block.hash(), height); // TODO get hash from DB
             match request.size() {
