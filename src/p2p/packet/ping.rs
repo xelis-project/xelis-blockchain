@@ -6,6 +6,7 @@ use crate::crypto::hash::Hash;
 use std::sync::Arc;
 use log::warn;
 
+#[derive(Clone)]
 pub struct Ping {
     block_top_hash: Hash,
     block_height: u64

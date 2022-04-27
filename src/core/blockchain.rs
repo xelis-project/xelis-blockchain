@@ -176,9 +176,7 @@ impl Blockchain {
         self.verify_transaction_with_hash(&storage, &tx, &hash, false)?;
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
-                if let Err(e) = p2p.broadcast_tx(&tx).await {
-                    return Err(BlockchainError::ErrorOnP2p(e))
-                }
+                p2p.broadcast_tx(&tx).await;
             }
         }
 
@@ -436,9 +434,7 @@ impl Blockchain {
         if block.get_height() != 0 && broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
-                if let Err(e) = p2p.broadcast_block(&block).await { // Broadcast block to other nodes
-                    debug!("Error while broadcasting block: {}", e);
-                }
+                p2p.broadcast_block(&block).await;
             }
         }
 

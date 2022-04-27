@@ -11,6 +11,7 @@ use crate::core::writer::Writer;
 use super::packet::handshake::Handshake;
 use super::packet::request_chain::RequestChain;
 use super::packet::ping::Ping;
+use std::borrow::Cow;
 use log::debug;
 
 const HANDSHAKE_ID: u8 = 0;
@@ -19,59 +20,39 @@ const BLOCK_ID: u8 = 2;
 const REQUEST_CHAIN_ID: u8 = 3;
 const PING_ID: u8 = 4;
 
-// TODO Rework this
-
-pub enum PacketOut<'a> { // Outgoing Packet
-    Handshake(&'a Handshake),
-    Transaction(&'a Transaction),
-    Block(&'a CompleteBlock),
-    RequestChain(&'a RequestChain),
-    Ping(&'a Ping)
+pub enum Packet<'a> {
+    Handshake(Cow<'a, Handshake>),
+    Transaction(Cow<'a, Transaction>),
+    Block(Cow<'a, CompleteBlock>),
+    RequestChain(Cow<'a, RequestChain>),
+    Ping(Cow<'a, Ping>)
 }
 
-impl<'a> Serializer for PacketOut<'a> {
-    fn read(_: &mut Reader) -> Result<PacketOut<'a>, ReaderError> {
-        Err(ReaderError::InvalidValue)
+impl<'a> Serializer for Packet<'a> {
+    fn read(reader: &mut Reader) -> Result<Packet<'a>, ReaderError> {
+        let res = match reader.read_u8()? {
+            HANDSHAKE_ID => Packet::Handshake(Cow::Owned(Handshake::read(reader)?)),
+            TX_ID => Packet::Transaction(Cow::Owned(Transaction::read(reader)?)),
+            BLOCK_ID => Packet::Block(Cow::Owned(CompleteBlock::read(reader)?)),
+            REQUEST_CHAIN_ID => Packet::RequestChain(Cow::Owned(RequestChain::read(reader)?)),
+            PING_ID => Packet::Ping(Cow::Owned(Ping::read(reader)?)),
+            _ => return Err(ReaderError::InvalidValue)
+        };
+        Ok(res)
     }
 
     fn write(&self, writer: &mut Writer) {
         let (id, packet) = match self { // TODO optimize to_bytes()
-            PacketOut::Handshake(handshake) => (HANDSHAKE_ID, handshake.to_bytes()),
-            PacketOut::Transaction(tx) => (TX_ID, tx.to_bytes()),
-            PacketOut::Block(block) => (BLOCK_ID, block.to_bytes()),
-            PacketOut::RequestChain(request) => (REQUEST_CHAIN_ID, request.to_bytes()),
-            PacketOut::Ping(ping) => (PING_ID, ping.to_bytes())
+            Packet::Handshake(handshake) => (HANDSHAKE_ID, handshake.to_bytes()),
+            Packet::Transaction(tx) => (TX_ID, tx.to_bytes()),
+            Packet::Block(block) => (BLOCK_ID, block.to_bytes()),
+            Packet::RequestChain(request) => (REQUEST_CHAIN_ID, request.to_bytes()),
+            Packet::Ping(ping) => (PING_ID, ping.to_bytes())
         };
 
         let packet_len: u32 = packet.len() as u32 + 1;
         writer.write_u32(&packet_len);
         writer.write_u8(id);
         writer.write_bytes(&packet);
-        //debug!("Packet ID: {}, size: {}", id, writer.total_write());
     }
-}
-
-pub enum PacketIn { // Incoming Packet
-    Handshake(Handshake),
-    Transaction(Transaction),
-    Block(CompleteBlock),
-    RequestChain(RequestChain),
-    Ping(Ping)
-}
-
-impl Serializer for PacketIn {
-    fn read(reader: &mut Reader) -> Result<PacketIn, ReaderError> {
-        let res = match reader.read_u8()? {
-            HANDSHAKE_ID => PacketIn::Handshake(Handshake::read(reader)?),
-            TX_ID => PacketIn::Transaction(Transaction::read(reader)?),
-            BLOCK_ID => PacketIn::Block(CompleteBlock::read(reader)?),
-            REQUEST_CHAIN_ID => PacketIn::RequestChain(RequestChain::read(reader)?),
-            PING_ID => PacketIn::Ping(Ping::read(reader)?),
-            _ => return Err(ReaderError::InvalidValue)
-        };
-        Ok(res)
-    }
-
-    // not serializable
-    fn write(&self, _: &mut Writer) {}
 }

@@ -2,7 +2,7 @@ use crate::core::serializer::Serializer;
 use crate::crypto::hash::Hash;
 use super::peer_list::SharedPeerList;
 use super::connection::Connection;
-use super::packet::PacketOut;
+use super::packet::Packet;
 use super::error::P2pError;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::fmt::{Display, Error, Formatter};
@@ -111,7 +111,7 @@ impl Peer {
         Ok(())
     }
 
-    pub async fn send_packet(&self, packet: PacketOut<'_>) -> Result<(), P2pError> {
+    pub async fn send_packet(&self, packet: Packet<'_>) -> Result<(), P2pError> {
         self.send_bytes(Bytes::from(packet.to_bytes())).await
     }
 

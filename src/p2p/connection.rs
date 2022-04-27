@@ -2,7 +2,7 @@ use crate::core::serializer::Serializer;
 use crate::globals::get_current_time;
 use crate::core::reader::Reader;
 use super::error::P2pError;
-use super::packet::PacketIn;
+use super::packet::Packet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
@@ -68,7 +68,7 @@ impl Connection {
         Ok(())
     }
 
-    pub async fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<PacketIn> {
+    pub async fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<Packet<'_>> {
         let mut stream = self.stream.lock().await;
         let size = self.read_packet_size(&mut stream, buf).await?;
         if size == 0 || size > max_size {
@@ -78,7 +78,7 @@ impl Connection {
 
         let bytes = self.read_all_bytes(&mut stream, buf, size).await?;
         let mut reader = Reader::new(&bytes);
-        let packet = PacketIn::read(&mut reader)?;
+        let packet = Packet::read(&mut reader)?;
         if reader.total_read() != bytes.len() {
             warn!("read only {}/{} on bytes available", reader.total_read(), bytes.len());
             return Err(P2pError::InvalidPacketNotFullRead)

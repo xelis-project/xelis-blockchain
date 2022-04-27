@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 // If handshake is valid, server reply with his own handshake
 // We just have to repeat this request to all peers until we reach max connection
 // Network ID, Block Height & block top hash is to verify that we are on the same network & chain.
+#[derive(Clone)]
 pub struct Handshake {
     version: String, // daemon version
     node_tag: Option<String>, // node tag
@@ -36,7 +37,7 @@ impl Handshake {
 
         assert!(peers.len() <= Handshake::MAX_LEN); // maximum 16 peers allowed
 
-        Handshake {
+        Self {
             version,
             node_tag,
             network_id,
