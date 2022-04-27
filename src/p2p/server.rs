@@ -494,6 +494,16 @@ impl P2pServer {
         peer_list.size()
     }
 
+    pub async fn get_best_height(&self) -> u64 {
+        let our_height = self.blockchain.get_height();
+        let peer_list = self.peer_list.lock().await;
+        let best_height = peer_list.get_best_height();
+        if best_height > our_height {
+            best_height
+        } else {
+            our_height
+        }
+    }
     pub async fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError> {
         let peer_list = self.peer_list.lock().await;
         Ok(self.peer_id == *peer_id || peer_list.has_peer(peer_id))

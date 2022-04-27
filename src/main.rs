@@ -78,24 +78,24 @@ async fn main() {
 }
 
 async fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
-let closure = || async {
+    let closure = || async {
         let height = blockchain.get_height();
-        let peers = match blockchain.get_p2p().lock().await.as_ref() {
-            Some(p2p) => p2p.get_peer_count().await,
-            None => 0
+        let (peers, best) = match blockchain.get_p2p().lock().await.as_ref() {
+            Some(p2p) => (p2p.get_peer_count().await, p2p.get_best_height().await),
+            None => (0, height)
         };
-        build_prompt_message(height, peers)
+        build_prompt_message(height, best, peers)
     };
 
-    prompt.handle_commands(&closure).await?;
-    Ok(())
+    prompt.handle_commands(&closure).await
 }
 
-fn build_prompt_message(height: u64, peers_count: usize) -> String {
+fn build_prompt_message(height: u64, best_height: u64, peers_count: usize) -> String {
     let height_str = format!(
-        "{}: {}",
+        "{}: {}/{}",
         Prompt::colorize_str(Color::Yellow, "Height"),
-        Prompt::colorize_string(Color::Green, &format!("{}", height)) // TODO Color based on height / peer
+        Prompt::colorize_string(Color::Green, &format!("{}", height)), // TODO Color based on height / peer
+        Prompt::colorize_string(Color::Green, &format!("{}", best_height))
     );
     let peers_str = format!(
         "{}: {}",
