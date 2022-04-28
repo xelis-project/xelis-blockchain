@@ -72,8 +72,12 @@ async fn main() {
         });
     }
 
-    if let Err(e) = run_prompt(prompt, blockchain).await {
+    if let Err(e) = run_prompt(prompt, blockchain.clone()).await {
         error!("Error while running prompt: {}", e);
+    }
+    let p2p = blockchain.get_p2p().lock().await;
+    if let Some(p2p) = p2p.as_ref() {
+        p2p.stop().await;
     }
 }
 

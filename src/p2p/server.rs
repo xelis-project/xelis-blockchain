@@ -1,4 +1,4 @@
-use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_TIMEOUT_SECS, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND};
+use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND};
 use crate::core::transaction::Transaction;
 use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
@@ -56,7 +56,7 @@ impl P2pServer {
             max_peers,
             bind_address: addr,
             peer_list: PeerList::new(max_peers),
-            blockchain,
+            blockchain
         };
 
         let arc = Arc::new(server);
@@ -67,15 +67,13 @@ impl P2pServer {
             }
         });
         tokio::spawn(Arc::clone(&arc).chain_sync_loop());
-
         arc
     }
 
-    pub async fn stop(&self) -> Result<(), P2pError> {
+    pub async fn stop(&self) {
         info!("Stopping P2p Server...");
         let mut peers = self.peer_list.lock().await;
         peers.close_all().await;
-        Ok(())
     }
 
     // Connect to all seed nodes from constant
@@ -419,8 +417,8 @@ impl P2pServer {
 
                 if let Some(common_point) = response.get_common_point() {
                     debug!("Peer found a common point for sync, received {} blocks", response.size());
-                    let mut storage = self.blockchain.get_storage().lock().await; // keep the lock until finished
                     let pop_count = {
+                        let storage = self.blockchain.get_storage().lock().await;
                         let common_block = match storage.get_block_by_hash(common_point) {
                             Ok(block) => block,
                             Err(e) => {
@@ -437,7 +435,7 @@ impl P2pServer {
 
                     if pop_count > 0 && (pop_count <= MAX_BLOCK_REWIND || peer.is_priority()) {
                         warn!("Rewinding chain because of peer {} (priority: {}, pop count: {})", peer.get_connection().get_address(), peer.is_priority(), pop_count);
-                        if let Err(e) = self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
+                        if let Err(e) = self.blockchain.rewind_chain(pop_count as usize).await {
                             error!("Error on rewind chain: pop count: {}, error: {}", pop_count, e);
                         }
                     }
@@ -590,10 +588,6 @@ impl P2pServer {
 
     pub fn get_bind_address(&self) -> &SocketAddr {
         &self.bind_address
-    }
-
-    pub fn get_peer_list(&self) -> &SharedPeerList {
-        &self.peer_list
     }
 
     pub async fn broadcast_tx(&self, tx: &Transaction) {

@@ -1,15 +1,13 @@
 use crate::core::difficulty::{check_difficulty, hash_to_big};
 use crate::crypto::hash::{Hash, Hashable};
-use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
 use crate::core::block::CompleteBlock;
-use super::error::P2pError;
 use super::peer::Peer;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 
-pub struct ChainSync { // TODO, receive Block Header only
+pub struct ChainSync {
     blocks: HashMap<Hash, CompleteBlock>
 }
 
@@ -49,9 +47,5 @@ impl ChainSync {
 
     pub fn size(&self) -> usize {
         self.blocks.len()
-    }
-
-    pub fn consume(self) -> HashMap<Hash, CompleteBlock> {
-        self.blocks
     }
 }

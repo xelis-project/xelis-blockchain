@@ -19,10 +19,6 @@ pub enum P2pError {
     InvalidPeerAddress(String), // peer address from handshake
     #[error("Invalid network ID")]
     InvalidNetworkID,
-    #[error("No channel found for peer {}", _0)]
-    ChannelNotFound(u64),
-    #[error("Peer {} not found", _0)]
-    PeerNotFound(u64),
     #[error("Peer id {} is already used!", _0)]
     PeerIdAlreadyUsed(u64),
     #[error("Peer already connected: {}", _0)]
@@ -45,8 +41,6 @@ pub enum P2pError {
     InvalidPacketNotFullRead,
     #[error("Request sync chain too fast")]
     RequestSyncChainTooFast,
-    #[error("Invalid height range")]
-    InvalidHeightRange,
     #[error(transparent)]
     AsyncTimeOut(#[from] Elapsed)
 }

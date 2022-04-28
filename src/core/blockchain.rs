@@ -132,14 +132,9 @@ impl Blockchain {
 
         let complete_block = self.build_complete_block_from_block(block).await?;
         let zelf = Arc::clone(self);
-        tokio::spawn(async move {
-            let block_height = complete_block.get_height();
-            if let Err(e) = zelf.add_new_block(complete_block, true).await {
-                error!("Error adding new mined block: {}", e);
-            } else {
-                info!("Block mined at height {}", block_height);
-            }
-        });
+        let block_height = complete_block.get_height();
+        zelf.add_new_block(complete_block, true).await?;
+        info!("Mined a new block {} at height {}", hash, block_height);
         Ok(())
     }
 
