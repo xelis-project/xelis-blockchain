@@ -1,12 +1,14 @@
 use crate::core::serializer::Serializer;
 use crate::crypto::hash::Hash;
+use super::packet::object::ObjectRequest;
 use super::peer_list::SharedPeerList;
 use super::connection::Connection;
 use super::packet::Packet;
 use super::error::P2pError;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicBool, Ordering};
 use std::fmt::{Display, Error, Formatter};
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 use bytes::Bytes;
 
 pub struct Peer {
@@ -23,7 +25,8 @@ pub struct Peer {
     // TODO last_fail_count
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
     peer_list: SharedPeerList,
-    chain_requested: AtomicBool
+    chain_requested: AtomicBool,
+    objects_requested: Mutex<HashSet<ObjectRequest>>
 }
 
 impl Peer {
@@ -41,7 +44,8 @@ impl Peer {
             fail_count: AtomicU8::new(0),
             last_chain_sync: AtomicU64::new(0),
             peer_list,
-            chain_requested: AtomicBool::new(false)
+            chain_requested: AtomicBool::new(false),
+            objects_requested: Mutex::new(HashSet::new())
         }
     }
 
@@ -73,9 +77,8 @@ impl Peer {
         self.block_height.store(height, Ordering::Relaxed);
     }
 
-    pub fn set_block_top_hash(&self, hash: Hash) -> Result<(), P2pError> {
-        *self.block_top_hash.lock()? = hash;
-        Ok(())
+    pub async fn set_block_top_hash(&self, hash: Hash) {
+        *self.block_top_hash.lock().await = hash
     }
 
     pub fn get_top_block_hash(&self) -> &Mutex<Hash> {
@@ -113,6 +116,15 @@ impl Peer {
 
     pub fn set_chain_sync_requested(&self, value: bool) {
         self.chain_requested.store(value, Ordering::Relaxed);
+    }
+
+    pub fn get_objects_requested(&self) -> &Mutex<HashSet<ObjectRequest>> {
+        &self.objects_requested
+    }
+
+    pub async fn remove_object_request(&self, request: &ObjectRequest) -> bool {
+        let mut objects = self.objects_requested.lock().await;
+        objects.remove(request)
     }
 
     pub async fn close(&self) -> Result<(), P2pError> {

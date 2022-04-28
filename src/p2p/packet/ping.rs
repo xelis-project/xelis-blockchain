@@ -4,7 +4,6 @@ use crate::p2p::peer::Peer;
 use crate::core::writer::Writer;
 use crate::crypto::hash::Hash;
 use std::sync::Arc;
-use log::warn;
 
 #[derive(Clone)]
 pub struct Ping {
@@ -20,10 +19,8 @@ impl Ping {
         }
     }
 
-    pub fn update_peer(self, peer: &Arc<Peer>) {
-        if let Err(e) = peer.set_block_top_hash(self.block_top_hash) {
-            warn!("Error occured in Ping handle: {}", e);
-        }
+    pub async fn update_peer(self, peer: &Arc<Peer>) {
+        peer.set_block_top_hash(self.block_top_hash).await;
         peer.set_block_height(self.block_height);
     }
 }

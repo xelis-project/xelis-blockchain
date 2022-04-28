@@ -12,7 +12,6 @@ use super::packet::object::{ObjectRequest, ObjectResponse};
 use super::peer_list::{SharedPeerList, PeerList};
 use super::connection::{State, Connection};
 use super::packet::handshake::Handshake;
-use super::chain_sync::ChainSync;
 use super::packet::ping::Ping;
 use super::error::P2pError;
 use super::packet::Packet;
@@ -25,7 +24,6 @@ use tokio::time::timeout;
 use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use std::sync::Arc;
 use bytes::Bytes;
 use rand::Rng;
@@ -40,7 +38,6 @@ pub struct P2pServer {
     bind_address: SocketAddr, // ip:port address to receive connections
     peer_list: SharedPeerList, // all peers accepted
     blockchain: Arc<Blockchain>, // reference to the chain to add blocks/txs
-    sync: Mutex<ChainSync>
 }
 
 impl P2pServer {
@@ -60,7 +57,6 @@ impl P2pServer {
             bind_address: addr,
             peer_list: PeerList::new(max_peers),
             blockchain,
-            sync: Mutex::new(ChainSync::new())
         };
 
         let arc = Arc::new(server);
@@ -399,7 +395,7 @@ impl P2pServer {
                             let mut height = block.get_height() + 1;
                             while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && height <= top_height {
                                 let block = storage.get_block_at_height(height).unwrap(); // TODO
-                                response_blocks.push(Cow::Borrowed(block));
+                                response_blocks.push(Cow::Owned(block.hash()));
                                 height += 1;
                             }
                             break;
@@ -447,10 +443,18 @@ impl P2pServer {
                     }
 
                     let blocks = response.get_blocks();
-                    for block in blocks {
-                        if let Err(e) = self.blockchain.add_new_block_for_storage(&mut storage, block.into_owned(), false).await {
-                            error!("Error while syncing: {}", e);
-                            break;
+                    // NOTE: Maybe we can distribute it by asking X blocks to Y peers that are on the same chain & has all requested blocks
+                    let mut objects = peer.get_objects_requested().lock().await;
+                    for hash in blocks { // Request all complete blocks now
+                        let object_request = ObjectRequest::Block(hash.into_owned());
+                        if objects.contains(&object_request) {
+                            error!("Error, peer send us multiple times the same block hash!");
+                            return Err(P2pError::InvalidPacket)
+                        }
+                        peer.send_packet(Packet::ObjectRequest(Cow::Borrowed(&object_request))).await?;
+                        if !objects.insert(object_request) {
+                            error!("Error while trying to add object request!");
+                            return Err(P2pError::InvalidPacket)
                         }
                     }
                 } else {
@@ -462,39 +466,63 @@ impl P2pServer {
                 }
             },
             Packet::Ping(ping) => {
-                ping.into_owned().update_peer(peer);
+                ping.into_owned().update_peer(peer).await;
             },
             Packet::ObjectRequest(request) => {
-                match request {
+                let request = request.into_owned();
+                debug!("Received a object request");
+                match &request {
                     ObjectRequest::Block(hash) => {
                         let storage = self.blockchain.get_storage().lock().await;
-                        match storage.get_block_by_hash(&hash) {
+                        match storage.get_block_by_hash(hash) {
                             Ok(block) => {
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::Block(Cow::Borrowed(block)))).await?;
                             },
                             Err(e) => {
                                 debug!("Peer {} asked block '{}' but got on error while retrieving it: {}", peer.get_connection().get_address(), hash, e);
-                                // TODO Reply with error response
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
                             }
                         }
                     },
                     ObjectRequest::Transaction(hash) => {
                         let mempool = self.blockchain.get_mempool().lock().await;
-                        match mempool.view_tx(&hash) {
+                        match mempool.view_tx(hash) {
                             Ok(tx) => {
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(tx)))).await?;
                             },
                             Err(e) => {
                                 debug!("Peer {} asked tx '{}' but got on error while retrieving it: {}", peer.get_connection().get_address(), hash, e);
-                                // TODO Reply with error response
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
                             }
                         }
                     }
                 }
             },
             Packet::ObjectResponse(response) => {
-                // TODO check if we really asked this object
-                // and handle it
+                debug!("Received a object response");
+                let request = response.get_request();
+                // check if we have requested this object
+                if !peer.remove_object_request(&request).await {
+                    error!("Peer {} send us a response object but we didn't asked it", peer.get_connection().get_address());
+                    return Err(P2pError::InvalidPacket)
+                }
+
+                // handle the response
+                match response {
+                    ObjectResponse::Block(block) => {
+                        if let Err(e) = self.blockchain.add_new_block(block.into_owned(), false).await {
+                            error!("Error while adding requested block: {}", e);
+                        }
+                    },
+                    ObjectResponse::Transaction(tx) => {
+                        if let Err(e) = self.blockchain.add_tx_to_mempool(tx.into_owned(), false).await {
+                            error!("Error while adding requested tx: {}", e);
+                        }
+                    },
+                    ObjectResponse::NotFound(_) => {
+                        error!("Peer {} have not the requested object", peer.get_connection().get_address())
+                    }
+                }
             }
         };
         Ok(())

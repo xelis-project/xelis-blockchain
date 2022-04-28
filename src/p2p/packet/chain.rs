@@ -2,7 +2,6 @@ use std::borrow::Cow;
 
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::serializer::Serializer;
-use crate::core::block::CompleteBlock;
 use crate::core::writer::Writer;
 use crate::crypto::hash::Hash;
 
@@ -96,11 +95,11 @@ impl Serializer for ChainRequest {
 
 pub struct ChainResponse<'a> {
     common_point: Option<Hash>,
-    blocks: Vec<Cow<'a, CompleteBlock>>,
+    blocks: Vec<Cow<'a, Hash>>,
 }
 
 impl<'a> ChainResponse<'a> {
-    pub fn new(common_point: Option<Hash>, blocks: Vec<Cow<'a, CompleteBlock>>) -> Self {
+    pub fn new(common_point: Option<Hash>, blocks: Vec<Cow<'a, Hash>>) -> Self {
         Self {
             common_point,
             blocks
@@ -115,7 +114,7 @@ impl<'a> ChainResponse<'a> {
         self.blocks.len()
     }
 
-    pub fn get_blocks(self) -> Vec<Cow<'a, CompleteBlock>> {
+    pub fn get_blocks(self) -> Vec<Cow<'a, Hash>> {
         self.blocks
     }
 }
@@ -132,8 +131,8 @@ impl<'a> Serializer for ChainResponse<'a> {
             }
         };
         writer.write_u8(self.blocks.len() as u8);
-        for block in &self.blocks {
-            block.write(writer);
+        for hash in &self.blocks {
+            writer.write_hash(hash);
         }
     }
 
@@ -144,10 +143,10 @@ impl<'a> Serializer for ChainResponse<'a> {
         };
 
         let len = reader.read_u8()?;
-        let mut blocks: Vec<Cow<'a, CompleteBlock>> = Vec::new(); 
+        let mut blocks: Vec<Cow<'a, Hash>> = Vec::new(); 
         for _ in 0..len {
-            let block = CompleteBlock::read(reader)?;
-            blocks.push(Cow::Owned(block));
+            let hash = reader.read_hash()?;
+            blocks.push(Cow::Owned(hash));
         }
 
         Ok(Self::new(common_point, blocks))

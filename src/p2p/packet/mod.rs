@@ -32,7 +32,7 @@ pub enum Packet<'a> {
     ChainRequest(Cow<'a, ChainRequest>),
     ChainResponse(ChainResponse<'a>),
     Ping(Cow<'a, Ping>),
-    ObjectRequest(ObjectRequest),
+    ObjectRequest(Cow<'a, ObjectRequest>),
     ObjectResponse(ObjectResponse<'a>)
 }
 
@@ -45,7 +45,7 @@ impl<'a> Serializer for Packet<'a> {
             CHAIN_REQUEST_ID => Packet::ChainRequest(Cow::Owned(ChainRequest::read(reader)?)),
             CHAIN_RESPONSE_ID => Packet::ChainResponse(ChainResponse::read(reader)?),
             PING_ID => Packet::Ping(Cow::Owned(Ping::read(reader)?)),
-            OBJECT_REQUEST_ID => Packet::ObjectRequest(ObjectRequest::read(reader)?),
+            OBJECT_REQUEST_ID => Packet::ObjectRequest(Cow::Owned(ObjectRequest::read(reader)?)),
             OBJECT_RESPONSE_ID => Packet::ObjectResponse(ObjectResponse::read(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         })
