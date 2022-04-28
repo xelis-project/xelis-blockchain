@@ -171,6 +171,10 @@ impl Blockchain {
         self.storage.lock().await.get_top_block_hash().clone()
     }
 
+    pub fn get_mempool(&self) -> &Mutex<Mempool> {
+        &self.mempool
+    }
+
     pub async fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
         let mut mempool = self.mempool.lock().await;
