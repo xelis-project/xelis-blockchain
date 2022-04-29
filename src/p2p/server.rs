@@ -84,7 +84,7 @@ impl P2pServer {
                 Ok(addr) => addr,
                 Err(e) => return Err(P2pError::InvalidPeerAddress(format!("seed node {}: {}", peer, e)))
             };
-            Arc::clone(self).try_to_connect_to_peer(addr, true);
+            self.try_to_connect_to_peer(addr, true);
         }
         Ok(())
     }
@@ -206,7 +206,7 @@ impl P2pServer {
 
             if !self.is_connected_to_addr(&peer_addr).await? {
                 debug!("Trying to extend peer list with {}", peer_addr);
-                Arc::clone(&self).try_to_connect_to_peer(peer_addr, false);
+                self.try_to_connect_to_peer(peer_addr, false);
             }
         }
 
@@ -215,15 +215,16 @@ impl P2pServer {
 
     // Connect to a specific peer address
     // Buffer is passed in parameter to prevent the re-allocation each time
-    fn try_to_connect_to_peer(self: Arc<Self>, addr: SocketAddr, priority: bool) {
+    pub fn try_to_connect_to_peer(self: &Arc<Self>, addr: SocketAddr, priority: bool) {
+        let zelf = Arc::clone(self);
         tokio::spawn(async move {
-            if let Err(e) = self.connect_to_peer(addr, priority).await {
+            if let Err(e) = zelf.connect_to_peer(addr, priority).await {
                 debug!("Error occured on outgoing peer {}: {}", addr, e);
             }
         });
     }
 
-    pub async fn connect_to_peer(self: Arc<Self>, addr: SocketAddr, priority: bool) -> Result<(), P2pError> {
+    async fn connect_to_peer(self: Arc<Self>, addr: SocketAddr, priority: bool) -> Result<(), P2pError> {
         debug!("Trying to connect to {}", addr);
         if self.is_connected_to_addr(&addr).await? {
             return Err(P2pError::PeerAlreadyConnected(format!("{}", addr)));

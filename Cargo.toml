@@ -27,8 +27,12 @@ bytes = "1"
 
 [[bin]]
 name = "wallet"
-path = "src/cmd/wallet/main.rs"
+path = "src/bin/wallet/main.rs"
+
+[[bin]]
+name = "miner"
+path = "src/bin/miner/main.rs"
 
 [[bin]]
 name = "daemon"
-path = "src/main.rs"
+path = "src/bin/daemon/main.rs"
