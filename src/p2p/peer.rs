@@ -1,15 +1,22 @@
+use crate::config::PEER_TIMEOUT_REQUEST_OBJECT;
 use crate::core::serializer::Serializer;
 use crate::crypto::hash::Hash;
-use super::packet::object::ObjectRequest;
+use super::packet::object::{ObjectRequest, OwnedObjectResponse};
 use super::peer_list::SharedPeerList;
 use super::connection::Connection;
 use super::packet::Packet;
 use super::error::P2pError;
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicBool, Ordering};
 use std::fmt::{Display, Error, Formatter};
+use std::time::Duration;
+use tokio::sync::oneshot::Sender;
+use tokio::time::timeout;
+use std::collections::HashMap;
 use tokio::sync::Mutex;
+use std::borrow::Cow;
 use bytes::Bytes;
+
+pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
 pub struct Peer {
     connection: Connection,
@@ -26,7 +33,7 @@ pub struct Peer {
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
     peer_list: SharedPeerList,
     chain_requested: AtomicBool,
-    objects_requested: Mutex<HashSet<ObjectRequest>>
+    objects_requested: Mutex<RequestedObjects>
 }
 
 impl Peer {
@@ -45,7 +52,7 @@ impl Peer {
             last_chain_sync: AtomicU64::new(0),
             peer_list,
             chain_requested: AtomicBool::new(false),
-            objects_requested: Mutex::new(HashSet::new())
+            objects_requested: Mutex::new(HashMap::new())
         }
     }
 
@@ -118,13 +125,37 @@ impl Peer {
         self.chain_requested.store(value, Ordering::Relaxed);
     }
 
-    pub fn get_objects_requested(&self) -> &Mutex<HashSet<ObjectRequest>> {
+    pub fn get_objects_requested(&self) -> &Mutex<RequestedObjects> {
         &self.objects_requested
     }
 
-    pub async fn remove_object_request(&self, request: &ObjectRequest) -> bool {
+    pub async fn remove_object_request(&self, request: ObjectRequest) -> Result<Sender<OwnedObjectResponse>, P2pError> {
         let mut objects = self.objects_requested.lock().await;
-        objects.remove(request)
+        objects.remove(&request).ok_or(P2pError::ObjectNotFound(request))
+    }
+
+    // Request a object from this peer and wait on it until we receive it or until timeout 
+    pub async fn request_blocking_object(&self, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
+        let receiver = {
+            let mut objects = self.objects_requested.lock().await;
+            if objects.contains_key(&request) {
+                return Err(P2pError::ObjectAlreadyRequested(request));
+            }
+            self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            objects.insert(request.clone(), sender); // clone is necessary in case timeout has occured
+            receiver
+        };
+        let object = match timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver).await {
+            Ok(res) => res?,
+            Err(e) => {
+                let mut objects = self.objects_requested.lock().await;
+                objects.remove(&request); // remove it from request list
+                return Err(P2pError::AsyncTimeOut(e));
+            }
+        };
+
+        Ok(object)
     }
 
     pub async fn close(&self) -> Result<(), P2pError> {

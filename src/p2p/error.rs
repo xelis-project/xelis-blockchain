@@ -1,11 +1,14 @@
 use crate::core::reader::ReaderError;
 use tokio::sync::mpsc::error::SendError as TSendError;
+use tokio::sync::oneshot::error::RecvError;
 use std::array::TryFromSliceError;
 use tokio::time::error::Elapsed;
 use std::sync::mpsc::SendError;
 use std::io::Error as IOError;
 use std::sync::PoisonError;
 use thiserror::Error;
+
+use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
 pub enum P2pError {
@@ -42,7 +45,13 @@ pub enum P2pError {
     #[error("Request sync chain too fast")]
     RequestSyncChainTooFast,
     #[error(transparent)]
-    AsyncTimeOut(#[from] Elapsed)
+    AsyncTimeOut(#[from] Elapsed),
+    #[error("Object requested {:?} not found", _0)]
+    ObjectNotFound(ObjectRequest),
+    #[error("Object requested {:?} already requested", _0)]
+    ObjectAlreadyRequested(ObjectRequest),
+    #[error(transparent)]
+    ObjectRequestError(#[from] RecvError),
 }
 
 impl<T> From<PoisonError<T>> for P2pError {

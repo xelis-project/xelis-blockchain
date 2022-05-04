@@ -5,8 +5,9 @@ use crate::core::error::BlockchainError;
 use crate::core::serializer::Serializer;
 use crate::core::block::CompleteBlock;
 use crate::globals::get_current_time;
-use crate::crypto::hash::Hashable;
+use crate::crypto::hash::{Hashable, Hash};
 use crate::core::writer::Writer;
+use crate::p2p::packet::object::OwnedObjectResponse;
 use super::packet::chain::{ChainRequest, ChainResponse};
 use super::packet::object::{ObjectRequest, ObjectResponse};
 use super::peer_list::{SharedPeerList, PeerList};
@@ -19,6 +20,7 @@ use super::peer::Peer;
 use tokio::net::{TcpListener, TcpStream};
 use log::{info, warn, error, debug};
 use tokio::io::AsyncWriteExt;
+use tokio::sync::oneshot::channel;
 use tokio::time::interval;
 use tokio::time::timeout;
 use std::borrow::Cow;
@@ -320,7 +322,7 @@ impl P2pServer {
         Ok(())
     }
 
-    async fn handle_incoming_packet(&self, peer: &Arc<Peer>, packet: Packet<'_>) -> Result<(), P2pError> {
+    async fn handle_incoming_packet(self: &Arc<Self>, peer: &Arc<Peer>, packet: Packet<'_>) -> Result<(), P2pError> {
         match packet {
             Packet::Handshake(_) => {
                 return Err(P2pError::InvalidPacket)
@@ -402,7 +404,7 @@ impl P2pServer {
                 }
                 peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, response_blocks))).await?;
             },
-            Packet::ChainResponse(response) => {
+            Packet::ChainResponse(response) => { // TODO run it in a new task
                 debug!("Received a chain response from {}", peer.get_connection().get_address());
                 if !peer.chain_sync_requested() {
                     warn!("Peer {} sent us a chain response but we haven't requested any.", peer.get_connection().get_address());
@@ -440,21 +442,24 @@ impl P2pServer {
                         }
                     }
 
-                    let blocks = response.get_blocks();
-                    // NOTE: Maybe we can distribute it by asking X blocks to Y peers that are on the same chain & has all requested blocks
-                    let mut objects = peer.get_objects_requested().lock().await;
-                    for hash in blocks { // Request all complete blocks now
-                        let object_request = ObjectRequest::Block(hash.into_owned());
-                        if objects.contains(&object_request) {
-                            error!("Error, peer send us multiple times the same block hash!");
-                            return Err(P2pError::InvalidPacket)
+                    let peer = Arc::clone(peer);
+                    let zelf = Arc::clone(self);
+                    let blocks: Vec<Hash> = response.get_blocks().into_iter().map(|b| b.into_owned()).collect();
+                    tokio::spawn(async move {
+                        // NOTE: Maybe we can distribute it by asking X blocks to Y peers that are on the same chain & has all requested blocks
+                        for hash in blocks { // Request all complete blocks now
+                            let object_request = ObjectRequest::Block(hash);
+                            let response = peer.request_blocking_object(object_request).await.unwrap();
+                            if let OwnedObjectResponse::Block(block) = response {
+                                debug!("Received block {} from peer {}", block.hash(), peer.get_connection().get_address());
+                                if let Err(e) = zelf.blockchain.add_new_block(block, false).await {
+                                    error!("Error while adding new block: {}", e);
+                                }
+                            } else {
+                                error!("Peer {} sent us an invalid block response", peer.get_connection().get_address());
+                            }
                         }
-                        peer.send_packet(Packet::ObjectRequest(Cow::Borrowed(&object_request))).await?;
-                        if !objects.insert(object_request) {
-                            error!("Error while trying to add object request!");
-                            return Err(P2pError::InvalidPacket)
-                        }
-                    }
+                    });
                 } else {
                     warn!("No common block was found with peer {}", peer.get_connection().get_address());
                     if response.size() > 0 {
@@ -499,27 +504,12 @@ impl P2pServer {
             Packet::ObjectResponse(response) => {
                 debug!("Received a object response");
                 let request = response.get_request();
-                // check if we have requested this object
-                if !peer.remove_object_request(&request).await {
-                    error!("Peer {} send us a response object but we didn't asked it", peer.get_connection().get_address());
-                    return Err(P2pError::InvalidPacket)
-                }
 
+                // check if we have requested this object & get the sender from it
+                let sender = peer.remove_object_request(request.into_owned()).await?;
                 // handle the response
-                match response {
-                    ObjectResponse::Block(block) => {
-                        if let Err(e) = self.blockchain.add_new_block(block.into_owned(), false).await {
-                            error!("Error while adding requested block: {}", e);
-                        }
-                    },
-                    ObjectResponse::Transaction(tx) => {
-                        if let Err(e) = self.blockchain.add_tx_to_mempool(tx.into_owned(), false).await {
-                            error!("Error while adding requested tx: {}", e);
-                        }
-                    },
-                    ObjectResponse::NotFound(_) => {
-                        error!("Peer {} have not the requested object", peer.get_connection().get_address())
-                    }
+                if sender.send(response.to_owned()?).is_err() {
+                    error!("Error while sending object response to sender!");
                 }
             }
         };
@@ -527,10 +517,10 @@ impl P2pServer {
     }
 
     // Listen to incoming packets from a connection
-    async fn listen_connection(&self, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
+    async fn listen_connection(self: &Arc<Self>, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
         let packet = peer.get_connection().read_packet(buf, MAX_BLOCK_SIZE as u32).await?;
         if let Err(e) = self.handle_incoming_packet(peer, packet).await {
-            debug!("Error occured while handling incoming packet from {}: {}", peer.get_connection().get_address(), e);
+            error!("Error occured while handling incoming packet from {}: {}", peer.get_connection().get_address(), e);
             peer.increment_fail_count();
         }
         Ok(())

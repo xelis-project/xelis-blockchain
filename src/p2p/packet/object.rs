@@ -1,7 +1,7 @@
-use crate::{crypto::hash::{Hash, Hashable}, core::{block::CompleteBlock, transaction::Transaction, serializer::Serializer, reader::{ReaderError, Reader}, writer::Writer}};
+use crate::{crypto::hash::{Hash, Hashable}, core::{block::CompleteBlock, transaction::Transaction, serializer::Serializer, reader::{ReaderError, Reader}, writer::Writer}, p2p::error::P2pError};
 use std::borrow::Cow;
 
-#[derive(Clone, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ObjectRequest {
     Block(Hash),
     Transaction(Hash)
@@ -31,6 +31,11 @@ impl Serializer for ObjectRequest {
     }
 }
 
+pub enum OwnedObjectResponse {
+    Block(CompleteBlock),
+    Transaction(Transaction)
+}
+
 pub enum ObjectResponse<'a> {
     Block(Cow<'a, CompleteBlock>),
     Transaction(Cow<'a, Transaction>),
@@ -44,7 +49,15 @@ impl ObjectResponse<'_> {
             ObjectResponse::Transaction(tx) => Cow::Owned(ObjectRequest::Transaction(tx.hash())),
             ObjectResponse::NotFound(request) => Cow::Borrowed(request)
         }
-    } 
+    }
+
+    pub fn to_owned(self) -> Result<OwnedObjectResponse, P2pError> {
+        Ok(match self {
+            ObjectResponse::Block(block) => OwnedObjectResponse::Block(block.into_owned()),
+            ObjectResponse::Transaction(tx) => OwnedObjectResponse::Transaction(tx.into_owned()),
+            ObjectResponse::NotFound(request) => return Err(P2pError::ObjectNotFound(request))
+        })
+    }
 }
 
 impl<'a> Serializer for ObjectResponse<'a> {

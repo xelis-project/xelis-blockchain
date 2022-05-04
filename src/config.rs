@@ -23,3 +23,4 @@ pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = 3; // wait maximum between each chain s
 pub const CHAIN_SYNC_DELAY: u64 = 3; // minimum 3s between each chain sync request per peer
 pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to 64 blocks id (hash + height) 
 pub const P2P_PING_DELAY: u64 = 10; // 10s between each handshake update
+pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 1500; // 1500ms until we timeout
