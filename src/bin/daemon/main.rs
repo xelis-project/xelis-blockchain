@@ -1,19 +1,13 @@
-mod globals;
-mod config;
-mod crypto;
-mod wallet;
-mod core;
-mod p2p;
-
-use crate::core::prompt::command::{Command, CommandError};
-use crate::core::prompt::prompt::{Prompt, PromptError};
-use crate::core::prompt::command::CommandManager;
-use crate::core::blockchain::Blockchain;
-use crate::core::prompt::argument::*;
-use crate::config::VERSION;
+use xelis_blockchain::core::prompt::command::{Command, CommandError};
+use xelis_blockchain::core::prompt::prompt::{Prompt, PromptError};
+use xelis_blockchain::core::prompt::command::CommandManager;
+use xelis_blockchain::core::blockchain::Blockchain;
+use xelis_blockchain::core::prompt::argument::*;
+use xelis_blockchain::config::VERSION;
 use fern::colors::Color;
 use log::{info, error};
 use argh::FromArgs;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,8 +18,11 @@ struct NodeConfig {
     #[argh(option)]
     tag: Option<String>,
     /// bind address for p2p
-    #[argh(option, default = "config::DEFAULT_BIND_ADDRESS.to_string()")]
+    #[argh(option, default = "xelis_blockchain::config::DEFAULT_BIND_ADDRESS.to_string()")]
     bind_address: String,
+    /// priority nodes
+    #[argh(option)]
+    priority_nodes: Vec<String>,
     /// enable debug logging
     #[argh(switch)]
     debug: bool,
@@ -58,6 +55,19 @@ async fn main() {
         }
     };
 
+    if let Some(p2p) = blockchain.get_p2p().lock().await.as_ref() {
+        for addr in config.priority_nodes {
+            let addr: SocketAddr = match addr.parse() {
+                Ok(addr) => addr,
+                Err(e) => {
+                    error!("Error while parsing priority node: {}", e);
+                    continue;
+                }
+            };
+            p2p.try_to_connect_to_peer(addr, true);
+        }
+    }
+
     if config.mining {
         let blockchain = blockchain.clone();
         tokio::spawn(async move {
@@ -66,7 +76,6 @@ async fn main() {
                 if let Err(e) = blockchain.mine_block(&key).await {
                     error!("Error while mining block: {}", e);
                 }
-
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
         });
