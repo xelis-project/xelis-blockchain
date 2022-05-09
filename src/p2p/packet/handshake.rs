@@ -6,6 +6,7 @@ use crate::p2p::connection::Connection;
 use crate::core::writer::Writer;
 use crate::crypto::hash::Hash;
 use crate::p2p::peer::Peer;
+use std::collections::HashSet;
 use std::fmt::{Display, Error, Formatter};
 use std::net::SocketAddr;
 
@@ -52,7 +53,11 @@ impl Handshake {
 
     pub fn create_peer(self, connection: Connection, out: bool, priority: bool, peer_list: SharedPeerList) -> (Peer, Vec<SocketAddr>) {
         let block_height = self.get_block_height();
-        (Peer::new(connection, self.get_peer_id(), self.node_tag, self.local_port, self.version, self.block_top_hash, block_height, out, priority, peer_list), self.peers)
+        let mut peers = HashSet::new();
+        for peer in &self.peers {
+            peers.insert(peer.clone());
+        }
+        (Peer::new(connection, self.get_peer_id(), self.node_tag, self.local_port, self.version, self.block_top_hash, block_height, out, priority, peer_list, peers), self.peers)
     }
 
     pub fn get_version(&self) -> &String {
@@ -140,7 +145,7 @@ impl Serializer for Handshake {
             return Err(ReaderError::InvalidSize)
         }
 
-        let mut peers = vec![];
+        let mut peers = Vec::with_capacity(peers_len);
         for _ in 0..peers_len {
             let peer = ip_from_bytes(reader)?;
             peers.push(peer);

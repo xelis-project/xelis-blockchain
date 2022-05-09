@@ -6,12 +6,13 @@ use super::peer_list::SharedPeerList;
 use super::connection::Connection;
 use super::packet::Packet;
 use super::error::P2pError;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicBool, Ordering};
 use std::fmt::{Display, Error, Formatter};
 use std::time::Duration;
 use tokio::sync::oneshot::Sender;
 use tokio::time::timeout;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 use std::borrow::Cow;
 use bytes::Bytes;
@@ -33,11 +34,12 @@ pub struct Peer {
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
     peer_list: SharedPeerList,
     chain_requested: AtomicBool,
-    objects_requested: Mutex<RequestedObjects>
+    objects_requested: Mutex<RequestedObjects>,
+    peers: Mutex<HashSet<SocketAddr>>, // all peers from this peer
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, block_top_hash: Hash, block_height: u64, out: bool, priority: bool, peer_list: SharedPeerList) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, block_top_hash: Hash, block_height: u64, out: bool, priority: bool, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
         Self {
             connection,
             id,
@@ -52,7 +54,8 @@ impl Peer {
             last_chain_sync: AtomicU64::new(0),
             peer_list,
             chain_requested: AtomicBool::new(false),
-            objects_requested: Mutex::new(HashMap::new())
+            objects_requested: Mutex::new(HashMap::new()),
+            peers: Mutex::new(peers),
         }
     }
 
@@ -156,6 +159,10 @@ impl Peer {
         };
 
         Ok(object)
+    }
+
+    pub fn get_peers(&self) -> &Mutex<HashSet<SocketAddr>> {
+        &self.peers
     }
 
     pub async fn close(&self) -> Result<(), P2pError> {

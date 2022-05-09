@@ -20,7 +20,6 @@ use super::peer::Peer;
 use tokio::net::{TcpListener, TcpStream};
 use log::{info, warn, error, debug};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::oneshot::channel;
 use tokio::time::interval;
 use tokio::time::timeout;
 use std::borrow::Cow;
@@ -244,6 +243,24 @@ impl P2pServer {
         connection.send_bytes(&writer.bytes()).await
     }
 
+    async fn build_ping_packet_for_peer(&self, peer: &Arc<Peer>) -> Ping {
+        let block_top_hash = self.blockchain.get_top_block_hash().await;
+        let block_height = self.blockchain.get_height();
+
+        let mut new_peers = Vec::new(); // TODO Limit to every X minutes
+        {
+            let mut peer_peers = peer.get_peers().lock().await;
+            let peer_list = self.peer_list.lock().await;
+            for p in peer_list.get_peers().values() {
+                let addr = p.get_connection().get_address();
+                if !peer_peers.contains(addr) {
+                    peer_peers.insert(addr.clone());
+                    new_peers.push(addr.clone());
+                }
+            }
+        }
+        Ping::new(block_top_hash, block_height, new_peers)
+    }
     // send a ping packet to specific peer every 10s
     async fn loop_ping(self: Arc<Self>, peer: Arc<Peer>) {
         let mut ping_interval = interval(Duration::from_secs(P2P_PING_DELAY));
@@ -253,10 +270,7 @@ impl P2pServer {
                 break;
             }
 
-            let block_top_hash = self.blockchain.get_top_block_hash().await;
-            let block_height = self.blockchain.get_height();
-            let ping = Ping::new(block_top_hash, block_height);
-            let packet = Packet::Ping(Cow::Owned(ping));
+            let packet = Packet::Ping(Cow::Owned(self.build_ping_packet_for_peer(&peer).await));
             debug!("Sending ping packet to peer: {}", peer.get_connection().get_address());
             if let Err(e) = peer.send_packet(packet).await {
                 debug!("Error occured on ping: {}", e);
@@ -293,7 +307,7 @@ impl P2pServer {
     }
 
     async fn handle_connection(self: Arc<Self>, buf: &mut [u8], peer: Arc<Peer>) -> Result<(), P2pError> {
-        tokio::spawn(Arc::clone(&self).loop_ping(peer.clone()));
+        tokio::spawn(Arc::clone(&self).loop_ping(Arc::clone(&peer)));
         let mut rx = peer.get_connection().get_rx().lock().await;
         loop {
             tokio::select! {
@@ -405,7 +419,7 @@ impl P2pServer {
                 }
                 peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, response_blocks))).await?;
             },
-            Packet::ChainResponse(response) => { // TODO run it in a new task
+            Packet::ChainResponse(response) => {
                 debug!("Received a chain response from {}", peer.get_connection().get_address());
                 if !peer.chain_sync_requested() {
                     warn!("Peer {} sent us a chain response but we haven't requested any.", peer.get_connection().get_address());
@@ -436,28 +450,42 @@ impl P2pServer {
                         error!("We may have deviated too much! Pop count: {}", pop_count);
                     }
 
-                    if pop_count > 0 && (pop_count <= MAX_BLOCK_REWIND || peer.is_priority()) {
-                        warn!("Rewinding chain because of peer {} (priority: {}, pop count: {})", peer.get_connection().get_address(), peer.is_priority(), pop_count);
-                        if let Err(e) = self.blockchain.rewind_chain(pop_count as usize).await {
-                            error!("Error on rewind chain: pop count: {}, error: {}", pop_count, e);
-                        }
-                    }
-
                     let peer = Arc::clone(peer);
                     let zelf = Arc::clone(self);
                     let blocks: Vec<Hash> = response.get_blocks().into_iter().map(|b| b.into_owned()).collect();
                     tokio::spawn(async move {
-                        // NOTE: Maybe we can distribute it by asking X blocks to Y peers that are on the same chain & has all requested blocks
+                        let mut storage = zelf.blockchain.get_storage().lock().await; // lock until we get all blocks
+                        let mut complete_blocks: Vec<CompleteBlock> = Vec::with_capacity(blocks.len());
                         for hash in blocks { // Request all complete blocks now
                             let object_request = ObjectRequest::Block(hash);
-                            let response = peer.request_blocking_object(object_request).await.unwrap();
+                            let response = match peer.request_blocking_object(object_request).await {
+                                Ok(obj) => obj,
+                                Err(e) => {
+                                    error!("Error while requesting block object: {}", e);
+                                    peer.increment_fail_count();
+                                    return;
+                                }
+                            }; 
                             if let OwnedObjectResponse::Block(block) = response {
                                 debug!("Received block {} from peer {}", block.hash(), peer.get_connection().get_address());
-                                if let Err(e) = zelf.blockchain.add_new_block(block, false).await {
-                                    error!("Error while adding new block: {}", e);
-                                }
+                                complete_blocks.push(block);
                             } else {
                                 error!("Peer {} sent us an invalid block response", peer.get_connection().get_address());
+                            }
+                        }
+
+                        if pop_count > 0 && (pop_count <= MAX_BLOCK_REWIND || peer.is_priority()) {
+                            warn!("Rewinding chain because of peer {} (priority: {}, pop count: {})", peer.get_connection().get_address(), peer.is_priority(), pop_count);
+                            if let Err(e) = zelf.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
+                                error!("Error on rewind chain: pop count: {}, error: {}", pop_count, e);
+                            }
+                        }
+
+                        for block in complete_blocks {
+                            if let Err(e) = zelf.blockchain.add_new_block_for_storage(&mut storage, block, false).await {
+                                error!("Error on adding block requested: {}", e);
+                                peer.increment_fail_count();
+                                return;
                             }
                         }
                     });
@@ -470,6 +498,12 @@ impl P2pServer {
                 }
             },
             Packet::Ping(ping) => {
+                for peer in ping.get_peers() { // TODO verify that peer don't spam us
+                    if !self.is_connected_to_addr(&peer).await? {
+                        let peer = peer.clone();
+                        self.try_to_connect_to_peer(peer, false);
+                    }
+                }
                 ping.into_owned().update_peer(peer).await;
             },
             Packet::ObjectRequest(request) => {
