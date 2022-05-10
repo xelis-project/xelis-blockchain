@@ -24,6 +24,7 @@ chrono = "0.4.19"
 argh = "0.1.7"
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "time", "macros", "sync", "net"] }
 bytes = "1"
+actix-web = "4"
 
 [[bin]]
 name = "wallet"

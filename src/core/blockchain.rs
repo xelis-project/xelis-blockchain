@@ -3,6 +3,7 @@ use crate::crypto::hash::{Hash, Hashable};
 use crate::globals::get_current_time;
 use crate::crypto::key::PublicKey;
 use crate::p2p::server::P2pServer;
+use crate::rpc::RpcServer;
 use super::difficulty::{check_difficulty, calculate_difficulty};
 use super::block::{Block, CompleteBlock};
 use super::mempool::{Mempool, SortedTx};
@@ -40,22 +41,19 @@ impl Account {
     }
 }
 
-#[derive(serde::Serialize)]
 pub struct Blockchain {
     height: AtomicU64, // current block height 
     supply: AtomicU64, // current circulating supply based on coins already emitted
     difficulty: AtomicU64, // difficulty for next block
-    #[serde(skip_serializing)]
     mempool: Mutex<Mempool>, // mempool to retrieve/add all txs
-    #[serde(skip_serializing)]
     storage: Mutex<Storage>, // storage to retrieve/add blocks
-    #[serde(skip_serializing)]
-    p2p: Mutex<Option<Arc<P2pServer>>>,
+    p2p: Mutex<Option<Arc<P2pServer>>>, // P2p module
+    rpc: Mutex<Option<RpcServer>>, // Rpc module
     dev_address: PublicKey // Dev address for block fee
 }
 
 impl Blockchain {
-    pub async fn new(tag: Option<String>, p2p_address: String) -> Result<Arc<Self>, BlockchainError> {
+    pub async fn new(tag: Option<String>, max_peers: usize, p2p_address: String) -> Result<Arc<Self>, BlockchainError> {
         let dev_address = PublicKey::from_address(&DEV_ADDRESS.to_owned())?;
         let blockchain = Self {
             height: AtomicU64::new(0),
@@ -64,17 +62,40 @@ impl Blockchain {
             mempool: Mutex::new(Mempool::new()),
             storage: Mutex::new(Storage::new()),
             p2p: Mutex::new(None),
+            rpc: Mutex::new(None),
             dev_address: dev_address
         };
+        // TODO Read blockchain from disk if exists
+        // include genesis block
         blockchain.create_genesis_block().await?;
 
         let arc = Arc::new(blockchain);
+        // create P2P Server
         {
-            let p2p = P2pServer::new(tag, 8, p2p_address, arc.clone());
+            let p2p = P2pServer::new(tag, max_peers, p2p_address, Arc::clone(&arc));
             *arc.p2p.lock().await = Some(p2p);
         }
 
+        // create RPC Server
+        {
+            let server = RpcServer::new(String::from("0.0.0.0:8080"), Arc::clone(&arc))?; // TODO config
+            *arc.rpc.lock().await = Some(server);
+        }
         Ok(arc)
+    }
+
+    pub async fn stop(&self) {
+        info!("Stopping modules...");
+        let mut p2p = self.p2p.lock().await;
+        if let Some(p2p) = p2p.take() {
+            p2p.stop().await;
+        }
+
+        let mut rpc = self.rpc.lock().await;
+        if let Some(rpc) = rpc.take() {
+            rpc.stop().await;
+        }
+        info!("All modules are now stopped!");
     }
 
     // function to include the genesis block and register the public dev key.

@@ -3,6 +3,7 @@ use crate::crypto::hash::Hash;
 use crate::crypto::key::PublicKey;
 use crate::crypto::bech32::Bech32Error;
 use super::reader::ReaderError;
+use super::prompt::prompt::PromptError;
 use std::sync::PoisonError;
 use thiserror::Error;
 
@@ -72,6 +73,8 @@ pub enum BlockchainError {
     ErrorOnP2p(#[from] P2pError),
     #[error(transparent)]
     ErrorOnReader(#[from] ReaderError),
+    #[error(transparent)]
+    ErrorOnPrompt(#[from] PromptError),
     #[error("Poison Error: {}", _0)]
     PoisonError(String),
     #[error("Blockchain is syncing")]

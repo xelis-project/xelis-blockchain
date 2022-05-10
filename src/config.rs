@@ -25,4 +25,5 @@ pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to X blocks id
 pub const P2P_PING_DELAY: u64 = 5; // time between each ping
 pub const P2P_PING_PEER_LIST_DELAY: u64 = 15; // time in seconds between each update of peerlist
 pub const P2P_PING_PEER_LIST_LIMIT: usize = 16; // maximum number of addresses to be send
+pub const P2P_DEFAULT_MAX_PEERS: usize = 32; // default number of maximum peers
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 1500; // millis until we timeout

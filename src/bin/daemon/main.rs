@@ -1,3 +1,4 @@
+use xelis_blockchain::core::error::BlockchainError;
 use xelis_blockchain::core::prompt::command::{Command, CommandError};
 use xelis_blockchain::core::prompt::prompt::{Prompt, PromptError};
 use xelis_blockchain::core::prompt::command::CommandManager;
@@ -23,6 +24,9 @@ struct NodeConfig {
     /// priority nodes
     #[argh(option)]
     priority_nodes: Vec<String>,
+    /// maximum number of peers
+    #[argh(option, default = "xelis_blockchain::config::P2P_DEFAULT_MAX_PEERS")]
+    max_peers: usize,
     /// enable debug logging
     #[argh(switch)]
     debug: bool,
@@ -35,26 +39,14 @@ struct NodeConfig {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), BlockchainError> {
     let config: NodeConfig = argh::from_env();
     let command_manager = create_command_manager();
-    let prompt = match Prompt::new(config.debug, config.disable_file_logging, command_manager) {
-        Ok(prompt) => prompt,
-        Err(e) => {
-            println!("Error while initializing prompt: {}", e);
-            return
-        }
-    };
+    let prompt = Prompt::new(config.debug, config.disable_file_logging, command_manager)?;
     info!("Xelis Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
-    let blockchain = match Blockchain::new(config.tag, config.bind_address).await {
-        Ok(blockchain) => blockchain,
-        Err(e) => {
-            error!("Couldn't create blockchain: {}", e);
-            return;
-        }
-    };
-
+    let blockchain = Blockchain::new(config.tag, config.max_peers, config.bind_address).await?;
+    // connect to all priority nodes
     if let Some(p2p) = blockchain.get_p2p().lock().await.as_ref() {
         for addr in config.priority_nodes {
             let addr: SocketAddr = match addr.parse() {
@@ -81,16 +73,23 @@ async fn main() {
         });
     }
 
-    if let Err(e) = run_prompt(prompt, blockchain.clone()).await {
-        error!("Error while running prompt: {}", e);
+    tokio::select! {
+        Err(e) = run_prompt(&prompt, blockchain.clone()) => {
+            error!("Error while running prompt: {}", e);
+        },
+        res = tokio::signal::ctrl_c() => {
+            if let Err(e) = res {
+                error!("Error received on CTRL+C: {}", e);
+            } else {
+                info!("CTRL+C received, exiting...");
+            }
+        }
     }
-    let p2p = blockchain.get_p2p().lock().await;
-    if let Some(p2p) = p2p.as_ref() {
-        p2p.stop().await;
-    }
+    blockchain.stop().await;
+    Ok(())
 }
 
-async fn run_prompt(prompt: Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
+async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
     let closure = || async {
         let height = blockchain.get_height();
         let (peers, best) = match blockchain.get_p2p().lock().await.as_ref() {

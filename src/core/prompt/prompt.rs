@@ -30,7 +30,7 @@ impl<T> From<PoisonError<T>> for PromptError {
 
 pub struct Prompt {
     prompt: Mutex<Option<String>>,
-    command_manager: CommandManager
+    command_manager: CommandManager,
 }
 
 impl Prompt {
@@ -61,7 +61,7 @@ impl Prompt {
         let mut buf = [0u8; 256]; // alow up to 256 characters
         loop {
             tokio::select! {
-                res = stdin.read(&mut buf) => {
+                res = stdin.read(&mut buf) => { // TODO fix it / replace it (have to press enter after ctrl+c, otherwise it will be stuck)
                     let n = res?;
                     if n == 0 {
                         return Err(PromptError::EndOfStream);
