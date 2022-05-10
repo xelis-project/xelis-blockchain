@@ -7,7 +7,8 @@ use crate::core::block::CompleteBlock;
 use crate::globals::get_current_time;
 use crate::crypto::hash::{Hashable, Hash};
 use crate::core::writer::Writer;
-use super::packet::chain::{ChainRequest, ChainResponse};
+use crate::p2p::packet::chain::CommonPoint;
+use super::packet::chain::{BlockId, ChainRequest, ChainResponse};
 use super::packet::object::{ObjectRequest, ObjectResponse, OwnedObjectResponse};
 use super::peer_list::{SharedPeerList, PeerList};
 use super::connection::{State, Connection};
@@ -60,13 +61,12 @@ impl P2pServer {
         };
 
         let arc = Arc::new(server);
-        let zelf = arc.clone();
+        let zelf = Arc::clone(&arc);
         tokio::spawn(async move {
             if let Err(e) = zelf.start().await {
                 error!("Unexpected error on P2p module: {}", e);
             }
         });
-        tokio::spawn(Arc::clone(&arc).chain_sync_loop());
         arc
     }
 
@@ -97,6 +97,9 @@ impl P2pServer {
         if let Err(e) = self.connect_to_seed_nodes().await {
             error!("Error while connecting to seed nodes: {}", e);
         }
+
+        // start a new task for chain sync
+        tokio::spawn(Arc::clone(&self).chain_sync_loop());
 
         let listener = TcpListener::bind(self.get_bind_address()).await?;
         info!("P2p Server will listen on: {}", self.get_bind_address());
@@ -387,7 +390,7 @@ impl P2pServer {
                 let last_request = peer.get_last_chain_sync();
                 let time = get_current_time();
                 peer.set_last_chain_sync(time);
-                // Node is trying to ask too fast chain
+                // Node is trying to ask too fast our chain
                 if  last_request + CHAIN_SYNC_DELAY > time {
                     debug!("Peer requested sync chain too fast!");
                     return Err(P2pError::RequestSyncChainTooFast)
@@ -399,29 +402,15 @@ impl P2pServer {
                     return Err(P2pError::InvalidPacket)
                 }
 
+                let zelf = Arc::clone(&self);
+                let peer = Arc::clone(peer);
                 let blocks = request.get_blocks();
-                let storage = self.blockchain.get_storage().lock().await;
-                let mut response_blocks = Vec::new();
-                let mut common_point = None;
-                for block_id in blocks { // search a common point
-                    if let Ok(block) = storage.get_block_by_hash(block_id.get_hash()) {
-                        let (hash, height) = block_id.consume();
-                        debug!("Block {} found for height: {}", hash, height);
-                        if block.get_height() == height {
-                            debug!("common point with peer found at block {} hash: {}", height, hash);
-                            common_point = Some(hash);
-                            let top_height = self.blockchain.get_height();
-                            let mut height = block.get_height() + 1;
-                            while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && height <= top_height {
-                                let block = storage.get_block_at_height(height).unwrap(); // TODO
-                                response_blocks.push(Cow::Owned(block.hash()));
-                                height += 1;
-                            }
-                            break;
-                        }
+                tokio::spawn(async move {
+                    if let Err(e) = zelf.handle_chain_request(&peer, blocks).await {
+                        error!("Error while handling chain request from {}: {}", peer.get_connection().get_address(), e);
+                        peer.increment_fail_count();
                     }
-                }
-                peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, response_blocks))).await?;
+                });
             },
             Packet::ChainResponse(response) => {
                 debug!("Received a chain response from {}", peer.get_connection().get_address());
@@ -440,13 +429,17 @@ impl P2pServer {
                     debug!("Peer found a common point for sync, received {} blocks", response.size());
                     let pop_count = {
                         let storage = self.blockchain.get_storage().lock().await;
-                        let common_block = match storage.get_block_by_hash(common_point) {
+                        let common_block = match storage.get_block_by_hash(common_point.get_hash()) {
                             Ok(block) => block,
                             Err(e) => {
                                 warn!("Peer {} sent us an invalid common point: {}", peer.get_connection().get_address(), e);
                                 return Err(P2pError::InvalidPacket)
                             }
                         };
+                        if common_block.get_height() != common_point.get_height() {
+                            error!("Peer {} sent us a valid block hash, but at invalid height (expected: {}, got: {})!", peer.get_connection().get_address(), common_block.get_height(), common_point.get_height());
+                            return Err(P2pError::InvalidPacket)
+                        }
                         self.blockchain.get_height() - common_block.get_height()
                     };
 
@@ -457,6 +450,8 @@ impl P2pServer {
                     let peer = Arc::clone(peer);
                     let zelf = Arc::clone(self);
                     let blocks: Vec<Hash> = response.get_blocks().into_iter().map(|b| b.into_owned()).collect();
+
+                    // start a new task to wait on all requested blocks
                     tokio::spawn(async move {
                         if let Err(e) = zelf.handle_chain_response(&peer, blocks, pop_count).await {
                             error!("Error while handling chain response from {}: {}", peer.get_connection().get_address(), e);
@@ -535,6 +530,32 @@ impl P2pServer {
         Ok(())
     }
 
+    async fn handle_chain_request(self: Arc<Self>, peer: &Arc<Peer>, blocks: Vec<BlockId>) -> Result<(), BlockchainError> {
+        let storage = self.blockchain.get_storage().lock().await;
+        let mut response_blocks = Vec::new();
+        let mut common_point = None;
+        for block_id in blocks { // search a common point
+            if let Ok(block) = storage.get_block_by_hash(block_id.get_hash()) {
+                let (hash, height) = block_id.consume();
+                debug!("Block {} found for height: {}", hash, height);
+                if block.get_height() == height { // common point
+                    debug!("common point with peer found at block {} hash: {}", height, hash);
+                    common_point = Some(CommonPoint::new(Cow::Owned(hash), height));
+                    let top_height = self.blockchain.get_height();
+                    let mut height = block.get_height() + 1;
+                    while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && height <= top_height {
+                        let block = storage.get_block_at_height(height)?;
+                        response_blocks.push(Cow::Owned(block.hash()));
+                        height += 1;
+                    }
+                    break;
+                }
+            }
+        }
+        peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, response_blocks))).await?;
+        Ok(())
+    }
+
     async fn handle_chain_response(self: Arc<Self>, peer: &Arc<Peer>, blocks_request: Vec<Hash>, pop_count: u64) -> Result<(), BlockchainError> {
         let mut storage = self.blockchain.get_storage().lock().await; // lock until we get all blocks
         let mut blocks: Vec<CompleteBlock> = Vec::with_capacity(blocks_request.len());
@@ -596,6 +617,7 @@ impl P2pServer {
             our_height
         }
     }
+
     pub async fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError> {
         let peer_list = self.peer_list.lock().await;
         Ok(self.peer_id == *peer_id || peer_list.has_peer(peer_id))

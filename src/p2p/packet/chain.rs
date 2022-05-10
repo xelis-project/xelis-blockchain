@@ -93,20 +93,55 @@ impl Serializer for ChainRequest {
     }
 }
 
+pub struct CommonPoint<'a> {
+    hash: Cow<'a, Hash>,
+    height: u64
+}
+
+impl<'a> CommonPoint<'a> {
+    pub fn new(hash: Cow<'a, Hash>, height: u64) -> Self {
+        Self {
+            hash,
+            height
+        }
+    }
+
+    pub fn get_hash(&self) -> &Hash {
+        &self.hash
+    }
+
+    pub fn get_height(&self) -> u64 {
+        self.height
+    }
+}
+
+impl Serializer for CommonPoint<'_> {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_hash(&self.hash);
+        writer.write_u64(&self.height);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let hash = Cow::Owned(reader.read_hash()?);
+        let height = reader.read_u64()?;
+        Ok(Self { hash, height })
+    }
+}
+
 pub struct ChainResponse<'a> {
-    common_point: Option<Hash>,
+    common_point: Option<CommonPoint<'a>>,
     blocks: Vec<Cow<'a, Hash>>,
 }
 
 impl<'a> ChainResponse<'a> {
-    pub fn new(common_point: Option<Hash>, blocks: Vec<Cow<'a, Hash>>) -> Self {
+    pub fn new(common_point: Option<CommonPoint<'a>>, blocks: Vec<Cow<'a, Hash>>) -> Self {
         Self {
             common_point,
             blocks
         }
     }
 
-    pub fn get_common_point(&self) -> &Option<Hash> {
+    pub fn get_common_point(&self) -> &Option<CommonPoint<'a>> {
         &self.common_point
     }
 
@@ -125,9 +160,9 @@ impl<'a> Serializer for ChainResponse<'a> {
             None => {
                 writer.write_bool(&false);
             },
-            Some(hash) => {
+            Some(point) => {
                 writer.write_bool(&true);
-                writer.write_hash(hash);
+                point.write(writer);
             }
         };
         writer.write_u8(self.blocks.len() as u8);
@@ -138,7 +173,7 @@ impl<'a> Serializer for ChainResponse<'a> {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let common_point = match reader.read_bool()? {
-            true => Some(reader.read_hash()?),
+            true => Some(CommonPoint::read(reader)?),
             false => None
         };
 
