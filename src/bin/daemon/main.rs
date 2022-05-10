@@ -70,7 +70,7 @@ async fn main() {
 
     if config.mining {
         let blockchain = blockchain.clone();
-        tokio::spawn(async move {
+        tokio::spawn(async move { // TODO: move in another thread instead of tokio
             let key = blockchain.get_dev_address().clone();
             loop {
                 if let Err(e) = blockchain.mine_block(&key).await {

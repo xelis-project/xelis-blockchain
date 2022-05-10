@@ -52,6 +52,8 @@ pub enum P2pError {
     ObjectAlreadyRequested(ObjectRequest),
     #[error(transparent)]
     ObjectRequestError(#[from] RecvError),
+    #[error("Expected a block type")]
+    ExpectedBlock
 }
 
 impl<T> From<PoisonError<T>> for P2pError {
