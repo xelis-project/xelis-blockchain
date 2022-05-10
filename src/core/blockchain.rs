@@ -53,7 +53,7 @@ pub struct Blockchain {
 }
 
 impl Blockchain {
-    pub async fn new(tag: Option<String>, max_peers: usize, p2p_address: String) -> Result<Arc<Self>, BlockchainError> {
+    pub async fn new(tag: Option<String>, max_peers: usize, p2p_address: String, rpc_address: String) -> Result<Arc<Self>, BlockchainError> {
         let dev_address = PublicKey::from_address(&DEV_ADDRESS.to_owned())?;
         let blockchain = Self {
             height: AtomicU64::new(0),
@@ -78,7 +78,7 @@ impl Blockchain {
 
         // create RPC Server
         {
-            let server = RpcServer::new(String::from("0.0.0.0:8080"), Arc::clone(&arc))?; // TODO config
+            let server = RpcServer::new(rpc_address, Arc::clone(&arc))?; // TODO config
             *arc.rpc.lock().await = Some(server);
         }
         Ok(arc)

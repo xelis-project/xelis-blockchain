@@ -34,6 +34,7 @@ impl RpcServer {
     }
 
     pub async fn stop(self) {
+        info!("Stopping RPC Server...");
         self.handle.stop(true).await;
     }
 }

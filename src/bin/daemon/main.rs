@@ -18,15 +18,18 @@ struct NodeConfig {
     /// optional node tag
     #[argh(option)]
     tag: Option<String>,
-    /// bind address for p2p
-    #[argh(option, default = "xelis_blockchain::config::DEFAULT_BIND_ADDRESS.to_string()")]
-    bind_address: String,
+    /// bind address for P2P Server
+    #[argh(option, default = "xelis_blockchain::config::DEFAULT_P2P_BIND_ADDRESS.to_string()")]
+    p2p_bind_address: String,
     /// priority nodes
     #[argh(option)]
     priority_nodes: Vec<String>,
     /// maximum number of peers
     #[argh(option, default = "xelis_blockchain::config::P2P_DEFAULT_MAX_PEERS")]
     max_peers: usize,
+    /// bind address for RPC Server
+    #[argh(option, default = "xelis_blockchain::config::DEFAULT_RPC_BIND_ADDRESS.to_string()")]
+    rpc_bind_address: String,
     /// enable debug logging
     #[argh(switch)]
     debug: bool,
@@ -45,7 +48,7 @@ async fn main() -> Result<(), BlockchainError> {
     let prompt = Prompt::new(config.debug, config.disable_file_logging, command_manager)?;
     info!("Xelis Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
-    let blockchain = Blockchain::new(config.tag, config.max_peers, config.bind_address).await?;
+    let blockchain = Blockchain::new(config.tag, config.max_peers, config.p2p_bind_address, config.rpc_bind_address).await?;
     // connect to all priority nodes
     if let Some(p2p) = blockchain.get_p2p().lock().await.as_ref() {
         for addr in config.priority_nodes {
