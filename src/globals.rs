@@ -3,6 +3,7 @@ use crate::config::COIN_VALUE;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr};
 
+// return timestamp in seconds
 pub fn get_current_time() -> u64 {
     let start = SystemTime::now();
     let time = start.duration_since(UNIX_EPOCH).expect("Incorrect time returned from get_current_time");

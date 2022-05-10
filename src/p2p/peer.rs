@@ -36,6 +36,7 @@ pub struct Peer {
     chain_requested: AtomicBool,
     objects_requested: Mutex<RequestedObjects>,
     peers: Mutex<HashSet<SocketAddr>>, // all peers from this peer
+    last_peer_list_update: AtomicU64, // last time we send our peerlist to this peer
 }
 
 impl Peer {
@@ -56,6 +57,7 @@ impl Peer {
             chain_requested: AtomicBool::new(false),
             objects_requested: Mutex::new(HashMap::new()),
             peers: Mutex::new(peers),
+            last_peer_list_update: AtomicU64::new(0)
         }
     }
 
@@ -163,6 +165,14 @@ impl Peer {
 
     pub fn get_peers(&self) -> &Mutex<HashSet<SocketAddr>> {
         &self.peers
+    }
+
+    pub fn get_last_peer_list_update(&self) -> u64 {
+        self.last_peer_list_update.load(Ordering::Relaxed)
+    }
+
+    pub fn set_last_peer_list_update(&self, value: u64) {
+        self.last_peer_list_update.store(value, Ordering::Relaxed)
     }
 
     pub async fn close(&self) -> Result<(), P2pError> {

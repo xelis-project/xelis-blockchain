@@ -1,17 +1,17 @@
+use crate::core::blockchain::Blockchain;
 use crate::core::difficulty::{check_difficulty, hash_to_big};
 use crate::crypto::hash::{Hash, Hashable};
 use crate::core::error::BlockchainError;
 use crate::core::block::CompleteBlock;
-use super::peer::Peer;
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 
-pub struct ChainSync {
-    blocks: HashMap<Hash, CompleteBlock>
+pub struct ChainSync<'a> {
+    blocks: HashMap<Hash, Cow<'a, CompleteBlock>>
 }
 
-impl ChainSync {
+impl<'a> ChainSync<'a> {
     pub fn new() -> Self {
         Self {
             blocks: HashMap::new()
@@ -29,7 +29,11 @@ impl ChainSync {
         }
     }
 
-    pub fn insert_block(&mut self, block: CompleteBlock, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
+    pub fn insert_block_no_check(&mut self, hash: Hash, block: Cow<'a, CompleteBlock>) {
+        self.blocks.insert(hash, block);
+    }
+
+    pub fn insert_block(&mut self, block: Cow<'a, CompleteBlock>) -> Result<(), BlockchainError> {
         let block_hash = block.hash();
         if !self.block_exist(&block_hash) { // no need to re verify/insert block
             if !self.block_exist(block.get_previous_hash()) {
@@ -40,8 +44,7 @@ impl ChainSync {
                 return Err(BlockchainError::InvalidDifficulty)
             }
         }
-
-        self.blocks.insert(block_hash, block);
+        self.insert_block_no_check(block_hash, block);
         Ok(())
     }
 

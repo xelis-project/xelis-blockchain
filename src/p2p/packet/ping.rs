@@ -1,3 +1,4 @@
+use crate::config::P2P_PING_PEER_LIST_LIMIT;
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::serializer::Serializer;
 use crate::globals::{ip_to_bytes, ip_from_bytes};
@@ -54,6 +55,10 @@ impl Serializer for Ping {
         let block_top_hash = reader.read_hash()?;
         let block_height = reader.read_u64()?;
         let peers_len = reader.read_u8()? as usize;
+        if peers_len > P2P_PING_PEER_LIST_LIMIT {
+            return Err(ReaderError::InvalidValue)
+        }
+
         let mut peer_list = Vec::with_capacity(peers_len);
         for _ in 0..peers_len {
             let peer = ip_from_bytes(reader)?;

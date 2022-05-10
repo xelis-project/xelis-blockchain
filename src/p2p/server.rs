@@ -1,4 +1,4 @@
-use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND};
+use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT};
 use crate::core::transaction::Transaction;
 use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
@@ -247,8 +247,10 @@ impl P2pServer {
         let block_top_hash = self.blockchain.get_top_block_hash().await;
         let block_height = self.blockchain.get_height();
 
-        let mut new_peers = Vec::new(); // TODO Limit to every X minutes
-        {
+        let mut new_peers = Vec::new();
+        let current_time = get_current_time();
+        if current_time > peer.get_last_chain_sync() + P2P_PING_PEER_LIST_DELAY {
+            peer.set_last_peer_list_update(current_time);
             let mut peer_peers = peer.get_peers().lock().await;
             let peer_list = self.peer_list.lock().await;
             for p in peer_list.get_peers().values() {
@@ -256,6 +258,9 @@ impl P2pServer {
                 if !peer_peers.contains(addr) {
                     peer_peers.insert(addr.clone());
                     new_peers.push(addr.clone());
+                    if new_peers.len() >= P2P_PING_PEER_LIST_LIMIT {
+                        break;
+                    }
                 }
             }
         }
