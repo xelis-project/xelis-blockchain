@@ -48,7 +48,7 @@ pub struct Blockchain {
     mempool: Mutex<Mempool>, // mempool to retrieve/add all txs
     storage: Mutex<Storage>, // storage to retrieve/add blocks
     p2p: Mutex<Option<Arc<P2pServer>>>, // P2p module
-    rpc: Mutex<Option<RpcServer>>, // Rpc module
+    rpc: Mutex<Option<Arc<RpcServer>>>, // Rpc module
     dev_address: PublicKey // Dev address for block fee
 }
 
@@ -78,7 +78,7 @@ impl Blockchain {
 
         // create RPC Server
         {
-            let server = RpcServer::new(rpc_address, Arc::clone(&arc))?; // TODO config
+            let server = RpcServer::new(rpc_address, Arc::clone(&arc)).await?;
             *arc.rpc.lock().await = Some(server);
         }
         Ok(arc)
