@@ -1,10 +1,12 @@
+pub mod rpc;
+
 use crate::{core::{error::BlockchainError, blockchain::Blockchain}, config};
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder, dev::ServerHandle, ResponseError};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Value, Error as SerdeError, json};
 use tokio::sync::Mutex;
 use std::{sync::Arc, collections::HashMap, pin::Pin, future::Future, fmt::{Display, Formatter}};
-use log::info;
+use log::{debug, info};
 use anyhow::Error as AnyError;
 use thiserror::Error;
 
@@ -19,12 +21,16 @@ pub enum RpcError {
     ParseBodyError,
     #[error("Invalid request")]
     InvalidRequest,
-    #[error("Invalid params")]
-    InvalidParams,
+    #[error("Invalid params: {}", _0)]
+    InvalidParams(#[from] SerdeError),
+    #[error("Unexpected parameters for this method")]
+    UnexpectedParams,
     #[error("Expected json_rpc set to '2.0'")]
     InvalidVersion,
     #[error("Method '{}' in request was not found", _0)]
     MethodNotFound(String),
+    #[error("Error: {}", _0)]
+    BlockchainError(#[from] BlockchainError),
     #[error("Error: {}", _0)]
     AnyError(#[from] AnyError),
 }
@@ -35,7 +41,7 @@ impl RpcError {
             RpcError::ParseBodyError => -32700,
             RpcError::InvalidRequest | RpcError::InvalidVersion => -32600,
             RpcError::MethodNotFound(_) => -32601,
-            RpcError::InvalidParams => -32602,
+            RpcError::InvalidParams(_) | RpcError::UnexpectedParams => -32602,
             _ => -32603
         }
     }
@@ -98,18 +104,12 @@ pub struct RpcServer {
 
 impl RpcServer {
     pub async fn new(bind_address: String, blockchain: Arc<Blockchain>) -> Result<Arc<Self>, BlockchainError> {
-        let mut methods: HashMap<String, Handler> = HashMap::new();
-        methods.insert("getheight".into(), Box::new(move |blockchain, _| {
-            Box::pin(async move {
-                Ok(json!(blockchain.get_height()))
-            })
-        }));
-
-        let server = Self {
+        let mut server = Self {
             handle: Mutex::new(None),
-            methods,
+            methods: HashMap::new(),
             blockchain
         };
+        rpc::register_methods(&mut server);
 
         let rpc_server = Arc::new(server);
         let rpc_clone = Arc::clone(&rpc_server);
@@ -139,6 +139,10 @@ impl RpcServer {
         }
     }
 
+    pub fn register_method(&mut self, name: &str, handler: Handler) {
+        self.methods.insert(name.into(), handler);
+    }
+
     pub fn get_registered_methods(&self) -> &HashMap<String, Handler> {
         &self.methods
     }
@@ -165,6 +169,7 @@ async fn json_rpc(rpc: SharedRpcServer, body: web::Bytes) -> Result<impl Respond
         Some(handler) => handler,
         None => return Err(RpcResponseError::new(rpc_request.id, RpcError::MethodNotFound(rpc_request.method)))
     };
+    debug!("executing '{}' RPC method", rpc_request.method);
     let result = handler(Arc::clone(rpc.get_blockchain()), rpc_request.params.take().unwrap_or(Value::Null)).await.map_err(|err| RpcResponseError::new(rpc_request.id, err.into()))?;
     Ok(HttpResponse::Ok().json(json!({
         "jsonrpc": JSON_RPC_VERSION,

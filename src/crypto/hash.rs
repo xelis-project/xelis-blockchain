@@ -1,5 +1,7 @@
 use crate::core::serializer::Serializer;
 use std::fmt::{Display, Error, Formatter};
+use serde::de::Error as SerdeError;
+use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use std::convert::TryInto;
 use std::hash::Hasher;
@@ -53,11 +55,25 @@ impl Display for Hash {
     }
 }
 
-impl serde::Serialize for Hash {
+impl Serialize for Hash {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where S: serde::Serializer,
     {
         serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'a> Deserialize<'a> for Hash {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where D: serde::Deserializer<'a> {
+        let hex = String::deserialize(deserializer)?;
+        if hex.len() != 64 {
+            return Err(SerdeError::custom("Invalid hex length"))
+        }
+
+        let decoded_hex = hex::decode(hex).map_err(SerdeError::custom)?;
+        let bytes: [u8; 32] = decoded_hex.try_into().map_err(|_| SerdeError::custom("Could not transform hex to bytes array for Hash"))?;
+        Ok(Hash::new(bytes))
     }
 }
 
