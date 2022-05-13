@@ -3,17 +3,24 @@ use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder, dev::S
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use std::{sync::Arc, collections::HashMap, pin::Pin, future::Future};
+use std::{sync::Arc, collections::HashMap, pin::Pin, future::Future, fmt::{Display, Formatter}};
 use log::info;
-use anyhow::{Result, Error as AnyError};
+use anyhow::Error as AnyError;
 use thiserror::Error;
+
+pub type SharedRpcServer = web::Data<Arc<RpcServer>>;
+pub type Handler = Box<dyn Fn(Arc<Blockchain>, Value) -> Pin<Box<dyn Future<Output = Result<Value, RpcError>>>> + Send + Sync>;
 
 const JSON_RPC_VERSION: &str = "2.0";
 
 #[derive(Error, Debug)]
-enum RpcError {
+pub enum RpcError {
+    #[error("Invalid body in request")]
+    ParseBodyError,
     #[error("Invalid request")]
     InvalidRequest,
+    #[error("Invalid params")]
+    InvalidParams,
     #[error("Expected json_rpc set to '2.0'")]
     InvalidVersion,
     #[error("Method '{}' in request was not found", _0)]
@@ -22,26 +29,63 @@ enum RpcError {
     AnyError(#[from] AnyError),
 }
 
-impl ResponseError for RpcError {
+impl RpcError {
+    pub fn get_code(&self) -> i32 {
+        match self {
+            RpcError::ParseBodyError => -32700,
+            RpcError::InvalidRequest | RpcError::InvalidVersion => -32600,
+            RpcError::MethodNotFound(_) => -32601,
+            RpcError::InvalidParams => -32602,
+            _ => -32603
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RpcResponseError {
+    id: Option<usize>,
+    error: RpcError
+}
+
+impl RpcResponseError {
+    pub fn new(id: Option<usize>, error: RpcError) -> Self {
+        Self {
+            id,
+            error
+        }
+    }
+
+    pub fn get_id(&self) -> Value {
+        match self.id {
+            Some(id) => json!(id),
+            None => Value::Null
+        }
+    }
+}
+
+impl Display for RpcResponseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RpcError[id: {}, error: {}]", self.get_id(), self.error.to_string())
+    }
+}
+
+impl ResponseError for RpcResponseError {
     fn error_response(&self) -> HttpResponse {
         HttpResponse::Ok().json(json!({
             "jsonrpc": JSON_RPC_VERSION,
-            "id": 0, // TODO
+            "id": self.get_id(),
             "error": {
-                "code": -32700, // TODO
-                "message": self.to_string()
+                "code": self.error.get_code(),
+                "message": self.error.to_string()
             }
         }))
     }
 }
 
-pub type SharedRpcServer = web::Data<Arc<RpcServer>>;
-pub type Handler = Box<dyn Fn(Arc<Blockchain>, Value) -> Pin<Box<dyn Future<Output = Result<Value>>>> + Send + Sync>;
-
 #[derive(Deserialize)]
 pub struct RpcRequest {
     jsonrpc: String,
-    id: usize,
+    id: Option<usize>,
     method: String,
     params: Option<Value>
 }
@@ -109,15 +153,19 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body(format!("Hello, world!\nRunning on: {}", config::VERSION))
 }
 
+// TODO support batch
 #[post("/json_rpc")]
-async fn json_rpc(rpc: SharedRpcServer, body: web::Bytes) -> Result<impl Responder, RpcError> {
-    let rpc_request: RpcRequest = serde_json::from_slice(&body).map_err(|_| RpcError::InvalidRequest)?;
+async fn json_rpc(rpc: SharedRpcServer, body: web::Bytes) -> Result<impl Responder, RpcResponseError> {
+    let mut rpc_request: RpcRequest = serde_json::from_slice(&body).map_err(|_| RpcResponseError::new(None, RpcError::ParseBodyError))?;
     if rpc_request.jsonrpc != JSON_RPC_VERSION {
-        return Err(RpcError::InvalidVersion);
+        return Err(RpcResponseError::new(rpc_request.id, RpcError::InvalidVersion));
     }
 
-    let handler = rpc.get_registered_methods().get(&rpc_request.method).ok_or(RpcError::MethodNotFound(rpc_request.method))?;
-    let result = handler(Arc::clone(rpc.get_blockchain()), rpc_request.params.unwrap_or(Value::Null)).await?;
+    let handler = match rpc.get_registered_methods().get(&rpc_request.method) {
+        Some(handler) => handler,
+        None => return Err(RpcResponseError::new(rpc_request.id, RpcError::MethodNotFound(rpc_request.method)))
+    };
+    let result = handler(Arc::clone(rpc.get_blockchain()), rpc_request.params.take().unwrap_or(Value::Null)).await.map_err(|err| RpcResponseError::new(rpc_request.id, err.into()))?;
     Ok(HttpResponse::Ok().json(json!({
         "jsonrpc": JSON_RPC_VERSION,
         "id": rpc_request.id,
