@@ -110,7 +110,7 @@ impl CommandManager {
         let command = self.get_command(command_name).ok_or(CommandError::CommandNotFound)?;
         let mut arguments: HashMap<String, ArgValue> = HashMap::new();
         for arg in command.get_required_args() {
-            let arg_value = command_split.next().ok_or(CommandError::ExpectedRequiredArg(arg.get_name().to_owned()))?;
+            let arg_value = command_split.next().ok_or_else(|| CommandError::ExpectedRequiredArg(arg.get_name().to_owned()))?;
             arguments.insert(arg.get_name().clone(), arg.get_type().to_value(arg_value)?);
         }
 

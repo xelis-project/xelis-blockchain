@@ -154,15 +154,15 @@ impl Serializer for Handshake {
     }
 }
 
+const NO_NODE_TAG: &str = "None";
+
 impl Display for Handshake {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        let node_tag: String;
-        if let Some(value) = self.get_node_tag() {
-            node_tag = value.clone();
+        let node_tag: &dyn Display = if let Some(tag) = self.get_node_tag() {
+            tag
         } else {
-            node_tag = String::from("None");
-        }
-
+            &NO_NODE_TAG
+        };
         write!(f, "Handshake[version: {}, node tag: {}, network_id: {}, peer_id: {}, utc_time: {}, block_height: {}, block_top_hash: {}, peers: ({})]", self.get_version(), node_tag, hex::encode(self.get_network_id()), self.get_peer_id(), self.get_utc_time(), self.get_block_height(), self.get_block_top_hash(), self.get_peers().len())
     }
 }

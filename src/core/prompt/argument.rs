@@ -111,7 +111,7 @@ impl ArgumentManager {
     }
 
     pub fn get_value(&mut self, name: &str) -> Result<ArgValue, ArgError> {
-        self.arguments.remove(name).ok_or(ArgError::NotFound(name.to_owned()))
+        self.arguments.remove(name).ok_or_else(|| ArgError::NotFound(name.to_owned()))
     }
 
     pub fn has_argument(&self, name: &str) -> bool {

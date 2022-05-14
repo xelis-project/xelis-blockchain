@@ -1,21 +1,39 @@
+use std::string::FromUtf8Error;
+
 use thiserror::Error;
 
 const CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 const GENERATOR: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+const SEPARATOR: char = '1';
 
 #[derive(Error, Debug)]
 pub enum Bech32Error {
-    InvalidDataRange(u16, u16), //data, from bits
+    #[error("Invalid data range: {}, max is {}", _0, _1)]
+    InvalidDataRange(u16, u16), // data, from bits
+    #[error("Illegal zero padding")]
     IllegalZeroPadding,
+    #[error("Non zero padding")]
     NonZeroPadding,
+    #[error("human readable part is empty")]
     HrpEmpty,
-    HrpInvalidCharacter(u8), //character as byte
+    #[error("Invalid character value in human readable part: {}", _0)]
+    HrpInvalidCharacter(u8), // character as byte
+    #[error("Mix case is not allowed in human readable part")]
     HrpMixCase,
-    InvalidValue(u8, usize), //value, max
+    #[error("Invalid value: {}, max is {}", _0, _1)]
+    InvalidValue(u8, usize), // value, max
+    #[error("Separator '1' not found")]
     Separator1NotFound,
-    Separator1InvalidPosition(usize), //position
-    InvalidUTF8Sequence(String), //error returned by 'String::from_utf8' as string
-    InvalidChecksum
+    #[error("Invalid separator '1' position: {}", _0)]
+    Separator1InvalidPosition(usize), // position
+    #[error(transparent)]
+    InvalidUTF8Sequence(#[from] FromUtf8Error), // error returned by 'String::from_utf8'
+    #[error("Invalid prefix, got: {}", _0)]
+    InvalidPrefix(String),
+    #[error("Invalid checksum")]
+    InvalidChecksum,
+    #[error("Invalid index '{}': not found", _0)]
+    InvalidIndex(usize)
 }
 
 fn polymod(values: &[u8]) -> u32 {
@@ -121,20 +139,18 @@ pub fn encode(mut hrp: String, data: &[u8]) -> Result<String, Bech32Error> {
     
     let mut result: Vec<u8> = Vec::new();
     result.extend(hrp.bytes());
-    result.extend(b"1");
+    result.extend(SEPARATOR.to_string().bytes());
 
     for value in combined.iter() {
         if *value > CHARSET.len() as u8 {
             return Err(Bech32Error::InvalidValue(*value, CHARSET.len()))
         }
 
-        result.push(CHARSET.bytes().nth(*value as usize).unwrap());
+        result.push(CHARSET.bytes().nth(*value as usize).ok_or(Bech32Error::InvalidIndex(*value as usize))?);
     }
 
-    match String::from_utf8(result) {
-        Ok(value) => Ok(value),
-        Err(e) => Err(Bech32Error::InvalidUTF8Sequence(e.to_string()))
-    }
+    let string = String::from_utf8(result)?;
+    Ok(string)
 }
 
 pub fn decode(bech: &String) -> Result<(String, Vec<u8>), Bech32Error> {
@@ -142,11 +158,7 @@ pub fn decode(bech: &String) -> Result<(String, Vec<u8>), Bech32Error> {
         return Err(Bech32Error::HrpMixCase)
     }
 
-    let pos = match bech.rfind("1") {
-        Some(v) => v,
-        None => return Err(Bech32Error::Separator1NotFound)
-    };
-
+    let pos = bech.rfind(SEPARATOR).ok_or(Bech32Error::Separator1NotFound)?;
     if pos < 1 || pos + 7 > bech.len() {
         return Err(Bech32Error::Separator1InvalidPosition(pos))
     }
@@ -160,11 +172,8 @@ pub fn decode(bech: &String) -> Result<(String, Vec<u8>), Bech32Error> {
 
     let mut data: Vec<u8> = vec![];
     for i in pos + 1..bech.len() {
-        let c = bech.chars().nth(i).unwrap();
-        let value = match CHARSET.find(c) {
-            Some(v) => v,
-            None => return Err(Bech32Error::HrpInvalidCharacter(c as u8))
-        };
+        let c = bech.chars().nth(i).ok_or(Bech32Error::InvalidIndex(i))?;
+        let value = CHARSET.find(c).ok_or(Bech32Error::HrpInvalidCharacter(c as u8))?;
 
         data.push(value as u8);
     }
@@ -178,25 +187,4 @@ pub fn decode(bech: &String) -> Result<(String, Vec<u8>), Bech32Error> {
     }
 
     Ok((hrp, data))
-}
-
-use std::fmt::{Display, Error, Formatter};
-
-impl Display for Bech32Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        use Bech32Error::*;
-        match self {
-            InvalidDataRange(value, max) => write!(f, "Invalid data range: {}, max is {}", value, max),
-            IllegalZeroPadding => write!(f, "Illegal zero padding"),
-            NonZeroPadding => write!(f, "Non zero padding"),
-            HrpEmpty => write!(f, "human readable part is empty"),
-            HrpInvalidCharacter(value) => write!(f, "Invalid character value in human readable part: {}", value),
-            HrpMixCase => write!(f, "Mix case is not allowed in human readable part"),
-            InvalidValue(value, max) => write!(f, "Invalid value: {}, max is {}", value, max),
-            Separator1NotFound => write!(f, "Separator '1' not found"),
-            Separator1InvalidPosition(pos) => write!(f, "Invalid separator '1' position: {}", pos),
-            InvalidUTF8Sequence(value) => write!(f, "Invalid UTF-8 sequence: {}", value),
-            InvalidChecksum => write!(f, "Invalid checksum")
-        }
-    }
 }

@@ -41,17 +41,13 @@ impl PublicKey {
     }
 
     pub fn from_address(address: &String) -> Result<Self, BlockchainError> {
-        let (hrp, decoded) = match decode(address) {
-            Ok(v) => v,
-            Err(e) => return Err(BlockchainError::ErrorOnBech32(e))
-        };
+        let (hrp, decoded) = decode(address)?;
         if hrp != PREFIX_ADDRESS {
-            return Err(BlockchainError::ErrorOnBech32(Bech32Error::InvalidUTF8Sequence(hrp)))
+            return Err(BlockchainError::ErrorOnBech32(Bech32Error::InvalidPrefix(hrp)))
         }
 
-        let bits = convert_bits(&decoded, 5, 8, false).unwrap();
-        let key = ed25519_dalek::PublicKey::from_bytes(&bits).unwrap();
-
+        let bits = convert_bits(&decoded, 5, 8, false)?;
+        let key = ed25519_dalek::PublicKey::from_bytes(&bits)?;
         Ok(PublicKey(key))
     }
 }

@@ -52,27 +52,15 @@ impl Mempool {
     }
 
     pub fn remove_tx(&mut self, hash: &Hash) -> Result<Transaction, BlockchainError> {
-        match self.txs.remove(hash) {
-            Some(v) => {
-                match self.txs_sorted.iter().position(|tx| tx.hash == *hash) { // TODO Optimize
-                    Some(index) => {
-                        self.txs_sorted.remove(index);
-                        Ok(v)
-                    },
-                    None => {
-                        panic!("TX is not present in tx sorted!")
-                    }
-                }
-            },
-            None => Err(BlockchainError::TxNotFound(hash.clone()))
-        }
+        let tx = self.txs.remove(hash).ok_or_else(|| BlockchainError::TxNotFound(hash.clone()))?;
+        let index = self.txs_sorted.iter().position(|tx| tx.hash == *hash).ok_or_else(|| BlockchainError::TxNotFoundInSortedList(hash.clone()))?; // TODO Optimized
+        self.txs_sorted.remove(index);
+
+        Ok(tx)
     }
 
     pub fn view_tx(&self, hash: &Hash) -> Result<&Transaction, BlockchainError> {
-        match self.txs.get(hash) {
-            Some(tx) => Ok(tx),
-            None => Err(BlockchainError::TxNotFound(hash.clone()))
-        }
+        self.txs.get(hash).ok_or_else(|| BlockchainError::TxNotFound(hash.clone()))
     }
 
     pub fn get_sorted_txs(&self) -> &Vec<SortedTx> {

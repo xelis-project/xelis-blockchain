@@ -29,6 +29,8 @@ pub enum BlockchainError {
     InvalidTxInBlock(Hash),
     #[error("Tx {} not found in mempool", _0)]
     TxNotFound(Hash),
+    #[error("Tx {} was present in mempool but not in sorted list!", _0)]
+    TxNotFoundInSortedList(Hash),
     #[error("Tx {} already in mempool", _0)]
     TxAlreadyInMempool(Hash),
     #[error("Normal Tx {} is empty", _0)]
@@ -75,6 +77,8 @@ pub enum BlockchainError {
     ErrorOnReader(#[from] ReaderError),
     #[error(transparent)]
     ErrorOnPrompt(#[from] PromptError),
+    #[error(transparent)]
+    ErrorOnSignature(#[from] ed25519_dalek::SignatureError),
     #[error("Poison Error: {}", _0)]
     PoisonError(String),
     #[error("Blockchain is syncing")]
