@@ -2,6 +2,7 @@ use crate::core::reader::ReaderError;
 use tokio::sync::mpsc::error::SendError as TSendError;
 use tokio::sync::oneshot::error::RecvError;
 use std::array::TryFromSliceError;
+use std::net::AddrParseError;
 use tokio::time::error::Elapsed;
 use std::sync::mpsc::SendError;
 use std::io::Error as IOError;
@@ -36,6 +37,8 @@ pub enum P2pError {
     TryInto(#[from] TryFromSliceError),
     #[error(transparent)]
     ReaderError(#[from] ReaderError),
+    #[error(transparent)]
+    ParseAddressError(#[from] AddrParseError),
     #[error("Invalid packet ID")]
     InvalidPacket,
     #[error("Packet size exceed limit")]

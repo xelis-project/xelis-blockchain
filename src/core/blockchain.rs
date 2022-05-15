@@ -72,7 +72,7 @@ impl Blockchain {
         let arc = Arc::new(blockchain);
         // create P2P Server
         {
-            let p2p = P2pServer::new(tag, max_peers, p2p_address, Arc::clone(&arc));
+            let p2p = P2pServer::new(tag, max_peers, p2p_address, Arc::clone(&arc))?;
             *arc.p2p.lock().await = Some(p2p);
         }
 

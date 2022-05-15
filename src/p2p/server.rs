@@ -42,7 +42,7 @@ pub struct P2pServer {
 }
 
 impl P2pServer {
-    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain>) -> Arc<Self> {
+    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain>) -> Result<Arc<Self>, P2pError> {
         if let Some(tag) = &tag {
             assert!(tag.len() > 0 && tag.len() <= 16);
         }
@@ -50,7 +50,7 @@ impl P2pServer {
         // set channel to communicate with listener thread
         let mut rng = rand::thread_rng();
         let peer_id: u64 = rng.gen(); // generate a random peer id for network
-        let addr: SocketAddr = bind_address.parse().unwrap();
+        let addr: SocketAddr = bind_address.parse()?; // parse the bind address
         let server = Self {
             peer_id,
             tag,
@@ -67,7 +67,7 @@ impl P2pServer {
                 error!("Unexpected error on P2p module: {}", e);
             }
         });
-        arc
+        Ok(arc)
     }
 
     pub async fn stop(&self) {
