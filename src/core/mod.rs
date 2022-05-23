@@ -9,3 +9,4 @@ pub mod reader;
 pub mod writer;
 pub mod storage;
 pub mod prompt;
+pub mod json_rpc;

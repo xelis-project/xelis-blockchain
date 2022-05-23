@@ -194,9 +194,10 @@ impl Peer {
 
 impl Display for Peer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
-        write!(f, "Peer[connection: {}, id: {}, priority: {}, tag: {}, version: {}, out: {}]",
+        write!(f, "Peer[connection: {}, id: {}, height: {}, priority: {}, tag: {}, version: {}, out: {}]",
             self.get_connection(),
             self.get_id(),
+            self.get_block_height(),
             self.is_priority(),
             self.get_node_tag().as_ref().unwrap_or(&"None".to_owned()),
             self.get_version(),

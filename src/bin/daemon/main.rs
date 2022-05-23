@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(FromArgs)]
-/// Xelis Blockchain daemon
+/// XELIS Daemon
 struct NodeConfig {
     /// optional node tag
     #[argh(option)]

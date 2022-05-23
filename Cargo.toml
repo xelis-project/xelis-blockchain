@@ -26,6 +26,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "ti
 bytes = "1"
 actix-web = "4"
 anyhow = "1.0.57"
+reqwest = { version = "0.11.10", features = ["blocking", "json"] }
 
 [[bin]]
 name = "wallet"

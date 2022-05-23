@@ -1,6 +1,6 @@
 pub mod rpc;
 
-use crate::{core::{error::BlockchainError, blockchain::Blockchain}, config};
+use crate::{core::{error::BlockchainError, blockchain::Blockchain, reader::ReaderError}, config};
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder, dev::ServerHandle, ResponseError};
 use serde::Deserialize;
 use serde_json::{Value, Error as SerdeError, json};
@@ -32,11 +32,13 @@ pub enum RpcError {
     #[error("Error: {}", _0)]
     BlockchainError(#[from] BlockchainError),
     #[error("Error: {}", _0)]
+    DeserializerError(#[from] ReaderError),
+    #[error("Error: {}", _0)]
     AnyError(#[from] AnyError),
 }
 
 impl RpcError {
-    pub fn get_code(&self) -> i32 {
+    pub fn get_code(&self) -> i16 {
         match self {
             RpcError::ParseBodyError => -32700,
             RpcError::InvalidRequest | RpcError::InvalidVersion => -32600,
