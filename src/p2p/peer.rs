@@ -2,9 +2,10 @@ use crate::config::PEER_TIMEOUT_REQUEST_OBJECT;
 use crate::core::serializer::Serializer;
 use crate::crypto::hash::Hash;
 use super::packet::object::{ObjectRequest, OwnedObjectResponse};
+use super::packet::ping::Ping;
 use super::peer_list::SharedPeerList;
 use super::connection::Connection;
-use super::packet::Packet;
+use super::packet::{Packet, PacketWrapper};
 use super::error::P2pError;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicBool, Ordering};
@@ -140,13 +141,13 @@ impl Peer {
     }
 
     // Request a object from this peer and wait on it until we receive it or until timeout 
-    pub async fn request_blocking_object(&self, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
+    pub async fn request_blocking_object(&self, request: ObjectRequest, ping: &Ping<'_>) -> Result<OwnedObjectResponse, P2pError> {
         let receiver = {
             let mut objects = self.objects_requested.lock().await;
             if objects.contains_key(&request) {
                 return Err(P2pError::ObjectAlreadyRequested(request));
             }
-            self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
+            self.send_packet(Packet::ObjectRequest(PacketWrapper::new(Cow::Borrowed(&request), Cow::Borrowed(&ping)))).await?;
             let (sender, receiver) = tokio::sync::oneshot::channel();
             objects.insert(request.clone(), sender); // clone is necessary in case timeout has occured
             receiver

@@ -464,7 +464,7 @@ impl Blockchain {
         if block.get_height() != 0 && broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
-                p2p.broadcast_block(&block).await;
+                p2p.broadcast_block(&block, &block_hash).await;
             }
         }
 

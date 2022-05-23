@@ -59,18 +59,20 @@ impl PeerList {
 
     pub async fn broadcast(&self, bytes: Bytes) {
         for (_, peer) in self.peers.iter() {
-            if let Err(e) = peer.send_bytes(bytes.clone()).await {
-                error!("Error while trying to broadcast to peer {}: {}", peer.get_connection().get_address(), e);
-            }
+            self.send_bytes_to_peer(peer, bytes.clone()).await;
         }
     }
 
     pub async fn broadcast_filter<P>(&self, predicate: P, bytes: Bytes)
     where P: FnMut(&(&u64, &Arc<Peer>)) -> bool {
         for (_, peer) in self.peers.iter().filter(predicate) {
-            if let Err(e) = peer.send_bytes(bytes.clone()).await {
-                error!("Error while trying to broadcast to peer {}: {}", peer.get_connection().get_address(), e);
-            }
+            self.send_bytes_to_peer(peer, bytes.clone()).await;
+        }
+    }
+
+    pub async fn send_bytes_to_peer(&self, peer: &Arc<Peer>, bytes: Bytes) {
+        if let Err(e) = peer.send_bytes(bytes.clone()).await {
+            error!("Error while trying to broadcast to peer {}: {}", peer.get_connection().get_address(), e);
         }
     }
 

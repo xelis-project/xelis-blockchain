@@ -137,8 +137,9 @@ impl RpcServer {
     pub async fn stop(&self) {
         info!("Stopping RPC Server...");
         if let Some(handler) = self.handle.lock().await.take() {
-            handler.stop(true).await;
+            handler.stop(false).await;
         }
+        info!("RPC Server is now stopped!");
     }
 
     pub fn register_method(&mut self, name: &str, handler: Handler) {

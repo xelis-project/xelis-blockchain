@@ -15,7 +15,7 @@ use super::connection::{State, Connection};
 use super::packet::handshake::Handshake;
 use super::packet::ping::Ping;
 use super::error::P2pError;
-use super::packet::Packet;
+use super::packet::{Packet, PacketWrapper};
 use super::peer::Peer;
 use tokio::net::{TcpListener, TcpStream};
 use log::{info, warn, error, debug};
@@ -74,6 +74,7 @@ impl P2pServer {
         info!("Stopping P2p Server...");
         let mut peers = self.peer_list.lock().await;
         peers.close_all().await;
+        info!("P2p Server is now stopped!");
     }
 
     // Connect to all seed nodes from constant
@@ -245,28 +246,33 @@ impl P2pServer {
         connection.send_bytes(&writer.bytes()).await
     }
 
-    async fn build_ping_packet_for_peer(&self, peer: &Arc<Peer>) -> Ping {
+    async fn build_ping_packet(&self, peer: Option<&Arc<Peer>>) -> Ping<'_> {
         let block_top_hash = self.blockchain.get_top_block_hash().await;
         let block_height = self.blockchain.get_height();
-
         let mut new_peers = Vec::new();
-        let current_time = get_current_time();
-        if current_time > peer.get_last_chain_sync() + P2P_PING_PEER_LIST_DELAY {
-            peer.set_last_peer_list_update(current_time);
-            let mut peer_peers = peer.get_peers().lock().await;
-            let peer_list = self.peer_list.lock().await;
-            for p in peer_list.get_peers().values() {
-                let addr = p.get_connection().get_address();
-                if !peer_peers.contains(addr) {
-                    peer_peers.insert(addr.clone());
-                    new_peers.push(addr.clone());
-                    if new_peers.len() >= P2P_PING_PEER_LIST_LIMIT {
-                        break;
+        if let Some(peer) = peer {
+            let current_time = get_current_time();
+            if current_time > peer.get_last_chain_sync() + P2P_PING_PEER_LIST_DELAY {
+                peer.set_last_peer_list_update(current_time);
+                let mut peer_peers = peer.get_peers().lock().await;
+                let peer_list = self.peer_list.lock().await;
+                for p in peer_list.get_peers().values() {
+                    let addr = p.get_connection().get_address();
+                    if !peer_peers.contains(addr) {
+                        peer_peers.insert(addr.clone());
+                        new_peers.push(addr.clone());
+                        if new_peers.len() >= P2P_PING_PEER_LIST_LIMIT {
+                            break;
+                        }
                     }
                 }
             }
         }
-        Ping::new(block_top_hash, block_height, new_peers)
+        Ping::new(Cow::Owned(block_top_hash), block_height, new_peers)
+    }
+
+    async fn build_ping_packet_for_peer(&self, peer: &Arc<Peer>) -> Ping<'_> {
+        self.build_ping_packet(Some(peer)).await
     }
     // send a ping packet to specific peer every 10s
     async fn loop_ping(self: Arc<Self>, peer: Arc<Peer>) {
@@ -349,9 +355,12 @@ impl P2pServer {
             Packet::Handshake(_) => {
                 return Err(P2pError::InvalidPacket)
             },
-            Packet::TransactionPropagation(tx) => {
+            Packet::TransactionPropagation(packet_wrapper) => {
+                let (tx, ping) = packet_wrapper.consume();
+                ping.into_owned().update_peer(peer).await;
                 let tx = tx.into_owned();
-                let packet = Bytes::from(Packet::TransactionPropagation(Cow::Borrowed(&tx)).to_bytes());
+                let ping = self.build_ping_packet_for_peer(peer).await;
+                let packet = Bytes::from(Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(&tx), Cow::Owned(ping))).to_bytes());
                 if let Err(e) = self.blockchain.add_tx_to_mempool(tx, false).await {
                     match e {
                         BlockchainError::TxAlreadyInMempool(_) => {},
@@ -365,7 +374,9 @@ impl P2pServer {
                     peer_list.broadcast_filter(|(id, _)| **id != peer.get_id(), packet).await; // broadcast tx to our peers
                 }
             },
-            Packet::BlockPropagation(block) => {
+            Packet::BlockPropagation(packet_wrapper) => {
+                let (block, ping) = packet_wrapper.consume();
+                ping.into_owned().update_peer(peer).await;
                 let block = block.into_owned();
                 debug!("Received block at height {} from {}", block.get_height(), peer.get_connection().get_address());
                 let block_height = block.get_height();
@@ -374,7 +385,8 @@ impl P2pServer {
                 }
 
                 { // add immediately the block to chain as we are synced with
-                    let packet = Bytes::from(Packet::BlockPropagation(Cow::Borrowed(&block)).to_bytes());
+                    let ping = self.build_ping_packet_for_peer(peer).await;
+                    let packet = Bytes::from(Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(&block), Cow::Owned(ping))).to_bytes());
                     if let Err(e) = self.blockchain.add_new_block(block, false).await {
                         error!("Error while adding new block: {}", e);
                         peer.increment_fail_count();
@@ -385,7 +397,9 @@ impl P2pServer {
                     }
                 }
             },
-            Packet::ChainRequest(request) => {
+            Packet::ChainRequest(packet_wrapper) => {
+                let (request, ping) = packet_wrapper.consume();
+                ping.into_owned().update_peer(peer).await;
                 let request = request.into_owned();
                 let last_request = peer.get_last_chain_sync();
                 let time = get_current_time();
@@ -475,7 +489,9 @@ impl P2pServer {
                 }
                 ping.into_owned().update_peer(peer).await;
             },
-            Packet::ObjectRequest(request) => {
+            Packet::ObjectRequest(packet_wrapper) => {
+                let (request, ping) = packet_wrapper.consume();
+                ping.into_owned().update_peer(peer).await;
                 let request = request.into_owned();
                 debug!("Received a object request");
                 match &request {
@@ -557,12 +573,13 @@ impl P2pServer {
     }
 
     async fn handle_chain_response(self: Arc<Self>, peer: &Arc<Peer>, blocks_request: Vec<Hash>, pop_count: u64) -> Result<(), BlockchainError> {
+        let ping = self.build_ping_packet_for_peer(peer).await;
         let mut storage = self.blockchain.get_storage().lock().await; // lock until we get all blocks
         let mut blocks: Vec<CompleteBlock> = Vec::with_capacity(blocks_request.len());
 
         for hash in blocks_request { // Request all complete blocks now
             let object_request = ObjectRequest::Block(hash);
-            let response = peer.request_blocking_object(object_request).await?;
+            let response = peer.request_blocking_object(object_request, &ping).await?;
             if let OwnedObjectResponse::Block(block) = response {
                 let hash = block.hash();
                 debug!("Received block {} from peer {}", hash, peer.get_connection().get_address());
@@ -573,7 +590,7 @@ impl P2pServer {
             }
         }
 
-        if pop_count > 0 && (pop_count <= MAX_BLOCK_REWIND || peer.is_priority()) {
+        if pop_count > 0 && (/*pop_count <= MAX_BLOCK_REWIND ||*/ peer.is_priority()) {
             warn!("Rewinding chain because of peer {} (priority: {}, pop count: {})", peer.get_connection().get_address(), peer.is_priority(), pop_count);
             if let Err(e) = self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
                 error!("Error on rewind chain: pop count: {}, error: {}", pop_count, e);
@@ -642,14 +659,22 @@ impl P2pServer {
     }
 
     pub async fn broadcast_tx(&self, tx: &Transaction) {
-        self.broadcast_packet(Packet::TransactionPropagation(Cow::Borrowed(tx))).await;
+        let ping = self.build_ping_packet(None).await;
+        self.broadcast_packet(Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(tx), Cow::Owned(ping)))).await;
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &CompleteBlock) {
+    pub async fn broadcast_block(&self, block: &CompleteBlock, hash: &Hash) {
         let peer_list = self.peer_list.lock().await;
-        let packet = Packet::BlockPropagation(Cow::Borrowed(block));
-        peer_list.broadcast_filter(|(_, peer)| peer.get_block_height() == block.get_height() - 1, Bytes::from(packet.to_bytes())).await;
+        let ping = Ping::new(Cow::Borrowed(hash), block.get_height(), Vec::new());
+        let packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Owned(ping)));
+        let bytes = Bytes::from(packet.to_bytes());
+        for (_, peer) in peer_list.get_peers() {
+            if peer.get_block_height() == block.get_height() - 1 {
+                peer_list.send_bytes_to_peer(peer, bytes.clone()).await;
+                peer.set_block_height(block.get_height());
+            }
+        }
     }
 
     pub async fn broadcast_packet(&self, packet: Packet<'_>) {
@@ -658,37 +683,40 @@ impl P2pServer {
     }
 
     pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
-        let storage = self.blockchain.get_storage().lock().await;
-        let height = self.blockchain.get_height();
-        let mut i = 0;
         let mut request = ChainRequest::new();
-        while i < height && request.size() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
-            let block = storage.get_block_at_height(height - i)?;
-            request.add_block_id(block.hash(), height - i); // TODO get hash from DB
-            match request.size() {
-                0..=19 => {
-                    i += 1;
-                },
-                20..=39 => {
-                    i += 5;
-                }
-                40..=59 => {
-                    i += 50;
-                },
-                60..=79 => {
-                    i += 500;
-                }
-                _ => {
-                    i = i * 2;
-                }
-            };
+        {
+            let storage = self.blockchain.get_storage().lock().await;
+            let height = self.blockchain.get_height();
+            let mut i = 0;
+            while i < height && request.size() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
+                let block = storage.get_block_at_height(height - i)?;
+                request.add_block_id(block.hash(), height - i); // TODO get hash from DB
+                match request.size() {
+                    0..=19 => {
+                        i += 1;
+                    },
+                    20..=39 => {
+                        i += 5;
+                    }
+                    40..=59 => {
+                        i += 50;
+                    },
+                    60..=79 => {
+                        i += 500;
+                    }
+                    _ => {
+                        i = i * 2;
+                    }
+                };
+            }
+    
+            let genesis_block = storage.get_block_at_height(0)?;
+            request.add_block_id(genesis_block.hash(), 0);
+            debug!("Sending a chain request with {} blocks", request.size());
+            peer.set_chain_sync_requested(true);
         }
-
-        let genesis_block = storage.get_block_at_height(0)?;
-        request.add_block_id(genesis_block.hash(), 0);
-        debug!("Sending a chain request with {} blocks", request.size());
-        peer.set_chain_sync_requested(true);
-        peer.send_packet(Packet::ChainRequest(Cow::Owned(request))).await?;
+        let ping = self.build_ping_packet(None).await;
+        peer.send_packet(Packet::ChainRequest(PacketWrapper::new(Cow::Owned(request), Cow::Owned(ping)))).await?;
         Ok(())
     }
 }

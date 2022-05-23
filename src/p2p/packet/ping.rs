@@ -5,18 +5,19 @@ use crate::globals::{ip_to_bytes, ip_from_bytes};
 use crate::p2p::peer::Peer;
 use crate::core::writer::Writer;
 use crate::crypto::hash::Hash;
+use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub struct Ping {
-    block_top_hash: Hash,
+pub struct Ping<'a> {
+    block_top_hash: Cow<'a, Hash>,
     block_height: u64,
     peer_list: Vec<SocketAddr>
 }
 
-impl Ping {
-    pub fn new(block_top_hash: Hash, block_height: u64, peer_list: Vec<SocketAddr>) -> Self {
+impl<'a> Ping<'a> {
+    pub fn new(block_top_hash: Cow<'a, Hash>, block_height: u64, peer_list: Vec<SocketAddr>) -> Self {
         Self {
             block_top_hash,
             block_height,
@@ -25,7 +26,7 @@ impl Ping {
     }
 
     pub async fn update_peer(self, peer: &Arc<Peer>) {
-        peer.set_block_top_hash(self.block_top_hash).await;
+        peer.set_block_top_hash(self.block_top_hash.into_owned()).await;
         peer.set_block_height(self.block_height);
 
         let mut peers = peer.get_peers().lock().await;
@@ -41,7 +42,7 @@ impl Ping {
     }
 }
 
-impl Serializer for Ping {
+impl Serializer for Ping<'_> {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(&self.block_top_hash);
         writer.write_u64(&self.block_height);
@@ -52,7 +53,7 @@ impl Serializer for Ping {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let block_top_hash = reader.read_hash()?;
+        let block_top_hash = Cow::Owned(reader.read_hash()?);
         let block_height = reader.read_u64()?;
         let peers_len = reader.read_u8()? as usize;
         if peers_len > P2P_PING_PEER_LIST_LIMIT {

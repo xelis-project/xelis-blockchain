@@ -1,8 +1,8 @@
 use argh::FromArgs;
 use xelis_blockchain::{core::{json_rpc::JsonRPCClient, block::Block, serializer::Serializer, difficulty::check_difficulty}, rpc::rpc::{GetBlockTemplateParams, GetBlockTemplateResult, SubmitBlockParams}, config::DEV_ADDRESS, globals::get_current_time, crypto::hash::Hashable};
 
-
 const DEFAULT_DAEMON_ADDRESS: &str = "http://127.0.0.1:8080";
+
 #[derive(FromArgs)]
 /// XELIS Miner
 pub struct MinerConfig {

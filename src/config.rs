@@ -21,7 +21,7 @@ pub const DEV_ADDRESS: &str = "xel167x5gq697cyhdacn740mpukr8staamcnyys74sjpp868z
 
 pub const MAX_BLOCK_REWIND: u64 = 5; // maximum X blocks can be rewinded
 pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = 3; // wait maximum between each chain sync request to peers
-pub const CHAIN_SYNC_DELAY: u64 = 10; // minimum X seconds between each chain sync request per peer
+pub const CHAIN_SYNC_DELAY: u64 = 3; // minimum X seconds between each chain sync request per peer
 pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to X blocks id (hash + height) 
 pub const P2P_PING_DELAY: u64 = 5; // time between each ping
 pub const P2P_PING_PEER_LIST_DELAY: u64 = 15; // time in seconds between each update of peerlist
