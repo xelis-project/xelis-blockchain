@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tokio::sync::Mutex;
 use std::sync::Arc;
 use bytes::Bytes;
-use log::{info, error};
+use log::{info, debug, error};
 
 pub type SharedPeerList = Arc<Mutex<PeerList>>;
 
@@ -50,6 +50,7 @@ impl PeerList {
 
     pub async fn close_all(&mut self) {
         for (_, peer) in self.peers.iter() {
+            debug!("Closing peer: {}", peer);
             if let Err(e) = peer.get_connection().close().await {
                 error!("Error while trying to close peer {}: {}", peer.get_connection().get_address(), e);
             }

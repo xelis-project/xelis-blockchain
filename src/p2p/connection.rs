@@ -48,7 +48,7 @@ impl Connection {
             connected_on: get_current_time(),
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
-            closed: AtomicBool::new(false),
+            closed: AtomicBool::new(false)
         }
     }
 
@@ -131,8 +131,6 @@ impl Connection {
 
     pub async fn close(&self) -> P2pResult<()> {
         self.closed.store(true, Ordering::Relaxed);
-        let mut stream = self.stream.lock().await;
-        stream.shutdown().await?;
         Ok(())
     }
 

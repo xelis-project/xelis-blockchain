@@ -160,7 +160,6 @@ impl Peer {
                 return Err(P2pError::AsyncTimeOut(e));
             }
         };
-
         Ok(object)
     }
 
