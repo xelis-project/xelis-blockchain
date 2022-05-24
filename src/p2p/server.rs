@@ -183,7 +183,7 @@ impl P2pServer {
     // A new connection have to send an Handshake
     // if the handshake is valid, we accept it & register it on server
     async fn handle_new_connection(self: Arc<Self>,mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
-        debug!("New connection: {}", connection);
+        trace!("New connection: {}", connection);
         let mut buf = [0u8; 1024];
         let handshake: Handshake = match timeout(Duration::from_millis(800), connection.read_packet(&mut buf, 1024)).await?? {
             Packet::Handshake(h) => h.into_owned(), // only allow handshake packet
@@ -200,7 +200,10 @@ impl P2pServer {
 
         // if we reach here, handshake is all good, we can start listening this new peer
         let peer_id = peer.get_id(); // keep in memory the peer_id outside connection (because of moved value)
-        let peer = self.peer_list.lock().await.add_peer(peer_id, peer);
+        let peer = {
+            let mut peer_list = self.peer_list.lock().await;
+            peer_list.add_peer(peer_id, peer)
+        };
 
         // try to extend our peer list
         for peer_addr in peers { // should we limit to X peers only ?
@@ -257,8 +260,15 @@ impl P2pServer {
                 let mut peer_peers = peer.get_peers().lock().await;
                 let peer_list = self.peer_list.lock().await;
                 for p in peer_list.get_peers().values() {
-                    let addr = p.get_connection().get_address();
-                    if !peer_peers.contains(addr) {
+                    if *p.get_connection().get_address() == *peer.get_connection().get_address() {
+                        continue;
+                    }
+                    let mut addr = p.get_connection().get_address().clone();
+                    if !p.is_out() {
+                        addr.set_port(p.get_local_port());
+                    }
+
+                    if !peer_peers.contains(&addr) {
                         peer_peers.insert(addr.clone());
                         new_peers.push(addr.clone());
                         if new_peers.len() >= P2P_PING_PEER_LIST_LIMIT {

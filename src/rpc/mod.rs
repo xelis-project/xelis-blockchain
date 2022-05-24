@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, Error as SerdeError, json};
 use tokio::sync::Mutex;
 use std::{sync::Arc, collections::HashMap, pin::Pin, future::Future, fmt::{Display, Formatter}};
-use log::{debug, info};
+use log::{trace, info};
 use anyhow::Error as AnyError;
 use thiserror::Error;
 
@@ -172,7 +172,7 @@ async fn json_rpc(rpc: SharedRpcServer, body: web::Bytes) -> Result<impl Respond
         Some(handler) => handler,
         None => return Err(RpcResponseError::new(rpc_request.id, RpcError::MethodNotFound(rpc_request.method)))
     };
-    debug!("executing '{}' RPC method", rpc_request.method);
+    trace!("executing '{}' RPC method", rpc_request.method);
     let result = handler(Arc::clone(rpc.get_blockchain()), rpc_request.params.take().unwrap_or(Value::Null)).await.map_err(|err| RpcResponseError::new(rpc_request.id, err.into()))?;
     Ok(HttpResponse::Ok().json(json!({
         "jsonrpc": JSON_RPC_VERSION,
