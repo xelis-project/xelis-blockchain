@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use std::convert::TryInto;
 use bytes::Bytes;
-use log::warn;
+use log::{debug, warn};
 
 pub type Tx = mpsc::UnboundedSender<Bytes>;
 pub type Rx = mpsc::UnboundedReceiver<Bytes>;
@@ -75,6 +75,7 @@ impl Connection {
             warn!("Received invalid packet size: {} bytes (max: {} bytes) from peer {}", size, max_size, self.get_address());
             return Err(P2pError::InvalidPacketSize)
         }
+        debug!("Size received: {}", size);
 
         let bytes = self.read_all_bytes(&mut stream, buf, size).await?;
         let mut reader = Reader::new(&bytes);
@@ -129,8 +130,10 @@ impl Connection {
         }
     }
 
-    pub async fn close(&self) -> P2pResult<()> {
+    pub async fn close(&self) -> P2pResult<()> { // TODO fix deadlock
         self.closed.store(true, Ordering::Relaxed);
+        let mut stream = self.stream.lock().await;
+        stream.shutdown().await?; // sometimes the peer is not removed on other peer side
         Ok(())
     }
 

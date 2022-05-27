@@ -96,6 +96,10 @@ impl<'a> Reader<'a> {
         }
     }
 
+    pub fn total_size(&self) -> usize {
+        self.bytes.len()
+    }
+
     pub fn size(&self) -> usize {
         self.bytes.len() - self.total
     }

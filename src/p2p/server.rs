@@ -23,6 +23,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::time::interval;
 use tokio::time::timeout;
 use std::borrow::Cow;
+use std::convert::TryInto;
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::sync::Arc;
@@ -255,19 +256,22 @@ impl P2pServer {
         let mut new_peers = Vec::new();
         if let Some(peer) = peer {
             let current_time = get_current_time();
-            if current_time > peer.get_last_chain_sync() + P2P_PING_PEER_LIST_DELAY {
+            if current_time > peer.get_last_peer_list_update() + P2P_PING_PEER_LIST_DELAY {
                 peer.set_last_peer_list_update(current_time);
+                // all the peers of current peer
                 let mut peer_peers = peer.get_peers().lock().await;
+                // our peerlist
                 let peer_list = self.peer_list.lock().await;
                 for p in peer_list.get_peers().values() {
                     if *p.get_connection().get_address() == *peer.get_connection().get_address() {
                         continue;
                     }
                     let mut addr = p.get_connection().get_address().clone();
-                    if !p.is_out() {
+                    if !p.is_out() { // if we are connected to it (outgoing connection), set the local port instead
                         addr.set_port(p.get_local_port());
                     }
 
+                    // if we haven't send him this peer addr, insert it
                     if !peer_peers.contains(&addr) {
                         peer_peers.insert(addr.clone());
                         new_peers.push(addr.clone());
@@ -281,6 +285,7 @@ impl P2pServer {
         Ping::new(Cow::Owned(block_top_hash), block_height, new_peers)
     }
 
+    // build a ping packet with a specific peerlist for the peer
     async fn build_ping_packet_for_peer(&self, peer: &Arc<Peer>) -> Ping<'_> {
         self.build_ping_packet(Some(peer)).await
     }
@@ -343,6 +348,7 @@ impl P2pServer {
                 }
                 Some(data) = rx.recv() => {
                     trace!("Data to send to {} received!", peer.get_connection().get_address());
+                    debug!("Sending packet with ID {}, size sent: {}, real size: {}", data[5], u32::from_be_bytes(data[0..4].try_into()?), data.len() - 4);
                     peer.get_connection().send_bytes(&data).await?;
                     trace!("data sucessfully sent!");
                 }
@@ -392,14 +398,14 @@ impl P2pServer {
                 let block_height = block.get_height();
                 debug!("Received block at height {} from {}", block_height, peer.get_connection().get_address());
                 { // add immediately the block to chain as we are synced with
-                    let ping = self.build_ping_packet_for_peer(peer).await;
-                    let packet = Bytes::from(Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(&block), Cow::Borrowed(&ping))).to_bytes());
+                    let ping = self.build_ping_packet(None).await;
+                    let packet = Bytes::from(Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(&block), Cow::Owned(ping))).to_bytes());
                     if let Err(e) = self.blockchain.add_new_block(block, false).await {
                         error!("Error while adding new block: {}", e);
                         peer.increment_fail_count();
                     } else { // broadcast new block to peers
                         debug!("broadcast received block to peers!");
-                        self.broadcast_block_packet(block_height, packet, Bytes::from(ping.to_bytes())).await;
+                        self.broadcast_block_packet(block_height, packet).await;
                     }
                 }
             },
@@ -670,16 +676,13 @@ impl P2pServer {
         self.broadcast_packet(Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(tx), Cow::Owned(ping)))).await;
     }
 
-    async fn broadcast_block_packet(&self, block_height: u64, block_bytes: Bytes, ping_bytes: Bytes) {
+    async fn broadcast_block_packet(&self, block_height: u64, block_bytes: Bytes) {
         let peer_list = self.peer_list.lock().await;
         for (_, peer) in peer_list.get_peers() {
             if peer.get_block_height() == block_height - 1 {
                 trace!("Broadcast block to {}", peer);
                 peer_list.send_bytes_to_peer(peer, block_bytes.clone()).await;
                 peer.set_block_height(block_height);
-            } else {
-                trace!("Send ping packet to {} due to new block available", peer);
-                peer_list.send_bytes_to_peer(peer, ping_bytes.clone()).await;
             }
         }
     }
@@ -688,10 +691,9 @@ impl P2pServer {
     pub async fn broadcast_block(&self, block: &CompleteBlock, hash: &Hash) {
         trace!("Broadcast block: {} at height {}", hash, block.get_height());
         let ping = Ping::new(Cow::Borrowed(hash), block.get_height(), Vec::new());
-        let ping_packet = Bytes::from(ping.to_bytes());
-        let packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Borrowed(&ping)));
+        let packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Owned(ping)));
         let bytes = Bytes::from(packet.to_bytes());
-        self.broadcast_block_packet(block.get_height(), bytes, ping_packet).await;
+        self.broadcast_block_packet(block.get_height(), bytes).await;
     }
 
     pub async fn broadcast_packet(&self, packet: Packet<'_>) {

@@ -72,7 +72,7 @@ impl PeerList {
     }
 
     pub async fn send_bytes_to_peer(&self, peer: &Arc<Peer>, bytes: Bytes) {
-        if let Err(e) = peer.send_bytes(bytes.clone()).await {
+        if let Err(e) = peer.send_bytes(bytes).await {
             error!("Error while trying to broadcast to peer {}: {}", peer.get_connection().get_address(), e);
         }
     }
