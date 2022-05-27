@@ -13,8 +13,13 @@ use std::convert::TryInto;
 use bytes::Bytes;
 use log::{debug, warn};
 
-pub type Tx = mpsc::UnboundedSender<Bytes>;
-pub type Rx = mpsc::UnboundedReceiver<Bytes>;
+pub enum ConnectionMessage {
+    Packet(Bytes),
+    Exit
+}
+
+pub type Tx = mpsc::UnboundedSender<ConnectionMessage>;
+pub type Rx = mpsc::UnboundedReceiver<ConnectionMessage>;
 
 type P2pResult<T> = std::result::Result<T, P2pError>;
 
@@ -130,8 +135,10 @@ impl Connection {
         }
     }
 
-    pub async fn close(&self) -> P2pResult<()> { // TODO fix deadlock
+    pub async fn close(&self) -> P2pResult<()> {
         self.closed.store(true, Ordering::Relaxed);
+        let tx = self.get_tx().lock().await;
+        tx.send(ConnectionMessage::Exit)?; // send a exit message to stop the current lock of stream
         let mut stream = self.stream.lock().await;
         stream.shutdown().await?; // sometimes the peer is not removed on other peer side
         Ok(())

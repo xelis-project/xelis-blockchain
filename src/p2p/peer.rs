@@ -4,7 +4,7 @@ use crate::crypto::hash::Hash;
 use super::packet::object::{ObjectRequest, OwnedObjectResponse};
 use super::packet::ping::Ping;
 use super::peer_list::SharedPeerList;
-use super::connection::Connection;
+use super::connection::{Connection, ConnectionMessage};
 use super::packet::{Packet, PacketWrapper};
 use super::error::P2pError;
 use std::net::SocketAddr;
@@ -187,7 +187,7 @@ impl Peer {
 
     pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), P2pError> {
         let tx = self.connection.get_tx().lock().await;
-        tx.send(bytes)?;
+        tx.send(ConnectionMessage::Packet(bytes))?;
         Ok(())
     }
 }

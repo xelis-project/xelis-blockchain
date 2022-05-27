@@ -7,6 +7,7 @@ use crate::core::block::CompleteBlock;
 use crate::globals::get_current_time;
 use crate::crypto::hash::{Hashable, Hash};
 use crate::core::writer::Writer;
+use crate::p2p::connection::ConnectionMessage;
 use crate::p2p::packet::chain::CommonPoint;
 use super::packet::chain::{BlockId, ChainRequest, ChainResponse};
 use super::packet::object::{ObjectRequest, ObjectResponse, OwnedObjectResponse};
@@ -347,10 +348,18 @@ impl P2pServer {
                     }
                 }
                 Some(data) = rx.recv() => {
-                    trace!("Data to send to {} received!", peer.get_connection().get_address());
-                    debug!("Sending packet with ID {}, size sent: {}, real size: {}", data[5], u32::from_be_bytes(data[0..4].try_into()?), data.len() - 4);
-                    peer.get_connection().send_bytes(&data).await?;
-                    trace!("data sucessfully sent!");
+                    match data {
+                        ConnectionMessage::Packet(bytes) => {
+                            trace!("Data to send to {} received!", peer.get_connection().get_address());
+                            debug!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[5], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len() - 4);
+                            peer.get_connection().send_bytes(&bytes).await?;
+                            trace!("data sucessfully sent!");
+                        }
+                        ConnectionMessage::Exit => {
+                            trace!("Exit message received for peer {}", peer);
+                            break;
+                        }
+                    };
                 }
             }
 
