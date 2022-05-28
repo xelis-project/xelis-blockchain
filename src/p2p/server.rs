@@ -407,14 +407,9 @@ impl P2pServer {
                 let block_height = block.get_height();
                 debug!("Received block at height {} from {}", block_height, peer.get_connection().get_address());
                 { // add immediately the block to chain as we are synced with
-                    let ping = self.build_ping_packet(None).await;
-                    let packet = Bytes::from(Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(&block), Cow::Owned(ping))).to_bytes());
-                    if let Err(e) = self.blockchain.add_new_block(block, false).await {
+                    if let Err(e) = self.blockchain.add_new_block(block, true).await {
                         error!("Error while adding new block: {}", e);
                         peer.increment_fail_count();
-                    } else { // broadcast new block to peers
-                        debug!("broadcast received block to peers!");
-                        self.broadcast_block_packet(block_height, packet).await;
                     }
                 }
             },
@@ -685,24 +680,28 @@ impl P2pServer {
         self.broadcast_packet(Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(tx), Cow::Owned(ping)))).await;
     }
 
-    async fn broadcast_block_packet(&self, block_height: u64, block_bytes: Bytes) {
-        let peer_list = self.peer_list.lock().await;
-        for (_, peer) in peer_list.get_peers() {
-            if peer.get_block_height() == block_height - 1 {
-                trace!("Broadcast block to {}", peer);
-                peer_list.send_bytes_to_peer(peer, block_bytes.clone()).await;
-                peer.set_block_height(block_height);
-            }
-        }
-    }
-
     // broadcast block to all peers that can accept directly this new block
     pub async fn broadcast_block(&self, block: &CompleteBlock, hash: &Hash) {
-        trace!("Broadcast block: {} at height {}", hash, block.get_height());
-        let ping = Ping::new(Cow::Borrowed(hash), block.get_height(), Vec::new());
+        let block_height = block.get_height();
+        trace!("Broadcast block: {} at height {}", hash, block_height);
+        // we build the ping packet ourself this time (we have enough data for it)
+        // because this function can be call from Blockchain, which would lead to deadlock
+        let ping = Ping::new(Cow::Borrowed(hash), block_height, Vec::new());
+        let ping_bytes = Bytes::from(Packet::Ping(Cow::Borrowed(&ping)).to_bytes());
         let packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Owned(ping)));
         let bytes = Bytes::from(packet.to_bytes());
-        self.broadcast_block_packet(block.get_height(), bytes).await;
+        // TODO should we move it in another async task ?
+        let peer_list = self.peer_list.lock().await;
+        for (_, peer) in peer_list.get_peers() {
+            // if the peer can directly accept this new block, send it
+            if peer.get_block_height() == block_height - 1 {
+                trace!("Broadcast block to {}", peer);
+                peer_list.send_bytes_to_peer(peer, bytes.clone()).await;
+                peer.set_block_height(block_height); // we suppose peer will accept the block like us
+            } else { // we send a ping packet to others peers to tell them a new block was found
+                peer_list.send_bytes_to_peer(peer, ping_bytes.clone()).await;
+            }
+        }
     }
 
     pub async fn broadcast_packet(&self, packet: Packet<'_>) {
