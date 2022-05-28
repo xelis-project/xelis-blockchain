@@ -56,7 +56,11 @@ pub enum P2pError {
     #[error(transparent)]
     ObjectRequestError(#[from] RecvError),
     #[error("Expected a block type")]
-    ExpectedBlock
+    ExpectedBlock,
+    #[error("Peer sent us a peerlist faster than protocol rules")]
+    PeerInvalidPeerListCountdown,
+    #[error("Peer sent us a ping packet faster than protocol rules")]
+    PeerInvalidPingCoutdown
 }
 
 impl<T> From<PoisonError<T>> for P2pError {

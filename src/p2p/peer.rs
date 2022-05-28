@@ -38,6 +38,8 @@ pub struct Peer {
     objects_requested: Mutex<RequestedObjects>,
     peers: Mutex<HashSet<SocketAddr>>, // all peers from this peer
     last_peer_list_update: AtomicU64, // last time we send our peerlist to this peer
+    last_peer_list: AtomicU64, // last time we received a peerlist from this peer
+    last_ping: AtomicU64 // last time we got a ping packet from this peer
 }
 
 impl Peer {
@@ -58,7 +60,9 @@ impl Peer {
             chain_requested: AtomicBool::new(false),
             objects_requested: Mutex::new(HashMap::new()),
             peers: Mutex::new(peers),
-            last_peer_list_update: AtomicU64::new(0)
+            last_peer_list_update: AtomicU64::new(0),
+            last_peer_list: AtomicU64::new(0),
+            last_ping: AtomicU64::new(0)
         }
     }
 
@@ -173,6 +177,22 @@ impl Peer {
 
     pub fn set_last_peer_list_update(&self, value: u64) {
         self.last_peer_list_update.store(value, Ordering::Relaxed)
+    }
+
+    pub fn get_last_peer_list(&self) -> u64 {
+        self.last_peer_list.load(Ordering::Relaxed)
+    }
+
+    pub fn set_last_peer_list(&self, value: u64) {
+        self.last_peer_list.store(value, Ordering::Relaxed)
+    }
+
+    pub fn get_last_ping(&self) -> u64 {
+        self.last_ping.load(Ordering::Relaxed)
+    }
+
+    pub fn set_last_ping(&self, value: u64) {
+        self.last_ping.store(value, Ordering::Relaxed)
     }
 
     pub async fn close(&self) -> Result<(), P2pError> {

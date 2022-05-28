@@ -155,7 +155,7 @@ impl P2pServer {
         }
 
         connection.set_state(State::Success);
-        let (peer, peers) = handshake.create_peer(connection, out, priority, self.peer_list.clone());
+        let (peer, peers) = handshake.create_peer(connection, out, priority, Arc::clone(&self.peer_list));
         Ok((peer, peers))
     }
 
@@ -498,7 +498,22 @@ impl P2pServer {
             },
             Packet::Ping(ping) => {
                 trace!("Received a ping packet from {}", peer.get_connection().get_address());
-                for peer in ping.get_peers() { // TODO verify that peer don't spam us
+                let current_time = get_current_time();
+                // verify the respect of the coutdown to prevent massive packet incoming
+                if current_time - peer.get_last_ping() < P2P_PING_DELAY {
+                    return Err(P2pError::PeerInvalidPingCoutdown)
+                }
+                peer.set_last_ping(current_time);
+
+                // we verify the respect of the countdown of peer list updates to prevent any spam
+                if ping.get_peers().len() > 0 {
+                    if current_time - peer.get_last_peer_list() < P2P_PING_PEER_LIST_DELAY {
+                        return Err(P2pError::PeerInvalidPeerListCountdown)
+                    }
+                    peer.set_last_peer_list(current_time);
+                }
+
+                for peer in ping.get_peers() {
                     if !self.is_connected_to_addr(&peer).await? {
                         let peer = peer.clone();
                         self.try_to_connect_to_peer(peer, false);
