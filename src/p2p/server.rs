@@ -702,7 +702,6 @@ impl P2pServer {
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to deadlock
         let ping = Ping::new(Cow::Borrowed(hash), block_height, Vec::new());
-        let ping_bytes = Bytes::from(Packet::Ping(Cow::Borrowed(&ping)).to_bytes());
         let packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Owned(ping)));
         let bytes = Bytes::from(packet.to_bytes());
         // TODO should we move it in another async task ?
@@ -713,8 +712,6 @@ impl P2pServer {
                 trace!("Broadcast block to {}", peer);
                 peer_list.send_bytes_to_peer(peer, bytes.clone()).await;
                 peer.set_block_height(block_height); // we suppose peer will accept the block like us
-            } else { // we send a ping packet to others peers to tell them a new block was found
-                peer_list.send_bytes_to_peer(peer, ping_bytes.clone()).await;
             }
         }
     }
