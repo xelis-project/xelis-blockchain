@@ -2,79 +2,35 @@ use xelis_blockchain::core::error::BlockchainError;
 use xelis_blockchain::core::prompt::command::{Command, CommandError};
 use xelis_blockchain::core::prompt::prompt::{Prompt, PromptError};
 use xelis_blockchain::core::prompt::command::CommandManager;
-use xelis_blockchain::core::blockchain::Blockchain;
+use xelis_blockchain::core::blockchain::{Blockchain, Config};
 use xelis_blockchain::core::prompt::argument::*;
 use xelis_blockchain::config::VERSION;
 use fern::colors::Color;
 use log::{info, error};
-use argh::FromArgs;
-use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use clap::Parser;
 
-#[derive(FromArgs)]
-/// XELIS Daemon
-struct NodeConfig {
-    /// optional node tag
-    #[argh(option)]
-    tag: Option<String>,
-    /// bind address for P2P Server
-    #[argh(option, default = "xelis_blockchain::config::DEFAULT_P2P_BIND_ADDRESS.to_string()")]
-    p2p_bind_address: String,
-    /// priority nodes
-    #[argh(option)]
-    priority_nodes: Vec<String>,
-    /// maximum number of peers
-    #[argh(option, default = "xelis_blockchain::config::P2P_DEFAULT_MAX_PEERS")]
-    max_peers: usize,
-    /// bind address for RPC Server
-    #[argh(option, default = "xelis_blockchain::config::DEFAULT_RPC_BIND_ADDRESS.to_string()")]
-    rpc_bind_address: String,
-    /// enable debug logging
-    #[argh(switch)]
+#[derive(Parser)]
+#[clap(version = VERSION, about = "XELIS Daemon")]
+pub struct NodeConfig {
+    #[structopt(flatten)]
+    nested: Config,
+    /// Enable the debug mode
+    #[clap(short, long)]
     debug: bool,
-    /// enable mining on this node
-    #[argh(switch)]
-    mining: bool,
-    /// disable file logging
-    #[argh(switch)]
+    /// Disable the log file
+    #[clap(short = 'f', long)]
     disable_file_logging: bool
 }
 
 #[tokio::main]
 async fn main() -> Result<(), BlockchainError> {
-    let config: NodeConfig = argh::from_env();
+    let config: NodeConfig = NodeConfig::parse();
     let command_manager = create_command_manager();
     let prompt = Prompt::new(config.debug, config.disable_file_logging, command_manager)?;
     info!("Xelis Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
-    let blockchain = Blockchain::new(config.tag, config.max_peers, config.p2p_bind_address, config.rpc_bind_address).await?;
-    // connect to all priority nodes
-    if let Some(p2p) = blockchain.get_p2p().lock().await.as_ref() {
-        for addr in config.priority_nodes {
-            let addr: SocketAddr = match addr.parse() {
-                Ok(addr) => addr,
-                Err(e) => {
-                    error!("Error while parsing priority node: {}", e);
-                    continue;
-                }
-            };
-            p2p.try_to_connect_to_peer(addr, true);
-        }
-    }
-
-    if config.mining {
-        let blockchain = blockchain.clone();
-        tokio::spawn(async move { // TODO: move in another thread instead of tokio
-            let key = blockchain.get_dev_address().clone();
-            loop {
-                if let Err(e) = blockchain.mine_block(&key).await {
-                    error!("Error while mining block: {}", e);
-                }
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-        });
-    }
+    let blockchain = Blockchain::new(config.nested).await?;
 
     tokio::select! {
         Err(e) = run_prompt(&prompt, blockchain.clone()) => {

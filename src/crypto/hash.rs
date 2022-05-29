@@ -1,4 +1,6 @@
+use crate::core::reader::{ReaderError, Reader};
 use crate::core::serializer::Serializer;
+use crate::core::writer::Writer;
 use std::fmt::{Display, Error, Formatter};
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
@@ -34,6 +36,17 @@ impl Hash {
 
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
+    }
+}
+
+impl Serializer for Hash {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let hash = reader.read_hash()?;
+        Ok(hash)
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        writer.write_hash(self);
     }
 }
 

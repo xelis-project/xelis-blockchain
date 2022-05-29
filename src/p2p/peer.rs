@@ -151,7 +151,7 @@ impl Peer {
             if objects.contains_key(&request) {
                 return Err(P2pError::ObjectAlreadyRequested(request));
             }
-            self.send_packet(Packet::ObjectRequest(PacketWrapper::new(Cow::Borrowed(&request), Cow::Borrowed(&ping)))).await?;
+            self.send_packet(Packet::ObjectRequest(PacketWrapper::new(Cow::Borrowed(&request), Cow::Borrowed(ping)))).await?;
             let (sender, receiver) = tokio::sync::oneshot::channel();
             objects.insert(request.clone(), sender); // clone is necessary in case timeout has occured
             receiver
@@ -164,6 +164,11 @@ impl Peer {
                 return Err(P2pError::AsyncTimeOut(e));
             }
         };
+        let object_hash = object.get_hash();
+        if object_hash != *request.get_hash() {
+            return Err(P2pError::InvalidObjectResponse(request, object_hash))
+        }
+
         Ok(object)
     }
 

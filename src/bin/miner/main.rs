@@ -1,21 +1,22 @@
-use argh::FromArgs;
 use xelis_blockchain::{core::{json_rpc::JsonRPCClient, block::Block, serializer::Serializer, difficulty::check_difficulty}, rpc::rpc::{GetBlockTemplateParams, GetBlockTemplateResult, SubmitBlockParams}, config::DEV_ADDRESS, globals::get_current_time, crypto::hash::Hashable};
+use xelis_blockchain::config::VERSION;
+use clap::Parser;
 
 const DEFAULT_DAEMON_ADDRESS: &str = "http://127.0.0.1:8080";
 
-#[derive(FromArgs)]
-/// XELIS Miner
+#[derive(Parser)]
+#[clap(version = VERSION, about = "XELIS Daemon")]
 pub struct MinerConfig {
-    /// miner address to get rewards
-    #[argh(option, default = "xelis_blockchain::config::DEV_ADDRESS.to_string()")]
+    /// Wallet address to mine and receive block rewards on
+    #[clap(short, long, default_value_t = String::from(DEV_ADDRESS))]
     miner_address: String,
-    /// daemon address to get and submit blocks
-    #[argh(option, default = "DEFAULT_DAEMON_ADDRESS.to_string()")]
+    /// Daemon address to connect to for mining
+    #[clap(short, long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String
 }
 
 fn main() {
-    let config: MinerConfig = argh::from_env();
+    let config: MinerConfig = MinerConfig::parse();
     let client = JsonRPCClient::new(format!("{}/json_rpc", config.daemon_address));
     let get_block_template = GetBlockTemplateParams { address: config.miner_address };
     loop {

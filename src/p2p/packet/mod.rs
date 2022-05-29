@@ -4,10 +4,10 @@ pub mod ping;
 pub mod object;
 
 use crate::core::reader::{Reader, ReaderError};
-use crate::core::transaction::Transaction;
 use crate::core::serializer::Serializer;
 use crate::core::block::CompleteBlock;
 use crate::core::writer::Writer;
+use crate::crypto::hash::Hash;
 use self::object::{ObjectRequest, ObjectResponse};
 use self::chain::{ChainRequest, ChainResponse};
 use self::handshake::Handshake;
@@ -60,8 +60,12 @@ impl<'a, T: Serializer + Clone> Serializer for PacketWrapper<'a, T> {
 }
 
 pub enum Packet<'a> {
-    Handshake(Cow<'a, Handshake>),
-    TransactionPropagation(PacketWrapper<'a, Transaction>),
+    Handshake(Cow<'a, Handshake>), // first packet to connect to a node
+    // packet contains tx hash, view this packet as a "notification"
+    // instead of sending the TX directly, we notify our peers
+    // so the peer that already have this TX in mempool don't have to read it again
+    // imo: can be useful when the network is spammed by alot of txs
+    TransactionPropagation(PacketWrapper<'a, Hash>),
     BlockPropagation(PacketWrapper<'a, CompleteBlock>),
     ChainRequest(PacketWrapper<'a, ChainRequest>),
     ChainResponse(ChainResponse<'a>),

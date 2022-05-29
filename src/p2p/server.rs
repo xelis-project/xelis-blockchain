@@ -381,22 +381,39 @@ impl P2pServer {
                 return Err(P2pError::InvalidPacket)
             },
             Packet::TransactionPropagation(packet_wrapper) => {
-                let (tx, ping) = packet_wrapper.consume();
+                let (hash, ping) = packet_wrapper.consume();
+                let hash = hash.into_owned();
                 ping.into_owned().update_peer(peer).await;
-                let tx = tx.into_owned();
-                let ping = self.build_ping_packet_for_peer(peer).await;
-                let packet = Bytes::from(Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(&tx), Cow::Owned(ping))).to_bytes());
-                if let Err(e) = self.blockchain.add_tx_to_mempool(tx, false).await {
-                    match e {
-                        BlockchainError::TxAlreadyInMempool(_) => {},
-                        e => {
-                            error!("Error while adding TX to mempool: {}", e);
+                let mempool = self.blockchain.get_mempool().lock().await;
+                if !mempool.contains_tx(&hash) {
+                    let zelf = Arc::clone(self);
+                    let peer = Arc::clone(peer);
+                    tokio::spawn(async move {
+                        let ping = zelf.build_ping_packet(None).await;
+                        let response = match peer.request_blocking_object(ObjectRequest::Transaction(hash), &ping).await {
+                            Ok(response) => response,
+                            Err(err) => {
+                                error!("Error while requesting transaction: {}", err);
+                                peer.increment_fail_count();
+                                return;
+                            }
+                        };
+                        if let OwnedObjectResponse::Transaction(tx) = response {
+                            if let Err(e) = zelf.blockchain.add_tx_to_mempool(tx, true).await {
+                                match e {
+                                    // another peer was faster than us
+                                    BlockchainError::TxAlreadyInMempool(_) => {}, // TODO: synced request list
+                                    e => {
+                                        error!("Error while adding TX to mempool: {}", e);
+                                        peer.increment_fail_count();
+                                    }
+                                };
+                            }
+                        } else {
                             peer.increment_fail_count();
+                            error!("Expected to receive a Transaction object from peer: {}", peer);
                         }
-                    };
-                } else {
-                    let peer_list = self.peer_list.lock().await;
-                    peer_list.broadcast_filter(|(id, _)| **id != peer.get_id(), packet).await; // broadcast tx to our peers
+                    });
                 }
             },
             Packet::BlockPropagation(packet_wrapper) => {
@@ -690,7 +707,7 @@ impl P2pServer {
         &self.bind_address
     }
 
-    pub async fn broadcast_tx(&self, tx: &Transaction) {
+    pub async fn broadcast_tx_hash(&self, tx: &Hash) {
         let ping = self.build_ping_packet(None).await;
         self.broadcast_packet(Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(tx), Cow::Owned(ping)))).await;
     }

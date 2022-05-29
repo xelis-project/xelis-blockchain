@@ -1,4 +1,5 @@
 use crate::core::reader::ReaderError;
+use crate::crypto::hash::Hash;
 use tokio::sync::mpsc::error::SendError as TSendError;
 use tokio::sync::oneshot::error::RecvError;
 use std::array::TryFromSliceError;
@@ -53,6 +54,8 @@ pub enum P2pError {
     ObjectNotFound(ObjectRequest),
     #[error("Object requested {:?} already requested", _0)]
     ObjectAlreadyRequested(ObjectRequest),
+    #[error("Invalid object response for request: {:?}, received hash: {}", _0, _1)]
+    InvalidObjectResponse(ObjectRequest, Hash),
     #[error(transparent)]
     ObjectRequestError(#[from] RecvError),
     #[error("Expected a block type")]

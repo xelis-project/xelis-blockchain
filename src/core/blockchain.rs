@@ -1,4 +1,4 @@
-use crate::config::{MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY, GENESIS_BLOCK, DEV_ADDRESS};
+use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY, GENESIS_BLOCK, DEV_ADDRESS};
 use crate::crypto::hash::{Hash, Hashable};
 use crate::globals::get_current_time;
 use crate::crypto::key::PublicKey;
@@ -11,6 +11,7 @@ use super::error::BlockchainError;
 use super::serializer::Serializer;
 use super::storage::Storage;
 use super::transaction::*;
+use std::net::SocketAddr;
 use std::sync::atomic::{Ordering, AtomicU64};
 use tokio::sync::Mutex;
 use std::collections::HashMap;
@@ -41,6 +42,25 @@ impl Account {
     }
 }
 
+#[derive(Debug, clap::StructOpt)]
+pub struct Config {
+    /// Optional node tag
+    #[clap(short, long)]
+    tag: Option<String>,
+    /// P2p bind address to listen for incoming connections
+    #[clap(short, long, default_value_t = String::from(DEFAULT_P2P_BIND_ADDRESS))]
+    p2p_bind_address: String,
+    /// Number of maximums peers allowed
+    #[clap(short, long, default_value_t = P2P_DEFAULT_MAX_PEERS)]
+    max_peers: usize,
+    /// Rpc bind address to listen for HTTP requests
+    #[clap(short, long, default_value_t = String::from(DEFAULT_RPC_BIND_ADDRESS))]
+    rpc_bind_address: String,
+    /// Add a priority node to connect when P2p is started
+    #[clap(short = 'n', long)]
+    priority_nodes: Vec<String>,
+}
+
 pub struct Blockchain {
     height: AtomicU64, // current block height 
     supply: AtomicU64, // current circulating supply based on coins already emitted
@@ -53,7 +73,7 @@ pub struct Blockchain {
 }
 
 impl Blockchain {
-    pub async fn new(tag: Option<String>, max_peers: usize, p2p_address: String, rpc_address: String) -> Result<Arc<Self>, BlockchainError> {
+    pub async fn new(config: Config) -> Result<Arc<Self>, BlockchainError> {
         let dev_address = PublicKey::from_address(&DEV_ADDRESS.to_owned())?;
         let blockchain = Self {
             height: AtomicU64::new(0),
@@ -72,13 +92,23 @@ impl Blockchain {
         let arc = Arc::new(blockchain);
         // create P2P Server
         {
-            let p2p = P2pServer::new(tag, max_peers, p2p_address, Arc::clone(&arc))?;
+            let p2p = P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc))?;
+            for addr in config.priority_nodes {
+                let addr: SocketAddr = match addr.parse() {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        error!("Error while parsing priority node: {}", e);
+                        continue;
+                    }
+                };
+                p2p.try_to_connect_to_peer(addr, true);
+            }
             *arc.p2p.lock().await = Some(p2p);
         }
 
         // create RPC Server
         {
-            let server = RpcServer::new(rpc_address, Arc::clone(&arc)).await?;
+            let server = RpcServer::new(config.rpc_bind_address, Arc::clone(&arc)).await?;
             *arc.rpc.lock().await = Some(server);
         }
         Ok(arc)
@@ -202,7 +232,7 @@ impl Blockchain {
         self.verify_transaction_with_hash(&storage, &tx, &hash, false)?;
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
-                p2p.broadcast_tx(&tx).await;
+                p2p.broadcast_tx_hash(&hash).await;
             }
         }
 

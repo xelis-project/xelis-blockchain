@@ -7,6 +7,15 @@ pub enum ObjectRequest {
     Transaction(Hash)
 }
 
+impl ObjectRequest {
+    pub fn get_hash(&self) -> &Hash {
+        match self {
+            ObjectRequest::Block(hash) => hash,
+            ObjectRequest::Transaction(hash) => hash
+        }
+    }
+}
+
 impl Serializer for ObjectRequest {
     fn write(&self, writer: &mut Writer) {
         match &self {
@@ -34,6 +43,15 @@ impl Serializer for ObjectRequest {
 pub enum OwnedObjectResponse {
     Block(CompleteBlock),
     Transaction(Transaction)
+}
+
+impl OwnedObjectResponse {
+    pub fn get_hash(&self) -> Hash {
+        match self {
+            OwnedObjectResponse::Block(block) => block.hash(),
+            OwnedObjectResponse::Transaction(transaction) => transaction.hash()
+        }
+    }
 }
 
 pub enum ObjectResponse<'a> {
