@@ -1,5 +1,4 @@
 use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT};
-use crate::core::transaction::Transaction;
 use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
 use crate::core::serializer::Serializer;
