@@ -1,3 +1,4 @@
+use serde_json::Value;
 use xelis_blockchain::{core::{json_rpc::JsonRPCClient, block::Block, serializer::Serializer, difficulty::check_difficulty}, rpc::rpc::{GetBlockTemplateParams, GetBlockTemplateResult, SubmitBlockParams}, config::DEV_ADDRESS, globals::get_current_timestamp, crypto::hash::Hashable};
 use xelis_blockchain::config::VERSION;
 use clap::Parser;
@@ -31,6 +32,13 @@ fn main() {
         }
 
         println!("Sending block with hash {}", hash);
-        client.notify_with("submit_block", SubmitBlockParams { block_template: block.to_hex(), block_hashing_blob: "".into()}).unwrap();
+        match client.call_with::<SubmitBlockParams, Value>("submit_block", &SubmitBlockParams { block_template: block.to_hex(), block_hashing_blob: "".into()}) {
+            Ok(_) => {
+                println!("Block successfully accepted!");
+            }
+            Err(e) => {
+                println!("Error whille adding new block: {:?}", e);
+            }
+        };
     }
 }

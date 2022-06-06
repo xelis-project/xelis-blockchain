@@ -130,16 +130,17 @@ impl Blockchain {
 
     // function to include the genesis block and register the public dev key.
     async fn create_genesis_block(&self) -> Result<(), BlockchainError> {
+        let mut storage = self.storage.lock().await;
+        storage.register_account(self.dev_address.clone());
+
         if GENESIS_BLOCK.len() != 0 {
             info!("De-serializing genesis block...");
             match CompleteBlock::from_hex(GENESIS_BLOCK.to_owned()) {
                 Ok(block) => {
-                    let dev_address = self.dev_address.clone();
-                    if *block.get_miner() != dev_address {
+                    if *block.get_miner() != self.dev_address {
                         return Err(BlockchainError::GenesisBlockMiner)
                     }
-                    self.storage.lock().await.register_account(dev_address);
-                    self.add_new_block(block, true).await?;
+                    self.add_new_block_for_storage(&mut storage, block, true).await?;
                 },
                 Err(_) => return Err(BlockchainError::InvalidGenesisBlock)
             }
@@ -147,11 +148,11 @@ impl Blockchain {
             error!("No genesis block found...");
             info!("Generating a new genesis block...");
             let coinbase = CoinbaseTx {
-                block_reward: get_block_reward(0),
+                block_reward: get_block_reward(self.get_supply()),
                 fee_reward: 0
             };
             let miner_tx = Transaction::new(0, TransactionData::Coinbase(coinbase), self.get_dev_address().clone());
-            let mut block = Block::new(0, get_current_timestamp(), Hash::zero(), [0u8; 32], miner_tx, Vec::new());
+            let mut block = Block::new(1, get_current_timestamp(), Hash::zero(), [0u8; 32], miner_tx, Vec::new());
             let mut hash = block.hash();
             while self.get_height() == 0 && !check_difficulty(&hash, self.get_difficulty())? {
                 block.nonce += 1;
@@ -160,7 +161,7 @@ impl Blockchain {
             }
             let complete_block = CompleteBlock::new(block, self.get_difficulty(), Vec::new());
             info!("Genesis generated & added: {}", complete_block.to_hex());
-            self.add_new_block(complete_block, true).await?;
+            self.add_new_block_for_storage(&mut storage, complete_block, true).await?;
         }
 
         Ok(())
@@ -296,7 +297,7 @@ impl Blockchain {
                 return Err(BlockchainError::InvalidBlockHeight(block.get_height(), height as u64))
             }
 
-            if block.get_height() != 0 { // if not genesis, check parent block
+            if block.get_height() != 1 { // if not genesis, check parent block
                 let previous_hash = storage.get_block_at_height(block.get_height() - 1)?.hash();
                 if previous_hash != *block.get_previous_hash() {
                     debug!("Invalid previous block hash, expected {} got {}", previous_hash, block.get_previous_hash());
@@ -371,13 +372,13 @@ impl Blockchain {
         let current_height = self.get_height();
         let current_difficulty = self.get_difficulty();
         let block_hash = block.hash();
-        if storage.has_blocks() && current_height + 1 != block.get_height() {
+        if current_height + 1 != block.get_height() {
             return Err(BlockchainError::InvalidBlockHeight(current_height + 1, block.get_height()));
         } else if !check_difficulty(&block_hash, current_difficulty)? {
             return Err(BlockchainError::InvalidDifficulty);
         } else if block.get_timestamp() > get_current_timestamp() { // TODO accept a latency of max 30s
             return Err(BlockchainError::TimestampIsInFuture(get_current_timestamp(), block.get_timestamp()));
-        } else if current_height != 0 && storage.has_blocks() { // TODO Block exist
+        } else if current_height != 0 { // if it's not the genesis block
             let previous_block = storage.get_block_at_height(current_height)?;
             let previous_hash = previous_block.hash();
             if previous_hash != *block.get_previous_hash() {
@@ -492,7 +493,7 @@ impl Blockchain {
         self.height.store(block.get_height(), Ordering::Relaxed);
         self.supply.fetch_add(block_reward, Ordering::Relaxed);
         debug!("Adding new block '{}' at height {}", block_hash, block.get_height());
-        if block.get_height() != 0 && broadcast {
+        if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
                 p2p.broadcast_block(&block, &block_hash).await;

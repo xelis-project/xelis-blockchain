@@ -606,7 +606,7 @@ impl P2pServer {
                     debug!("common point with peer found at block {} hash: {}", height, hash);
                     common_point = Some(CommonPoint::new(Cow::Owned(hash), height));
                     let top_height = self.blockchain.get_height();
-                    let mut height = block.get_height() + 1;
+                    let mut height = block.get_height();
                     while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && height <= top_height {
                         let block = storage.get_block_at_height(height)?;
                         response_blocks.push(Cow::Owned(block.hash()));
@@ -765,8 +765,9 @@ impl P2pServer {
                 };
             }
     
-            let genesis_block = storage.get_block_at_height(0)?;
-            request.add_block_id(genesis_block.hash(), 0);
+            // add genesis block
+            let genesis_block = storage.get_block_at_height(1)?;
+            request.add_block_id(genesis_block.hash(), 1);
             trace!("Sending a chain request with {} blocks", request.size());
             peer.set_chain_sync_requested(true);
         }

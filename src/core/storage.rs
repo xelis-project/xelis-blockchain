@@ -79,7 +79,7 @@ impl Storage {
     }
 
     pub fn get_block_at_height(&self, height: u64) -> Result<&CompleteBlock, BlockchainError> {
-        match self.blocks.get(height as usize) {
+        match self.blocks.get(height as usize - 1) {
             Some(block) => Ok(block),
             None => Err(BlockchainError::BlockHeightNotFound(height))
         }
