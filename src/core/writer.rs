@@ -38,6 +38,10 @@ impl Writer {
         self.bytes.extend(value.to_be_bytes());
     }
 
+    pub fn write_u128(&mut self, value: &u128) {
+        self.bytes.extend(value.to_be_bytes());
+    }
+
     pub fn write_string(&mut self, value: &String) {
         self.bytes.push(value.len() as u8);
         self.bytes.extend(value.as_bytes());

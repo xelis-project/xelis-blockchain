@@ -1,4 +1,4 @@
-use xelis_blockchain::{core::{json_rpc::JsonRPCClient, block::Block, serializer::Serializer, difficulty::check_difficulty}, rpc::rpc::{GetBlockTemplateParams, GetBlockTemplateResult, SubmitBlockParams}, config::DEV_ADDRESS, globals::get_current_time, crypto::hash::Hashable};
+use xelis_blockchain::{core::{json_rpc::JsonRPCClient, block::Block, serializer::Serializer, difficulty::check_difficulty}, rpc::rpc::{GetBlockTemplateParams, GetBlockTemplateResult, SubmitBlockParams}, config::DEV_ADDRESS, globals::get_current_timestamp, crypto::hash::Hashable};
 use xelis_blockchain::config::VERSION;
 use clap::Parser;
 
@@ -26,7 +26,7 @@ fn main() {
         let mut hash = block.hash();
         while !check_difficulty(&hash, block_template.difficulty).unwrap() {
             block.nonce += 1;
-            block.timestamp = get_current_time();
+            block.timestamp = get_current_timestamp();
             hash = block.hash();
         }
 

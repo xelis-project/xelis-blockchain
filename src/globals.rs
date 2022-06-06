@@ -10,6 +10,13 @@ pub fn get_current_time() -> u64 {
     time.as_secs()
 }
 
+// return timestamp in milliseconds
+pub fn get_current_timestamp() -> u128 {
+    let start = SystemTime::now();
+    let time = start.duration_since(UNIX_EPOCH).expect("Incorrect time returned from get_current_timestamp");
+    time.as_millis()
+}
+
 pub fn format_coin(value: u64) -> String {
     format!("{}", value as f64 / COIN_VALUE as f64)
 }

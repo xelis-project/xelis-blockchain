@@ -4,6 +4,10 @@ use num_traits::{One};
 use super::error::BlockchainError;
 use crate::config::{MINIMUM_DIFFICULTY, BLOCK_TIME};
 use super::block::CompleteBlock;
+use log::debug;
+
+const E: f64 = 2.71828182845905;
+const M: f64 = 8f64;
 
 pub fn check_difficulty(hash: &Hash, difficulty: u64) -> Result<bool, BlockchainError> {
     let big_diff = difficulty_to_big(difficulty)?;
@@ -29,25 +33,19 @@ pub fn hash_to_big(hash: &Hash) -> BigUint {
     BigUint::from_bytes_be(hash.as_bytes())
 }
 
-pub fn calculate_difficulty(parent_block: &CompleteBlock, new_block: &CompleteBlock) -> u64 {
-    let timestamp_diff: u64 = new_block.get_timestamp() - parent_block.get_timestamp();
-    let parent_diff = parent_block.get_difficulty();
-    // (parent_diff + (parent_diff / 100 * max(1 - (block_timestamp - parent_timestamp) / (expected_block_time * 2 / 3), -99))
-    let ratio: i64 = max(1 - timestamp_diff as i64 / (BLOCK_TIME as i64 * 2 / 3), -99);
-    let diff = ((parent_diff / 100) as i64) * ratio;
-    let block_diff: u64 = (parent_diff as i64 + diff) as u64;
+pub fn calculate_difficulty(parent_block: &CompleteBlock, new_block: &CompleteBlock, previous_difficulty: u64) -> u64 {
+    let mut solve_time: u128 = new_block.get_timestamp() - parent_block.get_timestamp();
+    if solve_time > (BLOCK_TIME as u128 * 2) {
+        solve_time = BLOCK_TIME as u128 * 2;
+    }
 
-    if block_diff < MINIMUM_DIFFICULTY {
+    let easypart = (E.powf((1f64 - solve_time as f64 / BLOCK_TIME as f64) / M) * 10000f64) as i64;
+    let diff = ((previous_difficulty as i64 * easypart) / 10000) as u64;
+    debug!("Difficulty calculated, easypart: {}, previous diff: {}, diff: {}", easypart, previous_difficulty, diff);
+
+    if diff < MINIMUM_DIFFICULTY {
        return MINIMUM_DIFFICULTY
     }
 
-    block_diff
-}
-
-fn max(left: i64, right: i64) -> i64 {
-    if left > right {
-        return left
-    }
-
-    return right
+    diff
 }

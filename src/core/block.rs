@@ -6,12 +6,12 @@ use super::reader::{Reader, ReaderError};
 use super::writer::Writer;
 
 const EXTRA_NONCE_SIZE: usize = 32;
-const BLOCK_WORK_SIZE: usize = 152;
+const BLOCK_WORK_SIZE: usize = 160;
 
 #[derive(serde::Serialize, Clone)]
 pub struct Block {
     pub previous_hash: Hash,
-    pub timestamp: u64,
+    pub timestamp: u128,
     pub height: u64,
     pub nonce: u64,
     #[serde(skip_serializing)]
@@ -29,7 +29,7 @@ pub struct CompleteBlock {
 }
 
 impl Block {
-    pub fn new(height: u64, timestamp: u64, previous_hash: Hash, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner_tx: Transaction, txs_hashes: Vec<Hash>) -> Self {
+    pub fn new(height: u64, timestamp: u128, previous_hash: Hash, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner_tx: Transaction, txs_hashes: Vec<Hash>) -> Self {
         Block {
             height,
             timestamp,
@@ -59,12 +59,12 @@ impl Block {
         let mut bytes: Vec<u8> = vec![];
 
         bytes.extend(&self.height.to_be_bytes()); // 8
-        bytes.extend(&self.timestamp.to_be_bytes()); // 8 + 8 = 16
-        bytes.extend(self.previous_hash.as_bytes()); // 16 + 32 = 48
-        bytes.extend(&self.nonce.to_be_bytes()); // 48 + 8 = 56
-        bytes.extend(self.miner_tx.hash().as_bytes()); // 56 + 32 = 88
-        bytes.extend(&self.extra_nonce); // 88 + 32 = 120
-        bytes.extend(self.get_txs_hash().as_bytes()); // 120 + 32 = 152
+        bytes.extend(&self.timestamp.to_be_bytes()); // 8 + 16 = 24
+        bytes.extend(self.previous_hash.as_bytes()); // 24 + 32 = 56
+        bytes.extend(&self.nonce.to_be_bytes()); // 56 + 8 = 64
+        bytes.extend(self.miner_tx.hash().as_bytes()); // 64 + 32 = 96
+        bytes.extend(&self.extra_nonce); // 96 + 32 = 128
+        bytes.extend(self.get_txs_hash().as_bytes()); // 128 + 32 = 160
 
         if bytes.len() != BLOCK_WORK_SIZE {
             panic!("Error, invalid block work size, got {} but expected {}", bytes.len(), BLOCK_WORK_SIZE)
@@ -91,7 +91,7 @@ impl CompleteBlock {
         self.difficulty
     }
 
-    pub fn get_timestamp(&self) -> u64 {
+    pub fn get_timestamp(&self) -> u128 {
         self.block.timestamp
     }
 
@@ -131,11 +131,11 @@ impl CompleteBlock {
 impl Serializer for Block {
     fn write(&self, writer: &mut Writer) {
         writer.write_u64(&self.height); // 8
-        writer.write_u64(&self.timestamp); // 8 + 8 = 16
-        writer.write_hash(&self.previous_hash); // 16 + 32 = 48
-        writer.write_u64(&self.nonce); // 48 + 8 = 56
-        writer.write_bytes(&self.extra_nonce); // 56 + 32 = 88
-        writer.write_u16(&(self.txs_hashes.len() as u16)); // 88 + 2 = 90
+        writer.write_u128(&self.timestamp); // 8 + 16 = 24
+        writer.write_hash(&self.previous_hash); // 24 + 32 = 56
+        writer.write_u64(&self.nonce); // 56 + 8 = 64
+        writer.write_bytes(&self.extra_nonce); // 64 + 32 = 96
+        writer.write_u16(&(self.txs_hashes.len() as u16)); // 96 + 2 = 98
         for tx in &self.txs_hashes {
             writer.write_hash(tx);
         }
@@ -144,7 +144,7 @@ impl Serializer for Block {
 
     fn read(reader: &mut Reader) -> Result<Block, ReaderError> {
         let height = reader.read_u64()?;
-        let timestamp = reader.read_u64()?;
+        let timestamp = reader.read_u128()?;
         let previous_hash = Hash::new(reader.read_bytes_32()?);
         let nonce = reader.read_u64()?;
         let extra_nonce: [u8; 32] = reader.read_bytes_32()?;

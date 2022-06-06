@@ -76,6 +76,10 @@ impl<'a> Reader<'a> {
         Ok(u64::from_be_bytes(self.read_bytes(8)?))
     }
 
+    pub fn read_u128(&mut self) -> Result<u128, ReaderError> {
+        Ok(u128::from_be_bytes(self.read_bytes(16)?))
+    }
+
     pub fn read_string_with_size(&mut self, size: usize) -> Result<String, ReaderError> {
         let bytes: Vec<u8> = self.read_bytes(size)?;
         match String::from_utf8(bytes) {

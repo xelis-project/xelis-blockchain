@@ -5,6 +5,7 @@ XELIS is a blockchain in Rust (powered by Tokio) using the account model with a 
 ## Roadmap
 
 - Create a RPC Server for daemon API using Actix
+- Web Socket for new mining jobs
 - Miner
 - Fix bugs
 - Wallet

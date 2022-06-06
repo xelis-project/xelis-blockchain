@@ -1,6 +1,6 @@
 use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY, GENESIS_BLOCK, DEV_ADDRESS};
 use crate::crypto::hash::{Hash, Hashable};
-use crate::globals::get_current_time;
+use crate::globals::get_current_timestamp;
 use crate::crypto::key::PublicKey;
 use crate::p2p::server::P2pServer;
 use crate::rpc::RpcServer;
@@ -151,11 +151,11 @@ impl Blockchain {
                 fee_reward: 0
             };
             let miner_tx = Transaction::new(0, TransactionData::Coinbase(coinbase), self.get_dev_address().clone());
-            let mut block = Block::new(0, get_current_time(), Hash::zero(), [0u8; 32], miner_tx, Vec::new());
+            let mut block = Block::new(0, get_current_timestamp(), Hash::zero(), [0u8; 32], miner_tx, Vec::new());
             let mut hash = block.hash();
             while self.get_height() == 0 && !check_difficulty(&hash, self.get_difficulty())? {
                 block.nonce += 1;
-                block.timestamp = get_current_time();
+                block.timestamp = get_current_timestamp();
                 hash = block.hash();
             }
             let complete_block = CompleteBlock::new(block, self.get_difficulty(), Vec::new());
@@ -177,7 +177,7 @@ impl Blockchain {
                 block = self.get_block_template(key.clone()).await?;
             }
             block.nonce += 1;
-            block.timestamp = get_current_time();
+            block.timestamp = get_current_timestamp();
             hash = block.hash();
         }
 
@@ -245,7 +245,7 @@ impl Blockchain {
             fee_reward: 0,
         }), address);
         let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>();
-        let mut block = Block::new(self.get_height() + 1, get_current_time(), self.get_top_block_hash().await, extra_nonce, coinbase_tx, Vec::new());
+        let mut block = Block::new(self.get_height() + 1, get_current_timestamp(), self.get_top_block_hash().await, extra_nonce, coinbase_tx, Vec::new());
         let mut total_fee = 0;
         let mempool = self.mempool.lock().await;
         let txs: &Vec<SortedTx> = mempool.get_sorted_txs();
@@ -375,8 +375,8 @@ impl Blockchain {
             return Err(BlockchainError::InvalidBlockHeight(current_height + 1, block.get_height()));
         } else if !check_difficulty(&block_hash, current_difficulty)? {
             return Err(BlockchainError::InvalidDifficulty);
-        } else if block.get_timestamp() > get_current_time() { // TODO accept a latency of max 30s
-            return Err(BlockchainError::TimestampIsInFuture(get_current_time(), block.get_timestamp()));
+        } else if block.get_timestamp() > get_current_timestamp() { // TODO accept a latency of max 30s
+            return Err(BlockchainError::TimestampIsInFuture(get_current_timestamp(), block.get_timestamp()));
         } else if current_height != 0 && storage.has_blocks() { // TODO Block exist
             let previous_block = storage.get_block_at_height(current_height)?;
             let previous_hash = previous_block.hash();
@@ -386,7 +386,7 @@ impl Blockchain {
             if previous_block.get_timestamp() > block.get_timestamp() { // block timestamp can't be less than previous block.
                 return Err(BlockchainError::TimestampIsLessThanParent(block.get_timestamp()));
             }
-            debug!("Block Time for this block is: {}s", block.get_timestamp() - previous_block.get_timestamp());
+            debug!("Block Time for this block is: {:.2}s", (block.get_timestamp() - previous_block.get_timestamp()) as f64 / 1000f64);
         }
 
         let mut total_fees: u64 = 0;
@@ -484,7 +484,8 @@ impl Blockchain {
         self.execute_transaction(storage, block.get_miner_tx())?; // execute coinbase tx
 
         if current_height > 2 { // re calculate difficulty
-            let difficulty = calculate_difficulty(storage.get_top_block()?, &block);
+            let top_block = storage.get_top_block()?;
+            let difficulty = calculate_difficulty(top_block, &block, current_difficulty);
             self.difficulty.store(difficulty, Ordering::Relaxed);
         }
 

@@ -10,9 +10,9 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum BlockchainError {
     #[error("Timestamp {} is less than parent", _0)]
-    TimestampIsLessThanParent(u64),
+    TimestampIsLessThanParent(u128),
     #[error("Timestamp {} is greater than current time {}", _0, _1)]
-    TimestampIsInFuture(u64, u64), // left is expected, right is got
+    TimestampIsInFuture(u128, u128), // left is expected, right is got
     #[error("Block height mismatch, expected {}, got {}.", _0, _1)]
     InvalidBlockHeight(u64, u64),
     #[error("Invalid difficulty")]
