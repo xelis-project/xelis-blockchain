@@ -15,12 +15,6 @@ pub struct Tx {
 }
 
 #[derive(serde::Serialize, Clone)]
-pub struct CoinbaseTx {
-    pub block_reward: u64,
-    pub fee_reward: u64
-}
-
-#[derive(serde::Serialize, Clone)]
 pub struct SmartContractTx {
     pub contract: String,
     pub amount: u64,
@@ -33,8 +27,8 @@ pub enum TransactionData {
     Normal(Vec<Tx>),
     SmartContract(SmartContractTx),
     Burn(u64),
-    Coinbase(CoinbaseTx),
     UploadSmartContract(String),
+    Coinbase,
 }
 
 impl Serializer for TransactionData {
@@ -67,10 +61,8 @@ impl Serializer for TransactionData {
                     writer.write_string(value); // TODO real value type
                 }
             }
-            TransactionData::Coinbase(tx) => {
+            TransactionData::Coinbase => {
                 writer.write_u8(4);
-                writer.write_u64(&tx.block_reward);
-                writer.write_u64(&tx.fee_reward);
             }
             TransactionData::UploadSmartContract(code) => {
                 writer.write_u8(5);
@@ -109,13 +101,7 @@ impl Serializer for TransactionData {
                 })
             },
             4 => {
-                let block_reward = reader.read_u64()?;
-                let fee_reward = reader.read_u64()?;
-
-                TransactionData::Coinbase(CoinbaseTx {
-                    block_reward,
-                    fee_reward
-                })
+                TransactionData::Coinbase
             }
             _ => {
                 return Err(ReaderError::InvalidValue)
@@ -146,7 +132,7 @@ impl Transaction {
         };
 
         tx.fee = match &tx.data { // Registration & Coinbase tx have no fee
-            TransactionData::Registration | TransactionData::Coinbase(_) => 0,
+            TransactionData::Registration | TransactionData::Coinbase => 0,
             _ => crate::core::blockchain::calculate_tx_fee(tx.size())
         };
 
@@ -193,7 +179,7 @@ impl Transaction {
 
     pub fn calculate_hash(&mut self) -> Result<Hash, BlockchainError> {
         let result = match self.data {
-            TransactionData::Registration => { //mini PoW for registration TX to prevent spam as we can't ask fee on newly created account
+            TransactionData::Registration => { // mini PoW for registration TX to prevent spam as we can't ask fee on newly created account
                 let mut hash: Hash;
                 loop {
                     hash = self.hash();
@@ -236,7 +222,7 @@ impl Transaction {
 
     pub fn is_coinbase(&self) -> bool {
         match &self.data {
-            TransactionData::Coinbase(_) => true,
+            TransactionData::Coinbase => true,
             _ => false
         }
     }
@@ -250,7 +236,7 @@ impl Transaction {
 
     pub fn require_signature(&self) -> bool {
         match &self.data {
-            TransactionData::Registration | TransactionData::Coinbase(_) => false,
+            TransactionData::Registration | TransactionData::Coinbase => false,
             _ => true
         }
     }
@@ -273,7 +259,7 @@ impl Serializer for Transaction {
         let owner = PublicKey::read(reader)?;
         let fee = reader.read_u64()?;
         let signature: Option<Signature> = match &data {
-            TransactionData::Registration | TransactionData::Coinbase(_) => None,
+            TransactionData::Registration | TransactionData::Coinbase => None,
             _ => Some(Signature::read(reader)?)
         };
 

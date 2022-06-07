@@ -147,11 +147,7 @@ impl Blockchain {
         } else {
             error!("No genesis block found...");
             info!("Generating a new genesis block...");
-            let coinbase = CoinbaseTx {
-                block_reward: get_block_reward(self.get_supply()),
-                fee_reward: 0
-            };
-            let miner_tx = Transaction::new(0, TransactionData::Coinbase(coinbase), self.get_dev_address().clone());
+            let miner_tx = Transaction::new(0, TransactionData::Coinbase, self.get_dev_address().clone());
             let mut block = Block::new(1, get_current_timestamp(), Hash::zero(), [0u8; 32], miner_tx, Vec::new());
             let mut hash = block.hash();
             while self.get_height() == 0 && !check_difficulty(&hash, self.get_difficulty())? {
@@ -241,13 +237,9 @@ impl Blockchain {
     }
 
     pub async fn get_block_template(&self, address: PublicKey) -> Result<Block, BlockchainError> {
-        let coinbase_tx = Transaction::new(0, TransactionData::Coinbase(CoinbaseTx {
-            block_reward: get_block_reward(self.get_supply()),
-            fee_reward: 0,
-        }), address);
+        let coinbase_tx = Transaction::new(0, TransactionData::Coinbase, address);
         let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>();
         let mut block = Block::new(self.get_height() + 1, get_current_timestamp(), self.get_top_block_hash().await, extra_nonce, coinbase_tx, Vec::new());
-        let mut total_fee = 0;
         let mempool = self.mempool.lock().await;
         let txs: &Vec<SortedTx> = mempool.get_sorted_txs();
         let mut tx_size = 0;
@@ -256,18 +248,8 @@ impl Blockchain {
             if block.size() + tx_size > MAX_BLOCK_SIZE {
                 break;
             }
-
-            total_fee += tx.get_fee();
             block.txs_hashes.push(tx.get_hash().clone());
         }
-
-        match block.miner_tx.get_mut_data() {
-            TransactionData::Coinbase(ref mut data) => {
-                data.fee_reward = total_fee;
-            },
-            _ => {}
-        }
-
         Ok(block)
     }
 
@@ -289,6 +271,7 @@ impl Blockchain {
             return Err(BlockchainError::InvalidBlockHeight(self.get_height(), blocks.len() as u64))
         }
 
+        // TODO re calculate ALL accounts balances
         let mut circulating_supply = 0;
         for (height, block) in blocks.iter().enumerate() {
             let hash = block.hash();
@@ -315,20 +298,15 @@ impl Blockchain {
                 return Err(BlockchainError::InvalidDifficulty)
             }
 
-            let coinbase_tx = match block.get_miner_tx().get_data() {
-                TransactionData::Coinbase(tx) => tx,
-                _ => return Err(BlockchainError::InvalidMinerTx)
-            };
-            let reward = get_block_reward(circulating_supply);
-            if coinbase_tx.block_reward != reward {
-                return Err(BlockchainError::InvalidBlockReward(coinbase_tx.block_reward, reward))
+            if !block.get_miner_tx().is_coinbase() {
+                return Err(BlockchainError::InvalidMinerTx)
             }
 
-            let mut fees: u64 = 0;
+            let reward = get_block_reward(circulating_supply);
             for tx in block.get_transactions() {
                 let tx_hash = tx.hash();
                 if !tx.is_coinbase() {
-                    self.verify_transaction(&storage, tx, true)?;
+                    self.verify_transaction(&storage, tx, true)?; // TODO check when account have no more funds
                 } else {
                     return Err(BlockchainError::InvalidTxInBlock(tx_hash))
                 }
@@ -336,14 +314,7 @@ impl Blockchain {
                 if !block.get_txs_hashes().contains(&tx_hash) { // check if tx is in txs hashes
                     return Err(BlockchainError::InvalidTxInBlock(tx_hash))
                 }
-
-                fees += tx.get_fee();
             }
-
-            if fees != coinbase_tx.fee_reward {
-                return Err(BlockchainError::InvalidBlockReward(coinbase_tx.block_reward + coinbase_tx.fee_reward, reward + fees))
-            }
-
             circulating_supply += reward;
         }
 
@@ -356,7 +327,7 @@ impl Blockchain {
             return Err(BlockchainError::InvalidCirculatingSupply(circulating_supply, self.get_supply()));
         }
 
-        if total_supply_from_accounts != self.get_supply() {
+        if total_supply_from_accounts != circulating_supply {
             return Err(BlockchainError::InvalidCirculatingSupply(total_supply_from_accounts, self.get_supply()));
         }
 
@@ -412,7 +383,7 @@ impl Blockchain {
                 }
 
                 match tx.get_data() {
-                    TransactionData::Coinbase(_) => {
+                    TransactionData::Coinbase => {
                         return Err(BlockchainError::InvalidTxInBlock(tx_hash))
                     }
                     TransactionData::Registration => {
@@ -442,7 +413,7 @@ impl Blockchain {
         // Miner Tx verification
         let block_reward = get_block_reward(self.get_supply());
         match block.get_miner_tx().get_data() {
-            TransactionData::Coinbase(data) => { // reward contains block reward + fees from all txs included in this block
+            TransactionData::Coinbase => { // reward contains block reward + fees from all txs included in this block
                 if !storage.has_account(block.get_miner_tx().get_sender()) {
                     return Err(BlockchainError::AddressNotRegistered(block.get_miner_tx().get_sender().clone()));
                 }
@@ -453,14 +424,6 @@ impl Blockchain {
 
                 if block.get_miner_tx().has_signature() { // Coinbase tx should not be signed (there is no sender, why signing it ?)
                     return Err(BlockchainError::InvalidTransactionSignature)
-                }
-
-                if data.block_reward != block_reward || data.fee_reward != total_fees {
-                    return Err(BlockchainError::InvalidBlockReward(block_reward + total_fees, data.block_reward + data.fee_reward))
-                }
-
-                if data.fee_reward != total_fees {
-                    return Err(BlockchainError::InvalidFeeReward(total_fees, data.fee_reward))
                 }
             }
             _ => {
@@ -482,7 +445,7 @@ impl Blockchain {
         for tx in block.get_transactions() { // execute all txs
             self.execute_transaction(storage, tx)?;
         }
-        self.execute_transaction(storage, block.get_miner_tx())?; // execute coinbase tx
+        self.execute_miner_tx(storage, block.get_miner_tx(), block_reward, total_fees)?; // execute coinbase tx
 
         if current_height > 2 { // re calculate difficulty
             let top_block = storage.get_top_block()?;
@@ -580,7 +543,7 @@ impl Blockchain {
                     return Err(BlockchainError::NotEnoughFunds(tx.get_sender().clone(), amount + tx.get_fee()))
                 }
             }
-            TransactionData::Coinbase(_) => {
+            TransactionData::Coinbase => {
                 return Err(BlockchainError::CoinbaseTxNotAllowed(hash.clone()));
             }
             _ => {
@@ -589,6 +552,22 @@ impl Blockchain {
         };
 
         Ok(())
+    }
+
+    fn execute_miner_tx(&self, storage: &mut Storage, transaction: &Transaction, mut block_reward: u64, fees: u64) -> Result<(), BlockchainError> {
+        if let TransactionData::Coinbase = transaction.get_data() {
+            if DEV_FEE_PERCENT != 0 {
+                let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
+                let account = storage.get_mut_account(self.get_dev_address())?;
+                account.balance += dev_fee;
+                block_reward -= dev_fee;
+            }
+            let account = storage.get_mut_account(transaction.get_sender())?;
+            account.balance += block_reward + fees;
+            Ok(())
+        } else {
+            Err(BlockchainError::InvalidMinerTx)
+        }
     }
 
     fn execute_transaction(&self, storage: &mut Storage, transaction: &Transaction) -> Result<(), BlockchainError> {
@@ -612,20 +591,6 @@ impl Blockchain {
                 storage.register_account(transaction.get_sender().clone());
 
                 return Ok(())
-            }
-            TransactionData::Coinbase(data) => {
-                let mut block_reward = data.block_reward;
-                if DEV_FEE_PERCENT != 0 {
-                    let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
-                    let account = storage.get_mut_account(self.get_dev_address())?;
-                    account.balance += dev_fee;
-                    block_reward -= dev_fee;
-                }
-
-                let account = storage.get_mut_account(transaction.get_sender())?;
-                account.balance += block_reward + data.fee_reward;
-
-                return Ok(()) // return now to prevent the nonce increment
             }
             _ => {
                 panic!("not implemented")
