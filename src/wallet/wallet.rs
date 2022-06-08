@@ -1,3 +1,4 @@
+use crate::crypto::address::{Address, AddressType};
 use crate::crypto::key::KeyPair;
 use crate::core::transaction::{Transaction, TransactionData};
 use crate::core::error::BlockchainError;
@@ -19,8 +20,8 @@ impl Wallet {
         }
     }
 
-    pub fn get_address(&self) -> String {
-        self.keypair.get_public_key().to_address().unwrap()
+    pub fn get_address(&self) -> Address {
+        Address::new(true, AddressType::Normal, self.keypair.get_public_key().clone())
     }
 
     pub fn create_transaction(&self, data: TransactionData) -> Result<Transaction, BlockchainError> {

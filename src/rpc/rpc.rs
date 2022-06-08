@@ -1,4 +1,4 @@
-use crate::{core::{blockchain::Blockchain, block::Block, serializer::Serializer}, crypto::{key::PublicKey, hash::Hash}};
+use crate::{core::{blockchain::Blockchain, block::Block, serializer::Serializer}, crypto::{key::PublicKey, hash::Hash, address::Address}};
 use super::{RpcError, RpcServer};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{json, Value};
@@ -32,6 +32,11 @@ pub struct SubmitBlockParams {
     pub block_hashing_blob: String // hex
 }
 
+/*#[derive(Serialize, Deserialize)]
+pub struct GetAccountParams {
+    pub key: Address
+}*/
+
 macro_rules! method {
     ($func: expr) => {
         Box::new(move |a, b| {
@@ -51,6 +56,7 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("get_block_at_height", method!(get_block_at_height));
     server.register_method("get_block_by_hash", method!(get_block_by_hash));
     server.register_method("submit_block", method!(submit_block));
+    //server.register_method("get_account", method!(get_account));
 }
 
 async fn get_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -76,8 +82,8 @@ async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<V
 
 async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBlockTemplateParams = parse_params(body)?;
-    let address = PublicKey::from_address(&params.address)?;
-    let block = blockchain.get_block_template(address).await?;
+    let address = Address::from_address(&params.address)?;
+    let block = blockchain.get_block_template(address.consume_public_key()).await?;
     Ok(json!(GetBlockTemplateResult { template: block.to_hex(), difficulty: blockchain.get_difficulty() }))
 }
 
@@ -89,3 +95,10 @@ async fn submit_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value,
     blockchain.add_new_block(complete_block, true).await?;
     Ok(json!(true))
 }
+
+/*async fn get_account(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    let params: GetAccountParams = parse_params(body)?;
+    let storage = blockchain.get_storage().lock().await;
+    let account = storage.get_account(params.key.get_public_key())?;
+    Ok(json!(account))
+}*/

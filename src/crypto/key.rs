@@ -1,9 +1,6 @@
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::serializer::Serializer;
-use crate::core::error::BlockchainError;
-use crate::config::PREFIX_ADDRESS;
 use crate::core::writer::Writer;
-use super::bech32::{convert_bits, encode, decode, Bech32Error};
 use super::hash::Hash;
 use std::fmt::{Display, Error, Formatter};
 use std::hash::Hasher;
@@ -16,7 +13,7 @@ pub struct PublicKey(ed25519_dalek::PublicKey);
 pub struct PrivateKey(ed25519_dalek::SecretKey);
 
 #[derive(Clone)]
-pub struct Signature(ed25519_dalek::Signature);//([u8; SIGNATURE_LENGTH]);
+pub struct Signature(ed25519_dalek::Signature); // ([u8; SIGNATURE_LENGTH]);
 
 pub struct KeyPair {
     public_key: PublicKey,
@@ -32,23 +29,6 @@ impl PublicKey {
 
     pub fn as_bytes(&self) -> &[u8; KEY_LENGTH] {
         self.0.as_bytes()
-    }
-
-    pub fn to_address(&self) -> Result<String, Bech32Error> {
-        let bits = convert_bits(self.as_bytes(), 8, 5, true)?;
-        let result = encode(PREFIX_ADDRESS.to_owned(), &bits)?;
-        Ok(result)
-    }
-
-    pub fn from_address(address: &String) -> Result<Self, BlockchainError> {
-        let (hrp, decoded) = decode(address)?;
-        if hrp != PREFIX_ADDRESS {
-            return Err(BlockchainError::ErrorOnBech32(Bech32Error::InvalidPrefix(hrp)))
-        }
-
-        let bits = convert_bits(&decoded, 5, 8, false)?;
-        let key = ed25519_dalek::PublicKey::from_bytes(&bits)?;
-        Ok(PublicKey(key))
     }
 }
 
@@ -82,13 +62,13 @@ impl serde::Serialize for PublicKey {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_address().unwrap())
+        serializer.serialize_str(&self.to_string())
     }
 }
 
 impl Display for PublicKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "{}", &self.to_address().unwrap())
+        write!(f, "{}", hex::encode(self.to_bytes()))
     }
 }
 

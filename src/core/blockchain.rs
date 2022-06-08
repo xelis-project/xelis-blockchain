@@ -1,4 +1,5 @@
 use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY, GENESIS_BLOCK, DEV_ADDRESS};
+use crate::crypto::address::Address;
 use crate::crypto::hash::{Hash, Hashable};
 use crate::globals::get_current_timestamp;
 use crate::crypto::key::PublicKey;
@@ -64,6 +65,7 @@ pub struct Config {
 pub struct Blockchain {
     height: AtomicU64, // current block height 
     supply: AtomicU64, // current circulating supply based on coins already emitted
+    burned: AtomicU64, // total burned coins
     difficulty: AtomicU64, // difficulty for next block
     mempool: Mutex<Mempool>, // mempool to retrieve/add all txs
     storage: Mutex<Storage>, // storage to retrieve/add blocks
@@ -74,10 +76,11 @@ pub struct Blockchain {
 
 impl Blockchain {
     pub async fn new(config: Config) -> Result<Arc<Self>, BlockchainError> {
-        let dev_address = PublicKey::from_address(&DEV_ADDRESS.to_owned())?;
+        let dev_address = Address::from_address(&DEV_ADDRESS.to_owned())?.consume_public_key();
         let blockchain = Self {
             height: AtomicU64::new(0),
             supply: AtomicU64::new(0),
+            burned: AtomicU64::new(0),
             difficulty: AtomicU64::new(MINIMUM_DIFFICULTY),
             mempool: Mutex::new(Mempool::new()),
             storage: Mutex::new(Storage::new()),
@@ -202,6 +205,10 @@ impl Blockchain {
         self.supply.load(Ordering::Relaxed)
     }
 
+    pub fn get_burned_supply(&self) -> u64 {
+        self.burned.load(Ordering::Relaxed)
+    }
+
     pub fn get_dev_address(&self) -> &PublicKey {
         &self.dev_address
     }
@@ -297,7 +304,7 @@ impl Blockchain {
                 return Err(BlockchainError::InvalidDifficulty)
             }
 
-            if !block.get_miner_tx().is_coinbase() {
+            if !block.get_miner_tx().is_coinbase() || !block.get_miner_tx().verify_signature()? {
                 return Err(BlockchainError::InvalidMinerTx)
             }
 
@@ -305,7 +312,7 @@ impl Blockchain {
             for tx in block.get_transactions() {
                 let tx_hash = tx.hash();
                 if !tx.is_coinbase() {
-                    self.verify_transaction(&storage, tx, true)?; // TODO check when account have no more funds
+                    self.verify_transaction_with_hash(&storage, tx, &tx_hash, true)?; // TODO check when account have no more funds
                 } else {
                     return Err(BlockchainError::InvalidTxInBlock(tx_hash))
                 }
@@ -322,7 +329,7 @@ impl Blockchain {
             total_supply_from_accounts += account.balance;
         }
 
-        if circulating_supply != self.get_supply() {
+        if circulating_supply != self.get_supply() - self.get_burned_supply() {
             return Err(BlockchainError::InvalidCirculatingSupply(circulating_supply, self.get_supply()));
         }
 
@@ -452,15 +459,12 @@ impl Blockchain {
         self.rewind_chain_for_storage(&mut storage, count).await
     }
 
+    // TODO missing burned supply, txs etc
     pub async fn rewind_chain_for_storage(&self, storage: &mut Storage, count: usize) -> Result<(), BlockchainError> {
         let top_height = storage.pop_blocks(count)?;
         self.height.store(top_height, Ordering::Relaxed);
         self.supply.store(get_supply_at_height(top_height), Ordering::Relaxed); // recaculate supply
         Ok(())
-    }
-
-    fn verify_transaction(&self, storage: &Storage, tx: &Transaction, disable_nonce_check: bool) -> Result<u64, BlockchainError> {
-        self.verify_transaction_with_hash(storage, tx, &tx.hash(), disable_nonce_check)
     }
 
     // verify the transaction and returns fees available
@@ -558,13 +562,12 @@ impl Blockchain {
                 // shouldn't happen due to previous check
                 return Err(BlockchainError::CoinbaseTxNotAllowed(transaction.hash()))
             }
-            TransactionVariant::Normal { nonce, fee, data } => {
+            TransactionVariant::Normal { fee, data, .. } => {
                 let mut amount = 0; // total amount to be deducted
                 match data {
                     TransactionData::Burn(burn_amount) => {
                         amount += burn_amount + fee;
-                        // by burning an amount, this amount can still be regenerated through block reward, should we prevent this ?
-                        //self.supply = self.supply - burn_amount;
+                        self.burned.fetch_add(*burn_amount, Ordering::Relaxed);
                     }
                     TransactionData::Normal(txs) => {
                         let mut total = *fee;

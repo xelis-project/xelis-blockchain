@@ -1,6 +1,11 @@
+use std::fmt::Display;
+
+use crate::config::PREFIX_ADDRESS;
+use crate::core::error::BlockchainError;
 use crate::core::serializer::Serializer;
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::writer::Writer;
+use super::bech32::{convert_bits, encode, decode, Bech32Error};
 use super::key::PublicKey;
 
 const PAYMENT_ID_SIZE: usize = 8; // 8 bytes for paymentID
@@ -17,8 +22,40 @@ pub struct Address {
 }
 
 impl Address {
+    pub fn new(mainnet: bool, addr_type: AddressType, pub_key: PublicKey) -> Self {
+        Self {
+            mainnet,
+            addr_type,
+            pub_key
+        }
+    }
+
+    pub fn from_address(address: &String) -> Result<Self, BlockchainError> {
+        let (hrp, decoded) = decode(address)?;
+        if hrp != PREFIX_ADDRESS {
+            return Err(BlockchainError::ErrorOnBech32(Bech32Error::InvalidPrefix(hrp)))
+        }
+
+        let bits = convert_bits(&decoded, 5, 8, false)?;
+        let mut reader = Reader::new(&bits);
+        let address = Address::read(&mut reader)?;
+        Ok(address)
+    }
+
     pub fn get_public_key(&self) -> &PublicKey {
         &self.pub_key
+    }
+
+    pub fn consume_public_key(self) -> PublicKey {
+        self.pub_key
+    }
+}
+
+impl Display for Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bits = convert_bits(&self.to_bytes(), 8, 5, true).unwrap();
+        let result = encode(PREFIX_ADDRESS.to_owned(), &bits).unwrap();
+        write!(f, "{}", result)
     }
 }
 
