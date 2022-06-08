@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::config::PREFIX_ADDRESS;
+use crate::config::{PREFIX_ADDRESS, TESTNET_PREFIX_ADDRESS};
 use crate::core::error::BlockchainError;
 use crate::core::serializer::Serializer;
 use crate::core::reader::{Reader, ReaderError};
@@ -13,6 +13,7 @@ const PAYMENT_ID_SIZE: usize = 8; // 8 bytes for paymentID
 pub enum AddressType {
     Normal,
     PaymentId([u8; PAYMENT_ID_SIZE]),
+    // TODO add custom variables
 }
 
 pub struct Address {
@@ -32,13 +33,17 @@ impl Address {
 
     pub fn from_address(address: &String) -> Result<Self, BlockchainError> {
         let (hrp, decoded) = decode(address)?;
-        if hrp != PREFIX_ADDRESS {
+        let is_mainnet = hrp == PREFIX_ADDRESS;
+        if !is_mainnet && hrp != TESTNET_PREFIX_ADDRESS {
             return Err(BlockchainError::ErrorOnBech32(Bech32Error::InvalidPrefix(hrp)))
         }
 
         let bits = convert_bits(&decoded, 5, 8, false)?;
         let mut reader = Reader::new(&bits);
         let address = Address::read(&mut reader)?;
+        if address.mainnet != is_mainnet {
+            return Err(BlockchainError::ErrorOnBech32(Bech32Error::InvalidPrefix(hrp)))
+        }
         Ok(address)
     }
 
@@ -54,7 +59,8 @@ impl Address {
 impl Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let bits = convert_bits(&self.to_bytes(), 8, 5, true).unwrap();
-        let result = encode(PREFIX_ADDRESS.to_owned(), &bits).unwrap();
+        let prefix = if self.mainnet { PREFIX_ADDRESS } else { TESTNET_PREFIX_ADDRESS };
+        let result = encode(prefix.to_owned(), &bits).unwrap();
         write!(f, "{}", result)
     }
 }
@@ -106,5 +112,38 @@ impl Serializer for Address {
             addr_type,
             pub_key
         })
+    }
+}
+
+impl serde::Serialize for Address {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Address {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de> {
+        let string = deserializer.deserialize_string(StringVisitor)?;
+        Address::from_address(&string).or_else(|err| Err(serde::de::Error::custom(err)))
+    }
+}
+
+struct StringVisitor;
+
+impl<'de> serde::de::Visitor<'de> for StringVisitor {
+    type Value = String;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(formatter, "a valid string")
+    }
+
+    fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(s.to_owned())
     }
 }

@@ -11,7 +11,8 @@ pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024); // 1.25 MB
 pub const FEE_PER_KB: u64 = 1000; // 0.01000 XLS per KB
 pub const DEV_FEE_PERCENT: u64 = 5; // 5% per block going to dev address
 
-pub const PREFIX_ADDRESS: &str = "xel";
+pub const PREFIX_ADDRESS: &str = "xel"; // mainnet prefix address
+pub const TESTNET_PREFIX_ADDRESS: &str = "xet"; // testnet prefix address
 pub const COIN_VALUE: u64 = 100_000; // 5 decimals for a full coin
 pub const MAX_SUPPLY: u64 = 18_400_000 * COIN_VALUE; // 18.4M full coin
 pub const EMISSION_SPEED_FACTOR: u64 = 21;

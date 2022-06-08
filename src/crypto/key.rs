@@ -3,6 +3,7 @@ use crate::core::serializer::Serializer;
 use crate::core::writer::Writer;
 use super::hash::Hash;
 use std::fmt::{Display, Error, Formatter};
+use rand::{rngs::OsRng, RngCore};
 use std::hash::Hasher;
 
 pub const KEY_LENGTH: usize = 32;
@@ -81,11 +82,7 @@ impl PrivateKey {
 
 impl KeyPair {
     pub fn new() -> Self {
-        use rand::rngs::OsRng;
-        use rand::RngCore;
-
         let mut csprng = OsRng {};
-
         let mut bytes = [0u8; KEY_LENGTH];
         csprng.fill_bytes(&mut bytes);
         let secret_key: ed25519_dalek::SecretKey = ed25519_dalek::SecretKey::from_bytes(&bytes).unwrap();
