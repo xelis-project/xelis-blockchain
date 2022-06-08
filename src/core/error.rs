@@ -85,6 +85,8 @@ pub enum BlockchainError {
     IsSyncing,
     #[error("Invalid transaction signature")]
     InvalidTransactionSignature,
+    #[error("Found a signature on the transaction, but its not required")]
+    UnexpectedTransactionSignature,
     #[error("Difficulty cannot be zero!")]
     DifficultyCannotBeZero,
     #[error("Difficulty error on conversion to BigUint")]
@@ -97,8 +99,12 @@ pub enum BlockchainError {
     InvalidGenesisBlock,
     #[error("Not enough blocks")]
     NotEnoughBlocks,
-    #[error("unknown data store error")]
-    Unknown
+    #[error("Unknown data store error")]
+    Unknown,
+    #[error("No signature found for this TX")]
+    NoTxSignature,
+    #[error("Smart Contract not supported yet")]
+    SmartContractTodo
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

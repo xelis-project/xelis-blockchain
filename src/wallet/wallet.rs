@@ -24,10 +24,9 @@ impl Wallet {
     }
 
     pub fn create_transaction(&self, data: TransactionData) -> Result<Transaction, BlockchainError> {
-        let mut transaction = Transaction::new(self.nonce, data, self.keypair.get_public_key().clone());
-        transaction.sign_transaction(&self.keypair)?;
-
-        Ok(transaction)
+        //let mut transaction = Transaction::new(self.keypair.get_public_key().clone());
+        //transaction.sign(&self.keypair)?;
+        panic!("not implemented")
     }
 
     pub fn get_transactions(&self) -> &Vec<Transaction> {

@@ -1,8 +1,6 @@
-use crate::crypto::key::{PublicKey, KeyPair, Signature, SIGNATURE_LENGTH};
-use crate::crypto::hash::{Hash, Hashable, hash};
-use crate::config::REGISTRATION_DIFFICULTY;
+use crate::crypto::key::{PublicKey, Signature, SIGNATURE_LENGTH, KeyPair};
+use crate::crypto::hash::{Hashable, hash};
 use super::reader::{Reader, ReaderError};
-use super::difficulty::check_difficulty;
 use super::error::BlockchainError;
 use super::serializer::Serializer;
 use super::writer::Writer;
@@ -23,12 +21,10 @@ pub struct SmartContractTx {
 
 #[derive(serde::Serialize, Clone)]
 pub enum TransactionData {
-    Registration,
     Normal(Vec<Tx>),
     SmartContract(SmartContractTx),
     Burn(u64),
     UploadSmartContract(String),
-    Coinbase,
 }
 
 impl Serializer for TransactionData {
@@ -47,11 +43,8 @@ impl Serializer for TransactionData {
                     tx.to.write(writer);
                 }
             }
-            TransactionData::Registration => {
-                writer.write_u8(2);
-            }
             TransactionData::SmartContract(tx) => {
-                writer.write_u8(3);
+                writer.write_u8(2);
                 writer.write_string(&tx.contract);
                 writer.write_u64(&tx.amount);
 
@@ -61,18 +54,15 @@ impl Serializer for TransactionData {
                     writer.write_string(value); // TODO real value type
                 }
             }
-            TransactionData::Coinbase => {
-                writer.write_u8(4);
-            }
             TransactionData::UploadSmartContract(code) => {
-                writer.write_u8(5);
+                writer.write_u8(3);
                 writer.write_string(code);
             }
         };
     }
 
     fn read(reader: &mut Reader) -> Result<TransactionData, ReaderError> {
-        let data: TransactionData = match reader.read_u8()? {
+        Ok(match reader.read_u8()? {
             0 => {
                 let amount = reader.read_u64()?;
                 TransactionData::Burn(amount)
@@ -90,186 +80,144 @@ impl Serializer for TransactionData {
                 }
                 TransactionData::Normal(txs)
             },
-            2 => { // Registration
-                TransactionData::Registration
-            },
-            3 => { // TODO SC
+            2 => { // TODO SC
                 TransactionData::SmartContract(SmartContractTx {
                     contract: String::from(""),
                     amount: 0,
                     params: HashMap::new()
                 })
             },
-            4 => {
-                TransactionData::Coinbase
-            }
             _ => {
                 return Err(ReaderError::InvalidValue)
             }
-        };
+        })
+    }
+}
 
-        Ok(data)
+#[derive(serde::Serialize, Clone)]
+pub enum TransactionVariant {
+    Normal {
+        nonce: u64,
+        fee: u64,
+        data: TransactionData,
+    },
+    Registration,
+    Coinbase,
+}
+
+impl Serializer for TransactionVariant {
+    fn write(&self, writer: &mut Writer) {
+        match self {
+            TransactionVariant::Normal { nonce, fee, data } => {
+                writer.write_u8(0);
+                writer.write_u64(nonce);
+                writer.write_u64(fee);
+                data.write(writer);
+            },
+            TransactionVariant::Registration => {
+                writer.write_u8(1);
+            },
+            TransactionVariant::Coinbase => {
+                writer.write_u8(2);
+            }
+        }
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let id = reader.read_u8()?;
+        Ok(match id {
+            0 => {
+                let nonce = reader.read_u64()?;
+                let fee = reader.read_u64()?;
+                let data = TransactionData::read(reader)?;
+                TransactionVariant::Normal { nonce, fee, data }
+            },
+            1 => {
+                TransactionVariant::Registration
+            }
+            2 => {
+                TransactionVariant::Coinbase
+            }
+            _ => return Err(ReaderError::InvalidValue)
+        })
     }
 }
 
 #[derive(serde::Serialize, Clone)]
 pub struct Transaction {
-    nonce: u64,
-    data: TransactionData,
     owner: PublicKey,
-    fee: u64,
+    variant: TransactionVariant,
     signature: Option<Signature>
 }
 
 impl Transaction {
-    pub fn new(nonce: u64, data: TransactionData, owner: PublicKey) -> Self {
-        let mut tx = Transaction {
-            nonce,
-            data,
+    pub fn new(owner: PublicKey, variant: TransactionVariant) -> Self {
+        Transaction {
             owner,
-            fee: 0,
-            signature: None,
-        };
-
-        tx.fee = match &tx.data { // Registration & Coinbase tx have no fee
-            TransactionData::Registration | TransactionData::Coinbase => 0,
-            _ => crate::core::blockchain::calculate_tx_fee(tx.size())
-        };
-
-        tx
-    }
-
-    pub fn new_registration(owner: PublicKey) -> Result<Self, BlockchainError> {
-        let mut tx = Transaction {
-            nonce: 0,
-            data: TransactionData::Registration,
-            owner,
-            fee: 0,
-            signature: None,
-        };
-
-        tx.calculate_hash()?;
-        Ok(tx)
-    }
-
-    pub fn verify_signature(&self) -> bool {
-        match &self.signature {
-            Some(signature) => {
-                let bytes = self.to_bytes();
-                let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
-                self.get_sender().verify_signature(&hash(bytes), signature)
-            },
-            None => false
+            variant,
+            signature: None
         }
     }
 
-    pub fn get_signature(&self) -> &Option<Signature> {
-        &self.signature
+    pub fn get_variant(&self) -> &TransactionVariant {
+        &self.variant
     }
 
-    pub fn has_signature(&self) -> bool { // registration & coinbase don't have signature.
-        self.signature.is_some()
-    }
-
-    pub fn sign_transaction(&mut self, pair: &KeyPair) -> Result<(), BlockchainError> {
-        self.signature = Some(pair.sign(self.hash().as_bytes()));
-
-        Ok(())
-    }
-
-    pub fn calculate_hash(&mut self) -> Result<Hash, BlockchainError> {
-        let result = match self.data {
-            TransactionData::Registration => { // mini PoW for registration TX to prevent spam as we can't ask fee on newly created account
-                let mut hash: Hash;
-                loop {
-                    hash = self.hash();
-                    if check_difficulty(&hash, REGISTRATION_DIFFICULTY)? {
-                        break;
-                    } else {
-                        self.nonce += 1;
-                    }
-                }
-
-                hash
-            }
-            _ => {
-                self.hash()
-            }
-        };
-
-        Ok(result)
-    }
-
-    pub fn get_nonce(&self) -> u64 {
-        self.nonce
-    }
-
-    pub fn get_data(&self) -> &TransactionData {
-        &self.data
-    }
-
-    pub fn get_mut_data(&mut self) -> &mut TransactionData {
-        &mut self.data
-    }
-
-    pub fn get_sender(&self) -> &PublicKey {
+    pub fn get_owner(&self) -> &PublicKey {
         &self.owner
     }
 
-    pub fn get_fee(&self) -> u64 {
-        self.fee
-    }
-
     pub fn is_coinbase(&self) -> bool {
-        match &self.data {
-            TransactionData::Coinbase => true,
+        match self.get_variant() {
+            TransactionVariant::Coinbase => true,
             _ => false
         }
     }
 
-    pub fn is_registration(&self) -> bool {
-        match &self.data {
-            TransactionData::Registration => true,
-            _ => false 
+    pub fn require_signature(&self) -> bool {
+        match self.get_variant() {
+            TransactionVariant::Normal { .. } => true,
+            _ => false
         }
     }
 
-    pub fn require_signature(&self) -> bool {
-        match &self.data {
-            TransactionData::Registration | TransactionData::Coinbase => false,
-            _ => true
+    // check if we need a signature, and verify the validity of the signature if required
+    pub fn verify_signature(&self) -> Result<bool, BlockchainError> {
+        if let Some(signature) = &self.signature {
+            if !self.require_signature() { // we shouldn't have a signature on unrequired variant
+                return Err(BlockchainError::UnexpectedTransactionSignature)
+            }
+
+            let bytes = self.to_bytes();
+            let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
+            Ok(self.get_owner().verify_signature(&hash(bytes), signature))
+        } else if self.require_signature() { // we shouldn't have a signature on unrequired variant
+            Err(BlockchainError::NoTxSignature)
+        } else {
+            Ok(true)
         }
+    }
+
+    pub fn sign(&mut self, pair: &KeyPair) {
+        self.signature = Some(pair.sign(self.hash().as_bytes()));
     }
 }
 
 impl Serializer for Transaction {
     fn write(&self, writer: &mut Writer) {
-        writer.write_u64(&self.nonce); // 8
-        self.data.write(writer); // 16 + 1 (coinbase tx)
-        self.owner.write(writer); // 32
-        writer.write_u64(&self.fee); // 8
-        if let Some(signature) = &self.signature {
-            signature.write(writer);
-        }
+        self.owner.write(writer);
+        self.variant.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
-        let nonce = reader.read_u64()?;
-        let data = TransactionData::read(reader)?;
-        let owner = PublicKey::read(reader)?;
-        let fee = reader.read_u64()?;
-        let signature: Option<Signature> = match &data {
-            TransactionData::Registration | TransactionData::Coinbase => None,
-            _ => Some(Signature::read(reader)?)
+        let tx = Transaction {
+            owner: PublicKey::read(reader)?,
+            variant: TransactionVariant::read(reader)?,
+            signature: None
         };
 
-        Ok(Transaction {
-            nonce,
-            data: data,
-            owner: owner,
-            fee,
-            signature
-        })
+
+        Ok(tx)
     }
 }
 
