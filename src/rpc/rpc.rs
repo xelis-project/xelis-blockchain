@@ -1,4 +1,4 @@
-use crate::{core::{blockchain::Blockchain, block::Block, serializer::Serializer}, crypto::{key::PublicKey, hash::Hash, address::Address}};
+use crate::{core::{blockchain::Blockchain, block::Block, serializer::Serializer, transaction::Transaction}, crypto::{key::PublicKey, hash::Hash, address::Address}};
 use super::{RpcError, RpcServer};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{json, Value};
@@ -37,6 +37,11 @@ pub struct GetAccountParams {
     pub address: Address
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct SubmitTransactionParams {
+    pub data: String // should be in hex format
+}
+
 macro_rules! method {
     ($func: expr) => {
         Box::new(move |a, b| {
@@ -57,6 +62,7 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("get_block_by_hash", method!(get_block_by_hash));
     server.register_method("submit_block", method!(submit_block));
     server.register_method("get_account", method!(get_account));
+    server.register_method("submit_transaction", method!(submit_transaction));
 }
 
 async fn get_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -100,4 +106,11 @@ async fn get_account(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, 
     let storage = blockchain.get_storage().lock().await;
     let account = storage.get_account(params.address.get_public_key())?;
     Ok(json!(account))
+}
+
+async fn submit_transaction(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    let params: SubmitTransactionParams = parse_params(body)?;
+    let transaction = Transaction::from_hex(params.data)?;
+    blockchain.add_tx_to_mempool(transaction, true).await?;
+    Ok(json!(true))
 }

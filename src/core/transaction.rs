@@ -174,7 +174,7 @@ impl Transaction {
         }
     }
 
-    pub fn require_signature(&self) -> bool {
+    pub fn require_signature(&self) -> bool { // TODO Require Signature for Registration to prevent random bytes
         match self.get_variant() {
             TransactionVariant::Normal { .. } => true,
             _ => false
@@ -200,6 +200,15 @@ impl Transaction {
 
     pub fn sign(&mut self, pair: &KeyPair) {
         self.signature = Some(pair.sign(self.hash().as_bytes()));
+    }
+
+    pub fn set_fee(&mut self, value: u64) -> Result<(), BlockchainError> {
+        if let TransactionVariant::Normal { ref mut fee, .. } = &mut self.variant {
+            *fee = value;
+            Ok(())
+        } else {
+            Err(BlockchainError::UnexpectedTransactionVariant)
+        }
     }
 }
 

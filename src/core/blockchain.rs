@@ -232,8 +232,10 @@ impl Blockchain {
             return Err(BlockchainError::TxAlreadyInMempool(hash))
         }
 
-        let storage = self.storage.lock().await;
-        let fee = self.verify_transaction_with_hash(&storage, &tx, &hash, false)?;
+        let fee = {
+            let storage = self.storage.lock().await;
+            self.verify_transaction_with_hash(&storage, &tx, &hash, false)?
+        };
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 p2p.broadcast_tx_hash(&hash).await;

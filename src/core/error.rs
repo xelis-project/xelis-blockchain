@@ -104,7 +104,9 @@ pub enum BlockchainError {
     #[error("No signature found for this TX")]
     NoTxSignature,
     #[error("Smart Contract not supported yet")]
-    SmartContractTodo
+    SmartContractTodo,
+    #[error("Unexpected transaction variant to set fees")]
+    UnexpectedTransactionVariant
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {
