@@ -1,4 +1,4 @@
-use crate::{core::{blockchain::Blockchain, block::Block, serializer::Serializer}, crypto::{key::PublicKey, hash::Hash}};
+use crate::{core::{blockchain::Blockchain, block::Block, serializer::Serializer, message::MessageData}, crypto::{key::PublicKey, hash::Hash, address::Address}};
 use super::{RpcError, RpcServer};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{json, Value};
@@ -16,8 +16,8 @@ pub struct GetBlockByHashParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetBlockTemplateParams {
-    pub address: String
+pub struct GetBlockTemplateParams<'a> {
+    pub address: Address<'a>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -30,6 +30,12 @@ pub struct GetBlockTemplateResult {
 pub struct SubmitBlockParams {
     pub block_template: String, // hex: represent the BlockHeader (Block)
     pub block_hashing_blob: String // hex
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMessagesParams<'a> {
+    pub address: Address<'a>,
+    pub from: Option<Address<'a>>
 }
 
 macro_rules! method {
@@ -51,6 +57,7 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("get_block_at_height", method!(get_block_at_height));
     server.register_method("get_block_by_hash", method!(get_block_by_hash));
     server.register_method("submit_block", method!(submit_block));
+    server.register_method("get_messages", method!(get_messages));
 }
 
 async fn get_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -76,8 +83,10 @@ async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<V
 
 async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBlockTemplateParams = parse_params(body)?;
-    let address = PublicKey::from_address(&params.address)?;
-    let block = blockchain.get_block_template(address).await?;
+    if !params.address.is_normal() {
+        return Err(RpcError::ExpectedNormalAddress)
+    }
+    let block = blockchain.get_block_template(params.address.to_public_key()).await?;
     Ok(json!(GetBlockTemplateResult { template: block.to_hex(), difficulty: blockchain.get_difficulty() }))
 }
 
@@ -88,4 +97,14 @@ async fn submit_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value,
     let complete_block = blockchain.build_complete_block_from_block(block).await?;
     blockchain.add_new_block(complete_block, true).await?;
     Ok(json!(true))
+}
+
+async fn get_messages(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    let params: GetMessagesParams = parse_params(body)?;
+    if !params.address.is_normal() {
+        return Err(RpcError::ExpectedNormalAddress)
+    }
+    // TODO
+    let messages: Vec<&dyn MessageData> = Vec::new();
+    panic!("") //Ok(json!(messages))
 }

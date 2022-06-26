@@ -1,10 +1,9 @@
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::serializer::Serializer;
-use crate::core::error::BlockchainError;
-use crate::config::PREFIX_ADDRESS;
 use crate::core::writer::Writer;
-use super::bech32::{convert_bits, encode, decode, Bech32Error};
+use super::address::{Address, AddressType};
 use super::hash::Hash;
+use std::borrow::Cow;
 use std::fmt::{Display, Error, Formatter};
 use std::hash::Hasher;
 
@@ -24,7 +23,6 @@ pub struct KeyPair {
 }
 
 impl PublicKey {
-
     pub fn verify_signature(&self, hash: &Hash, signature: &Signature) -> bool {
         use ed25519_dalek::Verifier;
         self.0.verify(hash.as_bytes(), &signature.0).is_ok()
@@ -34,21 +32,8 @@ impl PublicKey {
         self.0.as_bytes()
     }
 
-    pub fn to_address(&self) -> Result<String, Bech32Error> {
-        let bits = convert_bits(self.as_bytes(), 8, 5, true)?;
-        let result = encode(PREFIX_ADDRESS.to_owned(), &bits)?;
-        Ok(result)
-    }
-
-    pub fn from_address(address: &String) -> Result<Self, BlockchainError> {
-        let (hrp, decoded) = decode(address)?;
-        if hrp != PREFIX_ADDRESS {
-            return Err(BlockchainError::ErrorOnBech32(Bech32Error::InvalidPrefix(hrp)))
-        }
-
-        let bits = convert_bits(&decoded, 5, 8, false)?;
-        let key = ed25519_dalek::PublicKey::from_bytes(&bits)?;
-        Ok(PublicKey(key))
+    pub fn to_address(&self) -> Address { // TODO mainnet mode based on config
+        Address::new(true, AddressType::Normal, Cow::Borrowed(self))
     }
 }
 
@@ -82,13 +67,13 @@ impl serde::Serialize for PublicKey {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_address().unwrap())
+        serializer.serialize_str(&self.to_address().to_string())
     }
 }
 
 impl Display for PublicKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "{}", &self.to_address().unwrap())
+        write!(f, "{}", &self.to_address())
     }
 }
 
@@ -140,7 +125,6 @@ impl Signature {
 }
 
 impl Serializer for Signature {
-
     fn write(&self, writer: &mut Writer) {
         writer.write_bytes(&self.0.to_bytes());
     }

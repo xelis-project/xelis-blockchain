@@ -35,6 +35,8 @@ pub enum RpcError {
     DeserializerError(#[from] ReaderError),
     #[error("Error: {}", _0)]
     AnyError(#[from] AnyError),
+    #[error("Error, expected a normal wallet address")]
+    ExpectedNormalAddress
 }
 
 impl RpcError {

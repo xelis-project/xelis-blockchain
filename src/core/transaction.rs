@@ -173,7 +173,6 @@ impl Transaction {
 
     pub fn sign_transaction(&mut self, pair: &KeyPair) -> Result<(), BlockchainError> {
         self.signature = Some(pair.sign(self.hash().as_bytes()));
-
         Ok(())
     }
 

@@ -1,5 +1,5 @@
 use serde_json::Value;
-use xelis_blockchain::{core::{json_rpc::JsonRPCClient, block::Block, serializer::Serializer, difficulty::check_difficulty}, rpc::rpc::{GetBlockTemplateParams, GetBlockTemplateResult, SubmitBlockParams}, config::DEV_ADDRESS, globals::get_current_timestamp, crypto::hash::Hashable};
+use xelis_blockchain::{core::{json_rpc::JsonRPCClient, block::Block, serializer::Serializer, difficulty::check_difficulty}, rpc::rpc::{GetBlockTemplateParams, GetBlockTemplateResult, SubmitBlockParams}, config::DEV_ADDRESS, globals::get_current_timestamp, crypto::{hash::Hashable, address::Address}};
 use xelis_blockchain::config::VERSION;
 use clap::Parser;
 
@@ -19,7 +19,7 @@ pub struct MinerConfig {
 fn main() {
     let config: MinerConfig = MinerConfig::parse();
     let client = JsonRPCClient::new(format!("{}/json_rpc", config.daemon_address));
-    let get_block_template = GetBlockTemplateParams { address: config.miner_address };
+    let get_block_template = GetBlockTemplateParams { address: Address::from_string(&config.miner_address).unwrap() };
     loop {
         println!("Requesting block template");
         let block_template: GetBlockTemplateResult = client.call_with("get_block_template", &get_block_template).unwrap();

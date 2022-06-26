@@ -1,4 +1,5 @@
 use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY, GENESIS_BLOCK, DEV_ADDRESS};
+use crate::crypto::address::Address;
 use crate::crypto::hash::{Hash, Hashable};
 use crate::globals::get_current_timestamp;
 use crate::crypto::key::PublicKey;
@@ -74,7 +75,7 @@ pub struct Blockchain {
 
 impl Blockchain {
     pub async fn new(config: Config) -> Result<Arc<Self>, BlockchainError> {
-        let dev_address = PublicKey::from_address(&DEV_ADDRESS.to_owned())?;
+        let dev_address = Address::from_string(&DEV_ADDRESS.to_owned())?;
         let blockchain = Self {
             height: AtomicU64::new(0),
             supply: AtomicU64::new(0),
@@ -83,7 +84,7 @@ impl Blockchain {
             storage: Mutex::new(Storage::new()),
             p2p: Mutex::new(None),
             rpc: Mutex::new(None),
-            dev_address: dev_address
+            dev_address: dev_address.to_public_key()
         };
         // TODO Read blockchain from disk if exists
         // include genesis block
