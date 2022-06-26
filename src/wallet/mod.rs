@@ -1,34 +1,51 @@
-use crate::crypto::address::Address;
-use crate::crypto::key::KeyPair;
-use crate::core::transaction::{Transaction, TransactionData};
+use std::borrow::Cow;
+
+use crate::core::blockchain::calculate_tx_fee;
+use crate::core::json_rpc::{JsonRPCClient, JsonRPCError};
+use crate::core::serializer::Serializer;
+use crate::crypto::address::{Address, AddressType};
+use crate::crypto::key::{KeyPair, SIGNATURE_LENGTH};
+use crate::core::transaction::{Transaction, TransactionData, TransactionVariant};
 use crate::core::error::BlockchainError;
+use crate::rpc::rpc::SubmitTransactionParams;
 
 pub struct Wallet {
     keypair: KeyPair,
     balance: u64,
     nonce: u64,
-    transactions: Vec<Transaction>
+    transactions: Vec<Transaction>,
+    client: JsonRPCClient
 }
 
 impl Wallet {
-    pub fn new() -> Self {
+    pub fn new(daemon_address: String) -> Self {
         Wallet {
             keypair: KeyPair::new(),
             balance: 0,
             nonce: 0,
-            transactions: vec![],
+            transactions: Vec::new(),
+            client: JsonRPCClient::new(daemon_address)
         }
     }
 
     pub fn get_address(&self) -> Address {
-        self.keypair.get_public_key().to_address()
+        Address::new(true, AddressType::Normal, Cow::Borrowed(self.keypair.get_public_key()))
+    }
+
+    pub fn send_transaction(&self, transaction: &Transaction) -> Result<(), JsonRPCError> {
+        self.client.notify_with("submit_transaction", &SubmitTransactionParams { data: transaction.to_hex() })
+    }
+
+    pub fn create_tx_registration(&self) -> Transaction {
+        Transaction::new(self.keypair.get_public_key().clone(), TransactionVariant::Registration)
     }
 
     pub fn create_transaction(&self, data: TransactionData) -> Result<Transaction, BlockchainError> {
-        let mut transaction = Transaction::new(self.nonce, data, self.keypair.get_public_key().clone());
-        transaction.sign_transaction(&self.keypair)?;
-
-        Ok(transaction)
+        let mut tx = Transaction::new(self.keypair.get_public_key().clone(), TransactionVariant::Normal { nonce: self.nonce, fee: 0, data });
+        let fee = calculate_tx_fee(tx.size() + SIGNATURE_LENGTH);
+        tx.set_fee(fee)?;
+        tx.sign(&self.keypair);
+        Ok(tx)
     }
 
     pub fn get_transactions(&self) -> &Vec<Transaction> {

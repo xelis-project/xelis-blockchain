@@ -108,7 +108,7 @@ impl CompleteBlock {
     }
 
     pub fn get_miner(&self) -> &PublicKey {
-        &self.block.miner_tx.get_sender()
+        &self.block.miner_tx.get_owner()
     }
 
     pub fn get_extra_nonce(&self) -> &[u8; EXTRA_NONCE_SIZE] {

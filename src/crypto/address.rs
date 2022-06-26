@@ -16,6 +16,7 @@ const PAYMENT_ID_SIZE: usize = 8; // 8 bytes for paymentID
 pub enum AddressType {
     Normal,
     PaymentId([u8; PAYMENT_ID_SIZE]),
+    // TODO add custom variables
 }
 
 pub struct Address<'a> {

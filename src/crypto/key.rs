@@ -5,6 +5,7 @@ use super::address::{Address, AddressType};
 use super::hash::Hash;
 use std::borrow::Cow;
 use std::fmt::{Display, Error, Formatter};
+use rand::{rngs::OsRng, RngCore};
 use std::hash::Hasher;
 
 pub const KEY_LENGTH: usize = 32;
@@ -15,7 +16,7 @@ pub struct PublicKey(ed25519_dalek::PublicKey);
 pub struct PrivateKey(ed25519_dalek::SecretKey);
 
 #[derive(Clone)]
-pub struct Signature(ed25519_dalek::Signature);//([u8; SIGNATURE_LENGTH]);
+pub struct Signature(ed25519_dalek::Signature); // ([u8; SIGNATURE_LENGTH]);
 
 pub struct KeyPair {
     public_key: PublicKey,
@@ -86,11 +87,7 @@ impl PrivateKey {
 
 impl KeyPair {
     pub fn new() -> Self {
-        use rand::rngs::OsRng;
-        use rand::RngCore;
-
         let mut csprng = OsRng {};
-
         let mut bytes = [0u8; KEY_LENGTH];
         csprng.fill_bytes(&mut bytes);
         let secret_key: ed25519_dalek::SecretKey = ed25519_dalek::SecretKey::from_bytes(&bytes).unwrap();
