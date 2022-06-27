@@ -127,7 +127,7 @@ impl serde::Serialize for Address<'_> {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_hex())
+        serializer.serialize_str(&self.to_string())
     }
 }
 

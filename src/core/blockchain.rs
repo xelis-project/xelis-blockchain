@@ -444,7 +444,7 @@ impl Blockchain {
 
         self.height.store(block.get_height(), Ordering::Relaxed);
         self.supply.fetch_add(block_reward, Ordering::Relaxed);
-        debug!("Adding new block '{}' at height {}", block_hash, block.get_height());
+        debug!("Adding new block '{}' with {} txs at height {}", block_hash, block.get_txs_count(), block.get_height());
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
