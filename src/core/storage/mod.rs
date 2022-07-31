@@ -1,18 +1,18 @@
 use crate::core::immutable::Immutable;
-use crate::crypto::hash::{Hash};
 use crate::crypto::key::PublicKey;
-use super::serializer::Serializer;
+use crate::crypto::hash::{Hash};
 use super::reader::{Reader, ReaderError};
-use super::error::BlockchainError;
 use super::block::{CompleteBlock, Block};
-use super::blockchain::Account;
 use super::transaction::Transaction;
+use super::serializer::Serializer;
+use super::error::BlockchainError;
+use super::blockchain::Account;
 use super::writer::Writer;
-use std::collections::HashMap;
 use std::hash::Hash as StdHash;
-use std::sync::Arc;
-use sled::Tree;
 use tokio::sync::Mutex;
+use std::sync::Arc;
+use lru::LruCache;
+use sled::Tree;
 
 impl Serializer for u64 {
     fn write(&self, writer: &mut Writer) {
@@ -82,15 +82,15 @@ pub struct Storage {
     blocks: Tree, // all blocks on disk
     metadata: Tree,
     // cached in memory
-    transactions_cache: Mutex<HashMap<Hash, Arc<Transaction>>>,
-    blocks_cache: Mutex<HashMap<Hash, Arc<Block>>>,
+    transactions_cache: Mutex<LruCache<Hash, Arc<Transaction>>>,
+    blocks_cache: Mutex<LruCache<Hash, Arc<Block>>>,
     // Only accounts can be updated
-    accounts_cache: Mutex<HashMap<PublicKey, Arc<Account>>>,
-    metadata_cache: Mutex<HashMap<u64, Arc<BlockMetadata>>> // TODO: LRU Cache
+    accounts_cache: Mutex<LruCache<PublicKey, Arc<Account>>>,
+    metadata_cache: Mutex<LruCache<u64, Arc<BlockMetadata>>>
 }
 
 impl Storage {
-    pub fn new() -> Result<Self, BlockchainError> {
+    pub fn new() -> Result<Self, BlockchainError> { // TODO configurable cache size & folder path
         let sled = sled::open("mainnet")?;
         let accounts = sled.open_tree("accounts")?;
         let transactions = sled.open_tree("transactions")?;
@@ -102,10 +102,10 @@ impl Storage {
             accounts,
             blocks,
             metadata,
-            transactions_cache: Mutex::new(HashMap::new()),
-            accounts_cache: Mutex::new(HashMap::new()),
-            blocks_cache: Mutex::new(HashMap::new()),
-            metadata_cache: Mutex::new(HashMap::new())
+            transactions_cache: Mutex::new(LruCache::new(1024)),
+            accounts_cache: Mutex::new(LruCache::new(1024)),
+            blocks_cache: Mutex::new(LruCache::new(1024)),
+            metadata_cache: Mutex::new(LruCache::new(1024))
         })
     }
 
@@ -121,52 +121,44 @@ impl Storage {
         }
     }
 
-    async fn get_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Mutex<HashMap<K, Arc<V>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
+    async fn get_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Mutex<LruCache<K, Arc<V>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
         let mut cache = cache.lock().await;
         if let Some(value) = cache.get(key) {
             return Ok(Arc::clone(&value));
         }
 
         let value = Arc::new(self.load_from_disk(tree, &key.to_bytes())?);
-        cache.insert(key.clone(), Arc::clone(&value));
+        cache.put(key.clone(), Arc::clone(&value));
         Ok(value)
     }
 
-    pub async fn save(&self) -> Result<(), BlockchainError> {
-        for (key, value) in self.transactions_cache.lock().await.drain() {
-            self.transactions.insert(key.to_bytes(), value.to_bytes())?;
-        }
-
-        for (key, value) in self.blocks_cache.lock().await.drain() {
-            self.blocks.insert(key.to_bytes(), value.to_bytes())?;
-        }
-
-        for (key, value) in self.accounts_cache.lock().await.drain() {
-            self.accounts.insert(key.to_bytes(), value.to_bytes())?;
-        }
-
-        // flush all trees
-        /*self.blocks.flush_async().await?;
+    // flush all trees
+    pub async fn flush(&self) -> Result<(), BlockchainError> {
+        self.blocks.flush_async().await?;
         self.accounts.flush_async().await?;
         self.transactions.flush_async().await?;
-        self.metadata.flush_async().await?;*/
+        self.metadata.flush_async().await?;
 
         Ok(())
     }
 
     pub async fn has_account(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
-        Ok(self.accounts_cache.lock().await.contains_key(key) || self.accounts.contains_key(key.as_bytes())?)
+        Ok(self.accounts_cache.lock().await.contains(key) || self.accounts.contains_key(key.as_bytes())?)
     }
 
     pub async fn get_account(&self, key: &PublicKey) -> Result<Arc<Account>, BlockchainError> {
         self.get_data(&self.accounts, &self.accounts_cache, key).await
     }
 
-    pub async fn register_account(&mut self, key: PublicKey) {
+    // save directly on disk & in cache
+    pub async fn register_account(&mut self, key: PublicKey) -> Result<(), BlockchainError> {
         let account = Account::new(0, 0);
 
+        self.accounts.insert(key.as_bytes(), account.to_bytes())?;
         let mut accounts = self.accounts_cache.lock().await;
-        accounts.insert(key, Arc::new(account));
+        accounts.put(key, Arc::new(account));
+
+        Ok(())
     }
 
     pub async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
@@ -181,9 +173,12 @@ impl Storage {
             self.transactions.insert(tx.as_bytes(), txs.remove(0).to_bytes())?;
         }
 
-        let metadata = BlockMetadata::new(difficulty, supply, burned, hash);
+        let metadata = BlockMetadata::new(difficulty, supply, burned, hash.clone()); // TODO Arc ?
         self.metadata.insert(block.get_height().to_bytes(), metadata.to_bytes())?;
-        self.save().await?;
+
+        self.metadata_cache.lock().await.put(block.get_height(), Arc::new(metadata));
+        self.blocks_cache.lock().await.put(hash, block.to_arc());
+        //self.flush().await?;
 
         Ok(())
     }
@@ -213,7 +208,7 @@ impl Storage {
     }
 
     pub async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        Ok(self.blocks_cache.lock().await.contains_key(hash) || self.blocks.contains_key(hash.as_bytes())?)
+        Ok(self.blocks_cache.lock().await.contains(hash) || self.blocks.contains_key(hash.as_bytes())?)
     }
 
     pub async fn get_block_by_hash(&self, hash: &Hash) -> Result<Arc<Block>, BlockchainError> {

@@ -17,6 +17,13 @@ impl<T: Clone> Immutable<T> {
             Immutable::Arc(v) => v
         }
     }
+
+    pub fn to_arc(self) -> Arc<T> {
+        match self {
+            Immutable::Owned(v) => Arc::new(v),
+            Immutable::Arc(v) => v
+        }
+    }
 }
 
 impl<T: Clone> Deref for Immutable<T> {
