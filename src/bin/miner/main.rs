@@ -37,7 +37,7 @@ fn main() {
                 println!("Block successfully accepted!");
             }
             Err(e) => {
-                println!("Error whille adding new block: {:?}", e);
+                println!("Error while adding new block: {:?}", e);
             }
         };
     }

@@ -13,7 +13,7 @@ hex = "0.4.3"
 num-bigint = "0.4.0"
 num-traits = "0.2.14"
 num_cpus = "1.13.0"
-serde = { version = "1.0.126", features = ["derive"] }
+serde = { version = "1.0.126", features = ["derive", "rc"] }
 serde_json = "1.0"
 rand = "0.8.4"
 ed25519-dalek = { version = "1.0.1", features = ["serde"] }
@@ -27,6 +27,7 @@ bytes = "1"
 actix-web = "4"
 anyhow = "1.0.57"
 reqwest = { version = "0.11.10", features = ["blocking", "json"] }
+sled = "0.34.7"
 
 [[bin]]
 name = "wallet"

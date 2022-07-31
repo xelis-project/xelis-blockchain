@@ -106,7 +106,11 @@ pub enum BlockchainError {
     #[error("Smart Contract not supported yet")]
     SmartContractTodo,
     #[error("Unexpected transaction variant to set fees")]
-    UnexpectedTransactionVariant
+    UnexpectedTransactionVariant,
+    #[error("Unexpected error on database: {}", _0)]
+    DatabaseError(#[from] sled::Error),
+    #[error("Data not found on disk")]
+    NotFoundOnDisk
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

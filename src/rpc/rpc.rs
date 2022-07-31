@@ -81,15 +81,15 @@ async fn get_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, R
 
 async fn get_block_at_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBlockAtHeightParams = parse_params(body)?;
-    let storage = blockchain.get_storage().lock().await;
-    let block = storage.get_block_at_height(params.height)?;
+    let storage = blockchain.get_storage().read().await;
+    let block = storage.get_block_at_height(params.height).await?;
     Ok(json!(block))
 }
 
 async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBlockByHashParams = parse_params(body)?;
-    let storage = blockchain.get_storage().lock().await;
-    let block = storage.get_block_by_hash(&params.hash)?;
+    let storage = blockchain.get_storage().read().await;
+    let block = storage.get_block_by_hash(&params.hash).await?;
     Ok(json!(block))
 }
 
@@ -118,13 +118,13 @@ async fn get_messages(blockchain: Arc<Blockchain>, body: Value) -> Result<Value,
     }
     // TODO
     let messages: Vec<&dyn MessageData> = Vec::new();
-    panic!("") //Ok(json!(messages))
+    todo!("xelis messages") //Ok(json!(messages))
 }
 
 async fn get_account(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetAccountParams = parse_params(body)?;
-    let storage = blockchain.get_storage().lock().await;
-    let account = storage.get_account(params.address.get_public_key())?;
+    let storage = blockchain.get_storage().read().await;
+    let account = storage.get_account(params.address.get_public_key()).await?;
     Ok(json!(account))
 }
 

@@ -139,8 +139,8 @@ impl P2pServer {
         }
 
         if handshake.get_block_height() <= self.blockchain.get_height() { // peer is not greater than us
-            let storage = self.blockchain.get_storage().lock().await;
-            let block = match storage.get_block_by_hash(handshake.get_block_top_hash()) {
+            let storage = self.blockchain.get_storage().read().await;
+            let block = match storage.get_block_by_hash(handshake.get_block_top_hash()).await {
                 Ok(block) => block,
                 Err(_) => {
                     warn!("Block '{}' not found at height '{}'.", handshake.get_block_top_hash(), handshake.get_block_height());
@@ -176,7 +176,7 @@ impl P2pServer {
         }
 
         let block_height = self.blockchain.get_height();
-        let top_hash = self.blockchain.get_storage().lock().await.get_top_block_hash().clone();
+        let top_hash = self.blockchain.get_storage().read().await.get_top_block_hash().unwrap_or_else(|_| Hash::zero());
         Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), block_height, top_hash, peers))
     }
 
@@ -282,7 +282,7 @@ impl P2pServer {
                 }
             }
         }
-        Ping::new(Cow::Owned(block_top_hash), block_height, new_peers)
+        Ping::new(Cow::Owned(block_top_hash.unwrap()), block_height, new_peers)
     }
 
     // build a ping packet with a specific peerlist for the peer
@@ -474,8 +474,8 @@ impl P2pServer {
                 if let Some(common_point) = response.get_common_point() {
                     debug!("Peer found a common point for sync, received {} blocks", response.size());
                     let pop_count = {
-                        let storage = self.blockchain.get_storage().lock().await;
-                        let common_block = match storage.get_block_by_hash(common_point.get_hash()) {
+                        let storage = self.blockchain.get_storage().read().await;
+                        let common_block = match storage.get_block_by_hash(common_point.get_hash()).await {
                             Ok(block) => block,
                             Err(e) => {
                                 warn!("Peer {} sent us an invalid common point: {}", peer.get_connection().get_address(), e);
@@ -544,10 +544,10 @@ impl P2pServer {
                 let request = request.into_owned();
                 match &request {
                     ObjectRequest::Block(hash) => {
-                        let storage = self.blockchain.get_storage().lock().await;
-                        match storage.get_block_by_hash(hash) {
+                        let storage = self.blockchain.get_storage().read().await;
+                        match storage.get_complete_block(hash).await {
                             Ok(block) => {
-                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Block(Cow::Borrowed(block)))).await?;
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Block(Cow::Owned(block)))).await?;
                             },
                             Err(e) => {
                                 debug!("Peer {} asked block '{}' but got on error while retrieving it: {}", peer.get_connection().get_address(), hash, e);
@@ -595,11 +595,11 @@ impl P2pServer {
     }
 
     async fn handle_chain_request(self: Arc<Self>, peer: &Arc<Peer>, blocks: Vec<BlockId>) -> Result<(), BlockchainError> {
-        let storage = self.blockchain.get_storage().lock().await;
+        let storage = self.blockchain.get_storage().read().await;
         let mut response_blocks = Vec::new();
         let mut common_point = None;
         for block_id in blocks { // search a common point
-            if let Ok(block) = storage.get_block_by_hash(block_id.get_hash()) {
+            if let Ok(block) = storage.get_block_by_hash(block_id.get_hash()).await {
                 let (hash, height) = block_id.consume();
                 debug!("Block {} found for height: {}", hash, height);
                 if block.get_height() == height { // common point
@@ -608,7 +608,7 @@ impl P2pServer {
                     let top_height = self.blockchain.get_height();
                     let mut height = block.get_height();
                     while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && height <= top_height {
-                        let block = storage.get_block_at_height(height)?;
+                        let block = storage.get_block_at_height(height).await?;
                         response_blocks.push(Cow::Owned(block.hash()));
                         height += 1;
                     }
@@ -622,7 +622,7 @@ impl P2pServer {
 
     async fn handle_chain_response(self: Arc<Self>, peer: &Arc<Peer>, blocks_request: Vec<Hash>, pop_count: u64) -> Result<(), BlockchainError> {
         let ping = self.build_ping_packet_for_peer(peer).await;
-        let mut storage = self.blockchain.get_storage().lock().await; // lock until we get all blocks
+        let mut storage = self.blockchain.get_storage().write().await; // lock until we get all blocks
         let mut blocks: Vec<CompleteBlock> = Vec::with_capacity(blocks_request.len());
 
         for hash in blocks_request { // Request all complete blocks now
@@ -740,12 +740,12 @@ impl P2pServer {
     pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         let mut request = ChainRequest::new();
         {
-            let storage = self.blockchain.get_storage().lock().await;
+            let storage = self.blockchain.get_storage().read().await;
             let height = self.blockchain.get_height();
             let mut i = 0;
             while i < height && request.size() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
-                let block = storage.get_block_at_height(height - i)?;
-                request.add_block_id(block.hash(), height - i); // TODO get hash from DB
+                let metadata = storage.get_block_metadata(height - i).await?;
+                request.add_block_id(metadata.get_hash().clone(), height - i);
                 match request.size() {
                     0..=19 => {
                         i += 1;
@@ -766,8 +766,8 @@ impl P2pServer {
             }
     
             // add genesis block
-            let genesis_block = storage.get_block_at_height(1)?;
-            request.add_block_id(genesis_block.hash(), 1);
+            let genesis_block = storage.get_block_metadata(1).await?;
+            request.add_block_id(genesis_block.get_hash().clone(), 1);
             trace!("Sending a chain request with {} blocks", request.size());
             peer.set_chain_sync_requested(true);
         }

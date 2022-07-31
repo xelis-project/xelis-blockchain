@@ -1,5 +1,6 @@
 use crate::crypto::hash::{Hash, Hashable, hash};
 use crate::crypto::key::PublicKey;
+use super::immutable::Immutable;
 use super::transaction::Transaction;
 use super::serializer::Serializer;
 use super::reader::{Reader, ReaderError};
@@ -11,25 +12,26 @@ const BLOCK_WORK_SIZE: usize = 160;
 #[derive(serde::Serialize, Clone)]
 pub struct Block {
     pub previous_hash: Hash,
+    #[serde(skip_serializing)] // TODO https://github.com/serde-rs/json/issues/625
     pub timestamp: u128,
     pub height: u64,
     pub nonce: u64,
     #[serde(skip_serializing)]
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE],
-    pub miner_tx: Transaction,
+    pub miner_tx: Immutable<Transaction>,
     pub txs_hashes: Vec<Hash>
 }
 
 #[derive(serde::Serialize, Clone)]
 pub struct CompleteBlock {
     #[serde(flatten)]
-    block: Block,
+    block: Immutable<Block>,
     difficulty: u64,
-    transactions: Vec<Transaction>
+    transactions: Vec<Immutable<Transaction>>
 }
 
 impl Block {
-    pub fn new(height: u64, timestamp: u128, previous_hash: Hash, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner_tx: Transaction, txs_hashes: Vec<Hash>) -> Self {
+    pub fn new(height: u64, timestamp: u128, previous_hash: Hash, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner_tx: Immutable<Transaction>, txs_hashes: Vec<Hash>) -> Self {
         Block {
             height,
             timestamp,
@@ -39,6 +41,38 @@ impl Block {
             miner_tx,
             txs_hashes
         }
+    }
+
+    pub fn get_height(&self) -> u64 {
+        self.height
+    }
+
+    pub fn get_timestamp(&self) -> u128 {
+        self.timestamp
+    }
+
+    pub fn get_previous_hash(&self) -> &Hash {
+        &self.previous_hash
+    }
+
+    pub fn get_nonce(&self) -> u64 {
+        self.nonce
+    }
+
+    pub fn get_miner_tx(&self) -> &Immutable<Transaction> {
+        &self.miner_tx
+    }
+
+    pub fn get_miner(&self) -> &PublicKey {
+        &self.miner_tx.get_owner()
+    }
+
+    pub fn get_extra_nonce(&self) -> &[u8; EXTRA_NONCE_SIZE] {
+        &self.extra_nonce
+    }
+
+    pub fn get_txs_hashes(&self) -> &Vec<Hash> {
+        &self.txs_hashes
     }
 
     pub fn get_txs_hash(&self) -> Hash {
@@ -72,10 +106,14 @@ impl Block {
 
         bytes
     }
+
+    pub fn get_transactions(&self) -> &Vec<Hash> {
+        &self.txs_hashes
+    }
 }
 
 impl CompleteBlock {
-    pub fn new(block: Block, difficulty: u64, transactions: Vec<Transaction>) -> Self {
+    pub fn new(block: Immutable<Block>, difficulty: u64, transactions: Vec<Immutable<Transaction>>) -> Self {
         CompleteBlock {
             block,
             difficulty,
@@ -123,8 +161,12 @@ impl CompleteBlock {
         self.transactions.len()
     }
 
-    pub fn get_transactions(&self) -> &Vec<Transaction> {
+    pub fn get_transactions(&self) -> &Vec<Immutable<Transaction>> {
         &self.transactions
+    }
+
+    pub fn split(self) -> (Immutable<Block>, Vec<Immutable<Transaction>>, u64) {
+        (self.block, self.transactions, self.difficulty)
     }
 }
 
@@ -153,7 +195,7 @@ impl Serializer for Block {
         for _ in 0..txs_count {
             txs_hashes.push(Hash::new(reader.read_bytes_32()?));
         }
-        let miner_tx = Transaction::read(reader)?;
+        let miner_tx = Immutable::Owned(Transaction::read(reader)?);
 
         Ok(
             Block {
@@ -187,13 +229,13 @@ impl Serializer for CompleteBlock {
     fn read(reader: &mut Reader) -> Result<CompleteBlock, ReaderError> {
         let block = Block::read(reader)?;
         let difficulty = reader.read_u64()?;
-        let mut txs: Vec<Transaction> = Vec::new();
+        let mut txs: Vec<Immutable<Transaction>> = Vec::new();
         for _ in 0..block.get_txs_count() {
             let tx = Transaction::read(reader)?;
-            txs.push(tx);     
+            txs.push(Immutable::Owned(tx));     
         }
 
-        Ok(CompleteBlock::new(block, difficulty, txs))
+        Ok(CompleteBlock::new(Immutable::Owned(block), difficulty, txs))
     }
 }
 
