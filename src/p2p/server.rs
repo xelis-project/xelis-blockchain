@@ -608,8 +608,8 @@ impl P2pServer {
                     let top_height = self.blockchain.get_height();
                     let mut height = block.get_height();
                     while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && height <= top_height {
-                        let block = storage.get_block_at_height(height).await?;
-                        response_blocks.push(Cow::Owned(block.hash()));
+                        let metadata = storage.get_block_metadata(height).await?;
+                        response_blocks.push(Cow::Owned(metadata.get_hash().clone()));
                         height += 1;
                     }
                     break;
@@ -630,7 +630,7 @@ impl P2pServer {
             let response = peer.request_blocking_object(object_request, &ping).await?;
             if let OwnedObjectResponse::Block(block) = response {
                 let hash = block.hash();
-                debug!("Received block {} from peer {}", hash, peer.get_connection().get_address());
+                debug!("Received block {} at height {} from peer {}", hash, block.get_height(), peer.get_connection().get_address());
                 blocks.push(block);
             } else {
                 error!("Peer {} sent us an invalid block response", peer.get_connection().get_address());

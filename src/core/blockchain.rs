@@ -168,7 +168,7 @@ impl Blockchain {
     // function to include the genesis block and register the public dev key.
     async fn create_genesis_block(&self) -> Result<(), BlockchainError> {
         let mut storage = self.storage.write().await;
-        storage.register_account(self.dev_address.clone()).await;
+        storage.register_account(self.dev_address.clone()).await?;
 
         if GENESIS_BLOCK.len() != 0 {
             info!("De-serializing genesis block...");
@@ -391,8 +391,7 @@ impl Blockchain {
         } else if block.get_timestamp() > get_current_timestamp() { // TODO accept a latency of max 30s
             return Err(BlockchainError::TimestampIsInFuture(get_current_timestamp(), block.get_timestamp()));
         } else if current_height != 0 { // if it's not the genesis block
-            let previous_block = storage.get_block_at_height(current_height).await?;
-            let previous_hash = previous_block.hash();
+            let (previous_hash, previous_block) = storage.get_block_at_height(current_height).await?;
             if previous_hash != *block.get_previous_hash() {
                 return Err(BlockchainError::InvalidPreviousBlockHash(previous_hash, block.get_previous_hash().clone()));
             }
@@ -496,9 +495,10 @@ impl Blockchain {
 
     // TODO missing burned supply, txs etc
     pub async fn rewind_chain_for_storage(&self, storage: &mut Storage, count: usize) -> Result<(), BlockchainError> {
-        let top_height = storage.pop_blocks(count)?;
-        self.height.store(top_height, Ordering::Relaxed);
-        self.supply.store(get_supply_at_height(top_height), Ordering::Relaxed); // recaculate supply
+        let (height, metadata) = storage.pop_blocks(self.get_height(), count as u64).await?;
+        self.height.store(height, Ordering::Relaxed);
+        self.supply.store(metadata.get_supply(), Ordering::Relaxed); // recaculate supply
+        self.burned.store(metadata.get_burned_supply(), Ordering::Relaxed);
         Ok(())
     }
 
@@ -596,7 +596,7 @@ impl Blockchain {
     async fn execute_transaction(&self, storage: &mut Storage, transaction: &Transaction) -> Result<(), BlockchainError> {
         match transaction.get_variant() {
             TransactionVariant::Registration => {
-                storage.register_account(transaction.get_owner().clone()).await;
+                storage.register_account(transaction.get_owner().clone()).await?;
             }
             TransactionVariant::Coinbase => {
                 // shouldn't happen due to previous check

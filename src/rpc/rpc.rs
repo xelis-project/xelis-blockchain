@@ -5,6 +5,13 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use log::info;
 
+#[derive(Serialize)]
+pub struct DataHash<T> {
+    hash: Hash,
+    #[serde(flatten)]
+    data: T
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct GetBlockAtHeightParams {
     height: u64
@@ -48,6 +55,16 @@ pub struct SubmitTransactionParams {
     pub data: String // should be in hex format
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct P2pStatusResult {
+    pub peer_count: usize,
+    pub max_peers: usize,
+    pub tag: Option<String>,
+    pub our_height: u64,
+    pub best_height: u64,
+    pub peer_id: u64
+}
+
 macro_rules! method {
     ($func: expr) => {
         Box::new(move |a, b| {
@@ -69,7 +86,11 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("submit_block", method!(submit_block));
     server.register_method("get_messages", method!(get_messages));
     server.register_method("get_account", method!(get_account));
+    server.register_method("count_accounts", method!(count_accounts));
+    server.register_method("count_transactions", method!(count_transactions));
     server.register_method("submit_transaction", method!(submit_transaction));
+    server.register_method("p2p_status", method!(p2p_status));
+    server.register_method("get_mempool", method!(get_mempool));
 }
 
 async fn get_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -82,15 +103,15 @@ async fn get_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, R
 async fn get_block_at_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBlockAtHeightParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
-    let block = storage.get_block_at_height(params.height).await?;
-    Ok(json!(block))
+    let (hash, block) = storage.get_block_at_height(params.height).await?;
+    Ok(json!(DataHash { hash, data: block }))
 }
 
 async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBlockByHashParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
     let block = storage.get_block_by_hash(&params.hash).await?;
-    Ok(json!(block))
+    Ok(json!(DataHash { hash: params.hash, data: block }))
 }
 
 async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -128,9 +149,69 @@ async fn get_account(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, 
     Ok(json!(account))
 }
 
+async fn count_accounts(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+    let storage = blockchain.get_storage().read().await;
+    Ok(json!(storage.count_accounts()))
+}
+
+async fn count_transactions(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+    let storage = blockchain.get_storage().read().await;
+    Ok(json!(storage.count_transactions()))
+}
+
 async fn submit_transaction(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: SubmitTransactionParams = parse_params(body)?;
     let transaction = Transaction::from_hex(params.data)?;
     blockchain.add_tx_to_mempool(transaction, true).await?;
     Ok(json!(true))
+}
+
+async fn p2p_status(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+
+    let p2p = blockchain.get_p2p().lock().await;
+    match p2p.as_ref() {
+        Some(p2p) => {
+            let peer_count = p2p.get_peer_count().await;
+            let tag = p2p.get_tag();
+            let peer_id = p2p.get_peer_id();
+            let best_height = p2p.get_best_height().await;
+            let max_peers = p2p.get_max_peers();
+
+            let our_height = blockchain.get_height();
+
+            Ok(json!(P2pStatusResult {
+                peer_count,
+                tag: tag.clone(),
+                peer_id,
+                our_height,
+                best_height,
+                max_peers
+            }))
+        },
+        None => return Err(RpcError::NoP2p)
+    }
+}
+
+async fn get_mempool(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+
+    let mempool = blockchain.get_mempool().lock().await;
+    let mut transactions = Vec::new();
+    for tx in mempool.get_sorted_txs() {
+        let transaction = mempool.view_tx(tx.get_hash())?;
+        transactions.push(transaction);
+    }
+
+    Ok(json!(transactions))
 }

@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 use std::sync::Arc;
 use lru::LruCache;
 use sled::Tree;
+use log::error;
 
 impl Serializer for u64 {
     fn write(&self, writer: &mut Writer) {
@@ -132,6 +133,22 @@ impl Storage {
         Ok(value)
     }
 
+    async fn delete_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Mutex<LruCache<K, Arc<V>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
+        let bytes = match tree.remove(key.to_bytes())? {
+            Some(data) => data.to_vec(),
+            None => return Err(BlockchainError::NotFoundOnDisk)
+        };
+
+        let mut cache = cache.lock().await;
+        if let Some(value) = cache.pop(key) {
+            return Ok(value);
+        }
+
+        let mut reader = Reader::new(&bytes);
+        let value = V::read(&mut reader)?;
+        Ok(Arc::new(value))
+    }
+
     // flush all trees
     pub async fn flush(&self) -> Result<(), BlockchainError> {
         self.blocks.flush_async().await?;
@@ -161,11 +178,18 @@ impl Storage {
         Ok(())
     }
 
+    pub fn count_accounts(&self) -> usize {
+        self.accounts.len()
+    }
+
     pub async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
         self.get_data(&self.transactions, &self.transactions_cache, hash).await
     }
 
-    // TODO add complete block in cache (LRU)
+    pub fn count_transactions(&self) -> usize {
+        self.transactions.len()
+    }
+
     pub async fn add_new_block(&mut self, block: CompleteBlock, hash: Hash, supply: u64, burned: u64) -> Result<(), BlockchainError> {
         let (block, mut txs, difficulty) = block.split();
         self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
@@ -183,24 +207,25 @@ impl Storage {
         Ok(())
     }
 
-    pub fn pop_blocks(&mut self, n: usize) -> Result<u64, BlockchainError> {
-        if self.blocks.len() <= n { // also prevent removing genesis block
+    pub async fn pop_blocks(&mut self, current_height: u64, n: u64) -> Result<(u64, BlockMetadata), BlockchainError> {
+        if current_height <= n as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
         }
-        /*self.blocks.truncate(self.blocks.len() - n);
-        let top_height = if let Some(block) = self.blocks.get(self.blocks.len() - 1) {
-            let hash = block.hash();
-            let height = block.get_height();
-            self.top_block_hash = hash;
-            // TODO Reverse txs
-            height
-        } else { // shouldn't happens
-            self.top_block_hash = Hash::zero();
-            0
-        };
 
-        Ok(top_height)*/
-        Ok(0)
+        for i in current_height..n {
+            let metadata = self.delete_data(&self.metadata, &self.metadata_cache, &(current_height - i)).await?;
+            let block = self.delete_data(&self.blocks, &self.blocks_cache, metadata.get_hash()).await?;
+            for tx in block.get_transactions() {
+                self.delete_data(&self.transactions, &self.transactions_cache, tx).await?;
+                // TODO revert TXs
+            }
+        }
+
+        let (new_height, metadata) = self.get_top_metadata()?;
+        if new_height != current_height - n {
+            error!("Error on pop blocks ! height: {}, n: {}, new height: {}", current_height, n, new_height);
+        }
+        Ok((new_height, metadata))
     }
 
     pub fn has_blocks(&self) -> bool {
@@ -219,9 +244,9 @@ impl Storage {
         self.get_data(&self.metadata, &self.metadata_cache, &height).await
     }
 
-    pub async fn get_block_at_height(&self, height: u64) -> Result<Arc<Block>, BlockchainError> {
+    pub async fn get_block_at_height(&self, height: u64) -> Result<(Hash, Arc<Block>), BlockchainError> {
         let metadata = self.get_block_metadata(height).await?;
-        self.get_data(&self.blocks, &self.blocks_cache, &metadata.hash).await
+        Ok((metadata.get_hash().clone(), self.get_data(&self.blocks, &self.blocks_cache, &metadata.hash).await?))
     }
 
     pub async fn get_complete_block(&self, hash: &Hash) -> Result<CompleteBlock, BlockchainError> {

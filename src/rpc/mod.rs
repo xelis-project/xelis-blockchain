@@ -36,7 +36,9 @@ pub enum RpcError {
     #[error("Error: {}", _0)]
     AnyError(#[from] AnyError),
     #[error("Error, expected a normal wallet address")]
-    ExpectedNormalAddress
+    ExpectedNormalAddress,
+    #[error("Error, no P2p enabled")]
+    NoP2p
 }
 
 impl RpcError {
