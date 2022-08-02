@@ -606,9 +606,10 @@ impl P2pServer {
                     debug!("common point with peer found at block {} hash: {}", height, hash);
                     common_point = Some(CommonPoint::new(Cow::Owned(hash), height));
                     let top_height = self.blockchain.get_height();
-                    let mut height = block.get_height();
+                    let mut height = block.get_height() + 1;
                     while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && height <= top_height {
                         let metadata = storage.get_block_metadata(height).await?;
+                        debug!("for request, adding hash {} for height {}", metadata.get_hash(), height);
                         response_blocks.push(Cow::Owned(metadata.get_hash().clone()));
                         height += 1;
                     }
@@ -624,7 +625,6 @@ impl P2pServer {
         let ping = self.build_ping_packet_for_peer(peer).await;
         let mut storage = self.blockchain.get_storage().write().await; // lock until we get all blocks
         let mut blocks: Vec<CompleteBlock> = Vec::with_capacity(blocks_request.len());
-
         for hash in blocks_request { // Request all complete blocks now
             let object_request = ObjectRequest::Block(hash);
             let response = peer.request_blocking_object(object_request, &ping).await?;

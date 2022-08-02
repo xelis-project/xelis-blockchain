@@ -33,8 +33,8 @@ pub fn hash_to_big(hash: &Hash) -> BigUint {
     BigUint::from_bytes_be(hash.as_bytes())
 }
 
-pub fn calculate_difficulty(parent_block: &CompleteBlock, new_block: &CompleteBlock, previous_difficulty: u64) -> u64 {
-    let mut solve_time: u128 = new_block.get_timestamp() - parent_block.get_timestamp();
+pub fn calculate_difficulty(parent_timestamp: u128, new_timestamp: u128, previous_difficulty: u64) -> u64 {
+    let mut solve_time: u128 = new_timestamp - parent_timestamp;
     if solve_time > (BLOCK_TIME as u128 * 2) {
         solve_time = BLOCK_TIME as u128 * 2;
     }

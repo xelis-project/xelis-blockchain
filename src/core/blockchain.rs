@@ -307,27 +307,37 @@ impl Blockchain {
     }
 
     pub async fn check_validity(&self) -> Result<(), BlockchainError> {
-        /*let storage = self.storage.lock().await;
-        let blocks = storage.get_blocks();
-        if self.get_height() != blocks.len() as u64 {
-            return Err(BlockchainError::InvalidBlockHeight(self.get_height(), blocks.len() as u64))
+        let storage = self.storage.read().await;
+        let blocks_count = storage.count_blocks() as u64;
+        if self.get_height() != blocks_count as u64 {
+            return Err(BlockchainError::InvalidBlockHeight(self.get_height(), blocks_count as u64))
         }
 
         // TODO re calculate ALL accounts balances
         let mut circulating_supply = 0;
-        for (height, block) in blocks.iter().enumerate() {
-            let hash = block.hash();
+        let mut difficulty = MINIMUM_DIFFICULTY;
+        for height in 1..=blocks_count {
+            let metadata = storage.get_block_metadata(height).await?;
+            let hash = metadata.get_hash();
+            debug!("Checking height {} with hash {}", height, hash);
+            let block = storage.get_block_by_hash(hash).await?;
             if block.get_height() != height as u64 {
-                debug!("Invalid block height for block {}, got {} but expected {}", block, block.get_height(), height);
+                debug!("Invalid block height for block {}, got {} but expected {}", hash, block.get_height(), height);
                 return Err(BlockchainError::InvalidBlockHeight(block.get_height(), height as u64))
             }
 
             if block.get_height() != 1 { // if not genesis, check parent block
-                let previous_hash = storage.get_block_at_height(block.get_height() - 1)?.hash();
-                if previous_hash != *block.get_previous_hash() {
+                let previous_metadata = storage.get_block_metadata(block.get_height() - 1).await?;
+                let previous_hash = previous_metadata.get_hash();
+                if *previous_hash != *block.get_previous_hash() {
                     debug!("Invalid previous block hash, expected {} got {}", previous_hash, block.get_previous_hash());
-                    return Err(BlockchainError::InvalidHash(previous_hash, block.get_previous_hash().clone()));
+                    return Err(BlockchainError::InvalidHash(previous_hash.clone(), block.get_previous_hash().clone()));
                 }
+            }
+
+            if metadata.get_difficulty() != difficulty {
+                error!("Invalid stored difficulty for block {} at height {}, difficulty stored: {}, calculated: {} ", hash, height, metadata.get_difficulty(), difficulty);
+                return Err(BlockchainError::InvalidDifficulty)
             }
 
             let txs_len = block.get_transactions().len();
@@ -336,7 +346,7 @@ impl Blockchain {
                 return Err(BlockchainError::InvalidBlockTxs(txs_hashes_len, txs_len));
             }
 
-            if !check_difficulty(&hash, self.get_difficulty())? {
+            if !check_difficulty(&hash, difficulty)? {
                 return Err(BlockchainError::InvalidDifficulty)
             }
 
@@ -345,23 +355,29 @@ impl Blockchain {
             }
 
             let reward = get_block_reward(circulating_supply);
-            for tx in block.get_transactions() {
-                let tx_hash = tx.hash();
+            for tx_hash in block.get_transactions() {
+                let tx = storage.get_transaction(tx_hash).await?;
                 if !tx.is_coinbase() {
-                    self.verify_transaction_with_hash(&storage, tx, &tx_hash, true)?; // TODO check when account have no more funds
+                    self.verify_transaction_with_hash(&storage, &tx, &tx_hash, true).await?; // TODO check when account have no more funds
                 } else {
-                    return Err(BlockchainError::InvalidTxInBlock(tx_hash))
+                    return Err(BlockchainError::InvalidTxInBlock(tx_hash.clone()))
                 }
 
                 if !block.get_txs_hashes().contains(&tx_hash) { // check if tx is in txs hashes
-                    return Err(BlockchainError::InvalidTxInBlock(tx_hash))
+                    return Err(BlockchainError::InvalidTxInBlock(tx_hash.clone()))
                 }
             }
             circulating_supply += reward;
+
+            if height > 3 {
+                let previous_block = storage.get_block_by_hash(block.get_previous_hash()).await?;
+                difficulty = calculate_difficulty(previous_block.get_timestamp(), block.get_timestamp(), difficulty);
+            }
         }
 
-        let mut total_supply_from_accounts = 0;
-        /*for (_, account) in storage.get_accounts() {
+        // TODO
+        /*let mut total_supply_from_accounts = 0;
+        for (_, account) in storage.get_accounts() {
             total_supply_from_accounts += account.balance;
         }*/
 
@@ -369,9 +385,10 @@ impl Blockchain {
             return Err(BlockchainError::InvalidCirculatingSupply(circulating_supply, self.get_supply()));
         }
 
-        if total_supply_from_accounts != circulating_supply {
+        /*if total_supply_from_accounts != circulating_supply {
             return Err(BlockchainError::InvalidCirculatingSupply(total_supply_from_accounts, self.get_supply()));
         }*/
+
         Ok(())
     }
 
@@ -470,8 +487,8 @@ impl Blockchain {
         self.execute_miner_tx(storage, block.get_miner_tx(), block_reward, total_fees).await?; // execute coinbase tx
 
         if current_height > 2 { // re calculate difficulty
-            let top_block = storage.get_top_complete_block().await?;
-            let difficulty = calculate_difficulty(&top_block, &block, current_difficulty);
+            let previous_block = storage.get_block_by_hash(block.get_previous_hash()).await?;
+            let difficulty = calculate_difficulty(previous_block.get_timestamp(), block.get_timestamp(), current_difficulty);
             self.difficulty.store(difficulty, Ordering::Relaxed);
         }
 

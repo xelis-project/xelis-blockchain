@@ -232,6 +232,10 @@ impl Storage {
         !self.blocks.is_empty()
     }
 
+    pub fn count_blocks(&self) -> usize {
+        self.blocks.len()
+    }
+
     pub async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         Ok(self.blocks_cache.lock().await.contains(hash) || self.blocks.contains_key(hash.as_bytes())?)
     }

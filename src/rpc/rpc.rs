@@ -91,6 +91,8 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("submit_transaction", method!(submit_transaction));
     server.register_method("p2p_status", method!(p2p_status));
     server.register_method("get_mempool", method!(get_mempool));
+    // TODO only in debug mode
+    server.register_method("is_chain_valid", method!(is_chain_valid));
 }
 
 async fn get_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -214,4 +216,13 @@ async fn get_mempool(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, 
     }
 
     Ok(json!(transactions))
+}
+
+async fn is_chain_valid(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+
+    blockchain.check_validity().await?;
+    Ok(json!(true))
 }
