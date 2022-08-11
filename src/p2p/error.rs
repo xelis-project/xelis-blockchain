@@ -1,3 +1,4 @@
+use crate::core::error::BlockchainError;
 use crate::core::reader::ReaderError;
 use crate::crypto::hash::Hash;
 use tokio::sync::mpsc::error::SendError as TSendError;
@@ -54,8 +55,8 @@ pub enum P2pError {
     ObjectNotFound(ObjectRequest),
     #[error("Object requested {:?} already requested", _0)]
     ObjectAlreadyRequested(ObjectRequest),
-    #[error("Invalid object response for request: {:?}, received hash: {}", _0, _1)]
-    InvalidObjectResponse(ObjectRequest, Hash),
+    #[error("Invalid object response for request, received hash: {}", _0)]
+    InvalidObjectResponse(Hash),
     #[error(transparent)]
     ObjectRequestError(#[from] RecvError),
     #[error("Expected a block type")]
@@ -63,8 +64,17 @@ pub enum P2pError {
     #[error("Peer sent us a peerlist faster than protocol rules")]
     PeerInvalidPeerListCountdown,
     #[error("Peer sent us a ping packet faster than protocol rules")]
-    PeerInvalidPingCoutdown
+    PeerInvalidPingCoutdown,
+    #[error(transparent)]
+    BlockchainError(#[from] Box<BlockchainError>)
 }
+
+impl From<BlockchainError> for P2pError {
+    fn from(err: BlockchainError) -> Self {
+        Self::BlockchainError(Box::new(err))
+    }
+}
+
 
 impl<T> From<PoisonError<T>> for P2pError {
     fn from(err: PoisonError<T>) -> Self {

@@ -2,7 +2,7 @@ use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_
 use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
 use crate::core::serializer::Serializer;
-use crate::core::block::CompleteBlock;
+use crate::core::block::{CompleteBlock, Block};
 use crate::globals::get_current_time;
 use crate::crypto::hash::{Hashable, Hash};
 use crate::core::writer::Writer;
@@ -379,11 +379,11 @@ impl P2pServer {
             Packet::Handshake(_) => {
                 return Err(P2pError::InvalidPacket)
             },
-            Packet::TransactionPropagation(packet_wrapper) => {
+            Packet::TransactionPropagation(packet_wrapper) => { // TODO prevent spam
                 let (hash, ping) = packet_wrapper.consume();
                 let hash = hash.into_owned();
                 ping.into_owned().update_peer(peer).await;
-                let mempool = self.blockchain.get_mempool().lock().await;
+                let mempool = self.blockchain.get_mempool().read().await;
                 if !mempool.contains_tx(&hash) {
                     let zelf = Arc::clone(self);
                     let peer = Arc::clone(peer);
@@ -422,12 +422,35 @@ impl P2pServer {
                 let block = block.into_owned();
                 let block_height = block.get_height();
                 debug!("Received block at height {} from {}", block_height, peer.get_connection().get_address());
-                { // add immediately the block to chain as we are synced with
-                    if let Err(e) = self.blockchain.add_new_block(block, true).await {
+                let zelf = Arc::clone(self);
+                let peer = Arc::clone(peer);
+                // verify that we have all txs in local or ask peer to get missing txs
+                tokio::spawn(async move {
+                    let ping = zelf.build_ping_packet(None).await;
+                    for hash in block.get_txs_hashes() {
+                        let contains = {
+                            let mempool = zelf.blockchain.get_mempool().read().await;
+                            mempool.contains_tx(hash)
+                        };
+
+                        if !contains { // retrieve one by one to prevent the acquiring the lock for nothing
+                            let response = peer.request_blocking_object(ObjectRequest::Transaction(hash.clone()), &ping).await?; // TODO delete clone
+                            if let OwnedObjectResponse::Transaction(tx) = response {
+                                zelf.blockchain.add_tx_to_mempool(tx, false).await?;
+                            } else {
+                                return Err(P2pError::InvalidObjectResponse(response.get_hash()))
+                            }
+                        }
+                    }
+
+                    // add immediately the block to chain as we are synced with
+                    let complete_block = zelf.blockchain.build_complete_block_from_block(block).await?;
+                    if let Err(e) = zelf.blockchain.add_new_block(complete_block, true).await {
                         error!("Error while adding new block: {}", e);
                         peer.increment_fail_count();
                     }
-                }
+                    Ok(())
+                });
             },
             Packet::ChainRequest(packet_wrapper) => {
                 let (request, ping) = packet_wrapper.consume();
@@ -448,7 +471,7 @@ impl P2pServer {
                     return Err(P2pError::InvalidPacket)
                 }
 
-                let zelf = Arc::clone(&self);
+                let zelf = Arc::clone(self);
                 let peer = Arc::clone(peer);
                 let blocks = request.get_blocks();
                 tokio::spawn(async move {
@@ -556,10 +579,10 @@ impl P2pServer {
                         }
                     },
                     ObjectRequest::Transaction(hash) => {
-                        let mempool = self.blockchain.get_mempool().lock().await;
+                        let mempool = self.blockchain.get_mempool().read().await;
                         match mempool.view_tx(hash) {
                             Ok(tx) => {
-                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(tx)))).await?;
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(&tx)))).await?;
                             },
                             Err(e) => {
                                 debug!("Peer {} asked tx '{}' but got on error while retrieving it: {}", peer.get_connection().get_address(), hash, e);
@@ -626,10 +649,13 @@ impl P2pServer {
         let mut storage = self.blockchain.get_storage().write().await; // lock until we get all blocks
         let mut blocks: Vec<CompleteBlock> = Vec::with_capacity(blocks_request.len());
         for hash in blocks_request { // Request all complete blocks now
-            let object_request = ObjectRequest::Block(hash);
+            let object_request = ObjectRequest::Block(hash.clone());
             let response = peer.request_blocking_object(object_request, &ping).await?;
             if let OwnedObjectResponse::Block(block) = response {
-                let hash = block.hash();
+                let block_hash = block.hash();
+                if hash != block_hash {
+                    return Err(P2pError::InvalidObjectResponse(block_hash).into())
+                } 
                 debug!("Received block {} at height {} from peer {}", hash, block.get_height(), peer.get_connection().get_address());
                 blocks.push(block);
             } else {
@@ -712,7 +738,7 @@ impl P2pServer {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &CompleteBlock, hash: &Hash) {
+    pub async fn broadcast_block(&self, block: &Block, hash: &Hash) {
         let block_height = block.get_height();
         trace!("Broadcast block: {} at height {}", hash, block_height);
         // we build the ping packet ourself this time (we have enough data for it)

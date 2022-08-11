@@ -121,6 +121,10 @@ impl CompleteBlock {
         }
     }
 
+    pub fn get_header(&self) -> &Block {
+        &self.block
+    }
+
     pub fn get_height(&self) -> u64 {
         self.block.height
     }

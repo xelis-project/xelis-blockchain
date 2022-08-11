@@ -1,4 +1,4 @@
-use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY, GENESIS_BLOCK, DEV_ADDRESS};
+use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY, GENESIS_BLOCK, DEV_ADDRESS};
 use crate::core::immutable::Immutable;
 use crate::crypto::address::Address;
 use crate::crypto::hash::{Hash, Hashable};
@@ -20,7 +20,7 @@ use std::sync::atomic::{Ordering, AtomicU64};
 use tokio::sync::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::sync::Arc;
-use log::{info, error, debug};
+use log::{info, error, warn, debug};
 use rand::Rng;
 
 #[derive(serde::Serialize)]
@@ -84,6 +84,9 @@ pub struct Config {
     /// Add a priority node to connect when P2p is started
     #[clap(short = 'n', long)]
     priority_nodes: Vec<String>,
+    /// Set dir path for blockchain storage
+    #[clap(short = 's', long, default_value_t = String::from(DEFAULT_DIR_PATH))]
+    dir_path: String
 }
 
 pub struct Blockchain {
@@ -91,7 +94,7 @@ pub struct Blockchain {
     supply: AtomicU64, // current circulating supply based on coins already emitted
     burned: AtomicU64, // total burned coins
     difficulty: AtomicU64, // difficulty for next block
-    mempool: Mutex<Mempool>, // mempool to retrieve/add all txs
+    mempool: RwLock<Mempool>, // mempool to retrieve/add all txs
     storage: RwLock<Storage>, // storage to retrieve/add blocks
     p2p: Mutex<Option<Arc<P2pServer>>>, // P2p module
     rpc: Mutex<Option<Arc<RpcServer>>>, // Rpc module
@@ -101,7 +104,7 @@ pub struct Blockchain {
 impl Blockchain {
     pub async fn new(config: Config) -> Result<Arc<Self>, BlockchainError> {
         let dev_address = Address::from_string(&DEV_ADDRESS.to_owned())?;
-        let storage = Storage::new()?;
+        let storage = Storage::new(config.dir_path)?;
         let on_disk = storage.has_blocks();
         let (height, supply, burned, difficulty) = if on_disk {
             info!("Reading last metadata available...");
@@ -114,7 +117,7 @@ impl Blockchain {
             supply: AtomicU64::new(supply),
             burned: AtomicU64::new(burned),
             difficulty: AtomicU64::new(difficulty),
-            mempool: Mutex::new(Mempool::new()),
+            mempool: RwLock::new(Mempool::new()),
             storage: RwLock::new(storage),
             p2p: Mutex::new(None),
             rpc: Mutex::new(None),
@@ -232,15 +235,15 @@ impl Blockchain {
     }
 
     pub fn get_difficulty(&self) -> u64 {
-        self.difficulty.load(Ordering::Relaxed)
+        self.difficulty.load(Ordering::Acquire)
     }
 
     pub fn get_supply(&self) -> u64 {
-        self.supply.load(Ordering::Relaxed)
+        self.supply.load(Ordering::Acquire)
     }
 
     pub fn get_burned_supply(&self) -> u64 {
-        self.burned.load(Ordering::Relaxed)
+        self.burned.load(Ordering::Acquire)
     }
 
     pub fn get_dev_address(&self) -> &PublicKey {
@@ -255,13 +258,13 @@ impl Blockchain {
         Ok(self.storage.read().await.get_top_block_hash()?)
     }
 
-    pub fn get_mempool(&self) -> &Mutex<Mempool> {
+    pub fn get_mempool(&self) -> &RwLock<Mempool> {
         &self.mempool
     }
 
     pub async fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
-        let mut mempool = self.mempool.lock().await;
+        let mut mempool = self.mempool.write().await;
         if mempool.contains_tx(&hash) {
             return Err(BlockchainError::TxAlreadyInMempool(hash))
         }
@@ -275,14 +278,14 @@ impl Blockchain {
                 p2p.broadcast_tx_hash(&hash).await;
             }
         }
-        mempool.add_tx_with_fee(hash, tx, fee)
+        mempool.add_tx_with_fee(hash, Arc::new(tx), fee)
     }
 
     pub async fn get_block_template(&self, address: PublicKey) -> Result<Block, BlockchainError> {
         let coinbase_tx = Transaction::new(address, TransactionVariant::Coinbase);
         let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>(); // generate random bytes
         let mut block = Block::new(self.get_height() + 1, get_current_timestamp(), self.get_top_block_hash().await?, extra_nonce, Immutable::Owned(coinbase_tx), Vec::new());
-        let mempool = self.mempool.lock().await;
+        let mempool = self.mempool.read().await;
         let txs: &Vec<SortedTx> = mempool.get_sorted_txs();
         let mut tx_size = 0;
         for tx in txs {
@@ -297,10 +300,10 @@ impl Blockchain {
 
     pub async fn build_complete_block_from_block(&self, block: Block) -> Result<CompleteBlock, BlockchainError> {
         let mut transactions: Vec<Immutable<Transaction>> = Vec::with_capacity(block.get_txs_count());
-        let mempool = self.mempool.lock().await;
+        let mempool = self.mempool.read().await;
         for hash in &block.txs_hashes {
             let tx = mempool.view_tx(hash)?; // at this point, we don't want to lose/remove any tx, we clone it only
-            transactions.push(Immutable::Owned(tx.clone())); // TODO maybe use a Rc ?
+            transactions.push(Immutable::Arc(tx));
         }
         let complete_block = CompleteBlock::new(Immutable::Owned(block), self.get_difficulty(), transactions);
         Ok(complete_block)
@@ -400,6 +403,12 @@ impl Blockchain {
     pub async fn add_new_block_for_storage(&self, storage: &mut Storage, block: CompleteBlock, broadcast: bool) -> Result<(), BlockchainError> {
         let current_height = self.get_height();
         let current_difficulty = self.get_difficulty();
+        warn!("Current height: {}, current difficulty: {}", current_height, current_difficulty);
+        if current_height != 0 {
+            let (height, top) = storage.get_top_metadata()?;
+            warn!("From metadata: height: {}, difficulty: {}", height, top.get_difficulty());
+        }
+
         let block_hash = block.hash();
         if current_height + 1 != block.get_height() {
             return Err(BlockchainError::InvalidBlockHeight(current_height + 1, block.get_height()));
@@ -471,7 +480,7 @@ impl Blockchain {
         }
 
         // Transaction execution
-        let mut mempool = self.mempool.lock().await;
+        let mut mempool = self.mempool.write().await;
         for hash in block.get_txs_hashes() { // remove all txs present in mempool
             match mempool.remove_tx(hash) {
                 Ok(_) => {
@@ -489,16 +498,16 @@ impl Blockchain {
         if current_height > 2 { // re calculate difficulty
             let previous_block = storage.get_block_by_hash(block.get_previous_hash()).await?;
             let difficulty = calculate_difficulty(previous_block.get_timestamp(), block.get_timestamp(), current_difficulty);
-            self.difficulty.store(difficulty, Ordering::Relaxed);
+            self.difficulty.store(difficulty, Ordering::Release);
         }
 
-        self.height.store(block.get_height(), Ordering::Relaxed);
-        self.supply.fetch_add(block_reward, Ordering::Relaxed);
+        self.height.store(block.get_height(), Ordering::Release);
+        self.supply.fetch_add(block_reward, Ordering::Release);
         debug!("Adding new block '{}' with {} txs at height {}", block_hash, block.get_txs_count(), block.get_height());
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
-                p2p.broadcast_block(&block, &block_hash).await;
+                p2p.broadcast_block(block.get_header(), &block_hash).await;
             }
         }
 

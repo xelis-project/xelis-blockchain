@@ -1,4 +1,4 @@
-use crate::{core::{blockchain::Blockchain, block::Block, serializer::Serializer, message::MessageData, transaction::Transaction}, crypto::{hash::Hash, address::Address}};
+use crate::{core::{blockchain::Blockchain, block::Block, serializer::Serializer, transaction::Transaction}, crypto::{hash::Hash, address::Address}};
 use super::{RpcError, RpcServer};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{json, Value};
@@ -83,8 +83,9 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("get_block_template", method!(get_block_template));
     server.register_method("get_block_at_height", method!(get_block_at_height));
     server.register_method("get_block_by_hash", method!(get_block_by_hash));
+    server.register_method("get_top_block", method!(get_top_block));
     server.register_method("submit_block", method!(submit_block));
-    server.register_method("get_messages", method!(get_messages));
+    //server.register_method("get_messages", method!(get_messages));
     server.register_method("get_account", method!(get_account));
     server.register_method("count_accounts", method!(count_accounts));
     server.register_method("count_transactions", method!(count_transactions));
@@ -105,8 +106,9 @@ async fn get_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, R
 async fn get_block_at_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBlockAtHeightParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
-    let (hash, block) = storage.get_block_at_height(params.height).await?;
-    Ok(json!(DataHash { hash, data: block }))
+    let metadata = storage.get_block_metadata(params.height).await?;
+    let block = storage.get_complete_block(metadata.get_hash()).await?;
+    Ok(json!(DataHash { hash: metadata.get_hash().clone(), data: block }))
 }
 
 async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -114,6 +116,16 @@ async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<V
     let storage = blockchain.get_storage().read().await;
     let block = storage.get_block_by_hash(&params.hash).await?;
     Ok(json!(DataHash { hash: params.hash, data: block }))
+}
+
+async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+    let storage = blockchain.get_storage().read().await;
+    let hash = storage.get_top_block_hash()?;
+    let block = storage.get_complete_block(&hash).await?;
+    Ok(json!(DataHash { hash, data: block }))
 }
 
 async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -134,6 +146,7 @@ async fn submit_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value,
     Ok(json!(true))
 }
 
+/*
 async fn get_messages(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetMessagesParams = parse_params(body)?;
     if !params.address.is_normal() {
@@ -143,6 +156,7 @@ async fn get_messages(blockchain: Arc<Blockchain>, body: Value) -> Result<Value,
     let messages: Vec<&dyn MessageData> = Vec::new();
     todo!("xelis messages") //Ok(json!(messages))
 }
+*/
 
 async fn get_account(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetAccountParams = parse_params(body)?;
@@ -208,7 +222,7 @@ async fn get_mempool(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, 
         return Err(RpcError::UnexpectedParams)
     }
 
-    let mempool = blockchain.get_mempool().lock().await;
+    let mempool = blockchain.get_mempool().read().await;
     let mut transactions = Vec::new();
     for tx in mempool.get_sorted_txs() {
         let transaction = mempool.view_tx(tx.get_hash())?;

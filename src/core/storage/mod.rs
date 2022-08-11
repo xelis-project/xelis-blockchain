@@ -91,8 +91,8 @@ pub struct Storage {
 }
 
 impl Storage {
-    pub fn new() -> Result<Self, BlockchainError> { // TODO configurable cache size & folder path
-        let sled = sled::open("mainnet")?;
+    pub fn new(dir_path: String) -> Result<Self, BlockchainError> {
+        let sled = sled::open(dir_path)?;
         let accounts = sled.open_tree("accounts")?;
         let transactions = sled.open_tree("transactions")?;
         let blocks = sled.open_tree("blocks")?;
@@ -197,7 +197,7 @@ impl Storage {
             self.transactions.insert(tx.as_bytes(), txs.remove(0).to_bytes())?;
         }
 
-        let metadata = BlockMetadata::new(difficulty, supply, burned, hash.clone()); // TODO Arc ?
+        let metadata = BlockMetadata::new(difficulty, supply, burned, hash.clone());
         self.metadata.insert(block.get_height().to_bytes(), metadata.to_bytes())?;
 
         self.metadata_cache.lock().await.put(block.get_height(), Arc::new(metadata));

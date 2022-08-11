@@ -1,9 +1,8 @@
+use crate::config::{MINIMUM_DIFFICULTY, BLOCK_TIME};
 use crate::crypto::hash::Hash;
+use super::error::BlockchainError;
 use num_bigint::{BigUint, ToBigUint};
 use num_traits::{One};
-use super::error::BlockchainError;
-use crate::config::{MINIMUM_DIFFICULTY, BLOCK_TIME};
-use super::block::CompleteBlock;
 use log::debug;
 
 const E: f64 = 2.71828182845905;

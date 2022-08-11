@@ -5,7 +5,7 @@ pub mod object;
 
 use crate::core::reader::{Reader, ReaderError};
 use crate::core::serializer::Serializer;
-use crate::core::block::CompleteBlock;
+use crate::core::block::Block;
 use crate::core::writer::Writer;
 use crate::crypto::hash::Hash;
 use self::object::{ObjectRequest, ObjectResponse};
@@ -66,7 +66,7 @@ pub enum Packet<'a> {
     // so the peer that already have this TX in mempool don't have to read it again
     // imo: can be useful when the network is spammed by alot of txs
     TransactionPropagation(PacketWrapper<'a, Hash>),
-    BlockPropagation(PacketWrapper<'a, CompleteBlock>),
+    BlockPropagation(PacketWrapper<'a, Block>),
     ChainRequest(PacketWrapper<'a, ChainRequest>),
     ChainResponse(ChainResponse<'a>),
     Ping(Cow<'a, Ping<'a>>),

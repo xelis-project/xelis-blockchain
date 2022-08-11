@@ -2,7 +2,7 @@ use std::{/*rc::Rc,*/ sync::Arc, ops::Deref};
 
 use serde::Serialize;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Debug, Eq, Hash, PartialEq)]
 #[serde(untagged)]
 pub enum Immutable<T: Clone> {
     Owned(T),
