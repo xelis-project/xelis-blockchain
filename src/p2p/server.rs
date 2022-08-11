@@ -425,7 +425,7 @@ impl P2pServer {
                 let zelf = Arc::clone(self);
                 let peer = Arc::clone(peer);
                 // verify that we have all txs in local or ask peer to get missing txs
-                tokio::spawn(async move {
+                tokio::spawn(async move { // TODO handle errors
                     let ping = zelf.build_ping_packet(None).await;
                     for hash in block.get_txs_hashes() {
                         let contains = {

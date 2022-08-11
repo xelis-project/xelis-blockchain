@@ -45,7 +45,7 @@ impl BlockMetadata {
     pub fn get_difficulty(&self) -> u64 {
         self.difficulty
     }
-    
+
     pub fn get_supply(&self) -> u64 {
         self.supply
     }

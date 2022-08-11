@@ -403,12 +403,6 @@ impl Blockchain {
     pub async fn add_new_block_for_storage(&self, storage: &mut Storage, block: CompleteBlock, broadcast: bool) -> Result<(), BlockchainError> {
         let current_height = self.get_height();
         let current_difficulty = self.get_difficulty();
-        warn!("Current height: {}, current difficulty: {}", current_height, current_difficulty);
-        if current_height != 0 {
-            let (height, top) = storage.get_top_metadata()?;
-            warn!("From metadata: height: {}, difficulty: {}", height, top.get_difficulty());
-        }
-
         let block_hash = block.hash();
         if current_height + 1 != block.get_height() {
             return Err(BlockchainError::InvalidBlockHeight(current_height + 1, block.get_height()));
