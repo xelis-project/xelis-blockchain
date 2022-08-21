@@ -664,7 +664,11 @@ impl P2pServer {
             }
         }
 
-        if pop_count > 0 && (pop_count <= MAX_BLOCK_REWIND && peer.is_priority()) {
+        // if node asks us to pop blocks, verify if it's a priority one
+        // if it's not a priority node, check if we are connected to one
+        // if yes, don't accept the pop count from this peer
+        // if no, check that the pop count request is less or equal than the configured limit
+        if pop_count > 0 && (peer.is_priority() || ((pop_count <= MAX_BLOCK_REWIND) && !self.is_connected_to_a_priority_node().await)) {
             warn!("Rewinding chain because of peer {} (priority: {}, pop count: {})", peer.get_connection().get_address(), peer.is_priority(), pop_count);
             if let Err(e) = self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
                 error!("Error on rewind chain: pop count: {}, error: {}", pop_count, e);
@@ -675,6 +679,17 @@ impl P2pServer {
             self.blockchain.add_new_block_for_storage(&mut storage, block, false).await?;
         }
         Ok(())
+    }
+
+    async fn is_connected_to_a_priority_node(&self) -> bool {
+        let peer_list = self.peer_list.lock().await;
+        for peer in peer_list.get_peers().values() {
+            if peer.is_priority() {
+                return true
+            }
+        }
+
+        false
     }
 
     pub fn get_tag(&self) -> &Option<String> {

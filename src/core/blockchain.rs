@@ -20,7 +20,7 @@ use std::sync::atomic::{Ordering, AtomicU64};
 use tokio::sync::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::sync::Arc;
-use log::{info, error, warn, debug};
+use log::{info, error, debug};
 use rand::Rng;
 
 #[derive(serde::Serialize)]
@@ -46,11 +46,11 @@ impl Account {
     }
 
     pub fn read_balance(&self) -> u64 {
-        self.balance.load(Ordering::Relaxed)
+        self.balance.load(Ordering::Acquire)
     }
 
     pub fn read_nonce(&self) -> u64 {
-        self.nonce.load(Ordering::Relaxed)
+        self.nonce.load(Ordering::Acquire)
     }
 }
 
@@ -227,7 +227,7 @@ impl Blockchain {
     }
 
     pub fn get_height(&self) -> u64 {
-        self.height.load(Ordering::Relaxed)
+        self.height.load(Ordering::Acquire)
     }
 
     pub fn get_p2p(&self) -> &Mutex<Option<Arc<P2pServer>>> {
@@ -516,9 +516,9 @@ impl Blockchain {
     // TODO missing burned supply, txs etc
     pub async fn rewind_chain_for_storage(&self, storage: &mut Storage, count: usize) -> Result<(), BlockchainError> {
         let (height, metadata) = storage.pop_blocks(self.get_height(), count as u64).await?;
-        self.height.store(height, Ordering::Relaxed);
-        self.supply.store(metadata.get_supply(), Ordering::Relaxed); // recaculate supply
-        self.burned.store(metadata.get_burned_supply(), Ordering::Relaxed);
+        self.height.store(height, Ordering::Release);
+        self.supply.store(metadata.get_supply(), Ordering::Release); // recaculate supply
+        self.burned.store(metadata.get_burned_supply(), Ordering::Release);
         Ok(())
     }
 
