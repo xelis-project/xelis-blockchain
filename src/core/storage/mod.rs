@@ -9,11 +9,38 @@ use super::error::BlockchainError;
 use super::blockchain::Account;
 use super::writer::Writer;
 use std::hash::Hash as StdHash;
+use num_bigint::BigUint;
 use tokio::sync::Mutex;
 use std::sync::Arc;
 use lru::LruCache;
 use sled::Tree;
 use log::error;
+
+const TIPS: &[u8] = "TIPS".as_bytes();
+
+pub type Tips = Vec<Hash>;
+
+impl Serializer for Tips {
+    fn write(&self, writer: &mut Writer) {
+        for hash in self {
+            writer.write_hash(hash);
+        }
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let total_size = reader.total_size();
+        if total_size % 32 != 0 {
+            return Err(ReaderError::InvalidSize)
+        }
+
+        let count = total_size % 32;
+        let mut tips = Vec::with_capacity(count);
+        for _ in 0..count {
+            tips.push(reader.read_hash()?);
+        }
+        Ok(tips)
+    }
+}
 
 impl Serializer for u64 {
     fn write(&self, writer: &mut Writer) {
@@ -27,15 +54,17 @@ impl Serializer for u64 {
 
 pub struct BlockMetadata {
     difficulty: u64,
+    cumulative_difficulty: BigUint,
     supply: u64,
     burned: u64,
     hash: Hash
 }
 
 impl BlockMetadata {
-    pub fn new(difficulty: u64, supply: u64, burned: u64, hash: Hash) -> Self {
+    pub fn new(difficulty: u64, cumulative_difficulty: BigUint, supply: u64, burned: u64, hash: Hash) -> Self {
         Self {
             difficulty,
+            cumulative_difficulty,
             supply,
             burned,
             hash
@@ -44,6 +73,10 @@ impl BlockMetadata {
 
     pub fn get_difficulty(&self) -> u64 {
         self.difficulty
+    }
+
+    pub fn get_cumulative_difficulty(&self) -> &BigUint {
+        &self.cumulative_difficulty
     }
 
     pub fn get_supply(&self) -> u64 {
@@ -62,6 +95,7 @@ impl BlockMetadata {
 impl Serializer for BlockMetadata {
     fn write(&self, writer: &mut Writer) {
         writer.write_u64(&self.difficulty);
+        writer.write_biguint(&self.cumulative_difficulty);
         writer.write_u64(&self.supply);
         writer.write_u64(&self.burned);
         writer.write_hash(&self.hash);
@@ -69,11 +103,12 @@ impl Serializer for BlockMetadata {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let difficulty = reader.read_u64()?;
+        let cumulative_difficulty = reader.read_big_uint()?;
         let supply = reader.read_u64()?;
         let burned = reader.read_u64()?;
         let hash = reader.read_hash()?;
 
-        Ok(Self::new(difficulty, supply, burned, hash))
+        Ok(Self::new(difficulty, cumulative_difficulty, supply, burned, hash))
     }
 }
 
@@ -190,14 +225,14 @@ impl Storage {
         self.transactions.len()
     }
 
-    pub async fn add_new_block(&mut self, block: CompleteBlock, hash: Hash, supply: u64, burned: u64) -> Result<(), BlockchainError> {
+    pub async fn add_new_block(&mut self, block: CompleteBlock, hash: Hash, cumulative_difficulty: BigUint, supply: u64, burned: u64) -> Result<(), BlockchainError> {
         let (block, mut txs, difficulty) = block.split();
         self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
         for tx in block.get_transactions() {
             self.transactions.insert(tx.as_bytes(), txs.remove(0).to_bytes())?;
         }
 
-        let metadata = BlockMetadata::new(difficulty, supply, burned, hash.clone());
+        let metadata = BlockMetadata::new(difficulty, cumulative_difficulty, supply, burned, hash.clone());
         self.metadata.insert(block.get_height().to_bytes(), metadata.to_bytes())?;
 
         self.metadata_cache.lock().await.put(block.get_height(), Arc::new(metadata));
@@ -312,4 +347,14 @@ impl Storage {
         let complete_block = CompleteBlock::new(Immutable::Arc(block), metadata.get_difficulty(), transactions);
         Ok(complete_block)
     }
+
+    pub async fn get_tips(&self) -> Result<Tips, BlockchainError> {
+        self.load_from_disk(&self.metadata, TIPS)
+    }
+
+    pub fn store_tips(&mut self, tips: Tips) -> Result<(), BlockchainError> {
+        self.metadata.insert(TIPS, tips.to_bytes())?;
+        Ok(())
+    }
+
 }

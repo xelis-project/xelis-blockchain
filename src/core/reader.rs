@@ -1,6 +1,7 @@
 use crate::crypto::hash::Hash;
 use std::fmt::{Display, Error, Formatter};
 use std::convert::TryInto;
+use num_bigint::BigUint;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -45,6 +46,15 @@ impl<'a> Reader<'a> {
 
         self.total += n;
         result
+    }
+
+    pub fn read_bytes_ref(&mut self, n: usize) -> Result<&[u8], ReaderError> {
+        if n > self.size() {
+            return Err(ReaderError::InvalidSize)
+        }
+
+        self.total += n;
+        Ok(&self.bytes[self.total..self.total+n])
     }
 
     pub fn read_bytes_32(&mut self) -> Result<[u8; 32], ReaderError> {
@@ -98,6 +108,12 @@ impl<'a> Reader<'a> {
             0 => Ok(None),
             n => Ok(Some(self.read_string_with_size(n as usize)?)),
         }
+    }
+
+    pub fn read_big_uint(&mut self) -> Result<BigUint, ReaderError> {
+        let size = self.read_u8()?;
+        let bytes = self.read_bytes_ref(size as usize)?;
+        Ok(BigUint::from_bytes_be(bytes))
     }
 
     pub fn total_size(&self) -> usize {

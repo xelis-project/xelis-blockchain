@@ -13,10 +13,11 @@ use super::error::BlockchainError;
 use super::reader::{ReaderError, Reader};
 use super::serializer::Serializer;
 use super::storage::Storage;
-use super::transaction::*;
+use super::{transaction::*, blockdag};
 use super::writer::Writer;
 use std::net::SocketAddr;
 use std::sync::atomic::{Ordering, AtomicU64};
+use num_bigint::{BigUint, ToBigUint};
 use tokio::sync::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -188,7 +189,7 @@ impl Blockchain {
             error!("No genesis block found...");
             info!("Generating a new genesis block...");
             let miner_tx = Transaction::new(self.get_dev_address().clone(), TransactionVariant::Coinbase);
-            let mut block = Block::new(1, get_current_timestamp(), Hash::zero(), [0u8; 32], Immutable::Owned(miner_tx), Vec::new());
+            let mut block = Block::new(1, get_current_timestamp(), Vec::new(), [0u8; 32], Immutable::Owned(miner_tx), Vec::new());
             let mut hash = block.hash();
             while self.get_height() == 0 && !check_difficulty(&hash, self.get_difficulty())? {
                 block.nonce += 1;
@@ -284,7 +285,11 @@ impl Blockchain {
     pub async fn get_block_template(&self, address: PublicKey) -> Result<Block, BlockchainError> {
         let coinbase_tx = Transaction::new(address, TransactionVariant::Coinbase);
         let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>(); // generate random bytes
-        let mut block = Block::new(self.get_height() + 1, get_current_timestamp(), self.get_top_block_hash().await?, extra_nonce, Immutable::Owned(coinbase_tx), Vec::new());
+
+        let storage = self.storage.read().await;
+        let mut sorted_tips = blockdag::sort_tips(self, storage.get_tips().await?).await?;
+        sorted_tips.truncate(3); // keep only first 3 tips
+        let mut block = Block::new(self.get_height() + 1, get_current_timestamp(), sorted_tips, extra_nonce, Immutable::Owned(coinbase_tx), Vec::new());
         let mempool = self.mempool.read().await;
         let txs: &Vec<SortedTx> = mempool.get_sorted_txs();
         let mut tx_size = 0;
@@ -336,6 +341,8 @@ impl Blockchain {
                     debug!("Invalid previous block hash, expected {} got {}", previous_hash, block.get_previous_hash());
                     return Err(BlockchainError::InvalidHash(previous_hash.clone(), block.get_previous_hash().clone()));
                 }
+            } else if block.get_tips().len() > 0 {
+                return Err(BlockchainError::InvalidTips)
             }
 
             if metadata.get_difficulty() != difficulty {
@@ -401,24 +408,43 @@ impl Blockchain {
     }
 
     pub async fn add_new_block_for_storage(&self, storage: &mut Storage, block: CompleteBlock, broadcast: bool) -> Result<(), BlockchainError> {
+        let block_hash = block.hash();
+        if storage.has_block(&block_hash).await? {
+            return Err(BlockchainError::AlreadyInChain)
+        }
+
         let current_height = self.get_height();
         let current_difficulty = self.get_difficulty();
-        let block_hash = block.hash();
         if current_height + 1 != block.get_height() {
             return Err(BlockchainError::InvalidBlockHeight(current_height + 1, block.get_height()));
-        } else if !check_difficulty(&block_hash, current_difficulty)? {
+        }
+        
+        if !check_difficulty(&block_hash, current_difficulty)? {
             return Err(BlockchainError::InvalidDifficulty);
-        } else if block.get_timestamp() > get_current_timestamp() { // TODO accept a latency of max 30s
+        }
+        
+        if block.get_timestamp() > get_current_timestamp() + 2 * 1000 { // accept 2s in future TODO config
             return Err(BlockchainError::TimestampIsInFuture(get_current_timestamp(), block.get_timestamp()));
-        } else if current_height != 0 { // if it's not the genesis block
-            let (previous_hash, previous_block) = storage.get_block_at_height(current_height).await?;
-            if previous_hash != *block.get_previous_hash() {
-                return Err(BlockchainError::InvalidPreviousBlockHash(previous_hash, block.get_previous_hash().clone()));
+        }
+
+        let tips_count = block.get_tips().len();
+        if current_height != 0 { // if it's not the genesis block
+            if tips_count > 3 || tips_count == 0 { // TODO Config ?
+                return Err(BlockchainError::InvalidTips) // only 3 tips are allowed
             }
-            if previous_block.get_timestamp() > block.get_timestamp() { // block timestamp can't be less than previous block.
-                return Err(BlockchainError::TimestampIsLessThanParent(block.get_timestamp()));
+
+            for hash in block.get_tips() {
+                let previous_block = storage.get_block_by_hash(hash).await?;
+                if previous_block.get_height() + 1 != block.get_height() {
+                    return Err(BlockchainError::InvalidBlockHeight(previous_block.get_height() + 1, block.get_height()));
+                }
+
+                if previous_block.get_timestamp() > block.get_timestamp() { // block timestamp can't be less than previous block.
+                    return Err(BlockchainError::TimestampIsLessThanParent(block.get_timestamp()));
+                }
             }
-            debug!("Block Time for this block is: {:.2}s", (block.get_timestamp() - previous_block.get_timestamp()) as f64 / 1000f64);
+        } else if tips_count != 0 { // check genesis block tips
+            return Err(BlockchainError::InvalidTips)
         }
 
         let mut total_fees: u64 = 0;
@@ -505,7 +531,8 @@ impl Blockchain {
             }
         }
 
-        storage.add_new_block(block, block_hash, self.get_supply(), self.get_burned_supply()).await // Add block to chain
+        let cumulative_difficulty = (0 as u8).to_biguint().unwrap();
+        storage.add_new_block(block, block_hash, cumulative_difficulty, self.get_supply(), self.get_burned_supply()).await // Add block to chain
     }
 
     pub async fn rewind_chain(&self, count: usize) -> Result<(), BlockchainError> {

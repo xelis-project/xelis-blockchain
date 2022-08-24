@@ -11,7 +11,7 @@ const BLOCK_WORK_SIZE: usize = 160;
 
 #[derive(serde::Serialize, Clone)]
 pub struct Block {
-    pub previous_hash: Hash,
+    pub tips: Vec<Hash>,
     #[serde(skip_serializing)] // TODO https://github.com/serde-rs/json/issues/625
     pub timestamp: u128,
     pub height: u64,
@@ -31,11 +31,11 @@ pub struct CompleteBlock {
 }
 
 impl Block {
-    pub fn new(height: u64, timestamp: u128, previous_hash: Hash, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner_tx: Immutable<Transaction>, txs_hashes: Vec<Hash>) -> Self {
+    pub fn new(height: u64, timestamp: u128, tips: Vec<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner_tx: Immutable<Transaction>, txs_hashes: Vec<Hash>) -> Self {
         Block {
             height,
             timestamp,
-            previous_hash,
+            tips,
             nonce: 0,
             extra_nonce,
             miner_tx,
@@ -51,8 +51,18 @@ impl Block {
         self.timestamp
     }
 
-    pub fn get_previous_hash(&self) -> &Hash {
-        &self.previous_hash
+    pub fn get_tips(&self) -> &Vec<Hash> {
+        &self.tips
+    }
+
+    pub fn get_tips_hash(&self) -> Hash {
+        let mut bytes = vec![];
+
+        for tx in &self.tips {
+            bytes.extend(tx.as_bytes())
+        }
+
+        hash(&bytes)
     }
 
     pub fn get_nonce(&self) -> u64 {
@@ -94,7 +104,7 @@ impl Block {
 
         bytes.extend(&self.height.to_be_bytes()); // 8
         bytes.extend(&self.timestamp.to_be_bytes()); // 8 + 16 = 24
-        bytes.extend(self.previous_hash.as_bytes()); // 24 + 32 = 56
+        bytes.extend(self.get_tips_hash().as_bytes()); // 24 + 32 = 56
         bytes.extend(&self.nonce.to_be_bytes()); // 56 + 8 = 64
         bytes.extend(self.miner_tx.hash().as_bytes()); // 64 + 32 = 96
         bytes.extend(&self.extra_nonce); // 96 + 32 = 128
@@ -125,40 +135,8 @@ impl CompleteBlock {
         &self.block
     }
 
-    pub fn get_height(&self) -> u64 {
-        self.block.height
-    }
-
     pub fn get_difficulty(&self) -> u64 {
         self.difficulty
-    }
-
-    pub fn get_timestamp(&self) -> u128 {
-        self.block.timestamp
-    }
-
-    pub fn get_previous_hash(&self) -> &Hash {
-        &self.block.previous_hash
-    }
-
-    pub fn get_nonce(&self) -> u64 {
-        self.block.nonce
-    }
-
-    pub fn get_miner_tx(&self) -> &Transaction {
-        &self.block.miner_tx
-    }
-
-    pub fn get_miner(&self) -> &PublicKey {
-        &self.block.miner_tx.get_owner()
-    }
-
-    pub fn get_extra_nonce(&self) -> &[u8; EXTRA_NONCE_SIZE] {
-        &self.block.extra_nonce
-    }
-
-    pub fn get_txs_hashes(&self) -> &Vec<Hash> {
-        &self.block.txs_hashes
     }
 
     pub fn get_txs_count(&self) -> usize {
@@ -178,12 +156,16 @@ impl Serializer for Block {
     fn write(&self, writer: &mut Writer) {
         writer.write_u64(&self.height); // 8
         writer.write_u128(&self.timestamp); // 8 + 16 = 24
-        writer.write_hash(&self.previous_hash); // 24 + 32 = 56
-        writer.write_u64(&self.nonce); // 56 + 8 = 64
-        writer.write_bytes(&self.extra_nonce); // 64 + 32 = 96
-        writer.write_u16(&(self.txs_hashes.len() as u16)); // 96 + 2 = 98
+        writer.write_u64(&self.nonce); // 24 + 8 = 32
+        writer.write_bytes(&self.extra_nonce); // 32 + 32 = 64
+        writer.write_u8(self.tips.len() as u8); // 64 + 1 = 65
+        for tip in &self.tips {
+            writer.write_hash(tip); // 32
+        }
+
+        writer.write_u16(&(self.txs_hashes.len() as u16)); // 65 + 2 = 67
         for tx in &self.txs_hashes {
-            writer.write_hash(tx);
+            writer.write_hash(tx); // 32
         }
         self.miner_tx.write(writer);
     }
@@ -191,13 +173,18 @@ impl Serializer for Block {
     fn read(reader: &mut Reader) -> Result<Block, ReaderError> {
         let height = reader.read_u64()?;
         let timestamp = reader.read_u128()?;
-        let previous_hash = Hash::new(reader.read_bytes_32()?);
+        let previous_hash = reader.read_hash()?;
         let nonce = reader.read_u64()?;
         let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
         let txs_count = reader.read_u16()?;
-        let mut txs_hashes = vec![];
+        let mut txs_hashes = Vec::with_capacity(txs_count as usize);
         for _ in 0..txs_count {
-            txs_hashes.push(Hash::new(reader.read_bytes_32()?));
+            txs_hashes.push(reader.read_hash()?);
+        }
+        let tips_count = reader.read_u8()?;
+        let mut tips = Vec::with_capacity(tips_count as usize);
+        for _ in 0..tips_count {
+            tips.push(reader.read_hash()?);
         }
         let miner_tx = Immutable::Owned(Transaction::read(reader)?);
 
@@ -206,7 +193,7 @@ impl Serializer for Block {
                 extra_nonce,
                 height,
                 timestamp,
-                previous_hash,
+                tips,
                 miner_tx,
                 nonce,
                 txs_hashes
@@ -249,10 +236,19 @@ impl Hashable for CompleteBlock {
     }
 }
 
+impl Deref for CompleteBlock {
+    type Target = Block;
+
+    fn deref(&self) -> &Self::Target {
+        &self.get_header()        
+    }
+}
+
 use std::fmt::{Error, Display, Formatter};
+use std::ops::Deref;
 
 impl Display for CompleteBlock {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "Block[height: {}, previous_hash: {}, timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.block.height, self.block.previous_hash, self.block.timestamp, self.block.nonce, hex::encode(self.block.extra_nonce), self.block.txs_hashes.len())
+        write!(f, "Block[height: {}, tips: {:?}, timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.block.height, self.block.tips, self.block.timestamp, self.block.nonce, hex::encode(self.block.extra_nonce), self.block.txs_hashes.len())
     }
 }

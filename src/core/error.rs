@@ -110,7 +110,13 @@ pub enum BlockchainError {
     #[error("Unexpected error on database: {}", _0)]
     DatabaseError(#[from] sled::Error),
     #[error("Data not found on disk")]
-    NotFoundOnDisk
+    NotFoundOnDisk,
+    #[error("Expected at least one tips")]
+    ExpectedTips,
+    #[error("Block has invalid tips")]
+    InvalidTips,
+    #[error("Block is already in chain")]
+    AlreadyInChain
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {
