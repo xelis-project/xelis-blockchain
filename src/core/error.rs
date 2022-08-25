@@ -118,7 +118,9 @@ pub enum BlockchainError {
     #[error("Block is already in chain")]
     AlreadyInChain,
     #[error("Block has an invalid reachability")]
-    InvalidReachability
+    InvalidReachability,
+    #[error("Block has too much deviated")]
+    BlockDeviation
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

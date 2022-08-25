@@ -122,7 +122,8 @@ pub struct Storage {
     blocks_cache: Mutex<LruCache<Hash, Arc<Block>>>,
     // Only accounts can be updated
     accounts_cache: Mutex<LruCache<PublicKey, Arc<Account>>>,
-    metadata_cache: Mutex<LruCache<u64, Arc<BlockMetadata>>>
+    metadata_cache: Mutex<LruCache<u64, Arc<BlockMetadata>>>,
+    tips_cache: Mutex<LruCache<Hash, Arc<Vec<Arc<Hash>>>>> // tips saved at each new block
 }
 
 impl Storage {
@@ -141,7 +142,8 @@ impl Storage {
             transactions_cache: Mutex::new(LruCache::new(1024)),
             accounts_cache: Mutex::new(LruCache::new(1024)),
             blocks_cache: Mutex::new(LruCache::new(1024)),
-            metadata_cache: Mutex::new(LruCache::new(1024))
+            metadata_cache: Mutex::new(LruCache::new(1024)),
+            tips_cache: Mutex::new(LruCache::new(1024))
         })
     }
 
@@ -227,10 +229,10 @@ impl Storage {
 
     pub async fn add_new_block(&mut self, block: CompleteBlock, hash: Hash, cumulative_difficulty: BigUint, supply: u64, burned: u64) -> Result<(), BlockchainError> {
         let (block, mut txs, difficulty) = block.split();
-        self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
-        for tx in block.get_transactions() {
+        for tx in block.get_transactions() { // first save all txs, then save block
             self.transactions.insert(tx.as_bytes(), txs.remove(0).to_bytes())?;
         }
+        self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
 
         let metadata = BlockMetadata::new(difficulty, cumulative_difficulty, supply, burned, hash.clone());
         self.metadata.insert(block.get_height().to_bytes(), metadata.to_bytes())?;
@@ -282,6 +284,12 @@ impl Storage {
     pub async fn get_block_metadata(&self, height: u64) -> Result<Arc<BlockMetadata>, BlockchainError> {
         self.get_data(&self.metadata, &self.metadata_cache, &height).await
     }
+
+    pub async fn get_block_metadata_by_hash(&self, hash: &Hash) -> Result<Arc<BlockMetadata>, BlockchainError> {
+        let block = self.get_data(&self.blocks, &self.blocks_cache, hash).await?;
+        self.get_block_metadata(block.get_height()).await
+    }
+
 
     pub async fn get_block_at_height(&self, height: u64) -> Result<(Hash, Arc<Block>), BlockchainError> {
         let metadata = self.get_block_metadata(height).await?;
@@ -355,6 +363,24 @@ impl Storage {
     pub fn store_tips(&mut self, tips: Tips) -> Result<(), BlockchainError> {
         self.metadata.insert(TIPS, tips.to_bytes())?;
         Ok(())
+    }
+
+    pub async fn get_tips_of(&self, hash: &Hash) -> Result<Arc<Vec<Arc<Hash>>>, BlockchainError> {
+        let mut cache = self.tips_cache.lock().await;
+        if let Some(tips) = cache.get(hash) {
+            return Ok(tips.clone())
+        }
+
+        let block = self.get_block_by_hash(hash).await?;
+        let mut tips = Vec::with_capacity(block.get_tips().len());
+        for hash in block.get_tips() {
+            tips.push(Arc::new(hash.clone()));
+        }
+
+        let tips = Arc::new(tips);
+        cache.put(hash.clone(), tips.clone());
+
+        Ok(tips)
     }
 
 }
