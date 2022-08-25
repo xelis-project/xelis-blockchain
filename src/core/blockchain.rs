@@ -1,4 +1,4 @@
-use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY, GENESIS_BLOCK, DEV_ADDRESS};
+use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT};
 use crate::core::immutable::Immutable;
 use crate::crypto::address::Address;
 use crate::crypto::hash::{Hash, Hashable};
@@ -231,6 +231,38 @@ impl Blockchain {
         self.height.load(Ordering::Acquire)
     }
 
+    async fn get_stable_height_for_storage(&self, storage: &Storage) -> Result<u64, BlockchainError> {
+        // TODO build stable height
+        Ok(0)
+    }
+
+    // TODO build + use cache
+    async fn build_reachability(&self, storage: &Storage, hash: &Hash) -> Result<Vec<Hash>, BlockchainError> {
+        todo!("build reachability")
+    }
+
+    async fn verify_non_reachability(&self, storage: &Storage, block: &CompleteBlock) -> Result<bool, BlockchainError> {
+        let tips = block.get_tips();
+        let tips_count = tips.len();
+        let mut reach: Vec<Vec<Hash>> = Vec::with_capacity(tips_count);
+        for hash in tips {
+            reach.push(self.build_reachability(storage, hash).await?);
+        }
+
+        for i in 0..tips_count {
+            for j in 0..tips_count {
+                if i == j { // avoid self test
+                    continue;
+                }
+
+                if reach[j].contains(&tips[j]) {
+                    return Ok(false)
+                }
+            }
+        }
+        Ok(true)
+    }
+
     pub fn get_p2p(&self) -> &Mutex<Option<Arc<P2pServer>>> {
         &self.p2p
     }
@@ -412,24 +444,25 @@ impl Blockchain {
         if storage.has_block(&block_hash).await? {
             return Err(BlockchainError::AlreadyInChain)
         }
-
-        let current_height = self.get_height();
-        let current_difficulty = self.get_difficulty();
-        if current_height + 1 != block.get_height() {
-            return Err(BlockchainError::InvalidBlockHeight(current_height + 1, block.get_height()));
-        }
         
+        let block_height_by_tips = blockdag::calculate_height_at_tips(storage, block.get_tips()).await?;
+        let stable_height = self.get_stable_height_for_storage(storage).await?;
+        if block_height_by_tips < stable_height {
+            return Err(BlockchainError::InvalidBlockHeight(stable_height, block_height_by_tips))
+        }
+
+        let current_difficulty = self.get_difficulty();
         if !check_difficulty(&block_hash, current_difficulty)? {
             return Err(BlockchainError::InvalidDifficulty);
         }
         
-        if block.get_timestamp() > get_current_timestamp() + 2 * 1000 { // accept 2s in future TODO config
+        if block.get_timestamp() > get_current_timestamp() + TIMESTAMP_IN_FUTURE_LIMIT { // accept 2s in future
             return Err(BlockchainError::TimestampIsInFuture(get_current_timestamp(), block.get_timestamp()));
         }
 
         let tips_count = block.get_tips().len();
-        if current_height != 0 { // if it's not the genesis block
-            if tips_count > 3 || tips_count == 0 { // TODO Config ?
+        if stable_height != 0 { // if it's not the genesis block
+            if tips_count > TIPS_LIMIT || tips_count == 0 {
                 return Err(BlockchainError::InvalidTips) // only 3 tips are allowed
             }
 
@@ -445,6 +478,10 @@ impl Blockchain {
             }
         } else if tips_count != 0 { // check genesis block tips
             return Err(BlockchainError::InvalidTips)
+        }
+
+        if !self.verify_non_reachability(storage, &block).await? {
+            return Err(BlockchainError::InvalidReachability)
         }
 
         let mut total_fees: u64 = 0;

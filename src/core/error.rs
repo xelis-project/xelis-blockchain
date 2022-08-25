@@ -116,7 +116,9 @@ pub enum BlockchainError {
     #[error("Block has invalid tips")]
     InvalidTips,
     #[error("Block is already in chain")]
-    AlreadyInChain
+    AlreadyInChain,
+    #[error("Block has an invalid reachability")]
+    InvalidReachability
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

@@ -11,7 +11,9 @@ pub const REGISTRATION_DIFFICULTY: u64 = 1/*0_000_000*/;
 pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024); // 1.25 MB
 pub const FEE_PER_KB: u64 = 1000; // 0.01000 XLS per KB
 pub const DEV_FEE_PERCENT: u64 = 5; // 5% per block going to dev address
-pub const TIPS_LIMIT: usize = 3;
+pub const TIPS_LIMIT: usize = 3; // maximum 3 previous blocks
+pub const STABLE_HEIGHT_LIMIT: u64 = 8;
+pub const TIMESTAMP_IN_FUTURE_LIMIT: u128 = 2 * 1000; // 2 seconds maximum in future
 
 pub const PREFIX_ADDRESS: &str = "xel"; // mainnet prefix address
 pub const TESTNET_PREFIX_ADDRESS: &str = "xet"; // testnet prefix address
