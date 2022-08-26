@@ -123,7 +123,7 @@ pub struct Storage {
     // Only accounts can be updated
     accounts_cache: Mutex<LruCache<PublicKey, Arc<Account>>>,
     metadata_cache: Mutex<LruCache<u64, Arc<BlockMetadata>>>,
-    tips_cache: Mutex<LruCache<Hash, Arc<Vec<Arc<Hash>>>>> // tips saved at each new block
+    tips_cache: Mutex<LruCache<Hash, Arc<Vec<Hash>>>> // tips saved at each new block
 }
 
 impl Storage {
@@ -365,7 +365,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn get_tips_of(&self, hash: &Hash) -> Result<Arc<Vec<Arc<Hash>>>, BlockchainError> {
+    pub async fn get_tips_of(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
         let mut cache = self.tips_cache.lock().await;
         if let Some(tips) = cache.get(hash) {
             return Ok(tips.clone())
@@ -374,7 +374,7 @@ impl Storage {
         let block = self.get_block_by_hash(hash).await?;
         let mut tips = Vec::with_capacity(block.get_tips().len());
         for hash in block.get_tips() {
-            tips.push(Arc::new(hash.clone()));
+            tips.push(hash.clone());
         }
 
         let tips = Arc::new(tips);

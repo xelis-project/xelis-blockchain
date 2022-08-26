@@ -238,12 +238,12 @@ impl Blockchain {
     }
 
     #[async_recursion] // TODO no recursion
-    async fn build_reachability_recursive(&self, storage: &Storage, set: &mut HashSet<Arc<Hash>>, hash: Arc<Hash>, level: u8) -> Result<(), BlockchainError> {
+    async fn build_reachability_recursive(&self, storage: &Storage, set: &mut HashSet<Hash>, hash: Hash, level: u8) -> Result<(), BlockchainError> {
         let tips = storage.get_tips_of(&hash).await?;
-        set.insert(hash.clone());
+        set.insert(hash);
 
         if level < STABLE_HEIGHT_LIMIT as u8 * 2 {
-            for hash in tips.iter() { // TODO Keep Arc
+            for hash in tips.iter() {
                 if !set.contains(hash) {
                     self.build_reachability_recursive(storage, set, hash.clone(), level + 1).await?;
                 }
@@ -252,19 +252,16 @@ impl Blockchain {
 
         Ok(())
     }
-    // TODO build + use cache
-    async fn build_reachability(&self, storage: &Storage, hash: Arc<Hash>) -> Result<HashSet<Arc<Hash>>, BlockchainError> {
-        let mut set = HashSet::new();
-        self.build_reachability_recursive(storage, &mut set, hash, 0).await?;
-        Ok(set)
-    }
 
+    // TODO no clone
     async fn verify_non_reachability(&self, storage: &Storage, block: &CompleteBlock) -> Result<bool, BlockchainError> {
         let tips = block.get_tips();
         let tips_count = tips.len();
-        let mut reach: Vec<HashSet<Arc<Hash>>> = Vec::with_capacity(tips_count);
-        for hash in tips {
-            reach.push(self.build_reachability(storage, Arc::new(hash.clone())).await?);
+        let mut reach = Vec::with_capacity(tips_count);
+        for hash in block.get_tips() {
+            let mut set = HashSet::new();
+            self.build_reachability_recursive(storage, &mut set, hash.clone(), 0).await?;
+            reach.push(set);
         }
 
         for i in 0..tips_count {
@@ -321,6 +318,31 @@ impl Blockchain {
         let block = storage.get_block_metadata_by_hash(tip).await?;
 
         Ok(best_block.get_difficulty() * 91 / 100 < block.get_difficulty())
+    }
+
+    async fn get_difficulty_at_tips(&self, storage: &Storage, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
+        if tips.len() == 0 { // Genesis difficulty
+            return Ok(0)
+        }
+
+        let height = blockdag::calculate_height_at_tips(storage, tips).await?;
+        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, tips).await?;
+        let best_tip_timestamp = storage.get_block_by_hash(best_tip).await?.get_timestamp();
+        let biggest_difficulty = storage.get_block_metadata_by_hash(best_tip).await?.get_difficulty();
+
+        let parent_tips = storage.get_tips_of(best_tip).await?;
+        let test: Arc<Vec<Hash>> = Arc::new(Vec::new());
+        let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &test).await?;
+        let parent_best_tip_timestamp = storage.get_block_by_hash(parent_best_tip).await?.get_timestamp();
+ 
+        let difficulty = calculate_difficulty(parent_best_tip_timestamp, best_tip_timestamp, biggest_difficulty);
+        Ok(difficulty)
+    }
+
+    // pass in params the already computed block hash
+    async fn verify_proof_of_work(&self, storage: &Storage, hash: &Hash, block: &Block) -> Result<bool, BlockchainError> {
+        let difficulty = self.get_difficulty_at_tips(storage, block.get_tips()).await?;
+        Ok(check_difficulty(hash, difficulty)?)
     }
 
     pub fn get_p2p(&self) -> &Mutex<Option<Arc<P2pServer>>> {
@@ -505,11 +527,6 @@ impl Blockchain {
             return Err(BlockchainError::AlreadyInChain)
         }
 
-        let current_difficulty = self.get_difficulty();
-        if !check_difficulty(&block_hash, current_difficulty)? {
-            return Err(BlockchainError::InvalidDifficulty);
-        }
-        
         if block.get_timestamp() > get_current_timestamp() + TIMESTAMP_IN_FUTURE_LIMIT { // accept 2s in future
             return Err(BlockchainError::TimestampIsInFuture(get_current_timestamp(), block.get_timestamp()));
         }
@@ -550,13 +567,19 @@ impl Blockchain {
             }
         }
 
-        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&storage, block.get_tips()).await?;
-        for hash in block.get_tips() {
-            if best_tip != hash {
-                if !self.validate_tips(storage, best_tip, hash).await? {
-                    return Err(BlockchainError::InvalidTips)
+        if tips_count > 1 {
+            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&storage, block.get_tips()).await?;
+            for hash in block.get_tips() {
+                if best_tip != hash {
+                    if !self.validate_tips(storage, best_tip, hash).await? {
+                        return Err(BlockchainError::InvalidTips)
+                    }
                 }
             }
+        }
+
+        if !self.verify_proof_of_work(&storage, &block_hash, &block).await? {
+            return Err(BlockchainError::InvalidDifficulty)
         }
 
         let mut total_fees: u64 = 0;
@@ -627,11 +650,11 @@ impl Blockchain {
         }
         self.execute_miner_tx(storage, block.get_miner_tx(), block_reward, total_fees).await?; // execute coinbase tx
 
-        if current_height > 2 { // re calculate difficulty
+        /*if current_height > 2 { // re calculate difficulty
             let previous_block = storage.get_block_by_hash(block.get_previous_hash()).await?;
             let difficulty = calculate_difficulty(previous_block.get_timestamp(), block.get_timestamp(), current_difficulty);
             self.difficulty.store(difficulty, Ordering::Release);
-        }
+        }*/
 
         self.height.store(block.get_height(), Ordering::Release);
         self.supply.fetch_add(block_reward, Ordering::Release);
