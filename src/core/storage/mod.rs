@@ -117,6 +117,7 @@ pub struct Storage {
     accounts: Tree, // all accounts registered on disk
     blocks: Tree, // all blocks on disk
     metadata: Tree,
+    tips_at_height: Tree,
     // cached in memory
     transactions_cache: Mutex<LruCache<Hash, Arc<Transaction>>>,
     blocks_cache: Mutex<LruCache<Hash, Arc<Block>>>,
@@ -133,12 +134,14 @@ impl Storage {
         let transactions = sled.open_tree("transactions")?;
         let blocks = sled.open_tree("blocks")?;
         let metadata = sled.open_tree("metadata")?;
+        let tips_at_height = sled.open_tree("tips")?;
 
         Ok(Self {
             transactions,
             accounts,
             blocks,
             metadata,
+            tips_at_height,
             transactions_cache: Mutex::new(LruCache::new(1024)),
             accounts_cache: Mutex::new(LruCache::new(1024)),
             blocks_cache: Mutex::new(LruCache::new(1024)),
@@ -383,4 +386,36 @@ impl Storage {
         Ok(tips)
     }
 
+    // returns all blocks hash at specified height
+    pub async fn get_tips_at_height(&self, height: u64) -> Result<Tips, BlockchainError> {
+        self.load_from_disk(&self.tips_at_height, &height.to_be_bytes())
+    }
+
+    // TODO optimize all these functions to read only what is necessary
+    pub async fn get_height_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        let block = self.get_block_by_hash(hash).await?;
+        Ok(block.get_height())
+    }
+
+    pub async fn get_topo_height_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        Ok(0) // TODO
+    }
+
+    pub async fn get_block_hash_at_topo_height(&self, height: u64) -> Result<Hash, BlockchainError> {
+        Ok(Hash::zero()) // TODO
+    }
+
+    pub async fn get_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        let metadata = self.get_block_metadata_by_hash(hash).await?;
+        Ok(metadata.get_difficulty())
+    }
+
+    pub async fn get_timestamp_for_block(&self, hash: &Hash) -> Result<u128, BlockchainError> {
+        let block = self.get_block_by_hash(hash).await?;
+        Ok(block.get_timestamp())
+    }
+
+    pub async fn get_cumulative_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        Ok(0) // TODO
+    }
 }

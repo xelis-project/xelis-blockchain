@@ -133,8 +133,10 @@ async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<
     if !params.address.is_normal() {
         return Err(RpcError::ExpectedNormalAddress)
     }
-    let block = blockchain.get_block_template(params.address.to_public_key()).await?;
-    Ok(json!(GetBlockTemplateResult { template: block.to_hex(), difficulty: blockchain.get_difficulty() }))
+    let storage = blockchain.get_storage().read().await;
+    let block = blockchain.get_block_template_for_storage(&storage, params.address.to_public_key()).await?;
+    let difficulty = blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await?;
+    Ok(json!(GetBlockTemplateResult { template: block.to_hex(), difficulty }))
 }
 
 async fn submit_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {

@@ -1,4 +1,4 @@
-use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, MINIMUM_DIFFICULTY, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT};
+use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT};
 use crate::core::immutable::Immutable;
 use crate::crypto::address::Address;
 use crate::crypto::hash::{Hash, Hashable};
@@ -16,7 +16,7 @@ use super::error::BlockchainError;
 use super::storage::Storage;
 use super::writer::Writer;
 use std::sync::atomic::{Ordering, AtomicU64};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use async_recursion::async_recursion;
 use num_bigint::ToBigUint;
 use tokio::sync::{Mutex, RwLock};
@@ -95,7 +95,6 @@ pub struct Blockchain {
     height: AtomicU64, // current block height 
     supply: AtomicU64, // current circulating supply based on coins already emitted
     burned: AtomicU64, // total burned coins
-    difficulty: AtomicU64, // difficulty for next block
     mempool: RwLock<Mempool>, // mempool to retrieve/add all txs
     storage: RwLock<Storage>, // storage to retrieve/add blocks
     p2p: Mutex<Option<Arc<P2pServer>>>, // P2p module
@@ -108,17 +107,16 @@ impl Blockchain {
         let dev_address = Address::from_string(&DEV_ADDRESS.to_owned())?;
         let storage = Storage::new(config.dir_path)?;
         let on_disk = storage.has_blocks();
-        let (height, supply, burned, difficulty) = if on_disk {
+        let (height, supply, burned) = if on_disk {
             info!("Reading last metadata available...");
             let (height, metadata) = storage.get_top_metadata()?;
-            (height, metadata.get_supply(), metadata.get_burned_supply(), metadata.get_difficulty())
-        } else { (0, 0, 0, MINIMUM_DIFFICULTY) };
+            (height, metadata.get_supply(), metadata.get_burned_supply())
+        } else { (0, 0, 0) };
 
         let blockchain = Self {
             height: AtomicU64::new(height),
             supply: AtomicU64::new(supply),
             burned: AtomicU64::new(burned),
-            difficulty: AtomicU64::new(difficulty),
             mempool: RwLock::new(Mempool::new()),
             storage: RwLock::new(storage),
             p2p: Mutex::new(None),
@@ -177,29 +175,20 @@ impl Blockchain {
 
         if GENESIS_BLOCK.len() != 0 {
             info!("De-serializing genesis block...");
-            match CompleteBlock::from_hex(GENESIS_BLOCK.to_owned()) {
-                Ok(block) => {
-                    if *block.get_miner() != self.dev_address {
-                        return Err(BlockchainError::GenesisBlockMiner)
-                    }
-                    self.add_new_block_for_storage(&mut storage, block, true).await?;
-                },
-                Err(_) => return Err(BlockchainError::InvalidGenesisBlock)
+            let genesis = CompleteBlock::from_hex(GENESIS_BLOCK.to_owned())?;
+            if *genesis.get_miner() != self.dev_address {
+                return Err(BlockchainError::GenesisBlockMiner)
             }
+            debug!("Adding genesis block to chain");
+            self.add_new_block_for_storage(&mut storage, genesis, false).await?;
         } else {
-            error!("No genesis block found...");
+            error!("No genesis block found!");
             info!("Generating a new genesis block...");
             let miner_tx = Transaction::new(self.get_dev_address().clone(), TransactionVariant::Coinbase);
-            let mut block = Block::new(1, get_current_timestamp(), Vec::new(), [0u8; 32], Immutable::Owned(miner_tx), Vec::new());
-            let mut hash = block.hash();
-            while self.get_height() == 0 && !check_difficulty(&hash, self.get_difficulty())? {
-                block.nonce += 1;
-                block.timestamp = get_current_timestamp();
-                hash = block.hash();
-            }
-            let complete_block = CompleteBlock::new(Immutable::Owned(block), self.get_difficulty(), Vec::new());
-            info!("Genesis generated & added: {}", complete_block.to_hex());
-            self.add_new_block_for_storage(&mut storage, complete_block, true).await?;
+            let block = Block::new(0, get_current_timestamp(), Vec::new(), [0u8; 32], Immutable::Owned(miner_tx), Vec::new());
+            let complete_block = CompleteBlock::new(Immutable::Owned(block), 1, Vec::new());
+            info!("Genesis generated & added: {}, hash: {}", complete_block.to_hex(), complete_block.hash());
+            self.add_new_block_for_storage(&mut storage, complete_block, false).await?;
         }
 
         Ok(())
@@ -207,10 +196,15 @@ impl Blockchain {
 
     // mine a block for current difficulty
     pub async fn mine_block(self: &Arc<Self>, key: &PublicKey) -> Result<(), BlockchainError> {
-        let mut block = self.get_block_template(key.clone()).await?;
+        let (mut block, difficulty) = {
+            let storage = self.storage.read().await;
+            let block = self.get_block_template_for_storage(&storage, key.clone()).await?;
+            let difficulty = self.get_difficulty_at_tips(&storage, &block.get_tips()).await?;
+            (block, difficulty)
+        };
         let mut hash = block.hash();
         let mut current_height = self.get_height();
-        while !check_difficulty(&hash, self.get_difficulty())? {
+        while !check_difficulty(&hash, difficulty)? {
             if self.get_height() != current_height {
                 current_height = self.get_height();
                 block = self.get_block_template(key.clone()).await?;
@@ -228,13 +222,102 @@ impl Blockchain {
         Ok(())
     }
 
+    // returns the highest (unstable) height on the chain
     pub fn get_height(&self) -> u64 {
         self.height.load(Ordering::Acquire)
     }
 
+    async fn is_block_sync_at_height(&self, storage: &Storage, hash: &Hash, height: u64) -> Result<bool, BlockchainError> {
+        let block_height = storage.get_height_for_block(hash).await?;
+        if block_height == 0 {
+            return Ok(true)
+        }
+
+        if block_height + STABLE_HEIGHT_LIMIT > height || !self.is_block_ordered(storage, hash).await? {
+            return Ok(false)
+        }
+
+        let tips_at_height = storage.get_tips_at_height(block_height).await?;
+        let mut blocks_in_main_chain = 0;
+        for hash in tips_at_height {
+            if self.is_block_ordered(storage, &hash).await? {
+                blocks_in_main_chain += 1;
+                if blocks_in_main_chain > 1 {
+                    return Ok(false)
+                }
+            }
+        }
+
+        let mut i = block_height - 1;
+        let mut pre_blocks = Vec::new();
+        while i >= (block_height - STABLE_HEIGHT_LIMIT) && i != 0 {
+            let mut blocks = storage.get_tips_at_height(i).await?;
+            pre_blocks.append(&mut blocks);
+            i -= 1;
+        }
+
+        let sync_block_cumulative_difficulty = storage.get_cumulative_difficulty_for_block(hash).await?;
+
+        for hash in pre_blocks {
+            let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
+            if cumulative_difficulty >= sync_block_cumulative_difficulty {
+                return Ok(false)
+            }
+        }
+
+        Ok(true)
+    }
+
+    // TODO: cache based on height/hash
+    #[async_recursion]
+    async fn find_tip_base(&self, storage: &Storage, hash: &Hash, height: u64) -> Result<(Hash, u64), BlockchainError> {
+        let tips = storage.get_tips_of(hash).await?;
+        let tips_count = tips.len();
+        if tips_count == 0 { // TODO genesis hash from config
+            let (hash, _) = storage.get_block_at_height(0).await?;
+            return Ok((hash, 0))
+        }
+
+        let mut bases = Vec::with_capacity(tips_count);
+        for hash in tips.iter() {
+            if self.is_block_sync_at_height(storage, hash, height).await? {
+                let block_height = storage.get_height_for_block(hash).await?;
+                return Ok((hash.clone(), block_height))
+            }
+            bases.push(self.find_tip_base(storage, hash, height).await?);
+        }
+
+        // sort ascending by height
+        bases.sort_by(|(_, a), (_, b)| a.cmp(b));
+
+        VecDeque::from(bases).pop_front().ok_or_else(|| BlockchainError::ExpectedTips)
+    }
+
+    async fn find_common_base(&self, storage: &Storage, tips: &Vec<Hash>) -> Result<(Hash, u64), BlockchainError> {
+        let mut best_height = 0;
+        for hash in tips {
+            let height = storage.get_height_for_block(hash).await?;
+            if height > best_height {
+                best_height = height;
+            }
+        }
+
+        let mut bases = Vec::with_capacity(tips.len());
+        for hash in tips {
+            bases.push(self.find_tip_base(storage, hash, best_height).await?);
+        }
+
+        bases.sort_by(|(_, a), (_, b)| a.cmp(b));
+
+        let (common_hash, _) = VecDeque::from(bases).pop_front().ok_or_else(|| BlockchainError::ExpectedTips)?;
+        let common_height = storage.get_height_for_block(&common_hash).await?;
+        Ok((common_hash, common_height))
+    }
+
     async fn get_stable_height_for_storage(&self, storage: &Storage) -> Result<u64, BlockchainError> {
-        // TODO build stable height
-        Ok(0)
+        let tips = storage.get_tips().await?;
+        let (_, height) = self.find_common_base(storage, &tips).await?;
+        Ok(height)
     }
 
     #[async_recursion] // TODO no recursion
@@ -253,13 +336,13 @@ impl Blockchain {
         Ok(())
     }
 
-    // TODO no clone
-    async fn verify_non_reachability(&self, storage: &Storage, block: &CompleteBlock) -> Result<bool, BlockchainError> {
+    async fn verify_non_reachability(&self, storage: &Storage, block: &Block) -> Result<bool, BlockchainError> {
         let tips = block.get_tips();
         let tips_count = tips.len();
         let mut reach = Vec::with_capacity(tips_count);
         for hash in block.get_tips() {
             let mut set = HashSet::new();
+            // TODO no clone
             self.build_reachability_recursive(storage, &mut set, hash.clone(), 0).await?;
             reach.push(set);
         }
@@ -278,16 +361,18 @@ impl Blockchain {
         Ok(true)
     }
 
-    async fn is_ordered(&self, storage: &Storage, hash: &Hash) -> Result<bool, BlockchainError> {
-        Ok(false) // TODO
+    async fn is_block_ordered(&self, storage: &Storage, hash: &Hash) -> Result<bool, BlockchainError> {
+        let topo_height = storage.get_topo_height_for_block(hash).await?;
+        let hash_at_topo = storage.get_block_hash_at_topo_height(topo_height).await?;
+        Ok(*hash == hash_at_topo)
     }
 
     #[async_recursion] // TODO no recursion
     async fn calculate_distance_from_mainchain_recursive(&self, storage: &Storage, set: &mut HashSet<u64>, hash: &Hash) -> Result<(), BlockchainError> {
         let tips = storage.get_tips_of(hash).await?;
         for hash in tips.iter() {
-            if self.is_ordered(storage, &hash).await? {
-                set.insert(0); // TODO get topo height
+            if self.is_block_ordered(storage, &hash).await? {
+                set.insert(storage.get_topo_height_for_block(hash).await?);
             } else {
                 self.calculate_distance_from_mainchain_recursive(storage, set, hash).await?;
             }
@@ -296,8 +381,8 @@ impl Blockchain {
     }
 
     async fn calculate_distance_from_mainchain(&self, storage: &Storage, hash: &Hash) -> Result<u64, BlockchainError> {
-        if self.is_ordered(storage, hash).await? {
-            return Ok(0) // TODO read topo height of this block
+        if self.is_block_ordered(storage, hash).await? {
+            return Ok(storage.get_topo_height_for_block(hash).await?)
         }
 
         let mut set = HashSet::new(); // replace by a Vec and sort + remove first ?
@@ -320,19 +405,17 @@ impl Blockchain {
         Ok(best_block.get_difficulty() * 91 / 100 < block.get_difficulty())
     }
 
-    async fn get_difficulty_at_tips(&self, storage: &Storage, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
+    pub async fn get_difficulty_at_tips(&self, storage: &Storage, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
         if tips.len() == 0 { // Genesis difficulty
-            return Ok(0)
+            return Ok(1)
         }
 
-        let height = blockdag::calculate_height_at_tips(storage, tips).await?;
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, tips).await?;
-        let best_tip_timestamp = storage.get_block_by_hash(best_tip).await?.get_timestamp();
-        let biggest_difficulty = storage.get_block_metadata_by_hash(best_tip).await?.get_difficulty();
+        let biggest_difficulty = storage.get_difficulty_for_block(best_tip).await?;
+        let best_tip_timestamp = storage.get_timestamp_for_block(best_tip).await?;
 
         let parent_tips = storage.get_tips_of(best_tip).await?;
-        let test: Arc<Vec<Hash>> = Arc::new(Vec::new());
-        let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &test).await?;
+        let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &parent_tips).await?;
         let parent_best_tip_timestamp = storage.get_block_by_hash(parent_best_tip).await?.get_timestamp();
  
         let difficulty = calculate_difficulty(parent_best_tip_timestamp, best_tip_timestamp, biggest_difficulty);
@@ -347,10 +430,6 @@ impl Blockchain {
 
     pub fn get_p2p(&self) -> &Mutex<Option<Arc<P2pServer>>> {
         &self.p2p
-    }
-
-    pub fn get_difficulty(&self) -> u64 {
-        self.difficulty.load(Ordering::Acquire)
     }
 
     pub fn get_supply(&self) -> u64 {
@@ -397,10 +476,14 @@ impl Blockchain {
     }
 
     pub async fn get_block_template(&self, address: PublicKey) -> Result<Block, BlockchainError> {
+        let storage = self.storage.read().await;
+        self.get_block_template_for_storage(&storage, address).await
+    }
+
+    pub async fn get_block_template_for_storage(&self, storage: &Storage, address: PublicKey) -> Result<Block, BlockchainError> {
         let coinbase_tx = Transaction::new(address, TransactionVariant::Coinbase);
         let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>(); // generate random bytes
 
-        let storage = self.storage.read().await;
         let mut sorted_tips = blockdag::sort_tips(&storage, &storage.get_tips().await?).await?;
         sorted_tips.truncate(3); // keep only first 3 tips
         let mut block = Block::new(self.get_height() + 1, get_current_timestamp(), sorted_tips, extra_nonce, Immutable::Owned(coinbase_tx), Vec::new());
@@ -424,7 +507,9 @@ impl Blockchain {
             let tx = mempool.view_tx(hash)?; // at this point, we don't want to lose/remove any tx, we clone it only
             transactions.push(Immutable::Arc(tx));
         }
-        let complete_block = CompleteBlock::new(Immutable::Owned(block), self.get_difficulty(), transactions);
+        let storage = self.storage.read().await;
+        let difficulty = self.get_difficulty_at_tips(&storage, &block.get_tips()).await?;
+        let complete_block = CompleteBlock::new(Immutable::Owned(block), difficulty, transactions);
         Ok(complete_block)
     }
 
@@ -437,8 +522,7 @@ impl Blockchain {
 
         // TODO re calculate ALL accounts balances
         let mut circulating_supply = 0;
-        let mut difficulty = MINIMUM_DIFFICULTY;
-        for height in 1..=blocks_count {
+        for height in 0..=blocks_count {
             let metadata = storage.get_block_metadata(height).await?;
             let hash = metadata.get_hash();
             debug!("Checking height {} with hash {}", height, hash);
@@ -448,17 +532,44 @@ impl Blockchain {
                 return Err(BlockchainError::InvalidBlockHeight(block.get_height(), height as u64))
             }
 
-            if block.get_height() != 1 { // if not genesis, check parent block
-                let previous_metadata = storage.get_block_metadata(block.get_height() - 1).await?;
-                let previous_hash = previous_metadata.get_hash();
-                if *previous_hash != *block.get_previous_hash() {
-                    debug!("Invalid previous block hash, expected {} got {}", previous_hash, block.get_previous_hash());
-                    return Err(BlockchainError::InvalidHash(previous_hash.clone(), block.get_previous_hash().clone()));
-                }
-            } else if block.get_tips().len() > 0 {
-                return Err(BlockchainError::InvalidTips)
+            let tips_count = block.get_tips().len();
+            if tips_count > TIPS_LIMIT {
+                return Err(BlockchainError::InvalidTips) // only 3 tips are allowed
+            }
+    
+            if tips_count == 0 && height != 0 {
+                return Err(BlockchainError::ExpectedTips)
             }
 
+            if tips_count > 0 {
+                let block_height_by_tips = blockdag::calculate_height_at_tips(&storage, block.get_tips()).await?;
+                let stable_height = self.get_stable_height_for_storage(&storage).await?;
+                if block_height_by_tips < stable_height {
+                    return Err(BlockchainError::InvalidBlockHeight(stable_height, block_height_by_tips))
+                }
+            }
+
+            if !self.verify_non_reachability(&storage, &block).await? {
+                return Err(BlockchainError::InvalidReachability)
+            }
+
+            for hash in block.get_tips() {
+                let previous_block = storage.get_block_by_hash(hash).await?;
+                if previous_block.get_height() + 1 != block.get_height() {
+                    return Err(BlockchainError::InvalidBlockHeight(previous_block.get_height() + 1, block.get_height()));
+                }
+    
+                if previous_block.get_timestamp() > block.get_timestamp() {
+                    return Err(BlockchainError::TimestampIsLessThanParent(block.get_timestamp()));
+                }
+    
+                let distance = self.calculate_distance_from_mainchain(&storage, hash).await?;
+                if height - distance >= STABLE_HEIGHT_LIMIT {
+                    return Err(BlockchainError::BlockDeviation)
+                }
+            }
+
+            let difficulty = self.get_difficulty_at_tips(&storage, block.get_tips()).await?;
             if metadata.get_difficulty() != difficulty {
                 error!("Invalid stored difficulty for block {} at height {}, difficulty stored: {}, calculated: {} ", hash, height, metadata.get_difficulty(), difficulty);
                 return Err(BlockchainError::InvalidDifficulty)
@@ -470,7 +581,7 @@ impl Blockchain {
                 return Err(BlockchainError::InvalidBlockTxs(txs_hashes_len, txs_len));
             }
 
-            if !check_difficulty(&hash, difficulty)? {
+            if !self.verify_proof_of_work(&storage, hash, &block).await? {
                 return Err(BlockchainError::InvalidDifficulty)
             }
 
@@ -479,6 +590,7 @@ impl Blockchain {
             }
 
             let reward = get_block_reward(circulating_supply);
+            let mut total_tx_size = 0;
             for tx_hash in block.get_transactions() {
                 let tx = storage.get_transaction(tx_hash).await?;
                 if !tx.is_coinbase() {
@@ -490,13 +602,15 @@ impl Blockchain {
                 if !block.get_txs_hashes().contains(&tx_hash) { // check if tx is in txs hashes
                     return Err(BlockchainError::InvalidTxInBlock(tx_hash.clone()))
                 }
-            }
-            circulating_supply += reward;
 
-            if height > 3 {
-                let previous_block = storage.get_block_by_hash(block.get_previous_hash()).await?;
-                difficulty = calculate_difficulty(previous_block.get_timestamp(), block.get_timestamp(), difficulty);
+                total_tx_size += tx.size();
             }
+
+            if total_tx_size + block.size() > MAX_BLOCK_SIZE {
+                return Err(BlockchainError::InvalidBlockSize(MAX_BLOCK_SIZE, total_tx_size + block.size()))
+            }
+
+            circulating_supply += reward;
         }
 
         // TODO
@@ -531,20 +645,23 @@ impl Blockchain {
             return Err(BlockchainError::TimestampIsInFuture(get_current_timestamp(), block.get_timestamp()));
         }
 
-        let block_height_by_tips = blockdag::calculate_height_at_tips(storage, block.get_tips()).await?;
-        let stable_height = self.get_stable_height_for_storage(storage).await?;
-        let current_height = self.get_height();
-        if block_height_by_tips < stable_height {
-            return Err(BlockchainError::InvalidBlockHeight(stable_height, block_height_by_tips))
-        }
-
         let tips_count = block.get_tips().len();
         if tips_count > TIPS_LIMIT {
             return Err(BlockchainError::InvalidTips) // only 3 tips are allowed
         }
 
+        let current_height = self.get_height();
         if tips_count == 0 && current_height != 0 {
             return Err(BlockchainError::ExpectedTips)
+        }
+
+        if tips_count > 0 {
+            let block_height_by_tips = blockdag::calculate_height_at_tips(storage, block.get_tips()).await?;
+            let stable_height = self.get_stable_height_for_storage(storage).await?;
+
+            if block_height_by_tips < stable_height {
+                return Err(BlockchainError::InvalidBlockHeight(stable_height, block_height_by_tips))
+            }
         }
 
         if !self.verify_non_reachability(storage, &block).await? {

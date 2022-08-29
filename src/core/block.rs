@@ -173,7 +173,6 @@ impl Serializer for Block {
     fn read(reader: &mut Reader) -> Result<Block, ReaderError> {
         let height = reader.read_u64()?;
         let timestamp = reader.read_u128()?;
-        let previous_hash = reader.read_hash()?;
         let nonce = reader.read_u64()?;
         let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
         let txs_count = reader.read_u16()?;
