@@ -8,6 +8,7 @@ use super::serializer::Serializer;
 use super::error::BlockchainError;
 use super::blockchain::Account;
 use super::writer::Writer;
+use std::collections::HashSet;
 use std::hash::Hash as StdHash;
 use num_bigint::BigUint;
 use tokio::sync::Mutex;
@@ -18,7 +19,7 @@ use log::error;
 
 const TIPS: &[u8] = "TIPS".as_bytes();
 
-pub type Tips = Vec<Hash>;
+pub type Tips = HashSet<Hash>;
 
 impl Serializer for Tips {
     fn write(&self, writer: &mut Writer) {
@@ -34,9 +35,9 @@ impl Serializer for Tips {
         }
 
         let count = total_size % 32;
-        let mut tips = Vec::with_capacity(count);
+        let mut tips = HashSet::with_capacity(count);
         for _ in 0..count {
-            tips.push(reader.read_hash()?);
+            tips.insert(reader.read_hash()?);
         }
         Ok(tips)
     }

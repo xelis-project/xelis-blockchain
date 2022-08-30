@@ -249,10 +249,10 @@ impl Blockchain {
         }
 
         let mut i = block_height - 1;
-        let mut pre_blocks = Vec::new();
+        let mut pre_blocks = HashSet::new();
         while i >= (block_height - STABLE_HEIGHT_LIMIT) && i != 0 {
-            let mut blocks = storage.get_tips_at_height(i).await?;
-            pre_blocks.append(&mut blocks);
+            let blocks = storage.get_tips_at_height(i).await?;
+            pre_blocks.extend(blocks);
             i -= 1;
         }
 
@@ -293,7 +293,7 @@ impl Blockchain {
         VecDeque::from(bases).pop_front().ok_or_else(|| BlockchainError::ExpectedTips)
     }
 
-    async fn find_common_base(&self, storage: &Storage, tips: &Vec<Hash>) -> Result<(Hash, u64), BlockchainError> {
+    async fn find_common_base(&self, storage: &Storage, tips: &HashSet<Hash>) -> Result<(Hash, u64), BlockchainError> {
         let mut best_height = 0;
         for hash in tips {
             let height = storage.get_height_for_block(hash).await?;
@@ -398,6 +398,39 @@ impl Blockchain {
         Ok(lowest_height)
     }
 
+    async fn find_best_tip<'a>(&self, storage: &Storage, tips: &'a HashSet<Hash>, base: &Hash, base_height: u64) -> Result<&'a Hash, BlockchainError> {
+        if tips.len() == 0 {
+            return Err(BlockchainError::ExpectedTips)
+        }
+
+        let mut scores = Vec::with_capacity(tips.len());
+        for hash in tips {
+            let (_, cumulative_difficulty) = (0, 0); // TODO self.find_tip_work_score(storage, hash, base, base_height).await?;
+            scores.push((hash, cumulative_difficulty));
+        }
+
+        blockdag::sort_descending_by_cumulative_difficulty(&mut scores);
+        let (best_tip, _) = scores[0];
+        Ok(best_tip)
+    }
+
+    // TODO implement cache
+    async fn generate_full_order(&self, storage: &Storage, hash: &Hash, base: &Hash, base_height: u64) -> Result<Vec<Hash>, BlockchainError> {
+        let block = storage.get_block_by_hash(hash).await?;
+
+        let mut order: Vec<Hash> = Vec::new();
+        if block.get_tips().len() == 0 {
+            todo!("return the Genesis block hash")
+        }
+
+        if hash == base {
+            order.push(base.clone());
+            return Ok(order)
+        }
+
+        todo!("")
+    }
+
     async fn validate_tips(&self, storage: &Storage, best_tip: &Hash, tip: &Hash) -> Result<bool, BlockchainError> {
         let best_block = storage.get_block_metadata_by_hash(best_tip).await?;
         let block = storage.get_block_metadata_by_hash(tip).await?;
@@ -484,7 +517,13 @@ impl Blockchain {
         let coinbase_tx = Transaction::new(address, TransactionVariant::Coinbase);
         let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>(); // generate random bytes
 
-        let mut sorted_tips = blockdag::sort_tips(&storage, &storage.get_tips().await?).await?;
+        let tips_set = storage.get_tips().await?;
+        let mut tips = Vec::with_capacity(tips_set.len());
+        for hash in tips_set {
+            tips.push(hash);
+        }
+
+        let mut sorted_tips = blockdag::sort_tips(&storage, &tips).await?;
         sorted_tips.truncate(3); // keep only first 3 tips
         let mut block = Block::new(self.get_height() + 1, get_current_timestamp(), sorted_tips, extra_nonce, Immutable::Owned(coinbase_tx), Vec::new());
         let mempool = self.mempool.read().await;
@@ -767,13 +806,21 @@ impl Blockchain {
         }
         self.execute_miner_tx(storage, block.get_miner_tx(), block_reward, total_fees).await?; // execute coinbase tx
 
-        /*if current_height > 2 { // re calculate difficulty
-            let previous_block = storage.get_block_by_hash(block.get_previous_hash()).await?;
-            let difficulty = calculate_difficulty(previous_block.get_timestamp(), block.get_timestamp(), current_difficulty);
-            self.difficulty.store(difficulty, Ordering::Release);
-        }*/
+        let mut tips = storage.get_tips().await?;
+        for hash in block.get_tips() {
+            tips.remove(hash);
+        }
 
-        self.height.store(block.get_height(), Ordering::Release);
+        let (base_hash, base_height) = self.find_common_base(storage, &tips).await?;
+        let best_tip = self.find_best_tip(storage, &tips, &base_hash, base_height).await?;
+
+        let full_order = self.generate_full_order(storage, &best_tip, &base_hash, base_height).await?;
+        // TODO generate full order
+
+        if block.get_height() > self.get_height() {
+            self.height.store(block.get_height(), Ordering::Release);
+            // TODO save top height
+        }
         self.supply.fetch_add(block_reward, Ordering::Release);
         debug!("Adding new block '{}' with {} txs at height {}", block_hash, block.get_txs_count(), block.get_height());
         if broadcast {

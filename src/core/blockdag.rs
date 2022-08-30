@@ -1,11 +1,10 @@
-use super::{error::BlockchainError, storage::{Storage, BlockMetadata}};
+use super::{error::BlockchainError, storage::Storage};
 use crate::crypto::hash::Hash;
-use std::sync::Arc;
 
-fn sort_descending_by_cumulative_difficulty(scores: &mut Vec<(&Hash, Arc<BlockMetadata>)>) {
+pub fn sort_descending_by_cumulative_difficulty(scores: &mut Vec<(&Hash, u64)>) {
     scores.sort_by(|(a_hash, a), (b_hash, b)| {
-        if a.get_cumulative_difficulty() != b.get_cumulative_difficulty() {
-            a.get_cumulative_difficulty().cmp(b.get_cumulative_difficulty())
+        if a != b {
+            a.cmp(b)
         } else {
             a_hash.cmp(b_hash)
         }
@@ -24,9 +23,8 @@ pub async fn sort_tips(storage: &Storage, tips: &Vec<Hash>) -> Result<Vec<Hash>,
 
     let mut scores = Vec::with_capacity(tips.len());
     for hash in tips {
-        let block = storage.get_block_by_hash(hash).await?;
-        let metadata = storage.get_block_metadata(block.get_height()).await?;
-        scores.push((hash, metadata));
+        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(hash).await?;
+        scores.push((hash, cumulative_difficulty));
     }
 
     sort_descending_by_cumulative_difficulty(&mut scores);
@@ -67,9 +65,8 @@ pub async fn find_best_tip_by_cumulative_difficulty<'a>(storage: &Storage, tips:
 
     let mut scores = Vec::with_capacity(tips.len());
     for hash in tips {
-        let block = storage.get_block_by_hash(&hash).await?;
-        let metadata = storage.get_block_metadata(block.get_height()).await?;
-        scores.push((hash, metadata));
+        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(hash).await?;
+        scores.push((hash, cumulative_difficulty));
     }
 
     sort_descending_by_cumulative_difficulty(&mut scores);
