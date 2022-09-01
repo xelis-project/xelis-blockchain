@@ -238,30 +238,32 @@ impl Blockchain {
         }
 
         let tips_at_height = storage.get_tips_at_height(block_height).await?;
-        let mut blocks_in_main_chain = 0;
-        for hash in tips_at_height {
-            if self.is_block_ordered(storage, &hash).await? {
-                blocks_in_main_chain += 1;
-                if blocks_in_main_chain > 1 {
-                    return Ok(false)
+        if tips_at_height.len() > 1 {
+            let mut blocks_in_main_chain = 0;
+            for hash in tips_at_height {
+                if self.is_block_ordered(storage, &hash).await? {
+                    blocks_in_main_chain += 1;
+                    if blocks_in_main_chain > 1 {
+                        return Ok(false)
+                    }
                 }
             }
-        }
 
-        let mut i = block_height - 1;
-        let mut pre_blocks = HashSet::new();
-        while i >= (block_height - STABLE_HEIGHT_LIMIT) && i != 0 {
-            let blocks = storage.get_tips_at_height(i).await?;
-            pre_blocks.extend(blocks);
-            i -= 1;
-        }
+            let mut i = block_height - 1;
+            let mut pre_blocks = HashSet::new();
+            while i >= (block_height - STABLE_HEIGHT_LIMIT) && i != 0 {
+                let blocks = storage.get_tips_at_height(i).await?;
+                pre_blocks.extend(blocks);
+                i -= 1;
+            }
 
-        let sync_block_cumulative_difficulty = storage.get_cumulative_difficulty_for_block(hash).await?;
+            let sync_block_cumulative_difficulty = storage.get_cumulative_difficulty_for_block(hash).await?;
 
-        for hash in pre_blocks {
-            let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
-            if cumulative_difficulty >= sync_block_cumulative_difficulty {
-                return Ok(false)
+            for hash in pre_blocks {
+                let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
+                if cumulative_difficulty >= sync_block_cumulative_difficulty {
+                    return Ok(false)
+                }
             }
         }
 
