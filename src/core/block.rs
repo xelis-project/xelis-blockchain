@@ -175,15 +175,15 @@ impl Serializer for Block {
         let timestamp = reader.read_u128()?;
         let nonce = reader.read_u64()?;
         let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
-        let txs_count = reader.read_u16()?;
-        let mut txs_hashes = Vec::with_capacity(txs_count as usize);
-        for _ in 0..txs_count {
-            txs_hashes.push(reader.read_hash()?);
-        }
         let tips_count = reader.read_u8()?;
         let mut tips = Vec::with_capacity(tips_count as usize);
         for _ in 0..tips_count {
             tips.push(reader.read_hash()?);
+        }
+        let txs_count = reader.read_u16()?;
+        let mut txs_hashes = Vec::with_capacity(txs_count as usize);
+        for _ in 0..txs_count {
+            txs_hashes.push(reader.read_hash()?);
         }
         let miner_tx = Immutable::Owned(Transaction::read(reader)?);
 

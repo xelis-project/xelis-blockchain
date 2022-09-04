@@ -120,7 +120,9 @@ pub enum BlockchainError {
     #[error("Block has an invalid reachability")]
     InvalidReachability,
     #[error("Block has too much deviated")]
-    BlockDeviation
+    BlockDeviation,
+    #[error("Invalid genesis block hash")]
+    InvalidGenesisHash
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

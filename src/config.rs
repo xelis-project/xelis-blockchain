@@ -22,6 +22,7 @@ pub const MAX_SUPPLY: u64 = 18_400_000 * COIN_VALUE; // 18.4M full coin
 pub const EMISSION_SPEED_FACTOR: u64 = 21;
 
 pub const GENESIS_BLOCK: &str = "0000000000000000000000000000000000000182e9891ae3000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd020000000000000001"; // Genesis block in hexadecimal format
+pub const GENESIS_BLOCK_HASH: &str = "5d45dbcf3fc29b5cb051ef96699176da85b1aabf77de618af8d4cece32e2c2eb";
 pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"; // Dev address
 
 pub const MAX_BLOCK_REWIND: u64 = 5; // maximum X blocks can be rewinded

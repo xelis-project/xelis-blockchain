@@ -1,6 +1,6 @@
 use crate::core::immutable::Immutable;
 use crate::crypto::key::PublicKey;
-use crate::crypto::hash::{Hash};
+use crate::crypto::hash::Hash;
 use super::reader::{Reader, ReaderError};
 use super::block::{CompleteBlock, Block};
 use super::transaction::Transaction;
@@ -8,16 +8,13 @@ use super::serializer::Serializer;
 use super::error::BlockchainError;
 use super::blockchain::Account;
 use super::writer::Writer;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::hash::Hash as StdHash;
-use num_bigint::BigUint;
 use tokio::sync::Mutex;
 use std::sync::Arc;
 use lru::LruCache;
 use sled::Tree;
 use log::error;
-
-const TIPS: &[u8] = "TIPS".as_bytes();
 
 pub type Tips = HashSet<Hash>;
 
@@ -55,14 +52,14 @@ impl Serializer for u64 {
 
 pub struct BlockMetadata {
     difficulty: u64,
-    cumulative_difficulty: BigUint,
+    cumulative_difficulty: u64,
     supply: u64,
     burned: u64,
     hash: Hash
 }
 
 impl BlockMetadata {
-    pub fn new(difficulty: u64, cumulative_difficulty: BigUint, supply: u64, burned: u64, hash: Hash) -> Self {
+    pub fn new(difficulty: u64, cumulative_difficulty: u64, supply: u64, burned: u64, hash: Hash) -> Self {
         Self {
             difficulty,
             cumulative_difficulty,
@@ -76,8 +73,8 @@ impl BlockMetadata {
         self.difficulty
     }
 
-    pub fn get_cumulative_difficulty(&self) -> &BigUint {
-        &self.cumulative_difficulty
+    pub fn get_cumulative_difficulty(&self) -> u64 {
+        self.cumulative_difficulty
     }
 
     pub fn get_supply(&self) -> u64 {
@@ -96,7 +93,7 @@ impl BlockMetadata {
 impl Serializer for BlockMetadata {
     fn write(&self, writer: &mut Writer) {
         writer.write_u64(&self.difficulty);
-        writer.write_biguint(&self.cumulative_difficulty);
+        writer.write_u64(&self.cumulative_difficulty);
         writer.write_u64(&self.supply);
         writer.write_u64(&self.burned);
         writer.write_hash(&self.hash);
@@ -104,7 +101,7 @@ impl Serializer for BlockMetadata {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let difficulty = reader.read_u64()?;
-        let cumulative_difficulty = reader.read_big_uint()?;
+        let cumulative_difficulty = reader.read_u64()?;
         let supply = reader.read_u64()?;
         let burned = reader.read_u64()?;
         let hash = reader.read_hash()?;
@@ -125,7 +122,12 @@ pub struct Storage {
     // Only accounts can be updated
     accounts_cache: Mutex<LruCache<PublicKey, Arc<Account>>>,
     metadata_cache: Mutex<LruCache<u64, Arc<BlockMetadata>>>,
-    tips_cache: Mutex<LruCache<Hash, Arc<Vec<Hash>>>> // tips saved at each new block
+    tips_cache: Mutex<LruCache<Hash, Arc<Vec<Hash>>>>, // tips saved at each new block
+
+    // Test only
+    topo: Mutex<HashMap<Hash, u64>>,
+    hash_at_topo: Mutex<HashMap<u64, Hash>>,
+    tips: Tips
 }
 
 impl Storage {
@@ -147,7 +149,10 @@ impl Storage {
             accounts_cache: Mutex::new(LruCache::new(1024)),
             blocks_cache: Mutex::new(LruCache::new(1024)),
             metadata_cache: Mutex::new(LruCache::new(1024)),
-            tips_cache: Mutex::new(LruCache::new(1024))
+            tips_cache: Mutex::new(LruCache::new(1024)),
+            topo: Mutex::new(HashMap::new()),
+            hash_at_topo: Mutex::new(HashMap::new()),
+            tips: HashSet::new()
         })
     }
 
@@ -231,10 +236,9 @@ impl Storage {
         self.transactions.len()
     }
 
-    pub async fn add_new_block(&mut self, block: CompleteBlock, hash: Hash, cumulative_difficulty: BigUint, supply: u64, burned: u64) -> Result<(), BlockchainError> {
-        let (block, mut txs, difficulty) = block.split();
-        for tx in block.get_transactions() { // first save all txs, then save block
-            self.transactions.insert(tx.as_bytes(), txs.remove(0).to_bytes())?;
+    pub async fn add_new_block(&mut self, block: Arc<Block>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash, cumulative_difficulty: u64, supply: u64, burned: u64) -> Result<(), BlockchainError> {
+        for (hash, tx) in block.get_transactions().iter().zip(txs) { // first save all txs, then save block
+            self.transactions.insert(hash.as_bytes(), tx.to_bytes())?;
         }
         self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
 
@@ -242,7 +246,7 @@ impl Storage {
         self.metadata.insert(block.get_height().to_bytes(), metadata.to_bytes())?;
 
         self.metadata_cache.lock().await.put(block.get_height(), Arc::new(metadata));
-        self.blocks_cache.lock().await.put(hash, block.to_arc());
+        self.blocks_cache.lock().await.put(hash, block);
         //self.flush().await?;
 
         Ok(())
@@ -361,11 +365,13 @@ impl Storage {
     }
 
     pub async fn get_tips(&self) -> Result<Tips, BlockchainError> {
-        self.load_from_disk(&self.metadata, TIPS)
+        Ok(self.tips.clone())
+        //self.load_from_disk(&self.metadata, TIPS)
     }
 
-    pub fn store_tips(&mut self, tips: Tips) -> Result<(), BlockchainError> {
-        self.metadata.insert(TIPS, tips.to_bytes())?;
+    pub fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
+        //self.metadata.insert(TIPS, tips.to_bytes())?;
+        self.tips = tips.clone();
         Ok(())
     }
 
@@ -398,12 +404,22 @@ impl Storage {
         Ok(block.get_height())
     }
 
-    pub async fn get_topo_height_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        Ok(0) // TODO
+    pub async fn set_topo_height_for_block(&self, hash: Hash, height: u64) -> Result<(), BlockchainError> {
+        let mut topo = self.topo.lock().await;
+        let mut hash_at_topo = self.hash_at_topo.lock().await;
+        topo.insert(hash.clone(), height);
+        hash_at_topo.insert(height, hash);
+        Ok(())
     }
 
-    pub async fn get_block_hash_at_topo_height(&self, height: u64) -> Result<Hash, BlockchainError> {
-        Ok(Hash::zero()) // TODO
+    pub async fn get_topo_height_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        let topo = self.topo.lock().await;
+        Ok(*topo.get(hash).ok_or_else(|| BlockchainError::NotFoundOnDisk)?)
+    }
+
+    pub async fn get_block_hash_at_topo_height(&self, height: &u64) -> Result<Hash, BlockchainError> {
+        let map = self.hash_at_topo.lock().await;
+        Ok(map.get(height).ok_or_else(|| BlockchainError::NotFoundOnDisk)?.clone())
     }
 
     pub async fn get_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
@@ -417,6 +433,7 @@ impl Storage {
     }
 
     pub async fn get_cumulative_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        Ok(0) // TODO
+        let metadata = self.get_block_metadata_by_hash(hash).await?;
+        Ok(metadata.get_cumulative_difficulty())
     }
 }

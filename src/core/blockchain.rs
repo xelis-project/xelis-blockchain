@@ -1,4 +1,4 @@
-use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT};
+use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY};
 use crate::core::immutable::Immutable;
 use crate::crypto::address::Address;
 use crate::crypto::hash::{Hash, Hashable};
@@ -18,7 +18,6 @@ use super::writer::Writer;
 use std::sync::atomic::{Ordering, AtomicU64};
 use std::collections::{HashMap, HashSet, VecDeque};
 use async_recursion::async_recursion;
-use num_bigint::ToBigUint;
 use tokio::sync::{Mutex, RwLock};
 use log::{info, error, debug};
 use std::net::SocketAddr;
@@ -179,7 +178,12 @@ impl Blockchain {
             if *genesis.get_miner() != self.dev_address {
                 return Err(BlockchainError::GenesisBlockMiner)
             }
-            debug!("Adding genesis block to chain");
+
+            if Hash::from_hex(GENESIS_BLOCK_HASH.to_owned())? != genesis.hash() {
+                return Err(BlockchainError::InvalidGenesisHash)
+            }
+
+            debug!("Adding genesis block '{}' to chain", GENESIS_BLOCK_HASH);
             self.add_new_block_for_storage(&mut storage, genesis, false).await?;
         } else {
             error!("No genesis block found!");
@@ -365,7 +369,7 @@ impl Blockchain {
 
     async fn is_block_ordered(&self, storage: &Storage, hash: &Hash) -> Result<bool, BlockchainError> {
         let topo_height = storage.get_topo_height_for_block(hash).await?;
-        let hash_at_topo = storage.get_block_hash_at_topo_height(topo_height).await?;
+        let hash_at_topo = storage.get_block_hash_at_topo_height(&topo_height).await?;
         Ok(*hash == hash_at_topo)
     }
 
@@ -417,20 +421,45 @@ impl Blockchain {
     }
 
     // TODO implement cache
+    #[async_recursion]
     async fn generate_full_order(&self, storage: &Storage, hash: &Hash, base: &Hash, base_height: u64) -> Result<Vec<Hash>, BlockchainError> {
         let block = storage.get_block_by_hash(hash).await?;
 
-        let mut order: Vec<Hash> = Vec::new();
         if block.get_tips().len() == 0 {
-            todo!("return the Genesis block hash")
+            return Ok(vec![Hash::from_hex(GENESIS_BLOCK_HASH.to_owned())?])
         }
 
         if hash == base {
-            order.push(base.clone());
-            return Ok(order)
+            return Ok(vec![base.clone()])
         }
 
-        todo!("")
+        let mut order: Vec<Hash> = Vec::new();
+        let mut scores = Vec::new();
+        for hash in block.get_tips() {
+            let is_ordered = self.is_block_ordered(storage, hash).await?;
+            if !is_ordered {
+                let diff = storage.get_cumulative_difficulty_for_block(hash).await?;
+                scores.push((hash, diff));
+            } else if is_ordered && storage.get_topo_height_for_block(hash).await? >= storage.get_topo_height_for_block(base).await? {
+                let diff = storage.get_cumulative_difficulty_for_block(hash).await?;
+                scores.push((hash, diff))
+            }
+        }
+
+        blockdag::sort_descending_by_cumulative_difficulty(&mut scores);
+
+        for (hash, _) in scores {
+            let sub_order = self.generate_full_order(storage, hash, base, base_height).await?;
+            for order_hash in sub_order {
+                if !order.contains(&order_hash) {
+                    order.push(order_hash);
+                }
+            }
+        }
+
+        order.push(hash.clone());
+
+        Ok(order)
     }
 
     async fn validate_tips(&self, storage: &Storage, best_tip: &Hash, tip: &Hash) -> Result<bool, BlockchainError> {
@@ -445,6 +474,10 @@ impl Blockchain {
             return Ok(1)
         }
 
+        let height = blockdag::calculate_height_at_tips(storage, tips).await?;
+        if height < 3 {
+            return Ok(MINIMUM_DIFFICULTY)
+        }
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, tips).await?;
         let biggest_difficulty = storage.get_difficulty_for_block(best_tip).await?;
         let best_tip_timestamp = storage.get_timestamp_for_block(best_tip).await?;
@@ -792,6 +825,11 @@ impl Blockchain {
             return Err(BlockchainError::InvalidTransactionSignature)
         }
 
+        // Save transactions & block
+        let (block, txs, difficulty) = block.split();
+        let block = block.to_arc();
+        storage.add_new_block(block.clone(), &txs, difficulty, block_hash.clone(), self.get_supply(), 0, self.get_burned_supply()).await?; // Add block to chain
+
         // Transaction execution
         let mut mempool = self.mempool.write().await;
         for hash in block.get_txs_hashes() { // remove all txs present in mempool
@@ -803,12 +841,13 @@ impl Blockchain {
             };
         }
 
-        for tx in block.get_transactions() { // execute all txs
-            self.execute_transaction(storage, tx).await?;
+        for tx in txs { // execute all txs
+            self.execute_transaction(storage, &tx).await?;
         }
         self.execute_miner_tx(storage, block.get_miner_tx(), block_reward, total_fees).await?; // execute coinbase tx
 
         let mut tips = storage.get_tips().await?;
+        tips.insert(block_hash.clone());
         for hash in block.get_tips() {
             tips.remove(hash);
         }
@@ -817,7 +856,30 @@ impl Blockchain {
         let best_tip = self.find_best_tip(storage, &tips, &base_hash, base_height).await?;
 
         let full_order = self.generate_full_order(storage, &best_tip, &base_hash, base_height).await?;
-        // TODO generate full order
+        let base_topo = if tips_count == 0 {
+            0
+        } else {
+            storage.get_topo_height_for_block(&base_hash).await?
+        };
+
+        {
+            let mut i = 0;
+            for hash in full_order {
+                let topo = base_topo + i;
+                storage.set_topo_height_for_block(hash, topo).await?;
+                i += 1;
+            }
+        }
+
+        let best_height = storage.get_height_for_block(best_tip).await?;
+        for hash in &tips {
+            let tip_base_distance = self.calculate_distance_from_mainchain(storage, hash).await?;
+            if best_height - tip_base_distance < STABLE_HEIGHT_LIMIT - 1 {
+
+            } // else tip has deviated
+        }
+
+        storage.store_tips(&tips)?;
 
         if block.get_height() > self.get_height() {
             self.height.store(block.get_height(), Ordering::Release);
@@ -828,12 +890,10 @@ impl Blockchain {
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
-                p2p.broadcast_block(block.get_header(), &block_hash).await;
+                p2p.broadcast_block(&block, &block_hash).await;
             }
         }
-
-        let cumulative_difficulty = (0 as u8).to_biguint().unwrap(); // TODO
-        storage.add_new_block(block, block_hash, cumulative_difficulty, self.get_supply(), self.get_burned_supply()).await // Add block to chain
+        Ok(())
     }
 
     pub async fn rewind_chain(&self, count: usize) -> Result<(), BlockchainError> {
