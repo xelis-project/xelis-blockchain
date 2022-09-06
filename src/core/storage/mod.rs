@@ -306,15 +306,13 @@ impl Storage {
 
     pub async fn get_complete_block(&self, hash: &Hash) -> Result<CompleteBlock, BlockchainError> {
         let block = self.get_block_by_hash(hash).await?;
-        let metadata = self.get_block_metadata(block.get_height()).await?;
-        
         let mut transactions = Vec::new();
         for tx in block.get_transactions() {
             let transaction = self.get_transaction(tx).await?;
             transactions.push(Immutable::Arc(transaction));
         }
 
-        let complete_block = CompleteBlock::new(Immutable::Arc(block), metadata.get_difficulty(), transactions);
+        let complete_block = CompleteBlock::new(Immutable::Arc(block), transactions);
         Ok(complete_block)
     }
 
@@ -360,7 +358,7 @@ impl Storage {
             transactions.push(Immutable::Arc(transaction));
         }
 
-        let complete_block = CompleteBlock::new(Immutable::Arc(block), metadata.get_difficulty(), transactions);
+        let complete_block = CompleteBlock::new(Immutable::Arc(block), transactions);
         Ok(complete_block)
     }
 

@@ -26,7 +26,6 @@ pub struct Block {
 pub struct CompleteBlock {
     #[serde(flatten)]
     block: Immutable<Block>,
-    difficulty: u64,
     transactions: Vec<Immutable<Transaction>>
 }
 
@@ -123,20 +122,15 @@ impl Block {
 }
 
 impl CompleteBlock {
-    pub fn new(block: Immutable<Block>, difficulty: u64, transactions: Vec<Immutable<Transaction>>) -> Self {
+    pub fn new(block: Immutable<Block>, transactions: Vec<Immutable<Transaction>>) -> Self {
         CompleteBlock {
             block,
-            difficulty,
             transactions
         }
     }
 
     pub fn get_header(&self) -> &Block {
         &self.block
-    }
-
-    pub fn get_difficulty(&self) -> u64 {
-        self.difficulty
     }
 
     pub fn get_txs_count(&self) -> usize {
@@ -147,8 +141,8 @@ impl CompleteBlock {
         &self.transactions
     }
 
-    pub fn split(self) -> (Immutable<Block>, Vec<Immutable<Transaction>>, u64) {
-        (self.block, self.transactions, self.difficulty)
+    pub fn split(self) -> (Immutable<Block>, Vec<Immutable<Transaction>>) {
+        (self.block, self.transactions)
     }
 }
 
@@ -210,7 +204,6 @@ impl Hashable for Block {
 impl Serializer for CompleteBlock {
     fn write(&self, writer: &mut Writer) {
         self.block.write(writer);
-        writer.write_u64(&self.difficulty);
         for tx in &self.transactions {
             tx.write(writer);
         }
@@ -218,14 +211,13 @@ impl Serializer for CompleteBlock {
 
     fn read(reader: &mut Reader) -> Result<CompleteBlock, ReaderError> {
         let block = Block::read(reader)?;
-        let difficulty = reader.read_u64()?;
         let mut txs: Vec<Immutable<Transaction>> = Vec::new();
         for _ in 0..block.get_txs_count() {
             let tx = Transaction::read(reader)?;
             txs.push(Immutable::Owned(tx));     
         }
 
-        Ok(CompleteBlock::new(Immutable::Owned(block), difficulty, txs))
+        Ok(CompleteBlock::new(Immutable::Owned(block), txs))
     }
 }
 

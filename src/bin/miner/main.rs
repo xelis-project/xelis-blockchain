@@ -24,6 +24,7 @@ fn main() {
         println!("Requesting block template");
         let block_template: GetBlockTemplateResult = client.call_with("get_block_template", &get_block_template).unwrap();
         let mut block = Block::from_hex(block_template.template).unwrap();
+        println!("Block template received for height {} and difficulty at {}", block.get_height(), block_template.difficulty);
         let mut hash = block.hash();
         while !check_difficulty(&hash, block_template.difficulty).unwrap() {
             block.nonce += 1;

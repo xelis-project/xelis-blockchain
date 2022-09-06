@@ -190,7 +190,7 @@ impl Blockchain {
             info!("Generating a new genesis block...");
             let miner_tx = Transaction::new(self.get_dev_address().clone(), TransactionVariant::Coinbase);
             let block = Block::new(0, get_current_timestamp(), Vec::new(), [0u8; 32], Immutable::Owned(miner_tx), Vec::new());
-            let complete_block = CompleteBlock::new(Immutable::Owned(block), 1, Vec::new());
+            let complete_block = CompleteBlock::new(Immutable::Owned(block), Vec::new());
             info!("Genesis generated & added: {}, hash: {}", complete_block.to_hex(), complete_block.hash());
             self.add_new_block_for_storage(&mut storage, complete_block, false).await?;
         }
@@ -233,7 +233,7 @@ impl Blockchain {
 
     async fn is_block_sync_at_height(&self, storage: &Storage, hash: &Hash, height: u64) -> Result<bool, BlockchainError> {
         let block_height = storage.get_height_for_block(hash).await?;
-        if block_height == 0 {
+        if block_height == 0 { // genesis block is a sync block
             return Ok(true)
         }
 
@@ -491,9 +491,15 @@ impl Blockchain {
     }
 
     // pass in params the already computed block hash
-    async fn verify_proof_of_work(&self, storage: &Storage, hash: &Hash, block: &Block) -> Result<bool, BlockchainError> {
+    // check the difficulty calculated at tips
+    // if the difficulty is valid, returns it (prevent to re-compute it)
+    async fn verify_proof_of_work(&self, storage: &Storage, hash: &Hash, block: &Block) -> Result<u64, BlockchainError> {
         let difficulty = self.get_difficulty_at_tips(storage, block.get_tips()).await?;
-        Ok(check_difficulty(hash, difficulty)?)
+        if check_difficulty(hash, difficulty)? {
+            Ok(difficulty)
+        } else {
+            Err(BlockchainError::InvalidDifficulty)
+        }
     }
 
     pub fn get_p2p(&self) -> &Mutex<Option<Arc<P2pServer>>> {
@@ -581,9 +587,7 @@ impl Blockchain {
             let tx = mempool.view_tx(hash)?; // at this point, we don't want to lose/remove any tx, we clone it only
             transactions.push(Immutable::Arc(tx));
         }
-        let storage = self.storage.read().await;
-        let difficulty = self.get_difficulty_at_tips(&storage, &block.get_tips()).await?;
-        let complete_block = CompleteBlock::new(Immutable::Owned(block), difficulty, transactions);
+        let complete_block = CompleteBlock::new(Immutable::Owned(block), transactions);
         Ok(complete_block)
     }
 
@@ -643,7 +647,7 @@ impl Blockchain {
                 }
             }
 
-            let difficulty = self.get_difficulty_at_tips(&storage, block.get_tips()).await?;
+            let difficulty = self.verify_proof_of_work(&storage, hash, &block).await?;
             if metadata.get_difficulty() != difficulty {
                 error!("Invalid stored difficulty for block {} at height {}, difficulty stored: {}, calculated: {} ", hash, height, metadata.get_difficulty(), difficulty);
                 return Err(BlockchainError::InvalidDifficulty)
@@ -655,9 +659,6 @@ impl Blockchain {
                 return Err(BlockchainError::InvalidBlockTxs(txs_hashes_len, txs_len));
             }
 
-            if !self.verify_proof_of_work(&storage, hash, &block).await? {
-                return Err(BlockchainError::InvalidDifficulty)
-            }
 
             if !block.get_miner_tx().is_coinbase() || !block.get_miner_tx().verify_signature()? {
                 return Err(BlockchainError::InvalidMinerTx)
@@ -769,10 +770,8 @@ impl Blockchain {
             }
         }
 
-        if !self.verify_proof_of_work(&storage, &block_hash, &block).await? {
-            return Err(BlockchainError::InvalidDifficulty)
-        }
-
+        // verify PoW and get difficulty for block tips
+        let difficulty = self.verify_proof_of_work(&storage, &block_hash, &block).await?;
         let mut total_fees: u64 = 0;
         let mut total_tx_size: usize = 0;
         { // Transaction verification
@@ -826,7 +825,7 @@ impl Blockchain {
         }
 
         // Save transactions & block
-        let (block, txs, difficulty) = block.split();
+        let (block, txs) = block.split();
         let block = block.to_arc();
         storage.add_new_block(block.clone(), &txs, difficulty, block_hash.clone(), self.get_supply(), 0, self.get_burned_supply()).await?; // Add block to chain
 
@@ -886,7 +885,7 @@ impl Blockchain {
             // TODO save top height
         }
         self.supply.fetch_add(block_reward, Ordering::Release);
-        debug!("Adding new block '{}' with {} txs at height {}", block_hash, block.get_txs_count(), block.get_height());
+        debug!("Adding new block '{}' with {} txs and {} tips at height {}", block_hash, block.get_txs_count(), tips_count, block.get_height());
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
