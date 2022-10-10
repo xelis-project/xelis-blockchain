@@ -241,7 +241,7 @@ impl Blockchain {
             return Ok(false)
         }
 
-        let tips_at_height = storage.get_tips_at_height(block_height).await?;
+        let tips_at_height = storage.get_blocks_at_height(block_height).await?;
         if tips_at_height.len() > 1 {
             let mut blocks_in_main_chain = 0;
             for hash in tips_at_height {
@@ -256,7 +256,7 @@ impl Blockchain {
             let mut i = block_height - 1;
             let mut pre_blocks = HashSet::new();
             while i >= (block_height - STABLE_HEIGHT_LIMIT) && i != 0 {
-                let blocks = storage.get_tips_at_height(i).await?;
+                let blocks = storage.get_blocks_at_height(i).await?;
                 pre_blocks.extend(blocks);
                 i -= 1;
             }

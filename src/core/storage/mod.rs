@@ -5,7 +5,7 @@ use super::reader::{Reader, ReaderError};
 use super::block::{CompleteBlock, Block};
 use super::transaction::Transaction;
 use super::serializer::Serializer;
-use super::error::BlockchainError;
+use super::error::{BlockchainError, DiskContext};
 use super::blockchain::Account;
 use super::writer::Writer;
 use std::collections::{HashSet, HashMap};
@@ -115,7 +115,7 @@ pub struct Storage {
     accounts: Tree, // all accounts registered on disk
     blocks: Tree, // all blocks on disk
     metadata: Tree,
-    tips_at_height: Tree,
+    blocks_at_height: Tree, // all blocks height at specific height
     // cached in memory
     transactions_cache: Mutex<LruCache<Hash, Arc<Transaction>>>,
     blocks_cache: Mutex<LruCache<Hash, Arc<Block>>>,
@@ -137,14 +137,14 @@ impl Storage {
         let transactions = sled.open_tree("transactions")?;
         let blocks = sled.open_tree("blocks")?;
         let metadata = sled.open_tree("metadata")?;
-        let tips_at_height = sled.open_tree("tips")?;
+        let blocks_at_height = sled.open_tree("blocks_at_height")?;
 
         Ok(Self {
             transactions,
             accounts,
             blocks,
             metadata,
-            tips_at_height,
+            blocks_at_height,
             transactions_cache: Mutex::new(LruCache::new(1024)),
             accounts_cache: Mutex::new(LruCache::new(1024)),
             blocks_cache: Mutex::new(LruCache::new(1024)),
@@ -164,7 +164,7 @@ impl Storage {
                 let value = T::read(&mut reader)?;
                 Ok(value)
             },
-            None => Err(BlockchainError::NotFoundOnDisk)
+            None => Err(BlockchainError::NotFoundOnDisk(DiskContext::LoadData))
         }
     }
 
@@ -182,7 +182,7 @@ impl Storage {
     async fn delete_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Mutex<LruCache<K, Arc<V>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
         let bytes = match tree.remove(key.to_bytes())? {
             Some(data) => data.to_vec(),
-            None => return Err(BlockchainError::NotFoundOnDisk)
+            None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
 
         let mut cache = cache.lock().await;
@@ -245,6 +245,7 @@ impl Storage {
         let metadata = BlockMetadata::new(difficulty, cumulative_difficulty, supply, burned, hash.clone());
         self.metadata.insert(block.get_height().to_bytes(), metadata.to_bytes())?;
 
+        self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
         self.metadata_cache.lock().await.put(block.get_height(), Arc::new(metadata));
         self.blocks_cache.lock().await.put(hash, block);
         //self.flush().await?;
@@ -325,7 +326,7 @@ impl Storage {
     pub fn get_top_block(&self) -> Result<Block, BlockchainError> {
         let data = match self.blocks.last()? {
             Some((_, data)) => data,
-            None => return Err(BlockchainError::NotFoundOnDisk)
+            None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::GetTopBlock))
         };
         let bytes = data.to_vec();
         let mut reader = Reader::new(&bytes);
@@ -336,7 +337,7 @@ impl Storage {
     pub fn get_top_metadata(&self) -> Result<(u64, BlockMetadata), BlockchainError> {
         let (key, value) = match self.metadata.last()? {
             Some((key, value)) => (key, value),
-            None => return Err(BlockchainError::NotFoundOnDisk)
+            None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::GetTopMetadata))
         };
 
         let bytes = key.to_vec();
@@ -392,8 +393,19 @@ impl Storage {
     }
 
     // returns all blocks hash at specified height
-    pub async fn get_tips_at_height(&self, height: u64) -> Result<Tips, BlockchainError> {
-        self.load_from_disk(&self.tips_at_height, &height.to_be_bytes())
+    pub async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError> {
+        self.load_from_disk(&self.blocks_at_height, &height.to_be_bytes())
+    }
+
+    pub async fn add_block_hash_at_height(&self, hash: Hash, height: u64) -> Result<(), BlockchainError> {
+        let mut tips = match self.get_blocks_at_height(height).await {
+            Ok(tips) => tips,
+            Err(_) => Tips::new()
+        };
+        tips.insert(hash);
+
+        self.blocks_at_height.insert(height.to_be_bytes(), tips.to_bytes())?;
+        Ok(())
     }
 
     // TODO optimize all these functions to read only what is necessary
@@ -412,12 +424,12 @@ impl Storage {
 
     pub async fn get_topo_height_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         let topo = self.topo.lock().await;
-        Ok(*topo.get(hash).ok_or_else(|| BlockchainError::NotFoundOnDisk)?)
+        Ok(*topo.get(hash).ok_or_else(|| BlockchainError::NotFoundOnDisk(DiskContext::GetTopoHeight(hash.clone())))?)
     }
 
     pub async fn get_block_hash_at_topo_height(&self, height: &u64) -> Result<Hash, BlockchainError> {
         let map = self.hash_at_topo.lock().await;
-        Ok(map.get(height).ok_or_else(|| BlockchainError::NotFoundOnDisk)?.clone())
+        Ok(map.get(height).ok_or_else(|| BlockchainError::NotFoundOnDisk(DiskContext::GetBlockHash(*height)))?.clone())
     }
 
     pub async fn get_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {

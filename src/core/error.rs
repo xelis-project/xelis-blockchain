@@ -7,6 +7,24 @@ use super::prompt::prompt::PromptError;
 use std::sync::PoisonError;
 use thiserror::Error;
 
+
+
+#[derive(Error, Debug)]
+pub enum DiskContext {
+    #[error("get top block")]
+    GetTopBlock,
+    #[error("get top metadata")]
+    GetTopMetadata,
+    #[error("get topo height for hash '{}'", _0)]
+    GetTopoHeight(Hash),
+    #[error("get block hash for height '{}'", _0)]
+    GetBlockHash(u64),
+    #[error("delete data")]
+    DeleteData,
+    #[error("load data")]
+    LoadData,
+}
+
 #[derive(Error, Debug)]
 pub enum BlockchainError {
     #[error("Timestamp {} is less than parent", _0)]
@@ -109,8 +127,8 @@ pub enum BlockchainError {
     UnexpectedTransactionVariant,
     #[error("Unexpected error on database: {}", _0)]
     DatabaseError(#[from] sled::Error),
-    #[error("Data not found on disk")]
-    NotFoundOnDisk,
+    #[error("Data not found on disk: {}", _0)]
+    NotFoundOnDisk(DiskContext),
     #[error("Expected at least one tips")]
     ExpectedTips,
     #[error("Block has invalid tips")]
