@@ -112,6 +112,7 @@ impl Blockchain {
             (height, metadata.get_supply(), metadata.get_burned_supply())
         } else { (0, 0, 0) };
 
+        info!("Initializing chain...");
         let blockchain = Self {
             height: AtomicU64::new(height),
             supply: AtomicU64::new(supply),

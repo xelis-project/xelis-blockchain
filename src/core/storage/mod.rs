@@ -14,7 +14,9 @@ use tokio::sync::Mutex;
 use std::sync::Arc;
 use lru::LruCache;
 use sled::Tree;
-use log::error;
+use log::{error, debug};
+
+const TIPS: &[u8; 4] = b"TIPS";
 
 pub type Tips = HashSet<Hash>;
 
@@ -33,7 +35,7 @@ impl Serializer for Tips {
 
         let count = total_size % 32;
         let mut tips = HashSet::with_capacity(count);
-        for _ in 0..count {
+        for _ in 0..=count {
             tips.insert(reader.read_hash()?);
         }
         Ok(tips)
@@ -116,18 +118,18 @@ pub struct Storage {
     blocks: Tree, // all blocks on disk
     metadata: Tree,
     blocks_at_height: Tree, // all blocks height at specific height
+    tips: Tree, // last tips saved on disk
     // cached in memory
     transactions_cache: Mutex<LruCache<Hash, Arc<Transaction>>>,
     blocks_cache: Mutex<LruCache<Hash, Arc<Block>>>,
     // Only accounts can be updated
     accounts_cache: Mutex<LruCache<PublicKey, Arc<Account>>>,
     metadata_cache: Mutex<LruCache<u64, Arc<BlockMetadata>>>,
-    tips_cache: Mutex<LruCache<Hash, Arc<Vec<Hash>>>>, // tips saved at each new block
-
+    past_blocks_cache: Mutex<LruCache<Hash, Arc<Vec<Hash>>>>, // tips saved at each new block
     // Test only
     topo: Mutex<HashMap<Hash, u64>>,
     hash_at_topo: Mutex<HashMap<u64, Hash>>,
-    tips: Tips
+    tips_cache: Tips
 }
 
 impl Storage {
@@ -138,22 +140,31 @@ impl Storage {
         let blocks = sled.open_tree("blocks")?;
         let metadata = sled.open_tree("metadata")?;
         let blocks_at_height = sled.open_tree("blocks_at_height")?;
+        let tips = sled.open_tree("tips")?;
 
-        Ok(Self {
+        let mut storage = Self {
             transactions,
             accounts,
             blocks,
             metadata,
             blocks_at_height,
+            tips,
             transactions_cache: Mutex::new(LruCache::new(1024)),
             accounts_cache: Mutex::new(LruCache::new(1024)),
             blocks_cache: Mutex::new(LruCache::new(1024)),
             metadata_cache: Mutex::new(LruCache::new(1024)),
-            tips_cache: Mutex::new(LruCache::new(1024)),
+            past_blocks_cache: Mutex::new(LruCache::new(1024)),
             topo: Mutex::new(HashMap::new()),
             hash_at_topo: Mutex::new(HashMap::new()),
-            tips: HashSet::new()
-        })
+            tips_cache: HashSet::new()
+        };
+        
+        if let Ok(tips) = storage.load_from_disk::<Tips>(&storage.tips, TIPS) {
+            debug!("Found tips: {}", tips.len());
+            storage.tips_cache = tips;
+        }
+
+        Ok(storage)
     }
 
     fn load_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<T, BlockchainError> {
@@ -201,6 +212,7 @@ impl Storage {
         self.accounts.flush_async().await?;
         self.transactions.flush_async().await?;
         self.metadata.flush_async().await?;
+        self.tips.flush_async().await?;
 
         Ok(())
     }
@@ -364,18 +376,18 @@ impl Storage {
     }
 
     pub async fn get_tips(&self) -> Result<Tips, BlockchainError> {
-        Ok(self.tips.clone())
-        //self.load_from_disk(&self.metadata, TIPS)
+        Ok(self.tips_cache.clone())
     }
 
     pub fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
-        //self.metadata.insert(TIPS, tips.to_bytes())?;
-        self.tips = tips.clone();
+        debug!("Saving {} Tips", tips.len());
+        self.tips.insert(TIPS, tips.to_bytes())?;
+        self.tips_cache = tips.clone();
         Ok(())
     }
 
     pub async fn get_tips_of(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
-        let mut cache = self.tips_cache.lock().await;
+        let mut cache = self.past_blocks_cache.lock().await;
         if let Some(tips) = cache.get(hash) {
             return Ok(tips.clone())
         }
