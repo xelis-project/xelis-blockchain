@@ -16,6 +16,17 @@ It is possible to create transactions, sign them, and introduce them in a block.
 - Support of Smart Contracts (xelis-vm)
 - Privacy (through Homomorphic Encryption)
 
+
+## BlockDAG
+
+XELIS try to implement & use a blockDAG which the rules are the following:
+- A block is considered "sync block" when the block height is less than `TOP_HEIGHT - STABLE_HEIGHT_LIMIT` and it's the unique block at a specific height or if it's the heaviest block by cumulative difficulty at its height.
+- A height is not unique anymore.
+- Topo height is unique for each block, but can change when the DAG is re-ordered.
+- You can have up to 3 previous blocks in a block.
+- For mining, you have to mine on one of 3 of the most heavier tips
+- Block should not have deviated to much from main chain / heavier tips.
+
 ## API
 
 Http Server running using Actix.

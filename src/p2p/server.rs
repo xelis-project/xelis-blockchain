@@ -807,8 +807,8 @@ impl P2pServer {
             }
     
             // add genesis block
-            let genesis_block = storage.get_block_metadata(1).await?;
-            request.add_block_id(genesis_block.get_hash().clone(), 1);
+            let genesis_block = storage.get_block_metadata(0).await?;
+            request.add_block_id(genesis_block.get_hash().clone(), 0);
             trace!("Sending a chain request with {} blocks", request.size());
             peer.set_chain_sync_requested(true);
         }

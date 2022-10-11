@@ -9,12 +9,10 @@ use crate::rpc::RpcServer;
 use super::difficulty::{check_difficulty, calculate_difficulty};
 use super::block::{Block, CompleteBlock};
 use super::mempool::{Mempool, SortedTx};
-use super::reader::{ReaderError, Reader};
 use super::{transaction::*, blockdag};
 use super::serializer::Serializer;
 use super::error::BlockchainError;
 use super::storage::Storage;
-use super::writer::Writer;
 use std::sync::atomic::{Ordering, AtomicU64};
 use std::collections::{HashMap, HashSet, VecDeque};
 use async_recursion::async_recursion;
@@ -23,50 +21,6 @@ use log::{info, error, debug};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use rand::Rng;
-
-#[derive(serde::Serialize)]
-pub struct Account {
-    balance: AtomicU64,
-    nonce: AtomicU64
-}
-
-impl Account {
-    pub fn new(balance: u64, nonce: u64) -> Self {
-        Self {
-            balance: AtomicU64::new(balance),
-            nonce: AtomicU64::new(nonce)
-        }
-    }
-
-    pub fn get_balance(&self) -> &AtomicU64 {
-        &self.balance
-    }
-
-    pub fn get_nonce(&self) -> &AtomicU64 {
-        &self.nonce
-    }
-
-    pub fn read_balance(&self) -> u64 {
-        self.balance.load(Ordering::Acquire)
-    }
-
-    pub fn read_nonce(&self) -> u64 {
-        self.nonce.load(Ordering::Acquire)
-    }
-}
-
-impl Serializer for Account {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let balance = reader.read_u64()?;
-        let nonce = reader.read_u64()?;
-        Ok(Self::new(balance, nonce))
-    }
-
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u64(&self.read_balance());
-        writer.write_u64(&self.read_nonce());
-    }
-}
 
 #[derive(Debug, clap::StructOpt)]
 pub struct Config {
@@ -243,6 +197,10 @@ impl Blockchain {
         }
 
         let tips_at_height = storage.get_blocks_at_height(block_height).await?;
+        if tips_at_height.len() == 1 {
+            return Ok(true)
+        }
+
         if tips_at_height.len() > 1 {
             let mut blocks_in_main_chain = 0;
             for hash in tips_at_height {
@@ -990,11 +948,11 @@ impl Blockchain {
             if DEV_FEE_PERCENT != 0 {
                 let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
                 let account = storage.get_account(self.get_dev_address()).await?;
-                account.balance.fetch_add(dev_fee, Ordering::Relaxed);
+                account.get_balance().fetch_add(dev_fee, Ordering::Relaxed);
                 block_reward -= dev_fee;
             }
             let account = storage.get_account(transaction.get_owner()).await?;
-            account.balance.fetch_add(block_reward + fees, Ordering::Relaxed);
+            account.get_balance().fetch_add(block_reward + fees, Ordering::Relaxed);
             Ok(())
         } else {
             Err(BlockchainError::InvalidMinerTx)
@@ -1021,7 +979,7 @@ impl Blockchain {
                         let mut total = *fee;
                         for tx in txs {
                             let to_account = storage.get_account(&tx.to).await?; // update receiver's account
-                            to_account.balance.fetch_add(tx.amount, Ordering::Relaxed);
+                            to_account.get_balance().fetch_add(tx.amount, Ordering::Relaxed);
                             total += tx.amount;
                         }
                         amount += total;
@@ -1032,8 +990,8 @@ impl Blockchain {
                 };
 
                 let account = storage.get_account(transaction.get_owner()).await?;
-                account.balance.fetch_min(amount, Ordering::Relaxed);
-                account.nonce.fetch_add(1, Ordering::Relaxed);
+                account.get_balance().fetch_min(amount, Ordering::Relaxed);
+                account.get_nonce().fetch_add(1, Ordering::Relaxed);
             }
         };
         Ok(())

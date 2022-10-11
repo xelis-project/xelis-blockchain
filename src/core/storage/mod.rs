@@ -1,14 +1,14 @@
 use crate::core::immutable::Immutable;
 use crate::crypto::key::PublicKey;
 use crate::crypto::hash::Hash;
+use super::account::Account;
 use super::reader::{Reader, ReaderError};
 use super::block::{CompleteBlock, Block};
 use super::transaction::Transaction;
 use super::serializer::Serializer;
 use super::error::{BlockchainError, DiskContext};
-use super::blockchain::Account;
 use super::writer::Writer;
-use std::collections::{HashSet, HashMap};
+use std::collections::HashSet;
 use std::hash::Hash as StdHash;
 use tokio::sync::Mutex;
 use std::sync::Arc;
