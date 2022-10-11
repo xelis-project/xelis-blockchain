@@ -8,14 +8,14 @@ use crate::crypto::hash::Hash;
 #[derive(Clone)]
 pub struct BlockId {
     hash: Hash,
-    height: u64
+    topoheight: u64
 }
 
 impl BlockId {
-    pub fn new(hash: Hash, height: u64) -> Self {
+    pub fn new(hash: Hash, topoheight: u64) -> Self {
         Self {
             hash,
-            height
+            topoheight
         }
     }
 
@@ -23,19 +23,19 @@ impl BlockId {
         &self.hash
     }
 
-    pub fn get_height(&self) -> u64 {
-        self.height
+    pub fn get_topoheight(&self) -> u64 {
+        self.topoheight
     }
 
     pub fn consume(self) -> (Hash, u64) {
-        (self.hash, self.height)
+        (self.hash, self.topoheight)
     }
 }
 
 impl Serializer for BlockId {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(self.get_hash());
-        writer.write_u64(&self.get_height());
+        writer.write_u64(&self.get_topoheight());
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -55,10 +55,10 @@ impl ChainRequest {
         }
     }
 
-    pub fn add_block_id(&mut self, hash: Hash, height: u64) {
+    pub fn add_block_id(&mut self, hash: Hash, topoheight: u64) {
         self.blocks.push(BlockId {
             hash,
-            height
+            topoheight
         });
     }
 
@@ -95,14 +95,14 @@ impl Serializer for ChainRequest {
 
 pub struct CommonPoint<'a> {
     hash: Cow<'a, Hash>,
-    height: u64
+    topoheight: u64
 }
 
 impl<'a> CommonPoint<'a> {
-    pub fn new(hash: Cow<'a, Hash>, height: u64) -> Self {
+    pub fn new(hash: Cow<'a, Hash>, topoheight: u64) -> Self {
         Self {
             hash,
-            height
+            topoheight
         }
     }
 
@@ -110,21 +110,21 @@ impl<'a> CommonPoint<'a> {
         &self.hash
     }
 
-    pub fn get_height(&self) -> u64 {
-        self.height
+    pub fn get_topoheight(&self) -> u64 {
+        self.topoheight
     }
 }
 
 impl Serializer for CommonPoint<'_> {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(&self.hash);
-        writer.write_u64(&self.height);
+        writer.write_u64(&self.topoheight);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let hash = Cow::Owned(reader.read_hash()?);
-        let height = reader.read_u64()?;
-        Ok(Self { hash, height })
+        let topoheight = reader.read_u64()?;
+        Ok(Self { hash, topoheight })
     }
 }
 

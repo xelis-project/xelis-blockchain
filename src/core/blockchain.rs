@@ -871,8 +871,8 @@ impl Blockchain {
 
         if block.get_height() > self.get_height() {
             self.height.store(block.get_height(), Ordering::Release);
-            // TODO save top height
         }
+        self.topoheight.store(storage.get_topo_height_for_hash(&block_hash).await?, Ordering::Release);
         self.supply.fetch_add(block_reward, Ordering::Release);
         debug!("Adding new block '{}' with {} txs and {} tips at height {}", block_hash, block.get_txs_count(), tips_count, block.get_height());
         if broadcast {
