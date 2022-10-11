@@ -627,14 +627,14 @@ impl P2pServer {
                 debug!("Block {} found for height: {}", hash, height);
                 if block.get_height() == height { // common point
                     debug!("common point with peer found at block {} hash: {}", height, hash);
+                    let mut topoheight = storage.get_topo_height_for_hash(&hash).await? + 1;
                     common_point = Some(CommonPoint::new(Cow::Owned(hash), height));
-                    let top_height = self.blockchain.get_height();
-                    let mut height = block.get_height() + 1;
-                    while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && height <= top_height {
-                        let metadata = storage.get_block_metadata(height).await?;
-                        debug!("for request, adding hash {} for height {}", metadata.get_hash(), height);
-                        response_blocks.push(Cow::Owned(metadata.get_hash().clone()));
-                        height += 1;
+                    let top_height = self.blockchain.get_topo_height();
+                    while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && topoheight <= top_height {
+                        let hash = storage.get_hash_at_topo_height(topoheight).await?;
+                        debug!("for request, adding hash {} for topoheight {}", hash, topoheight);
+                        response_blocks.push(Cow::Owned(hash));
+                        topoheight += 1;
                     }
                     break;
                 }
@@ -785,8 +785,8 @@ impl P2pServer {
             let height = self.blockchain.get_height();
             let mut i = 0;
             while i < height && request.size() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
-                let metadata = storage.get_block_metadata(height - i).await?;
-                request.add_block_id(metadata.get_hash().clone(), height - i);
+                let hash = storage.get_hash_at_topo_height(height - i).await?;
+                request.add_block_id(hash, height - i);
                 match request.size() {
                     0..=19 => {
                         i += 1;
@@ -807,8 +807,8 @@ impl P2pServer {
             }
     
             // add genesis block
-            let genesis_block = storage.get_block_metadata(0).await?;
-            request.add_block_id(genesis_block.get_hash().clone(), 0);
+            let genesis_block = storage.get_hash_at_topo_height(0).await?;
+            request.add_block_id(genesis_block, 0);
             trace!("Sending a chain request with {} blocks", request.size());
             peer.set_chain_sync_requested(true);
         }

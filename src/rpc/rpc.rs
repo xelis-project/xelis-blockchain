@@ -13,8 +13,8 @@ pub struct DataHash<T> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetBlockAtHeightParams {
-    height: u64
+pub struct GetBlockAtTopoHeightParams {
+    topoheight: u64
 }
 
 #[derive(Serialize, Deserialize)]
@@ -80,8 +80,9 @@ fn parse_params<P: DeserializeOwned>(value: Value) -> Result<P, RpcError> {
 pub fn register_methods(server: &mut RpcServer) {
     info!("Registering RPC methods...");
     server.register_method("get_height", method!(get_height));
+    server.register_method("get_topoheight", method!(get_topoheight));
     server.register_method("get_block_template", method!(get_block_template));
-    server.register_method("get_block_at_height", method!(get_block_at_height));
+    server.register_method("get_block_at_height", method!(get_block_at_topoheight));
     server.register_method("get_block_by_hash", method!(get_block_by_hash));
     server.register_method("get_top_block", method!(get_top_block));
     server.register_method("submit_block", method!(submit_block));
@@ -103,12 +104,19 @@ async fn get_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, R
     Ok(json!(blockchain.get_height()))
 }
 
-async fn get_block_at_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
-    let params: GetBlockAtHeightParams = parse_params(body)?;
+async fn get_topoheight(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+    Ok(json!(blockchain.get_topo_height()))
+}
+
+async fn get_block_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    let params: GetBlockAtTopoHeightParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
-    let metadata = storage.get_block_metadata(params.height).await?;
-    let block = storage.get_complete_block(metadata.get_hash()).await?;
-    Ok(json!(DataHash { hash: metadata.get_hash().clone(), data: block }))
+    let hash = storage.get_hash_at_topo_height(params.topoheight).await?;
+    let block = storage.get_complete_block(&hash).await?;
+    Ok(json!(DataHash { hash, data: block }))
 }
 
 async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {

@@ -26,6 +26,15 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 - You can have up to 3 previous blocks in a block.
 - For mining, you have to mine on one of 3 of the most heavier tips
 - Block should not have deviated to much from main chain / heavier tips.
+- Maximum 9% of difficulty difference between Tips selected in the same block.
+
+## Storage
+- Transactions: Hash
+- Blocks: Hash
+- Metadata: Hash
+- Topo by Hash: Hash
+- Hash at Topo: TopoHeight
+- Blocks At Height: Height
 
 ## API
 
@@ -33,8 +42,9 @@ Http Server running using Actix.
 
 Methods available:
 - `get_height`
+- `get_topoheight`
 - `get_block_template`
-- `get_block_at_height`
+- `get_block_at_topoheight`
 - `get_block_by_hash`
 - `get_top_block`
 - `submit_block`

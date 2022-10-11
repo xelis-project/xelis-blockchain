@@ -17,6 +17,7 @@ use sled::Tree;
 use log::{error, debug};
 
 const TIPS: &[u8; 4] = b"TIPS";
+const TOP_HASH: &[u8; 3] = b"THA";
 
 pub type Tips = HashSet<Hash>;
 
@@ -57,17 +58,17 @@ pub struct BlockMetadata {
     cumulative_difficulty: u64,
     supply: u64,
     burned: u64,
-    hash: Hash
+    height: u64
 }
 
 impl BlockMetadata {
-    pub fn new(difficulty: u64, cumulative_difficulty: u64, supply: u64, burned: u64, hash: Hash) -> Self {
+    pub fn new(difficulty: u64, cumulative_difficulty: u64, supply: u64, burned: u64, height: u64) -> Self {
         Self {
             difficulty,
             cumulative_difficulty,
             supply,
             burned,
-            hash
+            height
         }
     }
 
@@ -87,8 +88,8 @@ impl BlockMetadata {
         self.burned
     }
 
-    pub fn get_hash(&self) -> &Hash {
-        &self.hash
+    pub fn get_height(&self) -> u64 {
+        self.height
     }
 }
 
@@ -98,7 +99,7 @@ impl Serializer for BlockMetadata {
         writer.write_u64(&self.cumulative_difficulty);
         writer.write_u64(&self.supply);
         writer.write_u64(&self.burned);
-        writer.write_hash(&self.hash);
+        writer.write_u64(&self.height);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -106,9 +107,9 @@ impl Serializer for BlockMetadata {
         let cumulative_difficulty = reader.read_u64()?;
         let supply = reader.read_u64()?;
         let burned = reader.read_u64()?;
-        let hash = reader.read_hash()?;
+        let height = reader.read_u64()?;
 
-        Ok(Self::new(difficulty, cumulative_difficulty, supply, burned, hash))
+        Ok(Self::new(difficulty, cumulative_difficulty, supply, burned, height))
     }
 }
 
@@ -118,17 +119,17 @@ pub struct Storage {
     blocks: Tree, // all blocks on disk
     metadata: Tree,
     blocks_at_height: Tree, // all blocks height at specific height
-    tips: Tree, // last tips saved on disk
-    topo_at_hash: Tree, // topo at hash on disk
+    extra: Tree, // all extra data saved on disk
+    topo_by_hash: Tree, // topo at hash on disk
     hash_at_topo: Tree, // hash at topo height on disk
     // cached in memory
     transactions_cache: Mutex<LruCache<Hash, Arc<Transaction>>>,
     blocks_cache: Mutex<LruCache<Hash, Arc<Block>>>,
     // Only accounts can be updated
     accounts_cache: Mutex<LruCache<PublicKey, Arc<Account>>>,
-    metadata_cache: Mutex<LruCache<u64, Arc<BlockMetadata>>>,
+    metadata_cache: Mutex<LruCache<Hash, Arc<BlockMetadata>>>,
     past_blocks_cache: Mutex<LruCache<Hash, Arc<Vec<Hash>>>>, // previous blocks saved at each new block
-    topo_at_hash_cache: Mutex<LruCache<Hash, u64>>,
+    topo_by_hash_cache: Mutex<LruCache<Hash, u64>>,
     hash_at_topo_cache: Mutex<LruCache<u64, Hash>>,
     tips_cache: Tips
 }
@@ -142,20 +143,20 @@ impl Storage {
             blocks: sled.open_tree("blocks")?,
             metadata: sled.open_tree("metadata")?,
             blocks_at_height: sled.open_tree("blocks_at_height")?,
-            tips: sled.open_tree("tips")?,
-            topo_at_hash: sled.open_tree("topo_at_hash")?,
+            extra: sled.open_tree("extra")?,
+            topo_by_hash: sled.open_tree("topo_at_hash")?,
             hash_at_topo: sled.open_tree("hash_at_topo")?,
             transactions_cache: Mutex::new(LruCache::new(1024)),
             accounts_cache: Mutex::new(LruCache::new(1024)),
             blocks_cache: Mutex::new(LruCache::new(1024)),
             metadata_cache: Mutex::new(LruCache::new(1024)),
             past_blocks_cache: Mutex::new(LruCache::new(1024)),
-            topo_at_hash_cache: Mutex::new(LruCache::new(1024)),
+            topo_by_hash_cache: Mutex::new(LruCache::new(1024)),
             hash_at_topo_cache: Mutex::new(LruCache::new(1024)),
             tips_cache: HashSet::new()
         };
         
-        if let Ok(tips) = storage.load_from_disk::<Tips>(&storage.tips, TIPS) {
+        if let Ok(tips) = storage.load_from_disk::<Tips>(&storage.extra, TIPS) {
             debug!("Found tips: {}", tips.len());
             storage.tips_cache = tips;
         }
@@ -202,6 +203,22 @@ impl Storage {
         Ok(Arc::new(value))
     }
 
+    async fn delete_data_no_arc<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Mutex<LruCache<K, V>>, key: &K) -> Result<V, BlockchainError> {
+        let bytes = match tree.remove(key.to_bytes())? {
+            Some(data) => data.to_vec(),
+            None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
+        };
+
+        let mut cache = cache.lock().await;
+        if let Some(value) = cache.pop(key) {
+            return Ok(value);
+        }
+
+        let mut reader = Reader::new(&bytes);
+        let value = V::read(&mut reader)?;
+        Ok(value)
+    }
+
     pub async fn has_account(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
         Ok(self.accounts_cache.lock().await.contains(key) || self.accounts.contains_key(key.as_bytes())?)
     }
@@ -239,35 +256,42 @@ impl Storage {
         }
         self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
 
-        let metadata = BlockMetadata::new(difficulty, cumulative_difficulty, supply, burned, hash.clone());
-        self.metadata.insert(block.get_height().to_bytes(), metadata.to_bytes())?;
+        let metadata = BlockMetadata::new(difficulty, cumulative_difficulty, supply, burned, block.get_height());
+        self.metadata.insert(hash.as_bytes(), metadata.to_bytes())?;
 
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
-        self.metadata_cache.lock().await.put(block.get_height(), Arc::new(metadata));
+        self.extra.insert(TOP_HASH, hash.as_bytes())?;
+
+        self.metadata_cache.lock().await.put(hash.clone(), Arc::new(metadata));
         self.blocks_cache.lock().await.put(hash, block);
 
         Ok(())
     }
 
-    pub async fn pop_blocks(&mut self, current_height: u64, n: u64) -> Result<(u64, BlockMetadata), BlockchainError> {
+    pub async fn pop_blocks(&mut self, current_height: u64, n: u64) -> Result<(u64, u64, Arc<BlockMetadata>), BlockchainError> {
         if current_height <= n as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
         }
 
         for i in current_height..n {
-            let metadata = self.delete_data(&self.metadata, &self.metadata_cache, &(current_height - i)).await?;
-            let block = self.delete_data(&self.blocks, &self.blocks_cache, metadata.get_hash()).await?;
+            let block_hash = self.delete_data_no_arc(&self.hash_at_topo, &self.hash_at_topo_cache, &(current_height - i)).await?;
+            self.delete_data_no_arc(&self.topo_by_hash, &self.topo_by_hash_cache, &block_hash).await?;
+
+            self.delete_data(&self.metadata, &self.metadata_cache, &block_hash).await?;
+            let block = self.delete_data(&self.blocks, &self.blocks_cache, &block_hash).await?;
             for tx in block.get_transactions() {
                 self.delete_data(&self.transactions, &self.transactions_cache, tx).await?;
                 // TODO revert TXs
             }
         }
 
-        let (new_height, metadata) = self.get_top_metadata()?;
+        let (top_hash, metadata) = self.get_top_metadata().await?;
+        let new_height = metadata.get_height();
         if new_height != current_height - n {
             error!("Error on pop blocks ! height: {}, n: {}, new height: {}", current_height, n, new_height);
         }
-        Ok((new_height, metadata))
+        let topoheight = self.get_topo_height_for_hash(&top_hash).await?;
+        Ok((new_height, topoheight, metadata))
     }
 
     pub fn has_blocks(&self) -> bool {
@@ -286,19 +310,15 @@ impl Storage {
         self.get_data(&self.blocks, &self.blocks_cache, hash).await
     }
 
-    pub async fn get_block_metadata(&self, height: u64) -> Result<Arc<BlockMetadata>, BlockchainError> {
-        self.get_data(&self.metadata, &self.metadata_cache, &height).await
-    }
-
     pub async fn get_block_metadata_by_hash(&self, hash: &Hash) -> Result<Arc<BlockMetadata>, BlockchainError> {
-        let block = self.get_data(&self.blocks, &self.blocks_cache, hash).await?;
-        self.get_block_metadata(block.get_height()).await
+        self.get_data(&self.metadata, &self.metadata_cache, hash).await
     }
 
 
-    pub async fn get_block_at_height(&self, height: u64) -> Result<(Hash, Arc<Block>), BlockchainError> {
-        let metadata = self.get_block_metadata(height).await?;
-        Ok((metadata.get_hash().clone(), self.get_data(&self.blocks, &self.blocks_cache, &metadata.hash).await?))
+    pub async fn get_block_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<Block>), BlockchainError> {
+        let hash = self.get_hash_at_topo_height(topoheight).await?;
+        let block = self.get_data(&self.blocks, &self.blocks_cache, &hash).await?;
+        Ok((hash, block))
     }
 
     pub async fn get_complete_block(&self, hash: &Hash) -> Result<CompleteBlock, BlockchainError> {
@@ -314,41 +334,19 @@ impl Storage {
     }
 
     pub fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
-        let (_, metadata) = self.get_top_metadata()?;
-        Ok(metadata.get_hash().clone()) // TODO
+        self.load_from_disk(&self.extra, TOP_HASH)
     }
 
-    // TODO generic
-    pub fn get_top_block(&self) -> Result<Block, BlockchainError> {
-        let data = match self.blocks.last()? {
-            Some((_, data)) => data,
-            None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::GetTopBlock))
-        };
-        let bytes = data.to_vec();
-        let mut reader = Reader::new(&bytes);
-        let value = Block::read(&mut reader)?;
-        Ok(value)
-    }
-
-    pub fn get_top_metadata(&self) -> Result<(u64, BlockMetadata), BlockchainError> {
-        let (key, value) = match self.metadata.last()? {
-            Some((key, value)) => (key, value),
-            None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::GetTopMetadata))
-        };
-
-        let bytes = key.to_vec();
-        let mut reader = Reader::new(&bytes);
-        let height = u64::read(&mut reader)?;
-
-        let bytes = value.to_vec();
-        let mut reader = Reader::new(&bytes);
-        let metadata = BlockMetadata::read(&mut reader)?;
-        Ok((height, metadata))
+    pub async fn get_top_metadata(&self) -> Result<(Hash, Arc<BlockMetadata>), BlockchainError> {        
+        let hash = self.get_top_block_hash()?;
+        let metadata = self.get_block_metadata_by_hash(&hash).await?;
+        debug!("Top block hash is {} at height {}", hash, metadata.get_height());
+        Ok((hash, metadata))
     }
 
     pub async fn get_top_complete_block(&self) -> Result<CompleteBlock, BlockchainError> {
-        let (_, metadata) = self.get_top_metadata()?;
-        let block = self.get_block_by_hash(metadata.get_hash()).await?;
+        let (hash, _) = self.get_top_metadata().await?;
+        let block = self.get_block_by_hash(&hash).await?;
         let mut transactions = Vec::new();
         for tx in block.get_transactions() {
             let transaction = self.get_transaction(tx).await?;
@@ -365,7 +363,7 @@ impl Storage {
 
     pub fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
         debug!("Saving {} Tips", tips.len());
-        self.tips.insert(TIPS, tips.to_bytes())?;
+        self.extra.insert(TIPS, tips.to_bytes())?;
         self.tips_cache = tips.clone();
         Ok(())
     }
@@ -412,11 +410,11 @@ impl Storage {
     }
 
     pub async fn set_topo_height_for_block(&self, hash: Hash, height: u64) -> Result<(), BlockchainError> {
-        self.topo_at_hash.insert(hash.as_bytes(), height.to_bytes())?;
+        self.topo_by_hash.insert(hash.as_bytes(), height.to_bytes())?;
         self.hash_at_topo.insert(height.to_be_bytes(), hash.as_bytes())?;
 
         // save in cache
-        let mut topo = self.topo_at_hash_cache.lock().await;
+        let mut topo = self.topo_by_hash_cache.lock().await;
         let mut hash_at_topo = self.hash_at_topo_cache.lock().await;
         topo.put(hash.clone(), height);
         hash_at_topo.put(height, hash);
@@ -424,25 +422,26 @@ impl Storage {
     }
 
     // TODO generic
-    pub async fn get_topo_height_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        let mut topo_at_hash = self.topo_at_hash_cache.lock().await;
+    pub async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        let mut topo_at_hash = self.topo_by_hash_cache.lock().await;
         if let Some(value) = topo_at_hash.get(hash) {
             return Ok(*value)
         }
 
-        let height = self.load_from_disk(&self.topo_at_hash, hash.as_bytes())?;
+        debug!("Trying to read topo of hash {}", hash);
+        let height = self.load_from_disk(&self.topo_by_hash, hash.as_bytes())?;
         topo_at_hash.put(hash.clone(), height);
         Ok(height)
     }
 
-    pub async fn get_block_hash_at_topo_height(&self, height: &u64) -> Result<Hash, BlockchainError> {
+    pub async fn get_hash_at_topo_height(&self, height: u64) -> Result<Hash, BlockchainError> {
         let mut hash_at_topo = self.hash_at_topo_cache.lock().await;
-        if let Some(value) = hash_at_topo.get(height) {
+        if let Some(value) = hash_at_topo.get(&height) {
             return Ok(value.clone())
         }
 
         let hash: Hash = self.load_from_disk(&self.hash_at_topo, &height.to_be_bytes())?;
-        hash_at_topo.put(*height, hash.clone());
+        hash_at_topo.put(height, hash.clone());
         Ok(hash)
     }
 
