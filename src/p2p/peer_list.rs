@@ -77,10 +77,10 @@ impl PeerList {
         }
     }
 
-    pub fn get_best_height(&self) -> u64 { // TODO: Calculate median of all peers
+    pub fn get_best_topoheight(&self) -> u64 { // TODO: Calculate median of all peers
         let mut best_height = 0;
         for (_, peer) in self.peers.iter() {
-            let height = peer.get_block_height();
+            let height = peer.get_block_topoheight();
             if height > best_height {
                 best_height = height;
             }

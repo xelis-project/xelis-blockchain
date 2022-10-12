@@ -12,22 +12,22 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct Ping<'a> {
     block_top_hash: Cow<'a, Hash>,
-    block_height: u64,
+    block_topoheight: u64,
     peer_list: Vec<SocketAddr>
 }
 
 impl<'a> Ping<'a> {
-    pub fn new(block_top_hash: Cow<'a, Hash>, block_height: u64, peer_list: Vec<SocketAddr>) -> Self {
+    pub fn new(block_top_hash: Cow<'a, Hash>, block_topoheight: u64, peer_list: Vec<SocketAddr>) -> Self {
         Self {
             block_top_hash,
-            block_height,
+            block_topoheight,
             peer_list
         }
     }
 
     pub async fn update_peer(self, peer: &Arc<Peer>) {
         peer.set_block_top_hash(self.block_top_hash.into_owned()).await;
-        peer.set_block_height(self.block_height);
+        peer.set_block_topoheight(self.block_topoheight);
 
         let mut peers = peer.get_peers().lock().await;
         for peer in self.peer_list {
@@ -45,7 +45,7 @@ impl<'a> Ping<'a> {
 impl Serializer for Ping<'_> {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(&self.block_top_hash);
-        writer.write_u64(&self.block_height);
+        writer.write_u64(&self.block_topoheight);
         writer.write_u8(self.peer_list.len() as u8);
         for peer in &self.peer_list {
             writer.write_bytes(&ip_to_bytes(peer));
@@ -54,7 +54,7 @@ impl Serializer for Ping<'_> {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let block_top_hash = Cow::Owned(reader.read_hash()?);
-        let block_height = reader.read_u64()?;
+        let block_topoheight = reader.read_u64()?;
         let peers_len = reader.read_u8()? as usize;
         if peers_len > P2P_PING_PEER_LIST_LIMIT {
             return Err(ReaderError::InvalidValue)
@@ -66,6 +66,6 @@ impl Serializer for Ping<'_> {
             peer_list.push(peer);
         }
 
-        Ok(Self { block_top_hash, block_height, peer_list })
+        Ok(Self { block_top_hash, block_topoheight, peer_list })
     }
 }

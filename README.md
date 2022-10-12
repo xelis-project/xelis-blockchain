@@ -35,6 +35,7 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 - Topo by Hash: Hash
 - Hash at Topo: TopoHeight
 - Blocks At Height: Height
+- Extra: Save highest TopoHeight and current Tips
 
 ## API
 

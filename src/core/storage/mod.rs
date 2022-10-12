@@ -17,7 +17,7 @@ use sled::Tree;
 use log::{error, debug};
 
 const TIPS: &[u8; 4] = b"TIPS";
-const TOP_HASH: &[u8; 3] = b"THA";
+const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
 
 pub type Tips = HashSet<Hash>;
 
@@ -260,7 +260,6 @@ impl Storage {
         self.metadata.insert(hash.as_bytes(), metadata.to_bytes())?;
 
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
-        self.extra.insert(TOP_HASH, hash.as_bytes())?;
 
         self.metadata_cache.lock().await.put(hash.clone(), Arc::new(metadata));
         self.blocks_cache.lock().await.put(hash, block);
@@ -333,14 +332,24 @@ impl Storage {
         Ok(complete_block)
     }
 
-    pub fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
-        self.load_from_disk(&self.extra, TOP_HASH)
+    pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
+        self.get_hash_at_topo_height(self.get_top_topoheight()?).await
     }
 
-    pub async fn get_top_metadata(&self) -> Result<(Hash, Arc<BlockMetadata>), BlockchainError> {        
-        let hash = self.get_top_block_hash()?;
+    pub fn get_top_topoheight(&self) -> Result<u64, BlockchainError> {
+        self.load_from_disk(&self.extra, TOP_TOPO_HEIGHT)
+    }
+
+    pub fn set_top_topoheight(&self, topoheight: u64) -> Result<(), BlockchainError> {
+        self.extra.insert(TOP_TOPO_HEIGHT, &topoheight.to_be_bytes())?;
+        Ok(())
+    }
+
+    pub async fn get_top_metadata(&self) -> Result<(Hash, Arc<BlockMetadata>), BlockchainError> {   
+        let topoheight = self.get_top_topoheight()?;
+        let hash = self.get_hash_at_topo_height(topoheight).await?;
         let metadata = self.get_block_metadata_by_hash(&hash).await?;
-        debug!("Top block hash is {} at height {}", hash, metadata.get_height());
+        debug!("Top block hash is {} at height {} and topoheight {}", hash, metadata.get_height(), topoheight);
         Ok((hash, metadata))
     }
 
@@ -368,7 +377,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn get_tips_of(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
+    pub async fn get_past_blocks_of(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
         let mut cache = self.past_blocks_cache.lock().await;
         if let Some(tips) = cache.get(hash) {
             return Ok(tips.clone())
@@ -419,6 +428,25 @@ impl Storage {
         topo.put(hash.clone(), height);
         hash_at_topo.put(height, hash);
         Ok(())
+    }
+
+    pub async fn is_block_topological_ordered(&self, hash: &Hash) -> bool {
+        let topoheight = match self.get_topo_height_for_hash(&hash).await {
+            Ok(topoheight) => topoheight,
+            Err(e) => {
+                debug!("Error while checking if block {} is ordered: {}", hash, e);
+                return false
+            }
+        };
+
+        let hash_at_topo = match self.get_hash_at_topo_height(topoheight).await {
+            Ok(hash_at_topo) => hash_at_topo,
+            Err(e) => {
+                debug!("Error while checking if a block hash is ordered at topo {}: {}", topoheight, e);
+                return false
+            }
+        };
+        hash_at_topo == *hash
     }
 
     // TODO generic

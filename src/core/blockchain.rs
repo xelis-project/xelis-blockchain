@@ -189,8 +189,13 @@ impl Blockchain {
         self.height.load(Ordering::Acquire)
     }
 
+    // returns the highest topological height
     pub fn get_topo_height(&self) -> u64 {
         self.topoheight.load(Ordering::Acquire)
+    }
+
+    pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
+        self.storage.read().await.get_top_block_hash().await
     }
 
     async fn is_block_sync_at_height(&self, storage: &Storage, hash: &Hash, height: u64) -> Result<bool, BlockchainError> {
@@ -243,7 +248,7 @@ impl Blockchain {
     // TODO: cache based on height/hash
     #[async_recursion]
     async fn find_tip_base(&self, storage: &Storage, hash: &Hash, height: u64) -> Result<(Hash, u64), BlockchainError> {
-        let tips = storage.get_tips_of(hash).await?;
+        let tips = storage.get_past_blocks_of(hash).await?;
         let tips_count = tips.len();
         if tips_count == 0 { // only genesis block can have 0 tips saved
             return Ok((hash.clone(), 0))
@@ -293,7 +298,7 @@ impl Blockchain {
 
     #[async_recursion] // TODO no recursion
     async fn build_reachability_recursive(&self, storage: &Storage, set: &mut HashSet<Hash>, hash: Hash, level: u8) -> Result<(), BlockchainError> {
-        let tips = storage.get_tips_of(&hash).await?;
+        let tips = storage.get_past_blocks_of(&hash).await?;
         set.insert(hash);
 
         if level < STABLE_HEIGHT_LIMIT as u8 * 2 {
@@ -341,7 +346,7 @@ impl Blockchain {
 
     #[async_recursion] // TODO no recursion
     async fn calculate_distance_from_mainchain_recursive(&self, storage: &Storage, set: &mut HashSet<u64>, hash: &Hash) -> Result<(), BlockchainError> {
-        let tips = storage.get_tips_of(hash).await?;
+        let tips = storage.get_past_blocks_of(hash).await?;
         for hash in tips.iter() {
             if self.is_block_ordered(storage, &hash).await? {
                 set.insert(storage.get_topo_height_for_hash(hash).await?);
@@ -449,7 +454,7 @@ impl Blockchain {
         let biggest_difficulty = storage.get_difficulty_for_block(best_tip).await?;
         let best_tip_timestamp = storage.get_timestamp_for_block(best_tip).await?;
 
-        let parent_tips = storage.get_tips_of(best_tip).await?;
+        let parent_tips = storage.get_past_blocks_of(best_tip).await?;
         let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &parent_tips).await?;
         let parent_best_tip_timestamp = storage.get_block_by_hash(parent_best_tip).await?.get_timestamp();
  
@@ -487,10 +492,6 @@ impl Blockchain {
 
     pub fn get_storage(&self) -> &RwLock<Storage> {
         &self.storage
-    }
-
-    pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
-        Ok(self.storage.read().await.get_top_block_hash()?)
     }
 
     pub fn get_mempool(&self) -> &RwLock<Mempool> {
@@ -848,12 +849,13 @@ impl Blockchain {
             storage.get_topo_height_for_hash(&base_hash).await?
         };
 
+        let mut highest_topo = 0;
         {
             let mut i = 0;
             for hash in full_order {
-                let topo = base_topo + i;
-                debug!("Block {} is now at topoheight {}", hash, topo);
-                storage.set_topo_height_for_block(hash, topo).await?;
+                highest_topo = base_topo + i;
+                debug!("Block {} is now at topoheight {}", hash, highest_topo);
+                storage.set_topo_height_for_block(hash, highest_topo).await?;
                 i += 1;
             }
         }
@@ -867,18 +869,23 @@ impl Blockchain {
             } // else tip has deviated
         }*/
 
+        // save highest topo height
+        storage.set_top_topoheight(highest_topo)?;
+        self.topoheight.store(highest_topo, Ordering::Release);
+
         storage.store_tips(&tips)?;
 
         if block.get_height() > self.get_height() {
             self.height.store(block.get_height(), Ordering::Release);
         }
-        self.topoheight.store(storage.get_topo_height_for_hash(&block_hash).await?, Ordering::Release);
+        let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
+        self.topoheight.store(topoheight, Ordering::Release);
         self.supply.fetch_add(block_reward, Ordering::Release);
-        debug!("Adding new block '{}' with {} txs and {} tips at height {}", block_hash, block.get_txs_count(), tips_count, block.get_height());
+        debug!("Adding new block '{}' with {} txs and {} tips at height {} and topoheight {}", block_hash, block.get_txs_count(), tips_count, block.get_height(), topoheight);
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
-                p2p.broadcast_block(&block, &block_hash).await;
+                p2p.broadcast_block(&block, topoheight, &block_hash).await;
             }
         }
         Ok(())

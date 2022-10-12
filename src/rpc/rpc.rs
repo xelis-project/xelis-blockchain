@@ -1,4 +1,4 @@
-use crate::{core::{blockchain::Blockchain, block::Block, serializer::Serializer, transaction::Transaction}, crypto::{hash::Hash, address::Address}};
+use crate::{core::{blockchain::Blockchain, block::{Block, CompleteBlock}, serializer::Serializer, transaction::Transaction}, crypto::{hash::Hash, address::Address}};
 use super::{RpcError, RpcServer};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{json, Value};
@@ -12,9 +12,22 @@ pub struct DataHash<T> {
     data: T
 }
 
+#[derive(Serialize)]
+pub struct TopoCompleteBlock {
+    hash: Hash,
+    topoheight: Option<u64>,
+    #[serde(flatten)]
+    block: CompleteBlock
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct GetBlockAtTopoHeightParams {
     topoheight: u64
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetBlocksAtHeightParams {
+    height: u64
 }
 
 #[derive(Serialize, Deserialize)]
@@ -82,7 +95,8 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("get_height", method!(get_height));
     server.register_method("get_topoheight", method!(get_topoheight));
     server.register_method("get_block_template", method!(get_block_template));
-    server.register_method("get_block_at_height", method!(get_block_at_topoheight));
+    server.register_method("get_block_at_topoheight", method!(get_block_at_topoheight));
+    server.register_method("get_blocks_at_height", method!(get_blocks_at_height));
     server.register_method("get_block_by_hash", method!(get_block_by_hash));
     server.register_method("get_top_block", method!(get_top_block));
     server.register_method("submit_block", method!(submit_block));
@@ -93,6 +107,7 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("submit_transaction", method!(submit_transaction));
     server.register_method("p2p_status", method!(p2p_status));
     server.register_method("get_mempool", method!(get_mempool));
+    server.register_method("get_tips", method!(get_tips));
     // TODO only in debug mode
     server.register_method("is_chain_valid", method!(is_chain_valid));
 }
@@ -131,7 +146,7 @@ async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value
         return Err(RpcError::UnexpectedParams)
     }
     let storage = blockchain.get_storage().read().await;
-    let hash = storage.get_top_block_hash()?;
+    let hash = storage.get_top_block_hash().await?;
     let block = storage.get_complete_block(&hash).await?;
     Ok(json!(DataHash { hash, data: block }))
 }
@@ -249,4 +264,31 @@ async fn is_chain_valid(blockchain: Arc<Blockchain>, body: Value) -> Result<Valu
 
     blockchain.check_validity().await?;
     Ok(json!(true))
+}
+
+async fn get_blocks_at_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    let params: GetBlocksAtHeightParams = parse_params(body)?;
+    let storage = blockchain.get_storage().read().await;
+
+    let mut blocks: Vec<TopoCompleteBlock> = Vec::new();
+    for hash in storage.get_blocks_at_height(params.height).await? {
+        let topoheight = if storage.is_block_topological_ordered(&hash).await {
+            Some(storage.get_topo_height_for_hash(&hash).await?)
+        } else {
+            None
+        };
+
+        let block = storage.get_complete_block(&hash).await?;
+        blocks.push(TopoCompleteBlock { hash, topoheight, block })
+    }
+    Ok(json!(blocks))
+}
+
+async fn get_tips(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+    let storage = blockchain.get_storage().read().await;
+    let tips = storage.get_tips().await?;
+    Ok(json!(tips))
 }

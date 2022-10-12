@@ -176,7 +176,7 @@ impl P2pServer {
         }
 
         let block_height = self.blockchain.get_height();
-        let top_hash = self.blockchain.get_storage().read().await.get_top_block_hash().unwrap_or_else(|_| Hash::zero());
+        let top_hash = self.blockchain.get_storage().read().await.get_top_block_hash().await.unwrap_or_else(|_| Hash::zero());
         Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), block_height, top_hash, peers))
     }
 
@@ -251,8 +251,14 @@ impl P2pServer {
     }
 
     async fn build_ping_packet(&self, peer: Option<&Arc<Peer>>) -> Ping<'_> {
-        let block_top_hash = self.blockchain.get_top_block_hash().await;
-        let block_height = self.blockchain.get_height();
+        let block_top_hash = match self.blockchain.get_top_block_hash().await {
+            Err(e) => {
+                error!("Couldn't get the top block hash from storage: {}", e);
+                Hash::zero()
+            },
+            Ok(hash) => hash
+        };
+        let top_topo_height = self.blockchain.get_topo_height();
         let mut new_peers = Vec::new();
         if let Some(peer) = peer {
             let current_time = get_current_time();
@@ -282,7 +288,7 @@ impl P2pServer {
                 }
             }
         }
-        Ping::new(Cow::Owned(block_top_hash.unwrap()), block_height, new_peers)
+        Ping::new(Cow::Owned(block_top_hash), top_topo_height, new_peers)
     }
 
     // build a ping packet with a specific peerlist for the peer
@@ -309,8 +315,8 @@ impl P2pServer {
 
     async fn select_random_best_peer(&self) -> Option<Arc<Peer>> {
         let peer_list = self.peer_list.lock().await;
-        let our_height = self.blockchain.get_height();
-        let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p| p.get_block_height() > our_height).collect();
+        let our_height = self.blockchain.get_topo_height();
+        let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p| p.get_block_topoheight() > our_height).collect();
         let count = peers.len();
         trace!("peers available for random selection: {}", count);
         if count == 0 {
@@ -627,7 +633,7 @@ impl P2pServer {
                 let (hash, mut topoheight) = block_id.consume();
                 debug!("Block {} found for topoheight: {}", hash, topoheight);
                 if storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
-                    debug!("common point with peer found at block {} hash: {}", topoheight, hash);
+                    debug!("common point with peer found at block {} with same topoheight at {}", topoheight, hash);
                     common_point = Some(CommonPoint::new(Cow::Owned(hash), topoheight));
                     let top_height = self.blockchain.get_topo_height();
                     topoheight += 1;
@@ -650,18 +656,20 @@ impl P2pServer {
         let mut storage = self.blockchain.get_storage().write().await; // lock until we get all blocks
         let mut blocks: Vec<CompleteBlock> = Vec::with_capacity(blocks_request.len());
         for hash in blocks_request { // Request all complete blocks now
-            let object_request = ObjectRequest::Block(hash.clone());
-            let response = peer.request_blocking_object(object_request, &ping).await?;
-            if let OwnedObjectResponse::Block(block) = response {
-                let block_hash = block.hash();
-                if hash != block_hash {
-                    return Err(P2pError::InvalidObjectResponse(block_hash).into())
-                } 
-                debug!("Received block {} at height {} from peer {}", hash, block.get_height(), peer.get_connection().get_address());
-                blocks.push(block);
-            } else {
-                error!("Peer {} sent us an invalid block response", peer.get_connection().get_address());
-                return Err(P2pError::ExpectedBlock.into())
+            if !storage.has_block(&hash).await? {
+                let object_request = ObjectRequest::Block(hash.clone());
+                let response = peer.request_blocking_object(object_request, &ping).await?;
+                if let OwnedObjectResponse::Block(block) = response {
+                    let block_hash = block.hash();
+                    if hash != block_hash {
+                        return Err(P2pError::InvalidObjectResponse(block_hash).into())
+                    } 
+                    debug!("Received block {} at height {} from peer {}", hash, block.get_height(), peer.get_connection().get_address());
+                    blocks.push(block);
+                } else {
+                    error!("Peer {} sent us an invalid block response", peer.get_connection().get_address());
+                    return Err(P2pError::ExpectedBlock.into())
+                }
             }
         }
 
@@ -717,7 +725,7 @@ impl P2pServer {
     pub async fn get_best_height(&self) -> u64 {
         let our_height = self.blockchain.get_height();
         let peer_list = self.peer_list.lock().await;
-        let best_height = peer_list.get_best_height();
+        let best_height = peer_list.get_best_topoheight();
         if best_height > our_height {
             best_height
         } else {
@@ -754,22 +762,21 @@ impl P2pServer {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &Block, hash: &Hash) {
-        let block_height = block.get_height();
-        trace!("Broadcast block: {} at height {}", hash, block_height);
+    pub async fn broadcast_block(&self, block: &Block, topoheight: u64, hash: &Hash) {
+        trace!("Broadcast block: {} at topoheight {}", hash, topoheight);
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to deadlock
-        let ping = Ping::new(Cow::Borrowed(hash), block_height, Vec::new());
+        let ping = Ping::new(Cow::Borrowed(hash), topoheight, Vec::new());
         let packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Owned(ping)));
         let bytes = Bytes::from(packet.to_bytes());
         // TODO should we move it in another async task ?
         let peer_list = self.peer_list.lock().await;
         for (_, peer) in peer_list.get_peers() {
             // if the peer can directly accept this new block, send it
-            if peer.get_block_height() == block_height - 1 {
+            if peer.get_block_topoheight() == topoheight - 1 {
                 trace!("Broadcast block to {}", peer);
                 peer_list.send_bytes_to_peer(peer, bytes.clone()).await;
-                peer.set_block_height(block_height); // we suppose peer will accept the block like us
+                peer.set_block_topoheight(topoheight); // we suppose peer will accept the block like us
             }
         }
     }
