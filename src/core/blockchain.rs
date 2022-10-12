@@ -204,7 +204,7 @@ impl Blockchain {
             return Ok(true)
         }
 
-        if block_height + STABLE_HEIGHT_LIMIT > height || !self.is_block_ordered(storage, hash).await? {
+        if block_height + STABLE_HEIGHT_LIMIT > height || !storage.is_block_topological_ordered(hash).await {
             return Ok(false)
         }
 
@@ -216,7 +216,7 @@ impl Blockchain {
         if tips_at_height.len() > 1 {
             let mut blocks_in_main_chain = 0;
             for hash in tips_at_height {
-                if self.is_block_ordered(storage, &hash).await? {
+                if storage.is_block_topological_ordered(&hash).await {
                     blocks_in_main_chain += 1;
                     if blocks_in_main_chain > 1 {
                         return Ok(false)
@@ -337,18 +337,11 @@ impl Blockchain {
         Ok(true)
     }
 
-    async fn is_block_ordered(&self, storage: &Storage, hash: &Hash) -> Result<bool, BlockchainError> {
-        let topo_height = storage.get_topo_height_for_hash(hash).await?;
-        let hash_at_topo = storage.get_hash_at_topo_height(topo_height).await?;
-        debug!("Is block {} ordered: {}", hash, *hash == hash_at_topo);
-        Ok(*hash == hash_at_topo)
-    }
-
     #[async_recursion] // TODO no recursion
     async fn calculate_distance_from_mainchain_recursive(&self, storage: &Storage, set: &mut HashSet<u64>, hash: &Hash) -> Result<(), BlockchainError> {
         let tips = storage.get_past_blocks_of(hash).await?;
         for hash in tips.iter() {
-            if self.is_block_ordered(storage, &hash).await? {
+            if storage.is_block_topological_ordered(hash).await {
                 set.insert(storage.get_topo_height_for_hash(hash).await?);
             } else {
                 self.calculate_distance_from_mainchain_recursive(storage, set, hash).await?;
@@ -358,7 +351,7 @@ impl Blockchain {
     }
 
     async fn calculate_distance_from_mainchain(&self, storage: &Storage, hash: &Hash) -> Result<u64, BlockchainError> {
-        if self.is_block_ordered(storage, hash).await? {
+        if storage.is_block_topological_ordered(hash).await {
             return Ok(storage.get_topo_height_for_hash(hash).await?)
         }
 
@@ -407,7 +400,7 @@ impl Blockchain {
         let mut order: Vec<Hash> = Vec::new();
         let mut scores = Vec::new();
         for hash in block.get_tips() {
-            let is_ordered = self.is_block_ordered(storage, hash).await?;
+            let is_ordered = storage.is_block_topological_ordered(hash).await;
             if !is_ordered {
                 let diff = storage.get_cumulative_difficulty_for_block(hash).await?;
                 scores.push((hash, diff));
