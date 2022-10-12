@@ -130,7 +130,7 @@ impl Blockchain {
         let mut storage = self.storage.write().await;
         storage.register_account(self.dev_address.clone()).await?;
 
-        if GENESIS_BLOCK.len() != 0 {
+        let genesis_block = if GENESIS_BLOCK.len() != 0 {
             info!("De-serializing genesis block...");
             let genesis = CompleteBlock::from_hex(GENESIS_BLOCK.to_owned())?;
             if *genesis.get_miner() != self.dev_address {
@@ -142,16 +142,21 @@ impl Blockchain {
             }
 
             debug!("Adding genesis block '{}' to chain", GENESIS_BLOCK_HASH);
-            self.add_new_block_for_storage(&mut storage, genesis, false).await?;
+            genesis
         } else {
             error!("No genesis block found!");
             info!("Generating a new genesis block...");
             let miner_tx = Transaction::new(self.get_dev_address().clone(), TransactionVariant::Coinbase);
             let block = Block::new(0, get_current_timestamp(), Vec::new(), [0u8; 32], Immutable::Owned(miner_tx), Vec::new());
             let complete_block = CompleteBlock::new(Immutable::Owned(block), Vec::new());
-            info!("Genesis generated & added: {}, hash: {}", complete_block.to_hex(), complete_block.hash());
-            self.add_new_block_for_storage(&mut storage, complete_block, false).await?;
-        }
+            info!("Genesis generated: {}", complete_block.to_hex());
+            complete_block
+        };
+
+        // hardcode genesis block topoheight
+        storage.set_topo_height_for_block(genesis_block.hash(), 0).await?;
+
+        self.add_new_block_for_storage(&mut storage, genesis_block, false).await?;
 
         Ok(())
     }
@@ -853,6 +858,7 @@ impl Blockchain {
         // Save transactions & block
         let (block, txs) = block.split();
         let block = block.to_arc();
+        debug!("Saving block {} on disk", block_hash);
         storage.add_new_block(block.clone(), &txs, difficulty, block_hash.clone(), self.get_supply(), 0, self.get_burned_supply()).await?; // Add block to chain
 
         // Transaction execution
@@ -878,9 +884,14 @@ impl Blockchain {
         }
 
         let (base_hash, base_height) = self.find_common_base(storage, &tips).await?;
+        debug!("Base hash: {}, base height: {}", base_hash, base_height);
+
         let best_tip = self.find_best_tip(storage, &tips, &base_hash, base_height).await?;
+        debug!("Best tip selected: {}", best_tip);
 
         let full_order = self.generate_full_order(storage, &best_tip, &base_hash, base_height).await?;
+        debug!("Generated full order size: {}", full_order.len());
+
         let base_topo = if tips_count == 0 {
             0
         } else {
@@ -908,6 +919,7 @@ impl Blockchain {
         }*/
 
         // save highest topo height
+        debug!("Highest topo height found: {}", highest_topo);
         storage.set_top_topoheight(highest_topo)?;
         self.topoheight.store(highest_topo, Ordering::Release);
 
