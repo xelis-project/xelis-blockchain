@@ -368,6 +368,51 @@ impl Blockchain {
         Ok(lowest_height)
     }
 
+    #[async_recursion] // TODO no recursion
+    async fn find_tip_work_score_internal<'a>(&self, storage: &Storage, map: &mut HashMap<Hash, u64>, hash: &'a Hash, base_topoheight: u64, base_height: u64) -> Result<(), BlockchainError> {
+        let tips = storage.get_past_blocks_of(hash).await?;
+        for hash in tips.iter() {
+            if !map.contains_key(hash) {
+                let is_ordered = storage.is_block_topological_ordered(hash).await;
+                if !is_ordered || (is_ordered && storage.get_topo_height_for_hash(hash).await? >= base_topoheight) {
+                    self.find_tip_work_score_internal(storage, map, hash, base_topoheight, base_height).await?;
+                }
+            }
+        }
+
+        map.insert(hash.clone(), storage.get_difficulty_for_block(hash).await?);
+
+        Ok(())
+    }
+
+    // TODO cache
+    // find the sum of work done
+    async fn find_tip_work_score(&self, storage: &Storage, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashMap<Hash, u64>, u64), BlockchainError> {
+        let block = storage.get_block_by_hash(hash).await?;
+        let mut map: HashMap<Hash, u64> = HashMap::new();
+        let base_topoheight = storage.get_topo_height_for_hash(base).await?;
+        for hash in block.get_tips() {
+            if !map.contains_key(hash) {
+                let is_ordered = storage.is_block_topological_ordered(hash).await;
+                if !is_ordered || (is_ordered && storage.get_topo_height_for_hash(hash).await? >= base_topoheight) {
+                    self.find_tip_work_score_internal(storage, &mut map, hash, base_topoheight, base_height).await?;
+                }
+            }
+        }
+
+        if base != hash {
+            map.insert(base.clone(), storage.get_cumulative_difficulty_for_block(base).await?);
+        }
+        map.insert(hash.clone(), storage.get_difficulty_for_block(hash).await?);
+
+        let mut score = 0;
+        for value in map.values() {
+            score += value;
+        }
+
+        Ok((map, score))
+    }
+
     async fn find_best_tip<'a>(&self, storage: &Storage, tips: &'a HashSet<Hash>, base: &Hash, base_height: u64) -> Result<&'a Hash, BlockchainError> {
         if tips.len() == 0 {
             return Err(BlockchainError::ExpectedTips)
@@ -375,7 +420,7 @@ impl Blockchain {
 
         let mut scores = Vec::with_capacity(tips.len());
         for hash in tips {
-            let (_, cumulative_difficulty) = (0, 0); // TODO self.find_tip_work_score(storage, hash, base, base_height).await?;
+            let (_, cumulative_difficulty) = self.find_tip_work_score(storage, hash, base, base_height).await?;
             scores.push((hash, cumulative_difficulty));
         }
 
