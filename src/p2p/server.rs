@@ -86,19 +86,33 @@ impl P2pServer {
                 Ok(addr) => addr,
                 Err(e) => return Err(P2pError::InvalidPeerAddress(format!("seed node {}: {}", peer, e)))
             };
-            self.try_to_connect_to_peer(addr, true);
+            if !self.is_connected_to_addr(&addr).await? {
+                self.try_to_connect_to_peer(addr, true);
+            }
         }
         Ok(())
     }
 
+    // every 10 seconds, verify
+    async fn maintains_seed_nodes(self: &Arc<Self>) -> Result<(), P2pError> {
+        let mut ping_interval = interval(Duration::from_secs(10));
+        loop {
+            ping_interval.tick().await;
+            if let Err(e) = self.connect_to_seed_nodes().await {
+                debug!("Error while connecting to seed nodes: {}", e);
+            };
+        }
+    }
     // connect to seed nodes, start p2p server
     // and wait on all new connections
     async fn start(self: &Arc<Self>) -> Result<(), P2pError> {
-        info!("Connecting to seed nodes...");
-        // allocate this buffer only one time, because we are using the same thread
-        if let Err(e) = self.connect_to_seed_nodes().await {
-            error!("Error while connecting to seed nodes: {}", e);
-        }
+        let zelf = Arc::clone(self);
+        tokio::spawn(async move {
+            info!("Connecting to seed nodes...");
+            if let Err(e) = zelf.maintains_seed_nodes().await {
+                error!("Error while maintening connection with seed nodes: {}", e);
+            };
+        });
 
         // start a new task for chain sync
         tokio::spawn(Arc::clone(&self).chain_sync_loop());
@@ -130,27 +144,33 @@ impl P2pServer {
     // block height and block top hash of this peer (to know if we are on the same chain)
     async fn verify_handshake(&self, mut connection: Connection, handshake: Handshake, out: bool, priority: bool) -> Result<(Peer, Vec<SocketAddr>), P2pError> {
         if *handshake.get_network_id() != NETWORK_ID {
+            debug!("{} has an invalid network id: {:#?}", connection, handshake.get_network_id());
+            connection.close().await?;
             return Err(P2pError::InvalidNetworkID);
         }
 
         if self.is_connected_to(&handshake.get_peer_id()).await? {
+            debug!("{} has an already used peer id {}", connection, handshake.get_peer_id());
             connection.close().await?;
             return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }
 
         if handshake.get_block_height() <= self.blockchain.get_height() { // peer is not greater than us
             let storage = self.blockchain.get_storage().read().await;
-            let block = match storage.get_block_by_hash(handshake.get_block_top_hash()).await {
-                Ok(block) => block,
+            match storage.get_block_by_hash(handshake.get_block_top_hash()).await {
+                Ok(block) => {
+                    if block.get_height() != handshake.get_block_height() {
+                        debug!("{} is not on the same chain!", connection);
+                        connection.close().await?;
+                        return Err(P2pError::InvalidHandshake)
+                    }
+                },
                 Err(_) => {
-                    warn!("Block '{}' not found at height '{}'.", handshake.get_block_top_hash(), handshake.get_block_height());
+                    debug!("{} has a block '{}' which is not found at height '{}'.", connection, handshake.get_block_top_hash(), handshake.get_block_height());
+                    connection.close().await?;
                     return Err(P2pError::InvalidHandshake)
                 }
             };
-            if block.get_height() != handshake.get_block_height() {
-                error!("Peer is not on the same chain!");
-                return Err(P2pError::InvalidHandshake)
-            }
         }
 
         connection.set_state(State::Success);
@@ -652,6 +672,7 @@ impl P2pServer {
     }
 
     async fn handle_chain_response(self: Arc<Self>, peer: &Arc<Peer>, blocks_request: Vec<Hash>, pop_count: u64) -> Result<(), BlockchainError> {
+        debug!("handling chain response from peer {}, {} blocks, pop count {}", peer, blocks_request.len(), pop_count);
         let ping = self.build_ping_packet_for_peer(peer).await;
         let mut storage = self.blockchain.get_storage().write().await; // lock until we get all blocks
         let mut blocks: Vec<CompleteBlock> = Vec::with_capacity(blocks_request.len());
@@ -680,7 +701,7 @@ impl P2pServer {
         if pop_count > 0 && (peer.is_priority() || ((pop_count <= MAX_BLOCK_REWIND) && !self.is_connected_to_a_priority_node().await)) {
             warn!("Rewinding chain because of peer {} (priority: {}, pop count: {})", peer.get_connection().get_address(), peer.is_priority(), pop_count);
             if let Err(e) = self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
-                error!("Error on rewind chain: pop count: {}, error: {}", pop_count, e);
+                error!("Error on rewind chain with pop count at {}, error: {}", pop_count, e);
             }
         }
 

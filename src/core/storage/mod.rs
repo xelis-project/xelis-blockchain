@@ -273,6 +273,7 @@ impl Storage {
         }
 
         for i in current_height..n {
+            debug!("Deleting block at topoheight {}", i);
             let block_hash = self.delete_data_no_arc(&self.hash_at_topo, &self.hash_at_topo_cache, &(current_height - i)).await?;
             self.delete_data_no_arc(&self.topo_by_hash, &self.topo_by_hash_cache, &block_hash).await?;
 
