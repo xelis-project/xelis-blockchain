@@ -267,31 +267,55 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn pop_blocks(&mut self, current_height: u64, n: u64) -> Result<(u64, u64, Arc<BlockMetadata>), BlockchainError> {
-        if current_height <= n as u64 { // also prevent removing genesis block
+    pub async fn pop_blocks(&mut self, current_topoheight: u64, n: u64) -> Result<(u64, u64, Arc<BlockMetadata>), BlockchainError> {
+        if current_topoheight <= n as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
         }
 
-        for i in current_height..n {
-            debug!("Deleting block at topoheight {}", i);
-            let block_hash = self.delete_data_no_arc(&self.hash_at_topo, &self.hash_at_topo_cache, &(current_height - i)).await?;
+        let mut topoheight = current_topoheight;
+        let mut tips = self.get_tips().await?;
+        while topoheight >= current_topoheight - n {
+            debug!("Deleting block at topoheight {}", topoheight);
+            let block_hash = self.delete_data_no_arc(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await?;
+            
             self.delete_data_no_arc(&self.topo_by_hash, &self.topo_by_hash_cache, &block_hash).await?;
-
             self.delete_data(&self.metadata, &self.metadata_cache, &block_hash).await?;
             let block = self.delete_data(&self.blocks, &self.blocks_cache, &block_hash).await?;
+            
+            // recalculate tips: delete current block hash, and add TIPS of this block
+            error!("Deleting {} from TIPS: {}", block_hash, tips.remove(&block_hash));
+            for hash in block.get_tips() {
+                error!("Adding previous block {} from {}", hash, block_hash);
+                tips.insert(hash.clone());
+            }
+
+            // get all blocks at same height, and delete current block hash from the list
+            let mut blocks_at_height = self.get_blocks_at_height(block.get_height()).await?;
+            blocks_at_height.remove(&block_hash);
+            if blocks_at_height.len() == 0 {
+                self.blocks_at_height.remove(block.get_height().to_be_bytes())?;
+            } else {
+                self.blocks_at_height.insert(block.get_height().to_be_bytes(), blocks_at_height.to_bytes())?;
+            }
+
             for tx in block.get_transactions() {
                 self.delete_data(&self.transactions, &self.transactions_cache, tx).await?;
                 // TODO revert TXs
             }
+
+            topoheight -= 1;
         }
 
-        let (top_hash, metadata) = self.get_top_metadata().await?;
-        let new_height = metadata.get_height();
-        if new_height != current_height - n {
-            error!("Error on pop blocks ! height: {}, n: {}, new height: {}", current_height, n, new_height);
+        for hash in &tips {
+            error!("hash {} at height {}", hash, self.get_height_for_block(&hash).await?);
         }
-        let topoheight = self.get_topo_height_for_hash(&top_hash).await?;
-        Ok((new_height, topoheight, metadata))
+        // store the new tips and topo topoheight
+        self.store_tips(&tips)?;
+        self.set_top_topoheight(topoheight)?;
+
+        let (_, metadata) = self.get_top_metadata().await?;
+
+        Ok((metadata.get_height(), topoheight, metadata))
     }
 
     pub fn has_blocks(&self) -> bool {
@@ -313,7 +337,6 @@ impl Storage {
     pub async fn get_block_metadata_by_hash(&self, hash: &Hash) -> Result<Arc<BlockMetadata>, BlockchainError> {
         self.get_data(&self.metadata, &self.metadata_cache, hash).await
     }
-
 
     pub async fn get_block_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<Block>), BlockchainError> {
         let hash = self.get_hash_at_topo_height(topoheight).await?;

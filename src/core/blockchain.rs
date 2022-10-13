@@ -949,8 +949,9 @@ impl Blockchain {
 
     // TODO missing burned supply, txs etc
     pub async fn rewind_chain_for_storage(&self, storage: &mut Storage, count: usize) -> Result<(), BlockchainError> {
-        debug!("Rewind chain with count = {}", count);
-        let (height, topoheight, metadata) = storage.pop_blocks(self.get_height(), count as u64).await?;
+        let topoheight = self.get_topo_height();
+        debug!("Rewind chain with count = {} and topoheight = {}", count, topoheight);
+        let (height, topoheight, metadata) = storage.pop_blocks(topoheight, count as u64).await?;
         self.height.store(height, Ordering::Release);
         self.topoheight.store(topoheight, Ordering::Release);
         self.supply.store(metadata.get_supply(), Ordering::Release); // recaculate supply
