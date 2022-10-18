@@ -376,7 +376,7 @@ impl P2pServer {
                     match data {
                         ConnectionMessage::Packet(bytes) => {
                             trace!("Data to send to {} received!", peer.get_connection().get_address());
-                            debug!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[5], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len() - 4);
+                            trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[5], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len() - 4);
                             peer.get_connection().send_bytes(&bytes).await?;
                             trace!("data sucessfully sent!");
                         }

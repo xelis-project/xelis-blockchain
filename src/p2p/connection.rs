@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use std::convert::TryInto;
 use bytes::Bytes;
-use log::{debug, warn};
+use log::{trace, warn};
 
 pub enum ConnectionMessage {
     Packet(Bytes),
@@ -80,7 +80,7 @@ impl Connection {
             warn!("Received invalid packet size: {} bytes (max: {} bytes) from peer {}", size, max_size, self.get_address());
             return Err(P2pError::InvalidPacketSize)
         }
-        debug!("Size received: {}", size);
+        trace!("Size received: {}", size);
 
         let bytes = self.read_all_bytes(&mut stream, buf, size).await?;
         let mut reader = Reader::new(&bytes);

@@ -13,7 +13,7 @@ use self::chain::{ChainRequest, ChainResponse};
 use self::handshake::Handshake;
 use self::ping::Ping;
 use std::borrow::Cow;
-use log::{debug, error};
+use log::{trace, error};
 
 // All registered packet ids
 const HANDSHAKE_ID: u8 = 0;
@@ -77,7 +77,7 @@ pub enum Packet<'a> {
 impl<'a> Serializer for Packet<'a> {
     fn read(reader: &mut Reader) -> Result<Packet<'a>, ReaderError> {
         let id = reader.read_u8()?;
-        debug!("Packet ID received: {}, size: {}", id, reader.total_size());
+        trace!("Packet ID received: {}, size: {}", id, reader.total_size());
         Ok(match id {
             HANDSHAKE_ID => Packet::Handshake(Cow::Owned(Handshake::read(reader)?)),
             TX_PROPAGATION_ID => Packet::TransactionPropagation(PacketWrapper::read(reader)?),
