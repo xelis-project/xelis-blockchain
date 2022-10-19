@@ -16,7 +16,6 @@ It is possible to create transactions, sign them, and introduce them in a block.
 - Support of Smart Contracts (xelis-vm)
 - Privacy (through Homomorphic Encryption)
 
-
 ## BlockDAG
 
 XELIS try to implement & use a blockDAG which the rules are the following:
@@ -44,8 +43,10 @@ Http Server running using Actix.
 Methods available:
 - `get_height`
 - `get_topoheight`
+- `get_stableheight`
 - `get_block_template`
 - `get_block_at_topoheight`
+- `get_blocks_at_height`
 - `get_block_by_hash`
 - `get_top_block`
 - `submit_block`
@@ -55,6 +56,7 @@ Methods available:
 - `submit_transaction`
 - `p2p_status`
 - `get_mempool`
+- `get_tips`
 - `is_chain_valid`
 
 ## XELIS Message

@@ -93,6 +93,7 @@ pub fn register_methods(server: &mut RpcServer) {
     info!("Registering RPC methods...");
     server.register_method("get_height", method!(get_height));
     server.register_method("get_topoheight", method!(get_topoheight));
+    server.register_method("get_stableheight", method!(get_stableheight));
     server.register_method("get_block_template", method!(get_block_template));
     server.register_method("get_block_at_topoheight", method!(get_block_at_topoheight));
     server.register_method("get_blocks_at_height", method!(get_blocks_at_height));
@@ -123,6 +124,14 @@ async fn get_topoheight(blockchain: Arc<Blockchain>, body: Value) -> Result<Valu
         return Err(RpcError::UnexpectedParams)
     }
     Ok(json!(blockchain.get_topo_height()))
+}
+
+async fn get_stableheight(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+
+    Ok(json!(blockchain.get_stable_height().await?))
 }
 
 async fn get_block_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
