@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 use std::sync::Arc;
 use lru::LruCache;
 use sled::Tree;
-use log::{error, debug};
+use log::debug;
 
 const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
@@ -203,6 +203,17 @@ impl Storage {
         Ok(Arc::new(value))
     }
 
+    async fn delete_data_no_cache<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, key: &K) -> Result<V, BlockchainError> {
+        let bytes = match tree.remove(key.to_bytes())? {
+            Some(data) => data.to_vec(),
+            None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
+        };
+
+        let mut reader = Reader::new(&bytes);
+        let value = V::read(&mut reader)?;
+        Ok(value)
+    }
+
     async fn delete_data_no_arc<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Mutex<LruCache<K, V>>, key: &K) -> Result<V, BlockchainError> {
         let bytes = match tree.remove(key.to_bytes())? {
             Some(data) => data.to_vec(),
@@ -267,47 +278,70 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn pop_blocks(&mut self, current_topoheight: u64, n: u64) -> Result<(u64, u64, Arc<BlockMetadata>), BlockchainError> {
-        if current_topoheight <= n as u64 { // also prevent removing genesis block
+    pub async fn pop_blocks(&mut self, mut height: u64, count: u64) -> Result<(u64, u64, Arc<BlockMetadata>), BlockchainError> {
+        if height < count as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
         }
 
-        let mut topoheight = current_topoheight;
         let mut tips = self.get_tips().await?;
-        while topoheight >= current_topoheight - n {
-            debug!("Deleting block at topoheight {}", topoheight);
-            let block_hash = self.delete_data_no_arc(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await?;
-            
-            self.delete_data_no_arc(&self.topo_by_hash, &self.topo_by_hash_cache, &block_hash).await?;
-            self.delete_data(&self.metadata, &self.metadata_cache, &block_hash).await?;
-            let block = self.delete_data(&self.blocks, &self.blocks_cache, &block_hash).await?;
-            
-            // recalculate tips: delete current block hash, and add TIPS of this block
-            error!("Deleting {} from TIPS: {}", block_hash, tips.remove(&block_hash));
-            for hash in block.get_tips() {
-                error!("Adding previous block {} from {}", hash, block_hash);
-                tips.insert(hash.clone());
-            }
-
+        let mut topoheight = 0;
+        let mut done = 0;
+        loop {
+            done += 1;
             // get all blocks at same height, and delete current block hash from the list
-            let mut blocks_at_height = self.get_blocks_at_height(block.get_height()).await?;
-            blocks_at_height.remove(&block_hash);
-            if blocks_at_height.len() == 0 {
-                self.blocks_at_height.remove(block.get_height().to_be_bytes())?;
-            } else {
-                self.blocks_at_height.insert(block.get_height().to_be_bytes(), blocks_at_height.to_bytes())?;
+            debug!("Searching blocks at height {}", height);
+            let blocks_at_height: Tips = self.delete_data_no_cache(&self.blocks_at_height, &height).await?;
+            debug!("Blocks at height {}: {}", height, blocks_at_height.len());
+
+            for hash in blocks_at_height {
+                debug!("deleting metadata for hash {}", hash);
+                self.delete_data(&self.metadata, &self.metadata_cache, &hash).await?;
+                debug!("deleting block {}", hash);
+                let block = self.delete_data(&self.blocks, &self.blocks_cache, &hash).await?;
+                debug!("block deleted successfully");
+
+                // if block is ordered, delete data
+                if self.is_block_topological_ordered(&hash).await {
+                    let block_topoheight = self.get_topo_height_for_hash(&hash).await?;
+                    debug!("Block was at topoheight {}", block_topoheight);
+    
+                    self.delete_data_no_arc(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
+                    debug!("deleting topo by hash");
+                    self.delete_data_no_arc(&self.hash_at_topo, &self.hash_at_topo_cache, &block_topoheight).await?;
+                    debug!("Deleting hash at topo");
+                }
+
+                for tx in block.get_transactions() {
+                    let _ = self.delete_data(&self.transactions, &self.transactions_cache, tx).await?;
+                    // TODO revert TXs
+                }
+
+                // generate new tips
+                debug!("Removing {} from {} tips", hash, tips.len());
+                tips.remove(&hash);
+                for hash in block.get_tips() {
+                    debug!("Adding {} to {} tips", hash, tips.len());
+                    tips.insert(hash.clone());
+                }
             }
 
-            for tx in block.get_transactions() {
-                self.delete_data(&self.transactions, &self.transactions_cache, tx).await?;
-                // TODO revert TXs
+            if done >= count || height == 1 { // prevent removing genesis block
+                let tmp_blocks_at_height = self.get_blocks_at_height(height - 1).await?;
+                if tmp_blocks_at_height.len() == 1 {
+                    for unique in tmp_blocks_at_height {
+                        topoheight = self.get_topo_height_for_hash(&unique).await?;
+                        debug!("Unique block at height {} and topoheight {} found!", height - 1, topoheight);
+                    }
+                    break;
+                }
             }
 
-            topoheight -= 1;
+            // height of old block become new height
+            height -= 1;
         }
-
+        debug!("Blocks processed {}, new topoheight: {}, tips: {}", done, topoheight, tips.len());
         for hash in &tips {
-            error!("hash {} at height {}", hash, self.get_height_for_block(&hash).await?);
+            debug!("hash {} at height {}", hash, self.get_height_for_block(&hash).await?);
         }
         // store the new tips and topo topoheight
         self.store_tips(&tips)?;

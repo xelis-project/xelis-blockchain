@@ -17,7 +17,7 @@ use std::sync::atomic::{Ordering, AtomicU64};
 use std::collections::{HashMap, HashSet, VecDeque};
 use async_recursion::async_recursion;
 use tokio::sync::{Mutex, RwLock};
-use log::{info, error, debug};
+use log::{info, error, debug, warn};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use rand::Rng;
@@ -197,6 +197,11 @@ impl Blockchain {
     // returns the highest topological height
     pub fn get_topo_height(&self) -> u64 {
         self.topoheight.load(Ordering::Acquire)
+    }
+
+    pub async fn get_stable_height(&self) -> Result<u64, BlockchainError> {
+        let storage = self.storage.read().await;
+        self.get_stable_height_for_storage(&storage).await
     }
 
     pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
@@ -949,9 +954,10 @@ impl Blockchain {
 
     // TODO missing burned supply, txs etc
     pub async fn rewind_chain_for_storage(&self, storage: &mut Storage, count: usize) -> Result<(), BlockchainError> {
+        let height = self.get_height();
         let topoheight = self.get_topo_height();
-        debug!("Rewind chain with count = {} and topoheight = {}", count, topoheight);
-        let (height, topoheight, metadata) = storage.pop_blocks(topoheight, count as u64).await?;
+        warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, height, topoheight);
+        let (height, topoheight, metadata) = storage.pop_blocks(height, count as u64).await?;
         self.height.store(height, Ordering::Release);
         self.topoheight.store(topoheight, Ordering::Release);
         self.supply.store(metadata.get_supply(), Ordering::Release); // recaculate supply
