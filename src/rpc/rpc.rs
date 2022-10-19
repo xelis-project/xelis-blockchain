@@ -13,11 +13,10 @@ pub struct DataHash<T> {
 }
 
 #[derive(Serialize)]
-pub struct TopoCompleteBlock {
-    hash: Hash,
-    topoheight: Option<u64>,
+pub struct OrderedDataHash<T> {
     #[serde(flatten)]
-    block: CompleteBlock
+    topoheight: Option<u64>,
+    data: DataHash<T>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -131,14 +130,18 @@ async fn get_block_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> Re
     let storage = blockchain.get_storage().read().await;
     let hash = storage.get_hash_at_topo_height(params.topoheight).await?;
     let block = storage.get_complete_block(&hash).await?;
-    Ok(json!(DataHash { hash, data: block }))
+    Ok(json!(OrderedDataHash { topoheight: Some(params.topoheight), data: DataHash { hash, data: block } }))
 }
 
 async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBlockByHashParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
     let block = storage.get_block_by_hash(&params.hash).await?;
-    Ok(json!(DataHash { hash: params.hash, data: block }))
+    let topoheight = match storage.get_topo_height_for_hash(&params.hash).await {
+        Ok(topoheight) => Some(topoheight),
+        Err(_) => None
+    };
+    Ok(json!(OrderedDataHash { topoheight, data: DataHash { hash: params.hash, data: block } }))
 }
 
 async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -148,7 +151,12 @@ async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value
     let storage = blockchain.get_storage().read().await;
     let hash = storage.get_top_block_hash().await?;
     let block = storage.get_complete_block(&hash).await?;
-    Ok(json!(DataHash { hash, data: block }))
+    let topoheight = if storage.is_block_topological_ordered(&hash).await {
+        Some(storage.get_topo_height_for_hash(&hash).await?)
+    } else {
+        None
+    };
+    Ok(json!(OrderedDataHash { topoheight: topoheight, data: DataHash { hash, data: block } }))
 }
 
 async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -226,7 +234,6 @@ async fn p2p_status(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, R
             let peer_id = p2p.get_peer_id();
             let best_height = p2p.get_best_height().await;
             let max_peers = p2p.get_max_peers();
-
             let our_height = blockchain.get_height();
 
             Ok(json!(P2pStatusResult {
@@ -248,10 +255,10 @@ async fn get_mempool(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, 
     }
 
     let mempool = blockchain.get_mempool().read().await;
-    let mut transactions = Vec::new();
+    let mut transactions: Vec<DataHash<Arc<Transaction>>> = Vec::new();
     for tx in mempool.get_sorted_txs() {
         let transaction = mempool.view_tx(tx.get_hash())?;
-        transactions.push(transaction);
+        transactions.push(DataHash { hash: tx.get_hash().clone(), data: transaction });
     }
 
     Ok(json!(transactions))
@@ -270,7 +277,7 @@ async fn get_blocks_at_height(blockchain: Arc<Blockchain>, body: Value) -> Resul
     let params: GetBlocksAtHeightParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
 
-    let mut blocks: Vec<TopoCompleteBlock> = Vec::new();
+    let mut blocks: Vec<OrderedDataHash<CompleteBlock>> = Vec::new();
     for hash in storage.get_blocks_at_height(params.height).await? {
         let topoheight = if storage.is_block_topological_ordered(&hash).await {
             Some(storage.get_topo_height_for_hash(&hash).await?)
@@ -279,7 +286,7 @@ async fn get_blocks_at_height(blockchain: Arc<Blockchain>, body: Value) -> Resul
         };
 
         let block = storage.get_complete_block(&hash).await?;
-        blocks.push(TopoCompleteBlock { hash, topoheight, block })
+        blocks.push(OrderedDataHash { topoheight, data: DataHash { hash, data: block } })
     }
     Ok(json!(blocks))
 }
