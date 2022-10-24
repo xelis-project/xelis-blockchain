@@ -335,10 +335,13 @@ impl P2pServer {
         }
     }
 
+    // select a random peer which is greater than us to sync chain
+    // candidate peer should have a greater topoheight or a higher block height than us
     async fn select_random_best_peer(&self) -> Option<Arc<Peer>> {
         let peer_list = self.peer_list.read().await;
-        let our_height = self.blockchain.get_topo_height();
-        let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p| p.get_topoheight() > our_height).collect();
+        let our_height = self.blockchain.get_height();
+        let our_topoheight = self.blockchain.get_topo_height();
+        let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p| p.get_height() > our_height || p.get_topoheight() > our_topoheight).collect();
         let count = peers.len();
         trace!("peers available for random selection: {}", count);
         if count == 0 {
@@ -658,7 +661,7 @@ impl P2pServer {
                     debug!("common point with peer found at block {} with same topoheight at {}", topoheight, hash);
                     common_point = Some(CommonPoint::new(Cow::Owned(hash), topoheight));
                     let top_height = self.blockchain.get_topo_height();
-                    topoheight += 1;
+                    topoheight += 1; // we don't want to send the common block
                     while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && topoheight <= top_height {
                         let hash = storage.get_hash_at_topo_height(topoheight).await?;
                         debug!("for request, adding hash {} for topoheight {}", hash, topoheight);
@@ -796,8 +799,8 @@ impl P2pServer {
         let peer_list = self.peer_list.read().await;
         for (_, peer) in peer_list.get_peers() {
             // if the peer can directly accept this new block, send it
-            if block.get_height() - 1 == peer.get_height() || peer.get_height() - block.get_height() < STABLE_HEIGHT_LIMIT {
-                trace!("Broadcast block to {}", peer);
+            if block.get_height() - 1 == peer.get_height() || topoheight - 1 == peer.get_topoheight() /* peer.get_height() - block.get_height() < STABLE_HEIGHT_LIMIT */ {
+                debug!("Broadcast to {}", peer);
                 peer_list.send_bytes_to_peer(peer, bytes.clone()).await;
                 peer.set_topoheight(topoheight); // we suppose peer will accept the block like us
             }

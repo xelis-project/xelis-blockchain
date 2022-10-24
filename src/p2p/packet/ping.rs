@@ -6,8 +6,10 @@ use crate::p2p::peer::Peer;
 use crate::core::writer::Writer;
 use crate::crypto::hash::Hash;
 use std::borrow::Cow;
+use std::fmt::Display;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use log::debug;
 
 #[derive(Clone)]
 pub struct Ping<'a> {
@@ -28,6 +30,7 @@ impl<'a> Ping<'a> {
     }
 
     pub async fn update_peer(self, peer: &Arc<Peer>) {
+        debug!("Updating {} with {}", peer, self);
         peer.set_block_top_hash(self.top_hash.into_owned()).await;
         peer.set_topoheight(self.topoheight);
         peer.set_height(self.height);
@@ -72,5 +75,11 @@ impl Serializer for Ping<'_> {
         }
 
         Ok(Self { top_hash, topoheight, height, peer_list })
+    }
+}
+
+impl Display for Ping<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Ping[top_hash: {}, topoheight: {}, height: {}, peers length: {}]", self.top_hash, self.topoheight, self.height, self.peer_list.len())
     }
 }

@@ -14,8 +14,8 @@ pub struct DataHash<T> {
 
 #[derive(Serialize)]
 pub struct OrderedDataHash<T> {
-    #[serde(flatten)]
     topoheight: Option<u64>,
+    #[serde(flatten)]
     data: DataHash<T>
 }
 
