@@ -1,14 +1,15 @@
 use super::peer::Peer;
 use std::collections::HashMap;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use std::sync::Arc;
 use bytes::Bytes;
 use log::{info, debug, error};
 
-pub type SharedPeerList = Arc<Mutex<PeerList>>;
+pub type SharedPeerList = Arc<RwLock<PeerList>>;
 
 // this object will be shared in Server, and each Peer
 // so when we call Peer#close it will remove it from the list too
+// using a RwLock so we can have multiple readers at the same time
 pub struct PeerList {
     peers: HashMap<u64, Arc<Peer>>
 }
@@ -16,7 +17,7 @@ pub struct PeerList {
 impl PeerList {
     pub fn new(capacity: usize) -> SharedPeerList {
         Arc::new(
-            Mutex::new(
+            RwLock::new(
                 Self {
                     peers: HashMap::with_capacity(capacity)
                 }
@@ -80,7 +81,7 @@ impl PeerList {
     pub fn get_best_topoheight(&self) -> u64 { // TODO: Calculate median of all peers
         let mut best_height = 0;
         for (_, peer) in self.peers.iter() {
-            let height = peer.get_block_topoheight();
+            let height = peer.get_topoheight();
             if height > best_height {
                 best_height = height;
             }

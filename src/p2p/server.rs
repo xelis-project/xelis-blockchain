@@ -1,4 +1,4 @@
-use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT};
+use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT};
 use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
 use crate::core::serializer::Serializer;
@@ -73,7 +73,7 @@ impl P2pServer {
 
     pub async fn stop(&self) {
         info!("Stopping P2p Server...");
-        let mut peers = self.peer_list.lock().await;
+        let mut peers = self.peer_list.write().await;
         peers.close_all().await;
         info!("P2p Server is now stopped!");
     }
@@ -180,7 +180,7 @@ impl P2pServer {
 
     async fn build_handshake(&self) -> Result<Handshake, P2pError> {
         let mut peers: Vec<SocketAddr> = Vec::new();
-        let peer_list = self.peer_list.lock().await;
+        let peer_list = self.peer_list.read().await;
         let mut iter = peer_list.get_peers().iter();
         while peers.len() < Handshake::MAX_LEN {
             match iter.next() {
@@ -195,9 +195,10 @@ impl P2pServer {
             };
         }
 
-        let block_height = self.blockchain.get_height();
+        let topoheight = self.blockchain.get_topo_height();
+        let height = self.blockchain.get_height();
         let top_hash = self.blockchain.get_storage().read().await.get_top_block_hash().await.unwrap_or_else(|_| Hash::zero());
-        Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), block_height, top_hash, peers))
+        Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, height, top_hash, peers))
     }
 
     // this function handle all new connections
@@ -222,7 +223,7 @@ impl P2pServer {
         // if we reach here, handshake is all good, we can start listening this new peer
         let peer_id = peer.get_id(); // keep in memory the peer_id outside connection (because of moved value)
         let peer = {
-            let mut peer_list = self.peer_list.lock().await;
+            let mut peer_list = self.peer_list.write().await;
             peer_list.add_peer(peer_id, peer)
         };
 
@@ -278,7 +279,8 @@ impl P2pServer {
             },
             Ok(hash) => hash
         };
-        let top_topo_height = self.blockchain.get_topo_height();
+        let highest_topo_height = self.blockchain.get_topo_height();
+        let highest_height = self.blockchain.get_height();
         let mut new_peers = Vec::new();
         if let Some(peer) = peer {
             let current_time = get_current_time();
@@ -287,7 +289,7 @@ impl P2pServer {
                 // all the peers of current peer
                 let mut peer_peers = peer.get_peers().lock().await;
                 // our peerlist
-                let peer_list = self.peer_list.lock().await;
+                let peer_list = self.peer_list.read().await;
                 for p in peer_list.get_peers().values() {
                     if *p.get_connection().get_address() == *peer.get_connection().get_address() {
                         continue;
@@ -308,7 +310,7 @@ impl P2pServer {
                 }
             }
         }
-        Ping::new(Cow::Owned(block_top_hash), top_topo_height, new_peers)
+        Ping::new(Cow::Owned(block_top_hash), highest_topo_height, highest_height, new_peers)
     }
 
     // build a ping packet with a specific peerlist for the peer
@@ -334,9 +336,9 @@ impl P2pServer {
     }
 
     async fn select_random_best_peer(&self) -> Option<Arc<Peer>> {
-        let peer_list = self.peer_list.lock().await;
+        let peer_list = self.peer_list.read().await;
         let our_height = self.blockchain.get_topo_height();
-        let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p| p.get_block_topoheight() > our_height).collect();
+        let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p| p.get_topoheight() > our_height).collect();
         let count = peers.len();
         trace!("peers available for random selection: {}", count);
         if count == 0 {
@@ -712,7 +714,7 @@ impl P2pServer {
     }
 
     async fn is_connected_to_a_priority_node(&self) -> bool {
-        let peer_list = self.peer_list.lock().await;
+        let peer_list = self.peer_list.read().await;
         for peer in peer_list.get_peers().values() {
             if peer.is_priority() {
                 return true
@@ -739,13 +741,13 @@ impl P2pServer {
     }
 
     pub async fn get_peer_count(&self) -> usize {
-        let peer_list = self.peer_list.lock().await;
+        let peer_list = self.peer_list.read().await;
         peer_list.size()
     }
 
     pub async fn get_best_height(&self) -> u64 {
         let our_height = self.blockchain.get_height();
-        let peer_list = self.peer_list.lock().await;
+        let peer_list = self.peer_list.read().await;
         let best_height = peer_list.get_best_topoheight();
         if best_height > our_height {
             best_height
@@ -755,7 +757,7 @@ impl P2pServer {
     }
 
     pub async fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError> {
-        let peer_list = self.peer_list.lock().await;
+        let peer_list = self.peer_list.read().await;
         Ok(self.peer_id == *peer_id || peer_list.has_peer(peer_id))
     }
 
@@ -764,7 +766,7 @@ impl P2pServer {
             debug!("Trying to connect to ourself, ignoring.");
             return Ok(true)
         }
-        let peer_list = self.peer_list.lock().await;
+        let peer_list = self.peer_list.read().await;
         for peer in peer_list.get_peers().values() {
             if *peer.get_connection().get_address() == *peer_addr {
                 return Ok(true)
@@ -783,27 +785,27 @@ impl P2pServer {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &Block, topoheight: u64, hash: &Hash) {
+    pub async fn broadcast_block(&self, block: &Block, topoheight: u64, highest_topoheight: u64, highest_height: u64, hash: &Hash) {
         trace!("Broadcast block: {} at topoheight {}", hash, topoheight);
         // we build the ping packet ourself this time (we have enough data for it)
-        // because this function can be call from Blockchain, which would lead to deadlock
-        let ping = Ping::new(Cow::Borrowed(hash), topoheight, Vec::new());
+        // because this function can be call from Blockchain, which would lead to a deadlock
+        let ping = Ping::new(Cow::Borrowed(hash), highest_topoheight, highest_height, Vec::new());
         let packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Owned(ping)));
         let bytes = Bytes::from(packet.to_bytes());
         // TODO should we move it in another async task ?
-        let peer_list = self.peer_list.lock().await;
+        let peer_list = self.peer_list.read().await;
         for (_, peer) in peer_list.get_peers() {
             // if the peer can directly accept this new block, send it
-            if peer.get_block_topoheight() == topoheight - 1 {
+            if block.get_height() - 1 == peer.get_height() || peer.get_height() - block.get_height() < STABLE_HEIGHT_LIMIT {
                 trace!("Broadcast block to {}", peer);
                 peer_list.send_bytes_to_peer(peer, bytes.clone()).await;
-                peer.set_block_topoheight(topoheight); // we suppose peer will accept the block like us
+                peer.set_topoheight(topoheight); // we suppose peer will accept the block like us
             }
         }
     }
 
     pub async fn broadcast_packet(&self, packet: Packet<'_>) {
-        let peer_list = self.peer_list.lock().await;
+        let peer_list = self.peer_list.read().await;
         peer_list.broadcast(Bytes::from(packet.to_bytes())).await;
     }
 

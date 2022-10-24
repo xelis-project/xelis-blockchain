@@ -934,14 +934,13 @@ impl Blockchain {
         if block.get_height() > self.get_height() {
             self.height.store(block.get_height(), Ordering::Release);
         }
-        let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
-        self.topoheight.store(topoheight, Ordering::Release);
         self.supply.fetch_add(block_reward, Ordering::Release);
+        let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
         debug!("Adding new block '{}' with {} txs and {} tips at height {} and topoheight {}", block_hash, block.get_txs_count(), tips_count, block.get_height(), topoheight);
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
-                p2p.broadcast_block(&block, topoheight, &block_hash).await;
+                p2p.broadcast_block(&block, topoheight, highest_topo, self.get_height(), &block_hash).await;
             }
         }
         Ok(())

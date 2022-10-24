@@ -11,23 +11,26 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct Ping<'a> {
-    block_top_hash: Cow<'a, Hash>,
-    block_topoheight: u64,
+    top_hash: Cow<'a, Hash>,
+    topoheight: u64,
+    height: u64,
     peer_list: Vec<SocketAddr>
 }
 
 impl<'a> Ping<'a> {
-    pub fn new(block_top_hash: Cow<'a, Hash>, block_topoheight: u64, peer_list: Vec<SocketAddr>) -> Self {
+    pub fn new(top_hash: Cow<'a, Hash>, topoheight: u64, height: u64, peer_list: Vec<SocketAddr>) -> Self {
         Self {
-            block_top_hash,
-            block_topoheight,
+            top_hash,
+            topoheight,
+            height,
             peer_list
         }
     }
 
     pub async fn update_peer(self, peer: &Arc<Peer>) {
-        peer.set_block_top_hash(self.block_top_hash.into_owned()).await;
-        peer.set_block_topoheight(self.block_topoheight);
+        peer.set_block_top_hash(self.top_hash.into_owned()).await;
+        peer.set_topoheight(self.topoheight);
+        peer.set_height(self.height);
 
         let mut peers = peer.get_peers().lock().await;
         for peer in self.peer_list {
@@ -44,8 +47,9 @@ impl<'a> Ping<'a> {
 
 impl Serializer for Ping<'_> {
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.block_top_hash);
-        writer.write_u64(&self.block_topoheight);
+        writer.write_hash(&self.top_hash);
+        writer.write_u64(&self.topoheight);
+        writer.write_u64(&self.height);
         writer.write_u8(self.peer_list.len() as u8);
         for peer in &self.peer_list {
             writer.write_bytes(&ip_to_bytes(peer));
@@ -53,8 +57,9 @@ impl Serializer for Ping<'_> {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let block_top_hash = Cow::Owned(reader.read_hash()?);
-        let block_topoheight = reader.read_u64()?;
+        let top_hash = Cow::Owned(reader.read_hash()?);
+        let topoheight = reader.read_u64()?;
+        let height = reader.read_u64()?;
         let peers_len = reader.read_u8()? as usize;
         if peers_len > P2P_PING_PEER_LIST_LIMIT {
             return Err(ReaderError::InvalidValue)
@@ -66,6 +71,6 @@ impl Serializer for Ping<'_> {
             peer_list.push(peer);
         }
 
-        Ok(Self { block_top_hash, block_topoheight, peer_list })
+        Ok(Self { top_hash, topoheight, height, peer_list })
     }
 }
