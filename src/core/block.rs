@@ -238,12 +238,18 @@ impl Deref for CompleteBlock {
 use std::fmt::{Error, Display, Formatter};
 use std::ops::Deref;
 
-impl Display for CompleteBlock {
+impl Display for Block {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         let mut tips = Vec::with_capacity(self.tips.len());
         for hash in &self.tips {
             tips.push(format!("{}", hash));
         }
-        write!(f, "Block[height: {}, tips: [{}], timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.block.height, tips.join(", "), self.block.timestamp, self.block.nonce, hex::encode(self.block.extra_nonce), self.block.txs_hashes.len())
+        write!(f, "Block[height: {}, tips: [{}], timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.height, tips.join(", "), self.timestamp, self.nonce, hex::encode(self.extra_nonce), self.txs_hashes.len())
+    }
+}
+
+impl Display for CompleteBlock {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        write!(f, "{}", self.block.get_inner())
     }
 }
