@@ -319,6 +319,11 @@ impl Storage {
                 // generate new tips
                 debug!("Removing {} from {} tips", hash, tips.len());
                 tips.remove(&hash);
+                debug!("Tips: {}", tips.len());
+                for tip in &tips {
+                    debug!("Tip {}", tip);
+                }
+
                 for hash in block.get_tips() {
                     debug!("Adding {} to {} tips", hash, tips.len());
                     tips.insert(hash.clone());

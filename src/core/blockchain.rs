@@ -936,7 +936,7 @@ impl Blockchain {
         }
         self.supply.fetch_add(block_reward, Ordering::Release);
         let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
-        debug!("Adding new block '{}' with {} txs and {} tips at height {} and topoheight {}", block_hash, block.get_txs_count(), tips_count, block.get_height(), topoheight);
+        debug!("Adding new '{}' {} at topoheight {}", block_hash, block, topoheight);
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
