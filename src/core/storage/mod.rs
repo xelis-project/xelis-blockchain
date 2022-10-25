@@ -283,11 +283,26 @@ impl Storage {
             return Err(BlockchainError::NotEnoughBlocks);
         }
 
+        // new topo height after all deleted blocks
+        let topoheight;
+        // new TIPS for chain
         let mut tips = self.get_tips().await?;
-        let mut topoheight = 0;
         let mut done = 0;
-        loop {
-            done += 1;
+        'main: loop {
+            // check if the next block is alone at its height, if yes stop rewinding
+            if done >= count || height == 0 { // prevent removing genesis block
+                let tmp_blocks_at_height = self.get_blocks_at_height(height).await?;
+                if tmp_blocks_at_height.len() == 1 {
+                    for unique in tmp_blocks_at_height {
+                        if self.is_block_topological_ordered(&unique).await {
+                            topoheight = self.get_topo_height_for_hash(&unique).await?;
+                            debug!("Unique block at height {} and topoheight {} found!", height, topoheight);
+                            break 'main;
+                        }
+                    }
+                }
+            }
+
             // get all blocks at same height, and delete current block hash from the list
             debug!("Searching blocks at height {}", height);
             let blocks_at_height: Tips = self.delete_data_no_cache(&self.blocks_at_height, &height).await?;
@@ -300,18 +315,21 @@ impl Storage {
                 let block = self.delete_data(&self.blocks, &self.blocks_cache, &hash).await?;
                 debug!("block deleted successfully");
 
-                // if block is ordered, delete data
-                if self.is_block_topological_ordered(&hash).await {
-                    let block_topoheight = self.get_topo_height_for_hash(&hash).await?;
-                    debug!("Block was at topoheight {}", block_topoheight);
-    
+                // if block is ordered, delete data that are linked to it
+                if let Ok(topo) = self.get_topo_height_for_hash(&hash).await {
+                    debug!("Block was at topoheight {}", topo);
                     self.delete_data_no_arc(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
-                    debug!("deleting topo by hash");
-                    self.delete_data_no_arc(&self.hash_at_topo, &self.hash_at_topo_cache, &block_topoheight).await?;
-                    debug!("Deleting hash at topo");
+
+                    if let Ok(hash_at_topo) = self.get_hash_at_topo_height(topo).await {
+                        if hash_at_topo == hash {
+                            debug!("Deleting hash '{}' at topo height '{}'", hash_at_topo, topo);
+                            self.delete_data_no_arc(&self.hash_at_topo, &self.hash_at_topo_cache, &topo).await?;
+                        }
+                    }
                 }
 
                 for tx in block.get_transactions() {
+                    debug!("Deleting transaction '{}'", tx);
                     let _ = self.delete_data(&self.transactions, &self.transactions_cache, tx).await?;
                     // TODO revert TXs
                 }
@@ -330,19 +348,9 @@ impl Storage {
                 }
             }
 
-            if done >= count || height == 1 { // prevent removing genesis block
-                let tmp_blocks_at_height = self.get_blocks_at_height(height - 1).await?;
-                if tmp_blocks_at_height.len() == 1 {
-                    for unique in tmp_blocks_at_height {
-                        topoheight = self.get_topo_height_for_hash(&unique).await?;
-                        debug!("Unique block at height {} and topoheight {} found!", height - 1, topoheight);
-                    }
-                    break;
-                }
-            }
-
             // height of old block become new height
             height -= 1;
+            done += 1;
         }
         debug!("Blocks processed {}, new topoheight: {}, tips: {}", done, topoheight, tips.len());
         for hash in &tips {

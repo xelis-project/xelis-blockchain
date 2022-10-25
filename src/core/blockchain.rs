@@ -763,7 +763,7 @@ impl Blockchain {
         }
 
         if !self.verify_non_reachability(storage, &block).await? {
-            error!("Block has an invalid reachability");
+            error!("{} has an invalid reachability", block);
             return Err(BlockchainError::InvalidReachability)
         }
 

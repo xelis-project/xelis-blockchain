@@ -1,4 +1,4 @@
-use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT};
+use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT};
 use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
 use crate::core::serializer::Serializer;
@@ -420,7 +420,6 @@ impl P2pServer {
                     let zelf = Arc::clone(self);
                     let peer = Arc::clone(peer);
                     tokio::spawn(async move {
-                        let ping = zelf.build_ping_packet(None).await;
                         let response = match peer.request_blocking_object(ObjectRequest::Transaction(hash)).await {
                             Ok(response) => response,
                             Err(err) => {
@@ -810,7 +809,7 @@ impl P2pServer {
         let peer_list = self.peer_list.read().await;
         for (_, peer) in peer_list.get_peers() {
             // if the peer can directly accept this new block, send it
-            if block.get_height() - 1 == peer.get_height() || topoheight - 1 == peer.get_topoheight() /* peer.get_height() - block.get_height() < STABLE_HEIGHT_LIMIT */ {
+            if block.get_height() - 1 == peer.get_height() || topoheight - 1 == peer.get_topoheight() || (peer.get_topoheight() == topoheight && *hash != *peer.get_top_block_hash().lock().await)/* peer.get_height() - block.get_height() < STABLE_HEIGHT_LIMIT */ {
                 trace!("Broadcast to {}", peer);
                 peer_list.send_bytes_to_peer(peer, bytes.clone()).await;
                 peer.set_topoheight(topoheight); // we suppose peer will accept the block like us
