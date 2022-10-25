@@ -146,9 +146,10 @@ async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<V
     let params: GetBlockByHashParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
     let block = storage.get_block_by_hash(&params.hash).await?;
-    let topoheight = match storage.get_topo_height_for_hash(&params.hash).await {
-        Ok(topoheight) => Some(topoheight),
-        Err(_) => None
+    let topoheight = if storage.is_block_topological_ordered(&params.hash).await {
+        Some(storage.get_topo_height_for_hash(&params.hash).await?)
+    } else {
+        None
     };
     Ok(json!(OrderedDataHash { topoheight, data: DataHash { hash: params.hash, data: block } }))
 }
