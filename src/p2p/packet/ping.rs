@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use std::fmt::Display;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use log::debug;
+use log::trace;
 
 #[derive(Clone)]
 pub struct Ping<'a> {
@@ -30,7 +30,7 @@ impl<'a> Ping<'a> {
     }
 
     pub async fn update_peer(self, peer: &Arc<Peer>) {
-        debug!("Updating {} with {}", peer, self);
+        trace!("Updating {} with {}", peer, self);
         peer.set_block_top_hash(self.top_hash.into_owned()).await;
         peer.set_topoheight(self.topoheight);
         peer.set_height(self.height);
