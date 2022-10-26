@@ -20,14 +20,17 @@ pub struct NodeConfig {
     debug: bool,
     /// Disable the log file
     #[clap(short = 'f', long)]
-    disable_file_logging: bool
+    disable_file_logging: bool,
+    /// Log filename
+    #[clap(short = 'n', long, default_value_t = String::from("xelis.log"))]
+    filename_log: String
 }
 
 #[tokio::main]
 async fn main() -> Result<(), BlockchainError> {
     let config: NodeConfig = NodeConfig::parse();
     let command_manager = create_command_manager();
-    let prompt = Prompt::new(config.debug, config.disable_file_logging, command_manager)?;
+    let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging, command_manager)?;
     info!("Xelis Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
     let blockchain = Blockchain::new(config.nested).await?;
