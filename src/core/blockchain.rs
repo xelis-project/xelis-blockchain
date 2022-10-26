@@ -63,9 +63,9 @@ impl Blockchain {
         let on_disk = storage.has_blocks();
         let (height, topoheight, supply, burned) = if on_disk {
             info!("Reading last metadata available...");
-            let (hash, metadata) = storage.get_top_metadata().await?;
-            let topoheight = storage.get_topo_height_for_hash(&hash).await?; 
-            (metadata.get_height(), topoheight, metadata.get_supply(), metadata.get_burned_supply())
+            let (topoheight, _, metadata) = storage.get_top_metadata().await?;
+            let height = storage.get_top_height()?;
+            (height, topoheight, metadata.get_supply(), metadata.get_burned_supply())
         } else { (0, 0, 0, 0) };
 
         info!("Initializing chain...");
@@ -155,6 +155,7 @@ impl Blockchain {
 
         // hardcode genesis block topoheight
         storage.set_topo_height_for_block(genesis_block.hash(), 0).await?;
+        storage.set_top_height(0)?;
 
         self.add_new_block_for_storage(&mut storage, genesis_block, false).await?;
 
@@ -205,7 +206,12 @@ impl Blockchain {
     }
 
     pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
-        self.storage.read().await.get_top_block_hash().await
+        let storage = self.storage.read().await;
+        self.get_top_block_hash_for_storage(&storage).await
+    }
+    
+    pub async fn get_top_block_hash_for_storage(&self, storage: &Storage) -> Result<Hash, BlockchainError> {
+        storage.get_hash_at_topo_height(self.get_topo_height()).await
     }
 
     async fn is_block_sync_at_height(&self, storage: &Storage, hash: &Hash, height: u64) -> Result<bool, BlockchainError> {
@@ -339,7 +345,7 @@ impl Blockchain {
                     continue;
                 }
 
-                if reach[j].contains(&tips[j]) {
+                if reach[j].contains(&tips[i]) {
                     return Ok(false)
                 }
             }
@@ -621,7 +627,7 @@ impl Blockchain {
             debug!("Checking height {} with hash {}", height, hash);
             let block = storage.get_block_by_hash(&hash).await?;
             if block.get_height() != height as u64 {
-                debug!("Invalid block height for block {}, got {} but expected {}", hash, block.get_height(), height);
+                debug!("Invalid block height for {}, got {} but expected {}", hash, block, height);
                 return Err(BlockchainError::InvalidBlockHeight(block.get_height(), height as u64))
             }
 
@@ -739,7 +745,7 @@ impl Blockchain {
         }
 
         let tips_count = block.get_tips().len();
-        debug!("Tips count for this new block ({}): {}", block.get_height(), tips_count);
+        debug!("Tips count for this new {}: {}", block, tips_count);
         if tips_count > TIPS_LIMIT {
             error!("Invalid tips count, got {} but maximum allowed is {}", tips_count, TIPS_LIMIT);
             return Err(BlockchainError::InvalidTips) // only 3 tips are allowed
@@ -769,10 +775,10 @@ impl Blockchain {
 
         for hash in block.get_tips() {
             let previous_block = storage.get_block_by_hash(hash).await?;
-            if previous_block.get_height() + 1 != block.get_height() {
+            /*if previous_block.get_height() + 1 != block.get_height() {
                 error!("Invalid block height, previous block is at {} but this block is at {}", previous_block.get_height(), block.get_height());
                 return Err(BlockchainError::InvalidBlockHeight(previous_block.get_height() + 1, block.get_height()));
-            }
+            }*/
 
             if previous_block.get_timestamp() > block.get_timestamp() { // block timestamp can't be less than previous block.
                 error!("Invalid block timestamp, parent is less than new block");
@@ -915,25 +921,45 @@ impl Blockchain {
             }
         }
 
-        // TODO
-        /*let best_height = storage.get_height_for_block(best_tip).await?;
-        for hash in &tips {
-            let tip_base_distance = self.calculate_distance_from_mainchain(storage, hash).await?;
+        let best_height = storage.get_height_for_block(best_tip).await?;
+        let mut new_tips = Vec::new();
+        for hash in tips {
+            let tip_base_distance = self.calculate_distance_from_mainchain(storage, &hash).await?;
             if best_height - tip_base_distance < STABLE_HEIGHT_LIMIT - 1 {
+                debug!("Adding {} as new tips", hash);
+                new_tips.push(hash);
+            } else {
+                warn!("Rusty TIP declared stale {} with best height: {}, deviation: {}, tip base distance: {}", hash, best_height, best_height - tip_base_distance, tip_base_distance);
+                // TODO rewind stale TIP
+            }
+        }
 
-            } // else tip has deviated
-        }*/
+        tips = HashSet::new();
+        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&storage, &new_tips).await?.clone();
+        for hash in new_tips {
+            if best_tip != hash {
+                if !self.validate_tips(&storage, &best_tip, &hash).await? {
+                    warn!("Rusty TIP {} declared stale", hash);
+                    // TODO rewind stale TIP
+                } else {
+                    debug!("Tip {} is valid, adding to final Tips list", hash);
+                    tips.insert(hash);
+                }
+            }
+        }
+        tips.insert(best_tip);
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
         storage.set_top_topoheight(highest_topo)?;
         self.topoheight.store(highest_topo, Ordering::Release);
-
         storage.store_tips(&tips)?;
 
         if block.get_height() > self.get_height() {
             self.height.store(block.get_height(), Ordering::Release);
+            storage.set_top_height(block.get_height())?;
         }
+
         self.supply.fetch_add(block_reward, Ordering::Release);
         let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
         debug!("Adding new '{}' {} at topoheight {}", block_hash, block, topoheight);

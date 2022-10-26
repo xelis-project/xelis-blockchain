@@ -159,7 +159,7 @@ async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value
         return Err(RpcError::UnexpectedParams)
     }
     let storage = blockchain.get_storage().read().await;
-    let hash = storage.get_top_block_hash().await?;
+    let hash = blockchain.get_top_block_hash_for_storage(&storage).await?;
     let block = storage.get_complete_block(&hash).await?;
     let topoheight = if storage.is_block_topological_ordered(&hash).await {
         Some(storage.get_topo_height_for_hash(&hash).await?)

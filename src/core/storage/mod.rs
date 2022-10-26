@@ -18,6 +18,7 @@ use log::debug;
 
 const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
+const TOP_HEIGHT: &[u8; 4] = b"TOPH";
 
 pub type Tips = HashSet<Hash>;
 
@@ -359,10 +360,11 @@ impl Storage {
         // store the new tips and topo topoheight
         self.store_tips(&tips)?;
         self.set_top_topoheight(topoheight)?;
+        self.set_top_height(height)?;
 
-        let (_, metadata) = self.get_top_metadata().await?;
+        let (_, _, metadata) = self.get_top_metadata().await?;
 
-        Ok((metadata.get_height(), topoheight, metadata))
+        Ok((height, topoheight, metadata))
     }
 
     pub fn has_blocks(&self) -> bool {
@@ -416,16 +418,25 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn get_top_metadata(&self) -> Result<(Hash, Arc<BlockMetadata>), BlockchainError> {   
+    pub fn get_top_height(&self) -> Result<u64, BlockchainError> {
+        self.load_from_disk(&self.extra, TOP_HEIGHT)
+    }
+
+    pub fn set_top_height(&self, height: u64) -> Result<(), BlockchainError> {
+        self.extra.insert(TOP_HEIGHT, &height.to_be_bytes())?;
+        Ok(())
+    }
+
+    pub async fn get_top_metadata(&self) -> Result<(u64, Hash, Arc<BlockMetadata>), BlockchainError> {   
         let topoheight = self.get_top_topoheight()?;
         let hash = self.get_hash_at_topo_height(topoheight).await?;
         let metadata = self.get_block_metadata_by_hash(&hash).await?;
         debug!("Top block hash is {} at height {} and topoheight {}", hash, metadata.get_height(), topoheight);
-        Ok((hash, metadata))
+        Ok((topoheight, hash, metadata))
     }
 
     pub async fn get_top_complete_block(&self) -> Result<CompleteBlock, BlockchainError> {
-        let (hash, _) = self.get_top_metadata().await?;
+        let hash = self.get_top_block_hash().await?;
         let block = self.get_block_by_hash(&hash).await?;
         let mut transactions = Vec::new();
         for tx in block.get_transactions() {
