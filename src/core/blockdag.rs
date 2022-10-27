@@ -41,8 +41,7 @@ pub async fn sort_tips(storage: &Storage, tips: &Vec<Hash>) -> Result<Vec<Hash>,
 pub async fn calculate_height_at_tips(storage: &Storage, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
     let mut height = 0;
     for hash in tips {
-        let block = storage.get_block_by_hash(hash).await?;
-        let past_height = block.get_height();
+        let past_height = storage.get_height_for_block(hash).await?;
         if height <= past_height {
             height = past_height;
         }

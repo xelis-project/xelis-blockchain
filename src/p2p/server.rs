@@ -1,4 +1,4 @@
-use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT};
+use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT};
 use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
 use crate::core::serializer::Serializer;
@@ -451,6 +451,14 @@ impl P2pServer {
                 let (block, ping) = packet_wrapper.consume();
                 ping.into_owned().update_peer(peer).await;
                 let block = block.into_owned();
+                {
+                    let block_hash = block.hash();
+                    let storage = self.blockchain.get_storage().read().await;
+                    if storage.has_block(&block_hash).await? {
+                        debug!("{} with hash {} is already in our chain. Skipping", block, block_hash);
+                        return Ok(())
+                    }
+                }
                 let block_height = block.get_height();
                 debug!("Received block at height {} from {}", block_height, peer.get_connection().get_address());
                 let zelf = Arc::clone(self);
@@ -458,7 +466,7 @@ impl P2pServer {
                 // verify that we have all txs in local or ask peer to get missing txs
                 tokio::spawn(async move { // TODO handle errors
                     for hash in block.get_txs_hashes() {
-                        let contains = {
+                        let contains = { // we don't lock one time because we may wait on p2p response
                             let mempool = zelf.blockchain.get_mempool().read().await;
                             mempool.contains_tx(hash)
                         };
@@ -650,22 +658,21 @@ impl P2pServer {
         let storage = self.blockchain.get_storage().read().await;
         let mut response_blocks = Vec::new();
         let mut common_point = None;
-        let mut highest_topo_height = None;
         for block_id in blocks { // search a common point
-            if let Ok(_) = storage.get_block_by_hash(block_id.get_hash()).await {
-                let (hash, mut topoheight) = block_id.consume();
+            if let Ok(common_block) = storage.get_block_by_hash(block_id.get_hash()).await {
+                let (hash, topoheight) = block_id.consume();
                 debug!("Block {} found for topoheight: {}", hash, topoheight);
                 if storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
                     debug!("common point with peer found at block {} with same topoheight at {}", topoheight, hash);
                     common_point = Some(CommonPoint::new(Cow::Owned(hash), topoheight));
-                    let top_height = self.blockchain.get_topo_height();
-                    topoheight += 1; // we don't want to send the common block
-                    while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && topoheight <= top_height {
-                        let hash = storage.get_hash_at_topo_height(topoheight).await?;
-                        debug!("for request, adding hash {} for topoheight {}", hash, topoheight);
-                        response_blocks.push(Cow::Owned(hash));
-                        highest_topo_height = Some(topoheight);
-                        topoheight += 1;
+                    let top_height = self.blockchain.get_height();
+                    let mut height = common_block.get_height();
+                    while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && height <= top_height {
+                        for hash in storage.get_blocks_at_height(height).await? {
+                            debug!("for request, adding hash {} at height {}", hash, height);
+                            response_blocks.push(Cow::Owned(hash));
+                        }
+                        height += 1;
                     }
                     break;
                 }
@@ -673,17 +680,6 @@ impl P2pServer {
         }
 
         peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, response_blocks))).await?;
-        // Assume the peer will accept the chain like us
-        // used to sync faster, instead of waiting on a peer response
-        if let Some(topo) = highest_topo_height {
-            let hash = storage.get_hash_at_topo_height(topo).await?;
-            let height = storage.get_height_for_block(&hash).await?;
-            peer.set_block_top_hash(hash).await;
-            peer.set_topoheight(topo);
-            peer.set_height(height);
-            debug!("Assuming peer have accepted the chain: {}", peer);
-        }
-
         Ok(())
     }
 
@@ -798,8 +794,8 @@ impl P2pServer {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &Block, topoheight: u64, highest_topoheight: u64, highest_height: u64, hash: &Hash) {
-        trace!("Broadcast block: {} at topoheight {}", hash, topoheight);
+    pub async fn broadcast_block(&self, block: &Block, highest_topoheight: u64, highest_height: u64, hash: &Hash) {
+        trace!("Broadcast block: {}", hash);
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock
         let ping = Ping::new(Cow::Borrowed(hash), highest_topoheight, highest_height, Vec::new());
@@ -809,10 +805,9 @@ impl P2pServer {
         let peer_list = self.peer_list.read().await;
         for (_, peer) in peer_list.get_peers() {
             // if the peer can directly accept this new block, send it
-            if block.get_height() - 1 == peer.get_height() || topoheight - 1 == peer.get_topoheight() || (peer.get_topoheight() == topoheight && *hash != *peer.get_top_block_hash().lock().await)/* peer.get_height() - block.get_height() < STABLE_HEIGHT_LIMIT */ {
+            if block.get_height() - 1 == peer.get_height() || peer.get_height() - block.get_height() < STABLE_HEIGHT_LIMIT {
                 trace!("Broadcast to {}", peer);
                 peer_list.send_bytes_to_peer(peer, bytes.clone()).await;
-                peer.set_topoheight(topoheight); // we suppose peer will accept the block like us
             }
         }
     }

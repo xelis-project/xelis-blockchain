@@ -775,11 +775,6 @@ impl Blockchain {
 
         for hash in block.get_tips() {
             let previous_block = storage.get_block_by_hash(hash).await?;
-            /*if previous_block.get_height() + 1 != block.get_height() {
-                error!("Invalid block height, previous block is at {} but this block is at {}", previous_block.get_height(), block.get_height());
-                return Err(BlockchainError::InvalidBlockHeight(previous_block.get_height() + 1, block.get_height()));
-            }*/
-
             if previous_block.get_timestamp() > block.get_timestamp() { // block timestamp can't be less than previous block.
                 error!("Invalid block timestamp, parent is less than new block");
                 return Err(BlockchainError::TimestampIsLessThanParent(block.get_timestamp()));
@@ -951,22 +946,29 @@ impl Blockchain {
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
-        storage.set_top_topoheight(highest_topo)?;
-        self.topoheight.store(highest_topo, Ordering::Release);
+        if current_height == 0 || highest_topo > self.get_topo_height() {
+            storage.set_top_topoheight(highest_topo)?;
+            self.topoheight.store(highest_topo, Ordering::Release);
+        }
         storage.store_tips(&tips)?;
 
-        if block.get_height() > self.get_height() {
-            self.height.store(block.get_height(), Ordering::Release);
+        if current_height == 0 || block.get_height() > self.get_height() {
             storage.set_top_height(block.get_height())?;
+            self.height.store(block.get_height(), Ordering::Release);
         }
 
         self.supply.fetch_add(block_reward, Ordering::Release);
-        let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
-        debug!("Adding new '{}' {} at topoheight {}", block_hash, block, topoheight);
+        if storage.is_block_topological_ordered(&block_hash).await {
+            let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
+            debug!("Adding new '{}' {} at topoheight {}", block_hash, block, topoheight);
+        } else {
+            debug!("Adding new '{}' {} with no topoheight (not ordered)!", block_hash, block);
+        }
+
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
-                p2p.broadcast_block(&block, topoheight, highest_topo, self.get_height(), &block_hash).await;
+                p2p.broadcast_block(&block, highest_topo, self.get_height(), &block_hash).await;
             }
         }
         Ok(())
