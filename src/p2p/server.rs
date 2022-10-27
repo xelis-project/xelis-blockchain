@@ -155,12 +155,13 @@ impl P2pServer {
             return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }
 
-        if handshake.get_block_height() <= self.blockchain.get_height() { // peer is not greater than us
+        // check if peer is not greater than us and that we can rewind his top chain in case he is not on not the same chain
+        if handshake.get_block_height() <= self.blockchain.get_height() && self.blockchain.get_height() - handshake.get_block_height() > MAX_BLOCK_REWIND {
             let storage = self.blockchain.get_storage().read().await;
             match storage.get_block_by_hash(handshake.get_block_top_hash()).await {
                 Ok(block) => {
                     if block.get_height() != handshake.get_block_height() {
-                        debug!("{} is not on the same chain!", connection);
+                        debug!("{} is not on the same chain! Block height: {}, handshake height: {}", connection, block.get_height(), handshake.get_block_height());
                         connection.close().await?;
                         return Err(P2pError::InvalidHandshake)
                     }
@@ -824,6 +825,7 @@ impl P2pServer {
             let topoheight = self.blockchain.get_topo_height();
             let mut i = 0;
             while i < topoheight && request.size() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
+                error!("Requesting hash at topo {}", topoheight - i);
                 let hash = storage.get_hash_at_topo_height(topoheight - i).await?;
                 request.add_block_id(hash, topoheight - i);
                 match request.size() {
@@ -844,6 +846,7 @@ impl P2pServer {
                     }
                 };
             }
+            error!("OK");
     
             // add genesis block
             let genesis_block = storage.get_hash_at_topo_height(0).await?;

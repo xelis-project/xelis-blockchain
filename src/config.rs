@@ -25,7 +25,7 @@ pub const GENESIS_BLOCK: &str = "000000000000000000000000000000000000018312477cb
 pub const GENESIS_BLOCK_HASH: &str = "83f6a544d69ca4852e8e2b6bc98b3a1602509e8feea7d744f6a60deeef51c663";
 pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"; // Dev address
 
-pub const MAX_BLOCK_REWIND: u64 = 5; // maximum X blocks can be rewinded
+pub const MAX_BLOCK_REWIND: u64 = STABLE_HEIGHT_LIMIT - 1; // maximum X blocks can be rewinded
 pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = 3; // wait maximum between each chain sync request to peers
 pub const CHAIN_SYNC_DELAY: u64 = 3; // minimum X seconds between each chain sync request per peer
 pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to X blocks id (hash + height) 
