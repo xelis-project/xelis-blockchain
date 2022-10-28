@@ -825,7 +825,7 @@ impl P2pServer {
             let topoheight = self.blockchain.get_topo_height();
             let mut i = 0;
             while i < topoheight && request.size() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
-                error!("Requesting hash at topo {}", topoheight - i);
+                trace!("Requesting hash at topo {}", topoheight - i);
                 let hash = storage.get_hash_at_topo_height(topoheight - i).await?;
                 request.add_block_id(hash, topoheight - i);
                 match request.size() {
@@ -846,7 +846,6 @@ impl P2pServer {
                     }
                 };
             }
-            error!("OK");
     
             // add genesis block
             let genesis_block = storage.get_hash_at_topo_height(0).await?;
