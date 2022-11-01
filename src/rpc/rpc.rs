@@ -1,4 +1,4 @@
-use crate::{core::{blockchain::Blockchain, block::{Block, CompleteBlock}, serializer::Serializer, transaction::Transaction}, crypto::{hash::Hash, address::Address}};
+use crate::{core::{blockchain::Blockchain, block::{Block, CompleteBlock}, serializer::Serializer, transaction::Transaction, storage::Storage}, crypto::{hash::Hash, address::Address}};
 use super::{RpcError, RpcServer};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{json, Value};
@@ -13,8 +13,17 @@ pub struct DataHash<T> {
 }
 
 #[derive(Serialize)]
-pub struct OrderedDataHash<T> {
+pub enum BlockType {
+    Sync,
+    Side,
+    Orphaned,
+    Normal
+}
+
+#[derive(Serialize)]
+pub struct BlockResponse<T> {
     topoheight: Option<u64>,
+    block_type: BlockType,
     #[serde(flatten)]
     data: DataHash<T>
 }
@@ -89,6 +98,18 @@ fn parse_params<P: DeserializeOwned>(value: Value) -> Result<P, RpcError> {
     serde_json::from_value(value).map_err(|e| RpcError::InvalidParams(e))
 }
 
+async fn get_block_type_for_block(blockchain: &Blockchain, storage: &Storage, hash: &Hash) -> Result<BlockType, RpcError> {
+    Ok(if blockchain.is_block_orphaned_for_storage(storage, hash).await {
+        BlockType::Orphaned
+    } else if blockchain.is_block_sync(storage, hash).await? {
+        BlockType::Sync
+    } else if blockchain.is_side_block(storage, hash).await? {
+        BlockType::Side
+    } else {
+        BlockType::Normal
+    })
+}
+
 pub fn register_methods(server: &mut RpcServer) {
     info!("Registering RPC methods...");
     server.register_method("get_height", method!(get_height));
@@ -139,7 +160,7 @@ async fn get_block_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> Re
     let storage = blockchain.get_storage().read().await;
     let hash = storage.get_hash_at_topo_height(params.topoheight).await?;
     let block = storage.get_complete_block(&hash).await?;
-    Ok(json!(OrderedDataHash { topoheight: Some(params.topoheight), data: DataHash { hash, data: block } }))
+    Ok(json!(BlockResponse { topoheight: Some(params.topoheight), block_type: get_block_type_for_block(&blockchain, &storage, &hash).await?, data: DataHash { hash, data: block } }))
 }
 
 async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -151,7 +172,7 @@ async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<V
     } else {
         None
     };
-    Ok(json!(OrderedDataHash { topoheight, data: DataHash { hash: params.hash, data: block } }))
+    Ok(json!(BlockResponse { topoheight, block_type: get_block_type_for_block(&blockchain, &storage, &params.hash).await?, data: DataHash { hash: params.hash, data: block } }))
 }
 
 async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -166,7 +187,7 @@ async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value
     } else {
         None
     };
-    Ok(json!(OrderedDataHash { topoheight: topoheight, data: DataHash { hash, data: block } }))
+    Ok(json!(BlockResponse { topoheight, block_type: get_block_type_for_block(&blockchain, &storage, &hash).await?, data: DataHash { hash, data: block } }))
 }
 
 async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -287,7 +308,7 @@ async fn get_blocks_at_height(blockchain: Arc<Blockchain>, body: Value) -> Resul
     let params: GetBlocksAtHeightParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
 
-    let mut blocks: Vec<OrderedDataHash<CompleteBlock>> = Vec::new();
+    let mut blocks: Vec<BlockResponse<CompleteBlock>> = Vec::new();
     for hash in storage.get_blocks_at_height(params.height).await? {
         let topoheight = if storage.is_block_topological_ordered(&hash).await {
             Some(storage.get_topo_height_for_hash(&hash).await?)
@@ -296,7 +317,7 @@ async fn get_blocks_at_height(blockchain: Arc<Blockchain>, body: Value) -> Resul
         };
 
         let block = storage.get_complete_block(&hash).await?;
-        blocks.push(OrderedDataHash { topoheight, data: DataHash { hash, data: block } })
+        blocks.push(BlockResponse { topoheight, block_type: get_block_type_for_block(&blockchain, &storage, &hash).await?, data: DataHash { hash, data: block } })
     }
     Ok(json!(blocks))
 }

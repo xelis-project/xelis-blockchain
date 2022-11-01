@@ -20,11 +20,13 @@ It is possible to create transactions, sign them, and introduce them in a block.
 
 XELIS try to implement & use a blockDAG which the rules are the following:
 - A block is considered "sync block" when the block height is less than `TOP_HEIGHT - STABLE_HEIGHT_LIMIT` and it's the unique block at a specific height or if it's the heaviest block by cumulative difficulty at its height.
+- A block is considered "side block" when block height is less than or equal to height of past 8 topographical blocks.
+- A block is considered "orphaned" when the block is not ordered in DAG (no topological height for it).
 - A height is not unique anymore.
-- Topo height is unique for each block, but can change when the DAG is re-ordered.
+- Topo height is unique for each block, but can change when the DAG is re-ordered up to `TOP_HEIGHT - STABLE_HEIGHT_LIMIT`.
 - You can have up to 3 previous blocks in a block.
-- For mining, you have to mine on one of 3 of the most heavier tips
-- Block should not have deviated to much from main chain / heavier tips.
+- For mining, you have to mine on one of 3 of the most heavier tips.
+- Block should not have deviated too much from main chain / heavier tips.
 - Maximum 9% of difficulty difference between Tips selected in the same block.
 
 ## Storage

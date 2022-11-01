@@ -214,6 +214,11 @@ impl Blockchain {
         storage.get_hash_at_topo_height(self.get_topo_height()).await
     }
 
+    pub async fn is_block_sync(&self, storage: &Storage, hash: &Hash) -> Result<bool, BlockchainError> {
+        let current_height = self.get_height();
+        self.is_block_sync_at_height(storage, hash, current_height).await
+    }
+
     async fn is_block_sync_at_height(&self, storage: &Storage, hash: &Hash, height: u64) -> Result<bool, BlockchainError> {
         let block_height = storage.get_height_for_block(hash).await?;
         if block_height == 0 { // genesis block is a sync block
@@ -972,6 +977,32 @@ impl Blockchain {
             }
         }
         Ok(())
+    }
+
+    // if a block is not ordered, it's an orphaned block and its transactions are not honoured
+    pub async fn is_block_orphaned_for_storage(&self, storage: &Storage, hash: &Hash) -> bool {
+        !storage.is_block_topological_ordered(hash).await
+    }
+
+    // a block is a side block if block height is less than or equal to height of past 8 topographical blocks
+    pub async fn is_side_block(&self, storage: &Storage, hash: &Hash) -> Result<bool, BlockchainError> {
+        let topoheight = storage.get_topo_height_for_hash(hash).await?;
+        let height = storage.get_height_for_block(hash).await?;
+
+        let mut counter = 0;
+        let mut i = topoheight - 1;
+        while counter < STABLE_HEIGHT_LIMIT && i > 0 {
+            let hash = storage.get_hash_at_topo_height(i).await?;
+            let previous_height = storage.get_height_for_block(&hash).await?;
+            
+            if height <= previous_height {
+                return Ok(true)
+            }
+            counter += 1;
+            i -= 1;
+        }
+
+        Ok(false)
     }
 
     pub async fn rewind_chain(&self, count: usize) -> Result<(), BlockchainError> {
