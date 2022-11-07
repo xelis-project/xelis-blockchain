@@ -984,9 +984,17 @@ impl Blockchain {
         !storage.is_block_topological_ordered(hash).await
     }
 
-    // a block is a side block if block height is less than or equal to height of past 8 topographical blocks
+    // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
     pub async fn is_side_block(&self, storage: &Storage, hash: &Hash) -> Result<bool, BlockchainError> {
+        if !storage.is_block_topological_ordered(hash).await {
+            return Ok(false)
+        }
+
         let topoheight = storage.get_topo_height_for_hash(hash).await?;
+        if topoheight == 0 {
+            return Ok(false)
+        }
+
         let height = storage.get_height_for_block(hash).await?;
 
         let mut counter = 0;
