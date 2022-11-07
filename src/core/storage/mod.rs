@@ -280,13 +280,26 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn pop_blocks(&mut self, mut height: u64, count: u64) -> Result<(u64, u64, Arc<BlockMetadata>), BlockchainError> {
+    pub async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Arc<BlockMetadata>), BlockchainError> {
         if height < count as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
         }
 
+        // search the lowest topo height available based on count + 1
+        // (last lowest topo height accepted)
+        let mut lowest_topo = topoheight;
+        for i in (height-count..=height).rev() {
+            debug!("checking lowest topoheight for blocks at {}", i);
+            for hash in self.get_blocks_at_height(i).await? {
+                let topo = self.get_topo_height_for_hash(&hash).await?;
+                if topo < lowest_topo {
+                    lowest_topo = topo;
+                }
+            }
+        }
+        debug!("Lowest topoheight for rewind: {}", lowest_topo);
+
         // new topo height after all deleted blocks
-        let topoheight;
         // new TIPS for chain
         let mut tips = self.get_tips().await?;
         let mut done = 0;
@@ -298,8 +311,10 @@ impl Storage {
                     for unique in tmp_blocks_at_height {
                         if self.is_block_topological_ordered(&unique).await {
                             topoheight = self.get_topo_height_for_hash(&unique).await?;
-                            debug!("Unique block at height {} and topoheight {} found!", height, topoheight);
-                            break 'main;
+                            if topoheight <= lowest_topo {
+                                debug!("Unique block at height {} and topoheight {} found!", height, topoheight);
+                                break 'main;
+                            }
                         }
                     }
                 }
@@ -319,6 +334,10 @@ impl Storage {
 
                 // if block is ordered, delete data that are linked to it
                 if let Ok(topo) = self.get_topo_height_for_hash(&hash).await {
+                    if topo < topoheight {
+                        topoheight = topo;
+                    }
+
                     debug!("Block was at topoheight {}", topo);
                     self.delete_data_no_arc(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
 

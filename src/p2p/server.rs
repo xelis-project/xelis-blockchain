@@ -537,8 +537,8 @@ impl P2pServer {
                     debug!("Peer found a common point for sync, received {} blocks", response.size());
                     let pop_count = {
                         let storage = self.blockchain.get_storage().read().await;
-                        let common_block = match storage.get_block_by_hash(common_point.get_hash()).await {
-                            Ok(block) => block,
+                        let block_height = match storage.get_height_for_block(common_point.get_hash()).await {
+                            Ok(height) => height,
                             Err(e) => {
                                 warn!("Peer {} sent us an invalid common point: {}", peer.get_connection().get_address(), e);
                                 return Err(P2pError::InvalidPacket)
@@ -546,10 +546,10 @@ impl P2pServer {
                         };
                         let topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
                         if topoheight != common_point.get_topoheight() {
-                            error!("Peer {} sent us a valid block hash, but at invalid height (expected: {}, got: {})!", peer.get_connection().get_address(), common_block.get_height(), common_point.get_topoheight());
+                            error!("Peer {} sent us a valid block hash, but at invalid height (expected: {}, got: {})!", peer.get_connection().get_address(), block_height, common_point.get_topoheight());
                             return Err(P2pError::InvalidPacket)
                         }
-                        self.blockchain.get_topo_height() - topoheight
+                        self.blockchain.get_height() - block_height
                     };
 
                     if pop_count > MAX_BLOCK_REWIND {

@@ -121,7 +121,6 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("get_block_by_hash", method!(get_block_by_hash));
     server.register_method("get_top_block", method!(get_top_block));
     server.register_method("submit_block", method!(submit_block));
-    //server.register_method("get_messages", method!(get_messages));
     server.register_method("get_account", method!(get_account));
     server.register_method("count_accounts", method!(count_accounts));
     server.register_method("count_transactions", method!(count_transactions));
@@ -129,8 +128,10 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("p2p_status", method!(p2p_status));
     server.register_method("get_mempool", method!(get_mempool));
     server.register_method("get_tips", method!(get_tips));
+
     // TODO only in debug mode
     server.register_method("is_chain_valid", method!(is_chain_valid));
+    server.register_method("get_dag_order", method!(get_dag_order));
 }
 
 async fn get_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -209,18 +210,6 @@ async fn submit_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value,
     blockchain.add_new_block(complete_block, true).await?;
     Ok(json!(true))
 }
-
-/*
-async fn get_messages(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
-    let params: GetMessagesParams = parse_params(body)?;
-    if !params.address.is_normal() {
-        return Err(RpcError::ExpectedNormalAddress)
-    }
-    // TODO
-    let messages: Vec<&dyn MessageData> = Vec::new();
-    todo!("xelis messages") //Ok(json!(messages))
-}
-*/
 
 async fn get_account(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetAccountParams = parse_params(body)?;
@@ -329,4 +318,20 @@ async fn get_tips(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, Rpc
     let storage = blockchain.get_storage().read().await;
     let tips = storage.get_tips().await?;
     Ok(json!(tips))
+}
+
+async fn get_dag_order(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+
+    let topoheight = blockchain.get_topo_height();
+    let storage = blockchain.get_storage().read().await;
+    let mut order = Vec::with_capacity(topoheight as usize);
+    for i in 0..=topoheight {
+        let hash = storage.get_hash_at_topo_height(i).await?;
+        order.push(hash);
+    }
+
+    Ok(json!(order))
 }

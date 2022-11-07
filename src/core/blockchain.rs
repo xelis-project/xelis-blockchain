@@ -1015,7 +1015,7 @@ impl Blockchain {
         let height = self.get_height();
         let topoheight = self.get_topo_height();
         warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, height, topoheight);
-        let (height, topoheight, metadata) = storage.pop_blocks(height, count as u64).await?;
+        let (height, topoheight, metadata) = storage.pop_blocks(height, topoheight, count as u64).await?;
         self.height.store(height, Ordering::Release);
         self.topoheight.store(topoheight, Ordering::Release);
         self.supply.store(metadata.get_supply(), Ordering::Release); // recaculate supply
