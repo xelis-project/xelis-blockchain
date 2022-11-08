@@ -14,6 +14,8 @@ use log::{trace, info};
 use anyhow::Error as AnyError;
 use thiserror::Error;
 
+use self::websocket::NotifyEvent;
+
 pub type SharedRpcServer = web::Data<Arc<RpcServer>>;
 pub type Handler = Box<dyn Fn(Arc<Blockchain>, Value) -> Pin<Box<dyn Future<Output = Result<Value, RpcError>>>> + Send + Sync>;
 
@@ -42,7 +44,9 @@ pub enum RpcError {
     #[error("Error, expected a normal wallet address")]
     ExpectedNormalAddress,
     #[error("Error, no P2p enabled")]
-    NoP2p
+    NoP2p,
+    #[error("WebSocket client is not registered")]
+    ClientNotRegistered
 }
 
 impl RpcError {
@@ -114,7 +118,7 @@ pub struct RpcServer {
     handle: Mutex<Option<ServerHandle>>, // keep the server handle to stop it gracefully
     methods: HashMap<String, Handler>, // all rpc methods registered
     blockchain: Arc<Blockchain>, // pointer to blockchain data
-    clients: Mutex<HashSet<Addr<WebSocketHandler>>> // all websocket clients connected
+    clients: Mutex<HashMap<Addr<WebSocketHandler>, HashSet<NotifyEvent>>> // all websocket clients connected with subscriptions linked
 }
 
 impl RpcServer {
@@ -122,7 +126,7 @@ impl RpcServer {
         let mut server = Self {
             handle: Mutex::new(None),
             methods: HashMap::new(),
-            clients: Mutex::new(HashSet::new()),
+            clients: Mutex::new(HashMap::new()),
             blockchain
         };
         rpc::register_methods(&mut server);
@@ -189,12 +193,26 @@ impl RpcServer {
 
     pub async fn add_client(&self, addr: Addr<WebSocketHandler>) {
         let mut clients = self.clients.lock().await;
-        clients.insert(addr);
+        clients.insert(addr, HashSet::new());
     }
 
     pub async fn remove_client(&self, addr: &Addr<WebSocketHandler>) {
         let mut clients = self.clients.lock().await;
-        trace!("WebSocket client {:?} deleted: {}", addr, clients.remove(addr));
+        trace!("WebSocket client {:?} deleted: {}", addr, clients.remove(addr).is_some());
+    }
+
+    pub async fn subscribe_client_to(&self, addr: &Addr<WebSocketHandler>, subscribe: NotifyEvent) -> Result<(), RpcError> {
+        let mut clients = self.clients.lock().await;
+        let subscriptions = clients.get_mut(addr).ok_or_else(|| RpcError::ClientNotRegistered)?;
+        subscriptions.insert(subscribe);
+        Ok(())
+    }
+
+    pub async fn unsubscribe_client_from(&self, addr: &Addr<WebSocketHandler>, subscribe: &NotifyEvent) -> Result<(), RpcError> {
+        let mut clients = self.clients.lock().await;
+        let subscriptions = clients.get_mut(addr).ok_or_else(|| RpcError::ClientNotRegistered)?;
+        subscriptions.remove(subscribe);
+        Ok(())
     }
 }
 

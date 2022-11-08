@@ -1,10 +1,26 @@
-use actix::{Actor, StreamHandler, AsyncContext, Message as TMessage, Handler, ActorContext};
+use actix::{Actor, StreamHandler, AsyncContext, Message as TMessage, Handler, ActorContext, Addr};
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
+use serde::Deserialize;
 use serde_json::Value;
 use super::{SharedRpcServer, RpcError, RpcResponseError};
 use log::debug;
 
 struct Response(Value);
+
+#[derive(Deserialize)]
+pub struct SubscribeParams {
+    notify: NotifyEvent
+}
+
+#[derive(PartialEq, Eq, Hash, Deserialize)]
+pub enum NotifyEvent {
+    // When a new block is accepted by chain
+    NewBlock,
+    // When a new transaction is added in mempool
+    TransactionAddedInMempool,
+    // When a registered TX SC Call hash has been executed by chain
+    TransactionSCResult,
+}
 
 impl TMessage for Response {
     type Result = Result<(), RpcError>;
@@ -25,7 +41,7 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
                 let address = ctx.address();
                 let server = self.server.clone();
                 let fut = async move {
-                    let response = match WebSocketHandler::handle_request(server, &text.as_bytes()).await {
+                    let response = match WebSocketHandler::handle_request(&address, server, &text.as_bytes()).await {
                         Ok(result) => result,
                         Err(e) => e.to_json()
                     };
@@ -70,9 +86,20 @@ impl WebSocketHandler {
         }
     }
 
-    pub async fn handle_request(server: SharedRpcServer, body: &[u8]) -> Result<Value, RpcResponseError> {
-        let request = server.parse_request(body)?;
-        // TODO check for subscribe method
-        server.execute_method(request).await
+    pub async fn handle_request(addr: &Addr<WebSocketHandler>, server: SharedRpcServer, body: &[u8]) -> Result<Value, RpcResponseError> {
+        let mut request = server.parse_request(body)?;
+        match request.method.as_str() {
+            "subscribe" => {
+                let params: SubscribeParams = serde_json::from_value(request.params.take().unwrap_or(Value::Null)).map_err(|e| RpcResponseError::new(request.id, RpcError::InvalidParams(e)))?;
+                server.subscribe_client_to(addr, params.notify).await.map_err(|e| RpcResponseError::new(request.id, e))?;
+                Ok(Value::Bool(true)) 
+            },
+            "unsubscribe" => {
+                let params: SubscribeParams = serde_json::from_value(request.params.take().unwrap_or(Value::Null)).map_err(|e| RpcResponseError::new(request.id, RpcError::InvalidParams(e)))?;
+                server.unsubscribe_client_from(addr, &params.notify).await.map_err(|e| RpcResponseError::new(request.id, e))?;
+                Ok(Value::Bool(true)) 
+            },
+            _ => server.execute_method(request).await
+        }
     }
 }
