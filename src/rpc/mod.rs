@@ -3,12 +3,13 @@ pub mod websocket;
 
 use crate::{core::{error::BlockchainError, blockchain::Blockchain, reader::ReaderError}, config};
 use crate::rpc::websocket::WebSocketHandler;
+use actix::Addr;
 use actix_web::{get, post, web::{self, Payload}, error::Error, App, HttpResponse, HttpServer, Responder, dev::ServerHandle, ResponseError, HttpRequest};
-use actix_web_actors::ws;
+use actix_web_actors::ws::WsResponseBuilder;
 use serde::Deserialize;
 use serde_json::{Value, Error as SerdeError, json};
 use tokio::sync::Mutex;
-use std::{sync::Arc, collections::HashMap, pin::Pin, future::Future, fmt::{Display, Formatter}};
+use std::{sync::Arc, collections::{HashMap, HashSet}, pin::Pin, future::Future, fmt::{Display, Formatter}};
 use log::{trace, info};
 use anyhow::Error as AnyError;
 use thiserror::Error;
@@ -111,8 +112,9 @@ pub struct RpcRequest {
 
 pub struct RpcServer {
     handle: Mutex<Option<ServerHandle>>, // keep the server handle to stop it gracefully
-    methods: HashMap<String, Handler>,
-    blockchain: Arc<Blockchain>
+    methods: HashMap<String, Handler>, // all rpc methods registered
+    blockchain: Arc<Blockchain>, // pointer to blockchain data
+    clients: Mutex<HashSet<Addr<WebSocketHandler>>> // all websocket clients connected
 }
 
 impl RpcServer {
@@ -120,6 +122,7 @@ impl RpcServer {
         let mut server = Self {
             handle: Mutex::new(None),
             methods: HashMap::new(),
+            clients: Mutex::new(HashSet::new()),
             blockchain
         };
         rpc::register_methods(&mut server);
@@ -183,6 +186,11 @@ impl RpcServer {
     pub fn get_blockchain(&self) -> &Arc<Blockchain> {
         &self.blockchain
     }
+
+    pub async fn add_client(&self, addr: Addr<WebSocketHandler>) {
+        let mut clients = self.clients.lock().await;
+        clients.insert(addr);
+    }
 }
 
 #[get("/")]
@@ -201,5 +209,8 @@ async fn json_rpc(rpc: SharedRpcServer, body: web::Bytes) -> Result<impl Respond
 #[get("/ws")]
 async fn ws_endpoint(server: SharedRpcServer, request: HttpRequest, stream: Payload) -> Result<HttpResponse, Error> {
     trace!("new WebSocket request");
-    ws::start(WebSocketHandler::new(server), &request, stream)
+    let (addr, response) = WsResponseBuilder::new(WebSocketHandler::new(server.clone()), &request, stream).start_with_addr()?;
+    server.add_client(addr).await;
+
+    Ok(response)
 }
