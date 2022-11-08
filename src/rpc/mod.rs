@@ -2,7 +2,7 @@ pub mod rpc;
 pub mod websocket;
 
 use crate::{core::{error::BlockchainError, blockchain::Blockchain, reader::ReaderError}, config};
-use crate::rpc::websocket::WebSocket;
+use crate::rpc::websocket::WebSocketHandler;
 use actix_web::{get, post, web::{self, Payload}, error::Error, App, HttpResponse, HttpServer, Responder, dev::ServerHandle, ResponseError, HttpRequest};
 use actix_web_actors::ws;
 use serde::Deserialize;
@@ -57,7 +57,7 @@ impl RpcError {
 }
 
 #[derive(Debug)]
-struct RpcResponseError {
+pub struct RpcResponseError {
     id: Option<usize>,
     error: RpcError
 }
@@ -153,12 +153,31 @@ impl RpcServer {
         info!("RPC Server is now stopped!");
     }
 
-    pub fn register_method(&mut self, name: &str, handler: Handler) {
-        self.methods.insert(name.into(), handler);
+    pub fn parse_request(&self, body: &[u8]) -> Result<RpcRequest, RpcResponseError> {
+        let request: RpcRequest = serde_json::from_slice(&body).map_err(|_| RpcResponseError::new(None, RpcError::ParseBodyError))?;
+        if request.jsonrpc != JSON_RPC_VERSION {
+            return Err(RpcResponseError::new(request.id, RpcError::InvalidVersion));
+        }
+        Ok(request)
     }
 
-    pub fn get_registered_methods(&self) -> &HashMap<String, Handler> {
-        &self.methods
+    pub async fn execute_method(&self, mut request: RpcRequest) -> Result<Value, RpcResponseError> {
+
+        let handler = match self.methods.get(&request.method) {
+            Some(handler) => handler,
+            None => return Err(RpcResponseError::new(request.id, RpcError::MethodNotFound(request.method)))
+        };
+        trace!("executing '{}' RPC method", request.method);
+        let result = handler(Arc::clone(&self.blockchain), request.params.take().unwrap_or(Value::Null)).await.map_err(|err| RpcResponseError::new(request.id, err.into()))?;
+        Ok(json!({
+            "jsonrpc": JSON_RPC_VERSION,
+            "id": request.id,
+            "result": result
+        }))
+    }
+
+    pub fn register_method(&mut self, name: &str, handler: Handler) {
+        self.methods.insert(name.into(), handler);
     }
 
     pub fn get_blockchain(&self) -> &Arc<Blockchain> {
@@ -174,26 +193,13 @@ async fn index() -> impl Responder {
 // TODO support batch
 #[post("/json_rpc")]
 async fn json_rpc(rpc: SharedRpcServer, body: web::Bytes) -> Result<impl Responder, RpcResponseError> {
-    let mut rpc_request: RpcRequest = serde_json::from_slice(&body).map_err(|_| RpcResponseError::new(None, RpcError::ParseBodyError))?;
-    if rpc_request.jsonrpc != JSON_RPC_VERSION {
-        return Err(RpcResponseError::new(rpc_request.id, RpcError::InvalidVersion));
-    }
-
-    let handler = match rpc.get_registered_methods().get(&rpc_request.method) {
-        Some(handler) => handler,
-        None => return Err(RpcResponseError::new(rpc_request.id, RpcError::MethodNotFound(rpc_request.method)))
-    };
-    trace!("executing '{}' RPC method", rpc_request.method);
-    let result = handler(Arc::clone(rpc.get_blockchain()), rpc_request.params.take().unwrap_or(Value::Null)).await.map_err(|err| RpcResponseError::new(rpc_request.id, err.into()))?;
-    Ok(HttpResponse::Ok().json(json!({
-        "jsonrpc": JSON_RPC_VERSION,
-        "id": rpc_request.id,
-        "result": result
-    })))
+    let request = rpc.parse_request(&body)?;
+    let result = rpc.execute_method(request).await?;
+    Ok(HttpResponse::Ok().json(result))
 }
 
 #[get("/ws")]
 async fn ws_endpoint(server: SharedRpcServer, request: HttpRequest, stream: Payload) -> Result<HttpResponse, Error> {
     trace!("new WebSocket request");
-    ws::start(WebSocket::new(server), &request, stream)
+    ws::start(WebSocketHandler::new(server), &request, stream)
 }
