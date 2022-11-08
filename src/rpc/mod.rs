@@ -1,7 +1,10 @@
 pub mod rpc;
+pub mod websocket;
 
 use crate::{core::{error::BlockchainError, blockchain::Blockchain, reader::ReaderError}, config};
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder, dev::ServerHandle, ResponseError};
+use crate::rpc::websocket::WebSocket;
+use actix_web::{get, post, web::{self, Payload}, error::Error, App, HttpResponse, HttpServer, Responder, dev::ServerHandle, ResponseError, HttpRequest};
+use actix_web_actors::ws;
 use serde::Deserialize;
 use serde_json::{Value, Error as SerdeError, json};
 use tokio::sync::Mutex;
@@ -73,6 +76,17 @@ impl RpcResponseError {
             None => Value::Null
         }
     }
+
+    pub fn to_json(&self) -> Value {
+        json!({
+            "jsonrpc": JSON_RPC_VERSION,
+            "id": self.get_id(),
+            "error": {
+                "code": self.error.get_code(),
+                "message": self.error.to_string()
+            }
+        })
+    }
 }
 
 impl Display for RpcResponseError {
@@ -83,14 +97,7 @@ impl Display for RpcResponseError {
 
 impl ResponseError for RpcResponseError {
     fn error_response(&self) -> HttpResponse {
-        HttpResponse::Ok().json(json!({
-            "jsonrpc": JSON_RPC_VERSION,
-            "id": self.get_id(),
-            "error": {
-                "code": self.error.get_code(),
-                "message": self.error.to_string()
-            }
-        }))
+        HttpResponse::Ok().json(self.to_json())
     }
 }
 
@@ -183,4 +190,10 @@ async fn json_rpc(rpc: SharedRpcServer, body: web::Bytes) -> Result<impl Respond
         "id": rpc_request.id,
         "result": result
     })))
+}
+
+#[get("/ws")]
+async fn ws_endpoint(server: SharedRpcServer, request: HttpRequest, stream: Payload) -> Result<HttpResponse, Error> {
+    trace!("new WebSocket request");
+    ws::start(WebSocket::new(server), &request, stream)
 }
