@@ -877,12 +877,17 @@ impl Blockchain {
         storage.add_new_block(block.clone(), &txs, difficulty, block_hash.clone(), self.get_supply(), self.get_burned_supply()).await?; // Add block to chain
         // Compute cumulative difficulty for block
         let cumulative_difficulty = { // TODO Refactor
-            let mut tips = HashSet::with_capacity(block.get_tips().len());
-            for hash in block.get_tips() {
-                tips.insert(hash.clone());
-            }
-            let (base, base_height) = self.find_common_base(storage, &tips).await?;
-            let (_, cumulative_difficulty) = self.find_tip_work_score(&storage, &block_hash, &base, base_height).await?;
+            let cumulative_difficulty: u64 = if tips_count == 0 {
+                GENESIS_BLOCK_DIFFICULTY
+            } else {
+                let mut tips = HashSet::with_capacity(block.get_tips().len());
+                for hash in block.get_tips() {
+                    tips.insert(hash.clone());
+                }
+                let (base, base_height) = self.find_common_base(storage, &tips).await?;
+                let (_, cumulative_difficulty) = self.find_tip_work_score(&storage, &block_hash, &base, base_height).await?;
+                cumulative_difficulty
+            };
             storage.set_cumulative_difficulty_for_block(&block_hash, cumulative_difficulty).await?;
             debug!("Cumulative difficulty for block {}: {}", block_hash, cumulative_difficulty);
             cumulative_difficulty
