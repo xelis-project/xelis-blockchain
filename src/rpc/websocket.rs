@@ -4,11 +4,6 @@ use serde_json::Value;
 use super::{SharedRpcServer, RpcError, RpcResponseError};
 use log::debug;
 
-enum Action {
-    Notify(Addr<WebSocketHandler>, Value),
-    Register(Addr<WebSocketHandler>)
-}
-
 pub struct WebSocketHandler {
     server: SharedRpcServer
 }
@@ -17,7 +12,6 @@ impl Actor for WebSocketHandler {
     type Context = WebsocketContext<Self>;
 }
 
-/// Handler for ws::Message message
 impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
     fn handle(&mut self, msg: Result<Message, ProtocolError>, ctx: &mut Self::Context) {
         match msg {
