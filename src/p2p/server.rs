@@ -181,25 +181,29 @@ impl P2pServer {
 
     async fn build_handshake(&self) -> Result<Handshake, P2pError> {
         let mut peers: Vec<SocketAddr> = Vec::new();
-        let peer_list = self.peer_list.read().await;
-        let mut iter = peer_list.get_peers().iter();
-        while peers.len() < Handshake::MAX_LEN {
-            match iter.next() {
-                Some((_, v)) => {
-                    let mut addr: SocketAddr = v.get_connection().get_address().clone();
-                    if !v.is_out() {
-                        addr.set_port(v.get_local_port());
-                    }
-                    peers.push(addr);
-                },
-                None => break
-            };
+        {
+            let peer_list = self.peer_list.read().await;
+            let mut iter = peer_list.get_peers().iter();
+            while peers.len() < Handshake::MAX_LEN {
+                match iter.next() {
+                    Some((_, v)) => {
+                        let mut addr: SocketAddr = v.get_connection().get_address().clone();
+                        if !v.is_out() {
+                            addr.set_port(v.get_local_port());
+                        }
+                        peers.push(addr);
+                    },
+                    None => break
+                };
+            }
         }
 
         let topoheight = self.blockchain.get_topo_height();
         let height = self.blockchain.get_height();
-        let top_hash = self.blockchain.get_storage().read().await.get_top_block_hash().await.unwrap_or_else(|_| Hash::zero());
-        Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, height, top_hash, peers))
+        let storage = self.blockchain.get_storage().read().await;
+        let top_hash = storage.get_top_block_hash().await.unwrap_or_else(|_| Hash::zero());
+        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&top_hash).await.unwrap_or_else(|_| 0);
+        Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, height, top_hash, cumulative_difficulty, peers))
     }
 
     // this function handle all new connections
@@ -273,12 +277,15 @@ impl P2pServer {
     }
 
     async fn build_ping_packet(&self, peer: Option<&Arc<Peer>>) -> Ping<'_> {
-        let block_top_hash = match self.blockchain.get_top_block_hash().await {
-            Err(e) => {
-                error!("Couldn't get the top block hash from storage: {}", e);
-                Hash::zero()
-            },
-            Ok(hash) => hash
+        let (cumulative_difficulty, block_top_hash) = {
+            let storage = self.blockchain.get_storage().read().await;
+            match storage.get_top_block_hash().await {
+                Err(e) => {
+                    error!("Couldn't get the top block hash from storage: {}", e);
+                    (0, Hash::zero())
+                },
+                Ok(hash) => (storage.get_cumulative_difficulty_for_block(&hash).await.unwrap_or_else(|_| 0), hash)
+            }
         };
         let highest_topo_height = self.blockchain.get_topo_height();
         let highest_height = self.blockchain.get_height();
@@ -311,7 +318,7 @@ impl P2pServer {
                 }
             }
         }
-        Ping::new(Cow::Owned(block_top_hash), highest_topo_height, highest_height, new_peers)
+        Ping::new(Cow::Owned(block_top_hash), highest_topo_height, highest_height, cumulative_difficulty, new_peers)
     }
 
     // build a ping packet with a specific peerlist for the peer
@@ -795,11 +802,11 @@ impl P2pServer {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &Block, highest_topoheight: u64, highest_height: u64, hash: &Hash) {
+    pub async fn broadcast_block(&self, block: &Block, cumulative_difficulty: u64, highest_topoheight: u64, highest_height: u64, hash: &Hash) {
         trace!("Broadcast block: {}", hash);
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock
-        let ping = Ping::new(Cow::Borrowed(hash), highest_topoheight, highest_height, Vec::new());
+        let ping = Ping::new(Cow::Borrowed(hash), highest_topoheight, highest_height, cumulative_difficulty, Vec::new());
         let packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Owned(ping)));
         let bytes = Bytes::from(packet.to_bytes());
         // TODO should we move it in another async task ?

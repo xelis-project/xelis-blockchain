@@ -1,4 +1,4 @@
-use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY};
+use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY};
 use crate::core::immutable::Immutable;
 use crate::crypto::address::Address;
 use crate::crypto::hash::{Hash, Hashable};
@@ -502,13 +502,14 @@ impl Blockchain {
 
     pub async fn get_difficulty_at_tips(&self, storage: &Storage, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
         if tips.len() == 0 { // Genesis difficulty
-            return Ok(1)
+            return Ok(GENESIS_BLOCK_DIFFICULTY)
         }
 
         let height = blockdag::calculate_height_at_tips(storage, tips).await?;
         if height < 3 {
             return Ok(MINIMUM_DIFFICULTY)
         }
+
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, tips).await?;
         let biggest_difficulty = storage.get_difficulty_for_block(best_tip).await?;
         let best_tip_timestamp = storage.get_timestamp_for_block(best_tip).await?;
@@ -521,11 +522,11 @@ impl Blockchain {
         Ok(difficulty)
     }
 
-    // pass in params the already computed block hash
+    // pass in params the already computed block hash and its tips
     // check the difficulty calculated at tips
     // if the difficulty is valid, returns it (prevent to re-compute it)
-    async fn verify_proof_of_work(&self, storage: &Storage, hash: &Hash, block: &Block) -> Result<u64, BlockchainError> {
-        let difficulty = self.get_difficulty_at_tips(storage, block.get_tips()).await?;
+    async fn verify_proof_of_work(&self, storage: &Storage, hash: &Hash, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
+        let difficulty = self.get_difficulty_at_tips(storage, tips).await?;
         if check_difficulty(hash, difficulty)? {
             Ok(difficulty)
         } else {
@@ -673,7 +674,7 @@ impl Blockchain {
                 }
             }
 
-            let difficulty = self.verify_proof_of_work(&storage, &hash, &block).await?;
+            let difficulty = self.verify_proof_of_work(&storage, &hash, block.get_tips()).await?;
             let metadata = storage.get_block_metadata_by_hash(&hash).await?;
             if metadata.get_difficulty() != difficulty {
                 error!("Invalid stored difficulty for block {} at height {}, difficulty stored: {}, calculated: {} ", hash, height, metadata.get_difficulty(), difficulty);
@@ -805,9 +806,10 @@ impl Blockchain {
             }
         }
 
-        // verify PoW and get difficulty for block tips
-        let difficulty = self.verify_proof_of_work(&storage, &block_hash, &block).await?;
+        // verify PoW and get difficulty for this block based on tips
+        let difficulty = self.verify_proof_of_work(&storage, &block_hash, block.get_tips()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
+
         let mut total_fees: u64 = 0;
         let mut total_tx_size: usize = 0;
         { // Transaction verification
@@ -817,9 +819,10 @@ impl Blockchain {
                 error!("Block has an invalid block header, transaction count mismatch (expected {} got {})!", txs_len, hashes_len);
                 return Err(BlockchainError::InvalidBlockTxs(hashes_len, txs_len));
             }
+            // TODO replace bool by nonce to support multi TX in same block
             let mut cache_tx: HashMap<Hash, bool> = HashMap::new(); // avoid using a TX multiple times
             let mut registrations: HashMap<&PublicKey, bool> = HashMap::new(); // avoid multiple registration of the same public key 
-            for tx in block.get_transactions() {
+            for tx in block.get_transactions() { // TODO check correct order of TX / hash
                 let tx_hash = tx.hash();
                 // block can't contains the same tx and should have tx hash in block header
                 if cache_tx.contains_key(&tx_hash) {
@@ -871,8 +874,19 @@ impl Blockchain {
         let (block, txs) = block.split();
         let block = block.to_arc();
         debug!("Saving block {} on disk", block_hash);
-        storage.add_new_block(block.clone(), &txs, difficulty, block_hash.clone(), self.get_supply(), 0, self.get_burned_supply()).await?; // Add block to chain
-
+        storage.add_new_block(block.clone(), &txs, difficulty, block_hash.clone(), self.get_supply(), self.get_burned_supply()).await?; // Add block to chain
+        // Compute cumulative difficulty for block
+        let cumulative_difficulty = { // TODO Refactor
+            let mut tips = HashSet::with_capacity(block.get_tips().len());
+            for hash in block.get_tips() {
+                tips.insert(hash.clone());
+            }
+            let (base, base_height) = self.find_common_base(storage, &tips).await?;
+            let (_, cumulative_difficulty) = self.find_tip_work_score(&storage, &block_hash, &base, base_height).await?;
+            storage.set_cumulative_difficulty_for_block(&block_hash, cumulative_difficulty).await?;
+            debug!("Cumulative difficulty for block {}: {}", block_hash, cumulative_difficulty);
+            cumulative_difficulty
+        };
         // Transaction execution
         let mut mempool = self.mempool.write().await;
         for hash in block.get_txs_hashes() { // remove all txs present in mempool
@@ -973,7 +987,7 @@ impl Blockchain {
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
-                p2p.broadcast_block(&block, highest_topo, self.get_height(), &block_hash).await;
+                p2p.broadcast_block(&block, cumulative_difficulty, highest_topo, self.get_height(), &block_hash).await;
             }
         }
         Ok(())

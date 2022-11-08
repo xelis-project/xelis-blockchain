@@ -7,6 +7,7 @@ pub const DEFAULT_DIR_PATH: &str = "mainnet";
 
 pub const BLOCK_TIME: u64 = 15 * 1000; // Block Time in milliseconds
 pub const MINIMUM_DIFFICULTY: u64 = BLOCK_TIME * 10;
+pub const GENESIS_BLOCK_DIFFICULTY: u64 = 1;
 pub const REGISTRATION_DIFFICULTY: u64 = 1/*0_000_000*/;
 pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024); // 1.25 MB
 pub const FEE_PER_KB: u64 = 1000; // 0.01000 XLS per KB

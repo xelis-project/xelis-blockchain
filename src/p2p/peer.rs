@@ -40,11 +40,12 @@ pub struct Peer {
     peers: Mutex<HashSet<SocketAddr>>, // all peers from this peer
     last_peer_list_update: AtomicU64, // last time we send our peerlist to this peer
     last_peer_list: AtomicU64, // last time we received a peerlist from this peer
-    last_ping: AtomicU64 // last time we got a ping packet from this peer
+    last_ping: AtomicU64, // last time we got a ping packet from this peer
+    cumulative_difficulty: AtomicU64 // cumulative difficulty of peer chain
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, out: bool, priority: bool, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, out: bool, priority: bool, cumulative_difficulty: u64, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
         Self {
             connection,
             id,
@@ -64,7 +65,8 @@ impl Peer {
             peers: Mutex::new(peers),
             last_peer_list_update: AtomicU64::new(0),
             last_peer_list: AtomicU64::new(0),
-            last_ping: AtomicU64::new(0)
+            last_ping: AtomicU64::new(0),
+            cumulative_difficulty: AtomicU64::new(cumulative_difficulty)
         }
     }
 
@@ -111,6 +113,14 @@ impl Peer {
 
     pub fn get_top_block_hash(&self) -> &Mutex<Hash> {
         &self.top_hash
+    }
+
+    pub fn get_cumulative_difficulty(&self) -> u64 {
+        self.cumulative_difficulty.load(Ordering::Acquire)
+    }
+
+    pub fn set_cumulative_difficulty(&self, cumulative_difficulty: u64) {
+        self.cumulative_difficulty.store(cumulative_difficulty, Ordering::Release)
     }
 
     pub fn is_out(&self) -> bool {

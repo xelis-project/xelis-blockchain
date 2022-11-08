@@ -56,17 +56,15 @@ impl Serializer for u64 {
 
 pub struct BlockMetadata {
     difficulty: u64,
-    cumulative_difficulty: u64,
     supply: u64,
     burned: u64,
     height: u64
 }
 
 impl BlockMetadata {
-    pub fn new(difficulty: u64, cumulative_difficulty: u64, supply: u64, burned: u64, height: u64) -> Self {
+    pub fn new(difficulty: u64, supply: u64, burned: u64, height: u64) -> Self {
         Self {
             difficulty,
-            cumulative_difficulty,
             supply,
             burned,
             height
@@ -75,10 +73,6 @@ impl BlockMetadata {
 
     pub fn get_difficulty(&self) -> u64 {
         self.difficulty
-    }
-
-    pub fn get_cumulative_difficulty(&self) -> u64 {
-        self.cumulative_difficulty
     }
 
     pub fn get_supply(&self) -> u64 {
@@ -97,7 +91,6 @@ impl BlockMetadata {
 impl Serializer for BlockMetadata {
     fn write(&self, writer: &mut Writer) {
         writer.write_u64(&self.difficulty);
-        writer.write_u64(&self.cumulative_difficulty);
         writer.write_u64(&self.supply);
         writer.write_u64(&self.burned);
         writer.write_u64(&self.height);
@@ -105,12 +98,11 @@ impl Serializer for BlockMetadata {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let difficulty = reader.read_u64()?;
-        let cumulative_difficulty = reader.read_u64()?;
         let supply = reader.read_u64()?;
         let burned = reader.read_u64()?;
         let height = reader.read_u64()?;
 
-        Ok(Self::new(difficulty, cumulative_difficulty, supply, burned, height))
+        Ok(Self::new(difficulty, supply, burned, height))
     }
 }
 
@@ -123,6 +115,7 @@ pub struct Storage {
     extra: Tree, // all extra data saved on disk
     topo_by_hash: Tree, // topo at hash on disk
     hash_at_topo: Tree, // hash at topo height on disk
+    cumulative_difficulty: Tree, // cumulative difficulty for each block hash on disk
     // cached in memory
     transactions_cache: Mutex<LruCache<Hash, Arc<Transaction>>>,
     blocks_cache: Mutex<LruCache<Hash, Arc<Block>>>,
@@ -132,6 +125,7 @@ pub struct Storage {
     past_blocks_cache: Mutex<LruCache<Hash, Arc<Vec<Hash>>>>, // previous blocks saved at each new block
     topo_by_hash_cache: Mutex<LruCache<Hash, u64>>,
     hash_at_topo_cache: Mutex<LruCache<u64, Hash>>,
+    cumulative_difficulty_cache: Mutex<LruCache<Hash, u64>>,
     tips_cache: Tips
 }
 
@@ -147,6 +141,7 @@ impl Storage {
             extra: sled.open_tree("extra")?,
             topo_by_hash: sled.open_tree("topo_at_hash")?,
             hash_at_topo: sled.open_tree("hash_at_topo")?,
+            cumulative_difficulty: sled.open_tree("cumulative_difficulty")?,
             transactions_cache: Mutex::new(LruCache::new(1024)),
             accounts_cache: Mutex::new(LruCache::new(1024)),
             blocks_cache: Mutex::new(LruCache::new(1024)),
@@ -154,6 +149,7 @@ impl Storage {
             past_blocks_cache: Mutex::new(LruCache::new(1024)),
             topo_by_hash_cache: Mutex::new(LruCache::new(1024)),
             hash_at_topo_cache: Mutex::new(LruCache::new(1024)),
+            cumulative_difficulty_cache: Mutex::new(LruCache::new(1024)),
             tips_cache: HashSet::new()
         };
         
@@ -177,7 +173,7 @@ impl Storage {
         }
     }
 
-    async fn get_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Mutex<LruCache<K, Arc<V>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
+    async fn get_arc_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Mutex<LruCache<K, Arc<V>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
         let mut cache = cache.lock().await;
         if let Some(value) = cache.get(key) {
             return Ok(Arc::clone(&value));
@@ -185,6 +181,17 @@ impl Storage {
 
         let value = Arc::new(self.load_from_disk(tree, &key.to_bytes())?);
         cache.put(key.clone(), Arc::clone(&value));
+        Ok(value)
+    }
+
+    async fn get_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Copy>(&self, tree: &Tree, cache: &Mutex<LruCache<K, V>>, key: &K) -> Result<V, BlockchainError> {
+        let mut cache = cache.lock().await;
+        if let Some(value) = cache.get(key) {
+            return Ok(*value);
+        }
+
+        let value = self.load_from_disk(tree, &key.to_bytes())?;
+        cache.put(key.clone(), value);
         Ok(value)
     }
 
@@ -236,7 +243,7 @@ impl Storage {
     }
 
     pub async fn get_account(&self, key: &PublicKey) -> Result<Arc<Account>, BlockchainError> {
-        self.get_data(&self.accounts, &self.accounts_cache, key).await
+        self.get_arc_data(&self.accounts, &self.accounts_cache, key).await
     }
 
     // save directly on disk & in cache
@@ -255,28 +262,27 @@ impl Storage {
     }
 
     pub async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
-        self.get_data(&self.transactions, &self.transactions_cache, hash).await
+        self.get_arc_data(&self.transactions, &self.transactions_cache, hash).await
     }
 
     pub fn count_transactions(&self) -> usize {
         self.transactions.len()
     }
 
-    pub async fn add_new_block(&mut self, block: Arc<Block>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash, cumulative_difficulty: u64, supply: u64, burned: u64) -> Result<(), BlockchainError> {
-        debug!("Storing new {} with hash: {}, difficulty: {}, cumulative difficulty: {}, supply: {}, burned: {}", block, hash, difficulty, cumulative_difficulty, supply, burned);
+    pub async fn add_new_block(&mut self, block: Arc<Block>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash, supply: u64, burned: u64) -> Result<(), BlockchainError> {
+        debug!("Storing new {} with hash: {}, difficulty: {}, supply: {}, burned: {}", block, hash, difficulty, supply, burned);
         for (hash, tx) in block.get_transactions().iter().zip(txs) { // first save all txs, then save block
             self.transactions.insert(hash.as_bytes(), tx.to_bytes())?;
         }
         self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
 
-        let metadata = BlockMetadata::new(difficulty, cumulative_difficulty, supply, burned, block.get_height());
+        let metadata = BlockMetadata::new(difficulty, supply, burned, block.get_height());
         self.metadata.insert(hash.as_bytes(), metadata.to_bytes())?;
 
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
 
         self.metadata_cache.lock().await.put(hash.clone(), Arc::new(metadata));
         self.blocks_cache.lock().await.put(hash, block);
-
         Ok(())
     }
 
@@ -331,6 +337,10 @@ impl Storage {
                 debug!("deleting block {}", hash);
                 let block = self.delete_data(&self.blocks, &self.blocks_cache, &hash).await?;
                 debug!("block deleted successfully");
+
+                debug!("Deleting cumulative difficulty");
+                let cumulative_difficulty: u64 = self.delete_data_no_arc(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
+                debug!("Cumulative difficulty deleted: {}", cumulative_difficulty);
 
                 // if block is ordered, delete data that are linked to it
                 if let Ok(topo) = self.get_topo_height_for_hash(&hash).await {
@@ -401,12 +411,12 @@ impl Storage {
 
     pub async fn get_block_by_hash(&self, hash: &Hash) -> Result<Arc<Block>, BlockchainError> {
         debug!("get block by hash: {}", hash);
-        self.get_data(&self.blocks, &self.blocks_cache, hash).await
+        self.get_arc_data(&self.blocks, &self.blocks_cache, hash).await
     }
 
     pub async fn get_block_metadata_by_hash(&self, hash: &Hash) -> Result<Arc<BlockMetadata>, BlockchainError> {
         debug!("get block metadata by hash: {}", hash);
-        self.get_data(&self.metadata, &self.metadata_cache, hash).await
+        self.get_arc_data(&self.metadata, &self.metadata_cache, hash).await
     }
 
     pub async fn get_block_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<Block>), BlockchainError> {
@@ -560,18 +570,9 @@ impl Storage {
         hash_at_topo == *hash
     }
 
-    // TODO generic
     pub async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         debug!("get topoheight for hash: {}", hash);
-        let mut topo_at_hash = self.topo_by_hash_cache.lock().await;
-        if let Some(value) = topo_at_hash.get(hash) {
-            return Ok(*value)
-        }
-
-        debug!("Trying to read topo of hash {}", hash);
-        let height = self.load_from_disk(&self.topo_by_hash, hash.as_bytes())?;
-        topo_at_hash.put(hash.clone(), height);
-        Ok(height)
+        self.get_data(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await
     }
 
     pub async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
@@ -597,7 +598,11 @@ impl Storage {
     }
 
     pub async fn get_cumulative_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        let metadata = self.get_block_metadata_by_hash(hash).await?;
-        Ok(metadata.get_cumulative_difficulty())
+        self.get_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash).await
+    }
+
+    pub async fn set_cumulative_difficulty_for_block(&self, hash: &Hash, cumulative_difficulty: u64) -> Result<(), BlockchainError> {
+        self.cumulative_difficulty.insert(hash.as_bytes(), cumulative_difficulty.to_bytes())?;
+        Ok(())
     }
 }
