@@ -1131,10 +1131,12 @@ impl Blockchain {
                 let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
                 let account = storage.get_account(self.get_dev_address()).await?;
                 account.get_balance().fetch_add(dev_fee, Ordering::Relaxed);
+                storage.save_account(self.get_dev_address(), account)?;
                 block_reward -= dev_fee;
             }
             let account = storage.get_account(transaction.get_owner()).await?;
             account.get_balance().fetch_add(block_reward + fees, Ordering::Relaxed);
+            storage.save_account(transaction.get_owner(), account)?;
             Ok(())
         } else {
             Err(BlockchainError::InvalidMinerTx)
@@ -1162,6 +1164,7 @@ impl Blockchain {
                         for tx in txs {
                             let to_account = storage.get_account(&tx.to).await?; // update receiver's account
                             to_account.get_balance().fetch_add(tx.amount, Ordering::Relaxed);
+                            storage.save_account(&tx.to, to_account)?;
                             total += tx.amount;
                         }
                         amount += total;
@@ -1174,6 +1177,7 @@ impl Blockchain {
                 let account = storage.get_account(transaction.get_owner()).await?;
                 account.get_balance().fetch_min(amount, Ordering::Relaxed);
                 account.get_nonce().fetch_add(1, Ordering::Relaxed);
+                storage.save_account(transaction.get_owner(), account)?;
             }
         };
         Ok(())

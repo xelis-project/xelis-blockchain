@@ -257,6 +257,11 @@ impl Storage {
         Ok(())
     }
 
+    pub fn save_account(&mut self, key: &PublicKey, account: Arc<Account>) -> Result<(), BlockchainError> {
+        self.accounts.insert(key.as_bytes(), account.to_bytes())?;
+        Ok(())
+    }
+
     pub fn count_accounts(&self) -> usize {
         self.accounts.len()
     }
