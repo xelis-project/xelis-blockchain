@@ -1,4 +1,4 @@
-use actix::{Actor, StreamHandler, AsyncContext, Message as TMessage, Handler};
+use actix::{Actor, StreamHandler, AsyncContext, Message as TMessage, Handler, ActorContext};
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
 use serde_json::Value;
 use super::{SharedRpcServer, RpcError, RpcResponseError};
@@ -50,6 +50,7 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
             server.remove_client(&address).await;
         };
         ctx.spawn(actix::fut::wrap_future(fut));
+        ctx.stop();
     }
 }
 
