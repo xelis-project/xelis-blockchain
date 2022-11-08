@@ -191,6 +191,11 @@ impl RpcServer {
         let mut clients = self.clients.lock().await;
         clients.insert(addr);
     }
+
+    pub async fn remove_client(&self, addr: &Addr<WebSocketHandler>) {
+        let mut clients = self.clients.lock().await;
+        trace!("WebSocket client {:?} deleted: {}", addr, clients.remove(addr));
+    }
 }
 
 #[get("/")]

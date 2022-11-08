@@ -1,8 +1,14 @@
-use actix::{Actor, StreamHandler, AsyncContext, Addr};
+use actix::{Actor, StreamHandler, AsyncContext, Message as TMessage, Handler};
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
 use serde_json::Value;
 use super::{SharedRpcServer, RpcError, RpcResponseError};
 use log::debug;
+
+struct Response(Value);
+
+impl TMessage for Response {
+    type Result = Result<(), RpcError>;
+}
 
 pub struct WebSocketHandler {
     server: SharedRpcServer
@@ -20,11 +26,10 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
                 let server = self.server.clone();
                 let fut = async move {
                     let response = match WebSocketHandler::handle_request(server, &text.as_bytes()).await {
-                        Ok(result) => result.to_string(),
-                        Err(e) => e.to_json().to_string()
+                        Ok(result) => result,
+                        Err(e) => e.to_json()
                     };
-                    // TODO send response to client
-                    // ctx.text(response.to_string());
+                    address.do_send(Response(response));
                 };
                 let fut = actix::fut::wrap_future(fut);
                 ctx.spawn(fut);
@@ -36,6 +41,24 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
                 ctx.close(None);
             }
         }
+    }
+
+    fn finished(&mut self, ctx: &mut Self::Context) {
+        let server = self.server.clone();
+        let address = ctx.address();
+        let fut = async move {
+            server.remove_client(&address).await;
+        };
+        ctx.spawn(actix::fut::wrap_future(fut));
+    }
+}
+
+impl Handler<Response> for WebSocketHandler {
+    type Result = Result<(), RpcError>;
+
+    fn handle(&mut self, msg: Response, ctx: &mut Self::Context) -> Self::Result {
+        ctx.text(msg.0.to_string());
+        Ok(())
     }
 }
 
