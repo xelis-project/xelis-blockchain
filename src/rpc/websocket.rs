@@ -45,10 +45,15 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
                         Ok(result) => result,
                         Err(e) => e.to_json()
                     };
-                    address.do_send(Response(response));
+                    if let Err(e) = address.send(Response(response)).await {
+                        debug!("Error while sending response to {:?}: {}", address, e);
+                    }
                 };
                 let fut = actix::fut::wrap_future(fut);
                 ctx.spawn(fut);
+            },
+            Ok(Message::Close(reason)) => {
+                ctx.close(reason);
             },
             msg => {
                 debug!("Abnormal message received: {:?}. Closing connection", msg);
@@ -65,8 +70,7 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
         let fut = async move {
             server.remove_client(&address).await;
         };
-        ctx.spawn(actix::fut::wrap_future(fut));
-        ctx.stop();
+        ctx.wait(actix::fut::wrap_future(fut));
     }
 }
 

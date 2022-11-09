@@ -199,7 +199,8 @@ impl RpcServer {
 
     pub async fn remove_client(&self, addr: &Addr<WebSocketHandler>) {
         let mut clients = self.clients.lock().await;
-        trace!("WebSocket client {:?} deleted: {}", addr, clients.remove(addr).is_some());
+        let deleted = clients.remove(addr).is_some();
+        trace!("WebSocket client {:?} deleted: {}", addr, deleted);
     }
 
     pub async fn subscribe_client_to(&self, addr: &Addr<WebSocketHandler>, subscribe: NotifyEvent) -> Result<(), RpcError> {
@@ -232,8 +233,8 @@ async fn json_rpc(rpc: SharedRpcServer, body: web::Bytes) -> Result<impl Respond
 
 #[get("/ws")]
 async fn ws_endpoint(server: SharedRpcServer, request: HttpRequest, stream: Payload) -> Result<HttpResponse, Error> {
-    trace!("new WebSocket request");
     let (addr, response) = WsResponseBuilder::new(WebSocketHandler::new(server.clone()), &request, stream).start_with_addr()?;
+    trace!("New client connected to WebSocket: {:?}", addr);
     server.add_client(addr).await;
 
     Ok(response)
