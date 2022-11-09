@@ -3,10 +3,10 @@ pub mod websocket;
 
 use crate::{core::{error::BlockchainError, blockchain::Blockchain, reader::ReaderError}, config};
 use crate::rpc::websocket::WebSocketHandler;
-use actix::Addr;
+use actix::{Addr, MailboxError};
 use actix_web::{get, post, web::{self, Payload}, error::Error, App, HttpResponse, HttpServer, Responder, dev::ServerHandle, ResponseError, HttpRequest};
 use actix_web_actors::ws::WsResponseBuilder;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, Error as SerdeError, json};
 use tokio::sync::Mutex;
 use std::{sync::Arc, collections::{HashMap, HashSet}, pin::Pin, future::Future, fmt::{Display, Formatter}};
@@ -14,7 +14,7 @@ use log::{trace, info};
 use anyhow::Error as AnyError;
 use thiserror::Error;
 
-use self::websocket::NotifyEvent;
+use self::websocket::{NotifyEvent, Response};
 
 pub type SharedRpcServer = web::Data<Arc<RpcServer>>;
 pub type Handler = Box<dyn Fn(Arc<Blockchain>, Value) -> Pin<Box<dyn Future<Output = Result<Value, RpcError>>>> + Send + Sync>;
@@ -46,7 +46,9 @@ pub enum RpcError {
     #[error("Error, no P2p enabled")]
     NoP2p,
     #[error("WebSocket client is not registered")]
-    ClientNotRegistered
+    ClientNotRegistered,
+    #[error("Could not send message to address: {}", _0)]
+    WebSocketSendError(#[from] MailboxError)
 }
 
 impl RpcError {
@@ -214,6 +216,16 @@ impl RpcServer {
         let mut clients = self.clients.lock().await;
         let subscriptions = clients.get_mut(addr).ok_or_else(|| RpcError::ClientNotRegistered)?;
         subscriptions.remove(subscribe);
+        Ok(())
+    }
+
+    pub async fn notify_clients<V: Serialize>(&self, notify: NotifyEvent, value: V) -> Result<(), RpcError> {
+        let clients = self.clients.lock().await;
+        for (addr, subs) in clients.iter() {
+            if subs.contains(&notify) {
+                addr.send(Response(json!(value))).await??;
+            }
+        }
         Ok(())
     }
 }

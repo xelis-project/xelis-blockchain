@@ -1,11 +1,11 @@
-use actix::{Actor, StreamHandler, AsyncContext, Message as TMessage, Handler, ActorContext, Addr};
+use actix::{Actor, StreamHandler, AsyncContext, Message as TMessage, Handler, Addr};
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
 use serde::Deserialize;
 use serde_json::Value;
 use super::{SharedRpcServer, RpcError, RpcResponseError};
 use log::debug;
 
-struct Response(Value);
+pub struct Response(pub Value);
 
 #[derive(Deserialize)]
 pub struct SubscribeParams {
