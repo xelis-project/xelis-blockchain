@@ -6,6 +6,7 @@ use crate::globals::get_current_timestamp;
 use crate::crypto::key::PublicKey;
 use crate::p2p::server::P2pServer;
 use crate::rpc::RpcServer;
+use crate::rpc::websocket::NotifyEvent;
 use super::difficulty::{check_difficulty, calculate_difficulty};
 use super::block::{Block, CompleteBlock};
 use super::mempool::{Mempool, SortedTx};
@@ -574,7 +575,20 @@ impl Blockchain {
                 p2p.broadcast_tx_hash(&hash).await;
             }
         }
-        mempool.add_tx_with_fee(hash, Arc::new(tx), fee)
+        let tx = Arc::new(tx);
+        mempool.add_tx_with_fee(hash, tx.clone(), fee)?;
+
+        // broadcast to websocket this tx
+        if let Some(rpc) = self.rpc.lock().await.as_ref() {
+            let rpc = rpc.clone();
+            tokio::spawn(async move {
+                if let Err(e) = rpc.notify_clients(NotifyEvent::TransactionAddedInMempool, tx).await {
+                    debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
+                }
+            });
+        }
+
+        Ok(())
     }
 
     pub async fn get_block_template(&self, address: PublicKey) -> Result<Block, BlockchainError> {
@@ -995,6 +1009,18 @@ impl Blockchain {
                 p2p.broadcast_block(&block, cumulative_difficulty, highest_topo, self.get_height(), &block_hash).await;
             }
         }
+
+        // broadcast to websocket new block
+        if let Some(rpc) = self.rpc.lock().await.as_ref() {
+            let rpc = rpc.clone();
+            // don't block mutex/lock more than necessary, we move it in another task
+            tokio::spawn(async move {
+                if let Err(e) = rpc.notify_clients(NotifyEvent::NewBlock, block).await {
+                    debug!("Error while broadcasting event NewBlock to websocket: {}", e);
+                }
+            });
+        }
+
         Ok(())
     }
 
