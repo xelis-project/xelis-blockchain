@@ -44,7 +44,7 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 
 ## API
 
-Http Server run using Actix Framework.
+Http Server run using Actix Framework and serve the JSON-RPC API and WebSocket.
 
 JSON-RPC methods available:
 - `get_height`
@@ -65,6 +65,11 @@ JSON-RPC methods available:
 - `get_tips`
 - `is_chain_valid`
 - `get_dag_order`
+
+WebSocket allow JSON-RPC call and any app to be notified with `subscribe` method when a specific event happens on the daemon.
+Events currently available are:
+- `NewBlock`: when a new block is accepted by chain
+- `TransactionAddedInMempool`: when a new valid transaction is added in mempool
 
 ## XELIS Message
 
