@@ -139,6 +139,7 @@ impl RpcServer {
                 .app_data(web::Data::new(rpc))
                 .service(index)
                 .service(json_rpc)
+                .service(ws_endpoint)
         })
         .disable_signals()
         .bind(&bind_address)?
