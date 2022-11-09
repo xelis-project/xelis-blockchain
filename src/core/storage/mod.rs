@@ -274,13 +274,21 @@ impl Storage {
         self.transactions.len()
     }
 
-    pub async fn add_new_block(&mut self, block: Arc<Block>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash, supply: u64, burned: u64) -> Result<(), BlockchainError> {
+    pub async fn add_new_block(&mut self, block: Arc<Block>, miner_tx: &Immutable<Transaction>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash, supply: u64, burned: u64) -> Result<(), BlockchainError> {
         debug!("Storing new {} with hash: {}, difficulty: {}, supply: {}, burned: {}", block, hash, difficulty, supply, burned);
+
+        // Store miner_tx with block hash as key
+        self.transactions.insert(hash.as_bytes(), miner_tx.to_bytes())?;
+
+        // Store transactions
         for (hash, tx) in block.get_transactions().iter().zip(txs) { // first save all txs, then save block
             self.transactions.insert(hash.as_bytes(), tx.to_bytes())?;
         }
+
+        // Store block header
         self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
 
+        // Save all metadata
         let metadata = BlockMetadata::new(difficulty, supply, burned, block.get_height());
         self.metadata.insert(hash.as_bytes(), metadata.to_bytes())?;
 

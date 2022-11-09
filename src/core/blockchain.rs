@@ -888,7 +888,7 @@ impl Blockchain {
         let (block, txs) = block.split();
         let block = block.to_arc();
         debug!("Saving block {} on disk", block_hash);
-        storage.add_new_block(block.clone(), &txs, difficulty, block_hash.clone(), self.get_supply(), self.get_burned_supply()).await?; // Add block to chain
+        storage.add_new_block(block.clone(), block.get_miner_tx(), &txs, difficulty, block_hash.clone(), self.get_supply(), self.get_burned_supply()).await?; // Add block to chain
         // Compute cumulative difficulty for block
         let cumulative_difficulty = { // TODO Refactor
             let cumulative_difficulty: u64 = if tips_count == 0 {
