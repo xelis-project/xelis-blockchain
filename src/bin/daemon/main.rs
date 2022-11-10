@@ -20,14 +20,17 @@ pub struct NodeConfig {
     debug: bool,
     /// Disable the log file
     #[clap(short = 'f', long)]
-    disable_file_logging: bool
+    disable_file_logging: bool,
+    /// Log filename
+    #[clap(short = 'n', long, default_value_t = String::from("xelis.log"))]
+    filename_log: String
 }
 
 #[tokio::main]
 async fn main() -> Result<(), BlockchainError> {
     let config: NodeConfig = NodeConfig::parse();
     let command_manager = create_command_manager();
-    let prompt = Prompt::new(config.debug, config.disable_file_logging, command_manager)?;
+    let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging, command_manager)?;
     info!("Xelis Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
     let blockchain = Blockchain::new(config.nested).await?;
@@ -55,18 +58,23 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result
             Some(p2p) => (p2p.get_peer_count().await, p2p.get_best_height().await),
             None => (0, height)
         };
-        build_prompt_message(height, best, peers)
+        build_prompt_message(blockchain.get_topo_height(), height, best, peers)
     };
 
     prompt.handle_commands(&closure).await
 }
 
-fn build_prompt_message(height: u64, best_height: u64, peers_count: usize) -> String {
+fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, peers_count: usize) -> String {
     let height_str = format!(
         "{}: {}/{}",
         Prompt::colorize_str(Color::Yellow, "Height"),
         Prompt::colorize_string(Color::Green, &format!("{}", height)), // TODO Color based on height / peer
         Prompt::colorize_string(Color::Green, &format!("{}", best_height))
+    );
+    let topoheight_str = format!(
+        "{}: {}",
+        Prompt::colorize_str(Color::Yellow, "TopoHeight"),
+        Prompt::colorize_string(Color::Green, &format!("{}", topoheight)),
     );
     let peers_str = format!(
         "{}: {}",
@@ -74,9 +82,10 @@ fn build_prompt_message(height: u64, best_height: u64, peers_count: usize) -> St
         Prompt::colorize_string(Color::Green, &format!("{}", peers_count))
     );
     format!(
-        "{} | {} | {} {} ",
+        "{} | {} | {} | {} {} ",
         Prompt::colorize_str(Color::Blue, "XELIS"),
         height_str,
+        topoheight_str,
         peers_str,
         Prompt::colorize_str(Color::BrightBlack, ">>")
     )

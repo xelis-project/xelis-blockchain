@@ -7,10 +7,14 @@ pub const DEFAULT_DIR_PATH: &str = "mainnet";
 
 pub const BLOCK_TIME: u64 = 15 * 1000; // Block Time in milliseconds
 pub const MINIMUM_DIFFICULTY: u64 = BLOCK_TIME * 10;
+pub const GENESIS_BLOCK_DIFFICULTY: u64 = 1;
 pub const REGISTRATION_DIFFICULTY: u64 = 1/*0_000_000*/;
 pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024); // 1.25 MB
 pub const FEE_PER_KB: u64 = 1000; // 0.01000 XLS per KB
 pub const DEV_FEE_PERCENT: u64 = 5; // 5% per block going to dev address
+pub const TIPS_LIMIT: usize = 3; // maximum 3 previous blocks
+pub const STABLE_HEIGHT_LIMIT: u64 = 8;
+pub const TIMESTAMP_IN_FUTURE_LIMIT: u128 = 2 * 1000; // 2 seconds maximum in future
 
 pub const PREFIX_ADDRESS: &str = "xel"; // mainnet prefix address
 pub const TESTNET_PREFIX_ADDRESS: &str = "xet"; // testnet prefix address
@@ -18,10 +22,11 @@ pub const COIN_VALUE: u64 = 100_000; // 5 decimals for a full coin
 pub const MAX_SUPPLY: u64 = 18_400_000 * COIN_VALUE; // 18.4M full coin
 pub const EMISSION_SPEED_FACTOR: u64 = 21;
 
-pub const GENESIS_BLOCK: &str = "0000000000000001000000000000000000000181a6c150b90000000000000000000000000000000000000000000000000000000000000000000000000000a8ac000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd0200000000000249f0"; // Genesis block in hexadecimal format
+pub const GENESIS_BLOCK: &str = "000000000000000000000000000000000000018312477cba000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd02"; // Genesis block in hexadecimal format
+pub const GENESIS_BLOCK_HASH: &str = "83f6a544d69ca4852e8e2b6bc98b3a1602509e8feea7d744f6a60deeef51c663";
 pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"; // Dev address
 
-pub const MAX_BLOCK_REWIND: u64 = 5; // maximum X blocks can be rewinded
+pub const MAX_BLOCK_REWIND: u64 = STABLE_HEIGHT_LIMIT - 1; // maximum X blocks can be rewinded
 pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = 3; // wait maximum between each chain sync request to peers
 pub const CHAIN_SYNC_DELAY: u64 = 3; // minimum X seconds between each chain sync request per peer
 pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to X blocks id (hash + height) 

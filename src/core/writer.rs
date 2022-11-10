@@ -1,3 +1,5 @@
+use num_bigint::BigUint;
+
 use crate::crypto::hash::Hash;
 
 pub struct Writer {
@@ -45,6 +47,12 @@ impl Writer {
     pub fn write_string(&mut self, value: &String) {
         self.bytes.push(value.len() as u8);
         self.bytes.extend(value.as_bytes());
+    }
+
+    pub fn write_biguint(&mut self, value: &BigUint) {
+        let bytes = value.to_bytes_be();
+        self.bytes.push(bytes.len() as u8);
+        self.bytes.extend(bytes);
     }
 
     pub fn write_optional_string(&mut self, opt: &Option<String>) {

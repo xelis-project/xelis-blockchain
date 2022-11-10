@@ -2,10 +2,9 @@ use crate::config::PEER_TIMEOUT_REQUEST_OBJECT;
 use crate::core::serializer::Serializer;
 use crate::crypto::hash::Hash;
 use super::packet::object::{ObjectRequest, OwnedObjectResponse};
-use super::packet::ping::Ping;
 use super::peer_list::SharedPeerList;
 use super::connection::{Connection, ConnectionMessage};
-use super::packet::{Packet, PacketWrapper};
+use super::packet::Packet;
 use super::error::P2pError;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicBool, Ordering};
@@ -17,6 +16,7 @@ use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 use std::borrow::Cow;
 use bytes::Bytes;
+use log::warn;
 
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
@@ -28,8 +28,9 @@ pub struct Peer {
     version: String, // daemon version
     out: bool, // True mean we are the client
     priority: bool, // if this node can be trusted (seed node or added manually by user)
-    block_top_hash: Mutex<Hash>, // current block top hash for this peer
-    block_height: AtomicU64, // current block height for this peer
+    top_hash: Mutex<Hash>, // current block top hash for this peer
+    topoheight: AtomicU64, // current highest topo height for this peer
+    height: AtomicU64, // current highest block height for this peer
     last_chain_sync: AtomicU64,
     // TODO last_fail_count
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
@@ -39,19 +40,21 @@ pub struct Peer {
     peers: Mutex<HashSet<SocketAddr>>, // all peers from this peer
     last_peer_list_update: AtomicU64, // last time we send our peerlist to this peer
     last_peer_list: AtomicU64, // last time we received a peerlist from this peer
-    last_ping: AtomicU64 // last time we got a ping packet from this peer
+    last_ping: AtomicU64, // last time we got a ping packet from this peer
+    cumulative_difficulty: AtomicU64 // cumulative difficulty of peer chain
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, block_top_hash: Hash, block_height: u64, out: bool, priority: bool, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, out: bool, priority: bool, cumulative_difficulty: u64, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
         Self {
             connection,
             id,
             node_tag,
             local_port,
             version,
-            block_top_hash: Mutex::new(block_top_hash),
-            block_height: AtomicU64::new(block_height),
+            top_hash: Mutex::new(top_hash),
+            topoheight: AtomicU64::new(topoheight),
+            height: AtomicU64::new(height),
             out,
             priority,
             fail_count: AtomicU8::new(0),
@@ -62,7 +65,8 @@ impl Peer {
             peers: Mutex::new(peers),
             last_peer_list_update: AtomicU64::new(0),
             last_peer_list: AtomicU64::new(0),
-            last_ping: AtomicU64::new(0)
+            last_ping: AtomicU64::new(0),
+            cumulative_difficulty: AtomicU64::new(cumulative_difficulty)
         }
     }
 
@@ -86,20 +90,37 @@ impl Peer {
         &self.version
     }
 
-    pub fn get_block_height(&self) -> u64 {
-        self.block_height.load(Ordering::Relaxed)
+    pub fn get_topoheight(&self) -> u64 {
+        self.topoheight.load(Ordering::Acquire)
     }
 
-    pub fn set_block_height(&self, height: u64) {
-        self.block_height.store(height, Ordering::Relaxed);
+    pub fn set_topoheight(&self, topoheight: u64) {
+        self.topoheight.store(topoheight, Ordering::Release);
+    }
+
+
+    pub fn get_height(&self) -> u64 {
+        self.height.load(Ordering::Acquire)
+    }
+
+    pub fn set_height(&self, height: u64) {
+        self.height.store(height, Ordering::Release);
     }
 
     pub async fn set_block_top_hash(&self, hash: Hash) {
-        *self.block_top_hash.lock().await = hash
+        *self.top_hash.lock().await = hash
     }
 
     pub fn get_top_block_hash(&self) -> &Mutex<Hash> {
-        &self.block_top_hash
+        &self.top_hash
+    }
+
+    pub fn get_cumulative_difficulty(&self) -> u64 {
+        self.cumulative_difficulty.load(Ordering::Acquire)
+    }
+
+    pub fn set_cumulative_difficulty(&self, cumulative_difficulty: u64) {
+        self.cumulative_difficulty.store(cumulative_difficulty, Ordering::Release)
     }
 
     pub fn is_out(&self) -> bool {
@@ -111,28 +132,28 @@ impl Peer {
     }
 
     pub fn get_fail_count(&self) -> u8 {
-        self.fail_count.load(Ordering::Relaxed)
+        self.fail_count.load(Ordering::Acquire)
     }
 
     // TODO verify last fail count
     pub fn increment_fail_count(&self) {
-        self.fail_count.fetch_add(1, Ordering::Relaxed);
+        self.fail_count.fetch_add(1, Ordering::Release);
     }
 
     pub fn get_last_chain_sync(&self) -> u64 {
-        self.last_chain_sync.load(Ordering::Relaxed)
+        self.last_chain_sync.load(Ordering::Acquire)
     }
 
     pub fn set_last_chain_sync(&self, time: u64) {
-        self.last_chain_sync.store(time, Ordering::Relaxed);
+        self.last_chain_sync.store(time, Ordering::Release);
     }
 
     pub fn chain_sync_requested(&self) -> bool {
-        self.chain_requested.load(Ordering::Relaxed)
+        self.chain_requested.load(Ordering::Acquire)
     }
 
     pub fn set_chain_sync_requested(&self, value: bool) {
-        self.chain_requested.store(value, Ordering::Relaxed);
+        self.chain_requested.store(value, Ordering::Release);
     }
 
     pub fn get_objects_requested(&self) -> &Mutex<RequestedObjects> {
@@ -145,13 +166,13 @@ impl Peer {
     }
 
     // Request a object from this peer and wait on it until we receive it or until timeout 
-    pub async fn request_blocking_object(&self, request: ObjectRequest, ping: &Ping<'_>) -> Result<OwnedObjectResponse, P2pError> {
+    pub async fn request_blocking_object(&self, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
         let receiver = {
             let mut objects = self.objects_requested.lock().await;
             if objects.contains_key(&request) {
                 return Err(P2pError::ObjectAlreadyRequested(request));
             }
-            self.send_packet(Packet::ObjectRequest(PacketWrapper::new(Cow::Borrowed(&request), Cow::Borrowed(ping)))).await?;
+            self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
             let (sender, receiver) = tokio::sync::oneshot::channel();
             objects.insert(request.clone(), sender); // clone is necessary in case timeout has occured
             receiver
@@ -177,31 +198,32 @@ impl Peer {
     }
 
     pub fn get_last_peer_list_update(&self) -> u64 {
-        self.last_peer_list_update.load(Ordering::Relaxed)
+        self.last_peer_list_update.load(Ordering::Acquire)
     }
 
     pub fn set_last_peer_list_update(&self, value: u64) {
-        self.last_peer_list_update.store(value, Ordering::Relaxed)
+        self.last_peer_list_update.store(value, Ordering::Release)
     }
 
     pub fn get_last_peer_list(&self) -> u64 {
-        self.last_peer_list.load(Ordering::Relaxed)
+        self.last_peer_list.load(Ordering::Acquire)
     }
 
     pub fn set_last_peer_list(&self, value: u64) {
-        self.last_peer_list.store(value, Ordering::Relaxed)
+        self.last_peer_list.store(value, Ordering::Release)
     }
 
     pub fn get_last_ping(&self) -> u64 {
-        self.last_ping.load(Ordering::Relaxed)
+        self.last_ping.load(Ordering::Acquire)
     }
 
     pub fn set_last_ping(&self, value: u64) {
-        self.last_ping.store(value, Ordering::Relaxed)
+        self.last_ping.store(value, Ordering::Release)
     }
 
     pub async fn close(&self) -> Result<(), P2pError> {
-        self.peer_list.lock().await.remove_peer(&self);
+        let mut peer_list = self.peer_list.write().await;
+        peer_list.remove_peer(&self);
         self.get_connection().close().await?;
         Ok(())
     }
@@ -219,14 +241,23 @@ impl Peer {
 
 impl Display for Peer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
-        write!(f, "Peer[connection: {}, id: {}, height: {}, priority: {}, tag: {}, version: {}, out: {}]",
+        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, height: {}, priority: {}, tag: {}, version: {}, out: {}]",
             self.get_connection(),
             self.get_id(),
-            self.get_block_height(),
+            self.get_topoheight(),
+            self.get_height(),
             self.is_priority(),
             self.get_node_tag().as_ref().unwrap_or(&"None".to_owned()),
             self.get_version(),
             self.is_out()
         )
+    }
+}
+
+impl Drop for Peer {
+    fn drop(&mut self) {
+        if !self.get_connection().is_closed() {
+            warn!("{} was not closed correctly /!\\", self)
+        }
     }
 }

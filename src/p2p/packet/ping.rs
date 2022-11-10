@@ -6,28 +6,37 @@ use crate::p2p::peer::Peer;
 use crate::core::writer::Writer;
 use crate::crypto::hash::Hash;
 use std::borrow::Cow;
+use std::fmt::Display;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use log::trace;
 
 #[derive(Clone)]
 pub struct Ping<'a> {
-    block_top_hash: Cow<'a, Hash>,
-    block_height: u64,
+    top_hash: Cow<'a, Hash>,
+    topoheight: u64,
+    height: u64,
+    cumulative_difficulty: u64,
     peer_list: Vec<SocketAddr>
 }
 
 impl<'a> Ping<'a> {
-    pub fn new(block_top_hash: Cow<'a, Hash>, block_height: u64, peer_list: Vec<SocketAddr>) -> Self {
+    pub fn new(top_hash: Cow<'a, Hash>, topoheight: u64, height: u64, cumulative_difficulty: u64, peer_list: Vec<SocketAddr>) -> Self {
         Self {
-            block_top_hash,
-            block_height,
+            top_hash,
+            topoheight,
+            height,
+            cumulative_difficulty,
             peer_list
         }
     }
 
     pub async fn update_peer(self, peer: &Arc<Peer>) {
-        peer.set_block_top_hash(self.block_top_hash.into_owned()).await;
-        peer.set_block_height(self.block_height);
+        trace!("Updating {} with {}", peer, self);
+        peer.set_block_top_hash(self.top_hash.into_owned()).await;
+        peer.set_topoheight(self.topoheight);
+        peer.set_height(self.height);
+        peer.set_cumulative_difficulty(self.cumulative_difficulty);
 
         let mut peers = peer.get_peers().lock().await;
         for peer in self.peer_list {
@@ -44,8 +53,10 @@ impl<'a> Ping<'a> {
 
 impl Serializer for Ping<'_> {
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.block_top_hash);
-        writer.write_u64(&self.block_height);
+        writer.write_hash(&self.top_hash);
+        writer.write_u64(&self.topoheight);
+        writer.write_u64(&self.height);
+        writer.write_u64(&self.cumulative_difficulty);
         writer.write_u8(self.peer_list.len() as u8);
         for peer in &self.peer_list {
             writer.write_bytes(&ip_to_bytes(peer));
@@ -53,8 +64,10 @@ impl Serializer for Ping<'_> {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let block_top_hash = Cow::Owned(reader.read_hash()?);
-        let block_height = reader.read_u64()?;
+        let top_hash = Cow::Owned(reader.read_hash()?);
+        let topoheight = reader.read_u64()?;
+        let height = reader.read_u64()?;
+        let cumulative_difficulty = reader.read_u64()?;
         let peers_len = reader.read_u8()? as usize;
         if peers_len > P2P_PING_PEER_LIST_LIMIT {
             return Err(ReaderError::InvalidValue)
@@ -66,6 +79,12 @@ impl Serializer for Ping<'_> {
             peer_list.push(peer);
         }
 
-        Ok(Self { block_top_hash, block_height, peer_list })
+        Ok(Self { top_hash, topoheight, height, cumulative_difficulty, peer_list })
+    }
+}
+
+impl Display for Ping<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Ping[top_hash: {}, topoheight: {}, height: {}, peers length: {}]", self.top_hash, self.topoheight, self.height, self.peer_list.len())
     }
 }

@@ -10,7 +10,7 @@ use std::hash::Hasher;
 
 pub const HASH_SIZE: usize = 32; // 32 bytes / 256 bits
 
-#[derive(Eq, Clone, Debug)]
+#[derive(Eq, PartialEq, PartialOrd, Ord, Clone, Debug)]
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
@@ -47,12 +47,6 @@ impl Serializer for Hash {
 
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(self);
-    }
-}
-
-impl PartialEq for Hash {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
     }
 }
 

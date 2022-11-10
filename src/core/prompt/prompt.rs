@@ -34,13 +34,13 @@ pub struct Prompt {
 }
 
 impl Prompt {
-    pub fn new(debug: bool, disable_file_logging: bool, command_manager: CommandManager) -> Result<Arc<Self>, PromptError>  {
+    pub fn new(debug: bool, filename_log: String, disable_file_logging: bool, command_manager: CommandManager) -> Result<Arc<Self>, PromptError>  {
         let v = Self {
             prompt: Mutex::new(None),
             command_manager
         };
         let prompt = Arc::new(v);
-        Arc::clone(&prompt).setup_logger(debug, disable_file_logging)?;
+        Arc::clone(&prompt).setup_logger(debug, filename_log, disable_file_logging)?;
         Ok(prompt)
     }
 
@@ -94,7 +94,7 @@ impl Prompt {
     }
 
     // configure fern and print prompt message after each new output
-    fn setup_logger(self: Arc<Self>, debug: bool, disable_file_logging: bool) -> Result<(), fern::InitError> {
+    fn setup_logger(self: Arc<Self>, debug: bool, filename_log: String, disable_file_logging: bool) -> Result<(), fern::InitError> {
         let colors = ColoredLevelConfig::new()
             .debug(Color::Green)
             .info(Color::Cyan)
@@ -137,7 +137,7 @@ impl Prompt {
                     pad,
                     message
                 ))
-            }).chain(fern::log_file("xelis.log")?);
+            }).chain(fern::log_file(filename_log)?);
             base = base.chain(file_log);
         }
 
