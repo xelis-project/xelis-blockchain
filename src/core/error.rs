@@ -140,7 +140,9 @@ pub enum BlockchainError {
     #[error("Block has too much deviated")]
     BlockDeviation,
     #[error("Invalid genesis block hash")]
-    InvalidGenesisHash
+    InvalidGenesisHash,
+    #[error("Invalid tx nonce for account")]
+    InvalidTxNonce
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

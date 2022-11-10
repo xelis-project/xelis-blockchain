@@ -567,7 +567,8 @@ impl Blockchain {
 
         {
             let storage = self.storage.read().await;
-            self.verify_transaction_with_hash(&storage, &tx, &hash, false).await?
+            // TODO support multi nonces in mempool and same nonce with different fee
+            self.verify_transaction_with_hash(&storage, &tx, &hash, None).await?
         }
 
         if broadcast {
@@ -630,111 +631,6 @@ impl Blockchain {
         }
         let complete_block = CompleteBlock::new(Immutable::Owned(block), transactions);
         Ok(complete_block)
-    }
-
-    pub async fn check_validity(&self) -> Result<(), BlockchainError> {
-        let storage = self.storage.read().await;
-        let blocks_count = storage.count_blocks() as u64;
-        if self.get_height() != blocks_count as u64 {
-            return Err(BlockchainError::InvalidBlockHeight(self.get_height(), blocks_count as u64))
-        }
-
-        // TODO re calculate ALL accounts balances
-        let mut circulating_supply = 0;
-        for height in 0..=blocks_count {
-            let hash = storage.get_hash_at_topo_height(height).await?;
-            debug!("Checking height {} with hash {}", height, hash);
-            let block = storage.get_block_by_hash(&hash).await?;
-            if block.get_height() != height as u64 {
-                debug!("Invalid block height for {}, got {} but expected {}", hash, block, height);
-                return Err(BlockchainError::InvalidBlockHeight(block.get_height(), height as u64))
-            }
-
-            let tips_count = block.get_tips().len();
-            if tips_count > TIPS_LIMIT {
-                return Err(BlockchainError::InvalidTips) // only 3 tips are allowed
-            }
-    
-            if tips_count == 0 && height != 0 {
-                return Err(BlockchainError::ExpectedTips)
-            }
-
-            if tips_count > 0 {
-                let block_height_by_tips = blockdag::calculate_height_at_tips(&storage, block.get_tips()).await?;
-                let stable_height = self.get_stable_height_for_storage(&storage).await?;
-                if block_height_by_tips < stable_height {
-                    return Err(BlockchainError::InvalidBlockHeight(stable_height, block_height_by_tips))
-                }
-            }
-
-            if !self.verify_non_reachability(&storage, &block).await? {
-                return Err(BlockchainError::InvalidReachability)
-            }
-
-            for hash in block.get_tips() {
-                let previous_block = storage.get_block_by_hash(hash).await?;
-                if previous_block.get_height() + 1 != block.get_height() {
-                    return Err(BlockchainError::InvalidBlockHeight(previous_block.get_height() + 1, block.get_height()));
-                }
-    
-                if previous_block.get_timestamp() > block.get_timestamp() {
-                    return Err(BlockchainError::TimestampIsLessThanParent(block.get_timestamp()));
-                }
-    
-                let distance = self.calculate_distance_from_mainchain(&storage, hash).await?;
-                if height - distance >= STABLE_HEIGHT_LIMIT {
-                    return Err(BlockchainError::BlockDeviation)
-                }
-            }
-
-            let difficulty = self.verify_proof_of_work(&storage, &hash, block.get_tips()).await?;
-            let metadata = storage.get_block_metadata_by_hash(&hash).await?;
-            if metadata.get_difficulty() != difficulty {
-                error!("Invalid stored difficulty for block {} at height {}, difficulty stored: {}, calculated: {} ", hash, height, metadata.get_difficulty(), difficulty);
-                return Err(BlockchainError::InvalidDifficulty)
-            }
-
-            let txs_len = block.get_transactions().len();
-            let txs_hashes_len = block.get_txs_hashes().len();
-            if txs_len != txs_hashes_len {
-                return Err(BlockchainError::InvalidBlockTxs(txs_hashes_len, txs_len));
-            }
-
-            let reward = get_block_reward(circulating_supply);
-            let mut total_tx_size = 0;
-            for tx_hash in block.get_transactions() {
-                let tx = storage.get_transaction(tx_hash).await?;
-                self.verify_transaction_with_hash(&storage, &tx, &tx_hash, true).await?; // TODO check when account have no more funds
-
-                if !block.get_txs_hashes().contains(&tx_hash) { // check if tx is in txs hashes
-                    return Err(BlockchainError::InvalidTxInBlock(tx_hash.clone()))
-                }
-
-                total_tx_size += tx.size();
-            }
-
-            if total_tx_size + block.size() > MAX_BLOCK_SIZE {
-                return Err(BlockchainError::InvalidBlockSize(MAX_BLOCK_SIZE, total_tx_size + block.size()))
-            }
-
-            circulating_supply += reward;
-        }
-
-        // TODO
-        /*let mut total_supply_from_accounts = 0;
-        for (_, account) in storage.get_accounts() {
-            total_supply_from_accounts += account.balance;
-        }*/
-
-        if circulating_supply != self.get_supply() - self.get_burned_supply() {
-            return Err(BlockchainError::InvalidCirculatingSupply(circulating_supply, self.get_supply()));
-        }
-
-        /*if total_supply_from_accounts != circulating_supply {
-            return Err(BlockchainError::InvalidCirculatingSupply(total_supply_from_accounts, self.get_supply()));
-        }*/
-
-        Ok(())
     }
 
     pub async fn add_new_block(&self, block: CompleteBlock, broadcast: bool) -> Result<(), BlockchainError> {
@@ -823,12 +719,13 @@ impl Blockchain {
                 error!("Block has an invalid block header, transaction count mismatch (expected {} got {})!", txs_len, hashes_len);
                 return Err(BlockchainError::InvalidBlockTxs(hashes_len, txs_len));
             }
-            // TODO replace bool by nonce to support multi TX in same block
+
             let mut cache_tx: HashMap<Hash, bool> = HashMap::new(); // avoid using a TX multiple times
+            let mut cache_account: HashMap<&PublicKey, u64> = HashMap::new();
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_hash = tx.hash();
                 if tx_hash != *hash {
-                    error!("Invalid tx {} vs {} in header", tx_hash, hash);
+                    error!("Invalid tx {} vs {} in block header", tx_hash, hash);
                     return Err(BlockchainError::InvalidTxInBlock(tx_hash))
                 }
 
@@ -838,7 +735,7 @@ impl Blockchain {
                     return Err(BlockchainError::TxAlreadyInBlock(tx_hash));
                 }
 
-                self.verify_transaction_with_hash(storage, tx, &tx_hash, false).await?;
+                self.verify_transaction_with_hash(storage, tx, &tx_hash, Some(&mut cache_account)).await?;
                 total_fees += tx.get_fee();
                 cache_tx.insert(tx_hash, true);
                 total_tx_size += tx.size();
@@ -864,7 +761,7 @@ impl Blockchain {
         debug!("Saving block {} on disk", block_hash);
         storage.add_new_block(block.clone(), block.get_miner(), &txs, difficulty, block_hash.clone(), self.get_supply(), self.get_burned_supply()).await?; // Add block to chain
         // Compute cumulative difficulty for block
-        let cumulative_difficulty = { // TODO Refactor
+        let cumulative_difficulty = { // TODO Refactor: stop cloning hash
             let cumulative_difficulty: u64 = if tips_count == 0 {
                 GENESIS_BLOCK_DIFFICULTY
             } else {
@@ -1051,7 +948,9 @@ impl Blockchain {
     }
 
     // verify the transaction and returns fees available
-    async fn verify_transaction_with_hash(&self, storage: &Storage, tx: &Transaction, hash: &Hash, disable_nonce_check: bool) -> Result<(), BlockchainError> {
+    // nonces allow us to support multiples tx from same owner in the same block
+    // txs must be sorted in ascending order based on account nonce 
+    async fn verify_transaction_with_hash<'a>(&self, storage: &Storage, tx: &'a Transaction, hash: &Hash, nonces: Option<&mut HashMap<&'a PublicKey, u64>>) -> Result<(), BlockchainError> {
         let mut total_deducted = tx.get_fee();
         match tx.get_data() {
             TransactionType::Normal(txs) => {
@@ -1079,6 +978,22 @@ impl Blockchain {
         let account = storage.get_account(tx.get_owner()).await?;
         if account.read_balance() < total_deducted { // verify that the user have enough funds
             return Err(BlockchainError::NotEnoughFunds(tx.get_owner().clone(), total_deducted))
+        }
+
+        if let Some(nonces) = nonces {
+            if !nonces.contains_key(tx.get_owner()) {
+                nonces.insert(tx.get_owner(), account.read_nonce());
+            }
+
+            let nonce = nonces.get_mut(tx.get_owner()).ok_or(BlockchainError::InvalidTxNonce)?;
+            if *nonce != tx.get_nonce() {
+                return Err(BlockchainError::InvalidTxNonce)
+            }
+            *nonce += 1;
+        } else {
+            if account.read_nonce() != tx.get_nonce() {
+                return Err(BlockchainError::InvalidTxNonce)
+            }
         }
 
         Ok(())

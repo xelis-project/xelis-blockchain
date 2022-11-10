@@ -74,7 +74,6 @@ JSON-RPC methods available:
 - `p2p_status`
 - `get_mempool`
 - `get_tips`
-- `is_chain_valid`
 - `get_dag_order`
 
 WebSocket allow JSON-RPC call and any app to be notified with `subscribe` method when a specific event happens on the daemon.

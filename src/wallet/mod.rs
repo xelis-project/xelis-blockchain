@@ -1,3 +1,5 @@
+pub mod transaction_builder;
+
 use std::borrow::Cow;
 
 use crate::core::json_rpc::{JsonRPCClient, JsonRPCError};

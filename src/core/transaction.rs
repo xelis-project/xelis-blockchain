@@ -1,7 +1,5 @@
-use crate::crypto::key::{PublicKey, Signature, SIGNATURE_LENGTH, KeyPair};
+use crate::crypto::key::{PublicKey, Signature, SIGNATURE_LENGTH};
 use crate::crypto::hash::{Hashable, hash};
-use crate::wallet::WalletError;
-use super::blockchain::calculate_tx_fee;
 use super::reader::{Reader, ReaderError};
 use super::error::BlockchainError;
 use super::serializer::Serializer;
@@ -33,14 +31,9 @@ pub enum TransactionType {
 pub struct Transaction {
     owner: PublicKey,
     data: TransactionType,
-    signature: Signature,
-    fee: u64 // fees for this tx
-}
-
-pub struct TransactionBuilder {
-    owner: PublicKey,
-    data: TransactionType,
-    fee_multiplier: f64
+    fee: u64, // fees for this tx
+    nonce: u64, // nonce must be equal to the one on account
+    signature: Signature
 }
 
 impl Serializer for TransactionType {
@@ -107,12 +100,13 @@ impl Serializer for TransactionType {
 }
 
 impl Transaction {
-    pub fn new(owner: PublicKey, data: TransactionType, signature: Signature, fee: u64) -> Self {
+    pub fn new(owner: PublicKey, data: TransactionType, fee: u64, nonce: u64, signature: Signature) -> Self {
         Transaction {
             owner,
             data,
-            signature,
-            fee
+            fee,
+            nonce,
+            signature
         }
     }
 
@@ -128,6 +122,10 @@ impl Transaction {
         self.fee
     }
 
+    pub fn get_nonce(&self) -> u64 {
+        self.nonce
+    }
+
     // verify the validity of the signature
     pub fn verify_signature(&self) -> Result<bool, BlockchainError> {
         let bytes = self.to_bytes();
@@ -140,60 +138,20 @@ impl Serializer for Transaction {
     fn write(&self, writer: &mut Writer) {
         self.owner.write(writer);
         self.data.write(writer);
-        self.signature.write(writer);
         writer.write_u64(&self.fee);
+        writer.write_u64(&self.nonce);
+        self.signature.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
         Ok(Transaction {
             owner: PublicKey::read(reader)?,
             data: TransactionType::read(reader)?,
-            signature: Signature::read(reader)?,
-            fee: reader.read_u64()?
+            fee: reader.read_u64()?,
+            nonce: reader.read_u64()?,  
+            signature: Signature::read(reader)?
         })
     }
 }
 
 impl Hashable for Transaction {}
-
-impl TransactionBuilder {
-    pub fn new(owner: PublicKey, data: TransactionType, fee_multiplier: f64) -> Self {
-        Self {
-            owner,
-            data,
-            fee_multiplier
-        }
-    }
-
-    pub fn build(self, keypair: KeyPair) -> Result<Transaction, WalletError> {
-        if *keypair.get_public_key() != self.owner {
-            return Err(WalletError::InvalidKeyPair)
-        }
-
-        if let TransactionType::Normal(txs) = &self.data {
-            if txs.len() == 0 {
-                return Err(WalletError::ExpectedOneTx)
-            }
-
-            for tx in txs {
-                if tx.to == self.owner {
-                    return Err(WalletError::TxOwnerIsReceiver)
-                }
-            }
-        }
-
-        let mut writer = Writer::new();
-        self.owner.write(&mut writer);
-        self.data.write(&mut writer);
-
-        // 8 represent the field 'fee' in bytes size
-        let total_bytes = SIGNATURE_LENGTH + 8 + writer.total_write();
-        let fee = (calculate_tx_fee(total_bytes) as f64  * self.fee_multiplier) as u64;
-        writer.write_u64(&fee);
-
-        let signature = keypair.sign(&writer.bytes());
-        let tx = Transaction::new(self.owner, self.data, signature, fee);
-
-        Ok(tx)
-    }
-}
