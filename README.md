@@ -8,7 +8,7 @@ Its possible to create transactions, sign them, and introduce them in a block. A
 
 ### Daemon
 
-- Default P2P port is `2125`.
+- Default P2P port is `2125`
 - Defaut RPC Server port is `8080`
 
 ### Wallet
@@ -29,9 +29,9 @@ Its possible to create transactions, sign them, and introduce them in a block. A
 ## BlockDAG
 
 XELIS try to implement & use a blockDAG which the rules are the following:
-- A block is considered "sync block" when the block height is less than `TOP_HEIGHT - STABLE_HEIGHT_LIMIT` and it's the unique block at a specific height or if it's the heaviest block by cumulative difficulty at its height.
-- A block is considered "side block" when block height is less than or equal to height of past 8 topographical blocks.
-- A block is considered "orphaned" when the block is not ordered in DAG (no topological height for it).
+- A block is considered `Sync Block` when the block height is less than `TOP_HEIGHT - STABLE_HEIGHT_LIMIT` and it's the unique block at a specific height or if it's the heaviest block by cumulative difficulty at its height.
+- A block is considered `Side Block` when block height is less than or equal to height of past 8 topographical blocks.
+- A block is considered `Orphaned` when the block is not ordered in DAG (no topological height for it).
 - A height is not unique anymore.
 - Topo height is unique for each block, but can change when the DAG is re-ordered up to `TOP_HEIGHT - STABLE_HEIGHT_LIMIT`.
 - You can have up to 3 previous blocks in a block.
