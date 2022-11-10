@@ -3,7 +3,7 @@ use super::{RpcError, RpcServer};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use log::info;
+use log::{info, debug};
 
 #[derive(Serialize)]
 pub struct DataHash<T> {
@@ -85,6 +85,12 @@ pub struct P2pStatusResult {
     pub our_height: u64,
     pub best_height: u64,
     pub peer_id: u64
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetDagOrderParams {
+    pub start_topoheight: Option<u64>,
+    pub end_topoheight: Option<u64>
 }
 
 macro_rules! method {
@@ -325,15 +331,36 @@ async fn get_tips(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, Rpc
     Ok(json!(tips))
 }
 
+const MAX_DAG_ORDER: u64 = 64;
+// get dag order based on params
+// if no params found, get order of last 64 blocks
 async fn get_dag_order(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
-    if body != Value::Null {
-        return Err(RpcError::UnexpectedParams)
+    let params: GetDagOrderParams = parse_params(body)?;
+
+    let current_topoheight = blockchain.get_topo_height();
+    let start_topoheight = params.start_topoheight.unwrap_or_else(|| {
+        if params.end_topoheight.is_none() && current_topoheight > MAX_DAG_ORDER {
+            current_topoheight - MAX_DAG_ORDER
+        } else {
+            0
+        }
+    });
+
+    let end_topoheight = params.end_topoheight.unwrap_or(current_topoheight);
+    if end_topoheight < start_topoheight || end_topoheight > current_topoheight {
+        debug!("get dag order range: start = {}, end = {}, max = {}", start_topoheight, end_topoheight, current_topoheight);
+        return Err(RpcError::InvalidRequest)
     }
 
-    let topoheight = blockchain.get_topo_height();
+    let count = end_topoheight - start_topoheight;
+    if count > MAX_DAG_ORDER { // only retrieve max 64 blocks hash per request
+        debug!("get dag order requested count: {}", count);
+        return Err(RpcError::InvalidRequest) 
+    }
+
     let storage = blockchain.get_storage().read().await;
-    let mut order = Vec::with_capacity(topoheight as usize);
-    for i in 0..=topoheight {
+    let mut order = Vec::with_capacity(count as usize);
+    for i in start_topoheight..=end_topoheight {
         let hash = storage.get_hash_at_topo_height(i).await?;
         order.push(hash);
     }

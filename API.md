@@ -6,7 +6,12 @@
 
 #### Get Height
 Retrieve current height of the chain
+
 ##### Method `get_height`
+
+##### Parameters
+No parameters
+
 ##### Request
 ```json
 {
@@ -27,7 +32,12 @@ Retrieve current height of the chain
 
 #### Get Topo Height
 Retrieve current topological height of the chain
+
 ##### Method `get_topoheight`
+
+##### Parameters
+No parameters
+
 ##### Request
 ```json
 {
@@ -48,7 +58,12 @@ Retrieve current topological height of the chain
 
 #### Get Stable Height
 Retrieve current stable height of the chain.
+
 ##### Method `get_stableheight`
+
+##### Parameters
+No parameters
+
 ##### Request
 ```json
 {
@@ -69,7 +84,14 @@ Retrieve current stable height of the chain.
 
 #### Get Block Template
 Retrieve the block template for PoW work
+
 ##### Method `get_block_template`
+
+##### Parameters
+|   Name  |   Type  | Required |            Note           |
+|:-------:|:-------:|:--------:|:-------------------------:|
+| address | Address | Required | Miner address for rewards |
+
 ##### Request
 ```json
 {
@@ -96,7 +118,14 @@ Retrieve the block template for PoW work
 
 #### Get Block At Topo Height
 Retrieve a block at a specific topo height
+
 ##### Method `get_block_at_topoheight`
+
+##### Parameters
+|    Name    |   Type  | Required |                           Note                           |
+|:----------:|:-------:|:--------:|:--------------------------------------------------------:|
+| topoheight | Integer | Required | Topoheight must be equal or less than current topoheight |
+
 ##### Request
 ```json
 {
@@ -137,7 +166,14 @@ Retrieve a block at a specific topo height
 
 #### Get Blocks At Height
 Retrieve all blocks at a specific height
+
 ##### Method `get_blocks_at_height`
+
+##### Parameters
+|  Name  |   Type  | Required |                       Note                       |
+|:------:|:-------:|:--------:|:------------------------------------------------:|
+| height | Integer | Required | Height must be equal or less than current height |
+
 ##### Request
 ```json
 {
@@ -180,7 +216,14 @@ Retrieve all blocks at a specific height
 
 #### Get Block By Hash
 Retrieve a block by its hash
+
 ##### Method `get_block_by_hash`
+
+##### Parameters
+| Name | Type | Required |                  Note                 |
+|:----:|:----:|:--------:|:-------------------------------------:|
+| hash | Hash | Required | Valid block Hash present in the chain |
+
 ##### Request
 ```json
 {
@@ -220,7 +263,12 @@ Retrieve a block by its hash
 
 #### Get Top Block
 Retrieve the highest block based on the topological height
+
 ##### Method `get_top_block`
+
+##### Parameters
+No parameters
+
 ##### Request
 ```json
 {
@@ -258,7 +306,14 @@ Retrieve the highest block based on the topological height
 
 #### Get Account
 Retrieve the account based on its address
+
 ##### Method `get_account`
+
+##### Parameters
+|   Name  |   Type  | Required |                Note               |
+|:-------:|:-------:|:--------:|:---------------------------------:|
+| address | Address | Required | Valid address registered on chain |
+
 ##### Request
 ```json
 {
@@ -285,7 +340,12 @@ Retrieve the account based on its address
 
 #### Count Accounts
 Counts the number of accounts saved on disk
+
 ##### Method `count_accounts`
+
+##### Parameters
+No parameters
+
 ##### Request
 ```json
 {
@@ -306,7 +366,12 @@ Counts the number of accounts saved on disk
 
 #### Count Transactions
 Counts the number of transactions saved on disk
+
 ##### Method `count_transactions`
+
+##### Parameters
+No parameters
+
 ##### Request
 ```json
 {
@@ -325,17 +390,110 @@ Counts the number of transactions saved on disk
 }
 ```
 
+#### Get Tips
+Retrieve Tips (highest blocks from blockDAG) from chain 
+
+##### Method `get_tips`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_tips"
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": [
+		"0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692"
+	]
+}
+```
+
+#### P2p Status
+Retrieve some informations about P2p
+
+##### Method `p2p_status`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "p2p_status"
+}
+```
+
+##### Response
+```json
+{	
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"best_height": 23,
+		"max_peers": 32,
+		"our_height": 23,
+		"peer_count": 1,
+		"peer_id": 17384099500704996810,
+		"tag": null
+	}
+}
+```
+
+#### Get DAG Order
+Retrieve the whole DAG order (all blocks hash ordered by topoheight).
+If no parameters are set, it will retrieve the last 64 blocks hash ordered descending.
+Maximum of 64 blocks hash only per request.
+
+##### Method `get_dag_order`
+
+##### Parameters
+|       Name       |   Type  | Required |                      Note                     |
+|:----------------:|:-------:|:--------:|:---------------------------------------------:|
+| start_topoheight | Integer | Optional | If not set, will retrieve last 64 blocks hash |
+|  end_topoheight  | Integer | Optional |        Must be under current topoheight       |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_dag_order",
+	"params": {
+		"start_topoheight": 0,
+		"end_topoheight": 5
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": [
+		"83f6a544d69ca4852e8e2b6bc98b3a1602509e8feea7d744f6a60deeef51c663",
+		"00005c58f5c2a506b2a24e79967db009d3b2be13f15e657d6352b1aa59cdfedc",
+		"00002d138fbab2bc14958061edbc4a0c272d1ac27d60ef4a72e2f5ac9d1a2b0a",
+		...
+	]
+}
+```
+
 TODO:
 -  `submit_block`
 
 -  `submit_transaction`
 
--  `p2p_status`
-
 -  `get_mempool`
-
--  `get_tips`
-
--  `is_chain_valid`
-
--  `get_dag_order`
