@@ -147,8 +147,7 @@ impl Blockchain {
         } else {
             error!("No genesis block found!");
             info!("Generating a new genesis block...");
-            let miner_tx = Transaction::new(self.get_dev_address().clone(), TransactionVariant::Coinbase);
-            let block = Block::new(0, get_current_timestamp(), Vec::new(), [0u8; 32], Immutable::Owned(miner_tx), Vec::new());
+            let block = Block::new(0, get_current_timestamp(), Vec::new(), [0u8; 32], self.get_dev_address().clone(), Vec::new());
             let complete_block = CompleteBlock::new(Immutable::Owned(block), Vec::new());
             info!("Genesis generated: {}", complete_block.to_hex());
             complete_block
@@ -566,17 +565,18 @@ impl Blockchain {
             return Err(BlockchainError::TxAlreadyInMempool(hash))
         }
 
-        let fee = {
+        {
             let storage = self.storage.read().await;
             self.verify_transaction_with_hash(&storage, &tx, &hash, false).await?
-        };
+        }
+
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 p2p.broadcast_tx_hash(&hash).await;
             }
         }
         let tx = Arc::new(tx);
-        mempool.add_tx_with_fee(hash, tx.clone(), fee)?;
+        mempool.add_tx(hash, tx.clone())?;
 
         // broadcast to websocket this tx
         if let Some(rpc) = self.rpc.lock().await.as_ref() {
@@ -597,7 +597,6 @@ impl Blockchain {
     }
 
     pub async fn get_block_template_for_storage(&self, storage: &Storage, address: PublicKey) -> Result<Block, BlockchainError> {
-        let coinbase_tx = Transaction::new(address, TransactionVariant::Coinbase);
         let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>(); // generate random bytes
 
         let tips_set = storage.get_tips().await?;
@@ -608,7 +607,7 @@ impl Blockchain {
 
         let mut sorted_tips = blockdag::sort_tips(&storage, &tips).await?;
         sorted_tips.truncate(3); // keep only first 3 tips
-        let mut block = Block::new(self.get_height() + 1, get_current_timestamp(), sorted_tips, extra_nonce, Immutable::Owned(coinbase_tx), Vec::new());
+        let mut block = Block::new(self.get_height() + 1, get_current_timestamp(), sorted_tips, extra_nonce, address, Vec::new());
         let mempool = self.mempool.read().await;
         let txs: &Vec<SortedTx> = mempool.get_sorted_txs();
         let mut tx_size = 0;
@@ -701,20 +700,11 @@ impl Blockchain {
                 return Err(BlockchainError::InvalidBlockTxs(txs_hashes_len, txs_len));
             }
 
-
-            if !block.get_miner_tx().is_coinbase() || !block.get_miner_tx().verify_signature()? {
-                return Err(BlockchainError::InvalidMinerTx)
-            }
-
             let reward = get_block_reward(circulating_supply);
             let mut total_tx_size = 0;
             for tx_hash in block.get_transactions() {
                 let tx = storage.get_transaction(tx_hash).await?;
-                if !tx.is_coinbase() {
-                    self.verify_transaction_with_hash(&storage, &tx, &tx_hash, true).await?; // TODO check when account have no more funds
-                } else {
-                    return Err(BlockchainError::InvalidTxInBlock(tx_hash.clone()))
-                }
+                self.verify_transaction_with_hash(&storage, &tx, &tx_hash, true).await?; // TODO check when account have no more funds
 
                 if !block.get_txs_hashes().contains(&tx_hash) { // check if tx is in txs hashes
                     return Err(BlockchainError::InvalidTxInBlock(tx_hash.clone()))
@@ -835,27 +825,21 @@ impl Blockchain {
             }
             // TODO replace bool by nonce to support multi TX in same block
             let mut cache_tx: HashMap<Hash, bool> = HashMap::new(); // avoid using a TX multiple times
-            let mut registrations: HashMap<&PublicKey, bool> = HashMap::new(); // avoid multiple registration of the same public key 
-            for tx in block.get_transactions() { // TODO check correct order of TX / hash
+            for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_hash = tx.hash();
+                if tx_hash != *hash {
+                    error!("Invalid tx {} vs {} in header", tx_hash, hash);
+                    return Err(BlockchainError::InvalidTxInBlock(tx_hash))
+                }
+
                 // block can't contains the same tx and should have tx hash in block header
                 if cache_tx.contains_key(&tx_hash) {
                     error!("Block cannot contains the same TX {}", tx_hash);
                     return Err(BlockchainError::TxAlreadyInBlock(tx_hash));
                 }
 
-                if !block.get_txs_hashes().contains(&tx_hash) {
-                    error!("Block contains an unknown TX {}", tx_hash);
-                    return Err(BlockchainError::InvalidTxInBlock(tx_hash))
-                }
-                let fee = self.verify_transaction_with_hash(storage, tx, &tx_hash, false).await?;
-                if let TransactionVariant::Registration = tx.get_variant() { // prevent any duplicate registration
-                    if registrations.contains_key(tx.get_owner()) {
-                        return Err(BlockchainError::DuplicateRegistration(tx.get_owner().clone()))
-                    }
-                    registrations.insert(tx.get_owner(), true);
-                }
-                total_fees += fee;
+                self.verify_transaction_with_hash(storage, tx, &tx_hash, false).await?;
+                total_fees += tx.get_fee();
                 cache_tx.insert(tx_hash, true);
                 total_tx_size += tx.size();
             }
@@ -873,22 +857,12 @@ impl Blockchain {
 
         // Miner Tx verification
         let block_reward = get_block_reward(self.get_supply());
-        if !block.get_miner_tx().is_coinbase() {
-            error!("Invalid miner TX");
-            return Err(BlockchainError::InvalidMinerTx)
-        }
-
-        // miner tx don't require any signature
-        if !block.get_miner_tx().verify_signature()? {
-            error!("Miner TX shouldn't have a signature");
-            return Err(BlockchainError::InvalidTransactionSignature)
-        }
 
         // Save transactions & block
         let (block, txs) = block.split();
         let block = block.to_arc();
         debug!("Saving block {} on disk", block_hash);
-        storage.add_new_block(block.clone(), block.get_miner_tx(), &txs, difficulty, block_hash.clone(), self.get_supply(), self.get_burned_supply()).await?; // Add block to chain
+        storage.add_new_block(block.clone(), block.get_miner(), &txs, difficulty, block_hash.clone(), self.get_supply(), self.get_burned_supply()).await?; // Add block to chain
         // Compute cumulative difficulty for block
         let cumulative_difficulty = { // TODO Refactor
             let cumulative_difficulty: u64 = if tips_count == 0 {
@@ -920,7 +894,7 @@ impl Blockchain {
         for tx in txs { // execute all txs
             self.execute_transaction(storage, &tx).await?;
         }
-        self.execute_miner_tx(storage, block.get_miner_tx(), block_reward, total_fees).await?; // execute coinbase tx
+        // TODO self.execute_miner_tx(storage, block.get_miner(), block_reward, total_fees).await?; // execute coinbase tx
 
         let mut tips = storage.get_tips().await?;
         tips.insert(block_hash.clone());
@@ -1077,135 +1051,81 @@ impl Blockchain {
     }
 
     // verify the transaction and returns fees available
-    async fn verify_transaction_with_hash(&self, storage: &Storage, tx: &Transaction, hash: &Hash, disable_nonce_check: bool) -> Result<u64, BlockchainError> {
-        // check signature validity
-        if !tx.verify_signature()? {
-            return Err(BlockchainError::InvalidTransactionSignature)
-        }
+    async fn verify_transaction_with_hash(&self, storage: &Storage, tx: &Transaction, hash: &Hash, disable_nonce_check: bool) -> Result<(), BlockchainError> {
+        let mut total_deducted = tx.get_fee();
+        match tx.get_data() {
+            TransactionType::Normal(txs) => {
+                if txs.len() == 0 { // don't accept any empty tx
+                    return Err(BlockchainError::TxEmpty(hash.clone()))
+                }
 
-        match tx.get_variant() {
-            TransactionVariant::Coinbase => { // don't accept any coinbase tx
-                Err(BlockchainError::CoinbaseTxNotAllowed(hash.clone()))
+                for output in txs {
+                    if output.to == *tx.get_owner() { // we can't transfer coins to ourself, why would you do that ?
+                        return Err(BlockchainError::InvalidTransactionToSender(hash.clone()))
+                    }
+
+                    total_deducted += output.amount;
+                }
+            }
+            TransactionType::Burn(amount) => {
+                total_deducted += amount;
             },
-            TransactionVariant::Registration => {
-                // verify this address isn't already registered
-                if storage.has_account(tx.get_owner()).await? && !disable_nonce_check {
-                    return Err(BlockchainError::AddressAlreadyRegistered(tx.get_owner().clone()))
-                }
-                
-                // check validity of registration mini POW
-                if !check_difficulty(&hash, REGISTRATION_DIFFICULTY)? {
-                    return Err(BlockchainError::InvalidTxRegistrationPoW(hash.clone()))
-                }
-                Ok(0)
+            _ => {
+                // TODO implement SC
+                return Err(BlockchainError::SmartContractTodo)
             }
-            TransactionVariant::Normal { nonce, fee, data } => {
-                let calculted_fee = calculate_tx_fee(tx.size());
-                if *fee < calculted_fee { // minimum fee verification
-                    return Err(BlockchainError::InvalidTxFee(calculted_fee, *fee))
-                }
+        };
 
-                {
-                    let account = storage.get_account(tx.get_owner()).await?;
-                    let account_nonce = account.read_nonce();
-                    if !disable_nonce_check && account_nonce != *nonce { // check valid nonce
-                        return Err(BlockchainError::InvalidTransactionNonce(account_nonce, *nonce))
-                    }
-                }
-
-                match data {
-                    TransactionData::Normal(txs) => {
-                        if txs.len() == 0 { // don't accept any empty tx
-                            return Err(BlockchainError::TxEmpty(hash.clone()))
-                        }
-                        let mut total_coins = *fee;
-                        for output in txs {
-                            total_coins += output.amount;
-                            if output.to == *tx.get_owner() { // we can't transfer coins to ourself, why would you do that ?
-                                return Err(BlockchainError::InvalidTransactionToSender(hash.clone()))
-                            }
-        
-                            if !storage.has_account(&output.to).await? { // verify that all receivers are registered
-                                return Err(BlockchainError::AddressNotRegistered(output.to.clone()))
-                            }
-                        }
-        
-                        let account = storage.get_account(tx.get_owner()).await?;
-                        if account.read_balance() < total_coins { // verify that the user have enough funds
-                            return Err(BlockchainError::NotEnoughFunds(tx.get_owner().clone(), total_coins))
-                        }
-                    }
-                    TransactionData::Burn(amount) => {
-                        let account = storage.get_account(tx.get_owner()).await?;
-                        if account.read_balance() < amount + fee { // verify that the user have enough funds
-                            return Err(BlockchainError::NotEnoughFunds(tx.get_owner().clone(), amount + fee))
-                        }
-                    },
-                    _ => {
-                        // TODO implement SC
-                        return Err(BlockchainError::SmartContractTodo)
-                    }
-                };
-                Ok(*fee)
-            }
+        let account = storage.get_account(tx.get_owner()).await?;
+        if account.read_balance() < total_deducted { // verify that the user have enough funds
+            return Err(BlockchainError::NotEnoughFunds(tx.get_owner().clone(), total_deducted))
         }
+
+        Ok(())
     }
 
     async fn execute_miner_tx(&self, storage: &mut Storage, transaction: &Transaction, mut block_reward: u64, fees: u64) -> Result<(), BlockchainError> {
-        if let TransactionVariant::Coinbase = transaction.get_variant() {
-            if DEV_FEE_PERCENT != 0 {
-                let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
-                let account = storage.get_account(self.get_dev_address()).await?;
-                account.get_balance().fetch_add(dev_fee, Ordering::Relaxed);
-                storage.save_account(self.get_dev_address(), account)?;
-                block_reward -= dev_fee;
-            }
-            let account = storage.get_account(transaction.get_owner()).await?;
-            account.get_balance().fetch_add(block_reward + fees, Ordering::Relaxed);
-            storage.save_account(transaction.get_owner(), account)?;
-            Ok(())
-        } else {
-            Err(BlockchainError::InvalidMinerTx)
+        if DEV_FEE_PERCENT != 0 {
+            let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
+            let account = storage.get_account(self.get_dev_address()).await?;
+            account.get_balance().fetch_add(dev_fee, Ordering::Relaxed);
+            storage.save_account(self.get_dev_address(), account)?;
+            block_reward -= dev_fee;
         }
+        let account = storage.get_account(transaction.get_owner()).await?;
+        account.get_balance().fetch_add(block_reward + fees, Ordering::Relaxed);
+        storage.save_account(transaction.get_owner(), account)?;
+        Ok(())
     }
 
     async fn execute_transaction(&self, storage: &mut Storage, transaction: &Transaction) -> Result<(), BlockchainError> {
-        match transaction.get_variant() {
-            TransactionVariant::Registration => {
-                storage.register_account(transaction.get_owner().clone()).await?;
-            }
-            TransactionVariant::Coinbase => {
-                // shouldn't happen due to previous check
-                return Err(BlockchainError::CoinbaseTxNotAllowed(transaction.hash()))
-            }
-            TransactionVariant::Normal { fee, data, .. } => {
-                let mut amount = 0; // total amount to be deducted
-                match data {
-                    TransactionData::Burn(burn_amount) => {
-                        amount += burn_amount + fee;
-                        self.burned.fetch_add(*burn_amount, Ordering::Relaxed);
-                    }
-                    TransactionData::Normal(txs) => {
-                        let mut total = *fee;
-                        for tx in txs {
-                            let to_account = storage.get_account(&tx.to).await?; // update receiver's account
-                            to_account.get_balance().fetch_add(tx.amount, Ordering::Relaxed);
-                            storage.save_account(&tx.to, to_account)?;
-                            total += tx.amount;
-                        }
-                        amount += total;
-                    }
-                    _ => {
-                        return Err(BlockchainError::SmartContractTodo)
-                    }
-                };
+        let mut total_deducted = transaction.get_fee();
+        match transaction.get_data() {
+            TransactionType::Burn(burn_amount) => {
+                total_deducted += burn_amount;
 
-                let account = storage.get_account(transaction.get_owner()).await?;
-                account.get_balance().fetch_min(amount, Ordering::Relaxed);
-                account.get_nonce().fetch_add(1, Ordering::Relaxed);
-                storage.save_account(transaction.get_owner(), account)?;
+                // record the amount burned
+                self.burned.fetch_add(*burn_amount, Ordering::Relaxed);
+            }
+            TransactionType::Normal(txs) => {
+                for tx in txs {
+                    let to_account = storage.get_account(&tx.to).await?;
+
+                    // update receiver's account
+                    to_account.get_balance().fetch_add(tx.amount, Ordering::Relaxed);
+                    storage.save_account(&tx.to, to_account)?;
+                    total_deducted += tx.amount;
+                }
+            }
+            _ => {
+                return Err(BlockchainError::SmartContractTodo)
             }
         };
+
+        let account = storage.get_account(transaction.get_owner()).await?;
+        account.get_balance().fetch_min(total_deducted, Ordering::Relaxed);
+        account.get_nonce().fetch_add(1, Ordering::Relaxed);
+        storage.save_account(transaction.get_owner(), account)?;
         Ok(())
     }
 }

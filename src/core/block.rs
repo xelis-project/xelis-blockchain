@@ -18,7 +18,7 @@ pub struct Block {
     pub nonce: u64,
     #[serde(skip_serializing)]
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE],
-    pub miner_tx: Immutable<Transaction>,
+    pub miner: PublicKey,
     pub txs_hashes: Vec<Hash>
 }
 
@@ -30,14 +30,14 @@ pub struct CompleteBlock {
 }
 
 impl Block {
-    pub fn new(height: u64, timestamp: u128, tips: Vec<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner_tx: Immutable<Transaction>, txs_hashes: Vec<Hash>) -> Self {
+    pub fn new(height: u64, timestamp: u128, tips: Vec<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: Vec<Hash>) -> Self {
         Block {
             height,
             timestamp,
             tips,
             nonce: 0,
             extra_nonce,
-            miner_tx,
+            miner,
             txs_hashes
         }
     }
@@ -68,12 +68,8 @@ impl Block {
         self.nonce
     }
 
-    pub fn get_miner_tx(&self) -> &Immutable<Transaction> {
-        &self.miner_tx
-    }
-
     pub fn get_miner(&self) -> &PublicKey {
-        &self.miner_tx.get_owner()
+        &self.miner
     }
 
     pub fn get_extra_nonce(&self) -> &[u8; EXTRA_NONCE_SIZE] {
@@ -105,7 +101,7 @@ impl Block {
         bytes.extend(&self.timestamp.to_be_bytes()); // 8 + 16 = 24
         bytes.extend(self.get_tips_hash().as_bytes()); // 24 + 32 = 56
         bytes.extend(&self.nonce.to_be_bytes()); // 56 + 8 = 64
-        bytes.extend(self.miner_tx.hash().as_bytes()); // 64 + 32 = 96
+        bytes.extend(self.miner.as_bytes()); // 64 + 32 = 96
         bytes.extend(&self.extra_nonce); // 96 + 32 = 128
         bytes.extend(self.get_txs_hash().as_bytes()); // 128 + 32 = 160
 
@@ -161,7 +157,7 @@ impl Serializer for Block {
         for tx in &self.txs_hashes {
             writer.write_hash(tx); // 32
         }
-        self.miner_tx.write(writer);
+        self.miner.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Block, ReaderError> {
@@ -169,25 +165,27 @@ impl Serializer for Block {
         let timestamp = reader.read_u128()?;
         let nonce = reader.read_u64()?;
         let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
+
         let tips_count = reader.read_u8()?;
         let mut tips = Vec::with_capacity(tips_count as usize);
         for _ in 0..tips_count {
             tips.push(reader.read_hash()?);
         }
+
         let txs_count = reader.read_u16()?;
         let mut txs_hashes = Vec::with_capacity(txs_count as usize);
         for _ in 0..txs_count {
             txs_hashes.push(reader.read_hash()?);
         }
-        let miner_tx = Immutable::Owned(Transaction::read(reader)?);
 
+        let miner = PublicKey::read(reader)?;
         Ok(
             Block {
                 extra_nonce,
                 height,
                 timestamp,
                 tips,
-                miner_tx,
+                miner,
                 nonce,
                 txs_hashes
             }

@@ -1,13 +1,18 @@
 use std::borrow::Cow;
 
-use crate::core::blockchain::calculate_tx_fee;
 use crate::core::json_rpc::{JsonRPCClient, JsonRPCError};
 use crate::core::serializer::Serializer;
 use crate::crypto::address::{Address, AddressType};
-use crate::crypto::key::{KeyPair, SIGNATURE_LENGTH};
-use crate::core::transaction::{Transaction, TransactionData, TransactionVariant};
+use crate::crypto::key::KeyPair;
+use crate::core::transaction::{Transaction, TransactionType};
 use crate::core::error::BlockchainError;
 use crate::rpc::rpc::SubmitTransactionParams;
+
+pub enum WalletError {
+    InvalidKeyPair,
+    ExpectedOneTx,
+    TxOwnerIsReceiver
+}
 
 pub struct Wallet {
     keypair: KeyPair,
@@ -37,15 +42,16 @@ impl Wallet {
     }
 
     pub fn create_tx_registration(&self) -> Transaction {
-        Transaction::new(self.keypair.get_public_key().clone(), TransactionVariant::Registration)
+        panic!("") //Transaction::new(self.keypair.get_public_key().clone(), TransactionVariant::Registration)
     }
 
-    pub fn create_transaction(&self, data: TransactionData) -> Result<Transaction, BlockchainError> {
-        let mut tx = Transaction::new(self.keypair.get_public_key().clone(), TransactionVariant::Normal { nonce: self.nonce, fee: 0, data });
+    pub fn create_transaction(&self, data: TransactionType) -> Result<Transaction, BlockchainError> {
+        panic!("")
+        /*let mut tx = Transaction::new(self.keypair.get_public_key().clone(), TransactionVariant::Normal { nonce: self.nonce, fee: 0, data });
         let fee = calculate_tx_fee(tx.size() + SIGNATURE_LENGTH);
         tx.set_fee(fee)?;
         tx.sign(&self.keypair);
-        Ok(tx)
+        Ok(tx)*/
     }
 
     pub fn get_transactions(&self) -> &Vec<Transaction> {

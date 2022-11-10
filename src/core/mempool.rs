@@ -27,12 +27,11 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub fn add_tx_with_fee(&mut self, hash: Hash, tx: Arc<Transaction>, fee: u64) -> Result<(), BlockchainError> {
-        let size = tx.size();
+    pub fn add_tx(&mut self, hash: Hash, tx: Arc<Transaction>) -> Result<(), BlockchainError> {
         let sorted_tx = SortedTx {
             hash: hash.clone(),
-            fee,
-            size: size
+            fee: tx.get_fee(),
+            size: tx.size()
         };
 
         let mut index = 0;
