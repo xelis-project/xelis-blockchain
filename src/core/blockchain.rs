@@ -566,9 +566,29 @@ impl Blockchain {
         }
 
         {
+            // get the highest nonce for this owner
+            let owner = tx.get_owner();
+            let mut nonces = HashMap::new();
+            for (_, tx) in mempool.get_txs() {
+                if tx.get_owner() == owner {
+                    let nonce = nonces.entry(tx.get_owner()).or_insert(0);
+                    // if the tx is in mempool, then the nonce should be valid.
+                    if *nonce < tx.get_nonce() {
+                        *nonce = tx.get_nonce();
+                    }
+                }
+            }
+
+            // if the nonce of tx is N + 1, we increment it to let it pass
+            // so we have multiple TXs from same owner in the same block
+            if let Some(nonce) = nonces.get_mut(owner) {
+                if *nonce + 1 == tx.get_nonce() {
+                    *nonce += 1;
+                }
+            }
+
             let storage = self.storage.read().await;
-            // TODO support multi nonces in mempool and same nonce with different fee
-            self.verify_transaction_with_hash(&storage, &tx, &hash, None).await?
+            self.verify_transaction_with_hash(&storage, &tx, &hash, Some(&mut nonces)).await?
         }
 
         if broadcast {
@@ -599,7 +619,6 @@ impl Blockchain {
 
     pub async fn get_block_template_for_storage(&self, storage: &Storage, address: PublicKey) -> Result<Block, BlockchainError> {
         let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>(); // generate random bytes
-
         let tips_set = storage.get_tips().await?;
         let mut tips = Vec::with_capacity(tips_set.len());
         for hash in tips_set {
@@ -607,17 +626,27 @@ impl Blockchain {
         }
 
         let mut sorted_tips = blockdag::sort_tips(&storage, &tips).await?;
-        sorted_tips.truncate(3); // keep only first 3 tips
-        let mut block = Block::new(self.get_height() + 1, get_current_timestamp(), sorted_tips, extra_nonce, address, Vec::new());
+        sorted_tips.truncate(3); // keep only first 3 heavier tips
+        let height = blockdag::calculate_height_at_tips(storage, &tips).await?;
+        let mut block = Block::new(height, get_current_timestamp(), sorted_tips, extra_nonce, address, Vec::new());
+
         let mempool = self.mempool.read().await;
-        let txs: &Vec<SortedTx> = mempool.get_sorted_txs();
+        let txs = mempool.get_sorted_txs();
         let mut tx_size = 0;
         for tx in txs {
-            tx_size += tx.get_size();
-            if block.size() + tx_size > MAX_BLOCK_SIZE {
+            if block.size() + tx_size + tx.get_size() > MAX_BLOCK_SIZE {
                 break;
             }
-            block.txs_hashes.push(tx.get_hash().clone());
+
+            let transaction = mempool.view_tx(tx.get_hash())?;
+            let account = storage.get_account(transaction.get_owner()).await?;
+            if account.read_nonce() < transaction.get_nonce() {
+                debug!("Skipping {} with {} fees because another TX should be selected first due to nonce", tx.get_hash(), tx.get_fee());
+            } else {
+                // TODO no clone
+                block.txs_hashes.push(tx.get_hash().clone());
+                tx_size += tx.get_size();
+            }
         }
         Ok(block)
     }
@@ -720,8 +749,8 @@ impl Blockchain {
                 return Err(BlockchainError::InvalidBlockTxs(hashes_len, txs_len));
             }
 
-            let mut cache_tx: HashMap<Hash, bool> = HashMap::new(); // avoid using a TX multiple times
             let mut cache_account: HashMap<&PublicKey, u64> = HashMap::new();
+            let mut cache_tx: HashMap<Hash, bool> = HashMap::new(); // avoid using a TX multiple times
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_hash = tx.hash();
                 if tx_hash != *hash {
@@ -788,8 +817,10 @@ impl Blockchain {
             };
         }
 
-        for tx in txs { // execute all txs
-            self.execute_transaction(storage, &tx).await?;
+        // track all changes in nonces
+        let mut nonces = HashMap::new();
+        for tx in &txs { // execute all txs
+            self.execute_transaction(storage, &tx, &mut nonces).await?;
         }
         // TODO self.execute_miner_tx(storage, block.get_miner(), block_reward, total_fees).await?; // execute coinbase tx
 
@@ -892,6 +923,9 @@ impl Blockchain {
             });
         }
 
+        // Clean all old txs
+        mempool.clean_up(storage, nonces).await;
+
         Ok(())
     }
 
@@ -980,15 +1014,13 @@ impl Blockchain {
             return Err(BlockchainError::NotEnoughFunds(tx.get_owner().clone(), total_deducted))
         }
 
+        // nonces can be already pre-computed to support multi nonces at the same time in block/mempool
         if let Some(nonces) = nonces {
-            if !nonces.contains_key(tx.get_owner()) {
-                nonces.insert(tx.get_owner(), account.read_nonce());
-            }
-
-            let nonce = nonces.get_mut(tx.get_owner()).ok_or(BlockchainError::InvalidTxNonce)?;
+            let nonce = nonces.entry(tx.get_owner()).or_insert_with(|| account.read_nonce());
             if *nonce != tx.get_nonce() {
                 return Err(BlockchainError::InvalidTxNonce)
             }
+            // we increment it in case any new tx for same owner is following
             *nonce += 1;
         } else {
             if account.read_nonce() != tx.get_nonce() {
@@ -1013,7 +1045,7 @@ impl Blockchain {
         Ok(())
     }
 
-    async fn execute_transaction(&self, storage: &mut Storage, transaction: &Transaction) -> Result<(), BlockchainError> {
+    async fn execute_transaction<'a>(&self, storage: &mut Storage, transaction: &'a Transaction, nonces: &mut HashMap<&'a PublicKey, u64>) -> Result<(), BlockchainError> {
         let mut total_deducted = transaction.get_fee();
         match transaction.get_data() {
             TransactionType::Burn(burn_amount) => {
@@ -1038,8 +1070,9 @@ impl Blockchain {
         };
 
         let account = storage.get_account(transaction.get_owner()).await?;
-        account.get_balance().fetch_min(total_deducted, Ordering::Relaxed);
-        account.get_nonce().fetch_add(1, Ordering::Relaxed);
+        account.get_balance().fetch_min(total_deducted, Ordering::Release);
+        let nonce = account.get_nonce().fetch_add(1, Ordering::Release) + 1;
+        nonces.insert(transaction.get_owner(), nonce);
         storage.save_account(transaction.get_owner(), account)?;
         Ok(())
     }

@@ -1,5 +1,7 @@
 use crate::crypto::hash::Hash;
+use crate::crypto::key::PublicKey;
 use super::serializer::Serializer;
+use super::storage::Storage;
 use super::transaction::Transaction;
 use super::error::BlockchainError;
 use std::collections::HashMap;
@@ -66,6 +68,43 @@ impl Mempool {
 
     pub fn get_sorted_txs(&self) -> &Vec<SortedTx> {
         &self.txs_sorted
+    }
+
+    pub fn get_txs(&self) -> &HashMap<Hash, Arc<Transaction>> {
+        &self.txs
+    }
+
+    // delete all old txs not compatible anymore with current state of account
+    pub async fn clean_up(&mut self, storage: &Storage, nonces: HashMap<&PublicKey, u64>) {
+        let txs_sorted = std::mem::replace(&mut self.txs_sorted, vec!());
+        for sorted in txs_sorted {
+            let tx_nonce;
+            let account_nonce;
+
+            if let Some(tx) = self.txs.get(&sorted.hash) {
+                tx_nonce = tx.get_nonce();
+                account_nonce = if let Some(nonce) = nonces.get(tx.get_owner()) {
+                    *nonce
+                } else {
+                    match storage.get_account(tx.get_owner()).await {
+                        Ok(account) => account.read_nonce(),
+                        Err(_) => {
+                            // should not be possible, but in case
+                            self.txs.remove(&sorted.hash);
+                            continue;
+                        }
+                    }
+                };
+            } else {
+                continue;
+            }
+
+            if tx_nonce >= account_nonce {
+                self.txs_sorted.push(sorted);
+            } else {
+                self.txs.remove(&sorted.hash);
+            }
+        }
     }
 }
 
