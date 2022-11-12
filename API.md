@@ -496,4 +496,6 @@ TODO:
 
 -  `submit_transaction`
 
+- `get_transaction`
+
 -  `get_mempool`

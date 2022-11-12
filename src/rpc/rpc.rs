@@ -78,6 +78,11 @@ pub struct SubmitTransactionParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetTransactionParams {
+    pub hash: Hash
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct P2pStatusResult {
     pub peer_count: usize,
     pub max_peers: usize,
@@ -132,6 +137,7 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("count_accounts", method!(count_accounts));
     server.register_method("count_transactions", method!(count_transactions));
     server.register_method("submit_transaction", method!(submit_transaction));
+    server.register_method("get_transaction", method!(get_transaction));
     server.register_method("p2p_status", method!(p2p_status));
     server.register_method("get_mempool", method!(get_mempool));
     server.register_method("get_tips", method!(get_tips));
@@ -246,6 +252,13 @@ async fn submit_transaction(blockchain: Arc<Blockchain>, body: Value) -> Result<
     let transaction = Transaction::from_hex(params.data)?;
     blockchain.add_tx_to_mempool(transaction, true).await?;
     Ok(json!(true))
+}
+
+async fn get_transaction(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    let params: GetTransactionParams = parse_params(body)?;
+    let storage = blockchain.get_storage().read().await;
+    let tx = storage.get_transaction(&params.hash).await?;
+    Ok(json!(tx))
 }
 
 async fn p2p_status(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {

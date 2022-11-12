@@ -71,6 +71,7 @@ JSON-RPC methods available:
 - `count_accounts`
 - `count_transactions`
 - `submit_transaction`
+- `get_transaction`
 - `p2p_status`
 - `get_mempool`
 - `get_tips`
