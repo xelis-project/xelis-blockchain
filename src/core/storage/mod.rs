@@ -1,7 +1,6 @@
 use crate::core::immutable::Immutable;
 use crate::crypto::key::PublicKey;
 use crate::crypto::hash::Hash;
-use super::account::Account;
 use super::reader::{Reader, ReaderError};
 use super::block::{CompleteBlock, Block};
 use super::transaction::Transaction;
@@ -108,7 +107,6 @@ impl Serializer for BlockMetadata {
 
 pub struct Storage {
     transactions: Tree, // all txs stored on disk
-    accounts: Tree, // all accounts registered on disk
     blocks: Tree, // all blocks on disk
     metadata: Tree,
     blocks_at_height: Tree, // all blocks height at specific height
@@ -116,25 +114,37 @@ pub struct Storage {
     topo_by_hash: Tree, // topo at hash on disk
     hash_at_topo: Tree, // hash at topo height on disk
     cumulative_difficulty: Tree, // cumulative difficulty for each block hash on disk
+    assets: Tree, // all available assets on network
+    nonces: Tree, // account nonces to prevent TX replay attack
+    db: sled::Db,
     // cached in memory
-    transactions_cache: Mutex<LruCache<Hash, Arc<Transaction>>>,
-    blocks_cache: Mutex<LruCache<Hash, Arc<Block>>>,
-    // Only accounts can be updated
-    accounts_cache: Mutex<LruCache<PublicKey, Arc<Account>>>,
-    metadata_cache: Mutex<LruCache<Hash, Arc<BlockMetadata>>>,
-    past_blocks_cache: Mutex<LruCache<Hash, Arc<Vec<Hash>>>>, // previous blocks saved at each new block
-    topo_by_hash_cache: Mutex<LruCache<Hash, u64>>,
-    hash_at_topo_cache: Mutex<LruCache<u64, Hash>>,
-    cumulative_difficulty_cache: Mutex<LruCache<Hash, u64>>,
+    transactions_cache: Option<Mutex<LruCache<Hash, Arc<Transaction>>>>,
+    blocks_cache: Option<Mutex<LruCache<Hash, Arc<Block>>>>,
+    metadata_cache: Option<Mutex<LruCache<Hash, Arc<BlockMetadata>>>>,
+    past_blocks_cache: Option<Mutex<LruCache<Hash, Arc<Vec<Hash>>>>>, // previous blocks saved at each new block
+    topo_by_hash_cache: Option<Mutex<LruCache<Hash, u64>>>,
+    hash_at_topo_cache: Option<Mutex<LruCache<u64, Hash>>>,
+    cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, u64>>>,
+    assets_cache: Option<Mutex<LruCache<Hash, ()>>>,
+    nonces_cache: Option<Mutex<LruCache<PublicKey, u64>>>,
     tips_cache: Tips
 }
 
+macro_rules! init_cache {
+    ($cache_size: expr) => {{
+        if let Some(size) = &$cache_size {
+            Some(Mutex::new(LruCache::new(*size)))
+        } else {
+            None
+        }
+    }};
+}
+
 impl Storage {
-    pub fn new(dir_path: String) -> Result<Self, BlockchainError> {
+    pub fn new(dir_path: String, cache_size: Option<usize>) -> Result<Self, BlockchainError> {
         let sled = sled::open(dir_path)?;
         let mut storage = Self {
             transactions: sled.open_tree("transactions")?,
-            accounts: sled.open_tree("accounts")?,
             blocks: sled.open_tree("blocks")?,
             metadata: sled.open_tree("metadata")?,
             blocks_at_height: sled.open_tree("blocks_at_height")?,
@@ -142,17 +152,21 @@ impl Storage {
             topo_by_hash: sled.open_tree("topo_at_hash")?,
             hash_at_topo: sled.open_tree("hash_at_topo")?,
             cumulative_difficulty: sled.open_tree("cumulative_difficulty")?,
-            transactions_cache: Mutex::new(LruCache::new(1024)),
-            accounts_cache: Mutex::new(LruCache::new(1024)),
-            blocks_cache: Mutex::new(LruCache::new(1024)),
-            metadata_cache: Mutex::new(LruCache::new(1024)),
-            past_blocks_cache: Mutex::new(LruCache::new(1024)),
-            topo_by_hash_cache: Mutex::new(LruCache::new(1024)),
-            hash_at_topo_cache: Mutex::new(LruCache::new(1024)),
-            cumulative_difficulty_cache: Mutex::new(LruCache::new(1024)),
+            assets: sled.open_tree("assets")?,
+            nonces: sled.open_tree("nonces")?,
+            db: sled,
+            transactions_cache: init_cache!(cache_size),
+            blocks_cache: init_cache!(cache_size),
+            metadata_cache: init_cache!(cache_size),
+            past_blocks_cache: init_cache!(cache_size),
+            topo_by_hash_cache: init_cache!(cache_size),
+            hash_at_topo_cache: init_cache!(cache_size),
+            cumulative_difficulty_cache: init_cache!(cache_size),
+            assets_cache: init_cache!(cache_size),
+            nonces_cache: init_cache!(cache_size),
             tips_cache: HashSet::new()
         };
-        
+
         if let Ok(tips) = storage.load_from_disk::<Tips>(&storage.extra, TIPS) {
             debug!("Found tips: {}", tips.len());
             storage.tips_cache = tips;
@@ -173,37 +187,51 @@ impl Storage {
         }
     }
 
-    async fn get_arc_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Mutex<LruCache<K, Arc<V>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
-        let mut cache = cache.lock().await;
-        if let Some(value) = cache.get(key) {
-            return Ok(Arc::clone(&value));
-        }
+    async fn get_arc_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
+        let value = if let Some(cache) = cache {
+            let mut cache = cache.lock().await;
+            if let Some(value) = cache.get(key) {
+                return Ok(Arc::clone(&value));
+            }
 
-        let value = Arc::new(self.load_from_disk(tree, &key.to_bytes())?);
-        cache.put(key.clone(), Arc::clone(&value));
+            let value = Arc::new(self.load_from_disk(tree, &key.to_bytes())?);
+            cache.put(key.clone(), Arc::clone(&value));
+            value
+        } else {
+            Arc::new(self.load_from_disk(tree, &key.to_bytes())?)
+        };
+
         Ok(value)
     }
 
-    async fn get_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Copy>(&self, tree: &Tree, cache: &Mutex<LruCache<K, V>>, key: &K) -> Result<V, BlockchainError> {
-        let mut cache = cache.lock().await;
-        if let Some(value) = cache.get(key) {
-            return Ok(*value);
-        }
+    async fn get_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Copy>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
+        let value = if let Some(cache) = cache {
+            let mut cache = cache.lock().await;
+            if let Some(value) = cache.get(key) {
+                return Ok(*value);
+            }
 
-        let value = self.load_from_disk(tree, &key.to_bytes())?;
-        cache.put(key.clone(), value);
+            let value = self.load_from_disk(tree, &key.to_bytes())?;
+            cache.put(key.clone(), value);
+            value
+        } else {
+            self.load_from_disk(tree, &key.to_bytes())?
+        };
+
         Ok(value)
     }
 
-    async fn delete_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Mutex<LruCache<K, Arc<V>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
+    async fn delete_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Arc<V>, BlockchainError> {
         let bytes = match tree.remove(key.to_bytes())? {
             Some(data) => data.to_vec(),
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
 
-        let mut cache = cache.lock().await;
-        if let Some(value) = cache.pop(key) {
-            return Ok(value);
+        if let Some(cache) = cache {
+            let mut cache = cache.lock().await;
+            if let Some(value) = cache.pop(key) {
+                return Ok(value);
+            }
         }
 
         let mut reader = Reader::new(&bytes);
@@ -211,26 +239,17 @@ impl Storage {
         Ok(Arc::new(value))
     }
 
-    async fn delete_data_no_cache<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, key: &K) -> Result<V, BlockchainError> {
+    async fn delete_data_no_arc<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
         let bytes = match tree.remove(key.to_bytes())? {
             Some(data) => data.to_vec(),
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
 
-        let mut reader = Reader::new(&bytes);
-        let value = V::read(&mut reader)?;
-        Ok(value)
-    }
-
-    async fn delete_data_no_arc<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Mutex<LruCache<K, V>>, key: &K) -> Result<V, BlockchainError> {
-        let bytes = match tree.remove(key.to_bytes())? {
-            Some(data) => data.to_vec(),
-            None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
-        };
-
-        let mut cache = cache.lock().await;
-        if let Some(value) = cache.pop(key) {
-            return Ok(value);
+        if let Some(cache) = cache {
+            let mut cache = cache.lock().await;
+            if let Some(value) = cache.pop(key) {
+                return Ok(value);
+            }
         }
 
         let mut reader = Reader::new(&bytes);
@@ -238,32 +257,63 @@ impl Storage {
         Ok(value)
     }
 
-    pub async fn has_account(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
-        Ok(self.accounts_cache.lock().await.contains(key) || self.accounts.contains_key(key.as_bytes())?)
+    async fn contains_data<K: Eq + StdHash + Serializer + Clone, V>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<bool, BlockchainError> {
+        if let Some(cache) = cache {
+            let cache = cache.lock().await;
+            return Ok(cache.contains(key))
+        }
+
+        Ok(tree.contains_key(&key.to_bytes())?)
     }
 
-    pub async fn get_account(&self, key: &PublicKey) -> Result<Arc<Account>, BlockchainError> {
-        self.get_arc_data(&self.accounts, &self.accounts_cache, key).await
+    pub async fn asset_exist(&self, asset: &Hash) -> Result<bool, BlockchainError> {
+        self.contains_data(&self.assets, &self.assets_cache, asset).await
     }
 
-    // save directly on disk & in cache
-    pub async fn register_account(&mut self, key: PublicKey) -> Result<(), BlockchainError> {
-        let account = Account::new(0, 0);
+    pub async fn has_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<bool, BlockchainError> {
+        if !self.asset_exist(asset).await? {
+            return Err(BlockchainError::AssetNotFound(asset.clone()))
+        }
 
-        self.accounts.insert(key.as_bytes(), account.to_bytes())?;
-        let mut accounts = self.accounts_cache.lock().await;
-        accounts.put(key, Arc::new(account));
+        let tree = self.db.open_tree(asset.as_bytes())?;
+        Ok(tree.contains_key(key.as_bytes())?)
+    }
 
+    pub async fn get_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<u64, BlockchainError> {
+        if !self.has_balance_for(key, asset).await? {
+            return Ok(0)
+        }
+
+        let tree = self.db.open_tree(asset.as_bytes())?;
+        self.get_data(&tree, &None, key).await
+    }
+
+    pub fn set_balance_for(&mut self, key: &PublicKey, asset: &Hash, balance: u64) -> Result<(), BlockchainError> {
+        let tree = self.db.open_tree(asset.as_bytes())?;
+        tree.insert(&key.as_bytes(), &balance.to_be_bytes())?;
         Ok(())
     }
 
-    pub fn save_account(&mut self, key: &PublicKey, account: Arc<Account>) -> Result<(), BlockchainError> {
-        self.accounts.insert(key.as_bytes(), account.to_bytes())?;
-        Ok(())
+    pub async fn has_nonce(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
+        self.contains_data(&self.nonces, &self.nonces_cache, key).await
     }
 
-    pub fn count_accounts(&self) -> usize {
-        self.accounts.len()
+    pub async fn get_nonce(&self, key: &PublicKey) -> Result<u64, BlockchainError> {
+        if !self.has_nonce(key).await? {
+            return Ok(0)
+        }
+
+        self.get_data(&self.nonces, &self.nonces_cache, key).await
+    }
+
+    pub async fn set_nonce(&self, key: &PublicKey, nonce: u64) -> Result<(), BlockchainError> {
+        self.nonces.insert(&key.as_bytes(), &nonce.to_be_bytes())?;
+        if let Some(cache) = &self.nonces_cache {
+            let mut cache = cache.lock().await;
+            cache.put(key.clone(), nonce);
+        }
+
+        Ok(())
     }
 
     pub async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
@@ -294,8 +344,14 @@ impl Storage {
 
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
 
-        self.metadata_cache.lock().await.put(hash.clone(), Arc::new(metadata));
-        self.blocks_cache.lock().await.put(hash, block);
+        if let Some(cache) = &self.metadata_cache {
+            cache.lock().await.put(hash.clone(), Arc::new(metadata));
+        }
+
+        if let Some(cache) = &self.blocks_cache {
+            cache.lock().await.put(hash, block);
+        }
+
         Ok(())
     }
 
@@ -341,7 +397,7 @@ impl Storage {
 
             // get all blocks at same height, and delete current block hash from the list
             debug!("Searching blocks at height {}", height);
-            let blocks_at_height: Tips = self.delete_data_no_cache(&self.blocks_at_height, &height).await?;
+            let blocks_at_height: Tips = self.delete_data_no_arc(&self.blocks_at_height, &None, &height).await?;
             debug!("Blocks at height {}: {}", height, blocks_at_height.len());
 
             for hash in blocks_at_height {
@@ -419,7 +475,7 @@ impl Storage {
     }
 
     pub async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        Ok(self.blocks_cache.lock().await.contains(hash) || self.blocks.contains_key(hash.as_bytes())?)
+        self.contains_data(&self.blocks, &self.blocks_cache, hash).await
     }
 
     pub async fn get_block_by_hash(&self, hash: &Hash) -> Result<Arc<Block>, BlockchainError> {
@@ -509,19 +565,29 @@ impl Storage {
 
     pub async fn get_past_blocks_of(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
         debug!("get past blocks of {}", hash);
-        let mut cache = self.past_blocks_cache.lock().await;
-        if let Some(tips) = cache.get(hash) {
-            return Ok(tips.clone())
-        }
-
-        let block = self.get_block_by_hash(hash).await?;
-        let mut tips = Vec::with_capacity(block.get_tips().len());
-        for hash in block.get_tips() {
-            tips.push(hash.clone());
-        }
-
-        let tips = Arc::new(tips);
-        cache.put(hash.clone(), tips.clone());
+        let tips = if let Some(cache) = &self.past_blocks_cache {
+            let mut cache = cache.lock().await;
+            if let Some(tips) = cache.get(hash) {
+                return Ok(tips.clone())
+            }
+    
+            let block = self.get_block_by_hash(hash).await?;
+            let mut tips = Vec::with_capacity(block.get_tips().len());
+            for hash in block.get_tips() {
+                tips.push(hash.clone());
+            }
+    
+            let tips = Arc::new(tips);
+            cache.put(hash.clone(), tips.clone());
+            tips
+        } else {
+            let block = self.get_block_by_hash(hash).await?;
+            let mut tips = Vec::with_capacity(block.get_tips().len());
+            for hash in block.get_tips() {
+                tips.push(hash.clone());
+            }
+            Arc::new(tips)
+        };
 
         Ok(tips)
     }
@@ -556,10 +622,16 @@ impl Storage {
         self.hash_at_topo.insert(topoheight.to_be_bytes(), hash.as_bytes())?;
 
         // save in cache
-        let mut topo = self.topo_by_hash_cache.lock().await;
-        let mut hash_at_topo = self.hash_at_topo_cache.lock().await;
-        topo.put(hash.clone(), topoheight);
-        hash_at_topo.put(topoheight, hash);
+        if let Some(cache) = &self.topo_by_hash_cache {
+            let mut topo = cache.lock().await;
+            topo.put(hash.clone(), topoheight);
+        }
+
+        if let Some(cache) = &self.hash_at_topo_cache {
+            let mut hash_at_topo = cache.lock().await;
+            hash_at_topo.put(topoheight, hash);
+        }
+
         Ok(())
     }
 
@@ -590,13 +662,18 @@ impl Storage {
 
     pub async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
         debug!("get hash at topoheight: {}", topoheight);
-        let mut hash_at_topo = self.hash_at_topo_cache.lock().await;
-        if let Some(value) = hash_at_topo.get(&topoheight) {
-            return Ok(value.clone())
-        }
+        let hash = if let Some(cache) = &self.hash_at_topo_cache {
+            let mut hash_at_topo = cache.lock().await;
+            if let Some(value) = hash_at_topo.get(&topoheight) {
+                return Ok(value.clone())
+            }
+            let hash: Hash = self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes())?;
+            hash_at_topo.put(topoheight, hash.clone());
+            hash
+        } else {
+            self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes())?
+        };
 
-        let hash: Hash = self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes())?;
-        hash_at_topo.put(topoheight, hash.clone());
         Ok(hash)
     }
 

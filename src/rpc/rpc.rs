@@ -68,8 +68,14 @@ pub struct GetMessagesParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetAccountParams<'a> {
-    pub address: Address<'a>
+pub struct GetBalanceParams<'a> {
+    pub address: Address<'a>,
+    pub asset: Hash
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetNonceParams<'a> {
+    pub address: Address<'a>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -133,8 +139,8 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("get_block_by_hash", method!(get_block_by_hash));
     server.register_method("get_top_block", method!(get_top_block));
     server.register_method("submit_block", method!(submit_block));
-    server.register_method("get_account", method!(get_account));
-    server.register_method("count_accounts", method!(count_accounts));
+    server.register_method("get_balance", method!(get_balance));
+    server.register_method("get_nonce", method!(get_nonce));
     server.register_method("count_transactions", method!(count_transactions));
     server.register_method("submit_transaction", method!(submit_transaction));
     server.register_method("get_transaction", method!(get_transaction));
@@ -224,19 +230,18 @@ async fn submit_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value,
     Ok(json!(true))
 }
 
-async fn get_account(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
-    let params: GetAccountParams = parse_params(body)?;
+async fn get_balance(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    let params: GetBalanceParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
-    let account = storage.get_account(params.address.get_public_key()).await?;
-    Ok(json!(account))
+    let balance = storage.get_balance_for(params.address.get_public_key(), &params.asset).await?;
+    Ok(json!(balance))
 }
 
-async fn count_accounts(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
-    if body != Value::Null {
-        return Err(RpcError::UnexpectedParams)
-    }
+async fn get_nonce(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    let params: GetNonceParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
-    Ok(json!(storage.count_accounts()))
+    let nonce = storage.get_nonce(params.address.get_public_key()).await?;
+    Ok(json!(nonce))
 }
 
 async fn count_transactions(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {

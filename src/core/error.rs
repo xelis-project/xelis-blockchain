@@ -63,8 +63,8 @@ pub enum BlockchainError {
     AddressNotRegistered(PublicKey),
     #[error("Address {} is already registered", _0)]
     AddressAlreadyRegistered(PublicKey),
-    #[error("Address {} should have at least {}", _0, _1)]
-    NotEnoughFunds(PublicKey, u64),
+    #[error("Address {} should have {} for {} but have {}", _0, _2, _1, _3)]
+    NotEnoughFunds(PublicKey, Hash, u64, u64), // address, asset, balance, expected
     #[error("Coinbase Tx not allowed: {}", _0)]
     CoinbaseTxNotAllowed(Hash),
     #[error("Invalid block reward, expected {}, got {}", _0, _1)]
@@ -142,7 +142,9 @@ pub enum BlockchainError {
     #[error("Invalid genesis block hash")]
     InvalidGenesisHash,
     #[error("Invalid tx nonce for account")]
-    InvalidTxNonce
+    InvalidTxNonce,
+    #[error("Invalid asset ID: {}", _0)]
+    AssetNotFound(Hash)
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

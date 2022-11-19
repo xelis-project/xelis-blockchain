@@ -1,5 +1,5 @@
 use crate::crypto::key::{PublicKey, Signature, SIGNATURE_LENGTH};
-use crate::crypto::hash::{Hashable, hash};
+use crate::crypto::hash::{Hashable, hash, Hash};
 use super::reader::{Reader, ReaderError};
 use super::error::BlockchainError;
 use super::serializer::Serializer;
@@ -9,53 +9,64 @@ use std::collections::HashMap;
 #[derive(serde::Serialize, Clone)]
 pub struct Transfer {
     pub amount: u64,
+    pub asset: Hash,
     pub to: PublicKey
 }
 
 #[derive(serde::Serialize, Clone)]
-pub struct SmartContractTx {
-    pub contract: String,
-    pub amount: u64,
+pub struct SmartContractCall {
+    pub contract: Hash,
+    pub assets: HashMap<Hash, u64>,
     pub params: HashMap<String, String> // TODO
 }
 
+// this enum represent all types of transaction available on XELIS Network
+// you're able to send multi assets in one TX to different addresses
+// you can burn one asset at a time (so the TX Hash can be used as unique proof)
+// Smart Contract system is not yet available but types are already there
 #[derive(serde::Serialize, Clone)]
 pub enum TransactionType {
-    Normal(Vec<Transfer>),
-    SmartContract(SmartContractTx),
-    Burn(u64),
-    UploadSmartContract(String),
+    Transfer(Vec<Transfer>),
+    Burn(Hash, u64),
+    CallContract(SmartContractCall),
+    DeployContract(String), // represent the code to deploy
 }
 
 #[derive(serde::Serialize, Clone)]
 pub struct Transaction {
-    owner: PublicKey,
+    owner: PublicKey, // creator of this transaction
     data: TransactionType,
-    fee: u64, // fees for this tx
+    fee: u64, // fees in XELIS for this tx
     nonce: u64, // nonce must be equal to the one on account
-    signature: Signature
+    signature: Signature // signature of this Transaction by the owner
 }
 
 impl Serializer for TransactionType {
     fn write(&self, writer: &mut Writer) {
         match self {
-            TransactionType::Burn(amount) => {
+            TransactionType::Burn(asset, amount) => {
                 writer.write_u8(0);
+                writer.write_hash(asset);
                 writer.write_u64(amount);
             }
-            TransactionType::Normal(txs) => {
+            TransactionType::Transfer(txs) => {
                 writer.write_u8(1);
                 let len: u8 = txs.len() as u8; // max 255 txs
                 writer.write_u8(len);
                 for tx in txs {
+                    writer.write_hash(&tx.asset);
                     writer.write_u64(&tx.amount);
                     tx.to.write(writer);
                 }
             }
-            TransactionType::SmartContract(tx) => {
+            TransactionType::CallContract(tx) => {
                 writer.write_u8(2);
-                writer.write_string(&tx.contract);
-                writer.write_u64(&tx.amount);
+                writer.write_hash(&tx.contract);
+                writer.write_u8(tx.assets.len() as u8); // maximum 255 assets per call
+                for (asset, amount) in &tx.assets {
+                    writer.write_hash(asset);
+                    writer.write_u64(amount);
+                }
 
                 writer.write_u8(tx.params.len() as u8); // maximum 255 params supported
                 for (key, value) in &tx.params {
@@ -63,7 +74,7 @@ impl Serializer for TransactionType {
                     writer.write_string(value); // TODO real value type
                 }
             }
-            TransactionType::UploadSmartContract(code) => {
+            TransactionType::DeployContract(code) => {
                 writer.write_u8(3);
                 writer.write_string(code);
             }
@@ -73,25 +84,49 @@ impl Serializer for TransactionType {
     fn read(reader: &mut Reader) -> Result<TransactionType, ReaderError> {
         Ok(match reader.read_u8()? {
             0 => {
+                let asset = reader.read_hash()?;
                 let amount = reader.read_u64()?;
-                TransactionType::Burn(amount)
+                TransactionType::Burn(asset, amount)
             },
             1 => { // Normal
-                let mut txs = vec![];
-                for _ in 0..reader.read_u8()? {
+                let txs_count = reader.read_u8()?;
+                let mut txs = Vec::with_capacity(txs_count as usize);
+                for _ in 0..txs_count {
+                    let asset = reader.read_hash()?;
                     let amount = reader.read_u64()?;
                     let to = PublicKey::read(reader)?;
 
                     txs.push(Transfer {
+                        asset,
                         amount,
-                        to: to
+                        to
                     });
                 }
-                TransactionType::Normal(txs)
+                TransactionType::Transfer(txs)
             },
-            2 => { // TODO SC
-                todo!("Smart Contract TODO")
+            2 => {
+                let contract = reader.read_hash()?;
+                let assets_count = reader.read_u8()?;
+                let mut assets = HashMap::with_capacity(assets_count as usize);
+                for _ in 0..assets_count {
+                    let asset = reader.read_hash()?;
+                    let amount = reader.read_u64()?;
+                    assets.insert(asset, amount);
+                }
+
+                let params_count = reader.read_u8()?;
+                let mut params = HashMap::with_capacity(params_count as usize);
+                for _ in 0..params_count {
+                    let key = reader.read_string()?;
+                    let value = reader.read_string()?;
+                    params.insert(key, value);
+                }
+
+                TransactionType::CallContract(SmartContractCall { contract, assets, params })
             },
+            3 => {
+                TransactionType::DeployContract(reader.read_string()?)
+            }
             _ => {
                 return Err(ReaderError::InvalidValue)
             }

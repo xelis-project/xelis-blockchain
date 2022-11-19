@@ -22,7 +22,7 @@ impl TransactionBuilder {
             return Err(WalletError::InvalidKeyPair)
         }
 
-        if let TransactionType::Normal(txs) = &self.data {
+        if let TransactionType::Transfer(txs) = &self.data {
             if txs.len() == 0 {
                 return Err(WalletError::ExpectedOneTx)
             }

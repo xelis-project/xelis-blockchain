@@ -6,6 +6,7 @@ use super::transaction::Transaction;
 use super::error::BlockchainError;
 use std::collections::HashMap;
 use std::sync::Arc;
+use log::warn;
 
 #[derive(serde::Serialize)]
 pub struct SortedTx {
@@ -86,9 +87,10 @@ impl Mempool {
                 account_nonce = if let Some(nonce) = nonces.get(tx.get_owner()) {
                     *nonce
                 } else {
-                    match storage.get_account(tx.get_owner()).await {
-                        Ok(account) => account.read_nonce(),
-                        Err(_) => {
+                    match storage.get_nonce(tx.get_owner()).await {
+                        Ok(nonce) => nonce,
+                        Err(e) => {
+                            warn!("Error while cleaning up tx {}: {}", sorted.hash, e);
                             // should not be possible, but in case
                             self.txs.remove(&sorted.hash);
                             continue;

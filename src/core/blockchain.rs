@@ -1,4 +1,4 @@
-use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, REGISTRATION_DIFFICULTY, DEV_FEE_PERCENT, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY};
+use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET};
 use crate::core::immutable::Immutable;
 use crate::crypto::address::Address;
 use crate::crypto::hash::{Hash, Hashable};
@@ -9,7 +9,7 @@ use crate::rpc::RpcServer;
 use crate::rpc::websocket::NotifyEvent;
 use super::difficulty::{check_difficulty, calculate_difficulty};
 use super::block::{Block, CompleteBlock};
-use super::mempool::{Mempool, SortedTx};
+use super::mempool::Mempool;
 use super::{transaction::*, blockdag};
 use super::serializer::Serializer;
 use super::error::BlockchainError;
@@ -38,11 +38,14 @@ pub struct Config {
     #[clap(short, long, default_value_t = String::from(DEFAULT_RPC_BIND_ADDRESS))]
     rpc_bind_address: String,
     /// Add a priority node to connect when P2p is started
-    #[clap(short = 'n', long)]
+    #[clap(short = 'o', long)]
     priority_nodes: Vec<String>,
     /// Set dir path for blockchain storage
     #[clap(short = 's', long, default_value_t = String::from(DEFAULT_DIR_PATH))]
-    dir_path: String
+    dir_path: String,
+    /// Set LRUCache size (0 = disabled)
+    #[clap(short, long, default_value_t = DEFAULT_CACHE_SIZE)]
+    cache_size: usize,
 }
 
 pub struct Blockchain {
@@ -60,7 +63,13 @@ pub struct Blockchain {
 impl Blockchain {
     pub async fn new(config: Config) -> Result<Arc<Self>, BlockchainError> {
         let dev_address = Address::from_string(&DEV_ADDRESS.to_owned())?;
-        let storage = Storage::new(config.dir_path)?;
+        let use_cache = if config.cache_size > 0 {
+            Some(config.cache_size)
+        } else {
+            None
+        };
+
+        let storage = Storage::new(config.dir_path, use_cache)?;
         let on_disk = storage.has_blocks();
         let (height, topoheight, supply, burned) = if on_disk {
             info!("Reading last metadata available...");
@@ -129,8 +138,6 @@ impl Blockchain {
     // function to include the genesis block and register the public dev key.
     async fn create_genesis_block(&self) -> Result<(), BlockchainError> {
         let mut storage = self.storage.write().await;
-        storage.register_account(self.dev_address.clone()).await?;
-
         let genesis_block = if GENESIS_BLOCK.len() != 0 {
             info!("De-serializing genesis block...");
             let genesis = CompleteBlock::from_hex(GENESIS_BLOCK.to_owned())?;
@@ -639,8 +646,8 @@ impl Blockchain {
             }
 
             let transaction = mempool.view_tx(tx.get_hash())?;
-            let account = storage.get_account(transaction.get_owner()).await?;
-            if account.read_nonce() < transaction.get_nonce() {
+            let nonce = storage.get_nonce(transaction.get_owner()).await?;
+            if nonce < transaction.get_nonce() {
                 debug!("Skipping {} with {} fees because another TX should be selected first due to nonce", tx.get_hash(), tx.get_fee());
             } else {
                 // TODO no clone
@@ -985,9 +992,11 @@ impl Blockchain {
     // nonces allow us to support multiples tx from same owner in the same block
     // txs must be sorted in ascending order based on account nonce 
     async fn verify_transaction_with_hash<'a>(&self, storage: &Storage, tx: &'a Transaction, hash: &Hash, nonces: Option<&mut HashMap<&'a PublicKey, u64>>) -> Result<(), BlockchainError> {
-        let mut total_deducted = tx.get_fee();
+        let mut total_deducted: HashMap<&'a Hash, u64> = HashMap::new();
+        total_deducted.insert(&XELIS_ASSET, tx.get_fee());
+
         match tx.get_data() {
-            TransactionType::Normal(txs) => {
+            TransactionType::Transfer(txs) => {
                 if txs.len() == 0 { // don't accept any empty tx
                     return Err(BlockchainError::TxEmpty(hash.clone()))
                 }
@@ -997,11 +1006,11 @@ impl Blockchain {
                         return Err(BlockchainError::InvalidTransactionToSender(hash.clone()))
                     }
 
-                    total_deducted += output.amount;
+                    *total_deducted.entry(&output.asset).or_insert(0) += output.amount;
                 }
             }
-            TransactionType::Burn(amount) => {
-                total_deducted += amount;
+            TransactionType::Burn(asset, amount) => {
+                *total_deducted.entry(asset).or_insert(0) += amount;
             },
             _ => {
                 // TODO implement SC
@@ -1009,21 +1018,30 @@ impl Blockchain {
             }
         };
 
-        let account = storage.get_account(tx.get_owner()).await?;
-        if account.read_balance() < total_deducted { // verify that the user have enough funds
-            return Err(BlockchainError::NotEnoughFunds(tx.get_owner().clone(), total_deducted))
+        for (asset, amount) in total_deducted {
+            let balance = storage.get_balance_for(tx.get_owner(), asset).await?;
+            if balance < amount { // verify that the user have enough funds
+                return Err(BlockchainError::NotEnoughFunds(tx.get_owner().clone(), asset.clone(), balance, amount))
+            }
         }
 
         // nonces can be already pre-computed to support multi nonces at the same time in block/mempool
         if let Some(nonces) = nonces {
-            let nonce = nonces.entry(tx.get_owner()).or_insert_with(|| account.read_nonce());
+            let nonce = if !nonces.contains_key(tx.get_owner()) && storage.has_nonce(tx.get_owner()).await? {
+                storage.get_nonce(tx.get_owner()).await?
+            } else {
+                0
+            };
+
+            let nonce = nonces.entry(tx.get_owner()).or_insert(nonce);
             if *nonce != tx.get_nonce() {
                 return Err(BlockchainError::InvalidTxNonce)
             }
             // we increment it in case any new tx for same owner is following
             *nonce += 1;
         } else {
-            if account.read_nonce() != tx.get_nonce() {
+            let nonce = storage.get_nonce(tx.get_owner()).await?;
+            if nonce != tx.get_nonce() {
                 return Err(BlockchainError::InvalidTxNonce)
             }
         }
@@ -1034,34 +1052,37 @@ impl Blockchain {
     async fn execute_miner_tx(&self, storage: &mut Storage, transaction: &Transaction, mut block_reward: u64, fees: u64) -> Result<(), BlockchainError> {
         if DEV_FEE_PERCENT != 0 {
             let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
-            let account = storage.get_account(self.get_dev_address()).await?;
-            account.get_balance().fetch_add(dev_fee, Ordering::Relaxed);
-            storage.save_account(self.get_dev_address(), account)?;
+            let mut balance = storage.get_balance_for(self.get_dev_address(), &XELIS_ASSET).await?;
+            balance += dev_fee;
+            storage.set_balance_for(self.get_dev_address(), &XELIS_ASSET, balance)?;
             block_reward -= dev_fee;
         }
-        let account = storage.get_account(transaction.get_owner()).await?;
-        account.get_balance().fetch_add(block_reward + fees, Ordering::Relaxed);
-        storage.save_account(transaction.get_owner(), account)?;
+        let mut balance = storage.get_balance_for(transaction.get_owner(), &XELIS_ASSET).await?;
+        balance += block_reward + fees;
+        storage.set_balance_for(transaction.get_owner(), &XELIS_ASSET, balance)?;
+
         Ok(())
     }
 
     async fn execute_transaction<'a>(&self, storage: &mut Storage, transaction: &'a Transaction, nonces: &mut HashMap<&'a PublicKey, u64>) -> Result<(), BlockchainError> {
-        let mut total_deducted = transaction.get_fee();
+        let mut total_deducted: HashMap<&'a Hash, u64> = HashMap::new();
+        total_deducted.insert(&XELIS_ASSET, transaction.get_fee());
+
         match transaction.get_data() {
-            TransactionType::Burn(burn_amount) => {
-                total_deducted += burn_amount;
+            TransactionType::Burn(asset, amount) => {
+                *total_deducted.entry(asset).or_insert(0) += amount;
 
                 // record the amount burned
-                self.burned.fetch_add(*burn_amount, Ordering::Relaxed);
+                self.burned.fetch_add(*amount, Ordering::Relaxed);
             }
-            TransactionType::Normal(txs) => {
-                for tx in txs {
-                    let to_account = storage.get_account(&tx.to).await?;
-
+            TransactionType::Transfer(txs) => {
+                for output in txs {
                     // update receiver's account
-                    to_account.get_balance().fetch_add(tx.amount, Ordering::Relaxed);
-                    storage.save_account(&tx.to, to_account)?;
-                    total_deducted += tx.amount;
+                    let mut balance = storage.get_balance_for(&output.to, &output.asset).await?;
+                    balance += output.amount;
+                    storage.set_balance_for(&output.to, &output.asset, balance)?;
+
+                    *total_deducted.entry(&output.asset).or_insert(0) += output.amount;
                 }
             }
             _ => {
@@ -1069,21 +1090,18 @@ impl Blockchain {
             }
         };
 
-        let account = storage.get_account(transaction.get_owner()).await?;
-        account.get_balance().fetch_min(total_deducted, Ordering::Release);
-        let nonce = account.get_nonce().fetch_add(1, Ordering::Release) + 1;
+        for (asset, amount) in total_deducted {
+            let balance = storage.get_balance_for(transaction.get_owner(), asset).await?;
+            storage.set_balance_for(&transaction.get_owner(), asset, balance - amount)?;
+        }
+
+        let nonce = storage.get_nonce(transaction.get_owner()).await? + 1;
+        storage.set_nonce(transaction.get_owner(), nonce).await?;
+
         nonces.insert(transaction.get_owner(), nonce);
-        storage.save_account(transaction.get_owner(), account)?;
+
         Ok(())
     }
-}
-
-pub fn get_supply_at_height(height: u64) -> u64 {
-    let mut supply = 0;
-    for _ in 0..=height {
-        supply += get_block_reward(supply);
-    }
-    supply
 }
 
 pub fn get_block_reward(supply: u64) -> u64 {

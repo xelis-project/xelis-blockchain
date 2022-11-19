@@ -1,10 +1,13 @@
+use crate::crypto::hash::Hash;
+
 pub const VERSION: &str = "alpha-0.0.1";
 pub const NETWORK_ID: [u8; 16] = [0xA, 0xB, 0xC, 0xD, 0xE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF];
 pub const SEED_NODES: [&str; 1] = ["127.0.0.1:2125"]; // ["127.0.0.1:2125", "127.0.0.1:2126", "127.0.0.1:2127", "127.0.0.1:2128"];
 pub const DEFAULT_P2P_BIND_ADDRESS: &str = "0.0.0.0:2125";
 pub const DEFAULT_RPC_BIND_ADDRESS: &str = "0.0.0.0:8080";
 pub const DEFAULT_DIR_PATH: &str = "mainnet";
-
+pub const DEFAULT_CACHE_SIZE: usize = 1024;
+pub const XELIS_ASSET: Hash = Hash::zero();
 pub const BLOCK_TIME: u64 = 15 * 1000; // Block Time in milliseconds
 pub const MINIMUM_DIFFICULTY: u64 = BLOCK_TIME * 10;
 pub const GENESIS_BLOCK_DIFFICULTY: u64 = 1;
