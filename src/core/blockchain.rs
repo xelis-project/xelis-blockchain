@@ -876,10 +876,10 @@ impl Blockchain {
                 };
 
                 storage.set_block_reward(&hash, block_reward)?;
-
                 i += 1;
             }
         }
+        // TODO check for new stable block and add rewards to miner
 
         let best_height = storage.get_height_for_block(best_tip).await?;
         let mut new_tips = Vec::new();

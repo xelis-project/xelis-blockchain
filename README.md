@@ -38,7 +38,8 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 - For mining, you have to mine on one of 3 of the most heavier tips.
 - Block should not have deviated too much from main chain / heavier tips.
 - Maximum 9% of difficulty difference between Tips selected in the same block.
-- Side Blocks receive only 30% of block reward. (TODO)
+- Side Blocks receive only 30% of block reward.
+- Block rewards (with fees) are added to account only when block is in stable height.
 
 ## Storage
 
@@ -52,6 +53,8 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 |    blocks_at_height   |  Integer |   Array of Hash  |        Save all blocks hash at a specific height       |
 |         extra         |   Bytes  | No specific type | Actually used to save the highest topo height and TIPS |
 | cumulative_difficulty |   Hash   |      Integer     |   Save the cumulative difficulty for each block hash   |
+
+TODO: add `rewards`, `assets`, `nonces`
 
 ## API
 
@@ -67,8 +70,8 @@ JSON-RPC methods available:
 - `get_block_by_hash`
 - `get_top_block`
 - `submit_block`
-- `get_account`
-- `count_accounts`
+- `get_nonce`
+- `get_balance`
 - `count_transactions`
 - `submit_transaction`
 - `get_transaction`
