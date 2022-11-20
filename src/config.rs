@@ -8,6 +8,7 @@ pub const DEFAULT_RPC_BIND_ADDRESS: &str = "0.0.0.0:8080";
 pub const DEFAULT_DIR_PATH: &str = "mainnet";
 pub const DEFAULT_CACHE_SIZE: usize = 1024;
 pub const XELIS_ASSET: Hash = Hash::zero();
+pub const SIDE_BLOCK_REWARD_PERCENT: u64 = 30; // only 30% of reward for side block
 pub const BLOCK_TIME: u64 = 15 * 1000; // Block Time in milliseconds
 pub const MINIMUM_DIFFICULTY: u64 = BLOCK_TIME * 10;
 pub const GENESIS_BLOCK_DIFFICULTY: u64 = 1;

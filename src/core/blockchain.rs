@@ -1,4 +1,4 @@
-use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET};
+use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT};
 use crate::core::immutable::Immutable;
 use crate::crypto::address::Address;
 use crate::crypto::hash::{Hash, Hashable};
@@ -138,6 +138,10 @@ impl Blockchain {
     // function to include the genesis block and register the public dev key.
     async fn create_genesis_block(&self) -> Result<(), BlockchainError> {
         let mut storage = self.storage.write().await;
+
+        // register XELIS asset
+        storage.add_asset(&XELIS_ASSET).await?;
+
         let genesis_block = if GENESIS_BLOCK.len() != 0 {
             info!("De-serializing genesis block...");
             let genesis = CompleteBlock::from_hex(GENESIS_BLOCK.to_owned())?;
@@ -161,7 +165,7 @@ impl Blockchain {
         };
 
         // hardcode genesis block topoheight
-        storage.set_topo_height_for_block(genesis_block.hash(), 0).await?;
+        storage.set_topo_height_for_block(&genesis_block.hash(), 0).await?;
         storage.set_top_height(0)?;
 
         self.add_new_block_for_storage(&mut storage, genesis_block, false).await?;
@@ -788,14 +792,13 @@ impl Blockchain {
             }
         }
 
-        // Miner Tx verification
-        let block_reward = get_block_reward(self.get_supply());
-
         // Save transactions & block
         let (block, txs) = block.split();
         let block = block.to_arc();
         debug!("Saving block {} on disk", block_hash);
-        storage.add_new_block(block.clone(), block.get_miner(), &txs, difficulty, block_hash.clone(), self.get_supply(), self.get_burned_supply()).await?; // Add block to chain
+        // Add block to chain
+        storage.add_new_block(block.clone(), &txs, difficulty, block_hash.clone(), self.get_supply(), self.get_burned_supply()).await?;
+
         // Compute cumulative difficulty for block
         let cumulative_difficulty = { // TODO Refactor: stop cloning hash
             let cumulative_difficulty: u64 = if tips_count == 0 {
@@ -829,7 +832,6 @@ impl Blockchain {
         for tx in &txs { // execute all txs
             self.execute_transaction(storage, &tx, &mut nonces).await?;
         }
-        // TODO self.execute_miner_tx(storage, block.get_miner(), block_reward, total_fees).await?; // execute coinbase tx
 
         let mut tips = storage.get_tips().await?;
         tips.insert(block_hash.clone());
@@ -858,7 +860,23 @@ impl Blockchain {
             for hash in full_order {
                 highest_topo = base_topo + i;
                 debug!("Block {} is now at topoheight {}", hash, highest_topo);
-                storage.set_topo_height_for_block(hash, highest_topo).await?;
+                storage.set_topo_height_for_block(&hash, highest_topo).await?;
+                let supply = if highest_topo == 0 {
+                    0
+                } else {
+                    storage.get_supply_at_topo_height(highest_topo - 1).await?
+                };
+
+                let block_reward = if self.is_side_block(storage, &hash).await? {
+                    debug!("Block {} at topoheight {} is a side block", hash, highest_topo);
+                    let reward = get_block_reward(supply);
+                    reward * SIDE_BLOCK_REWARD_PERCENT / 100
+                } else {
+                    get_block_reward(supply)
+                };
+
+                storage.set_block_reward(&hash, block_reward)?;
+
                 i += 1;
             }
         }
@@ -904,7 +922,7 @@ impl Blockchain {
             self.height.store(block.get_height(), Ordering::Release);
         }
 
-        self.supply.fetch_add(block_reward, Ordering::Release);
+        // TODO self.supply.fetch_add(block_reward, Ordering::Release);
         if storage.is_block_topological_ordered(&block_hash).await {
             let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
             debug!("Adding new '{}' {} at topoheight {}", block_hash, block, topoheight);
@@ -1073,7 +1091,9 @@ impl Blockchain {
                 *total_deducted.entry(asset).or_insert(0) += amount;
 
                 // record the amount burned
-                self.burned.fetch_add(*amount, Ordering::Relaxed);
+                if *asset == XELIS_ASSET {
+                    self.burned.fetch_add(*amount, Ordering::Relaxed);
+                }
             }
             TransactionType::Transfer(txs) => {
                 for output in txs {

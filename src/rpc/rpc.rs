@@ -224,7 +224,7 @@ async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<
 async fn submit_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: SubmitBlockParams = parse_params(body)?;
     let block = Block::from_hex(params.block_template)?;
-     // TODO add block hashing blob on block template
+    // TODO add block hashing blob on block template
     let complete_block = blockchain.build_complete_block_from_block(block).await?;
     blockchain.add_new_block(complete_block, true).await?;
     Ok(json!(true))
@@ -244,6 +244,7 @@ async fn get_nonce(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, Rp
     Ok(json!(nonce))
 }
 
+// TODO Rate limiter
 async fn count_transactions(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     if body != Value::Null {
         return Err(RpcError::UnexpectedParams)

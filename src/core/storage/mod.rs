@@ -116,6 +116,7 @@ pub struct Storage {
     cumulative_difficulty: Tree, // cumulative difficulty for each block hash on disk
     assets: Tree, // all available assets on network
     nonces: Tree, // account nonces to prevent TX replay attack
+    rewards: Tree, // all block rewards for blocks
     db: sled::Db,
     // cached in memory
     transactions_cache: Option<Mutex<LruCache<Hash, Arc<Transaction>>>>,
@@ -154,6 +155,7 @@ impl Storage {
             cumulative_difficulty: sled.open_tree("cumulative_difficulty")?,
             assets: sled.open_tree("assets")?,
             nonces: sled.open_tree("nonces")?,
+            rewards: sled.open_tree("rewards")?,
             db: sled,
             transactions_cache: init_cache!(cache_size),
             blocks_cache: init_cache!(cache_size),
@@ -270,6 +272,15 @@ impl Storage {
         self.contains_data(&self.assets, &self.assets_cache, asset).await
     }
 
+    pub async fn add_asset(&self, asset: &Hash) -> Result<(), BlockchainError> {
+        self.assets.insert(asset.as_bytes(), &[0u8; 0])?;
+        if let Some(cache) = &self.assets_cache {
+            let mut cache = cache.lock().await;
+            cache.put(asset.clone(), ());
+        }
+        Ok(())
+    }
+
     pub async fn has_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<bool, BlockchainError> {
         if !self.asset_exist(asset).await? {
             return Err(BlockchainError::AssetNotFound(asset.clone()))
@@ -316,6 +327,15 @@ impl Storage {
         Ok(())
     }
 
+    pub fn get_block_reward(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        Ok(self.load_from_disk(&self.rewards, hash.as_bytes())?)
+    }
+
+    pub fn set_block_reward(&self, hash: &Hash, reward: u64) -> Result<(), BlockchainError> {
+        self.rewards.insert(hash.as_bytes(), &reward.to_be_bytes())?;
+        Ok(())
+    }
+
     pub async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
         self.get_arc_data(&self.transactions, &self.transactions_cache, hash).await
     }
@@ -324,11 +344,8 @@ impl Storage {
         self.transactions.len()
     }
 
-    pub async fn add_new_block(&mut self, block: Arc<Block>, miner: &PublicKey, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash, supply: u64, burned: u64) -> Result<(), BlockchainError> {
+    pub async fn add_new_block(&mut self, block: Arc<Block>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash, supply: u64, burned: u64) -> Result<(), BlockchainError> {
         debug!("Storing new {} with hash: {}, difficulty: {}, supply: {}, burned: {}", block, hash, difficulty, supply, burned);
-
-        // Store miner with block hash as key
-        //self.transactions.insert(hash.as_bytes(), miner_tx.to_bytes())?;
 
         // Store transactions
         for (hash, tx) in block.get_transactions().iter().zip(txs) { // first save all txs, then save block
@@ -616,7 +633,7 @@ impl Storage {
         Ok(block.get_height())
     }
 
-    pub async fn set_topo_height_for_block(&self, hash: Hash, topoheight: u64) -> Result<(), BlockchainError> {
+    pub async fn set_topo_height_for_block(&self, hash: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
         debug!("set topo height for {} at {}", hash, topoheight);
         self.topo_by_hash.insert(hash.as_bytes(), topoheight.to_bytes())?;
         self.hash_at_topo.insert(topoheight.to_be_bytes(), hash.as_bytes())?;
@@ -629,7 +646,7 @@ impl Storage {
 
         if let Some(cache) = &self.hash_at_topo_cache {
             let mut hash_at_topo = cache.lock().await;
-            hash_at_topo.put(topoheight, hash);
+            hash_at_topo.put(topoheight, hash.clone());
         }
 
         Ok(())
@@ -685,6 +702,12 @@ impl Storage {
     pub async fn get_timestamp_for_block(&self, hash: &Hash) -> Result<u128, BlockchainError> {
         let block = self.get_block_by_hash(hash).await?;
         Ok(block.get_timestamp())
+    }
+
+    pub async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {
+        let hash = self.get_hash_at_topo_height(topoheight).await?;
+        let metadata = self.get_block_metadata_by_hash(&hash).await?;
+        Ok(metadata.get_supply())
     }
 
     pub async fn get_cumulative_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
