@@ -72,6 +72,7 @@ JSON-RPC methods available:
 - `submit_block`
 - `get_nonce`
 - `get_balance`
+- `get_assets`
 - `count_transactions`
 - `submit_transaction`
 - `get_transaction`

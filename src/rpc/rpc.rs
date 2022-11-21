@@ -141,6 +141,7 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("submit_block", method!(submit_block));
     server.register_method("get_balance", method!(get_balance));
     server.register_method("get_nonce", method!(get_nonce));
+    server.register_method("get_assets", method!(get_assets));
     server.register_method("count_transactions", method!(count_transactions));
     server.register_method("submit_transaction", method!(submit_transaction));
     server.register_method("get_transaction", method!(get_transaction));
@@ -242,6 +243,17 @@ async fn get_nonce(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, Rp
     let storage = blockchain.get_storage().read().await;
     let nonce = storage.get_nonce(params.address.get_public_key()).await?;
     Ok(json!(nonce))
+}
+
+// TODO Rate limiter
+async fn get_assets(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+
+    let storage = blockchain.get_storage().read().await;
+    let assets = storage.get_assets().await?;
+    Ok(json!(assets))
 }
 
 // TODO Rate limiter

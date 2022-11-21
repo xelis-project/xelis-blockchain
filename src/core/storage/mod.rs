@@ -281,6 +281,19 @@ impl Storage {
         Ok(())
     }
 
+    // we are forced to read from disk directly because cache may don't have all assets in memory
+    pub async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError> {
+        let mut assets = Vec::new();
+        for e in self.assets.iter() {
+            let (key, _) = e?;
+            let mut reader = Reader::new(&key);
+            let hash = Hash::read(&mut reader)?;
+            assets.push(hash);
+        }
+
+        Ok(assets)
+    }
+
     pub async fn has_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<bool, BlockchainError> {
         if !self.asset_exist(asset).await? {
             return Err(BlockchainError::AssetNotFound(asset.clone()))

@@ -304,10 +304,13 @@ No parameters
 }
 ```
 
-#### Get Account
-Retrieve the account based on its address
+#### Get Nonce
+Retrieve the nonce for address in request params.
 
-##### Method `get_account`
+If no nonce is found for this address and its valid, value start at 0.
+Each nonce represents how many TX has been made by this address.
+
+##### Method `get_nonce`
 
 ##### Parameters
 |   Name  |   Type  | Required |                Note               |
@@ -319,7 +322,7 @@ Retrieve the account based on its address
 {
 	"jsonrpc": "2.0",
 	"id": 1,
-	"method": "get_account",
+	"method": "get_nonce",
 	"params": {
 		"address": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"
 	}
@@ -331,17 +334,48 @@ Retrieve the account based on its address
 {
 	"id": 1,
 	"jsonrpc": "2.0",
+	"result": 17
+}
+```
+
+#### Get Balance
+Get asset's balance for a specific address
+
+NOTE: Balance is returned in atomic units
+##### Method `get_balance`
+
+##### Parameters
+|   Name  |   Type  | Required |                Note               |
+|:-------:|:-------:|:--------:|:---------------------------------:|
+| address | Address | Required | Valid address registered on chain |
+|  asset  |   Hash  | Required |    Asset ID registered on chain   |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_balance",
 	"result": {
-		"balance": 21057003,
-		"nonce": 0
+		"address": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000"
 	}
 }
 ```
 
-#### Count Accounts
-Counts the number of accounts saved on disk
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 157000
+}
+```
 
-##### Method `count_accounts`
+#### Get Assets
+Get all assets available on network
+
+##### Method `get_assets`
 
 ##### Parameters
 No parameters
@@ -351,7 +385,7 @@ No parameters
 {
 	"jsonrpc": "2.0",
 	"id": 1,
-	"method": "count_accounts"
+	"method": "get_assets"
 }
 ```
 
@@ -360,7 +394,9 @@ No parameters
 {
 	"id": 1,
 	"jsonrpc": "2.0",
-	"result": 17
+	"result": [
+		"0000000000000000000000000000000000000000000000000000000000000000"
+	]
 }
 ```
 
@@ -492,10 +528,10 @@ Maximum of 64 blocks hash only per request.
 ```
 
 TODO:
--  `submit_block`
+- `submit_block`
 
--  `submit_transaction`
+- `submit_transaction`
 
 - `get_transaction`
 
--  `get_mempool`
+- `get_mempool`

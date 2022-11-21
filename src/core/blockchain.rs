@@ -140,6 +140,7 @@ impl Blockchain {
         let mut storage = self.storage.write().await;
 
         // register XELIS asset
+        debug!("Registering XELIS asset: {}", XELIS_ASSET);
         storage.add_asset(&XELIS_ASSET).await?;
 
         let genesis_block = if GENESIS_BLOCK.len() != 0 {

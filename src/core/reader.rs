@@ -53,8 +53,9 @@ impl<'a> Reader<'a> {
             return Err(ReaderError::InvalidSize)
         }
 
+        let bytes = &self.bytes[self.total..self.total+n];
         self.total += n;
-        Ok(&self.bytes[self.total..self.total+n])
+        Ok(bytes)
     }
 
     pub fn read_bytes_32(&mut self) -> Result<[u8; 32], ReaderError> {
