@@ -1012,7 +1012,7 @@ impl Blockchain {
         let height = self.get_height();
         let topoheight = self.get_topo_height();
         warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, height, topoheight);
-        let (height, topoheight, metadata, txs) = storage.pop_blocks(height, topoheight, count as u64).await?;
+        let (height, topoheight, metadata, txs, miners) = storage.pop_blocks(height, topoheight, count as u64).await?;
         
         // rewind all txs
         {
@@ -1023,12 +1023,25 @@ impl Blockchain {
                 self.rewind_transaction(storage, tx, &mut changes, &mut nonces).await?;
             }
 
+            // merge miners reward to TX changes
+            for (key, reward) in &miners {
+                let assets = changes.entry(&key).or_insert(HashMap::new());
+                if let Some(balance) = assets.get_mut(&XELIS_ASSET) {
+                    *balance -= reward;
+                } else {
+                    let balance = storage.get_balance_for(&key, &XELIS_ASSET).await?;
+                    assets.insert(&XELIS_ASSET, balance - reward);
+                }
+            }
+
+            // apply all changes to balance
             for (key, assets) in changes {
                 for (asset, amount) in assets {
                     storage.set_balance_for(key, asset, amount)?;
                 }
             }
 
+            // apply all changes to nonce
             for (key, nonce) in nonces {
                 storage.set_nonce(key, nonce).await?;
             }

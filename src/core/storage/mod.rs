@@ -1,3 +1,4 @@
+use crate::config::STABLE_HEIGHT_LIMIT;
 use crate::core::immutable::Immutable;
 use crate::crypto::key::PublicKey;
 use crate::crypto::hash::Hash;
@@ -7,7 +8,7 @@ use super::transaction::Transaction;
 use super::serializer::Serializer;
 use super::error::{BlockchainError, DiskContext};
 use super::writer::Writer;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::hash::Hash as StdHash;
 use tokio::sync::Mutex;
 use std::sync::Arc;
@@ -377,7 +378,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Arc<BlockMetadata>, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
+    pub async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Arc<BlockMetadata>, Vec<(Hash, Arc<Transaction>)>, HashMap<PublicKey, u64>), BlockchainError> {
         if height < count as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
         }
@@ -396,10 +397,14 @@ impl Storage {
         }
         debug!("Lowest topoheight for rewind: {}", lowest_topo);
 
+        let chain_topoheight = topoheight;
         // new topo height after all deleted blocks
         // new TIPS for chain
         let mut tips = self.get_tips().await?;
+        // all txs to be rewinded
         let mut txs = Vec::new();
+        // all miners rewards to be rewinded
+        let mut miners: HashMap<PublicKey, u64> = HashMap::new();
         let mut done = 0;
         'main: loop {
             // check if the next block is alone at its height, if yes stop rewinding
@@ -434,10 +439,25 @@ impl Storage {
                 let cumulative_difficulty: u64 = self.delete_data_no_arc(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
                 debug!("Cumulative difficulty deleted: {}", cumulative_difficulty);
 
+                let reward: u64 = self.delete_data_no_arc(&self.rewards, &None, &hash).await?;
+                debug!("Reward for block {} was: {}", hash, reward);
+
+                let mut total_fees = 0;
+                for hash in block.get_transactions() {
+                    let tx = self.delete_data(&self.transactions, &self.transactions_cache, hash).await?;
+                    total_fees += tx.get_fee();
+                    txs.push((hash.clone(), tx));
+                }
+
                 // if block is ordered, delete data that are linked to it
                 if let Ok(topo) = self.get_topo_height_for_hash(&hash).await {
                     if topo < topoheight {
                         topoheight = topo;
+                    }
+
+                    // check if miner rewards are already added
+                    if topo > STABLE_HEIGHT_LIMIT && topo < chain_topoheight && topo - chain_topoheight >= STABLE_HEIGHT_LIMIT {
+                        *miners.entry(block.get_miner().clone()).or_insert(0) += reward + total_fees;
                     }
 
                     debug!("Block was at topoheight {}", topo);
@@ -449,14 +469,6 @@ impl Storage {
                             self.delete_data_no_arc(&self.hash_at_topo, &self.hash_at_topo_cache, &topo).await?;
                         }
                     }
-                }
-
-                let reward: u64 = self.delete_data_no_arc(&self.rewards, &None, &hash).await?;
-                debug!("Reward for block {} was: {}", hash, reward);
-
-                for hash in block.get_transactions() {
-                    let tx = self.delete_data(&self.transactions, &self.transactions_cache, hash).await?;
-                    txs.push((hash.clone(), tx));
                 }
 
                 // generate new tips
@@ -488,7 +500,7 @@ impl Storage {
 
         let (_, _, metadata) = self.get_top_metadata().await?;
 
-        Ok((height, topoheight, metadata, txs))
+        Ok((height, topoheight, metadata, txs, miners))
     }
 
     pub fn has_blocks(&self) -> bool {
