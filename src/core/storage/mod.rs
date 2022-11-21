@@ -56,17 +56,15 @@ impl Serializer for u64 {
 pub struct BlockMetadata {
     difficulty: u64,
     supply: u64,
-    burned: u64,
-    height: u64
+    burned: u64
 }
 
 impl BlockMetadata {
-    pub fn new(difficulty: u64, supply: u64, burned: u64, height: u64) -> Self {
+    pub fn new(difficulty: u64, supply: u64, burned: u64) -> Self {
         Self {
             difficulty,
             supply,
-            burned,
-            height
+            burned
         }
     }
 
@@ -81,10 +79,6 @@ impl BlockMetadata {
     pub fn get_burned_supply(&self) -> u64 {
         self.burned
     }
-
-    pub fn get_height(&self) -> u64 {
-        self.height
-    }
 }
 
 impl Serializer for BlockMetadata {
@@ -92,16 +86,14 @@ impl Serializer for BlockMetadata {
         writer.write_u64(&self.difficulty);
         writer.write_u64(&self.supply);
         writer.write_u64(&self.burned);
-        writer.write_u64(&self.height);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let difficulty = reader.read_u64()?;
         let supply = reader.read_u64()?;
         let burned = reader.read_u64()?;
-        let height = reader.read_u64()?;
 
-        Ok(Self::new(difficulty, supply, burned, height))
+        Ok(Self::new(difficulty, supply, burned))
     }
 }
 
@@ -369,7 +361,7 @@ impl Storage {
         self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
 
         // Save all metadata
-        let metadata = BlockMetadata::new(difficulty, supply, burned, block.get_height());
+        let metadata = BlockMetadata::new(difficulty, supply, burned);
         self.metadata.insert(hash.as_bytes(), metadata.to_bytes())?;
 
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
@@ -385,7 +377,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Arc<BlockMetadata>), BlockchainError> {
+    pub async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Arc<BlockMetadata>, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
         if height < count as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
         }
@@ -407,6 +399,7 @@ impl Storage {
         // new topo height after all deleted blocks
         // new TIPS for chain
         let mut tips = self.get_tips().await?;
+        let mut txs = Vec::new();
         let mut done = 0;
         'main: loop {
             // check if the next block is alone at its height, if yes stop rewinding
@@ -458,10 +451,12 @@ impl Storage {
                     }
                 }
 
-                for tx in block.get_transactions() {
-                    debug!("Deleting transaction '{}'", tx);
-                    let _ = self.delete_data(&self.transactions, &self.transactions_cache, tx).await?;
-                    // TODO revert TXs
+                let reward: u64 = self.delete_data_no_arc(&self.rewards, &None, &hash).await?;
+                debug!("Reward for block {} was: {}", hash, reward);
+
+                for hash in block.get_transactions() {
+                    let tx = self.delete_data(&self.transactions, &self.transactions_cache, hash).await?;
+                    txs.push((hash.clone(), tx));
                 }
 
                 // generate new tips
@@ -493,7 +488,7 @@ impl Storage {
 
         let (_, _, metadata) = self.get_top_metadata().await?;
 
-        Ok((height, topoheight, metadata))
+        Ok((height, topoheight, metadata, txs))
     }
 
     pub fn has_blocks(&self) -> bool {
@@ -565,7 +560,7 @@ impl Storage {
         let topoheight = self.get_top_topoheight()?;
         let hash = self.get_hash_at_topo_height(topoheight).await?;
         let metadata = self.get_block_metadata_by_hash(&hash).await?;
-        debug!("Top block hash is {} at height {} and topoheight {}", hash, metadata.get_height(), topoheight);
+        debug!("Top block hash is {} and topoheight {}", hash, topoheight);
         Ok((topoheight, hash, metadata))
     }
 

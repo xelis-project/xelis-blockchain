@@ -16,7 +16,6 @@ pub struct Block {
     pub timestamp: u128,
     pub height: u64,
     pub nonce: u64,
-    #[serde(skip_serializing)]
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE],
     pub miner: PublicKey,
     pub txs_hashes: Vec<Hash>
@@ -95,7 +94,7 @@ impl Block {
     }
 
     fn get_block_work(&self) -> Vec<u8> {
-        let mut bytes: Vec<u8> = vec![];
+        let mut bytes: Vec<u8> = Vec::with_capacity(BLOCK_WORK_SIZE);
 
         bytes.extend(&self.height.to_be_bytes()); // 8
         bytes.extend(&self.timestamp.to_be_bytes()); // 8 + 16 = 24

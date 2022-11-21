@@ -18,8 +18,12 @@ pub enum NotifyEvent {
     NewBlock,
     // When a new transaction is added in mempool
     TransactionAddedInMempool,
+    // When a transaction has been included in a valid block & executed on chain
+    TransactionExecuted,
     // When a registered TX SC Call hash has been executed by chain
     TransactionSCResult,
+    // When a new asset has been registered
+    NewAsset
 }
 
 impl TMessage for Response {

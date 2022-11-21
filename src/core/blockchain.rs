@@ -573,6 +573,10 @@ impl Blockchain {
     pub async fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
         let mut mempool = self.mempool.write().await;
+        self.add_tx_for_mempool(&mut mempool, tx, hash, broadcast).await
+    }
+
+    async fn add_tx_for_mempool(&self, mempool: &mut Mempool, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
         if mempool.contains_tx(&hash) {
             return Err(BlockchainError::TxAlreadyInMempool(hash))
         }
@@ -880,7 +884,6 @@ impl Blockchain {
                 i += 1;
             }
         }
-        // TODO check for new stable block and add rewards to miner
 
         let best_height = storage.get_height_for_block(best_tip).await?;
         let mut new_tips = Vec::new();
@@ -915,6 +918,16 @@ impl Blockchain {
         if current_height == 0 || highest_topo > self.get_topo_height() {
             storage.set_top_topoheight(highest_topo)?;
             self.topoheight.store(highest_topo, Ordering::Release);
+
+            // when topo height extends to a new stable block, give miner rewards
+            if highest_topo >= STABLE_HEIGHT_LIMIT {
+                let last_stable_topo = highest_topo - STABLE_HEIGHT_LIMIT;
+                let hash = storage.get_hash_at_topo_height(last_stable_topo).await?;
+                let block_reward = storage.get_block_reward(&hash)?;
+                let stable_block = storage.get_block_by_hash(&hash).await?;
+                debug!("New highest topoheight detected: give {} rewards for miner of block {} at topoheight {}", block_reward, hash, last_stable_topo);
+                self.reward_miner(storage, &stable_block, block_reward).await?;
+            }
         }
         storage.store_tips(&tips)?;
 
@@ -999,7 +1012,34 @@ impl Blockchain {
         let height = self.get_height();
         let topoheight = self.get_topo_height();
         warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, height, topoheight);
-        let (height, topoheight, metadata) = storage.pop_blocks(height, topoheight, count as u64).await?;
+        let (height, topoheight, metadata, txs) = storage.pop_blocks(height, topoheight, count as u64).await?;
+        
+        // rewind all txs
+        {
+            let mut changes = HashMap::new();
+            let mut nonces = HashMap::new();
+            for (hash, tx) in &txs {
+                debug!("Rewinding tx hash: {}", hash);
+                self.rewind_transaction(storage, tx, &mut changes, &mut nonces).await?;
+            }
+
+            for (key, assets) in changes {
+                for (asset, amount) in assets {
+                    storage.set_balance_for(key, asset, amount)?;
+                }
+            }
+
+            for (key, nonce) in nonces {
+                storage.set_nonce(key, nonce).await?;
+            }
+
+            let mut mempool = self.mempool.write().await;
+            for (hash, tx) in txs {
+                if let Err(e) = self.add_tx_for_mempool(&mut mempool, tx.as_ref().clone(), hash, false).await {
+                    debug!("TX rewinded is not compatible anymore: {}", e);
+                }
+            }
+        }
         self.height.store(height, Ordering::Release);
         self.topoheight.store(topoheight, Ordering::Release);
         self.supply.store(metadata.get_supply(), Ordering::Release); // recaculate supply
@@ -1068,7 +1108,7 @@ impl Blockchain {
         Ok(())
     }
 
-    async fn execute_miner_tx(&self, storage: &mut Storage, transaction: &Transaction, mut block_reward: u64, fees: u64) -> Result<(), BlockchainError> {
+    async fn reward_miner(&self, storage: &mut Storage, block: &Block, mut block_reward: u64) -> Result<(), BlockchainError> {
         if DEV_FEE_PERCENT != 0 {
             let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
             let mut balance = storage.get_balance_for(self.get_dev_address(), &XELIS_ASSET).await?;
@@ -1076,9 +1116,15 @@ impl Blockchain {
             storage.set_balance_for(self.get_dev_address(), &XELIS_ASSET, balance)?;
             block_reward -= dev_fee;
         }
-        let mut balance = storage.get_balance_for(transaction.get_owner(), &XELIS_ASSET).await?;
-        balance += block_reward + fees;
-        storage.set_balance_for(transaction.get_owner(), &XELIS_ASSET, balance)?;
+        let mut balance = storage.get_balance_for(block.get_miner(), &XELIS_ASSET).await?;
+
+        let mut total_fees = 0;
+        for hash in block.get_txs_hashes() {
+            let tx = storage.get_transaction(hash).await?;
+            total_fees += tx.get_fee();
+        }
+        balance += block_reward + total_fees;
+        storage.set_balance_for(block.get_miner(), &XELIS_ASSET, balance)?;
 
         Ok(())
     }
@@ -1093,15 +1139,14 @@ impl Blockchain {
 
                 // record the amount burned
                 if *asset == XELIS_ASSET {
-                    self.burned.fetch_add(*amount, Ordering::Relaxed);
+                    self.burned.fetch_add(*amount, Ordering::Release);
                 }
             }
             TransactionType::Transfer(txs) => {
                 for output in txs {
                     // update receiver's account
-                    let mut balance = storage.get_balance_for(&output.to, &output.asset).await?;
-                    balance += output.amount;
-                    storage.set_balance_for(&output.to, &output.asset, balance)?;
+                    let balance = storage.get_balance_for(&output.to, &output.asset).await?;
+                    storage.set_balance_for(&output.to, &output.asset, balance + output.amount)?;
 
                     *total_deducted.entry(&output.asset).or_insert(0) += output.amount;
                 }
@@ -1116,11 +1161,66 @@ impl Blockchain {
             storage.set_balance_for(&transaction.get_owner(), asset, balance - amount)?;
         }
 
-        let nonce = storage.get_nonce(transaction.get_owner()).await? + 1;
+        // no need to read from disk, transaction nonce has been verified already
+        let nonce = transaction.get_nonce() + 1;
         storage.set_nonce(transaction.get_owner(), nonce).await?;
-
         nonces.insert(transaction.get_owner(), nonce);
 
+        Ok(())
+    }
+
+    async fn rewind_transaction<'a>(&self, storage: &mut Storage, transaction: &'a Transaction, changes: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: &mut HashMap<&'a PublicKey, u64>) -> Result<(), BlockchainError> {
+        // give fees back
+        let sender: &mut HashMap<&'a Hash, u64> = changes.entry(transaction.get_owner()).or_insert(HashMap::new());
+        {
+            if let Some(balance) = sender.get_mut(&XELIS_ASSET) {
+                *balance += transaction.get_fee();
+            }  else {
+                let balance = storage.get_balance_for(transaction.get_owner(), &XELIS_ASSET).await?;
+                sender.insert(&XELIS_ASSET, balance + transaction.get_fee());
+            }
+        }
+
+        match transaction.get_data() {
+            TransactionType::Burn(asset, amount) => {
+                if let Some(balance) = sender.get_mut(&asset) {
+                    *balance += amount;
+                }  else {
+                    let balance = storage.get_balance_for(transaction.get_owner(), asset).await?;
+                    sender.insert(asset, balance + amount);
+                }
+            }
+            TransactionType::Transfer(txs) => {
+                for output in txs {
+                    // update receiver's account
+                    let receiver = changes.entry(&output.to).or_insert(HashMap::new());
+                    if let Some(balance) = receiver.get_mut(&output.asset) {
+                        *balance -= output.amount;
+                    } else {
+                        let balance = storage.get_balance_for(&output.to, &output.asset).await?;
+                        receiver.insert(&output.asset, balance - output.amount);
+                    }
+
+                    // update sender balance too
+                    let sender = changes.entry(transaction.get_owner()).or_insert(HashMap::new());
+                    if let Some(balance) = sender.get_mut(&output.asset) {
+                        *balance += output.amount;
+                    } else {
+                        let balance = storage.get_balance_for(&output.to, &output.asset).await?;
+                        sender.insert(&output.asset, balance + output.amount);
+                    }
+                }
+            }
+            _ => {
+                // TODO
+            }
+        };
+
+        // keep the lowest nonce available
+        let nonce = nonces.entry(transaction.get_owner()).or_insert(transaction.get_nonce());
+        if *nonce < transaction.get_nonce() {
+            *nonce = transaction.get_nonce();
+        }
         Ok(())
     }
 }
