@@ -146,6 +146,8 @@ Retrieve a block at a specific topo height
 	"result": {
 		"block_type": "Normal",
 		"cumulative_difficulty": 16050593,
+		"supply": 1790008,
+		"difficulty": 234800,
 		"hash": "0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692",
 		"height": 23,
 		"miner_tx": {
@@ -195,6 +197,8 @@ Retrieve all blocks at a specific height
 		{
 			"block_type": "Normal",
 			"cumulative_difficulty": 16050593,
+			"supply": 1790008,
+			"difficulty": 234800,
 			"hash": "0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692",
 			"height": 23,
 			"miner_tx": {
@@ -244,6 +248,8 @@ Retrieve a block by its hash
 	"result": {
 		"block_type": "Normal",
 		"cumulative_difficulty": 14125125,
+		"supply": 1790008,
+		"difficulty": 234800,
 		"hash": "000002144bb86d9fcbe223aff1f6c2526d0c47eef0b8f7433b3abec22685fb31",
 		"height": 22,
 		"miner_tx": {
@@ -286,6 +292,8 @@ No parameters
 	"result": {
 		"block_type": "Normal",
 		"cumulative_difficulty": 16050593,
+		"supply": 1790008,
+		"difficulty": 234800,
 		"hash": "0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692",
 		"height": 23,
 		"miner_tx": {

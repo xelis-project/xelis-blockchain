@@ -40,6 +40,7 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 - Maximum 9% of difficulty difference between Tips selected in the same block.
 - Side Blocks receive only 30% of block reward.
 - Block rewards (with fees) are added to account only when block is in stable height.
+- Supply is re-calculated each time the block is re-ordered because its based on topo order.
 
 ## Storage
 
@@ -54,7 +55,7 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 |         extra         |   Bytes  | No specific type | Actually used to save the highest topo height and TIPS |
 | cumulative_difficulty |   Hash   |      Integer     |   Save the cumulative difficulty for each block hash   |
 
-TODO: add `rewards`, `assets`, `nonces`
+TODO: add `rewards`, `assets`, `nonces`, `supply`, `difficulty`
 
 ## API
 

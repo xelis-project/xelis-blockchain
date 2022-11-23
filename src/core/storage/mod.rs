@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 use std::sync::Arc;
 use lru::LruCache;
 use sled::Tree;
-use log::debug;
+use log::{debug, trace};
 
 const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
@@ -54,67 +54,23 @@ impl Serializer for u64 {
     }
 }
 
-pub struct BlockMetadata {
-    difficulty: u64,
-    supply: u64,
-    burned: u64
-}
-
-impl BlockMetadata {
-    pub fn new(difficulty: u64, supply: u64, burned: u64) -> Self {
-        Self {
-            difficulty,
-            supply,
-            burned
-        }
-    }
-
-    pub fn get_difficulty(&self) -> u64 {
-        self.difficulty
-    }
-
-    pub fn get_supply(&self) -> u64 {
-        self.supply
-    }
-    
-    pub fn get_burned_supply(&self) -> u64 {
-        self.burned
-    }
-}
-
-impl Serializer for BlockMetadata {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u64(&self.difficulty);
-        writer.write_u64(&self.supply);
-        writer.write_u64(&self.burned);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let difficulty = reader.read_u64()?;
-        let supply = reader.read_u64()?;
-        let burned = reader.read_u64()?;
-
-        Ok(Self::new(difficulty, supply, burned))
-    }
-}
-
 pub struct Storage {
     transactions: Tree, // all txs stored on disk
     blocks: Tree, // all blocks on disk
-    metadata: Tree,
     blocks_at_height: Tree, // all blocks height at specific height
     extra: Tree, // all extra data saved on disk
     topo_by_hash: Tree, // topo at hash on disk
     hash_at_topo: Tree, // hash at topo height on disk
     cumulative_difficulty: Tree, // cumulative difficulty for each block hash on disk
-    assets: Tree, // all available assets on network
+    assets: Tree, // keep tracks of all available assets on network
     nonces: Tree, // account nonces to prevent TX replay attack
     rewards: Tree, // all block rewards for blocks
-    db: sled::Db,
+    supply: Tree, // supply for each block hash
+    difficulty: Tree, // difficulty for each block hash
+    db: sled::Db, // opened DB used for assets to create dynamic assets
     // cached in memory
     transactions_cache: Option<Mutex<LruCache<Hash, Arc<Transaction>>>>,
     blocks_cache: Option<Mutex<LruCache<Hash, Arc<Block>>>>,
-    metadata_cache: Option<Mutex<LruCache<Hash, Arc<BlockMetadata>>>>,
     past_blocks_cache: Option<Mutex<LruCache<Hash, Arc<Vec<Hash>>>>>, // previous blocks saved at each new block
     topo_by_hash_cache: Option<Mutex<LruCache<Hash, u64>>>,
     hash_at_topo_cache: Option<Mutex<LruCache<u64, Hash>>>,
@@ -140,7 +96,6 @@ impl Storage {
         let mut storage = Self {
             transactions: sled.open_tree("transactions")?,
             blocks: sled.open_tree("blocks")?,
-            metadata: sled.open_tree("metadata")?,
             blocks_at_height: sled.open_tree("blocks_at_height")?,
             extra: sled.open_tree("extra")?,
             topo_by_hash: sled.open_tree("topo_at_hash")?,
@@ -149,10 +104,11 @@ impl Storage {
             assets: sled.open_tree("assets")?,
             nonces: sled.open_tree("nonces")?,
             rewards: sled.open_tree("rewards")?,
+            supply: sled.open_tree("supply")?,
+            difficulty: sled.open_tree("difficulty")?,
             db: sled,
             transactions_cache: init_cache!(cache_size),
             blocks_cache: init_cache!(cache_size),
-            metadata_cache: init_cache!(cache_size),
             past_blocks_cache: init_cache!(cache_size),
             topo_by_hash_cache: init_cache!(cache_size),
             hash_at_topo_cache: init_cache!(cache_size),
@@ -350,8 +306,8 @@ impl Storage {
         self.transactions.len()
     }
 
-    pub async fn add_new_block(&mut self, block: Arc<Block>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash, supply: u64, burned: u64) -> Result<(), BlockchainError> {
-        debug!("Storing new {} with hash: {}, difficulty: {}, supply: {}, burned: {}", block, hash, difficulty, supply, burned);
+    pub async fn add_new_block(&mut self, block: Arc<Block>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash) -> Result<(), BlockchainError> {
+        debug!("Storing new {} with hash: {}, difficulty: {}", block, hash, difficulty);
 
         // Store transactions
         for (hash, tx) in block.get_transactions().iter().zip(txs) { // first save all txs, then save block
@@ -361,15 +317,11 @@ impl Storage {
         // Store block header
         self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
 
-        // Save all metadata
-        let metadata = BlockMetadata::new(difficulty, supply, burned);
-        self.metadata.insert(hash.as_bytes(), metadata.to_bytes())?;
+        // Store difficulty
+        self.difficulty.insert(hash.as_bytes(), &difficulty.to_be_bytes())?;
 
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
 
-        if let Some(cache) = &self.metadata_cache {
-            cache.lock().await.put(hash.clone(), Arc::new(metadata));
-        }
 
         if let Some(cache) = &self.blocks_cache {
             cache.lock().await.put(hash, block);
@@ -378,7 +330,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Arc<BlockMetadata>, Vec<(Hash, Arc<Transaction>)>, HashMap<PublicKey, u64>), BlockchainError> {
+    pub async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>, HashMap<PublicKey, u64>), BlockchainError> {
         if height < count as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
         }
@@ -387,7 +339,7 @@ impl Storage {
         // (last lowest topo height accepted)
         let mut lowest_topo = topoheight;
         for i in (height-count..=height).rev() {
-            debug!("checking lowest topoheight for blocks at {}", i);
+            trace!("checking lowest topoheight for blocks at {}", i);
             for hash in self.get_blocks_at_height(i).await? {
                 let topo = self.get_topo_height_for_hash(&hash).await?;
                 if topo < lowest_topo {
@@ -395,7 +347,7 @@ impl Storage {
                 }
             }
         }
-        debug!("Lowest topoheight for rewind: {}", lowest_topo);
+        trace!("Lowest topoheight for rewind: {}", lowest_topo);
 
         let chain_topoheight = topoheight;
         // new topo height after all deleted blocks
@@ -415,7 +367,7 @@ impl Storage {
                         if self.is_block_topological_ordered(&unique).await {
                             topoheight = self.get_topo_height_for_hash(&unique).await?;
                             if topoheight <= lowest_topo {
-                                debug!("Unique block at height {} and topoheight {} found!", height, topoheight);
+                                trace!("Unique block at height {} and topoheight {} found!", height, topoheight);
                                 break 'main;
                             }
                         }
@@ -424,23 +376,24 @@ impl Storage {
             }
 
             // get all blocks at same height, and delete current block hash from the list
-            debug!("Searching blocks at height {}", height);
+            trace!("Searching blocks at height {}", height);
             let blocks_at_height: Tips = self.delete_data_no_arc(&self.blocks_at_height, &None, &height).await?;
-            debug!("Blocks at height {}: {}", height, blocks_at_height.len());
+            trace!("Blocks at height {}: {}", height, blocks_at_height.len());
 
             for hash in blocks_at_height {
-                debug!("deleting metadata for hash {}", hash);
-                self.delete_data(&self.metadata, &self.metadata_cache, &hash).await?;
-                debug!("deleting block {}", hash);
+                trace!("deleting block header {}", hash);
                 let block = self.delete_data(&self.blocks, &self.blocks_cache, &hash).await?;
-                debug!("block deleted successfully");
+                trace!("block header deleted successfully");
 
-                debug!("Deleting cumulative difficulty");
+                let _: u64 = self.delete_data_no_arc(&self.supply, &None, &hash).await?;
+                let _: u64 = self.delete_data_no_arc(&self.difficulty, &None, &hash).await?;
+
+                trace!("Deleting cumulative difficulty");
                 let cumulative_difficulty: u64 = self.delete_data_no_arc(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
-                debug!("Cumulative difficulty deleted: {}", cumulative_difficulty);
+                trace!("Cumulative difficulty deleted: {}", cumulative_difficulty);
 
                 let reward: u64 = self.delete_data_no_arc(&self.rewards, &None, &hash).await?;
-                debug!("Reward for block {} was: {}", hash, reward);
+                trace!("Reward for block {} was: {}", hash, reward);
 
                 let mut total_fees = 0;
                 for hash in block.get_transactions() {
@@ -460,27 +413,27 @@ impl Storage {
                         *miners.entry(block.get_miner().clone()).or_insert(0) += reward + total_fees;
                     }
 
-                    debug!("Block was at topoheight {}", topo);
+                    trace!("Block was at topoheight {}", topo);
                     self.delete_data_no_arc(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
 
                     if let Ok(hash_at_topo) = self.get_hash_at_topo_height(topo).await {
                         if hash_at_topo == hash {
-                            debug!("Deleting hash '{}' at topo height '{}'", hash_at_topo, topo);
+                            trace!("Deleting hash '{}' at topo height '{}'", hash_at_topo, topo);
                             self.delete_data_no_arc(&self.hash_at_topo, &self.hash_at_topo_cache, &topo).await?;
                         }
                     }
                 }
 
                 // generate new tips
-                debug!("Removing {} from {} tips", hash, tips.len());
+                trace!("Removing {} from {} tips", hash, tips.len());
                 tips.remove(&hash);
-                debug!("Tips: {}", tips.len());
+                trace!("Tips: {}", tips.len());
                 for tip in &tips {
-                    debug!("Tip {}", tip);
+                    trace!("Tip {}", tip);
                 }
 
                 for hash in block.get_tips() {
-                    debug!("Adding {} to {} tips", hash, tips.len());
+                    trace!("Adding {} to {} tips", hash, tips.len());
                     tips.insert(hash.clone());
                 }
             }
@@ -491,16 +444,14 @@ impl Storage {
         }
         debug!("Blocks processed {}, new topoheight: {}, tips: {}", done, topoheight, tips.len());
         for hash in &tips {
-            debug!("hash {} at height {}", hash, self.get_height_for_block(&hash).await?);
+            trace!("hash {} at height {}", hash, self.get_height_for_block(&hash).await?);
         }
         // store the new tips and topo topoheight
         self.store_tips(&tips)?;
         self.set_top_topoheight(topoheight)?;
         self.set_top_height(height)?;
 
-        let (_, _, metadata) = self.get_top_metadata().await?;
-
-        Ok((height, topoheight, metadata, txs, miners))
+        Ok((height, topoheight, txs, miners))
     }
 
     pub fn has_blocks(&self) -> bool {
@@ -516,17 +467,12 @@ impl Storage {
     }
 
     pub async fn get_block_by_hash(&self, hash: &Hash) -> Result<Arc<Block>, BlockchainError> {
-        debug!("get block by hash: {}", hash);
+        trace!("get block by hash: {}", hash);
         self.get_arc_data(&self.blocks, &self.blocks_cache, hash).await
     }
 
-    pub async fn get_block_metadata_by_hash(&self, hash: &Hash) -> Result<Arc<BlockMetadata>, BlockchainError> {
-        debug!("get block metadata by hash: {}", hash);
-        self.get_arc_data(&self.metadata, &self.metadata_cache, hash).await
-    }
-
     pub async fn get_block_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<Block>), BlockchainError> {
-        debug!("get block at topoheight: {}", topoheight);
+        trace!("get block at topoheight: {}", topoheight);
         let hash = self.get_hash_at_topo_height(topoheight).await?;
         let block = self.get_block_by_hash(&hash).await?;
         Ok((hash, block))
@@ -553,7 +499,7 @@ impl Storage {
     }
 
     pub fn set_top_topoheight(&self, topoheight: u64) -> Result<(), BlockchainError> {
-        debug!("set new top topoheight at {}", topoheight);
+        trace!("set new top topoheight at {}", topoheight);
         self.extra.insert(TOP_TOPO_HEIGHT, &topoheight.to_be_bytes())?;
         Ok(())
     }
@@ -563,17 +509,9 @@ impl Storage {
     }
 
     pub fn set_top_height(&self, height: u64) -> Result<(), BlockchainError> {
-        debug!("set new top height at {}", height);
+        trace!("set new top height at {}", height);
         self.extra.insert(TOP_HEIGHT, &height.to_be_bytes())?;
         Ok(())
-    }
-
-    pub async fn get_top_metadata(&self) -> Result<(u64, Hash, Arc<BlockMetadata>), BlockchainError> {   
-        let topoheight = self.get_top_topoheight()?;
-        let hash = self.get_hash_at_topo_height(topoheight).await?;
-        let metadata = self.get_block_metadata_by_hash(&hash).await?;
-        debug!("Top block hash is {} and topoheight {}", hash, topoheight);
-        Ok((topoheight, hash, metadata))
     }
 
     pub async fn get_top_complete_block(&self) -> Result<CompleteBlock, BlockchainError> {
@@ -594,14 +532,14 @@ impl Storage {
     }
 
     pub fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
-        debug!("Saving {} Tips", tips.len());
+        trace!("Saving {} Tips", tips.len());
         self.extra.insert(TIPS, tips.to_bytes())?;
         self.tips_cache = tips.clone();
         Ok(())
     }
 
     pub async fn get_past_blocks_of(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
-        debug!("get past blocks of {}", hash);
+        trace!("get past blocks of {}", hash);
         let tips = if let Some(cache) = &self.past_blocks_cache {
             let mut cache = cache.lock().await;
             if let Some(tips) = cache.get(hash) {
@@ -636,7 +574,7 @@ impl Storage {
     }
 
     pub async fn add_block_hash_at_height(&self, hash: Hash, height: u64) -> Result<(), BlockchainError> {
-        debug!("add block {} at height {}", hash, height);
+        trace!("add block {} at height {}", hash, height);
         let mut tips = match self.get_blocks_at_height(height).await {
             Ok(tips) => tips,
             Err(_) => Tips::new()
@@ -654,7 +592,7 @@ impl Storage {
     }
 
     pub async fn set_topo_height_for_block(&self, hash: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
-        debug!("set topo height for {} at {}", hash, topoheight);
+        trace!("set topo height for {} at {}", hash, topoheight);
         self.topo_by_hash.insert(hash.as_bytes(), topoheight.to_bytes())?;
         self.hash_at_topo.insert(topoheight.to_be_bytes(), hash.as_bytes())?;
 
@@ -673,11 +611,11 @@ impl Storage {
     }
 
     pub async fn is_block_topological_ordered(&self, hash: &Hash) -> bool {
-        debug!("is block topological ordered: {}", hash);
+        trace!("is block topological ordered: {}", hash);
         let topoheight = match self.get_topo_height_for_hash(&hash).await {
             Ok(topoheight) => topoheight,
             Err(e) => {
-                debug!("Error while checking if block {} is ordered: {}", hash, e);
+                trace!("Error while checking if block {} is ordered: {}", hash, e);
                 return false
             }
         };
@@ -685,7 +623,7 @@ impl Storage {
         let hash_at_topo = match self.get_hash_at_topo_height(topoheight).await {
             Ok(hash_at_topo) => hash_at_topo,
             Err(e) => {
-                debug!("Error while checking if a block hash is ordered at topo {}: {}", topoheight, e);
+                trace!("Error while checking if a block hash is ordered at topo {}: {}", topoheight, e);
                 return false
             }
         };
@@ -693,12 +631,12 @@ impl Storage {
     }
 
     pub async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        debug!("get topoheight for hash: {}", hash);
+        trace!("get topoheight for hash: {}", hash);
         self.get_data(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await
     }
 
     pub async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
-        debug!("get hash at topoheight: {}", topoheight);
+        trace!("get hash at topoheight: {}", topoheight);
         let hash = if let Some(cache) = &self.hash_at_topo_cache {
             let mut hash_at_topo = cache.lock().await;
             if let Some(value) = hash_at_topo.get(&topoheight) {
@@ -714,9 +652,8 @@ impl Storage {
         Ok(hash)
     }
 
-    pub async fn get_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        let metadata = self.get_block_metadata_by_hash(hash).await?;
-        Ok(metadata.get_difficulty())
+    pub fn get_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        self.load_from_disk(&self.difficulty, hash.as_bytes())
     }
 
     pub async fn get_timestamp_for_block(&self, hash: &Hash) -> Result<u128, BlockchainError> {
@@ -726,8 +663,16 @@ impl Storage {
 
     pub async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {
         let hash = self.get_hash_at_topo_height(topoheight).await?;
-        let metadata = self.get_block_metadata_by_hash(&hash).await?;
-        Ok(metadata.get_supply())
+        self.get_supply_for_hash(&hash)
+    }
+    
+    pub fn get_supply_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        self.load_from_disk(&self.supply, hash.as_bytes())
+    }
+
+    pub fn set_supply_for_block(&self, hash: &Hash, supply: u64) -> Result<(), BlockchainError> {
+        self.supply.insert(hash.as_bytes(), &supply.to_be_bytes())?;
+        Ok(())
     }
 
     pub async fn get_cumulative_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {

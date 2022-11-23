@@ -24,6 +24,8 @@ pub enum BlockType {
 pub struct BlockResponse<T> {
     topoheight: Option<u64>,
     block_type: BlockType,
+    difficulty: u64,
+    supply: u64,
     cumulative_difficulty: u64,
     #[serde(flatten)]
     data: DataHash<T>
@@ -170,7 +172,7 @@ async fn get_stableheight(blockchain: Arc<Blockchain>, body: Value) -> Result<Va
         return Err(RpcError::UnexpectedParams)
     }
 
-    Ok(json!(blockchain.get_stable_height().await?))
+    Ok(json!(blockchain.get_stable_height()))
 }
 
 async fn get_block_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -179,7 +181,9 @@ async fn get_block_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> Re
     let hash = storage.get_hash_at_topo_height(params.topoheight).await?;
     let block = storage.get_complete_block(&hash).await?;
     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
-    Ok(json!(BlockResponse { topoheight: Some(params.topoheight), block_type: get_block_type_for_block(&blockchain, &storage, &hash).await?, cumulative_difficulty, data: DataHash { hash, data: block } }))
+    let difficulty = storage.get_difficulty_for_block(&hash)?;
+    let supply = storage.get_supply_for_hash(&hash)?;
+    Ok(json!(BlockResponse { topoheight: Some(params.topoheight), block_type: get_block_type_for_block(&blockchain, &storage, &hash).await?, cumulative_difficulty, supply, difficulty, data: DataHash { hash, data: block } }))
 }
 
 async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -192,7 +196,9 @@ async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<V
         None
     };
     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&params.hash).await?;
-    Ok(json!(BlockResponse { topoheight, block_type: get_block_type_for_block(&blockchain, &storage, &params.hash).await?, cumulative_difficulty, data: DataHash { hash: params.hash, data: block } }))
+    let difficulty = storage.get_difficulty_for_block(&params.hash)?;
+    let supply = storage.get_supply_for_hash(&params.hash)?;
+    Ok(json!(BlockResponse { topoheight, block_type: get_block_type_for_block(&blockchain, &storage, &params.hash).await?, cumulative_difficulty, difficulty, supply, data: DataHash { hash: params.hash, data: block } }))
 }
 
 async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -208,7 +214,9 @@ async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value
         None
     };
     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
-    Ok(json!(BlockResponse { topoheight, block_type: get_block_type_for_block(&blockchain, &storage, &hash).await?, cumulative_difficulty, data: DataHash { hash, data: block } }))
+    let difficulty = storage.get_difficulty_for_block(&hash)?;
+    let supply = storage.get_supply_for_hash(&hash)?;
+    Ok(json!(BlockResponse { topoheight, block_type: get_block_type_for_block(&blockchain, &storage, &hash).await?, cumulative_difficulty, difficulty, supply, data: DataHash { hash, data: block } }))
 }
 
 async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -336,7 +344,9 @@ async fn get_blocks_at_height(blockchain: Arc<Blockchain>, body: Value) -> Resul
 
         let block = storage.get_complete_block(&hash).await?;
         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
-        blocks.push(BlockResponse { topoheight, block_type: get_block_type_for_block(&blockchain, &storage, &hash).await?, cumulative_difficulty, data: DataHash { hash, data: block } })
+        let difficulty = storage.get_difficulty_for_block(&hash)?;
+        let supply = storage.get_supply_for_hash(&hash)?;
+        blocks.push(BlockResponse { topoheight, block_type: get_block_type_for_block(&blockchain, &storage, &hash).await?, cumulative_difficulty, difficulty, supply, data: DataHash { hash, data: block } })
     }
     Ok(json!(blocks))
 }
