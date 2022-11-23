@@ -1,4 +1,4 @@
-use crate::{core::{blockchain::Blockchain, block::{Block, CompleteBlock}, serializer::Serializer, transaction::Transaction, storage::Storage}, crypto::{hash::Hash, address::Address}};
+use crate::{core::{blockchain::Blockchain, block::Block, serializer::Serializer, transaction::Transaction, storage::Storage}, crypto::{hash::Hash, address::Address}};
 use super::{RpcError, RpcServer};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{json, Value};
@@ -26,6 +26,7 @@ pub struct BlockResponse<T> {
     block_type: BlockType,
     difficulty: u64,
     supply: u64,
+    reward: u64,
     cumulative_difficulty: u64,
     #[serde(flatten)]
     data: DataHash<T>
@@ -130,6 +131,22 @@ async fn get_block_type_for_block(blockchain: &Blockchain, storage: &Storage, ha
     })
 }
 
+async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Storage, hash: Hash) -> Result<Value, RpcError> {
+    let block = storage.get_block_by_hash(&hash).await?;
+    let topoheight = if storage.is_block_topological_ordered(&hash).await {
+        Some(storage.get_topo_height_for_hash(&hash).await?)
+    } else {
+        None
+    };
+    let block_type = get_block_type_for_block(&blockchain, &storage, &hash).await?;
+    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
+    let difficulty = storage.get_difficulty_for_block(&hash)?;
+    let supply = storage.get_supply_for_hash(&hash)?;
+    let reward = storage.get_block_reward(&hash)?;
+
+    Ok(json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, data: DataHash { hash, data: block } }))
+}
+
 pub fn register_methods(server: &mut RpcServer) {
     info!("Registering RPC methods...");
     server.register_method("get_height", method!(get_height));
@@ -179,26 +196,13 @@ async fn get_block_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> Re
     let params: GetBlockAtTopoHeightParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
     let hash = storage.get_hash_at_topo_height(params.topoheight).await?;
-    let block = storage.get_complete_block(&hash).await?;
-    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
-    let difficulty = storage.get_difficulty_for_block(&hash)?;
-    let supply = storage.get_supply_for_hash(&hash)?;
-    Ok(json!(BlockResponse { topoheight: Some(params.topoheight), block_type: get_block_type_for_block(&blockchain, &storage, &hash).await?, cumulative_difficulty, supply, difficulty, data: DataHash { hash, data: block } }))
+    get_block_response_for_hash(&blockchain, &storage, hash).await
 }
 
 async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBlockByHashParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
-    let block = storage.get_block_by_hash(&params.hash).await?;
-    let topoheight = if storage.is_block_topological_ordered(&params.hash).await {
-        Some(storage.get_topo_height_for_hash(&params.hash).await?)
-    } else {
-        None
-    };
-    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&params.hash).await?;
-    let difficulty = storage.get_difficulty_for_block(&params.hash)?;
-    let supply = storage.get_supply_for_hash(&params.hash)?;
-    Ok(json!(BlockResponse { topoheight, block_type: get_block_type_for_block(&blockchain, &storage, &params.hash).await?, cumulative_difficulty, difficulty, supply, data: DataHash { hash: params.hash, data: block } }))
+    get_block_response_for_hash(&blockchain, &storage, params.hash).await
 }
 
 async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -207,16 +211,7 @@ async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value
     }
     let storage = blockchain.get_storage().read().await;
     let hash = blockchain.get_top_block_hash_for_storage(&storage).await?;
-    let block = storage.get_complete_block(&hash).await?;
-    let topoheight = if storage.is_block_topological_ordered(&hash).await {
-        Some(storage.get_topo_height_for_hash(&hash).await?)
-    } else {
-        None
-    };
-    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
-    let difficulty = storage.get_difficulty_for_block(&hash)?;
-    let supply = storage.get_supply_for_hash(&hash)?;
-    Ok(json!(BlockResponse { topoheight, block_type: get_block_type_for_block(&blockchain, &storage, &hash).await?, cumulative_difficulty, difficulty, supply, data: DataHash { hash, data: block } }))
+    get_block_response_for_hash(&blockchain, &storage, hash).await
 }
 
 async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -334,19 +329,9 @@ async fn get_blocks_at_height(blockchain: Arc<Blockchain>, body: Value) -> Resul
     let params: GetBlocksAtHeightParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
 
-    let mut blocks: Vec<BlockResponse<CompleteBlock>> = Vec::new();
+    let mut blocks = Vec::new();
     for hash in storage.get_blocks_at_height(params.height).await? {
-        let topoheight = if storage.is_block_topological_ordered(&hash).await {
-            Some(storage.get_topo_height_for_hash(&hash).await?)
-        } else {
-            None
-        };
-
-        let block = storage.get_complete_block(&hash).await?;
-        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
-        let difficulty = storage.get_difficulty_for_block(&hash)?;
-        let supply = storage.get_supply_for_hash(&hash)?;
-        blocks.push(BlockResponse { topoheight, block_type: get_block_type_for_block(&blockchain, &storage, &hash).await?, cumulative_difficulty, difficulty, supply, data: DataHash { hash, data: block } })
+        blocks.push(get_block_response_for_hash(&blockchain, &storage, hash).await?)
     }
     Ok(json!(blocks))
 }
