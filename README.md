@@ -44,18 +44,20 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 
 ## Storage
 
-|          Tree         | Key Type |    Value Type    |                         Comment                        |
-|:---------------------:|:--------:|:----------------:|:------------------------------------------------------:|
-|      transactions     |   Hash   |    Transaction   |      Save the whole transaction based on its hash      |
-|         blocks        |   Hash   |   Block Header   |      Save the block header only based on its hash      |
-|        metadata       |   Hash   |  Block Metadata  | Save the block metadata based on the Block Header hash |
-|      topo_by_hash     |   Hash   |      Integer     |       Save a block hash at a specific topo height      |
-|      hash_by_topo     |  Integer |       Hash       |      Save a topo height for a specific block hash      |
-|    blocks_at_height   |  Integer |   Array of Hash  |        Save all blocks hash at a specific height       |
-|         extra         |   Bytes  | No specific type | Actually used to save the highest topo height and TIPS |
-| cumulative_difficulty |   Hash   |      Integer     |   Save the cumulative difficulty for each block hash   |
-
-TODO: add `rewards`, `assets`, `nonces`, `supply`, `difficulty`
+|          Tree         |  Key Type  |    Value Type    |                          Comment                          |
+|:---------------------:|:----------:|:----------------:|:---------------------------------------------------------:|
+|      transactions     |    Hash    |    Transaction   |        Save the whole transaction based on its hash       |
+|         blocks        |    Hash    |   Block Header   |        Save the block header only based on its hash       |
+|        rewards        |    Hash    |      Integer     |                   Save the block reward                   |
+|         assets        |    Hash    |     No Value     | Used to verify if an assets is well registered and usable |
+|         nonces        | Public Key |      Integer     |        Nonce used to prevent replay attacks on TXs        |
+|         supply        |    Hash    |      Integer     |   Calculated supply (past + block reward) at each block   |
+|       difficulty      |    Hash    |      Integer     |                 Difficulty for each block                 |
+|      topo_by_hash     |    Hash    |      Integer     |        Save a block hash at a specific topo height        |
+|      hash_by_topo     |   Integer  |       Hash       |        Save a topo height for a specific block hash       |
+|    blocks_at_height   |   Integer  |   Array of Hash  |         Save all blocks hash at a specific height         |
+|         extra         |    Bytes   | No specific type |   Actually used to save the highest topo height and TIPS  |
+| cumulative_difficulty |    Hash    |      Integer     |     Save the cumulative difficulty for each block hash    |
 
 ## API
 
