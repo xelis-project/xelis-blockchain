@@ -1,14 +1,11 @@
 pub mod transaction_builder;
+pub mod storage;
 
-use std::borrow::Cow;
-
-use crate::core::json_rpc::{JsonRPCClient, JsonRPCError};
-use crate::core::serializer::Serializer;
-use crate::crypto::address::{Address, AddressType};
+use crate::config::{DEFAULT_DAEMON_ADDRESS, DEFAULT_DIR_PATH};
+use crate::core::json_rpc::JsonRPCClient;
 use crate::crypto::key::KeyPair;
-use crate::core::transaction::{Transaction, TransactionType};
-use crate::core::error::BlockchainError;
-use crate::rpc::rpc::SubmitTransactionParams;
+
+use self::storage::Storage;
 
 pub enum WalletError {
     InvalidKeyPair,
@@ -16,51 +13,28 @@ pub enum WalletError {
     TxOwnerIsReceiver
 }
 
+#[derive(Debug, clap::StructOpt)]
+pub struct Config {
+    /// Daemon address to use
+    #[clap(short, long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
+    daemon_address: String,
+    /// Set name path for wallet storage
+    #[clap(short = 'd', long, default_value_t = String::from(DEFAULT_DIR_PATH))]
+    name: String
+}
+
 pub struct Wallet {
     keypair: KeyPair,
-    balance: u64,
-    nonce: u64,
-    transactions: Vec<Transaction>,
+    storage: Storage,
     client: JsonRPCClient
 }
 
 impl Wallet {
-    pub fn new(daemon_address: String) -> Self {
+    pub fn new(config: Config) -> Self {
         Wallet {
             keypair: KeyPair::new(),
-            balance: 0,
-            nonce: 0,
-            transactions: Vec::new(),
-            client: JsonRPCClient::new(daemon_address)
+            storage: Storage::new(config.name).unwrap(),
+            client: JsonRPCClient::new(config.daemon_address)
         }
-    }
-
-    pub fn get_address(&self) -> Address {
-        Address::new(true, AddressType::Normal, Cow::Borrowed(self.keypair.get_public_key()))
-    }
-
-    pub fn send_transaction(&self, transaction: &Transaction) -> Result<(), JsonRPCError> {
-        self.client.notify_with("submit_transaction", &SubmitTransactionParams { data: transaction.to_hex() })
-    }
-
-    pub fn create_tx_registration(&self) -> Transaction {
-        panic!("") //Transaction::new(self.keypair.get_public_key().clone(), TransactionVariant::Registration)
-    }
-
-    pub fn create_transaction(&self, data: TransactionType) -> Result<Transaction, BlockchainError> {
-        panic!("")
-        /*let mut tx = Transaction::new(self.keypair.get_public_key().clone(), TransactionVariant::Normal { nonce: self.nonce, fee: 0, data });
-        let fee = calculate_tx_fee(tx.size() + SIGNATURE_LENGTH);
-        tx.set_fee(fee)?;
-        tx.sign(&self.keypair);
-        Ok(tx)*/
-    }
-
-    pub fn get_transactions(&self) -> &Vec<Transaction> {
-       &self.transactions
-    }
-
-    pub fn get_balance(&self) -> u64 {
-        self.balance
     }
 }

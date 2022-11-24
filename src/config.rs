@@ -39,3 +39,6 @@ pub const P2P_PING_PEER_LIST_DELAY: u64 = 15; // time in seconds between each up
 pub const P2P_PING_PEER_LIST_LIMIT: usize = 16; // maximum number of addresses to be send
 pub const P2P_DEFAULT_MAX_PEERS: usize = 32; // default number of maximum peers
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 1500; // millis until we timeout
+
+// Wallet config
+pub const DEFAULT_DAEMON_ADDRESS: &str = DEFAULT_RPC_BIND_ADDRESS;

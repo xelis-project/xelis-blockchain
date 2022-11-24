@@ -17,8 +17,8 @@ Its possible to create transactions, sign them, and introduce them in a block. A
 
 ## Roadmap
 
-- Register an account / wallet address by sending coins to it (but have a small fee added)
-- Rework miner TX: replace Coinbase Tx by only Address in Block Header. 
+- Create a functional wallet (WIP)
+- Include extra fees when sending coins to a not-yet registered address
 - Web Socket for new mining jobs: miner get notified only when the block change.
 - Better CLI daemon
 - CLI Wallet
@@ -41,6 +41,23 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 - Side Blocks receive only 30% of block reward.
 - Block rewards (with fees) are added to account only when block is in stable height.
 - Supply is re-calculated each time the block is re-ordered because its based on topo order.
+
+# Transaction
+
+Transaction types supported:
+- Transfer: possibility to send many assets to many addresses in the same TX
+- Burn: publicly burn amount of a specific asset and use this TX as proof of burn (coins are completely deleted from circulation)
+- Call Contract: call a Smart Contract with specific parameters (WIP) (NOTE: Multi Call Contract in the same TX ?)
+- Deploy Contract: deploy a new (valid) Smart Contract on chain (WIP)
+
+At this moment, transactions are public and have the following data.
+|   Field   |       Type      |                                   Comment                                  |
+|:---------:|:---------------:|:--------------------------------------------------------------------------:|
+|   owner   |    PublicKey    |                         Signer of this transaction                         |
+|    data   | TransactionType |                 Type with data included of this transaction                |
+|    fee    |     Integer     |             Fees to be paid by the owner for including this TX             |
+|   nonce   |     Integer     | Matching nonce of balance to be validated and prevent any replay TX attack |
+| signature |    Signature    |          Valid signature to prove that the owner validated this TX         |
 
 ## Storage
 
