@@ -42,12 +42,12 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 - Block rewards (with fees) are added to account only when block is in stable height.
 - Supply is re-calculated each time the block is re-ordered because its based on topo order.
 
-# Transaction
+## Transaction
 
 Transaction types supported:
 - Transfer: possibility to send many assets to many addresses in the same TX
 - Burn: publicly burn amount of a specific asset and use this TX as proof of burn (coins are completely deleted from circulation)
-- Call Contract: call a Smart Contract with specific parameters (WIP) (NOTE: Multi Call Contract in the same TX ?)
+- Call Contract: call a Smart Contract with specific parameters and list of assets to deposit (WIP) (NOTE: Multi Call Contract in the same TX ?)
 - Deploy Contract: deploy a new (valid) Smart Contract on chain (WIP)
 
 At this moment, transactions are public and have the following data.
@@ -58,6 +58,8 @@ At this moment, transactions are public and have the following data.
 |    fee    |     Integer     |             Fees to be paid by the owner for including this TX             |
 |   nonce   |     Integer     | Matching nonce of balance to be validated and prevent any replay TX attack |
 | signature |    Signature    |          Valid signature to prove that the owner validated this TX         |
+
+Transactions support any registered asset natively.
 
 ## Storage
 
