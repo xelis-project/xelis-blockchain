@@ -85,6 +85,18 @@ impl PrivateKey {
     }
 }
 
+impl Serializer for PrivateKey {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bytes(self.0.as_bytes());
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let bytes: [u8; KEY_LENGTH] = reader.read_bytes(KEY_LENGTH)?;
+        let secret_key = ed25519_dalek::SecretKey::from_bytes(&bytes).expect("invalid private key bytes");
+        Ok(PrivateKey(secret_key))
+    }
+}
+
 impl KeyPair {
     pub fn new() -> Self {
         let mut csprng = OsRng {};
@@ -112,6 +124,20 @@ impl KeyPair {
 
     pub fn sign(&self, data: &[u8]) -> Signature {
         self.private_key.sign(data, &self.public_key)
+    }
+}
+
+impl Serializer for KeyPair {
+    fn write(&self, writer: &mut Writer) {
+        self.public_key.write(writer);
+        self.private_key.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let public_key = PublicKey::read(reader)?;
+        let private_key = PrivateKey::read(reader)?;
+
+        Ok(Self::from_keys(public_key, private_key))
     }
 }
 
