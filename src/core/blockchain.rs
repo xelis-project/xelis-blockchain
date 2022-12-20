@@ -919,7 +919,6 @@ impl Blockchain {
             self.height.store(block.get_height(), Ordering::Release);
         }
 
-        // TODO self.supply.fetch_add(block_reward, Ordering::Release);
         if storage.is_block_topological_ordered(&block_hash).await {
             let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
             debug!("Adding new '{}' {} at topoheight {}", block_hash, block, topoheight);
