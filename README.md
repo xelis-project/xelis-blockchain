@@ -1,10 +1,33 @@
 # XELIS Blockchain
 
-XELIS is a blockchain made in Rust and powered by Tokio, using account model with a unique P2p in TCP sending data in raw bytes format directly.
-This project is based on an event-driven system combined with the native async/await.
-Its possible to create transactions, sign them, and introduce them in a block. A difficulty adjustment algorithm keeps the average block time to 15 seconds.
+XELIS is a blockchain made in Rust and powered by Tokio, using account model.
+It allows deploy custom assets working exactly like the native coin in transactions and wallet.
+
+This project is based on an event-driven system combined with the native async/await and works with a unique and from scratch p2p system.
+
+## Objectives
+
+The main objectives of XELIS are:
+- Provide privacy on transactions / balances.
+- Provide Smart Contracts support.
+- Secure and fast.
+
+Others objectives in mind are:
+- Provide real custom assets working as the native coin.
+- Designed as CPU/GPU mining friendly to improve decentralization as possible.
+- Simple to use.
+- Community driven decisions.
 
 ## Config
+
+### Network
+
+- Expected Block Time is ~`15` seconds
+- Address prefix is `xel` on mainnet and `xet` for testnet
+- Transaction fee is `0.01000` XEL per KB
+- Full coin can be divided up to `5` decimals
+- Maximum supply is set at `18.4` millions
+- Maximum block size is set at `1.25` MB
 
 ### Daemon
 
@@ -108,6 +131,32 @@ Events currently available are:
 - `NewBlock`: when a new block is accepted by chain
 - `TransactionAddedInMempool`: when a new valid transaction is added in mempool
 
+For a much more detailed API, see the API documentation [here](API.md).
+
 ## XELIS Message
 
-TODO
+Provide a almost free way to communicate through opened channels on chain between two parties.
+The specified receiver can reply for free to any message sent to him as long as the channel paid by the sender is still open.
+It can only reply by one message to one message not yet consumed.
+
+This feature would introduce a better way to communicate privately and in a fully decentralized environment with almost no fees.
+
+The channel price is determined by the maximum message size set, and the time it should stay alive (in blocks count).
+
+## How to build
+
+Building this project requires a working [Rust](https://rustup.rs) (stable) toolchain.
+
+It's expected to be cross-platform and guaranteed to work on Linux, Windows, MacOS platforms.
+To build a release (optimized) version:
+`cargo build --release --bin daemon`
+
+You can also build a debug version (just remove `--release` option) or run it directly from cargo:
+`cargo run --bin daemon`
+
+You can also build `wallet` or `miner` by replacing `daemon` word by it in previous commands.
+
+### Dev Fee
+
+No premine, fair-launch, but to fund this project, we set a developer fee percentage at `5%` of every block reward until the project is fully completed.
+This will also helps us to rewards community build and attracts others developers.
