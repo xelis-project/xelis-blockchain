@@ -84,6 +84,13 @@ At this moment, transactions are public and have the following data.
 
 Transactions support any registered asset natively.
 
+## P2p
+
+All transfered data are using a custom Serializer/Deserializer made by hand to transform a struct representation in raw bytes directly.
+This serialization is done using the fixed position of each fields and their corresponding bits size.
+
+Every data transfered is done through the Packet system which allow easily to read & transfer data and doing the whole serialization itself.
+
 ## Storage
 
 |          Tree         |  Key Type  |    Value Type    |                          Comment                          |
@@ -156,7 +163,7 @@ You can also build a debug version (just remove `--release` option) or run it di
 
 You can also build `wallet` or `miner` by replacing `daemon` word by it in previous commands.
 
-### Dev Fee
+## Dev Fee
 
 No premine, fair-launch, but to fund this project, we set a developer fee percentage at `5%` of every block reward until the project is fully completed.
 This will also helps us to rewards community build and attracts others developers.
