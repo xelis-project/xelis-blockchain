@@ -150,7 +150,7 @@ impl RpcServer {
         *rpc_server.handle.lock().await = Some(handle);
 
         // start the http server
-        info!("Starting RPC server on: http://{}", bind_address);
+        info!("RPC server will listen on: http://{}", bind_address);
         tokio::spawn(server);
         Ok(rpc_server)
     }

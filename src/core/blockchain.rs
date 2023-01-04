@@ -96,24 +96,32 @@ impl Blockchain {
         let arc = Arc::new(blockchain);
         // create P2P Server
         {
-            let p2p = P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc))?;
-            for addr in config.priority_nodes {
-                let addr: SocketAddr = match addr.parse() {
-                    Ok(addr) => addr,
-                    Err(e) => {
-                        error!("Error while parsing priority node: {}", e);
-                        continue;
+            info!("Starting P2p server...");
+            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc)) {
+                Ok(p2p) => {
+                    for addr in config.priority_nodes {
+                        let addr: SocketAddr = match addr.parse() {
+                            Ok(addr) => addr,
+                            Err(e) => {
+                                error!("Error while parsing priority node: {}", e);
+                                continue;
+                            }
+                        };
+                        p2p.try_to_connect_to_peer(addr, true);
                     }
-                };
-                p2p.try_to_connect_to_peer(addr, true);
-            }
-            *arc.p2p.lock().await = Some(p2p);
+                    *arc.p2p.lock().await = Some(p2p);
+                },
+                Err(e) => error!("Error while starting P2p server: {}", e)
+            };
         }
 
         // create RPC Server
         {
-            let server = RpcServer::new(config.rpc_bind_address, Arc::clone(&arc)).await?;
-            *arc.rpc.lock().await = Some(server);
+            info!("Starting RPC server...");
+            match RpcServer::new(config.rpc_bind_address, Arc::clone(&arc)).await {
+                Ok(server) => *arc.rpc.lock().await = Some(server),
+                Err(e) => error!("Error while starting RPC server: {}", e)
+            };
         }
         Ok(arc)
     }
