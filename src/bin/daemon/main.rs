@@ -8,6 +8,7 @@ use xelis_blockchain::config::VERSION;
 use fern::colors::Color;
 use log::{info, error};
 use std::sync::Arc;
+use std::time::Duration;
 use clap::Parser;
 
 #[derive(Parser)]
@@ -29,29 +30,21 @@ pub struct NodeConfig {
 #[tokio::main]
 async fn main() -> Result<(), BlockchainError> {
     let config: NodeConfig = NodeConfig::parse();
-    let command_manager = create_command_manager();
-    let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging, command_manager)?;
+    let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging)?;
     info!("Xelis Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
     let blockchain = Blockchain::new(config.nested).await?;
 
-    tokio::select! {
-        Err(e) = run_prompt(&prompt, blockchain.clone()) => {
-            error!("Error while running prompt: {}", e);
-        },
-        res = tokio::signal::ctrl_c() => {
-            if let Err(e) = res {
-                error!("Error received on CTRL+C: {}", e);
-            } else {
-                info!("CTRL+C received, exiting...");
-            }
-        }
+    if let Err(e) = run_prompt(&prompt, blockchain.clone()).await {
+        error!("Error while running prompt: {}", e);
     }
+
     blockchain.stop().await;
     Ok(())
 }
 
 async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
+    let command_manager = create_command_manager();
     let closure = || async {
         let height = blockchain.get_height();
         let (peers, best) = match blockchain.get_p2p().lock().await.as_ref() {
@@ -61,7 +54,7 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result
         build_prompt_message(blockchain.get_topo_height(), height, best, peers)
     };
 
-    prompt.handle_commands(&closure).await
+    prompt.start(Duration::from_millis(100), &closure, command_manager).await
 }
 
 fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, peers_count: usize) -> String {
@@ -104,7 +97,12 @@ fn help(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), Comma
     }
     Ok(())
 }
- 
+
+fn exit(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    info!("Stopping...");
+    Err(CommandError::Exit)
+}
+
 fn create_command_manager() -> CommandManager {
     let mut manager = CommandManager::new();
     manager.add_command(Command::new("help", "Show this help", Some(Arg::new("command", ArgType::String)), help));

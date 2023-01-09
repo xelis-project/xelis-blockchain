@@ -1,9 +1,8 @@
-use super::command::CommandManager;
+use super::command::{CommandManager, CommandError};
 use std::future::Future;
 use std::io::{Write, stdout, Error as IOError};
 use fern::colors::{ColoredLevelConfig, Color};
-use tokio::io::{AsyncReadExt, stdin};
-use log::{debug, error, Level};
+use log::{info, error, Level};
 use std::sync::{Arc, Mutex};
 use std::sync::PoisonError;
 use tokio::time::interval;
@@ -30,18 +29,71 @@ impl<T> From<PoisonError<T>> for PromptError {
 
 pub struct Prompt {
     prompt: Mutex<Option<String>>,
-    command_manager: CommandManager,
 }
 
 impl Prompt {
-    pub fn new(debug: bool, filename_log: String, disable_file_logging: bool, command_manager: CommandManager) -> Result<Arc<Self>, PromptError>  {
+    pub fn new(debug: bool, filename_log: String, disable_file_logging: bool) -> Result<Arc<Self>, PromptError>  {
         let v = Self {
-            prompt: Mutex::new(None),
-            command_manager
+            prompt: Mutex::new(None)
         };
         let prompt = Arc::new(v);
         Arc::clone(&prompt).setup_logger(debug, filename_log, disable_file_logging)?;
         Ok(prompt)
+    }
+
+    pub async fn start<Fut>(self: &Arc<Self>, update_every: Duration, fn_message: &dyn Fn() -> Fut, command_manager: CommandManager) -> Result<(), PromptError>
+    where Fut: Future<Output = String> {
+        let mut interval = interval(update_every);
+        let zelf = Arc::clone(self);
+        // spawn a thread to prevent IO blocking - https://github.com/tokio-rs/tokio/issues/2466
+        std::thread::spawn(move || {
+            let stdin = std::io::stdin();
+            loop {
+                let mut line = String::new();
+                match stdin.read_line(&mut line) {
+                    Ok(0) => {
+                        break;
+                    },
+                    Ok(1) => {
+                        if let Err(e) = zelf.show() {
+                            error!("Error while showing prompt: {}", e);
+                        }
+                    },
+                    Ok(_) => {
+                        match command_manager.handle_command(line.to_string()) {
+                            Err(CommandError::Exit) => break,
+                            Err(e) => {
+                                error!("Error while executing command: {}", e);
+                            }
+                            _ => {},
+                        };
+                    },
+                    Err(e) => {
+                        error!("Error while reading from stdin: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        loop {
+            tokio::select! {
+                res = tokio::signal::ctrl_c() => {
+                    if let Err(e) = res {
+                        error!("Error received on CTRL+C: {}", e);
+                    } else {
+                        info!("CTRL+C received, exiting...");
+                    }
+                    break;
+                },
+                _ = interval.tick() => {
+                    let prompt = (fn_message)().await;
+                    self.update_prompt(prompt)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn update_prompt(&self, msg: String) -> Result<(), PromptError> {
@@ -52,37 +104,6 @@ impl Prompt {
             self.show()?;
         }
         Ok(())
-    }
-
-    pub async fn handle_commands<Fut>(&self, fn_message: &dyn Fn() -> Fut) -> Result<(), PromptError>
-    where Fut: Future<Output = String> {
-        let mut interval = interval(Duration::from_millis(100));
-        let mut stdin = stdin();
-        let mut buf = [0u8; 256]; // alow up to 256 characters
-        loop {
-            tokio::select! {
-                /*res = stdin.read(&mut buf) => { // TODO fix it / replace it (have to press enter after ctrl+c, otherwise it will be stuck)
-                    let n = res?;
-                    if n == 0 {
-                        return Err(PromptError::EndOfStream);
-                    }
-
-                    if n > 1 { // don't waste time on empty cmds
-                        debug!("read {} bytes: {:?}", n, &buf[0..n]);
-                        let cmd = String::from_utf8_lossy(&buf[0..n-1]); // - 1 is for enter key
-                        if let Err(e) = self.command_manager.handle_command(cmd.to_string()) {
-                            error!("Error on command: {}", e);
-                        }
-                    } else {
-                        self.show()?;
-                    }
-                }*/
-                _ = interval.tick() => {
-                    let prompt = (fn_message)().await;
-                    self.update_prompt(prompt)?;
-                }
-            }
-        }
     }
 
     pub fn show(&self) -> Result<(), PromptError> {

@@ -17,7 +17,9 @@ pub enum CommandError {
     #[error(transparent)]
     ArgError(#[from] ArgError),
     #[error("Invalid argument: {}", _0)]
-    InvalidArgument(String)
+    InvalidArgument(String),
+    #[error("Exit command was called")]
+    Exit
 }
 
 pub type CommandCallback = fn(&CommandManager, ArgumentManager) -> Result<(), CommandError>;
