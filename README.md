@@ -93,6 +93,8 @@ Every data transfered is done through the Packet system which allow easily to re
 
 ## Storage
 
+All theses data are saved in plaintext.
+
 |          Tree         |  Key Type  |    Value Type    |                          Comment                          |
 |:---------------------:|:----------:|:----------------:|:---------------------------------------------------------:|
 |      transactions     |    Hash    |    Transaction   |        Save the whole transaction based on its hash       |
@@ -107,6 +109,15 @@ Every data transfered is done through the Packet system which allow easily to re
 |    blocks_at_height   |   Integer  |   Array of Hash  |         Save all blocks hash at a specific height         |
 |         extra         |    Bytes   | No specific type |   Actually used to save the highest topo height and TIPS  |
 | cumulative_difficulty |    Hash    |      Integer     |     Save the cumulative difficulty for each block hash    |
+
+## Wallet Storage
+
+Wallet implement a fully-encrypted storage system with following features:
+- Tree names are hashed with generated salt
+- Keys data are hashed with generated salt
+- Values are encrypted using XChaCha20Poly1305 and a random newly generated Nonce each time its saved. 
+
+This simple system prevent someone to read / use the data without the necessary secret key.
 
 ## API
 
