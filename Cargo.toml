@@ -32,6 +32,7 @@ reqwest = { version = "0.11.10", features = ["blocking", "json"] }
 sled = "0.34.7"
 lru = "0.7.8"
 async-recursion = "1.0.0"
+chacha20poly1305 = "0.10.1"
 
 [[bin]]
 name = "wallet"
