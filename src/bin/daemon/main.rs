@@ -106,5 +106,6 @@ fn exit(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), Comma
 fn create_command_manager() -> CommandManager {
     let mut manager = CommandManager::new();
     manager.add_command(Command::new("help", "Show this help", Some(Arg::new("command", ArgType::String)), help));
+    manager.add_command(Command::new("exit", "Shutdown the daemon", None, exit));
     manager
 }

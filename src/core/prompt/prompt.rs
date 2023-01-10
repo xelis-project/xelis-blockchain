@@ -2,7 +2,7 @@ use super::command::{CommandManager, CommandError};
 use std::future::Future;
 use std::io::{Write, stdout, Error as IOError};
 use fern::colors::{ColoredLevelConfig, Color};
-use log::{info, error, Level};
+use log::{info, error, Level, warn};
 use std::sync::{Arc, Mutex};
 use std::sync::PoisonError;
 use tokio::time::interval;
@@ -74,8 +74,10 @@ impl Prompt {
                     }
                 }
             }
+            info!("Command Manager is now stopped");
         });
 
+        // TODO break loop when command manager is stopped
         loop {
             tokio::select! {
                 res = tokio::signal::ctrl_c() => {
