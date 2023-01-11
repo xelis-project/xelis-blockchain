@@ -117,6 +117,8 @@ Wallet implement a fully-encrypted storage system with following features:
 - Keys data are hashed with generated salt
 - Values are encrypted using XChaCha20Poly1305 and a random newly generated Nonce each time its saved. 
 
+Hash algorithm used is SHA256 for keys / tree names.
+The random salt generated is a 64 bytes length.
 This simple system prevent someone to read / use the data without the necessary secret key.
 
 ## API
