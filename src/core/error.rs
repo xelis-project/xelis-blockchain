@@ -7,8 +7,6 @@ use super::prompt::prompt::PromptError;
 use std::sync::PoisonError;
 use thiserror::Error;
 
-
-
 #[derive(Error, Debug)]
 pub enum DiskContext {
     #[error("get top block")]

@@ -1239,13 +1239,3 @@ pub fn get_block_reward(supply: u64) -> u64 {
     let base_reward = (MAX_SUPPLY - supply) >> EMISSION_SPEED_FACTOR;
     base_reward
 }
-
-pub fn calculate_tx_fee(tx_size: usize) -> u64 {
-    let mut size_in_kb = tx_size as u64 / 1024;
-
-    if tx_size % 1024 != 0 { // we consume a full kb for fee
-        size_in_kb += 1;
-    }
-    
-    size_in_kb * FEE_PER_KB
-}

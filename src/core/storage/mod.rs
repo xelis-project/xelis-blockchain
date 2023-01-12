@@ -44,16 +44,6 @@ impl Serializer for Tips {
     }
 }
 
-impl Serializer for u64 {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u64(self);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(reader.read_u64()?)
-    }
-}
-
 pub struct Storage {
     transactions: Tree, // all txs stored on disk
     blocks: Tree, // all blocks on disk
