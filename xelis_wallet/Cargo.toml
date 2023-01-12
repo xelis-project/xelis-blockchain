@@ -1,0 +1,17 @@
+[package]
+name = "xelis_wallet"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+xelis_common = { path = "../xelis_common" }
+chacha20poly1305 = "0.10.1"
+sled = "0.34.7"
+clap = { version = "3.1.18", features = ["derive"] }
+
+# common dependencies
+rand = "0.8.4"
+thiserror = "1.0.30"
+anyhow = "1.0.57"

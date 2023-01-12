@@ -5,7 +5,7 @@ It allows deploy custom assets working exactly like the native coin in transacti
 
 This project is based on an event-driven system combined with the native async/await and works with a unique and from scratch p2p system.
 
-## Objectives
+### Objectives
 
 The main objectives of XELIS are:
 - Provide privacy on transactions / balances.
