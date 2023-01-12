@@ -1,6 +1,6 @@
 use crate::core::error::{BlockchainError, DiskContext};
 use xelis_common::{
-    serializer::{Writer, Reader, ReaderError, Serializer},
+    serializer::{Reader, Serializer},
     crypto::{key::PublicKey, hash::Hash},
     config::STABLE_HEIGHT_LIMIT,
     immutable::Immutable,

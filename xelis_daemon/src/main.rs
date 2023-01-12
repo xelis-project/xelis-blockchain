@@ -102,7 +102,7 @@ fn help(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), Comma
     Ok(())
 }
 
-fn exit(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+fn exit(_: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     info!("Stopping...");
     Err(CommandError::Exit)
 }
