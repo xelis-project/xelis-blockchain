@@ -1,7 +1,7 @@
 pub mod rpc;
 pub mod websocket;
 
-use crate::{core::{error::BlockchainError, blockchain::Blockchain, reader::ReaderError}, config};
+use crate::core::{error::BlockchainError, blockchain::Blockchain};
 use crate::rpc::websocket::WebSocketHandler;
 use actix::{Addr, MailboxError};
 use actix_web::{get, post, web::{self, Payload}, error::Error, App, HttpResponse, HttpServer, Responder, dev::ServerHandle, ResponseError, HttpRequest};
@@ -9,11 +9,12 @@ use actix_web_actors::ws::WsResponseBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, Error as SerdeError, json};
 use tokio::sync::Mutex;
+use xelis_common::config;
+use xelis_common::serializer::ReaderError;
 use std::{sync::Arc, collections::{HashMap, HashSet}, pin::Pin, future::Future, fmt::{Display, Formatter}};
 use log::{trace, info};
 use anyhow::Error as AnyError;
 use thiserror::Error;
-
 use self::websocket::{NotifyEvent, Response};
 
 pub type SharedRpcServer = web::Data<Arc<RpcServer>>;

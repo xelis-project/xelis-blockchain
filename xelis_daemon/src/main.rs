@@ -1,15 +1,19 @@
-use xelis_blockchain::core::error::BlockchainError;
-use xelis_blockchain::core::prompt::command::{Command, CommandError};
-use xelis_blockchain::core::prompt::prompt::{Prompt, PromptError};
-use xelis_blockchain::core::prompt::command::CommandManager;
-use xelis_blockchain::core::blockchain::{Blockchain, Config};
-use xelis_blockchain::core::prompt::argument::*;
-use xelis_blockchain::config::VERSION;
+pub mod storage;
+pub mod rpc;
+pub mod p2p;
+pub mod core;
+
 use fern::colors::Color;
 use log::{info, error};
+use xelis_common::{
+    prompt::{argument::{ArgumentManager, Arg, ArgType}, Prompt, command::{CommandError, CommandManager, Command}, PromptError},
+    config::VERSION
+};
+use crate::core::blockchain::{Config, Blockchain};
 use std::sync::Arc;
 use std::time::Duration;
 use clap::Parser;
+use anyhow::Result;
 
 #[derive(Parser)]
 #[clap(version = VERSION, about = "XELIS Daemon")]
@@ -28,7 +32,7 @@ pub struct NodeConfig {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), BlockchainError> {
+async fn main() -> Result<()> {
     let config: NodeConfig = NodeConfig::parse();
     let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging)?;
     info!("Xelis Blockchain running version: {}", VERSION);

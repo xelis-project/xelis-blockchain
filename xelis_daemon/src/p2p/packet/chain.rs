@@ -1,9 +1,13 @@
+use xelis_common::{
+    crypto::hash::Hash,
+    serializer::{
+        Serializer,
+        Writer,
+        ReaderError,
+        Reader
+    }
+};
 use std::borrow::Cow;
-
-use crate::core::reader::{Reader, ReaderError};
-use crate::core::serializer::Serializer;
-use crate::core::writer::Writer;
-use crate::crypto::hash::Hash;
 
 #[derive(Clone)]
 pub struct BlockId {

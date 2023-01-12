@@ -1,7 +1,30 @@
-use crate::{core::{blockchain::Blockchain, block::Block, serializer::Serializer, transaction::Transaction, storage::Storage}, crypto::{hash::Hash, address::Address}};
+use crate::{storage::Storage, core::blockchain::Blockchain};
 use super::{RpcError, RpcServer};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
+use xelis_common::{
+    api::daemon::{
+        BlockType,
+        BlockResponse,
+        DataHash,
+        GetBlockAtTopoHeightParams,
+        GetBlockByHashParams,
+        GetBlockTemplateParams,
+        GetBlockTemplateResult,
+        SubmitBlockParams,
+        GetBalanceParams,
+        GetNonceParams,
+        SubmitTransactionParams,
+        GetTransactionParams,
+        P2pStatusResult,
+        GetBlocksAtHeightParams,
+        GetDagOrderParams
+    },
+    serializer::Serializer,
+    transaction::Transaction,
+    crypto::hash::Hash,
+    block::Block,
+};
 use std::sync::Arc;
 use log::{info, debug};
 

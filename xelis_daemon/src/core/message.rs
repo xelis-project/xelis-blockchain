@@ -1,5 +1,15 @@
-use crate::crypto::{hash::{Hash, Hashable}, key::{PublicKey, Signature, KeyPair}};
-use super::{serializer::Serializer, writer::Writer, reader::{ReaderError, Reader}};
+use xelis_common::{
+    crypto::{
+        hash::{Hash, Hashable},
+        key::{PublicKey, Signature, KeyPair}
+    },
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    }
+};
 
 pub const SECRET_SIZE: usize = 32;
 

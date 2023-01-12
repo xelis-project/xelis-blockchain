@@ -1,11 +1,7 @@
 use crate::p2p::error::P2pError;
-use crate::crypto::hash::Hash;
-use crate::crypto::key::PublicKey;
-use crate::crypto::bech32::Bech32Error;
-use super::reader::ReaderError;
-use super::prompt::prompt::PromptError;
 use std::sync::PoisonError;
 use thiserror::Error;
+use xelis_common::{crypto::{hash::Hash, key::PublicKey, bech32::Bech32Error}, serializer::ReaderError, prompt::PromptError, difficulty::DifficultyError};
 
 #[derive(Error, Debug)]
 pub enum DiskContext {
@@ -103,10 +99,6 @@ pub enum BlockchainError {
     InvalidTransactionSignature,
     #[error("Found a signature on the transaction, but its not required")]
     UnexpectedTransactionSignature,
-    #[error("Difficulty cannot be zero!")]
-    DifficultyCannotBeZero,
-    #[error("Difficulty error on conversion to BigUint")]
-    DifficultyErrorOnConversion,
     #[error("Invalid miner transaction in the block, only coinbase tx is allowed")]
     InvalidMinerTx,
     #[error("Genesis block is not mined by dev address!")]
@@ -142,7 +134,9 @@ pub enum BlockchainError {
     #[error("Invalid tx nonce for account")]
     InvalidTxNonce,
     #[error("Invalid asset ID: {}", _0)]
-    AssetNotFound(Hash)
+    AssetNotFound(Hash),
+    #[error(transparent)]
+    DifficultyError(#[from] DifficultyError)
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

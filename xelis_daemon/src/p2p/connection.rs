@@ -1,11 +1,12 @@
-use crate::core::serializer::Serializer;
-use crate::globals::get_current_time;
-use crate::core::reader::Reader;
 use super::error::P2pError;
 use super::packet::Packet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
+use xelis_common::{
+    globals::get_current_time,
+    serializer::{Reader, Serializer},
+};
 use std::fmt::{Display, Error, Formatter};
 use tokio::sync::{mpsc, Mutex};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};

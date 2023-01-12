@@ -1,14 +1,24 @@
-use crate::config::P2P_PING_PEER_LIST_LIMIT;
-use crate::core::reader::{Reader, ReaderError};
-use crate::core::serializer::Serializer;
-use crate::globals::{ip_to_bytes, ip_from_bytes};
+use xelis_common::{
+    config::P2P_PING_PEER_LIST_LIMIT,
+    crypto::hash::Hash,
+    serializer::{
+        Writer,
+        Serializer,
+        ReaderError,
+        Reader
+    },
+    globals::{
+        ip_to_bytes,
+        ip_from_bytes
+    }
+};
 use crate::p2p::peer::Peer;
-use crate::core::writer::Writer;
-use crate::crypto::hash::Hash;
-use std::borrow::Cow;
-use std::fmt::Display;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::{
+    fmt::Display,
+    borrow::Cow,
+    net::SocketAddr,
+    sync::Arc
+};
 use log::trace;
 
 #[derive(Clone)]

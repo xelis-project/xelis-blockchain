@@ -1,4 +1,18 @@
-use crate::{crypto::hash::{Hash, Hashable}, core::{block::CompleteBlock, transaction::Transaction, serializer::Serializer, reader::{ReaderError, Reader}, writer::Writer}, p2p::error::P2pError};
+use xelis_common::{
+    crypto::hash::{
+        Hash,
+        Hashable
+    },
+    block::CompleteBlock,
+    transaction::Transaction,
+    serializer::{
+        Serializer,
+        ReaderError,
+        Reader,
+        Writer
+    },
+};
+use crate::p2p::error::P2pError;
 use std::borrow::Cow;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

@@ -1,11 +1,12 @@
-use crate::config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT};
+use xelis_common::{
+    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT},
+    serializer::{Writer, Serializer},
+    crypto::hash::{Hashable, Hash},
+    block::{CompleteBlock, Block},
+    globals::get_current_time
+};
 use crate::core::blockchain::Blockchain;
 use crate::core::error::BlockchainError;
-use crate::core::serializer::Serializer;
-use crate::core::block::{CompleteBlock, Block};
-use crate::globals::get_current_time;
-use crate::crypto::hash::{Hashable, Hash};
-use crate::core::writer::Writer;
 use crate::p2p::connection::ConnectionMessage;
 use crate::p2p::packet::chain::CommonPoint;
 use super::packet::chain::{BlockId, ChainRequest, ChainResponse};

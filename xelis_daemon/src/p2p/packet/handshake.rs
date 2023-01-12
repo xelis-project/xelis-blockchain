@@ -1,10 +1,11 @@
-use crate::globals::{ip_from_bytes, ip_to_bytes};
-use crate::core::reader::{Reader, ReaderError};
+use xelis_common::{
+    serializer::{Serializer, Writer, ReaderError, Reader},
+    globals::{ip_from_bytes, ip_to_bytes},
+    crypto::hash::Hash
+};
+
 use crate::p2p::peer_list::SharedPeerList;
-use crate::core::serializer::Serializer;
 use crate::p2p::connection::Connection;
-use crate::core::writer::Writer;
-use crate::crypto::hash::Hash;
 use crate::p2p::peer::Peer;
 use std::collections::HashSet;
 use std::fmt::{Display, Error, Formatter};

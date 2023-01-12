@@ -1,12 +1,17 @@
-use crate::crypto::hash::Hash;
-use crate::crypto::key::PublicKey;
-use super::serializer::Serializer;
-use super::storage::Storage;
-use super::transaction::Transaction;
+use crate::storage::Storage;
+
 use super::error::BlockchainError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use log::warn;
+use xelis_common::{
+    crypto::{
+        hash::Hash,
+        key::PublicKey
+    },
+    transaction::Transaction,
+    serializer::Serializer
+};
 
 #[derive(serde::Serialize)]
 pub struct SortedTx {

@@ -1,8 +1,8 @@
 use crate::core::error::BlockchainError;
-use crate::core::reader::ReaderError;
-use crate::crypto::hash::Hash;
 use tokio::sync::mpsc::error::SendError as TSendError;
 use tokio::sync::oneshot::error::RecvError;
+use xelis_common::crypto::hash::Hash;
+use xelis_common::serializer::ReaderError;
 use std::array::TryFromSliceError;
 use std::net::AddrParseError;
 use tokio::time::error::Elapsed;

@@ -1,3 +1,5 @@
+pub mod defaults;
+
 use crate::crypto::hash::Hash;
 use std::fmt::{Display, Error, Formatter};
 use std::convert::TryInto;
@@ -248,16 +250,5 @@ pub trait Serializer {
             },
             Err(_) => Err(ReaderError::InvalidHex)
         }
-    }
-}
-
-// Implement Serializer for u64
-impl Serializer for u64 {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u64(self);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(reader.read_u64()?)
     }
 }

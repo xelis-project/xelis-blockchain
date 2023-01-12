@@ -3,17 +3,17 @@ pub mod chain;
 pub mod ping;
 pub mod object;
 
-use crate::core::reader::{Reader, ReaderError};
-use crate::core::serializer::Serializer;
-use crate::core::block::Block;
-use crate::core::writer::Writer;
-use crate::crypto::hash::Hash;
 use self::object::{ObjectRequest, ObjectResponse};
 use self::chain::{ChainRequest, ChainResponse};
 use self::handshake::Handshake;
 use self::ping::Ping;
 use std::borrow::Cow;
 use log::{trace, error};
+use xelis_common::{
+    serializer::{Serializer, Reader, ReaderError, Writer},
+    block::Block,
+    crypto::hash::Hash
+};
 
 // All registered packet ids
 const HANDSHAKE_ID: u8 = 0;

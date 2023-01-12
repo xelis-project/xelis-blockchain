@@ -1,17 +1,18 @@
-use crate::config::STABLE_HEIGHT_LIMIT;
-use crate::core::immutable::Immutable;
-use crate::crypto::key::PublicKey;
-use crate::crypto::hash::Hash;
-use super::reader::{Reader, ReaderError};
-use super::block::{CompleteBlock, Block};
-use super::transaction::Transaction;
-use super::serializer::Serializer;
-use super::error::{BlockchainError, DiskContext};
-use super::writer::Writer;
-use std::collections::{HashSet, HashMap};
-use std::hash::Hash as StdHash;
+use crate::core::error::{BlockchainError, DiskContext};
+use xelis_common::{
+    serializer::{Writer, Reader, ReaderError, Serializer},
+    crypto::{key::PublicKey, hash::Hash},
+    config::STABLE_HEIGHT_LIMIT,
+    immutable::Immutable,
+    transaction::Transaction,
+    block::{Block, CompleteBlock},
+};
+use std::{
+    collections::{HashSet, HashMap},
+    hash::Hash as StdHash,
+    sync::Arc
+};
 use tokio::sync::Mutex;
-use std::sync::Arc;
 use lru::LruCache;
 use sled::Tree;
 use log::{debug, trace};
@@ -21,28 +22,6 @@ const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
 const TOP_HEIGHT: &[u8; 4] = b"TOPH";
 
 pub type Tips = HashSet<Hash>;
-
-impl Serializer for Tips {
-    fn write(&self, writer: &mut Writer) {
-        for hash in self {
-            writer.write_hash(hash);
-        }
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let total_size = reader.total_size();
-        if total_size % 32 != 0 {
-            return Err(ReaderError::InvalidSize)
-        }
-
-        let count = total_size % 32;
-        let mut tips = HashSet::with_capacity(count);
-        for _ in 0..=count {
-            tips.insert(reader.read_hash()?);
-        }
-        Ok(tips)
-    }
-}
 
 pub struct Storage {
     transactions: Tree, // all txs stored on disk

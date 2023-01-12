@@ -1,6 +1,8 @@
-use crate::config::PEER_TIMEOUT_REQUEST_OBJECT;
-use crate::core::serializer::Serializer;
-use crate::crypto::hash::Hash;
+use xelis_common::{
+    crypto::hash::Hash,
+    config::PEER_TIMEOUT_REQUEST_OBJECT,
+    serializer::Serializer
+};
 use super::packet::object::{ObjectRequest, OwnedObjectResponse};
 use super::peer_list::SharedPeerList;
 use super::connection::{Connection, ConnectionMessage};

@@ -1,19 +1,18 @@
-use crate::config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, FEE_PER_KB, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT};
-use crate::core::immutable::Immutable;
-use crate::crypto::address::Address;
-use crate::crypto::hash::{Hash, Hashable};
-use crate::globals::get_current_timestamp;
-use crate::crypto::key::PublicKey;
+use anyhow::Error;
+use xelis_common::{
+    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT},
+    crypto::{key::PublicKey, address::Address, hash::{Hashable, Hash}},
+    difficulty::{check_difficulty, calculate_difficulty},
+    transaction::{Transaction, TransactionType},
+    globals::get_current_timestamp,
+    block::{CompleteBlock, Block},
+    immutable::Immutable,
+    serializer::Serializer
+};
 use crate::p2p::server::P2pServer;
 use crate::rpc::RpcServer;
 use crate::rpc::websocket::NotifyEvent;
-use super::difficulty::{check_difficulty, calculate_difficulty};
-use super::block::{Block, CompleteBlock};
-use super::mempool::Mempool;
-use super::{transaction::*, blockdag};
-use super::serializer::Serializer;
-use super::error::BlockchainError;
-use super::storage::Storage;
+use crate::storage::Storage;
 use std::sync::atomic::{Ordering, AtomicU64};
 use std::collections::{HashMap, HashSet, VecDeque};
 use async_recursion::async_recursion;
@@ -22,6 +21,10 @@ use log::{info, error, debug, warn};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use rand::Rng;
+
+use super::blockdag;
+use super::error::BlockchainError;
+use super::mempool::Mempool;
 
 #[derive(Debug, clap::StructOpt)]
 pub struct Config {
@@ -59,7 +62,7 @@ pub struct Blockchain {
 }
 
 impl Blockchain {
-    pub async fn new(config: Config) -> Result<Arc<Self>, BlockchainError> {
+    pub async fn new(config: Config) -> Result<Arc<Self>, Error> {
         let dev_address = Address::from_string(&DEV_ADDRESS.to_owned())?;
         let use_cache = if config.cache_size > 0 {
             Some(config.cache_size)

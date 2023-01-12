@@ -3,18 +3,6 @@
 members = [
     "xelis_common",
     "xelis_wallet",
-    "xelis_miner"
+    "xelis_miner",
+    "xelis_daemon"
 ]
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-# [dependencies]
-# clap = { version = "3.1.18", features = ["derive"] }
-# bytes = "1"
-# actix = "0.13.0"
-# actix-web = "4"
-# actix-web-actors = "4"
-# anyhow = "1.0.57"
-# sled = "0.34.7"
-# lru = "0.7.8"
-# async-recursion = "1.0.0"
