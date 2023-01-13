@@ -123,6 +123,7 @@ This simple system prevent someone to read / use the data without the necessary 
 
 ## API
 
+### JSON-RPC
 Http Server run using Actix Framework and serve the JSON-RPC API and WebSocket.
 
 JSON-RPC methods available:
@@ -146,12 +147,46 @@ JSON-RPC methods available:
 - `get_tips`
 - `get_dag_order`
 
-WebSocket allow JSON-RPC call and any app to be notified with `subscribe` method when a specific event happens on the daemon.
-Events currently available are:
+For a much more detailed API, see the API documentation [here](API.md).
+
+### WebSocket
+
+WebSocket allow JSON-RPC call and any app to be notified when a specific event happens on the daemon.
+It is running on `/ws` route on same RPC server address.
+
+Example to subscribe to a registered event in the WebSocket connection:
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "subscribe",
+    "params": {
+        "notify": "NewBlock"
+    }
+}
+```
+
+You can notify to several events, just do a request for each event you want.
+The daemon will send you every events happening as long as you don't unsubscribe or close the WebSocket.
+
+Example to unsubscribe to a specific event:
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "subscribe",
+    "params": {
+        "notify": "NewBlock"
+    }
+}
+```
+
+Events currently available to subscribe are:
 - `NewBlock`: when a new block is accepted by chain
 - `TransactionAddedInMempool`: when a new valid transaction is added in mempool
-
-For a much more detailed API, see the API documentation [here](API.md).
+- `TransactionExecuted`: when a transaction has been included in a valid block & executed on chain
+- `TransactionSCResult`: when a valid TX SC Call hash has been executed by chain
+- `NewAsset`: when a new asset has been registered
 
 ## XELIS Message
 
