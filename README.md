@@ -168,13 +168,13 @@ The channel price is determined by the maximum message size set, and the time it
 Building this project requires a working [Rust](https://rustup.rs) (stable) toolchain.
 
 It's expected to be cross-platform and guaranteed to work on Linux, Windows, MacOS platforms.
+
+Go to one of following folder you want to build from source: `xelis_daemon`, `xelis_miner` or `xelis_wallet`.
 To build a release (optimized) version:
-`cargo build --release --bin daemon`
+`cargo build --release`
 
 You can also build a debug version (just remove `--release` option) or run it directly from cargo:
-`cargo run --bin daemon`
-
-You can also build `wallet` or `miner` by replacing `daemon` word by it in previous commands.
+`cargo run`
 
 ## Dev Fee
 
