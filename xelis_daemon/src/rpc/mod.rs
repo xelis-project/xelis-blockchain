@@ -1,20 +1,24 @@
 pub mod rpc;
 pub mod websocket;
+pub mod getwork_server;
 
 use crate::core::{error::BlockchainError, blockchain::Blockchain};
 use crate::rpc::websocket::WebSocketHandler;
 use actix::{Addr, MailboxError};
+use actix_web::web::Path;
 use actix_web::{get, post, web::{self, Payload}, error::Error, App, HttpResponse, HttpServer, Responder, dev::ServerHandle, ResponseError, HttpRequest};
 use actix_web_actors::ws::WsResponseBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, Error as SerdeError, json};
 use tokio::sync::Mutex;
 use xelis_common::config;
+use xelis_common::crypto::address::Address;
 use xelis_common::serializer::ReaderError;
 use std::{sync::Arc, collections::{HashMap, HashSet}, pin::Pin, future::Future, fmt::{Display, Formatter}};
-use log::{trace, info};
+use log::{trace, info, debug};
 use anyhow::Error as AnyError;
 use thiserror::Error;
+use self::getwork_server::{GetWorkWebSocketHandler, SharedGetWorkServer};
 use self::websocket::{NotifyEvent, Response};
 
 pub type SharedRpcServer = web::Data<Arc<RpcServer>>;
@@ -121,7 +125,8 @@ pub struct RpcServer {
     handle: Mutex<Option<ServerHandle>>, // keep the server handle to stop it gracefully
     methods: HashMap<String, Handler>, // all rpc methods registered
     blockchain: Arc<Blockchain>, // pointer to blockchain data
-    clients: Mutex<HashMap<Addr<WebSocketHandler>, HashSet<NotifyEvent>>> // all websocket clients connected with subscriptions linked
+    clients: Mutex<HashMap<Addr<WebSocketHandler>, HashSet<NotifyEvent>>>, // all websocket clients connected with subscriptions linked
+    getwork: Option<SharedGetWorkServer>
 }
 
 impl RpcServer {
@@ -130,6 +135,7 @@ impl RpcServer {
             handle: Mutex::new(None),
             methods: HashMap::new(),
             clients: Mutex::new(HashMap::new()),
+            getwork: None,
             blockchain
         };
         rpc::register_methods(&mut server);
@@ -173,7 +179,6 @@ impl RpcServer {
     }
 
     pub async fn execute_method(&self, mut request: RpcRequest) -> Result<Value, RpcResponseError> {
-
         let handler = match self.methods.get(&request.method) {
             Some(handler) => handler,
             None => return Err(RpcResponseError::new(request.id, RpcError::MethodNotFound(request.method)))
@@ -251,4 +256,33 @@ async fn ws_endpoint(server: SharedRpcServer, request: HttpRequest, stream: Payl
     server.add_client(addr).await;
 
     Ok(response)
+}
+
+#[get("/getwork/{address}/{worker}")]
+async fn getwork_endpoint(server: SharedRpcServer, request: HttpRequest, stream: Payload, path: Path<(String, String)>) -> Result<HttpResponse, Error> {
+    match &server.getwork {
+        Some(getwork) => {
+            let (addr, worker) = path.into_inner();
+            if worker.len() > 32 {
+                return Ok(HttpResponse::BadRequest().reason("Worker name must be less or equal to 32 chars").finish())
+            }
+
+            let address: Address<'_> = match Address::from_string(&addr) {
+                Ok(address) => address,
+                Err(e) => {
+                    debug!("Invalid miner address for getwork server: {}", e);
+                    return Ok(HttpResponse::BadRequest().reason("Invalid miner address for getwork server").finish())
+                }
+            };
+            if !address.is_normal() {
+                return Ok(HttpResponse::BadRequest().reason("Address should be in normal format").finish())
+            }
+            let key = address.to_public_key();
+            let (addr, response) = WsResponseBuilder::new(GetWorkWebSocketHandler::new(getwork.clone()), &request, stream).start_with_addr()?;
+            trace!("New miner connected to GetWork WebSocket: {:?}", addr);
+            getwork.add_miner(addr, key, worker).await;
+            Ok(response)
+        },
+        None => Ok(HttpResponse::NotFound().reason("GetWork server is not enabled").finish()) // getwork server is not started
+    }
 }
