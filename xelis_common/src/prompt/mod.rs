@@ -84,7 +84,6 @@ impl Prompt {
             }
         });
 
-        // TODO break loop when command manager is stopped
         loop {
             tokio::select! {
                 res = tokio::signal::ctrl_c() => {
