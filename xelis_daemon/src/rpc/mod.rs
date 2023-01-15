@@ -234,6 +234,10 @@ impl RpcServer {
         }
         Ok(())
     }
+
+    pub fn getwork_server(&self) -> &Option<SharedGetWorkServer> {
+        &self.getwork
+    }
 }
 
 #[get("/")]

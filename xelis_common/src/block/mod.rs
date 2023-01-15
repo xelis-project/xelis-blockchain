@@ -4,8 +4,8 @@ use crate::immutable::Immutable;
 use crate::transaction::Transaction;
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
 
-const EXTRA_NONCE_SIZE: usize = 32;
-const BLOCK_WORK_SIZE: usize = 160;
+pub const EXTRA_NONCE_SIZE: usize = 32;
+pub const BLOCK_WORK_SIZE: usize = 160;
 
 #[derive(serde::Serialize, Clone)]
 pub struct Block {
@@ -37,6 +37,14 @@ impl Block {
             miner,
             txs_hashes
         }
+    }
+
+    pub fn set_miner(&mut self, key: PublicKey) {
+        self.miner = key;
+    }
+
+    pub fn set_extra_nonce(&mut self, values: [u8; EXTRA_NONCE_SIZE]) {
+        self.extra_nonce = values;
     }
 
     pub fn get_height(&self) -> u64 {

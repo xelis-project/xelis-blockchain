@@ -946,6 +946,16 @@ impl Blockchain {
 
         // broadcast to websocket new block
         if let Some(rpc) = self.rpc.lock().await.as_ref() {
+            // if we have a getwork server, notify miners
+            if let Some(getwork) = rpc.getwork_server() {
+                let getwork = getwork.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = getwork.notify_new_job().await {
+                        debug!("Error while notifying new job to miners: {}", e);
+                    }
+                });
+            }
+
             let rpc = rpc.clone();
             // don't block mutex/lock more than necessary, we move it in another task
             tokio::spawn(async move {

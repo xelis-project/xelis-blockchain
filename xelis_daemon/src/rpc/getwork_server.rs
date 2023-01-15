@@ -3,19 +3,30 @@ use actix::{Actor, AsyncContext, Handler, Message as TMessage, StreamHandler, Ad
 use actix_web::web::Data;
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
 use log::{debug, warn};
+use rand::{rngs::OsRng, RngCore};
+use serde::Serialize;
+use serde_json::json;
 use tokio::sync::Mutex;
-use xelis_common::{crypto::key::PublicKey, globals::get_current_timestamp};
+use xelis_common::{crypto::key::PublicKey, globals::get_current_timestamp, api::daemon::GetBlockTemplateResult, serializer::Serializer, block::EXTRA_NONCE_SIZE};
 use crate::rpc::{RpcResponseError, RpcError};
 
 use super::SharedRpcServer;
 
 pub type SharedGetWorkServer = Data<Arc<GetWorkServer>>;
-pub struct Response; // TODO Notify, BlockAccepted, BlockRejected
+
+#[derive(Serialize)]
+pub enum Response {
+    NewJob(GetBlockTemplateResult),
+    BlockAccepted,
+    BlockRejected
+}
+
 impl TMessage for Response {
     type Result = Result<(), RpcError>;
 }
 
 pub struct Miner {
+    first_seen: u128, // timestamp of first connection
     key: PublicKey, // public key of account (address)
     name: String, // worker name
     blocks_found: usize, // blocks found since he is connected
@@ -24,10 +35,15 @@ pub struct Miner {
 impl Miner {
     pub fn new(key: PublicKey, name: String) -> Self {
         Self {
+            first_seen: get_current_timestamp(),
             key,
             name,
             blocks_found: 0
         }
+    }
+
+    pub fn first_seen(&self) -> u128 {
+        self.first_seen
     }
 
     pub fn get_public_key(&self) -> &PublicKey {
@@ -92,7 +108,8 @@ impl Handler<Response> for GetWorkWebSocketHandler {
     type Result = Result<(), RpcError>;
 
     fn handle(&mut self, msg: Response, ctx: &mut Self::Context) -> Self::Result {
-        todo!("send response to client")
+        ctx.text(json!(msg).to_string());
+        Ok(())
     }
 }
 
@@ -123,13 +140,22 @@ impl GetWorkServer {
     // each miner have his own task so nobody wait on other
     pub async fn notify_new_job(&self) -> Result<(), RpcError> {
         let blockchain = self.server.get_blockchain();
-        // TODO build a generic block template and replace public key by the one of each miner + random nonce
-
-        let mut miners = self.miners.lock().await;
-        for (addr, miner) in miners.iter_mut() {
+        let (mut block, difficulty) = {
+            let storage = blockchain.get_storage().read().await;
+            let block = blockchain.get_block_template(blockchain.get_dev_address().clone()).await?;
+            let difficulty = blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await?;
+            (block, difficulty)
+        };
+        let miners = self.miners.lock().await;
+        let mut extra_nonces = [0u8; EXTRA_NONCE_SIZE];
+        for (addr, miner) in miners.iter() {
             let addr = addr.clone();
+            OsRng.fill_bytes(&mut extra_nonces);
+            block.set_miner(miner.get_public_key().clone());
+            block.set_extra_nonce(extra_nonces);
+            let template = block.to_hex();
             tokio::spawn(async move {
-                match addr.send(Response).await { // TODO send block template
+                match addr.send(Response::NewJob(GetBlockTemplateResult { template, difficulty })).await {
                    Ok(request) => {
                     if let Err(e) = request {
                         warn!("Error while sending new job to addr {:?}: {}", addr, e);
