@@ -8,6 +8,9 @@ edition = "2021"
 [dependencies]
 xelis_common = { path = "../xelis_common" }
 clap = { version = "3.1.18", features = ["derive"] }
+num_cpus = "1.15.0"
+tokio-tungstenite = "0.18.0"
+futures-util = "0.3.25"
 
 # Common dependencies
 log = "0.4"
