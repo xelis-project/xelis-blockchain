@@ -3,6 +3,7 @@ pub mod websocket;
 pub mod getwork_server;
 
 use crate::core::{error::BlockchainError, blockchain::Blockchain};
+use crate::rpc::getwork_server::GetWorkServer;
 use crate::rpc::websocket::WebSocketHandler;
 use actix::{Addr, MailboxError};
 use actix_web::web::Path;
@@ -130,12 +131,19 @@ pub struct RpcServer {
 }
 
 impl RpcServer {
-    pub async fn new(bind_address: String, blockchain: Arc<Blockchain>) -> Result<Arc<Self>, BlockchainError> {
+    pub async fn new(bind_address: String, blockchain: Arc<Blockchain>, disable_getwork_server: bool) -> Result<Arc<Self>, BlockchainError> {
+        let getwork: Option<SharedGetWorkServer> = if !disable_getwork_server {
+            info!("Creating GetWork server...");
+            Some(Arc::new(GetWorkServer::new(blockchain.clone())))
+        } else {
+            None
+        };
+
         let mut server = Self {
             handle: Mutex::new(None),
             methods: HashMap::new(),
             clients: Mutex::new(HashMap::new()),
-            getwork: None,
+            getwork,
             blockchain
         };
         rpc::register_methods(&mut server);
@@ -149,12 +157,16 @@ impl RpcServer {
                 .service(index)
                 .service(json_rpc)
                 .service(ws_endpoint)
+                .service(getwork_endpoint)
         })
         .disable_signals()
         .bind(&bind_address)?
         .run();
-        let handle = server.handle();
-        *rpc_server.handle.lock().await = Some(handle);
+        
+        {
+            let handle = server.handle();
+            *rpc_server.handle.lock().await = Some(handle);
+        }
 
         // start the http server
         info!("RPC server will listen on: http://{}", bind_address);

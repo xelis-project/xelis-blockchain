@@ -1,6 +1,5 @@
 use std::{sync::Arc, collections::HashMap};
 use actix::{Actor, AsyncContext, Handler, Message as TMessage, StreamHandler, Addr};
-use actix_web::web::Data;
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
 use log::{debug, warn};
 use rand::{rngs::OsRng, RngCore};
@@ -8,11 +7,9 @@ use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 use xelis_common::{crypto::key::PublicKey, globals::get_current_timestamp, api::daemon::GetBlockTemplateResult, serializer::Serializer, block::EXTRA_NONCE_SIZE};
-use crate::rpc::{RpcResponseError, RpcError};
+use crate::{rpc::{RpcResponseError, RpcError}, core::blockchain::Blockchain};
 
-use super::SharedRpcServer;
-
-pub type SharedGetWorkServer = Data<Arc<GetWorkServer>>;
+pub type SharedGetWorkServer = Arc<GetWorkServer>;
 
 #[derive(Serialize)]
 pub enum Response {
@@ -115,14 +112,14 @@ impl Handler<Response> for GetWorkWebSocketHandler {
 
 pub struct GetWorkServer {
     miners: Mutex<HashMap<Addr<GetWorkWebSocketHandler>, Miner>>,
-    server: SharedRpcServer
+    blockchain: Arc<Blockchain>
 }
 
 impl GetWorkServer {
-    pub fn new(server: SharedRpcServer) -> Self {
+    pub fn new(blockchain: Arc<Blockchain>) -> Self {
         Self {
             miners: Mutex::new(HashMap::new()),
-            server
+            blockchain
         }
     }
 
@@ -139,11 +136,10 @@ impl GetWorkServer {
     // notify every miners connected to the getwork server
     // each miner have his own task so nobody wait on other
     pub async fn notify_new_job(&self) -> Result<(), RpcError> {
-        let blockchain = self.server.get_blockchain();
         let (mut block, difficulty) = {
-            let storage = blockchain.get_storage().read().await;
-            let block = blockchain.get_block_template(blockchain.get_dev_address().clone()).await?;
-            let difficulty = blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await?;
+            let storage = self.blockchain.get_storage().read().await;
+            let block = self.blockchain.get_block_template(self.blockchain.get_dev_address().clone()).await?;
+            let difficulty = self.blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await?;
             (block, difficulty)
         };
         let miners = self.miners.lock().await;
