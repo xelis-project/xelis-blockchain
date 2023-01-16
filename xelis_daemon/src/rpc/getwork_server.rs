@@ -1,12 +1,13 @@
-use std::{sync::Arc, collections::HashMap};
+use std::{sync::Arc, collections::HashMap, fmt::Display};
 use actix::{Actor, AsyncContext, Handler, Message as TMessage, StreamHandler, Addr};
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
-use log::{debug, warn};
+use anyhow::Context;
+use log::{debug, warn, error};
 use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
-use xelis_common::{crypto::key::PublicKey, globals::get_current_timestamp, api::daemon::GetBlockTemplateResult, serializer::Serializer, block::EXTRA_NONCE_SIZE};
+use xelis_common::{crypto::key::PublicKey, globals::get_current_timestamp, api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, serializer::Serializer, block::{EXTRA_NONCE_SIZE, Block}};
 use crate::{rpc::{RpcResponseError, RpcError}, core::blockchain::Blockchain};
 
 pub type SharedGetWorkServer = Arc<GetWorkServer>;
@@ -56,6 +57,12 @@ impl Miner {
     }
 }
 
+impl Display for Miner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Miner[address={}, name={}]", self.key.to_address(), self.name)        
+    }
+}
+
 pub struct GetWorkWebSocketHandler {
     server: SharedGetWorkServer
 }
@@ -77,7 +84,26 @@ impl StreamHandler<Result<Message, ProtocolError>> for GetWorkWebSocketHandler {
         match msg {
             Ok(Message::Text(text)) => {
                 let address = ctx.address();
-                // TODO read submitted block
+                let template: SubmitBlockParams = match serde_json::from_slice(text.as_bytes()) {
+                    Ok(template) => template,
+                    Err(e) => {
+                        debug!("Error while decoding message from {:?}: {}", address, e);
+                        return;
+                    }
+                };
+                let server = self.server.clone();
+                let fut = async move {
+                    let response = if let Err(e) = server.handle_block_for(&address, template).await {
+                        debug!("Error while handling new job from address: {:?}: {}", address, e);
+                        Response::BlockRejected
+                    } else {
+                        Response::BlockAccepted
+                    };
+                    if let Err(e) = address.send(response).await {
+                        error!("Error while sending block rejected response: {}", e);
+                    }
+                };
+                ctx.wait(actix::fut::wrap_future(fut));
             },
             Ok(Message::Close(reason)) => {
                 ctx.close(reason);
@@ -125,7 +151,32 @@ impl GetWorkServer {
 
     pub async fn add_miner(&self, addr: Addr<GetWorkWebSocketHandler>, key: PublicKey, worker: String) {
         let mut miners = self.miners.lock().await;
-        miners.insert(addr, Miner::new(key, worker));
+        let miner = Miner::new(key.clone(), worker);
+        debug!("Adding new miner to GetWork server: {}", miner);
+        miners.insert(addr.clone(), miner);
+
+        // notify the new miner so he can work ASAP
+        let (template, difficulty) = {
+            let storage = self.blockchain.get_storage().read().await;
+            let block = match self.blockchain.get_block_template(key).await {
+                Ok(block) => block,
+                Err(e) => {
+                    error!("Error while generating block template: {}", e);
+                    return;
+                }
+            };
+            let difficulty = match self.blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await {
+                Ok(difficulty) => difficulty,
+                Err(e) => {
+                    error!("Error while calculating difficulty at tips for block template: {}", e);
+                    return;
+                }
+            };
+            (block.to_hex(), difficulty)
+        };
+        if let Err(e) = addr.send(Response::NewJob(GetBlockTemplateResult { template, difficulty })).await {
+            error!("Error while sending new job to new miner: {}", e);
+        }
     }
 
     pub async fn delete_miner(&self, addr: &Addr<GetWorkWebSocketHandler>) {
@@ -133,6 +184,17 @@ impl GetWorkServer {
         miners.remove(addr);
     }
 
+    pub async fn handle_block_for(&self, addr: &Addr<GetWorkWebSocketHandler>, template: SubmitBlockParams) -> Result<(), RpcError> {
+        let mut miners = self.miners.lock().await;
+        let miner = miners.get_mut(addr).context("Unregistered miner found, cannot handle this block")?;
+        let block = Block::from_hex(template.block_template)?;
+        debug!("Handle job found by {} at height {}", miner, block.get_height());
+
+        let complete_block = self.blockchain.build_complete_block_from_block(block).await?;
+        self.blockchain.add_new_block(complete_block, true).await?;
+        miner.blocks_found += 1;
+        Ok(())
+    }
     // notify every miners connected to the getwork server
     // each miner have his own task so nobody wait on other
     pub async fn notify_new_job(&self) -> Result<(), RpcError> {
