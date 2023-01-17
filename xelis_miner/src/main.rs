@@ -2,9 +2,10 @@ pub mod config;
 
 use std::{time::Duration, sync::Arc};
 use crate::config::DEFAULT_DAEMON_ADDRESS;
-use futures_util::StreamExt;
+use futures_util::{StreamExt, SinkExt};
+use serde::{Serialize, Deserialize};
 use tokio::{sync::{broadcast, mpsc}, select};
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 use xelis_common::{
     block::{Block, EXTRA_NONCE_SIZE},
     serializer::Serializer,
@@ -50,6 +51,13 @@ enum ThreadNotification {
     Exit
 }
 
+#[derive(Serialize, Deserialize)]
+pub enum SocketMessage {
+    NewJob(GetBlockTemplateResult),
+    BlockAccepted,
+    BlockRejected
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
@@ -77,7 +85,7 @@ async fn main() -> Result<()> {
     info!("Total threads to use: {}", threads);
     
     if config.num_threads != 0 && threads as usize != threads_count {
-        warn!("Attention, the number of threads used may not be optimal, recommended is: {}", threads);
+        warn!("Attention, the number of threads used may not be optimal, recommended is: {}", threads_count);
     }
     // TODO show recommended threads count
 
@@ -93,16 +101,20 @@ async fn main() -> Result<()> {
     }
 
     // start communication task
-    let task = tokio::spawn(communication_task(config.daemon_address, sender.clone(), block_receiver, address, config.worker));
+    let mut task = tokio::spawn(communication_task(config.daemon_address, sender.clone(), block_receiver, address, config.worker));
 
     // run prompt until user exit
-    run_prompt(prompt).await?;
+    select! {
+        _ = run_prompt(prompt) => {
+            // stop the communication task
+            task.abort();
 
-    // stop the communication task
-    task.abort();
-    // send exit command to all threads to stop
-    if let Err(_) = sender.send(ThreadNotification::Exit) {
-        debug!("Error while sending exit message to threads");
+            // send exit command to all threads to stop
+            if let Err(_) = sender.send(ThreadNotification::Exit) {
+                debug!("Error while sending exit message to threads");
+            }
+        },
+        _ = &mut task => {}
     }
 
     Ok(())
@@ -129,32 +141,67 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
         }
     };
     info!("Connected successfully to {}", daemon_address);
-    let (write, read) = client.split();
-    read.for_each(|message| async {
-        match message {
-            Ok(message) => {
-                let text = message.into_text().unwrap();
-                warn!("{}", text);
-                // {"NewJob":{"difficulty":150000,"template":"aaa"}}
-            },
-            Err(e) => {
-                error!("Error while reading message from {}: {}", daemon_address, e);
-            }
-        };
-    }).await;
-
-    // TODO tokio select! with websocket from node
+    let (mut write, mut read) = client.split();
     loop {
         select! {
-            Some(block) = block_receiver.recv() => {
-                /*match client.call_with::<SubmitBlockParams, Value>("submit_block", &SubmitBlockParams { block_template: block.to_hex() }) {
-                    Ok(_) => {
-                        info!("Block at height {} was successfully accepted!", block.get_height());
-                    }
+            Some(message) = read.next() => { // read all messages from daemon
+                let message = match message {
+                    Ok(message) => message,
                     Err(e) => {
-                        error!("Error while adding new block: {:?}", e);
+                        error!("Error while reading message from WebSocket: {}", e);
+                        return;
                     }
-                };*/
+                };
+
+                match message {
+                    Message::Text(text) => {
+                        warn!("new message from daemon: {}", text);
+                        match serde_json::from_slice::<SocketMessage>(text.as_bytes()) {
+                            Ok(message) => match message {
+                                SocketMessage::NewJob(job) => {
+                                    info!("New job received from daemon: difficulty = {}", job.difficulty);
+                                    match Block::from_hex(job.template) {
+                                        Ok(block) => {
+                                            let difficulty = job.difficulty;
+                                            if let Err(e) = job_sender.send(ThreadNotification::NewJob(block, difficulty)) {
+                                                error!("Error while sending new job to threads: {}", e);
+                                            }
+                                        },
+                                        Err(_) => {
+                                            error!("Error while decoding new job received from daemon");
+                                        }
+                                    };
+                                },
+                                SocketMessage::BlockAccepted => {
+                                    info!("Block submitted has been accepted by network !")
+                                },
+                                SocketMessage::BlockRejected => {
+                                    warn!("Block submitted has been rejected by network !");
+                                }
+                            },
+                            Err(e) => {
+                                error!("Error while decoding message from WebSocket: {}", e);
+                            }
+                        }
+                    },
+                    Message::Close(reason) => {
+                        let reason: String = if let Some(reason) = reason {
+                            reason.to_string()
+                        } else {
+                            "No reason".into()
+                        };
+                        warn!("Daemon has closed the WebSocket connection with us: {}", reason);
+                    },
+                    _ => {
+                        warn!("Unexpected message from WebSocket");
+                    }
+                };
+            },
+            Some(block) = block_receiver.recv() => { // send all valid blocks found to the daemon
+                let submit = serde_json::json!(SubmitBlockParams { block_template: block.to_hex() }).to_string();
+                if let Err(e) = write.send(Message::Text(submit)).await {
+                    error!("Error while sending the block found to the daemon: {}", e);
+                }
             }
         }
     }
