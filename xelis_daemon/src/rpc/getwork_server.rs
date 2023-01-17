@@ -83,6 +83,7 @@ impl StreamHandler<Result<Message, ProtocolError>> for GetWorkWebSocketHandler {
     fn handle(&mut self, msg: Result<Message, ProtocolError>, ctx: &mut Self::Context) {
         match msg {
             Ok(Message::Text(text)) => {
+                debug!("New message incoming from miner");
                 let address = ctx.address();
                 let template: SubmitBlockParams = match serde_json::from_slice(text.as_bytes()) {
                     Ok(template) => template,
@@ -91,16 +92,11 @@ impl StreamHandler<Result<Message, ProtocolError>> for GetWorkWebSocketHandler {
                         return;
                     }
                 };
+
                 let server = self.server.clone();
                 let fut = async move {
-                    let response = if let Err(e) = server.handle_block_for(&address, template).await {
-                        debug!("Error while handling new job from address: {:?}: {}", address, e);
-                        Response::BlockRejected
-                    } else {
-                        Response::BlockAccepted
-                    };
-                    if let Err(e) = address.send(response).await {
-                        error!("Error while sending block rejected response: {}", e);
+                    if let Err(e) = server.handle_block_for(address, template).await {
+                        debug!("Error while handling new job from miner: {}", e);
                     }
                 };
                 ctx.wait(actix::fut::wrap_future(fut));
@@ -118,6 +114,7 @@ impl StreamHandler<Result<Message, ProtocolError>> for GetWorkWebSocketHandler {
     }
 
     fn finished(&mut self, ctx: &mut Self::Context) {
+        debug!("miner has disconnected");
         let server = self.server.clone();
         let address = ctx.address();
         let fut = async move {
@@ -178,6 +175,7 @@ impl GetWorkServer {
                 };
                 (block.to_hex(), difficulty)
             };
+            debug!("Sending job to new miner");
             if let Err(e) = addr.send(Response::NewJob(GetBlockTemplateResult { template, difficulty })).await {
                 error!("Error while sending new job to new miner: {}", e);
             }
@@ -192,20 +190,38 @@ impl GetWorkServer {
         }
     }
 
-    pub async fn handle_block_for(&self, addr: &Addr<GetWorkWebSocketHandler>, template: SubmitBlockParams) -> Result<(), RpcError> {
-        let mut miners = self.miners.lock().await;
-        let miner = miners.get_mut(addr).context("Unregistered miner found, cannot handle this block")?;
+    pub async fn handle_block_for(&self, addr: Addr<GetWorkWebSocketHandler>, template: SubmitBlockParams) -> Result<(), RpcError> {
         let block = Block::from_hex(template.block_template)?;
-        debug!("Handle job found by {} at height {}", miner, block.get_height());
+        {
+            let mut miners = self.miners.lock().await;
+            let miner = miners.get_mut(&addr).context("Unregistered miner found, cannot handle this block")?;
+            debug!("Handle job found by {} at height {}", miner, block.get_height());
+        }
 
         let complete_block = self.blockchain.build_complete_block_from_block(block).await?;
-        self.blockchain.add_new_block(complete_block, true).await?;
-        miner.blocks_found += 1;
+        let response = match self.blockchain.add_new_block(complete_block, true).await {
+            Ok(_) => Response::BlockAccepted,
+            Err(e) => {
+                debug!("Error while accepting miner block: {}", e);
+                Response::BlockRejected
+            }
+        };
+
+        tokio::spawn(async move {
+            debug!("Sending response to the miner");
+            if let Err(e) = addr.send(response).await {
+                error!("Error while sending block rejected response: {}", e);
+            }
+            debug!("Response sent!");
+        });
+
         Ok(())
     }
+
     // notify every miners connected to the getwork server
     // each miner have his own task so nobody wait on other
-    pub async fn notify_new_job(&self) -> Result<(), RpcError> {
+    pub async fn notify_new_job(&self) -> Result<(), RpcError> {        
+        debug!("Notify all miners for a new job");
         let (mut block, difficulty) = {
             let storage = self.blockchain.get_storage().read().await;
             let block = self.blockchain.get_block_template_for_storage(&storage, self.blockchain.get_dev_address().clone()).await?;
@@ -215,6 +231,7 @@ impl GetWorkServer {
         let miners = self.miners.lock().await;
         let mut extra_nonces = [0u8; EXTRA_NONCE_SIZE];
         for (addr, miner) in miners.iter() {
+            debug!("Notifying {} for new job", miner);
             let addr = addr.clone();
             OsRng.fill_bytes(&mut extra_nonces);
             block.set_miner(miner.get_public_key().clone());
