@@ -134,7 +134,7 @@ impl P2pServer {
             let zelf = Arc::clone(self);
             tokio::spawn(async move {
                 if let Err(e) = zelf.handle_new_connection(connection, false, false).await {
-                    debug!("Error on {}: {}", addr, e);
+                    trace!("Error on {}: {}", addr, e);
                 }
             });
         }
@@ -145,13 +145,13 @@ impl P2pServer {
     // block height and block top hash of this peer (to know if we are on the same chain)
     async fn verify_handshake(&self, mut connection: Connection, handshake: Handshake, out: bool, priority: bool) -> Result<(Peer, Vec<SocketAddr>), P2pError> {
         if *handshake.get_network_id() != NETWORK_ID {
-            debug!("{} has an invalid network id: {:#?}", connection, handshake.get_network_id());
+            trace!("{} has an invalid network id: {:#?}", connection, handshake.get_network_id());
             connection.close().await?;
             return Err(P2pError::InvalidNetworkID);
         }
 
         if self.is_connected_to(&handshake.get_peer_id()).await? {
-            debug!("{} has an already used peer id {}", connection, handshake.get_peer_id());
+            trace!("{} has an already used peer id {}", connection, handshake.get_peer_id());
             connection.close().await?;
             return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }
@@ -254,13 +254,13 @@ impl P2pServer {
         let zelf = Arc::clone(self);
         tokio::spawn(async move {
             if let Err(e) = zelf.connect_to_peer(addr, priority).await {
-                debug!("Error occured on outgoing peer {}: {}", addr, e);
+                trace!("Error occured on outgoing peer {}: {}", addr, e);
             }
         });
     }
 
     async fn connect_to_peer(self: Arc<Self>, addr: SocketAddr, priority: bool) -> Result<(), P2pError> {
-        debug!("Trying to connect to {}", addr);
+        trace!("Trying to connect to {}", addr);
         if self.is_connected_to_addr(&addr).await? {
             return Err(P2pError::PeerAlreadyConnected(format!("{}", addr)));
         }
