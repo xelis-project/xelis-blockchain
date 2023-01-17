@@ -1,6 +1,6 @@
 use crate::core::error::{BlockchainError, DiskContext};
 use xelis_common::{
-    serializer::{Writer, Reader, ReaderError, Serializer},
+    serializer::{Reader, Serializer},
     crypto::{key::PublicKey, hash::Hash},
     config::STABLE_HEIGHT_LIMIT,
     immutable::Immutable,
@@ -180,7 +180,7 @@ impl Storage {
     async fn contains_data<K: Eq + StdHash + Serializer + Clone, V>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<bool, BlockchainError> {
         if let Some(cache) = cache {
             let cache = cache.lock().await;
-            return Ok(cache.contains(key))
+            return Ok(cache.contains(key) || tree.contains_key(&key.to_bytes())?)
         }
 
         Ok(tree.contains_key(&key.to_bytes())?)

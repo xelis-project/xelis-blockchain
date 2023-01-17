@@ -42,10 +42,7 @@ Others objectives in mind are:
 
 - Create a functional wallet (WIP)
 - Include extra fees when sending coins to a not-yet registered address
-- Web Socket for new mining jobs: miner get notified only when the block change.
-- Better CLI daemon
 - CLI Wallet
-- CLI Miner
 - Support of Smart Contracts (xelis-vm)
 - Privacy (through Homomorphic Encryption)
 
@@ -123,6 +120,7 @@ This simple system prevent someone to read / use the data without the necessary 
 
 ## API
 
+### JSON-RPC
 Http Server run using Actix Framework and serve the JSON-RPC API and WebSocket.
 
 JSON-RPC methods available:
@@ -146,12 +144,46 @@ JSON-RPC methods available:
 - `get_tips`
 - `get_dag_order`
 
-WebSocket allow JSON-RPC call and any app to be notified with `subscribe` method when a specific event happens on the daemon.
-Events currently available are:
+For a much more detailed API, see the API documentation [here](API.md).
+
+### WebSocket
+
+WebSocket allow JSON-RPC call and any app to be notified when a specific event happens on the daemon.
+It is running on `/ws` route on same RPC server address.
+
+Example to subscribe to a registered event in the WebSocket connection:
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "subscribe",
+    "params": {
+        "notify": "NewBlock"
+    }
+}
+```
+
+You can notify to several events, just do a request for each event you want.
+The daemon will send you every events happening as long as you don't unsubscribe or close the WebSocket.
+
+Example to unsubscribe to a specific event:
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "subscribe",
+    "params": {
+        "notify": "NewBlock"
+    }
+}
+```
+
+Events currently available to subscribe are:
 - `NewBlock`: when a new block is accepted by chain
 - `TransactionAddedInMempool`: when a new valid transaction is added in mempool
-
-For a much more detailed API, see the API documentation [here](API.md).
+- `TransactionExecuted`: when a transaction has been included in a valid block & executed on chain
+- `TransactionSCResult`: when a valid TX SC Call hash has been executed by chain
+- `NewAsset`: when a new asset has been registered
 
 ## XELIS Message
 
@@ -168,13 +200,18 @@ The channel price is determined by the maximum message size set, and the time it
 Building this project requires a working [Rust](https://rustup.rs) (stable) toolchain.
 
 It's expected to be cross-platform and guaranteed to work on Linux, Windows, MacOS platforms.
+
+### Build from sub project
+Go to one of following folder you want to build from source: `xelis_daemon`, `xelis_miner` or `xelis_wallet`.
 To build a release (optimized) version:
-`cargo build --release --bin daemon`
+`cargo build --release`
+
+### Build from workspace
+To build a version from workspace (parent folder) directly, use the option `--bin` with `xelis_daemon`, `xelis_miner` or `xelis_wallet` as value.
+Example: `cargo build --release --bin xelis_miner`
 
 You can also build a debug version (just remove `--release` option) or run it directly from cargo:
-`cargo run --bin daemon`
-
-You can also build `wallet` or `miner` by replacing `daemon` word by it in previous commands.
+`cargo run`
 
 ## Dev Fee
 

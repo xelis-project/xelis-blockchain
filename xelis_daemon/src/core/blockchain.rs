@@ -49,6 +49,9 @@ pub struct Config {
     /// Set LRUCache size (0 = disabled)
     #[clap(short, long, default_value_t = DEFAULT_CACHE_SIZE)]
     cache_size: usize,
+    /// Disable GetWork Server (WebSocket for miners)
+    #[clap(short = 'g', long)]
+    disable_getwork_server: bool
 }
 
 pub struct Blockchain {
@@ -121,7 +124,7 @@ impl Blockchain {
         // create RPC Server
         {
             info!("Starting RPC server...");
-            match RpcServer::new(config.rpc_bind_address, Arc::clone(&arc)).await {
+            match RpcServer::new(config.rpc_bind_address, Arc::clone(&arc), config.disable_getwork_server).await {
                 Ok(server) => *arc.rpc.lock().await = Some(server),
                 Err(e) => error!("Error while starting RPC server: {}", e)
             };
@@ -553,6 +556,10 @@ impl Blockchain {
         &self.p2p
     }
 
+    pub fn get_rpc(&self) -> &Mutex<Option<Arc<RpcServer>>> {
+        &self.rpc
+    }
+
     pub fn get_dev_address(&self) -> &PublicKey {
         &self.dev_address
     }
@@ -946,6 +953,16 @@ impl Blockchain {
 
         // broadcast to websocket new block
         if let Some(rpc) = self.rpc.lock().await.as_ref() {
+            // if we have a getwork server, notify miners
+            if let Some(getwork) = rpc.getwork_server() {
+                let getwork = getwork.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = getwork.notify_new_job().await {
+                        debug!("Error while notifying new job to miners: {}", e);
+                    }
+                });
+            }
+
             let rpc = rpc.clone();
             // don't block mutex/lock more than necessary, we move it in another task
             tokio::spawn(async move {

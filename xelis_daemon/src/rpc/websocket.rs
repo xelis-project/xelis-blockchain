@@ -96,15 +96,17 @@ impl WebSocketHandler {
 
     pub async fn handle_request(addr: &Addr<WebSocketHandler>, server: SharedRpcServer, body: &[u8]) -> Result<Value, RpcResponseError> {
         let mut request = server.parse_request(body)?;
-        match request.method.as_str() {
-            "subscribe" => {
+        let method = request.method.as_str(); 
+        match method {
+            "subscribe" | "unsubscribe" => {
                 let params: SubscribeParams = serde_json::from_value(request.params.take().unwrap_or(Value::Null)).map_err(|e| RpcResponseError::new(request.id, RpcError::InvalidParams(e)))?;
-                server.subscribe_client_to(addr, params.notify).await.map_err(|e| RpcResponseError::new(request.id, e))?;
-                Ok(Value::Bool(true)) 
-            },
-            "unsubscribe" => {
-                let params: SubscribeParams = serde_json::from_value(request.params.take().unwrap_or(Value::Null)).map_err(|e| RpcResponseError::new(request.id, RpcError::InvalidParams(e)))?;
-                server.unsubscribe_client_from(addr, &params.notify).await.map_err(|e| RpcResponseError::new(request.id, e))?;
+                let res = if method == "subscribe" {
+                    server.subscribe_client_to(addr, params.notify).await
+                } else {
+                    server.unsubscribe_client_from(addr, &params.notify).await
+                };
+                res.map_err(|e| RpcResponseError::new(request.id, e))?;
+
                 Ok(Value::Bool(true)) 
             },
             _ => server.execute_method(request).await
