@@ -180,7 +180,7 @@ impl Storage {
     async fn contains_data<K: Eq + StdHash + Serializer + Clone, V>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<bool, BlockchainError> {
         if let Some(cache) = cache {
             let cache = cache.lock().await;
-            return Ok(cache.contains(key))
+            return Ok(cache.contains(key) || tree.contains_key(&key.to_bytes())?)
         }
 
         Ok(tree.contains_key(&key.to_bytes())?)
