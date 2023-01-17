@@ -5,6 +5,8 @@ pub mod core;
 
 use fern::colors::Color;
 use log::{info, error};
+use p2p::server::P2pServer;
+use rpc::getwork_server::SharedGetWorkServer;
 use xelis_common::{
     prompt::{argument::{ArgumentManager, Arg, ArgType}, Prompt, command::{CommandError, CommandManager, Command}, PromptError},
     config::VERSION
@@ -49,19 +51,34 @@ async fn main() -> Result<()> {
 
 async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
     let command_manager = create_command_manager();
+
+    let p2p: Option<Arc<P2pServer>> = match blockchain.get_p2p().lock().await.as_ref() {
+        Some(p2p) => Some(p2p.clone()),
+        None => None
+    };
+    let getwork: Option<SharedGetWorkServer> = match blockchain.get_rpc().lock().await.as_ref() {
+        Some(rpc) => rpc.getwork_server().clone(),
+        None => None
+    };
+ 
     let closure = || async {
         let height = blockchain.get_height();
-        let (peers, best) = match blockchain.get_p2p().lock().await.as_ref() {
+        let (peers, best) = match &p2p {
             Some(p2p) => (p2p.get_peer_count().await, p2p.get_best_height().await),
             None => (0, height)
         };
-        build_prompt_message(blockchain.get_topo_height(), height, best, peers)
+
+        let miners = match &getwork {
+            Some(getwork) => getwork.count_miners().await,
+            None => 0
+        };
+        build_prompt_message(blockchain.get_topo_height(), height, best, peers, miners)
     };
 
     prompt.start(Duration::from_millis(100), &closure, command_manager).await
 }
 
-fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, peers_count: usize) -> String {
+fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, peers_count: usize, miners_count: usize) -> String {
     let height_str = format!(
         "{}: {}/{}",
         Prompt::colorize_str(Color::Yellow, "Height"),
@@ -78,12 +95,18 @@ fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, peers_co
         Prompt::colorize_str(Color::Yellow, "Peers"),
         Prompt::colorize_string(Color::Green, &format!("{}", peers_count))
     );
+    let miners_str = format!(
+        "{}: {}",
+        Prompt::colorize_str(Color::Yellow, "Miners"),
+        Prompt::colorize_string(Color::Green, &format!("{}", miners_count))
+    );
     format!(
-        "{} | {} | {} | {} {} ",
+        "{} | {} | {} | {} | {} {} ",
         Prompt::colorize_str(Color::Blue, "XELIS"),
         height_str,
         topoheight_str,
         peers_str,
+        miners_str,
         Prompt::colorize_str(Color::BrightBlack, ">>")
     )
 }

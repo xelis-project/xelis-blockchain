@@ -146,6 +146,10 @@ impl GetWorkServer {
         }
     }
 
+    pub async fn count_miners(&self) -> usize {
+        self.miners.lock().await.len()
+    }
+
     pub async fn add_miner(self: &Arc<Self>, addr: Addr<GetWorkWebSocketHandler>, key: PublicKey, worker: String) {
         {
             let mut miners = self.miners.lock().await;

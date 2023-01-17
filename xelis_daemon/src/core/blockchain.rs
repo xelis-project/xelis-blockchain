@@ -556,6 +556,10 @@ impl Blockchain {
         &self.p2p
     }
 
+    pub fn get_rpc(&self) -> &Mutex<Option<Arc<RpcServer>>> {
+        &self.rpc
+    }
+
     pub fn get_dev_address(&self) -> &PublicKey {
         &self.dev_address
     }
