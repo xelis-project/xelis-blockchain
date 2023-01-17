@@ -42,10 +42,7 @@ Others objectives in mind are:
 
 - Create a functional wallet (WIP)
 - Include extra fees when sending coins to a not-yet registered address
-- Web Socket for new mining jobs: miner get notified only when the block change.
-- Better CLI daemon
 - CLI Wallet
-- CLI Miner
 - Support of Smart Contracts (xelis-vm)
 - Privacy (through Homomorphic Encryption)
 
@@ -204,9 +201,14 @@ Building this project requires a working [Rust](https://rustup.rs) (stable) tool
 
 It's expected to be cross-platform and guaranteed to work on Linux, Windows, MacOS platforms.
 
+### Build from sub project
 Go to one of following folder you want to build from source: `xelis_daemon`, `xelis_miner` or `xelis_wallet`.
 To build a release (optimized) version:
 `cargo build --release`
+
+### Build from workspace
+To build a version from workspace (parent folder) directly, use the option `--bin` with `xelis_daemon`, `xelis_miner` or `xelis_wallet` as value.
+Example: `cargo build --release --bin xelis_miner`
 
 You can also build a debug version (just remove `--release` option) or run it directly from cargo:
 `cargo run`
