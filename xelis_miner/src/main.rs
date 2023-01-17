@@ -1,7 +1,8 @@
 pub mod config;
 
-use std::{time::Duration, sync::Arc};
+use std::{time::Duration, sync::{Arc, atomic::{AtomicU64, Ordering, AtomicUsize, AtomicBool}}};
 use crate::config::DEFAULT_DAEMON_ADDRESS;
+use fern::colors::Color;
 use futures_util::{StreamExt, SinkExt};
 use serde::{Serialize, Deserialize};
 use tokio::{sync::{broadcast, mpsc}, select};
@@ -17,7 +18,7 @@ use xelis_common::{
 };
 use clap::Parser;
 use log::{error, info, debug, warn};
-use anyhow::{Result, Error};
+use anyhow::{Result, Error, Context};
 
 #[derive(Parser)]
 #[clap(version = VERSION, about = "XELIS Miner")]
@@ -58,6 +59,11 @@ pub enum SocketMessage {
     BlockRejected
 }
 
+static WEBSOCKET_CONNECTED: AtomicBool = AtomicBool::new(false);
+static CURRENT_HEIGHT: AtomicU64 = AtomicU64::new(0);
+static BLOCKS_FOUND: AtomicUsize = AtomicUsize::new(0);
+static BLOCKS_REJECTED: AtomicUsize = AtomicUsize::new(0);
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
@@ -87,7 +93,6 @@ async fn main() -> Result<()> {
     if config.num_threads != 0 && threads as usize != threads_count {
         warn!("Attention, the number of threads used may not be optimal, recommended is: {}", threads_count);
     }
-    // TODO show recommended threads count
 
     // broadcast channel to send new jobs / exit command to all threads
     let (sender, _) = broadcast::channel::<ThreadNotification>(threads as usize);
@@ -101,21 +106,19 @@ async fn main() -> Result<()> {
     }
 
     // start communication task
-    let mut task = tokio::spawn(communication_task(config.daemon_address, sender.clone(), block_receiver, address, config.worker));
+    let task = tokio::spawn(communication_task(config.daemon_address, sender.clone(), block_receiver, address, config.worker));
 
-    // run prompt until user exit
-    select! {
-        _ = run_prompt(prompt) => {
-            // stop the communication task
-            task.abort();
-
-            // send exit command to all threads to stop
-            if let Err(_) = sender.send(ThreadNotification::Exit) {
-                debug!("Error while sending exit message to threads");
-            }
-        },
-        _ = &mut task => {}
+    if let Err(e) = run_prompt(prompt).await {
+        error!("Error on running prompt: {}", e);
     }
+
+    // send exit command to all threads to stop
+    if let Err(_) = sender.send(ThreadNotification::Exit) {
+        debug!("Error while sending exit message to threads");
+    }
+
+    // stop the communication task
+    task.abort();
 
     Ok(())
 }
@@ -126,134 +129,150 @@ async fn main() -> Result<()> {
 // This allow mining threads to only focus on mining and receiving jobs through memory channels.
 async fn communication_task(daemon_address: String, job_sender: broadcast::Sender<ThreadNotification>, mut block_receiver: mpsc::Receiver<Block>, address: Address<'_>, worker: String) {
     info!("Starting communication task");
-    let client = match connect_async(format!("ws://{}/getwork/{}/{}", daemon_address, address.to_string(), worker)).await {
-        Ok((client, response)) => {
-            let status = response.status();
-            if status.is_server_error() || status.is_client_error() {
-                error!("Error while connecting to {}, got an unexpected response: {}", daemon_address, status.as_str());
-                return;
-            }
-            client
-        },
-        Err(e) => {
-            error!("Error while connecting to {}: {}", daemon_address, e);
-            return;
-        }
-    };
-    info!("Connected successfully to {}", daemon_address);
-    let (mut write, mut read) = client.split();
     loop {
-        select! {
-            Some(message) = read.next() => { // read all messages from daemon
-                let message = match message {
-                    Ok(message) => message,
-                    Err(e) => {
-                        error!("Error while reading message from WebSocket: {}", e);
-                        return;
-                    }
-                };
-
-                match message {
-                    Message::Text(text) => {
-                        warn!("new message from daemon: {}", text);
-                        match serde_json::from_slice::<SocketMessage>(text.as_bytes()) {
-                            Ok(message) => match message {
-                                SocketMessage::NewJob(job) => {
-                                    info!("New job received from daemon: difficulty = {}", job.difficulty);
-                                    match Block::from_hex(job.template) {
-                                        Ok(block) => {
-                                            let difficulty = job.difficulty;
-                                            if let Err(e) = job_sender.send(ThreadNotification::NewJob(block, difficulty)) {
-                                                error!("Error while sending new job to threads: {}", e);
-                                            }
-                                        },
-                                        Err(_) => {
-                                            error!("Error while decoding new job received from daemon");
-                                        }
-                                    };
-                                },
-                                SocketMessage::BlockAccepted => {
-                                    info!("Block submitted has been accepted by network !")
-                                },
-                                SocketMessage::BlockRejected => {
-                                    warn!("Block submitted has been rejected by network !");
-                                }
-                            },
-                            Err(e) => {
-                                error!("Error while decoding message from WebSocket: {}", e);
-                            }
-                        }
-                    },
-                    Message::Close(reason) => {
-                        let reason: String = if let Some(reason) = reason {
-                            reason.to_string()
-                        } else {
-                            "No reason".into()
-                        };
-                        warn!("Daemon has closed the WebSocket connection with us: {}", reason);
-                    },
-                    _ => {
-                        warn!("Unexpected message from WebSocket");
-                    }
-                };
+        info!("Trying to connect to {}", daemon_address);
+        let client = match connect_async(format!("ws://{}/getwork/{}/{}", daemon_address, address.to_string(), worker)).await {
+            Ok((client, response)) => {
+                let status = response.status();
+                if status.is_server_error() || status.is_client_error() {
+                    error!("Error while connecting to {}, got an unexpected response: {}", daemon_address, status.as_str());
+                    warn!("Trying to connect to WebSocket again in 10 seconds...");
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    continue;
+                }
+                client
             },
-            Some(block) = block_receiver.recv() => { // send all valid blocks found to the daemon
-                let submit = serde_json::json!(SubmitBlockParams { block_template: block.to_hex() }).to_string();
-                if let Err(e) = write.send(Message::Text(submit)).await {
-                    error!("Error while sending the block found to the daemon: {}", e);
+            Err(e) => {
+                error!("Error while connecting to {}: {}", daemon_address, e);
+                warn!("Trying to connect to WebSocket again in 10 seconds...");
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                continue;
+            }
+        };
+        WEBSOCKET_CONNECTED.store(true, Ordering::Relaxed);
+        info!("Connected successfully to {}", daemon_address);
+        let (mut write, mut read) = client.split();
+        loop {
+            select! {
+                Some(message) = read.next() => { // read all messages from daemon
+                    match handle_websocket_message(message, &job_sender).await {
+                        Ok(exit) => {
+                            if exit {
+                                break;
+                            }
+                        },
+                        Err(e) => {
+                            error!("Error while handling message from WebSocket: {}", e);
+                        }
+                    }
+                },
+                Some(block) = block_receiver.recv() => { // send all valid blocks found to the daemon
+                    let submit = serde_json::json!(SubmitBlockParams { block_template: block.to_hex() }).to_string();
+                    if let Err(e) = write.send(Message::Text(submit)).await {
+                        error!("Error while sending the block found to the daemon: {}", e);
+                    }
                 }
             }
         }
+
+        WEBSOCKET_CONNECTED.store(false, Ordering::Relaxed);
+        warn!("Trying to connect to WebSocket again in 10 seconds...");
+        tokio::time::sleep(Duration::from_secs(10)).await;
     }
+}
+
+async fn handle_websocket_message(message: Result<Message, tokio_tungstenite::tungstenite::Error>, job_sender: &broadcast::Sender<ThreadNotification>) -> Result<bool, Error> {
+    match message? {
+        Message::Text(text) => {
+            debug!("new message from daemon: {}", text);
+            match serde_json::from_slice::<SocketMessage>(text.as_bytes())? {
+                SocketMessage::NewJob(job) => {
+                    info!("New job received from daemon: difficulty = {}", job.difficulty);
+                    let block = Block::from_hex(job.template).context("Error while decoding new job received from daemon")?;
+                    CURRENT_HEIGHT.store(block.get_height(), Ordering::Relaxed);
+
+                    if let Err(e) = job_sender.send(ThreadNotification::NewJob(block, job.difficulty)) {
+                        error!("Error while sending new job to threads: {}", e);
+                    }
+                },
+                SocketMessage::BlockAccepted => {
+                    BLOCKS_FOUND.fetch_add(1, Ordering::Relaxed);
+                    info!("Block submitted has been accepted by network !");
+                },
+                SocketMessage::BlockRejected => {
+                    BLOCKS_REJECTED.fetch_add(1, Ordering::Relaxed);
+                    error!("Block submitted has been rejected by network !");
+                }
+            }
+        },
+        Message::Close(reason) => {
+            let reason: String = if let Some(reason) = reason {
+                reason.to_string()
+            } else {
+                "No reason".into()
+            };
+            warn!("Daemon has closed the WebSocket connection with us: {}", reason);
+            return Ok(true);
+        },
+        _ => {
+            warn!("Unexpected message from WebSocket");
+            return Ok(true);
+        }
+    };
+
+    Ok(false)
 }
 
 fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification>, block_sender: mpsc::Sender<Block>) -> Result<(), Error> {
     let builder = std::thread::Builder::new().name(format!("Mining Thread #{}", id));
     builder.spawn(move || {
         let mut block: Block;
-        let mut expected_difficulty: u64;
         let mut hash: Hash;
 
         info!("Mining Thread #{}: started", id);
         'main: loop {
-            debug!("Mining Thread #{}: Waiting for new job...", id);
-            match job_receiver.try_recv() { // TODO blocking
-                Ok(message) => match message {
-                    ThreadNotification::Exit => break,
-                    ThreadNotification::NewJob(job, difficulty) => {
+            if let Ok(message) = job_receiver.try_recv() { // TODO blocking
+                match message {
+                    ThreadNotification::Exit => {
+                        info!("Exiting Mining Thread #{}...", id);
+                        break 'main;
+                    },
+                    ThreadNotification::NewJob(job, expected_difficulty) => {
+                        debug!("Mining Thread #{} received a new job", id);
                         block = job;
                         // set thread id in extra nonce for more work spread between threads
                         block.extra_nonce[EXTRA_NONCE_SIZE - 1] = id;
-                        expected_difficulty = difficulty;
+
+                        // Solve block
+                        hash = block.hash();
+                        while !match check_difficulty(&hash, expected_difficulty) {
+                            Ok(value) => value,
+                            Err(e) => {
+                                error!("Mining Thread #{}: error on difficulty check: {}", id, e);
+                                continue 'main;
+                            }
+                        } {
+                            // check if we have a new job pending
+                            if !job_receiver.is_empty() {
+                                continue 'main;
+                            }
+
+                            block.nonce += 1;
+                            block.timestamp = get_current_timestamp();
+                            hash = block.hash();
+                        }
+                        info!("Mining Thread #{}: block {} found at height {}", id, hash, block.get_height());
+                        if let Err(_) = block_sender.blocking_send(block) {
+                            error!("Mining Thread #{}: error while sending block found with hash {}", id, hash);
+                        }
                     }
-                },
-                Err(e) => {
-                    error!("Mining Thread #{}: Error while trying to receive new job: {}. Retry in 1s", id, e);
-                    std::thread::sleep(Duration::from_secs(1));
-                    continue;
-                }
-            }
-
-            hash = block.hash();
-            while !match check_difficulty(&hash, expected_difficulty) {
-                Ok(value) => value,
-                Err(e) => {
-                    error!("Mining Thread #{}: error on difficulty check: {}", id, e);
+                };
+            } else {
+                if WEBSOCKET_CONNECTED.load(Ordering::Relaxed) {
                     continue 'main;
+                } else {
+                    std::thread::sleep(Duration::from_millis(100));
                 }
-            } {
-                // check if we have a new job pending
-                if !job_receiver.is_empty() {
-                    continue 'main;
-                }
-
-                block.nonce += 1;
-                block.timestamp = get_current_timestamp();
-                hash = block.hash();
-            }
-            info!("Mining Thread #{}: block {} found at height {}", id, hash, block.get_height());
-            if let Err(_) = block_sender.blocking_send(block) {
-                error!("Mining Thread #{}: error while sending block found with hash {}", id, hash);
             }
         }
         info!("Mining Thread #{}: stopped", id);
@@ -267,7 +286,35 @@ async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
     command_manager.add_command(Command::new("exit", "Shutdown the daemon", None, exit));
 
     let closure = || async {
-        format!("XELIS Miner >> ")
+        let height_str = format!(
+            "{}: {}",
+            Prompt::colorize_str(Color::Yellow, "Height"),
+            Prompt::colorize_string(Color::Green, &format!("{}", CURRENT_HEIGHT.load(Ordering::Relaxed))),
+        );
+        let blocks_found = format!(
+            "{}: {}",
+            Prompt::colorize_str(Color::Yellow, "Accepted"),
+            Prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_FOUND.load(Ordering::Relaxed))),
+        );
+        let blocks_rejected = format!(
+            "{}: {}",
+            Prompt::colorize_str(Color::Yellow, "Rejected"),
+            Prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_REJECTED.load(Ordering::Relaxed))),
+        );
+        let status = if WEBSOCKET_CONNECTED.load(Ordering::Relaxed) {
+            Prompt::colorize_str(Color::Green, "Online")
+        } else {
+            Prompt::colorize_str(Color::Red, "Offline")
+        };
+        format!(
+            "{} | {} | {} | {} | {} {} ",
+            Prompt::colorize_str(Color::Blue, "XELIS Miner"),
+            height_str,
+            blocks_found,
+            blocks_rejected,
+            status,
+            Prompt::colorize_str(Color::BrightBlack, ">>")
+        )
     };
     prompt.start(Duration::from_millis(100), &closure, command_manager).await?;
     Ok(())
