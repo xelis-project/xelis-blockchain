@@ -75,12 +75,12 @@ pub fn calculate_tx_fee(tx_size: usize) -> u64 {
 const HASHRATE_FORMATS: [&str; 5] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s"];
 
 pub fn format_hashrate(mut hashrate: f64) -> String {
-    let max = HASHRATE_FORMATS.len();
+    let max = HASHRATE_FORMATS.len() - 1;
     let mut count = 0;
     while hashrate > 1000f64 && count < max {
         count += 1;
         hashrate = hashrate / 1000f64;
     }
 
-    return format!("{} {}", hashrate, HASHRATE_FORMATS[count]);
+    return format!("{:.2} {}", hashrate, HASHRATE_FORMATS[count]);
 }

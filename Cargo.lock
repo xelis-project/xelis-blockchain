@@ -2470,6 +2470,7 @@ dependencies = [
  "clap",
  "fern",
  "futures-util",
+ "lazy_static",
  "log",
  "num_cpus",
  "serde",

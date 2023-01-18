@@ -5,20 +5,21 @@ use crate::config::DEFAULT_DAEMON_ADDRESS;
 use fern::colors::Color;
 use futures_util::{StreamExt, SinkExt};
 use serde::{Serialize, Deserialize};
-use tokio::{sync::{broadcast, mpsc}, select};
+use tokio::{sync::{broadcast, mpsc, Mutex}, select, time::Instant};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use xelis_common::{
     block::{Block, EXTRA_NONCE_SIZE},
     serializer::Serializer,
     difficulty::check_difficulty,
     config::{VERSION, DEV_ADDRESS},
-    globals::get_current_timestamp,
+    globals::{get_current_timestamp, format_hashrate},
     crypto::{hash::{Hashable, Hash}, address::Address},
     api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::{CommandManager, Command, CommandError}, argument::{Arg, ArgType, ArgumentManager}}
 };
 use clap::Parser;
 use log::{error, info, debug, warn};
 use anyhow::{Result, Error, Context};
+use lazy_static::lazy_static;
 
 #[derive(Parser)]
 #[clap(version = VERSION, about = "XELIS Miner")]
@@ -63,6 +64,12 @@ static WEBSOCKET_CONNECTED: AtomicBool = AtomicBool::new(false);
 static CURRENT_HEIGHT: AtomicU64 = AtomicU64::new(0);
 static BLOCKS_FOUND: AtomicUsize = AtomicUsize::new(0);
 static BLOCKS_REJECTED: AtomicUsize = AtomicUsize::new(0);
+static HASHRATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static HASHRATE_LAST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+lazy_static! {
+    static ref HASHRATE_LAST_TIME: Mutex<Instant> = Mutex::new(Instant::now());
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -245,6 +252,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
 
                         // Solve block
                         hash = block.hash();
+                        HASHRATE_COUNTER.fetch_add(1, Ordering::SeqCst);
                         while !match check_difficulty(&hash, expected_difficulty) {
                             Ok(value) => value,
                             Err(e) => {
@@ -260,6 +268,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                             block.nonce += 1;
                             block.timestamp = get_current_timestamp();
                             hash = block.hash();
+                            HASHRATE_COUNTER.fetch_add(1, Ordering::SeqCst);
                         }
                         info!("Mining Thread #{}: block {} found at height {}", id, hash, block.get_height());
                         if let Err(_) = block_sender.blocking_send(block) {
@@ -306,12 +315,25 @@ async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
         } else {
             Prompt::colorize_str(Color::Red, "Offline")
         };
+        let hashrate = {
+            let mut last_time = HASHRATE_LAST_TIME.lock().await;
+            let counter = HASHRATE_COUNTER.load(Ordering::SeqCst);
+            let last_counter = HASHRATE_LAST_COUNTER.load(Ordering::SeqCst);
+
+            let hashrate = (counter - last_counter) as f64 / last_time.elapsed().as_millis() as u64 as f64;
+            HASHRATE_LAST_COUNTER.store(counter, Ordering::SeqCst);
+            *last_time = Instant::now();
+
+            Prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(hashrate)))
+        };
+
         format!(
-            "{} | {} | {} | {} | {} {} ",
+            "{} | {} | {} | {} | {} | {} {} ",
             Prompt::colorize_str(Color::Blue, "XELIS Miner"),
             height_str,
             blocks_found,
             blocks_rejected,
+            hashrate,
             status,
             Prompt::colorize_str(Color::BrightBlack, ">>")
         )
