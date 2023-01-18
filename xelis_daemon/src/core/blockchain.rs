@@ -61,7 +61,8 @@ pub struct Blockchain {
     storage: RwLock<Storage>, // storage to retrieve/add blocks
     p2p: Mutex<Option<Arc<P2pServer>>>, // P2p module
     rpc: Mutex<Option<Arc<RpcServer>>>, // Rpc module
-    dev_address: PublicKey // Dev address for block fee
+    dev_address: PublicKey, // Dev address for block fee
+    difficulty: AtomicU64 // current difficulty
 }
 
 impl Blockchain {
@@ -91,12 +92,23 @@ impl Blockchain {
             storage: RwLock::new(storage),
             p2p: Mutex::new(None),
             rpc: Mutex::new(None),
-            dev_address: dev_address.to_public_key()
+            dev_address: dev_address.to_public_key(),
+            difficulty: AtomicU64::new(GENESIS_BLOCK_DIFFICULTY)
         };
 
         // include genesis block
         if !on_disk {
             blockchain.create_genesis_block().await?;
+        } else {
+            let storage = blockchain.get_storage().read().await;
+            let tips_set = storage.get_tips().await?;
+            let mut tips = Vec::with_capacity(tips_set.len());
+            for hash in tips_set {
+                tips.push(hash);
+            }
+    
+            let difficulty = blockchain.get_difficulty_at_tips(&storage, &tips).await?;
+            blockchain.difficulty.store(difficulty, Ordering::SeqCst);
         }
 
         let arc = Arc::new(blockchain);
@@ -540,6 +552,10 @@ impl Blockchain {
         Ok(difficulty)
     }
 
+    pub fn get_difficulty(&self) -> u64 {
+        self.difficulty.load(Ordering::SeqCst)
+    }
+
     // pass in params the already computed block hash and its tips
     // check the difficulty calculated at tips
     // if the difficulty is valid, returns it (prevent to re-compute it)
@@ -942,6 +958,18 @@ impl Blockchain {
             debug!("Adding new '{}' {} at topoheight {}", block_hash, block, topoheight);
         } else {
             debug!("Adding new '{}' {} with no topoheight (not ordered)!", block_hash, block);
+        }
+
+        // update difficulty in cache
+        {
+            let tips_set = storage.get_tips().await?;
+            let mut tips = Vec::with_capacity(tips_set.len());
+            for hash in tips_set {
+                tips.push(hash);
+            }
+    
+            let difficulty = self.get_difficulty_at_tips(&storage, &tips).await?;
+            self.difficulty.store(difficulty, Ordering::SeqCst);
         }
 
         if broadcast {

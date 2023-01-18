@@ -9,7 +9,7 @@ use p2p::server::P2pServer;
 use rpc::getwork_server::SharedGetWorkServer;
 use xelis_common::{
     prompt::{argument::{ArgumentManager, Arg, ArgType}, Prompt, command::{CommandError, CommandManager, Command}, PromptError},
-    config::VERSION
+    config::{VERSION, BLOCK_TIME}, globals::format_hashrate
 };
 use crate::core::blockchain::{Config, Blockchain};
 use std::sync::Arc;
@@ -72,13 +72,15 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result
             Some(getwork) => getwork.count_miners().await,
             None => 0
         };
-        build_prompt_message(blockchain.get_topo_height(), height, best, peers, miners)
+
+        let network_hashrate = (blockchain.get_difficulty() / BLOCK_TIME) as f64;
+        build_prompt_message(blockchain.get_topo_height(), height, best, network_hashrate, peers, miners)
     };
 
     prompt.start(Duration::from_millis(100), &closure, command_manager).await
 }
 
-fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, peers_count: usize, miners_count: usize) -> String {
+fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, network_hashrate: f64, peers_count: usize, miners_count: usize) -> String {
     let height_str = format!(
         "{}: {}/{}",
         Prompt::colorize_str(Color::Yellow, "Height"),
@@ -89,6 +91,12 @@ fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, peers_co
         "{}: {}",
         Prompt::colorize_str(Color::Yellow, "TopoHeight"),
         Prompt::colorize_string(Color::Green, &format!("{}", topoheight)),
+    );
+
+    let network_hashrate_str = format!(
+        "{}: {}",
+        Prompt::colorize_str(Color::Yellow, "Network"),
+        Prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(network_hashrate))),
     );
     let peers_str = format!(
         "{}: {}",
@@ -101,10 +109,11 @@ fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, peers_co
         Prompt::colorize_string(Color::Green, &format!("{}", miners_count))
     );
     format!(
-        "{} | {} | {} | {} | {} {} ",
+        "{} | {} | {} | {} | {} | {} {} ",
         Prompt::colorize_str(Color::Blue, "XELIS"),
         height_str,
         topoheight_str,
+        network_hashrate_str,
         peers_str,
         miners_str,
         Prompt::colorize_str(Color::BrightBlack, ">>")
