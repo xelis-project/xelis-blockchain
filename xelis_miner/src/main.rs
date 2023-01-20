@@ -14,7 +14,7 @@ use xelis_common::{
     config::{VERSION, DEV_ADDRESS},
     globals::{get_current_timestamp, format_hashrate},
     crypto::{hash::{Hashable, Hash}, address::Address},
-    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::{CommandManager, Command, CommandError}, argument::{Arg, ArgType, ArgumentManager}}
+    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager}
 };
 use clap::Parser;
 use log::{error, info, debug, warn};
@@ -290,10 +290,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
 }
 
 async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
-    let mut command_manager = CommandManager::new();
-    command_manager.add_command(Command::new("help", "Show this help", Some(Arg::new("command", ArgType::String)), help));
-    command_manager.add_command(Command::new("exit", "Shutdown the daemon", None, exit));
-
+    let command_manager = CommandManager::default();
     let closure = || async {
         let height_str = format!(
             "{}: {}",
@@ -340,23 +337,4 @@ async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
     };
     prompt.start(Duration::from_millis(100), &closure, command_manager).await?;
     Ok(())
-}
-
-fn help(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
-    if args.has_argument("command") {
-        let arg_value = args.get_value("command")?.to_string_value()?;
-        let cmd = manager.get_command(&arg_value).ok_or(CommandError::CommandNotFound)?;
-        manager.message(&format!("Usage: {}", cmd.get_usage()));
-    } else {
-        manager.message("Available commands:");
-        for cmd in manager.get_commands() {
-            manager.message(&format!("- {}: {}", cmd.get_name(), cmd.get_description()));
-        }
-    }
-    Ok(())
-}
-
-fn exit(_: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
-    info!("Stopping...");
-    Err(CommandError::Exit)
 }

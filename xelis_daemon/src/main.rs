@@ -8,7 +8,7 @@ use log::{info, error};
 use p2p::server::P2pServer;
 use rpc::getwork_server::SharedGetWorkServer;
 use xelis_common::{
-    prompt::{argument::{ArgumentManager, Arg, ArgType}, Prompt, command::{CommandError, CommandManager, Command}, PromptError},
+    prompt::{Prompt, command::CommandManager, PromptError},
     config::{VERSION, BLOCK_TIME}, globals::format_hashrate
 };
 use crate::core::blockchain::{Config, Blockchain};
@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
 }
 
 async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
-    let command_manager = create_command_manager();
+    let command_manager = CommandManager::default();
 
     let p2p: Option<Arc<P2pServer>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
@@ -118,30 +118,4 @@ fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, network_
         miners_str,
         Prompt::colorize_str(Color::BrightBlack, ">>")
     )
-}
-
-fn help(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
-    if args.has_argument("command") {
-        let arg_value = args.get_value("command")?.to_string_value()?;
-        let cmd = manager.get_command(&arg_value).ok_or(CommandError::CommandNotFound)?;
-        manager.message(&format!("Usage: {}", cmd.get_usage()));
-    } else {
-        manager.message("Available commands:");
-        for cmd in manager.get_commands() {
-            manager.message(&format!("- {}: {}", cmd.get_name(), cmd.get_description()));
-        }
-    }
-    Ok(())
-}
-
-fn exit(_: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
-    info!("Stopping...");
-    Err(CommandError::Exit)
-}
-
-fn create_command_manager() -> CommandManager {
-    let mut manager = CommandManager::new();
-    manager.add_command(Command::new("help", "Show this help", Some(Arg::new("command", ArgType::String)), help));
-    manager.add_command(Command::new("exit", "Shutdown the daemon", None, exit));
-    manager
 }

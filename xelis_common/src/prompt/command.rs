@@ -94,6 +94,13 @@ impl CommandManager {
         }
     }
 
+    pub fn default() -> Self {
+        let mut zelf = CommandManager::new();
+        zelf.add_command(Command::new("help", "Show this help", Some(Arg::new("command", ArgType::String)), help));
+        zelf.add_command(Command::new("exit", "Shutdown the daemon", None, exit));
+        zelf
+    }
+
     pub fn add_command(&mut self, command: Command) {
         self.commands.push(command);
     }
@@ -134,4 +141,23 @@ impl CommandManager {
     pub fn message(&self, message: &str) {
         info!("{}", message);
     }
+}
+
+fn help(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    if args.has_argument("command") {
+        let arg_value = args.get_value("command")?.to_string_value()?;
+        let cmd = manager.get_command(&arg_value).ok_or(CommandError::CommandNotFound)?;
+        manager.message(&format!("Usage: {}", cmd.get_usage()));
+    } else {
+        manager.message("Available commands:");
+        for cmd in manager.get_commands() {
+            manager.message(&format!("- {}: {}", cmd.get_name(), cmd.get_description()));
+        }
+    }
+    Ok(())
+}
+
+fn exit(_: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    info!("Stopping...");
+    Err(CommandError::Exit)
 }
