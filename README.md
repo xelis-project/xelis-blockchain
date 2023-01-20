@@ -107,7 +107,21 @@ All theses data are saved in plaintext.
 |         extra         |    Bytes   | No specific type |   Actually used to save the highest topo height and TIPS  |
 | cumulative_difficulty |    Hash    |      Integer     |     Save the cumulative difficulty for each block hash    |
 
-## Wallet Storage
+
+## Wallet
+
+Wallet keep tracks of all your transactions on chain, all your assets you own.
+
+When creating a new wallet, it generate a new random secure "master key" which will be encrypted by a password hashed.
+This master key allows to change easily the password of your wallet because you only have to save new encrypted version of it.
+
+The master key is also the one which will be able to decrypt/encrypt all your wallet storage.
+
+This way allow to save securely and easily data on any device.
+
+Password hashing algorithm used is Argon2id with a configuration of 15 MB and 16 iterations.
+
+### Storage
 
 Wallet implement a fully-encrypted storage system with following features:
 - Tree names are hashed with generated salt

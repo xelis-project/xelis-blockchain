@@ -10,8 +10,13 @@ xelis_common = { path = "../xelis_common" }
 chacha20poly1305 = "0.10.1"
 sled = "0.34.7"
 clap = { version = "3.1.18", features = ["derive"] }
+argon2 = "0.4.1"
+lazy_static = "1.4.0"
 
 # common dependencies
+log = "0.4"
 rand = "0.8.4"
 thiserror = "1.0.30"
-anyhow = "1.0.57"
+tokio = "1.24.1"
+anyhow = "1"
+fern = { version = "0.6", features = ["colored"] }
