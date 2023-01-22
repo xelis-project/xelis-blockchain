@@ -2,16 +2,18 @@ pub mod transaction_builder;
 pub mod storage;
 pub mod wallet;
 pub mod config;
+pub mod account;
+pub mod cipher;
 
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration, path::Path};
 
 use anyhow::Result;
+use config::DIR_PATH;
 use fern::colors::Color;
 use log::{error, info};
 use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
-    DEFAULT_DIR_PATH,
     VERSION
 }, prompt::{Prompt, command::CommandManager}};
 use wallet::Wallet;
@@ -33,17 +35,26 @@ pub struct Config {
     #[clap(short = 'l', long, default_value_t = String::from("xelis-wallet.log"))]
     filename_log: String,
     /// Set name path for wallet storage
-    #[clap(short, long, default_value_t = String::from(DEFAULT_DIR_PATH))]
-    name: String
+    #[clap(short, long)]
+    name: String,
+    /// Password used to open wallet
+    #[clap(short, long)]
+    password: String
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
     let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging)?;
+    let dir = format!("{}{}", DIR_PATH, config.name);
 
-    let password = "".into();
-    let wallet = Wallet::new(config.name, password, config.daemon_address)?;
+    let wallet = if Path::new(&dir).is_dir() {
+        info!("Opening wallet {}", dir);
+        Wallet::open(dir, config.password, config.daemon_address)?
+    } else {
+        info!("Creating a new wallet at {}", dir);
+        Wallet::new(dir, config.password, config.daemon_address)?
+    };
 
     if let Err(e) = run_prompt(prompt).await {
         error!("Error while running prompt: {}", e);
