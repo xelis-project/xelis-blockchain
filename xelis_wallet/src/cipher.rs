@@ -28,7 +28,7 @@ impl Cipher {
         let mut plaintext: Vec<u8> = Vec::with_capacity(SALT_SIZE + value.len());
         // add salt to the plaintext value
         if let Some(salt) = &self.salt {
-            plaintext.copy_from_slice(salt);
+            plaintext.extend_from_slice(salt);
         }
         plaintext.extend_from_slice(value);
 

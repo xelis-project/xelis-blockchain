@@ -58,7 +58,8 @@ impl EncryptedStorage {
 
     // load from disk, decrypt the value and deserialize it
     fn load_from_disk<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
-        let data = tree.get(self.cipher.encrypt_value(key)?)?.context(format!("load from disk: tree = {:?}, key = {:?}", tree.name(), key))?;
+        let hashed_key = self.cipher.hash_key(key);
+        let data = tree.get(hashed_key)?.context(format!("load from disk: tree = {:?}, key = {:?}", tree.name(), key))?;
         let bytes = self.cipher.decrypt_value(&data)?;
         let mut reader = Reader::new(&bytes);
         Ok(V::read(&mut reader)?)
@@ -66,7 +67,8 @@ impl EncryptedStorage {
 
     // hash key, encrypt data and then save to disk 
     fn save_to_disk(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
-        tree.insert(self.cipher.hash_key(key), self.cipher.encrypt_value(value)?)?;
+        let hashed_key = self.cipher.hash_key(key);
+        tree.insert(hashed_key, self.cipher.encrypt_value(value)?)?;
         Ok(())
     }
 
