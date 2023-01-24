@@ -33,7 +33,7 @@ impl Cipher {
         plaintext.extend_from_slice(value);
 
         // encrypt data using plaintext and nonce
-        let data = &self.cipher.encrypt(&nonce, value).map_err(|e| WalletError::CryptoError(e))?;
+        let data = &self.cipher.encrypt(&nonce, plaintext.as_slice()).map_err(|e| WalletError::CryptoError(e))?;
 
         // append unique nonce to the encrypted data
         let mut encrypted = Vec::with_capacity(nonce.len() + data.len());

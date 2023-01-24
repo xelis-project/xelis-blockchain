@@ -59,27 +59,35 @@ impl Wallet {
         debug!("hashing provided password");
         let hashed_password = hash_password(password, &salt)?;
 
-        // generate the master key which is used for storage
-        let mut master_key: [u8; 32] = [0; 32];
-        OsRng.fill_bytes(&mut master_key);
-
         debug!("Creating storage for {}", name);
         let inner = Storage::new(name)?;
-        debug!("Creating encrypted storage");
-        let storage = EncryptedStorage::new(inner, &master_key)?;
-
-        // save the salt used for password
-        debug!("Save password salt in public storage");
-        storage.get_public_storage().set_password_salt(&salt)?;
 
         // generate the Cipher
         let cipher = Cipher::new(&hashed_password, None)?;
-        // encrypt the master key
-        let encrypted_master_key = cipher.encrypt_value(&master_key)?;
 
-        // now we save the master key in encrypted form
+        // save the salt used for password
+        debug!("Save password salt in public storage");
+        inner.set_password_salt(&salt)?;
+
+        // generate the master key which is used for storage and then save it in encrypted form
+        let mut master_key: [u8; 32] = [0; 32];
+        OsRng.fill_bytes(&mut master_key);
+        let encrypted_master_key = cipher.encrypt_value(&master_key)?;
         debug!("Save encrypted master key in public storage");
-        storage.get_public_storage().set_encrypted_master_key(&encrypted_master_key)?;
+        inner.set_encrypted_master_key(&encrypted_master_key)?;
+        
+        // generate the storage salt and save it in encrypted form
+        let mut storage_salt = [0; SALT_SIZE];
+        OsRng.fill_bytes(&mut storage_salt);
+        let encrypted_storage_salt = cipher.encrypt_value(&storage_salt)?;
+        inner.set_encrypted_storage_salt(&encrypted_storage_salt)?;
+
+        debug!("Creating encrypted storage");
+        let storage = EncryptedStorage::new(inner, &master_key, storage_salt)?;
+
+        // generate random keypair and save it to encrypted storage
+        let keypair = KeyPair::new();
+        storage.set_keypair(&keypair)?;
 
         let mut wallet = Self {
             account: None,
@@ -87,8 +95,6 @@ impl Wallet {
             cipher
         };
 
-        // generate random keypair
-        let keypair = KeyPair::new();
         wallet.init_account(daemon_address, keypair);
 
         Ok(wallet)
@@ -108,13 +114,24 @@ impl Wallet {
 
         let hashed_password = hash_password(password, &salt)?;
 
-
         // decrypt the encrypted master key using the hashed password (used as key)
         let cipher = Cipher::new(&hashed_password, None)?;
         let master_key = cipher.decrypt_value(&encrypted_master_key).context("Invalid password provided for this wallet")?;
 
+        // Retrieve the encrypted storage salt
+        let encrypted_storage_salt = storage.get_encrypted_storage_salt()?;
+        let storage_salt = cipher.decrypt_value(&encrypted_storage_salt).context("Invalid encrypted storage salt for this wallet")?;
+        if storage_salt.len() != SALT_SIZE {
+            error!("Invalid size received after decrypting storage salt: {} bytes", storage_salt.len());
+            return Err(WalletError::InvalidSaltSize.into());
+        }
+
+        let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
+        salt.copy_from_slice(&storage_salt);
+
         debug!("Creating encrypted storage");
-        let storage = EncryptedStorage::new(storage, &master_key)?;
+        let storage = EncryptedStorage::new(storage, &master_key, salt)?;
+        debug!("Retrieving keypair from encrypted storage");
         let keypair =  storage.get_keypair()?;
 
         let mut wallet = Self {
@@ -129,7 +146,6 @@ impl Wallet {
     }
 
     fn init_account(&mut self, daemon_address: String, keypair: KeyPair) {
-        debug!("init account");
         //self.account = Some(Account::new(daemon_address, keypair));
     }
 }

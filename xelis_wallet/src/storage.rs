@@ -1,11 +1,9 @@
-use rand::RngCore;
 use sled::{Tree, Db};
 use xelis_common::{
     crypto::{hash::Hash, key::KeyPair},
     serializer::{Reader, Serializer},
     transaction::Transaction
 };
-use chacha20poly1305::aead::OsRng;
 use anyhow::{Context, Result};
 use crate::{config::SALT_SIZE, cipher::Cipher, wallet::WalletError};
 
@@ -33,18 +31,7 @@ pub struct EncryptedStorage {
 }
 
 impl EncryptedStorage {
-    pub fn new(inner: Storage, key: &[u8]) -> Result<Self> {
-        // generate (or retrieve) salt for trees/keys
-        let mut salt = [0; SALT_SIZE];
-        match inner.db.get(SALT_KEY)? {
-            Some(bytes) => {
-                salt.copy_from_slice(&bytes);
-            },
-            None => {
-                OsRng.fill_bytes(&mut salt);
-            }
-        };
-
+    pub fn new(inner: Storage, key: &[u8], salt: [u8; SALT_SIZE]) -> Result<Self> {
         let cipher = Cipher::new(key, Some(salt))?;
         let storage = Self {
             transactions: inner.db.open_tree(&cipher.hash_key("transactions"))?,
@@ -59,10 +46,10 @@ impl EncryptedStorage {
     // load from disk, decrypt the value and deserialize it
     fn load_from_disk<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
         let hashed_key = self.cipher.hash_key(key);
-        let data = tree.get(hashed_key)?.context(format!("load from disk: tree = {:?}, key = {:?}", tree.name(), key))?;
-        let bytes = self.cipher.decrypt_value(&data)?;
+        let data = tree.get(hashed_key)?.context(format!("load from disk: tree = {:?}, key = {}", tree.name(), String::from_utf8_lossy(key)))?;
+        let bytes = self.cipher.decrypt_value(&data).context("Error while decrypting value from disk")?;
         let mut reader = Reader::new(&bytes);
-        Ok(V::read(&mut reader)?)
+        Ok(V::read(&mut reader).context("Error while de-serializing value from disk")?)
     }
 
     // hash key, encrypt data and then save to disk 
@@ -96,7 +83,7 @@ impl EncryptedStorage {
         self.save_to_disk(&self.extra, NONCE_KEY, &nonce.to_be_bytes())
     }
 
-    pub fn set_keypair(&self, keypair: KeyPair) -> Result<()> {
+    pub fn set_keypair(&self, keypair: &KeyPair) -> Result<()> {
         self.save_to_disk(&self.extra, KEY_PAIR, &keypair.to_bytes())
     }
 
@@ -157,5 +144,18 @@ impl Storage {
         };
 
         Ok(salt)
+    }
+
+    pub fn get_encrypted_storage_salt(&self) -> Result<Vec<u8>> {
+        let values = self.db.get(SALT_KEY)?.context("encrypted salt for storage was not found")?;
+        let mut encrypted_salt = Vec::with_capacity(values.len());
+        encrypted_salt.extend_from_slice(&values);
+
+        Ok(encrypted_salt)
+    }
+
+    pub fn set_encrypted_storage_salt(&self, salt: &[u8]) -> Result<()> {
+        self.db.insert(SALT_KEY, salt)?;
+        Ok(())
     }
 }
