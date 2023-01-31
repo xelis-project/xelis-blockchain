@@ -8,8 +8,8 @@ use log::{info, error};
 use p2p::server::P2pServer;
 use rpc::getwork_server::SharedGetWorkServer;
 use xelis_common::{
-    prompt::{Prompt, command::CommandManager, PromptError},
-    config::{VERSION, BLOCK_TIME}, globals::format_hashrate
+    prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::ArgumentManager},
+    config::{VERSION, BLOCK_TIME}, globals::format_hashrate, async_handler
 };
 use crate::core::blockchain::{Config, Blockchain};
 use std::sync::Arc;
@@ -50,7 +50,9 @@ async fn main() -> Result<()> {
 }
 
 async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
-    let command_manager = CommandManager::default();
+    let mut command_manager: CommandManager<Arc<Blockchain>> = CommandManager::default();
+    command_manager.set_data(Some(blockchain.clone()));
+    command_manager.add_command(Command::new("list_peers", "List all peers connected", None, CommandHandler::Async(async_handler!(list_peers))));
 
     let p2p: Option<Arc<P2pServer>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
@@ -118,4 +120,20 @@ fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, network_
         miners_str,
         Prompt::colorize_str(Color::BrightBlack, ">>")
     )
+}
+
+async fn list_peers(blockchain: Arc<Blockchain>, _: ArgumentManager) -> Result<(), CommandError> {
+    match blockchain.get_p2p().lock().await.as_ref() {
+        Some(p2p) => {
+            let peer_list = p2p.get_peer_list().read().await;
+            for peer in peer_list.get_peers().values() {
+                info!("{}", peer);
+            }
+            info!("Total peer(s) count: {}", peer_list.size());
+        },
+        None => {
+            error!("No P2p server running!");
+        }
+    };
+    Ok(())
 }

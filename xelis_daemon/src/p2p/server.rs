@@ -797,6 +797,10 @@ impl P2pServer {
         &self.bind_address
     }
 
+    pub fn get_peer_list(&self) -> &SharedPeerList {
+        &self.peer_list
+    }
+
     pub async fn broadcast_tx_hash(&self, tx: &Hash) {
         let ping = self.build_ping_packet(None).await;
         self.broadcast_packet(Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(tx), Cow::Owned(ping)))).await;

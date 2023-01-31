@@ -64,8 +64,7 @@ async fn main() -> Result<()> {
 }
 
 async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
-    let command_manager = CommandManager::default();
-
+    let command_manager: CommandManager<()> = CommandManager::default();
     let closure = || async {
         let height_str = format!("{}/{}", 0, 0); // TODO
         let status = Prompt::colorize_str(Color::Red, "Offline");

@@ -20,6 +20,7 @@ use xelis_common::{
         GetBlocksAtHeightParams,
         GetDagOrderParams
     },
+    async_handler,
     serializer::Serializer,
     transaction::Transaction,
     crypto::hash::Hash,
@@ -27,14 +28,6 @@ use xelis_common::{
 };
 use std::sync::Arc;
 use log::{info, debug};
-
-macro_rules! method {
-    ($func: expr) => {
-        Box::new(move |a, b| {
-          Box::pin($func(a, b))
-        })
-    };
-}
 
 fn parse_params<P: DeserializeOwned>(value: Value) -> Result<P, RpcError> {
     serde_json::from_value(value).map_err(|e| RpcError::InvalidParams(e))
@@ -70,25 +63,25 @@ async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Storage,
 
 pub fn register_methods(server: &mut RpcServer) {
     info!("Registering RPC methods...");
-    server.register_method("get_height", method!(get_height));
-    server.register_method("get_topoheight", method!(get_topoheight));
-    server.register_method("get_stableheight", method!(get_stableheight));
-    server.register_method("get_block_template", method!(get_block_template));
-    server.register_method("get_block_at_topoheight", method!(get_block_at_topoheight));
-    server.register_method("get_blocks_at_height", method!(get_blocks_at_height));
-    server.register_method("get_block_by_hash", method!(get_block_by_hash));
-    server.register_method("get_top_block", method!(get_top_block));
-    server.register_method("submit_block", method!(submit_block));
-    server.register_method("get_balance", method!(get_balance));
-    server.register_method("get_nonce", method!(get_nonce));
-    server.register_method("get_assets", method!(get_assets));
-    server.register_method("count_transactions", method!(count_transactions));
-    server.register_method("submit_transaction", method!(submit_transaction));
-    server.register_method("get_transaction", method!(get_transaction));
-    server.register_method("p2p_status", method!(p2p_status));
-    server.register_method("get_mempool", method!(get_mempool));
-    server.register_method("get_tips", method!(get_tips));
-    server.register_method("get_dag_order", method!(get_dag_order));
+    server.register_method("get_height", async_handler!(get_height));
+    server.register_method("get_topoheight", async_handler!(get_topoheight));
+    server.register_method("get_stableheight", async_handler!(get_stableheight));
+    server.register_method("get_block_template", async_handler!(get_block_template));
+    server.register_method("get_block_at_topoheight", async_handler!(get_block_at_topoheight));
+    server.register_method("get_blocks_at_height", async_handler!(get_blocks_at_height));
+    server.register_method("get_block_by_hash", async_handler!(get_block_by_hash));
+    server.register_method("get_top_block", async_handler!(get_top_block));
+    server.register_method("submit_block", async_handler!(submit_block));
+    server.register_method("get_balance", async_handler!(get_balance));
+    server.register_method("get_nonce", async_handler!(get_nonce));
+    server.register_method("get_assets", async_handler!(get_assets));
+    server.register_method("count_transactions", async_handler!(count_transactions));
+    server.register_method("submit_transaction", async_handler!(submit_transaction));
+    server.register_method("get_transaction", async_handler!(get_transaction));
+    server.register_method("p2p_status", async_handler!(p2p_status));
+    server.register_method("get_mempool", async_handler!(get_mempool));
+    server.register_method("get_tips", async_handler!(get_tips));
+    server.register_method("get_dag_order", async_handler!(get_dag_order));
 }
 
 async fn get_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {

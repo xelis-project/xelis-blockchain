@@ -290,7 +290,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
 }
 
 async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
-    let command_manager = CommandManager::default();
+    let command_manager: CommandManager<()> = CommandManager::default();
     let closure = || async {
         let height_str = format!(
             "{}: {}",

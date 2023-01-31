@@ -3,6 +3,15 @@ use crate::config::{COIN_VALUE, FEE_PER_KB};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr};
 
+#[macro_export]
+macro_rules! async_handler {
+    ($func: expr) => {
+        Box::new(move |a, b| {
+          Box::pin($func(a, b))
+        })
+    };
+}
+
 // return timestamp in seconds
 pub fn get_current_time() -> u64 {
     let start = SystemTime::now();
