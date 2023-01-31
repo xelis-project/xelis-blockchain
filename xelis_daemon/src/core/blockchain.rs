@@ -9,7 +9,7 @@ use xelis_common::{
     immutable::Immutable,
     serializer::Serializer
 };
-use crate::p2p::server::P2pServer;
+use crate::p2p::P2pServer;
 use crate::rpc::RpcServer;
 use crate::rpc::websocket::NotifyEvent;
 use crate::storage::Storage;

@@ -5,7 +5,7 @@ pub mod core;
 
 use fern::colors::Color;
 use log::{info, error};
-use p2p::server::P2pServer;
+use p2p::P2pServer;
 use rpc::getwork_server::SharedGetWorkServer;
 use xelis_common::{
     prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::ArgumentManager},
