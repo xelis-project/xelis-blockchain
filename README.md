@@ -132,6 +132,25 @@ Hash algorithm used is SHA256 for keys / tree names.
 The random salt generated is a 64 bytes length.
 This simple system prevent someone to read / use the data without the necessary secret key.
 
+### Data Type and Value
+
+This protocol allows to transfer data through a custom wallet address called `integrated address`.
+It will simply integrate encoded data in the wallet address which can be used to send specific data to the wallet when creating a transaction.
+Each transaction can up to 512 bytes of space for encrypted data transfering.
+
+You can create simple service / communication on chain through wallets while staying anonymous and in encrypted form.
+
+Actually, you can have following values through API:
+- Null value representation
+- Boolean
+- String
+- Unsigned numbers (`u8`, `u16`, `u32`, `u64`, `u128`)
+
+And these types:
+- Value (which is only one value, can be used for PaymentID representation)
+- Array (of any different values types)
+- Fields (which can be used to represent custom `struct` for example)
+
 ## API
 
 ### JSON-RPC
