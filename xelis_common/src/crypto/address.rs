@@ -2,6 +2,7 @@ use core::fmt;
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 
+use crate::api::DataValue;
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
 use crate::config::PREFIX_ADDRESS;
 use super::bech32::{Bech32Error, encode, convert_bits, decode};
@@ -9,12 +10,11 @@ use super::key::PublicKey;
 use serde::de::Error as SerdeError;
 use anyhow::Error;
 
-const PAYMENT_ID_SIZE: usize = 8; // 8 bytes for paymentID
-
 pub enum AddressType {
     Normal,
-    PaymentId([u8; PAYMENT_ID_SIZE]),
-    // TODO add custom variables
+    // Data variant allow to integrate data in address for easier communication / data transfered
+    // those data are directly integrated in the data part and can be transfered in the transaction directly
+    Data(DataValue)
 }
 
 pub struct Address<'a> {
@@ -76,9 +76,9 @@ impl Serializer for AddressType {
             AddressType::Normal => {
                 writer.write_u8(0);
             },
-            AddressType::PaymentId(id) => {
+            AddressType::Data(data) => {
                 writer.write_u8(1);
-                writer.write_bytes(id);
+                data.write(writer);
             }
         };
     }
@@ -86,10 +86,7 @@ impl Serializer for AddressType {
     fn read(reader: &mut Reader) -> Result<AddressType, ReaderError> {
         let _type = match reader.read_u8()? {
             0 => AddressType::Normal,
-            1 => {
-                let id: [u8; PAYMENT_ID_SIZE] = reader.read_bytes(PAYMENT_ID_SIZE)?;
-                AddressType::PaymentId(id)
-            }
+            1 => AddressType::Data(DataValue::read(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         };
         Ok(_type)
