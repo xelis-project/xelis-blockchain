@@ -2,7 +2,7 @@ use core::fmt;
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 
-use crate::api::DataValue;
+use crate::api::DataType;
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
 use crate::config::PREFIX_ADDRESS;
 use super::bech32::{Bech32Error, encode, convert_bits, decode};
@@ -14,7 +14,7 @@ pub enum AddressType {
     Normal,
     // Data variant allow to integrate data in address for easier communication / data transfered
     // those data are directly integrated in the data part and can be transfered in the transaction directly
-    Data(DataValue)
+    Data(DataType)
 }
 
 pub struct Address<'a> {
@@ -86,7 +86,7 @@ impl Serializer for AddressType {
     fn read(reader: &mut Reader) -> Result<AddressType, ReaderError> {
         let _type = match reader.read_u8()? {
             0 => AddressType::Normal,
-            1 => AddressType::Data(DataValue::read(reader)?),
+            1 => AddressType::Data(DataType::read(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         };
         Ok(_type)
