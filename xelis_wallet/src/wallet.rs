@@ -1,6 +1,6 @@
 use anyhow::{Error, Context};
+use xelis_common::crypto::address::Address;
 use xelis_common::crypto::key::KeyPair;
-use crate::account::Account;
 use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
 use crate::storage::{EncryptedStorage, Storage};
@@ -36,11 +36,12 @@ pub enum WalletError {
 }
 
 pub struct Wallet {
+    // Encrypted Wallet Storage
     storage: EncryptedStorage,
-    // account to receive / generate txs
-    account: Option<Account>,
     // Cipher to encrypt / decrypt the master key
-    cipher: Cipher
+    cipher: Cipher,
+    // Private & Public key linked for this wallet
+    keypair: KeyPair
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -89,13 +90,11 @@ impl Wallet {
         let keypair = KeyPair::new();
         storage.set_keypair(&keypair)?;
 
-        let mut wallet = Self {
-            account: None,
+        let wallet = Self {
             storage,
-            cipher
+            cipher,
+            keypair
         };
-
-        wallet.init_account(daemon_address, keypair);
 
         Ok(wallet)
     }
@@ -134,18 +133,16 @@ impl Wallet {
         debug!("Retrieving keypair from encrypted storage");
         let keypair =  storage.get_keypair()?;
 
-        let mut wallet = Self {
-            account: None,
+        let wallet = Self {
             storage,
             cipher,
+            keypair
         };
-
-        wallet.init_account(daemon_address, keypair);
 
         Ok(wallet)
     }
 
-    fn init_account(&mut self, daemon_address: String, keypair: KeyPair) {
-        //self.account = Some(Account::new(daemon_address, keypair));
+    pub fn get_address(&self) -> Address<'_> {
+        self.keypair.get_public_key().to_address()
     }
 }

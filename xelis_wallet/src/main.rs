@@ -2,7 +2,6 @@ pub mod transaction_builder;
 pub mod storage;
 pub mod wallet;
 pub mod config;
-pub mod account;
 pub mod cipher;
 
 use std::{sync::Arc, time::Duration, path::Path};
