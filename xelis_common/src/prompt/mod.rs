@@ -44,7 +44,7 @@ impl Prompt {
         Ok(prompt)
     }
 
-    pub async fn start<Fut, T: Clone + Send>(self: &Arc<Self>, update_every: Duration, fn_message: &dyn Fn() -> Fut, command_manager: CommandManager<T>) -> Result<(), PromptError>
+    pub async fn start<Fut, T: Send>(self: &Arc<Self>, update_every: Duration, fn_message: &dyn Fn() -> Fut, command_manager: CommandManager<T>) -> Result<(), PromptError>
     where Fut: Future<Output = String> {
         let mut interval = interval(update_every);
         let zelf = Arc::clone(self);

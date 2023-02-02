@@ -6,9 +6,9 @@ use std::net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr};
 #[macro_export]
 macro_rules! async_handler {
     ($func: expr) => {
-        Box::new(move |a, b| {
+        move |a, b| {
           Box::pin($func(a, b))
-        })
+        }
     };
 }
 

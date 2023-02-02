@@ -27,14 +27,14 @@ pub enum CommandError {
 }
 
 pub type SyncCommandCallback<T> = fn(&CommandManager<T>, ArgumentManager) -> Result<(), CommandError>;
-pub type AsyncCommandCallback<T> = Box<dyn Fn(T, ArgumentManager) -> Pin<Box<dyn Future<Output = Result<(), CommandError>>>> + Send + Sync>;
+pub type AsyncCommandCallback<T> = fn(&'_ CommandManager<T>, ArgumentManager) -> Pin<Box<dyn Future<Output = Result<(), CommandError>> + '_>>;
 
-pub enum CommandHandler<T: Clone> {
+pub enum CommandHandler<T> {
     Sync(SyncCommandCallback<T>),
     Async(AsyncCommandCallback<T>)
 }
 
-pub struct Command<T: Clone> {
+pub struct Command<T> {
     name: String,
     description: String,
     required_args: Vec<Arg>,
@@ -42,7 +42,7 @@ pub struct Command<T: Clone> {
     callback: CommandHandler<T>
 }
 
-impl<T: Clone> Command<T> {
+impl<T> Command<T> {
     pub fn new(name: &str, description: &str, optional_arg: Option<Arg>, callback: CommandHandler<T>) -> Self {
         Self {
             name: name.to_owned(),
@@ -69,7 +69,7 @@ impl<T: Clone> Command<T> {
                 handler(manager, values)
             },
             CommandHandler::Async(handler) => {
-                handler(manager.get_data()?.clone(), values).await
+                handler(manager, values).await
             },
         }
     }
@@ -100,12 +100,12 @@ impl<T: Clone> Command<T> {
     }
 }
 
-pub struct CommandManager<T: Clone> {
+pub struct CommandManager<T> {
     commands: Vec<Command<T>>,
     data: Option<T>
 }
 
-impl<T: Clone> CommandManager<T> {
+impl<T> CommandManager<T> {
     pub fn new(data: Option<T>) -> Self {
         Self {
             commands: Vec::new(),
@@ -171,7 +171,7 @@ impl<T: Clone> CommandManager<T> {
     }
 }
 
-fn help<T: Clone>(manager: &CommandManager<T>, mut args: ArgumentManager) -> Result<(), CommandError> {
+fn help<T>(manager: &CommandManager<T>, mut args: ArgumentManager) -> Result<(), CommandError> {
     if args.has_argument("command") {
         let arg_value = args.get_value("command")?.to_string_value()?;
         let cmd = manager.get_command(&arg_value).ok_or(CommandError::CommandNotFound)?;
@@ -185,12 +185,12 @@ fn help<T: Clone>(manager: &CommandManager<T>, mut args: ArgumentManager) -> Res
     Ok(())
 }
 
-fn exit<T: Clone>(_: &CommandManager<T>, _: ArgumentManager) -> Result<(), CommandError> {
+fn exit<T>(_: &CommandManager<T>, _: ArgumentManager) -> Result<(), CommandError> {
     info!("Stopping...");
     Err(CommandError::Exit)
 }
 
-fn version<T: Clone>(_: &CommandManager<T>, _: ArgumentManager) -> Result<(), CommandError> {
+fn version<T>(_: &CommandManager<T>, _: ArgumentManager) -> Result<(), CommandError> {
     info!("Version: {}", VERSION);
     Ok(())
 }

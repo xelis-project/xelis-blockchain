@@ -13,8 +13,8 @@ use log::{error, info};
 use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
-    VERSION
-}, prompt::{Prompt, command::CommandManager}};
+    VERSION, XELIS_ASSET
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler};
 use wallet::Wallet;
 
 
@@ -63,7 +63,9 @@ async fn main() -> Result<()> {
 }
 
 async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
-    let command_manager: CommandManager<()> = CommandManager::default();
+    let mut command_manager: CommandManager<Wallet> = CommandManager::default();
+    command_manager.add_command(Command::new("balance", "Show your current balance", Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(balance))));
+
     let closure = || async {
         let height_str = format!("{}/{}", 0, 0); // TODO
         let status = Prompt::colorize_str(Color::Red, "Offline");
@@ -76,5 +78,16 @@ async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
         )
     };
     prompt.start(Duration::from_millis(100), &closure, command_manager).await?;
+    Ok(())
+}
+
+async fn balance(manager: &CommandManager<Wallet>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let asset = if arguments.has_argument("asset") {
+        arguments.get_value("asset")?.to_hash()?
+    } else {
+        XELIS_ASSET // default asset selected is XELIS
+    };
+
+    info!("Balance for asset {}: {}", asset, "TODO");
     Ok(())
 }

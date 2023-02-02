@@ -23,7 +23,7 @@ use self::getwork_server::{GetWorkWebSocketHandler, SharedGetWorkServer};
 use self::websocket::{NotifyEvent, Response};
 
 pub type SharedRpcServer = web::Data<Arc<RpcServer>>;
-pub type Handler = Box<dyn Fn(Arc<Blockchain>, Value) -> Pin<Box<dyn Future<Output = Result<Value, RpcError>>>> + Send + Sync>;
+pub type Handler = fn(Arc<Blockchain>, Value) -> Pin<Box<dyn Future<Output = Result<Value, RpcError>>>>;
 
 const JSON_RPC_VERSION: &str = "2.0";
 

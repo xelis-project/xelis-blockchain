@@ -122,7 +122,8 @@ fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, network_
     )
 }
 
-async fn list_peers(blockchain: Arc<Blockchain>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn list_peers(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain = manager.get_data()?;
     match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => {
             let peer_list = p2p.get_peer_list().read().await;
