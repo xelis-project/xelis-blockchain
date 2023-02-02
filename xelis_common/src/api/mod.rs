@@ -9,7 +9,7 @@ pub enum DataType {
     Value(DataValue),
     // For two next variants, we support up to 255 (u8::MAX) elements maximum
     Array(Vec<DataValue>),
-    Fields(HashMap<DataValue, DataValue>)
+    Fields(HashMap<DataValue, DataType>)
 }
 
 impl Serializer for DataType {
@@ -29,7 +29,7 @@ impl Serializer for DataType {
                 let mut fields = HashMap::with_capacity(size as usize);
                 for _ in 0..size {
                     let key = DataValue::read(reader)?;
-                    let value = DataValue::read(reader)?;
+                    let value = DataType::read(reader)?;
                     fields.insert(key, value);
                 }
                 Self::Fields(fields)
