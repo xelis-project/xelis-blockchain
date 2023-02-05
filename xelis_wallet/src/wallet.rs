@@ -38,8 +38,6 @@ pub enum WalletError {
 pub struct Wallet {
     // Encrypted Wallet Storage
     storage: EncryptedStorage,
-    // Cipher to encrypt / decrypt the master key
-    cipher: Cipher,
     // Private & Public key linked for this wallet
     keypair: KeyPair
 }
@@ -92,7 +90,6 @@ impl Wallet {
 
         let wallet = Self {
             storage,
-            cipher,
             keypair
         };
 
@@ -135,11 +132,49 @@ impl Wallet {
 
         let wallet = Self {
             storage,
-            cipher,
             keypair
         };
 
         Ok(wallet)
+    }
+
+    pub fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {
+        let storage = self.storage.get_public_storage();
+        let (master_key, storage_salt) = {
+            // retrieve old salt to build key from current password
+            let salt = storage.get_password_salt()?;
+            let hashed_password = hash_password(old_password, &salt)?;
+
+            let encrypted_master_key = storage.get_encrypted_master_key()?;
+            let encrypted_storage_salt = storage.get_encrypted_storage_salt()?;
+
+            // decrypt the encrypted master key using the provided password
+            let cipher = Cipher::new(&hashed_password, None)?;
+            let master_key = cipher.decrypt_value(&encrypted_master_key).context("Invalid password provided")?;
+            let storage_salt = cipher.decrypt_value(&encrypted_storage_salt)?;
+            (master_key, storage_salt)
+        };
+
+        // generate a new salt for password
+        let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
+        OsRng.fill_bytes(&mut salt);
+
+        // generate the password-based derivated key to encrypt the master key
+        let hashed_password = hash_password(password, &salt)?;
+        let cipher = Cipher::new(&hashed_password, None)?;
+
+        // encrypt the master key using the new password
+        let encrypted_key = cipher.encrypt_value(&master_key)?;
+
+        // encrypt the salt with the new password
+        let encrypted_storage_salt = cipher.encrypt_value(&storage_salt)?;
+
+        // save on disk
+        storage.set_password_salt(&salt)?;
+        storage.set_encrypted_master_key(&encrypted_key)?;
+        storage.set_encrypted_storage_salt(&encrypted_storage_salt)?;
+
+        Ok(())
     }
 
     pub fn get_address(&self) -> Address<'_> {

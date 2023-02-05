@@ -6,7 +6,7 @@ pub mod cipher;
 
 use std::{sync::Arc, time::Duration, path::Path};
 
-use anyhow::Result;
+use anyhow::{Result, Context};
 use config::DIR_PATH;
 use fern::colors::Color;
 use log::{error, info};
@@ -14,7 +14,7 @@ use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
     VERSION, XELIS_ASSET
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler};
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::address::Address};
 use wallet::Wallet;
 
 
@@ -55,16 +55,21 @@ async fn main() -> Result<()> {
         Wallet::new(dir, config.password, config.daemon_address)?
     };
 
-    if let Err(e) = run_prompt(prompt).await {
+    if let Err(e) = run_prompt(prompt, wallet).await {
         error!("Error while running prompt: {}", e);
     }
 
     Ok(())
 }
 
-async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
+async fn run_prompt(prompt: Arc<Prompt>, wallet: Wallet) -> Result<()> {
     let mut command_manager: CommandManager<Wallet> = CommandManager::default();
+    command_manager.add_command(Command::with_required_arguments("set_password", "Set a new password to open your wallet", vec![Arg::new("old_password", ArgType::String), Arg::new("password", ArgType::String)], None, CommandHandler::Async(async_handler!(set_password))));
+    command_manager.add_command(Command::with_required_arguments("transfer", "Send asset to a specified address", vec![Arg::new("address", ArgType::String), Arg::new("amount", ArgType::Number)], Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(transfer))));
+    command_manager.add_command(Command::new("display_address", "Show your wallet address", None, CommandHandler::Async(async_handler!(display_address))));
     command_manager.add_command(Command::new("balance", "Show your current balance", Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(balance))));
+
+    command_manager.set_data(Some(wallet));
 
     let closure = || async {
         let height_str = format!("{}/{}", 0, 0); // TODO
@@ -81,6 +86,44 @@ async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
     Ok(())
 }
 
+// Change wallet password
+async fn set_password(manager: &CommandManager<Wallet>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let wallet = manager.get_data()?;
+    let old_password = arguments.get_value("old_password")?.to_string_value()?;
+    let password = arguments.get_value("password")?.to_string_value()?;
+
+    info!("Changing password...");
+    wallet.set_password(old_password, password)?;
+    info!("Your password has been changed!");
+    Ok(())
+}
+
+// Create a new transfer to a specified address
+async fn transfer(manager: &CommandManager<Wallet>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let str_address = arguments.get_value("address")?.to_string_value()?;
+    let amount = arguments.get_value("amount")?.to_number()?;
+    let address = Address::from_string(&str_address).context("Invalid address")?;
+
+    let asset = if arguments.has_argument("asset") {
+        arguments.get_value("asset")?.to_hash()?
+    } else {
+        XELIS_ASSET // default asset selected is XELIS
+    };
+
+    let wallet = manager.get_data()?;
+    // TODO
+    info!("Sending {} of asset '{}' to {}", amount, asset, address);
+    Ok(())
+}
+
+// Show current wallet address
+async fn display_address(manager: &CommandManager<Wallet>, _: ArgumentManager) -> Result<(), CommandError> {
+    let wallet = manager.get_data()?;
+    info!("Wallet address: {}", wallet.get_address());
+    Ok(())
+}
+
+// Show current balance for specified asset
 async fn balance(manager: &CommandManager<Wallet>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let asset = if arguments.has_argument("asset") {
         arguments.get_value("asset")?.to_hash()?
@@ -88,6 +131,7 @@ async fn balance(manager: &CommandManager<Wallet>, mut arguments: ArgumentManage
         XELIS_ASSET // default asset selected is XELIS
     };
 
+    let wallet = manager.get_data()?;
     info!("Balance for asset {}: {}", asset, "TODO");
     Ok(())
 }
