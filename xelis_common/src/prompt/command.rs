@@ -3,6 +3,7 @@ use std::{collections::HashMap, pin::Pin, future::Future};
 use crate::config::VERSION;
 
 use super::argument::*;
+use anyhow::Error;
 use thiserror::Error;
 use log::info;
 
@@ -23,7 +24,9 @@ pub enum CommandError {
     #[error("Exit command was called")]
     Exit,
     #[error("No data was set in command manager")]
-    NoData
+    NoData,
+    #[error(transparent)]
+    Any(#[from] Error)
 }
 
 pub type SyncCommandCallback<T> = fn(&CommandManager<T>, ArgumentManager) -> Result<(), CommandError>;
