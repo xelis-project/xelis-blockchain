@@ -199,18 +199,17 @@ impl Wallet {
         };
         let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), TransactionType::Transfer(vec![transfer]), 1f64);
 
-        // now we check that we have enough native funds to pay fees
-        let native_balance = self.get_balance(&XELIS_ASSET);
+        // now we have to check that we have enough funds for fees
         let estimated_fees = builder.estimate_fees();
-        if estimated_fees > native_balance {
-            return Err(WalletError::NotEnoughFundsForFee(native_balance, amount).into())
-        }
-
-        // last check, if we want to send native asset, we have to be sure that we have enough funds with fees included
         if asset == XELIS_ASSET {
             let total_spent = amount + estimated_fees;
             if total_spent > balance {
                 return Err(WalletError::NotEnoughFunds(balance, total_spent, asset).into())
+            }
+        } else {
+            let native_balance = self.get_balance(&XELIS_ASSET);
+            if estimated_fees > native_balance {
+                return Err(WalletError::NotEnoughFundsForFee(native_balance, amount).into())
             }
         }
 
