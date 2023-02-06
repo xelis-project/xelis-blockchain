@@ -1,10 +1,13 @@
 use anyhow::{Error, Context};
+use xelis_common::config::XELIS_ASSET;
 use xelis_common::crypto::address::Address;
 use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::KeyPair;
+use xelis_common::transaction::{TransactionType, Transfer, Transaction};
 use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
 use crate::storage::{EncryptedStorage, Storage};
+use crate::transaction_builder::TransactionBuilder;
 use chacha20poly1305::{aead::OsRng, Error as CryptoError};
 use rand::RngCore;
 use thiserror::Error;
@@ -33,7 +36,11 @@ pub enum WalletError {
     #[error("Invalid salt size stored in storage, expected 32 bytes")]
     InvalidSaltSize,
     #[error("Error while fetching password salt from DB")]
-    NoSaltFound
+    NoSaltFound,
+    #[error("Your wallet contains only {} instead of {} for asset {}", _0, _1, _2)]
+    NotEnoughFunds(u64, u64, Hash),
+    #[error("Your wallet don't have enough funds to pay fees: expected {} but have only {}", _0, _1)]
+    NotEnoughFundsForFee(u64, u64)
 }
 
 pub struct Wallet {
@@ -176,6 +183,38 @@ impl Wallet {
         storage.set_encrypted_storage_salt(&encrypted_storage_salt)?;
 
         Ok(())
+    }
+
+    pub fn create_transaction(&self, asset: Hash, address: Address, amount: u64) -> Result<Transaction, Error> {
+        let balance = self.get_balance(&asset);
+        // check if we have enough funds for this asset
+        if amount > balance {
+            return Err(WalletError::NotEnoughFunds(balance, amount, asset).into())
+        }
+
+        let transfer = Transfer {
+            amount,
+            asset: asset.clone(),
+            to: address.to_public_key()
+        };
+        let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), TransactionType::Transfer(vec![transfer]), 1f64);
+
+        // now we check that we have enough native funds to pay fees
+        let native_balance = self.get_balance(&XELIS_ASSET);
+        let estimated_fees = builder.estimate_fees();
+        if estimated_fees > native_balance {
+            return Err(WalletError::NotEnoughFundsForFee(native_balance, amount).into())
+        }
+
+        // last check, if we want to send native asset, we have to be sure that we have enough funds with fees included
+        if asset == XELIS_ASSET {
+            let total_spent = amount + estimated_fees;
+            if total_spent > balance {
+                return Err(WalletError::NotEnoughFunds(balance, total_spent, asset).into())
+            }
+        }
+
+        Ok(builder.build(&self.keypair)?)
     }
 
     pub fn get_balance(&self, asset: &Hash) -> u64 {

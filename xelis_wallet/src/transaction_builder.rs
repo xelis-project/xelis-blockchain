@@ -22,7 +22,26 @@ impl TransactionBuilder {
         }
     }
 
-    pub fn build(self, keypair: KeyPair) -> Result<Transaction, WalletError> {
+    fn serialize(&self) -> Writer {
+        let mut writer = Writer::new();
+        self.owner.write(&mut writer);
+        self.data.write(&mut writer);
+        writer
+    }
+
+    fn estimate_fees_internal(&self, writer: &Writer) -> u64 {
+        // 8 represent the field 'fee' in bytes size
+        let total_bytes = SIGNATURE_LENGTH + 8 + writer.total_write();
+        let fee = (calculate_tx_fee(total_bytes) as f64  * self.fee_multiplier) as u64;
+        fee
+    }
+
+    pub fn estimate_fees(&self) -> u64 {
+        let writer = self.serialize();
+        self.estimate_fees_internal(&writer)
+    }
+
+    pub fn build(self, keypair: &KeyPair) -> Result<Transaction, WalletError> {
         if *keypair.get_public_key() != self.owner {
             return Err(WalletError::InvalidKeyPair)
         }
@@ -39,16 +58,11 @@ impl TransactionBuilder {
             }
         }
 
-        let mut writer = Writer::new();
-        self.owner.write(&mut writer);
-        self.data.write(&mut writer);
-
-        // 8 represent the field 'fee' in bytes size
-        let total_bytes = SIGNATURE_LENGTH + 8 + writer.total_write();
-        let fee = (calculate_tx_fee(total_bytes) as f64  * self.fee_multiplier) as u64;
-        let nonce = 0;
+        let mut writer = self.serialize();
+        let fee = self.estimate_fees_internal(&writer);
         writer.write_u64(&fee);
 
+        let nonce = 0; // TODO
         let signature = keypair.sign(&writer.bytes());
         let tx = Transaction::new(self.owner, self.data, fee, nonce, signature);
 

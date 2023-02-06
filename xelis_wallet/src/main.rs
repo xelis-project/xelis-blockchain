@@ -14,7 +14,7 @@ use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
     VERSION, XELIS_ASSET
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::address::Address};
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::{address::Address, hash::Hashable}};
 use wallet::Wallet;
 
 
@@ -111,8 +111,13 @@ async fn transfer(manager: &CommandManager<Wallet>, mut arguments: ArgumentManag
     };
 
     let wallet = manager.get_data()?;
-    // TODO
-    info!("Sending {} of asset '{}' to {}", amount, asset, address);
+    info!("Building transaction...");
+    let tx = wallet.create_transaction(asset, address, amount)?;
+    let tx_hash = tx.hash();
+    info!("Transaction hash: {}", tx_hash);
+
+    // TODO send transaction
+
     Ok(())
 }
 

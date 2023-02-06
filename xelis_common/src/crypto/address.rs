@@ -10,6 +10,7 @@ use super::key::PublicKey;
 use serde::de::Error as SerdeError;
 use anyhow::Error;
 
+#[derive(Clone)]
 pub enum AddressType {
     Normal,
     // Data variant allow to integrate data in address for easier communication / data transfered
@@ -17,6 +18,7 @@ pub enum AddressType {
     Data(DataType)
 }
 
+#[derive(Clone)]
 pub struct Address<'a> {
     mainnet: bool,
     addr_type: AddressType,
