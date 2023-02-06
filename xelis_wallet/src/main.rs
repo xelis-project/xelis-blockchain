@@ -132,6 +132,7 @@ async fn balance(manager: &CommandManager<Wallet>, mut arguments: ArgumentManage
     };
 
     let wallet = manager.get_data()?;
-    info!("Balance for asset {}: {}", asset, "TODO");
+    let balance = wallet.get_balance(&asset);
+    info!("Balance for asset {}: {}", asset, balance);
     Ok(())
 }

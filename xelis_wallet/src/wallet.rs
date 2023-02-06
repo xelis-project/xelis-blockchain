@@ -1,5 +1,6 @@
 use anyhow::{Error, Context};
 use xelis_common::crypto::address::Address;
+use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::KeyPair;
 use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
@@ -175,6 +176,10 @@ impl Wallet {
         storage.set_encrypted_storage_salt(&encrypted_storage_salt)?;
 
         Ok(())
+    }
+
+    pub fn get_balance(&self, asset: &Hash) -> u64 {
+        self.storage.get_balance_for(asset).unwrap_or(0)
     }
 
     pub fn get_address(&self) -> Address<'_> {
