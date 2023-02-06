@@ -1,4 +1,4 @@
-use std::{collections::HashMap, pin::Pin, future::Future};
+use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display};
 
 use crate::config::VERSION;
 
@@ -169,7 +169,7 @@ impl<T> CommandManager<T> {
         command.execute(self, ArgumentManager::new(arguments)).await
     }
 
-    pub fn message(&self, message: &str) {
+    pub fn message<D: Display>(&self, message: D) {
         info!("{}", message);
     }
 }
@@ -182,18 +182,19 @@ fn help<T>(manager: &CommandManager<T>, mut args: ArgumentManager) -> Result<(),
     } else {
         manager.message("Available commands:");
         for cmd in manager.get_commands() {
-            manager.message(&format!("- {}: {}", cmd.get_name(), cmd.get_description()));
+            manager.message(format!("- {}: {}", cmd.get_name(), cmd.get_description()));
         }
+        manager.message("See how to use a command using /help <command>");
     }
     Ok(())
 }
 
-fn exit<T>(_: &CommandManager<T>, _: ArgumentManager) -> Result<(), CommandError> {
-    info!("Stopping...");
+fn exit<T>(manager: &CommandManager<T>, _: ArgumentManager) -> Result<(), CommandError> {
+    manager.message("Stopping...");
     Err(CommandError::Exit)
 }
 
-fn version<T>(_: &CommandManager<T>, _: ArgumentManager) -> Result<(), CommandError> {
-    info!("Version: {}", VERSION);
+fn version<T>(manager: &CommandManager<T>, _: ArgumentManager) -> Result<(), CommandError> {
+    manager.message(format!("Version: {}", VERSION));
     Ok(())
 }

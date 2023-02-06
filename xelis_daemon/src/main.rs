@@ -128,12 +128,12 @@ async fn list_peers(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManage
         Some(p2p) => {
             let peer_list = p2p.get_peer_list().read().await;
             for peer in peer_list.get_peers().values() {
-                info!("{}", peer);
+                manager.message(format!("{}", peer));
             }
-            info!("Total peer(s) count: {}", peer_list.size());
+            manager.message(format!("Total peer(s) count: {}", peer_list.size()));
         },
         None => {
-            error!("No P2p server running!");
+            manager.message("No P2p server running!");
         }
     };
     Ok(())

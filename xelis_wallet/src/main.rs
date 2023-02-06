@@ -92,9 +92,9 @@ async fn set_password(manager: &CommandManager<Wallet>, mut arguments: ArgumentM
     let old_password = arguments.get_value("old_password")?.to_string_value()?;
     let password = arguments.get_value("password")?.to_string_value()?;
 
-    info!("Changing password...");
+    manager.message("Changing password...");
     wallet.set_password(old_password, password)?;
-    info!("Your password has been changed!");
+    manager.message("Your password has been changed!");
     Ok(())
 }
 
@@ -111,10 +111,10 @@ async fn transfer(manager: &CommandManager<Wallet>, mut arguments: ArgumentManag
     };
 
     let wallet = manager.get_data()?;
-    info!("Building transaction...");
+    manager.message("Building transaction...");
     let tx = wallet.create_transaction(asset, address, amount)?;
     let tx_hash = tx.hash();
-    info!("Transaction hash: {}", tx_hash);
+    manager.message(format!("Transaction hash: {}", tx_hash));
 
     // TODO send transaction
 
@@ -124,7 +124,7 @@ async fn transfer(manager: &CommandManager<Wallet>, mut arguments: ArgumentManag
 // Show current wallet address
 async fn display_address(manager: &CommandManager<Wallet>, _: ArgumentManager) -> Result<(), CommandError> {
     let wallet = manager.get_data()?;
-    info!("Wallet address: {}", wallet.get_address());
+    manager.message(format!("Wallet address: {}", wallet.get_address()));
     Ok(())
 }
 
@@ -138,6 +138,7 @@ async fn balance(manager: &CommandManager<Wallet>, mut arguments: ArgumentManage
 
     let wallet = manager.get_data()?;
     let balance = wallet.get_balance(&asset);
-    info!("Balance for asset {}: {}", asset, balance);
+    manager.message(format!("Balance for asset {}: {}", asset, balance));
+
     Ok(())
 }
