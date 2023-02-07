@@ -10,7 +10,7 @@ pub struct Transfer {
     pub amount: u64,
     pub asset: Hash,
     pub to: PublicKey,
-    pub extra_data: Option<Vec<u8>> // extra data in encrypted form
+    pub extra_data: Option<Vec<u8>> // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
 }
 
 #[derive(serde::Serialize, Clone)]
