@@ -3,11 +3,14 @@ use crate::crypto::hash::{Hashable, hash, Hash};
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
 use std::collections::HashMap;
 
+pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
+
 #[derive(serde::Serialize, Clone)]
 pub struct Transfer {
     pub amount: u64,
     pub asset: Hash,
-    pub to: PublicKey
+    pub to: PublicKey,
+    pub extra_data: Option<Vec<u8>> // extra data in encrypted form
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -54,6 +57,12 @@ impl Serializer for TransactionType {
                     writer.write_hash(&tx.asset);
                     writer.write_u64(&tx.amount);
                     tx.to.write(writer);
+
+                    writer.write_bool(&tx.extra_data.is_some());
+                    if let Some(extra_data) = &tx.extra_data {
+                        writer.write_u16(&(extra_data.len() as u16));
+                        writer.write_bytes(extra_data);
+                    }
                 }
             }
             TransactionType::CallContract(tx) => {
@@ -93,10 +102,24 @@ impl Serializer for TransactionType {
                     let amount = reader.read_u64()?;
                     let to = PublicKey::read(reader)?;
 
+                    // read any data transfered
+                    let has_extra_data = reader.read_bool()?;
+                    let extra_data = if has_extra_data {
+                        let extra_data_size = reader.read_u16()? as usize;
+                        if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
+                            return Err(ReaderError::InvalidSize)
+                        }
+
+                        Some(reader.read_bytes(extra_data_size)?)
+                    } else {
+                        None
+                    };
+
                     txs.push(Transfer {
                         asset,
                         amount,
-                        to
+                        to,
+                        extra_data
                     });
                 }
                 TransactionType::Transfer(txs)
@@ -176,12 +199,18 @@ impl Serializer for Transaction {
     }
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
+        let owner = PublicKey::read(reader)?;
+        let data = TransactionType::read(reader)?;
+        let fee = reader.read_u64()?;
+        let nonce = reader.read_u64()?;
+        let signature = Signature::read(reader)?;
+
         Ok(Transaction {
-            owner: PublicKey::read(reader)?,
-            data: TransactionType::read(reader)?,
-            fee: reader.read_u64()?,
-            nonce: reader.read_u64()?,  
-            signature: Signature::read(reader)?
+            owner,
+            data,
+            fee,
+            nonce,
+            signature
         })
     }
 }

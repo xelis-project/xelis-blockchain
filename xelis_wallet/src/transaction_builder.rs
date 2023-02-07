@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+
 use xelis_common::{
     transaction::{Transaction, TransactionType},
     globals::calculate_tx_fee,
     serializer::{Writer, Serializer},
-    crypto::key::{SIGNATURE_LENGTH, PublicKey, KeyPair}
+    crypto::{key::{SIGNATURE_LENGTH, PublicKey, KeyPair}, hash::Hash}
 };
 
 use crate::wallet::WalletError;
@@ -36,6 +38,28 @@ impl TransactionBuilder {
         fee
     }
 
+    pub fn total_spent(&self) -> HashMap<&Hash, u64> {
+        let mut total_spent = HashMap::new();
+        match &self.data {
+            TransactionType::Burn(asset, amount) => {
+                total_spent.insert(asset, *amount);
+            },
+            TransactionType::CallContract(call) => {
+                for (asset, amount) in &call.assets {
+                    total_spent.insert(asset, *amount);
+                }
+            },
+            TransactionType::Transfer(txs) => {
+                for tx in txs {
+                    let current = total_spent.entry(&tx.asset).or_insert(0);
+                    *current += tx.amount; 
+                }
+            },
+            TransactionType::DeployContract(_) => {}
+        }
+
+        total_spent
+    }
     pub fn estimate_fees(&self) -> u64 {
         let writer = self.serialize();
         self.estimate_fees_internal(&writer)

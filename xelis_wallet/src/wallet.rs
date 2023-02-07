@@ -1,9 +1,13 @@
+use std::collections::HashMap;
+
 use anyhow::{Error, Context};
+use xelis_common::api::DataType;
 use xelis_common::config::XELIS_ASSET;
 use xelis_common::crypto::address::Address;
 use xelis_common::crypto::hash::Hash;
-use xelis_common::crypto::key::KeyPair;
-use xelis_common::transaction::{TransactionType, Transfer, Transaction};
+use xelis_common::crypto::key::{KeyPair, PublicKey};
+use xelis_common::serializer::{Serializer, Writer};
+use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
 use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
 use crate::storage::{EncryptedStorage, Storage};
@@ -40,7 +44,9 @@ pub enum WalletError {
     #[error("Your wallet contains only {} instead of {} for asset {}", _0, _1, _2)]
     NotEnoughFunds(u64, u64, Hash),
     #[error("Your wallet don't have enough funds to pay fees: expected {} but have only {}", _0, _1)]
-    NotEnoughFundsForFee(u64, u64)
+    NotEnoughFundsForFee(u64, u64),
+    #[error("Invalid address params")]
+    InvalidAddressParams
 }
 
 pub struct Wallet {
@@ -57,7 +63,7 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 }
 
 impl Wallet {
-    pub fn new(name: String, password: String, daemon_address: String) -> Result<Self, Error> {
+    pub fn new(name: String, password: String) -> Result<Self, Error> {
         // generate random salt for hashed password
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
         OsRng.fill_bytes(&mut salt);
@@ -104,7 +110,7 @@ impl Wallet {
         Ok(wallet)
     }
 
-    pub fn open(name: String, password: String, daemon_address: String) -> Result<Self, Error> {
+    pub fn open(name: String, password: String) -> Result<Self, Error> {
         debug!("Creating storage for {}", name);
         let storage = Storage::new(name)?;
         
@@ -185,32 +191,53 @@ impl Wallet {
         Ok(())
     }
 
-    pub fn create_transaction(&self, asset: Hash, address: Address, amount: u64) -> Result<Transaction, Error> {
+    pub fn create_transfer(&self, asset: Hash, key: PublicKey, extra_data: Option<DataType>, amount: u64) -> Result<Transfer, Error> {
         let balance = self.get_balance(&asset);
         // check if we have enough funds for this asset
         if amount > balance {
             return Err(WalletError::NotEnoughFunds(balance, amount, asset).into())
         }
+        
+        // include all extra data in the TX
+        let extra_data = if let Some(data) = extra_data {
+            let mut writer = Writer::new();
+            data.write(&mut writer);
+            // TODO encrypt all the extra data for the receiver
+            if writer.total_write() > EXTRA_DATA_LIMIT_SIZE {
+                return Err(WalletError::InvalidAddressParams.into())
+            }
+            Some(writer.bytes())
+        } else {
+            None
+        };
 
         let transfer = Transfer {
             amount,
             asset: asset.clone(),
-            to: address.to_public_key()
+            to: key,
+            extra_data
         };
-        let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), TransactionType::Transfer(vec![transfer]), 1f64);
+        Ok(transfer)
+    }
 
-        // now we have to check that we have enough funds for fees
-        let estimated_fees = builder.estimate_fees();
-        if asset == XELIS_ASSET {
-            let total_spent = amount + estimated_fees;
-            if total_spent > balance {
-                return Err(WalletError::NotEnoughFunds(balance, total_spent, asset).into())
+    pub fn create_transaction(&self, transaction_type: TransactionType) -> Result<Transaction, Error> {
+        let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), transaction_type, 1f64);
+        let assets_spent: HashMap<&Hash, u64> = builder.total_spent();
+
+        // check that we have enough balance for every assets spent
+        for (asset, amount) in &assets_spent {
+            let asset: &Hash = *asset;
+            let balance = self.get_balance(asset);
+            if balance < *amount {
+                return Err(WalletError::NotEnoughFunds(balance, *amount, asset.clone()).into())
             }
-        } else {
-            let native_balance = self.get_balance(&XELIS_ASSET);
-            if estimated_fees > native_balance {
-                return Err(WalletError::NotEnoughFundsForFee(native_balance, amount).into())
-            }
+        }
+
+        // now we have to check that we have enough funds for spent + fees
+        let total_native_spent = assets_spent.get(&XELIS_ASSET).unwrap_or(&0) +  builder.estimate_fees();
+        let native_balance = self.get_balance(&XELIS_ASSET);
+        if total_native_spent > native_balance {
+            return Err(WalletError::NotEnoughFundsForFee(native_balance, total_native_spent).into())
         }
 
         Ok(builder.build(&self.keypair)?)
@@ -223,4 +250,8 @@ impl Wallet {
     pub fn get_address(&self) -> Address<'_> {
         self.keypair.get_public_key().to_address()
     }
+
+    pub fn get_address_with(&self, data: DataType) -> Address<'_> {
+        self.keypair.get_public_key().to_address_with(data)
+    }    
 }

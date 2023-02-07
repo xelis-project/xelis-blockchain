@@ -46,6 +46,10 @@ impl<'a> Address<'a> {
         &self.addr_type
     }
 
+    pub fn split(self) -> (PublicKey, AddressType) {
+        (self.pub_key.into_owned(), self.addr_type)
+    }
+
     pub fn is_normal(&self) -> bool {
         match self.addr_type {
             AddressType::Normal => true,

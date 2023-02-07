@@ -14,7 +14,7 @@ use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
     VERSION, XELIS_ASSET
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::{address::Address, hash::Hashable}};
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType};
 use wallet::Wallet;
 
 
@@ -49,10 +49,10 @@ async fn main() -> Result<()> {
 
     let wallet = if Path::new(&dir).is_dir() {
         info!("Opening wallet {}", dir);
-        Wallet::open(dir, config.password, config.daemon_address)?
+        Wallet::open(dir, config.password)?
     } else {
         info!("Creating a new wallet at {}", dir);
-        Wallet::new(dir, config.password, config.daemon_address)?
+        Wallet::new(dir, config.password)?
     };
 
     if let Err(e) = run_prompt(prompt, wallet).await {
@@ -112,7 +112,14 @@ async fn transfer(manager: &CommandManager<Wallet>, mut arguments: ArgumentManag
 
     let wallet = manager.get_data()?;
     manager.message("Building transaction...");
-    let tx = wallet.create_transaction(asset, address, amount)?;
+    let (key, address_type) = address.split();
+    let extra_data = match address_type {
+        AddressType::Normal => None,
+        AddressType::Data(data) => Some(data)
+    };
+
+    let transfer = wallet.create_transfer(asset, key, extra_data, amount)?;
+    let tx = wallet.create_transaction(TransactionType::Transfer(vec![transfer]))?;
     let tx_hash = tx.hash();
     manager.message(format!("Transaction hash: {}", tx_hash));
 

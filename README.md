@@ -136,7 +136,7 @@ This simple system prevent someone to read / use the data without the necessary 
 
 This protocol allows to transfer data through a custom wallet address called `integrated address`.
 It will simply integrate encoded data in the wallet address which can be used to send specific data to the wallet when creating a transaction.
-Each transaction can up to 512 bytes of space for encrypted data transfering.
+Each transaction can reserve up to 1 KB of space (for encrypted data transfering for example).
 
 You can create simple service / communication on chain through wallets while staying anonymous and in encrypted form.
 

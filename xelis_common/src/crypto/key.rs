@@ -1,3 +1,4 @@
+use crate::api::DataType;
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 use super::address::{Address, AddressType};
 use super::hash::Hash;
@@ -33,6 +34,10 @@ impl PublicKey {
 
     pub fn to_address(&self) -> Address { // TODO mainnet mode based on config
         Address::new(true, AddressType::Normal, Cow::Borrowed(self))
+    }
+
+    pub fn to_address_with(&self, data: DataType) -> Address {
+        Address::new(true, AddressType::Data(data), Cow::Borrowed(self))
     }
 }
 
