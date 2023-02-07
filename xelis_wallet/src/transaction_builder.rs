@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use xelis_common::{
-    transaction::{Transaction, TransactionType},
+    transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     globals::calculate_tx_fee,
     serializer::{Writer, Serializer},
     crypto::{key::{SIGNATURE_LENGTH, PublicKey, KeyPair}, hash::Hash}
@@ -60,6 +60,19 @@ impl TransactionBuilder {
 
         total_spent
     }
+
+    pub fn total_extra_data_size(&self) -> usize {
+        let mut total_size = 0;
+        if let TransactionType::Transfer(txs) = &self.data {
+            for tx in txs {
+                if let Some(data) = &tx.extra_data {
+                    total_size += data.len();
+                }
+            }
+        }
+        total_size
+    }
+
     pub fn estimate_fees(&self) -> u64 {
         let writer = self.serialize();
         self.estimate_fees_internal(&writer)
@@ -80,6 +93,11 @@ impl TransactionBuilder {
                     return Err(WalletError::TxOwnerIsReceiver)
                 }
             }
+        }
+
+        let extra_data_size = self.total_extra_data_size();
+        if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
+            return Err(WalletError::ExtraDataTooBig(EXTRA_DATA_LIMIT_SIZE, extra_data_size))
         }
 
         let mut writer = self.serialize();

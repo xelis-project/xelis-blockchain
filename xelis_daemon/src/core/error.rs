@@ -75,6 +75,8 @@ pub enum BlockchainError {
     InvalidTransactionNonce(u64, u64),
     #[error("Invalid transaction, sender trying to send coins to himself: {}", _0)]
     InvalidTransactionToSender(Hash),
+    #[error("Invalid extra data in this transaction, expected maximum {} bytes but got {} bytes", _0, _1)]
+    InvalidTransactionExtraDataTooBig(usize, usize),
     #[error("Error while retrieving block by hash: {} not found", _0)]
     BlockNotFound(Hash),
     #[error("Error while retrieving block by height: {} not found", _0)]

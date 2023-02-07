@@ -46,7 +46,9 @@ pub enum WalletError {
     #[error("Your wallet don't have enough funds to pay fees: expected {} but have only {}", _0, _1)]
     NotEnoughFundsForFee(u64, u64),
     #[error("Invalid address params")]
-    InvalidAddressParams
+    InvalidAddressParams,
+    #[error("Invalid extra data in this transaction, expected maximum {} bytes but got {} bytes", _0, _1)]
+    ExtraDataTooBig(usize, usize)
 }
 
 pub struct Wallet {

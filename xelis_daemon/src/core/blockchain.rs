@@ -3,7 +3,7 @@ use xelis_common::{
     config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, DEV_ADDRESS, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT},
     crypto::{key::PublicKey, address::Address, hash::{Hashable, Hash}},
     difficulty::{check_difficulty, calculate_difficulty},
-    transaction::{Transaction, TransactionType},
+    transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     globals::get_current_timestamp,
     block::{CompleteBlock, Block},
     immutable::Immutable,
@@ -1121,12 +1121,20 @@ impl Blockchain {
                     return Err(BlockchainError::TxEmpty(hash.clone()))
                 }
 
+                let mut extra_data_size = 0; 
                 for output in txs {
                     if output.to == *tx.get_owner() { // we can't transfer coins to ourself, why would you do that ?
                         return Err(BlockchainError::InvalidTransactionToSender(hash.clone()))
                     }
 
+                    if let Some(data) = &output.extra_data {
+                        extra_data_size += data.len();
+                    }
                     *total_deducted.entry(&output.asset).or_insert(0) += output.amount;
+                }
+
+                if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
+                    return Err(BlockchainError::InvalidTransactionExtraDataTooBig(EXTRA_DATA_LIMIT_SIZE, extra_data_size))   
                 }
             }
             TransactionType::Burn(asset, amount) => {
