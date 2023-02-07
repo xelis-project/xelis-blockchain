@@ -1236,7 +1236,7 @@ impl Blockchain {
     // TODO: it would be better to have versioned balances based on block
     // because if we use HE, it would take too much time
     async fn rewind_transaction<'a>(&self, storage: &mut Storage, transaction: &'a Transaction, changes: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: &mut HashMap<&'a PublicKey, u64>) -> Result<(), BlockchainError> {
-        // give fees back
+        // give spent assets and fees back
         let sender: &mut HashMap<&'a Hash, u64> = changes.entry(transaction.get_owner()).or_insert(HashMap::new());
         {
             if let Some(balance) = sender.get_mut(&XELIS_ASSET) {
@@ -1272,15 +1272,25 @@ impl Blockchain {
                     if let Some(balance) = sender.get_mut(&output.asset) {
                         *balance += output.amount;
                     } else {
-                        let balance = storage.get_balance_for(&output.to, &output.asset).await?;
+                        let balance = storage.get_balance_for(transaction.get_owner(), &output.asset).await?;
                         sender.insert(&output.asset, balance + output.amount);
                     }
                 }
             }
-            _ => {
-                // TODO
+            TransactionType::DeployContract(_) => {
+                // TODO reset contract
+            },
+            TransactionType::CallContract(call) => {
+                for (asset, amount) in &call.assets {
+                    if let Some(balance) = sender.get_mut(asset) {
+                        *balance += amount;
+                    } else {
+                        let balance = storage.get_balance_for(transaction.get_owner(), asset).await?;
+                        sender.insert(asset, balance + *amount);
+                    }
+                }
             }
-        };
+        }
 
         // keep the lowest nonce available
         let nonce = nonces.entry(transaction.get_owner()).or_insert(transaction.get_nonce());
