@@ -204,7 +204,12 @@ impl Wallet {
         let extra_data = if let Some(data) = extra_data {
             let mut writer = Writer::new();
             data.write(&mut writer);
+
             // TODO encrypt all the extra data for the receiver
+            // We can use XChaCha20 with 24 bytes 0 filled Nonce
+            // this allow us to prevent saving nonce in it and save space
+            // NOTE: We must be sure to have a different key each time
+
             if writer.total_write() > EXTRA_DATA_LIMIT_SIZE {
                 return Err(WalletError::InvalidAddressParams.into())
             }
