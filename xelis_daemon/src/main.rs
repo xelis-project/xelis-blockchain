@@ -4,18 +4,18 @@ pub mod p2p;
 pub mod core;
 
 use fern::colors::Color;
-use log::{info, error};
+use log::{info, error, debug};
 use p2p::P2pServer;
 use rpc::getwork_server::SharedGetWorkServer;
 use xelis_common::{
-    prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::ArgumentManager},
-    config::{VERSION, BLOCK_TIME}, globals::format_hashrate, async_handler
+    prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}},
+    config::{VERSION, BLOCK_TIME}, globals::format_hashrate, async_handler, crypto::address::Address
 };
 use crate::core::blockchain::{Config, Blockchain};
 use std::sync::Arc;
 use std::time::Duration;
 use clap::Parser;
-use anyhow::Result;
+use anyhow::{Result, Context};
 
 #[derive(Parser)]
 #[clap(version = VERSION, about = "XELIS Daemon")]
@@ -53,6 +53,8 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result
     let mut command_manager: CommandManager<Arc<Blockchain>> = CommandManager::default();
     command_manager.set_data(Some(blockchain.clone()));
     command_manager.add_command(Command::new("list_peers", "List all peers connected", None, CommandHandler::Async(async_handler!(list_peers))));
+    command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", None, CommandHandler::Async(async_handler!(list_assets))));
+    command_manager.add_command(Command::with_required_arguments("show_balance", "Show balance of an address", vec![Arg::new("address", ArgType::String), Arg::new("asset", ArgType::Hash)], Some(Arg::new("history", ArgType::Number)), CommandHandler::Async(async_handler!(show_balance))));
 
     let p2p: Option<Arc<P2pServer>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
@@ -136,5 +138,56 @@ async fn list_peers(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManage
             manager.message("No P2p server running!");
         }
     };
+    Ok(())
+}
+
+async fn list_assets(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain = manager.get_data()?;
+    let storage = blockchain.get_storage().read().await;
+    let assets = storage.get_assets().await.context("Error while retrieving assets")?;
+    manager.message(format!("Registered assets ({}):", assets.len()));
+    for asset in assets {
+        manager.message(format!("- {}", asset));
+    }
+    Ok(())
+}
+
+async fn show_balance(manager: &CommandManager<Arc<Blockchain>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let address = arguments.get_value("address")?.to_string_value()?;
+    let asset = arguments.get_value("asset")?.to_hash()?;
+    let mut history = if arguments.has_argument("history") {
+        arguments.get_value("history")?.to_number()?
+    } else {
+        0
+    };
+
+    let address = Address::from_string(&address)?;
+    let key = address.to_public_key();
+
+    let blockchain = manager.get_data()?;
+    let storage = blockchain.get_storage().read().await;
+    let (topo, mut version) = storage.get_last_balance(&key, &asset).await.context("Error while retrieving last balance")?;
+    match topo {
+        Some(mut topo) => {
+            loop {
+                manager.message(format!("Balance found at topoheight {}: {}", topo, version.get_balance()));
+                if history == 0 || topo == 0 {
+                    break;
+                }
+                history -= 1;
+
+                if let Some(previous) = version.get_previous_topoheight() {
+                    version = storage.get_balance_at_topoheight(&key, &asset, previous).await.context("Error while retrieving history balance")?;
+                    topo = previous;
+                } else {
+                    break;
+                }
+            }
+        },
+        None => {
+            manager.message("No balance found for this address");
+        }
+    };
+
     Ok(())
 }
