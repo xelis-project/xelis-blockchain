@@ -232,12 +232,16 @@ impl Storage {
         self.get_data(&tree, &None, key).await
     }
 
+    // set in storage the new top topoheight (the most up-to-date versioned balance)
     pub fn set_last_topoheight_for_balance(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
         let tree = self.db.open_tree(asset.as_bytes())?;
         tree.insert(&key.as_bytes(), &topoheight.to_be_bytes())?;
         Ok(())
     }
 
+    // delete the last topoheight registered for this key
+    // it can happens when rewinding chain and we don't have any changes (no transaction in/out) for this key
+    // because all versioned balances got deleted
     pub fn delete_last_topoheight_for_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(), BlockchainError> {
         let tree = self.db.open_tree(asset.as_bytes())?;
         tree.remove(&key.as_bytes())?;
@@ -291,22 +295,22 @@ impl Storage {
         self.delete_data_no_arc(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges)
     }
 
-    pub async fn add_balance_to(&self, key: &PublicKey, asset: &Hash, topoheight: u64, amount: u64) -> Result<(), BlockchainError> {
-        let (top_topo, mut version) = self.get_last_balance(key, asset).await?;
-        if let Some(topo) = top_topo {
-            if topo != topoheight {
-                version.set_previous_topoheight(Some(topo));
-                self.set_last_topoheight_for_balance(key, asset, topoheight)?;
-            }
-        }
-        
-        version.add_balance(amount);
-        self.set_balance_at_topoheight(asset, topoheight, key, &version).await?;
+    // returns a new versioned balance with already-set previous topoheight
+    pub async fn get_new_versioned_balance(&self, key: &PublicKey, asset: &Hash) -> Result<VersionedBalance, BlockchainError> {
+        let (top_topo, mut version) = self.get_last_balance(key, asset).await.unwrap_or_else(|_| (None, VersionedBalance::new(0, None)));
+        version.set_previous_topoheight(top_topo);
 
+        Ok(version)
+    }
+
+    // save a new versioned balance in storage and update the pointer
+    pub async fn set_balance_to(&self, key: &PublicKey, asset: &Hash, topoheight: u64, version: &VersionedBalance) -> Result<(), BlockchainError> {
+        self.set_balance_at_topoheight(asset, topoheight, key, &version).await?;
+        self.set_last_topoheight_for_balance(key, asset, topoheight)?;
         Ok(())
     }
 
-    // get the last version of balance
+    // get the last version of balance with its topoheight
     pub async fn get_last_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(Option<u64>, VersionedBalance), BlockchainError> {
         if !self.has_balance_for(key, asset).await? {
             return Err(BlockchainError::NoBalance)
@@ -328,11 +332,6 @@ impl Storage {
         let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
         tree.insert(&key.to_bytes(), balance.to_bytes())?;
         Ok(())
-    }
-
-    pub async fn get_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<u64, BlockchainError> {
-        let (_, version) = self.get_last_balance(key, asset).await?;
-        Ok(version.get_balance())
     }
 
     pub async fn has_nonce(&self, key: &PublicKey) -> Result<bool, BlockchainError> {

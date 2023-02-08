@@ -7,7 +7,7 @@ use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
-use xelis_common::{crypto::key::PublicKey, globals::get_current_timestamp, api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, serializer::Serializer, block::{EXTRA_NONCE_SIZE, Block}};
+use xelis_common::{crypto::key::PublicKey, globals::get_current_timestamp, api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, serializer::Serializer, block::{EXTRA_NONCE_SIZE, Block}, config::DEV_PUBLIC_KEY};
 use crate::{rpc::{RpcResponseError, RpcError}, core::blockchain::Blockchain};
 
 pub type SharedGetWorkServer = Arc<GetWorkServer>;
@@ -228,7 +228,7 @@ impl GetWorkServer {
         debug!("Notify all miners for a new job");
         let (mut block, difficulty) = {
             let storage = self.blockchain.get_storage().read().await;
-            let block = self.blockchain.get_block_template_for_storage(&storage, self.blockchain.get_dev_address().clone()).await?;
+            let block = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await?;
             let difficulty = self.blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await?;
             (block, difficulty)
         };

@@ -2463,6 +2463,7 @@ dependencies = [
  "ed25519-dalek",
  "fern",
  "hex",
+ "lazy_static",
  "log",
  "num-bigint",
  "num-traits",

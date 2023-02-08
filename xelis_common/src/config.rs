@@ -1,4 +1,6 @@
-use crate::crypto::hash::Hash;
+use lazy_static::lazy_static;
+
+use crate::crypto::{hash::Hash, key::PublicKey, address::Address};
 
 pub const VERSION: &str = "alpha-0.0.1";
 pub const NETWORK_ID: [u8; 16] = [0xA, 0xB, 0xC, 0xD, 0xE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF];
@@ -41,3 +43,7 @@ pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 1500; // millis until we timeout
 
 // Wallet config
 pub const DEFAULT_DAEMON_ADDRESS: &str = DEFAULT_RPC_BIND_ADDRESS;
+
+lazy_static! {
+    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
+}

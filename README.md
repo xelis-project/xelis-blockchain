@@ -49,7 +49,7 @@ Others objectives in mind are:
 ## BlockDAG
 
 XELIS try to implement & use a blockDAG which the rules are the following:
-- A block is considered `Sync Block` when the block height is less than `TOP_HEIGHT - STABLE_HEIGHT_LIMIT` and it's the unique block at a specific height or if it's the heaviest block by cumulative difficulty at its height.
+- A block is considered `Sync Block` when the block height is less than `TOP_HEIGHT - STABLE_HEIGHT_LIMIT` and it's the unique block at a specific height ~~or if it's the heaviest block by cumulative difficulty at its height~~.
 - A block is considered `Side Block` when block height is less than or equal to height of past 8 topographical blocks.
 - A block is considered `Orphaned` when the block is not ordered in DAG (no topological height for it).
 - A height is not unique anymore.
@@ -61,6 +61,7 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 - Side Blocks receive only 30% of block reward.
 - Block rewards (with fees) are added to account only when block is in stable height.
 - Supply is re-calculated each time the block is re-ordered because its based on topo order.
+- Transactions and miner rewards are re-computed when a new block is added and the block there linked to is not yet in stable topo height. 
 
 ## Transaction
 
