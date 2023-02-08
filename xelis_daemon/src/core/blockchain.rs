@@ -854,9 +854,14 @@ impl Blockchain {
 
         // track all changes in nonces
         let mut nonces = HashMap::new();
+        // track all changes in balances
+        let mut balances = HashMap::new();
         for tx in &txs { // execute all txs
-            self.execute_transaction(storage, &tx, &mut nonces).await?;
+            self.execute_transaction(storage, &tx, &mut nonces, &mut balances).await?;
         }
+
+        // TODO handle all balances changes
+        
 
         let mut tips = storage.get_tips().await?;
         tips.insert(block_hash.clone());
@@ -943,7 +948,7 @@ impl Blockchain {
                 let block_reward = storage.get_block_reward(&hash)?;
                 let stable_block = storage.get_block_by_hash(&hash).await?;
                 debug!("New highest topoheight detected: give {} rewards for miner of block {} at topoheight {}", block_reward, hash, last_stable_topo);
-                self.reward_miner(storage, &stable_block, block_reward).await?;
+                self.reward_miner(storage, &stable_block, block_reward, last_stable_topo).await?;
             }
         }
         storage.store_tips(&tips)?;
@@ -1058,35 +1063,53 @@ impl Blockchain {
     }
 
     pub async fn rewind_chain_for_storage(&self, storage: &mut Storage, count: usize) -> Result<(), BlockchainError> {
-        let height = self.get_height();
-        let topoheight = self.get_topo_height();
-        warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, height, topoheight);
-        let (height, topoheight, txs, miners) = storage.pop_blocks(height, topoheight, count as u64).await?;
-        
+        let current_height = self.get_height();
+        let current_topoheight = self.get_topo_height();
+        warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, current_height, current_topoheight);
+        let (height, topoheight, txs, miners) = storage.pop_blocks(current_height, current_topoheight, count as u64).await?;
+
         // rewind all txs
         {
-            let mut changes = HashMap::new();
+            let mut keys = HashSet::new();
+            // merge miners keys
+            for key in &miners {
+                keys.insert(key);
+            }
+
             let mut nonces = HashMap::new();
             for (hash, tx) in &txs {
                 debug!("Rewinding tx hash: {}", hash);
-                self.rewind_transaction(storage, tx, &mut changes, &mut nonces).await?;
+                self.rewind_transaction(storage, tx, &mut keys, &mut nonces).await?;
             }
 
-            // merge miners reward to TX changes
-            for (key, reward) in &miners {
-                let assets = changes.entry(&key).or_insert(HashMap::new());
-                if let Some(balance) = assets.get_mut(&XELIS_ASSET) {
-                    *balance -= reward;
-                } else {
-                    let balance = storage.get_balance_for(&key, &XELIS_ASSET).await?;
-                    assets.insert(&XELIS_ASSET, balance - reward);
+            // lowest previous versioned balances topoheight for each key
+            let assets = storage.get_assets().await?;
+            let mut balances: HashMap<&PublicKey, HashMap<&Hash, Option<u64>>> = HashMap::new();
+            // delete all versioned balances topoheight per topoheight
+            for i in (topoheight..=current_topoheight).rev() {
+                debug!("Clearing balances at topoheight {}", i);
+                // do it for every keys detected
+                for key in &keys {
+                    for asset in &assets {
+                        let version = storage.delete_balance_at_topoheight(key, &asset, current_topoheight).await?;
+                        let previous = version.get_previous_topoheight();
+                        let assets = balances.entry(key).or_insert_with(|| HashMap::new());
+                        assets.insert(asset, previous);
+                    }
                 }
             }
 
-            // apply all changes to balance
-            for (key, assets) in changes {
-                for (asset, amount) in assets {
-                    storage.set_balance_for(key, asset, amount)?;
+            // apply all changes: update last topoheight balances changes of each key 
+            for (key, previous) in balances {
+                for (asset, last) in previous {
+                    match last {
+                        Some(topo) => {
+                            storage.set_last_topoheight_for_balance(key, asset, topo)?;
+                        },
+                        None => {
+                            storage.delete_last_topoheight_for_balance(key, asset)?;
+                        }
+                    };
                 }
             }
 
@@ -1177,28 +1200,27 @@ impl Blockchain {
         Ok(())
     }
 
-    async fn reward_miner(&self, storage: &mut Storage, block: &Block, mut block_reward: u64) -> Result<(), BlockchainError> {
+    // TODO
+    async fn reward_miner(&self, storage: &mut Storage, block: &Block, mut block_reward: u64, current_topoheight: u64) -> Result<(), BlockchainError> {
         if DEV_FEE_PERCENT != 0 {
             let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
-            let mut balance = storage.get_balance_for(self.get_dev_address(), &XELIS_ASSET).await?;
-            balance += dev_fee;
-            storage.set_balance_for(self.get_dev_address(), &XELIS_ASSET, balance)?;
+            let dev_address = self.get_dev_address();
             block_reward -= dev_fee;
+            storage.add_balance_to(dev_address, &XELIS_ASSET, current_topoheight, dev_fee).await?;
         }
-        let mut balance = storage.get_balance_for(block.get_miner(), &XELIS_ASSET).await?;
 
         let mut total_fees = 0;
         for hash in block.get_txs_hashes() {
             let tx = storage.get_transaction(hash).await?;
             total_fees += tx.get_fee();
         }
-        balance += block_reward + total_fees;
-        storage.set_balance_for(block.get_miner(), &XELIS_ASSET, balance)?;
+
+        storage.add_balance_to(block.get_miner(), &XELIS_ASSET, current_topoheight, block_reward + total_fees).await?;
 
         Ok(())
     }
 
-    async fn execute_transaction<'a>(&self, storage: &mut Storage, transaction: &'a Transaction, nonces: &mut HashMap<&'a PublicKey, u64>) -> Result<(), BlockchainError> {
+    async fn execute_transaction<'a>(&self, storage: &mut Storage, transaction: &'a Transaction, nonces: &mut HashMap<&'a PublicKey, u64>, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>) -> Result<(), BlockchainError> {
         let mut total_deducted: HashMap<&'a Hash, u64> = HashMap::new();
         total_deducted.insert(&XELIS_ASSET, transaction.get_fee());
 
@@ -1209,8 +1231,14 @@ impl Blockchain {
             TransactionType::Transfer(txs) => {
                 for output in txs {
                     // update receiver's account
-                    let balance = storage.get_balance_for(&output.to, &output.asset).await?;
-                    storage.set_balance_for(&output.to, &output.asset, balance + output.amount)?;
+                    let receiver = balances.entry(&output.to).or_insert_with(|| HashMap::new());
+                    if let Some(current) = receiver.get_mut(&output.asset) {
+                        *current += output.amount;
+                    } else {
+                        // We add the balance so we can perform the computation directly here
+                        let balance = storage.get_balance_for(&output.to, &output.asset).await?;
+                        receiver.insert(&output.asset, balance + output.amount);
+                    }
 
                     *total_deducted.entry(&output.asset).or_insert(0) += output.amount;
                 }
@@ -1220,9 +1248,15 @@ impl Blockchain {
             }
         };
 
+        let sender = balances.entry(transaction.get_owner()).or_insert_with(|| HashMap::new());
         for (asset, amount) in total_deducted {
-            let balance = storage.get_balance_for(transaction.get_owner(), asset).await?;
-            storage.set_balance_for(&transaction.get_owner(), asset, balance - amount)?;
+            if let Some(current) = sender.get_mut(asset) {
+                *current += amount;
+            } else {
+                // We add the balance so we can perform the computation directly here
+                let balance = storage.get_balance_for(transaction.get_owner(), asset).await?;
+                sender.insert(asset, balance + amount);
+            }
         }
 
         // no need to read from disk, transaction nonce has been verified already
@@ -1233,62 +1267,14 @@ impl Blockchain {
         Ok(())
     }
 
-    // TODO: it would be better to have versioned balances based on block
-    // because if we use HE, it would take too much time
-    async fn rewind_transaction<'a>(&self, storage: &mut Storage, transaction: &'a Transaction, changes: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: &mut HashMap<&'a PublicKey, u64>) -> Result<(), BlockchainError> {
-        // give spent assets and fees back
-        let sender: &mut HashMap<&'a Hash, u64> = changes.entry(transaction.get_owner()).or_insert(HashMap::new());
-        {
-            if let Some(balance) = sender.get_mut(&XELIS_ASSET) {
-                *balance += transaction.get_fee();
-            }  else {
-                let balance = storage.get_balance_for(transaction.get_owner(), &XELIS_ASSET).await?;
-                sender.insert(&XELIS_ASSET, balance + transaction.get_fee());
-            }
-        }
+    async fn rewind_transaction<'a>(&self, _: &mut Storage, transaction: &'a Transaction, keys: &mut HashSet<&'a PublicKey>, nonces: &mut HashMap<&'a PublicKey, u64>) -> Result<(), BlockchainError> {
+        // add sender
+        keys.insert(transaction.get_owner());
 
-        match transaction.get_data() {
-            TransactionType::Burn(asset, amount) => {
-                if let Some(balance) = sender.get_mut(&asset) {
-                    *balance += amount;
-                }  else {
-                    let balance = storage.get_balance_for(transaction.get_owner(), asset).await?;
-                    sender.insert(asset, balance + amount);
-                }
-            }
-            TransactionType::Transfer(txs) => {
-                for output in txs {
-                    // update receiver's account
-                    let receiver = changes.entry(&output.to).or_insert(HashMap::new());
-                    if let Some(balance) = receiver.get_mut(&output.asset) {
-                        *balance -= output.amount;
-                    } else {
-                        let balance = storage.get_balance_for(&output.to, &output.asset).await?;
-                        receiver.insert(&output.asset, balance - output.amount);
-                    }
-
-                    // update sender balance too
-                    let sender = changes.entry(transaction.get_owner()).or_insert(HashMap::new());
-                    if let Some(balance) = sender.get_mut(&output.asset) {
-                        *balance += output.amount;
-                    } else {
-                        let balance = storage.get_balance_for(transaction.get_owner(), &output.asset).await?;
-                        sender.insert(&output.asset, balance + output.amount);
-                    }
-                }
-            }
-            TransactionType::DeployContract(_) => {
-                // TODO reset contract
-            },
-            TransactionType::CallContract(call) => {
-                for (asset, amount) in &call.assets {
-                    if let Some(balance) = sender.get_mut(asset) {
-                        *balance += amount;
-                    } else {
-                        let balance = storage.get_balance_for(transaction.get_owner(), asset).await?;
-                        sender.insert(asset, balance + *amount);
-                    }
-                }
+        // TODO for Smart Contracts we have to rewind them too
+        if let TransactionType::Transfer(txs) = transaction.get_data() {
+            for output in txs {
+                keys.insert(&output.to);
             }
         }
 

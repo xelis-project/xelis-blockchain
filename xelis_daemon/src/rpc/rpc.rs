@@ -1,5 +1,6 @@
 use crate::{storage::Storage, core::blockchain::Blockchain};
 use super::{RpcError, RpcServer};
+use anyhow::Context;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use xelis_common::{
@@ -18,7 +19,7 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetDagOrderParams
+        GetDagOrderParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult
     },
     async_handler,
     serializer::Serializer,
@@ -72,7 +73,8 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("get_block_by_hash", async_handler!(get_block_by_hash));
     server.register_method("get_top_block", async_handler!(get_top_block));
     server.register_method("submit_block", async_handler!(submit_block));
-    server.register_method("get_balance", async_handler!(get_balance));
+    server.register_method("get_last_balance", async_handler!(get_last_balance));
+    server.register_method("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight));
     server.register_method("get_nonce", async_handler!(get_nonce));
     server.register_method("get_assets", async_handler!(get_assets));
     server.register_method("count_transactions", async_handler!(count_transactions));
@@ -148,10 +150,25 @@ async fn submit_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value,
     Ok(json!(true))
 }
 
-async fn get_balance(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+async fn get_last_balance(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBalanceParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
-    let balance = storage.get_balance_for(params.address.get_public_key(), &params.asset).await?;
+    let (topoheight, balance) = storage.get_last_balance(params.address.get_public_key(), &params.asset).await?;
+    Ok(json!(GetLastBalanceResult {
+        balance,
+        topoheight
+    }))
+}
+
+async fn get_balance_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    let params: GetBalanceAtTopoHeightParams = parse_params(body)?;
+    let topoheight = blockchain.get_topo_height();
+    if params.topoheight > topoheight {
+        return Err(RpcError::UnexpectedParams).context("Topoheight cannot be greater than current chain topoheight")?
+    }
+
+    let storage = blockchain.get_storage().read().await;
+    let balance = storage.get_balance_at_topoheight(params.address.get_public_key(), &params.asset, params.topoheight).await?;
     Ok(json!(balance))
 }
 

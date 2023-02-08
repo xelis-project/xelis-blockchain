@@ -1,14 +1,13 @@
 use crate::core::error::{BlockchainError, DiskContext};
 use xelis_common::{
     serializer::{Reader, Serializer},
-    crypto::{key::PublicKey, hash::Hash},
-    config::STABLE_HEIGHT_LIMIT,
+    crypto::{key::PublicKey, hash::{Hash, hash}},
     immutable::Immutable,
     transaction::Transaction,
-    block::{Block, CompleteBlock},
+    block::{Block, CompleteBlock}, account::VersionedBalance,
 };
 use std::{
-    collections::{HashSet, HashMap},
+    collections::HashSet,
     hash::Hash as StdHash,
     sync::Arc
 };
@@ -46,6 +45,7 @@ pub struct Storage {
     cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, u64>>>,
     assets_cache: Option<Mutex<LruCache<Hash, ()>>>,
     nonces_cache: Option<Mutex<LruCache<PublicKey, u64>>>,
+    balances_trees_cache: Option<Mutex<LruCache<u64, Tree>>>, // versioned balances tree keep in cache to prevent hash recompute
     tips_cache: Tips
 }
 
@@ -84,6 +84,7 @@ impl Storage {
             cumulative_difficulty_cache: init_cache!(cache_size),
             assets_cache: init_cache!(cache_size),
             nonces_cache: init_cache!(cache_size),
+            balances_trees_cache: init_cache!(cache_size),
             tips_cache: HashSet::new()
         };
 
@@ -221,7 +222,8 @@ impl Storage {
         Ok(tree.contains_key(key.as_bytes())?)
     }
 
-    pub async fn get_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<u64, BlockchainError> {
+    // returns the highest topoheight where a balance changes happened
+    pub async fn get_last_topoheight_for_balance(&self, key: &PublicKey, asset: &Hash) -> Result<u64, BlockchainError> {
         if !self.has_balance_for(key, asset).await? {
             return Ok(0)
         }
@@ -230,10 +232,107 @@ impl Storage {
         self.get_data(&tree, &None, key).await
     }
 
-    pub fn set_balance_for(&mut self, key: &PublicKey, asset: &Hash, balance: u64) -> Result<(), BlockchainError> {
+    pub fn set_last_topoheight_for_balance(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
         let tree = self.db.open_tree(asset.as_bytes())?;
-        tree.insert(&key.as_bytes(), &balance.to_be_bytes())?;
+        tree.insert(&key.as_bytes(), &topoheight.to_be_bytes())?;
         Ok(())
+    }
+
+    pub fn delete_last_topoheight_for_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(), BlockchainError> {
+        let tree = self.db.open_tree(asset.as_bytes())?;
+        tree.remove(&key.as_bytes())?;
+        Ok(())
+    }
+
+    // hash asset + topoheight to create a unique key
+    fn generate_versioned_balance_key(&self, asset: &Hash, topoheight: u64) -> Result<Hash, BlockchainError> {
+        let mut bytes = asset.to_bytes();
+        bytes.extend_from_slice(&topoheight.to_be_bytes());
+        let key = hash(&bytes);
+        Ok(key)
+    }
+
+    // returns the Tree from cache or insert it and returns it
+    // if no cache, compute the key each time this function is called.
+    async fn get_versioned_balance_tree(&self, asset: &Hash, topoheight: u64) -> Result<Tree, BlockchainError> {
+        let tree = if let Some(cache) = &self.balances_trees_cache {
+            let mut balances = cache.lock().await;
+            if let Some(tree) = balances.get(&topoheight) {
+                tree.clone()
+            } else { // not found in cache, compute it and insert it
+                let key = self.generate_versioned_balance_key(asset, topoheight)?;
+                let tree = self.db.open_tree(key.as_bytes())?;
+                balances.put(topoheight, tree.clone());
+                tree
+            }
+        } else { // no cache found, we have to compute it ourself
+            let key = self.generate_versioned_balance_key(asset, topoheight)?;
+            self.db.open_tree(key.as_bytes())?
+        };
+
+        Ok(tree)
+    }
+
+    // get the balance at a specific topoheight
+    // if there is no balance change at this topoheight just return an error
+    pub async fn get_balance_at_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
+        // check first that this address has balance, if no returns
+        if !self.has_balance_for(key, asset).await? {
+            return Err(BlockchainError::NoBalanceChanges)
+        }
+
+        let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
+        self.get_data(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges)
+    }
+
+    // delete versioned balances for this topoheight
+    pub async fn delete_balance_at_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
+        let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
+        self.delete_data_no_arc(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges)
+    }
+
+    pub async fn add_balance_to(&self, key: &PublicKey, asset: &Hash, topoheight: u64, amount: u64) -> Result<(), BlockchainError> {
+        let (top_topo, mut version) = self.get_last_balance(key, asset).await?;
+        if let Some(topo) = top_topo {
+            if topo != topoheight {
+                version.set_previous_topoheight(Some(topo));
+                self.set_last_topoheight_for_balance(key, asset, topoheight)?;
+            }
+        }
+        
+        version.add_balance(amount);
+        self.set_balance_at_topoheight(asset, topoheight, key, &version).await?;
+
+        Ok(())
+    }
+
+    // get the last version of balance
+    pub async fn get_last_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(Option<u64>, VersionedBalance), BlockchainError> {
+        if !self.has_balance_for(key, asset).await? {
+            return Err(BlockchainError::NoBalance)
+        }
+
+        let tree = self.db.open_tree(asset.as_bytes())?;
+        let topoheight = self.get_data(&tree, &None, key).await.ok();
+
+        let balance = match topoheight {
+            Some(topoheight) => self.get_balance_at_topoheight(key, asset, topoheight).await?,
+            None => VersionedBalance::new(0, None)
+        };
+
+        Ok((topoheight, balance))
+    }
+
+    // save the asset balance at specific topoheight
+    pub async fn set_balance_at_topoheight(&self, asset: &Hash, topoheight: u64, key: &PublicKey, balance: &VersionedBalance) -> Result<(), BlockchainError> {
+        let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
+        tree.insert(&key.to_bytes(), balance.to_bytes())?;
+        Ok(())
+    }
+
+    pub async fn get_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<u64, BlockchainError> {
+        let (_, version) = self.get_last_balance(key, asset).await?;
+        Ok(version.get_balance())
     }
 
     pub async fn has_nonce(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
@@ -299,7 +398,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>, HashMap<PublicKey, u64>), BlockchainError> {
+    pub async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>, HashSet<PublicKey>), BlockchainError> {
         if height < count as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
         }
@@ -318,14 +417,12 @@ impl Storage {
         }
         trace!("Lowest topoheight for rewind: {}", lowest_topo);
 
-        let chain_topoheight = topoheight;
-        // new topo height after all deleted blocks
         // new TIPS for chain
         let mut tips = self.get_tips().await?;
         // all txs to be rewinded
         let mut txs = Vec::new();
         // all miners rewards to be rewinded
-        let mut miners: HashMap<PublicKey, u64> = HashMap::new();
+        let mut miners: HashSet<PublicKey> = HashSet::new();
         let mut done = 0;
         'main: loop {
             // check if the next block is alone at its height, if yes stop rewinding
@@ -354,6 +451,8 @@ impl Storage {
                 let block = self.delete_data(&self.blocks, &self.blocks_cache, &hash).await?;
                 trace!("block header deleted successfully");
 
+                miners.insert(block.get_miner().clone());
+
                 let _: u64 = self.delete_data_no_arc(&self.supply, &None, &hash).await?;
                 let _: u64 = self.delete_data_no_arc(&self.difficulty, &None, &hash).await?;
 
@@ -364,10 +463,8 @@ impl Storage {
                 let reward: u64 = self.delete_data_no_arc(&self.rewards, &None, &hash).await?;
                 trace!("Reward for block {} was: {}", hash, reward);
 
-                let mut total_fees = 0;
                 for hash in block.get_transactions() {
                     let tx = self.delete_data(&self.transactions, &self.transactions_cache, hash).await?;
-                    total_fees += tx.get_fee();
                     txs.push((hash.clone(), tx));
                 }
 
@@ -375,11 +472,6 @@ impl Storage {
                 if let Ok(topo) = self.get_topo_height_for_hash(&hash).await {
                     if topo < topoheight {
                         topoheight = topo;
-                    }
-
-                    // check if miner rewards are already added
-                    if topo > STABLE_HEIGHT_LIMIT && topo < chain_topoheight && topo - chain_topoheight >= STABLE_HEIGHT_LIMIT {
-                        *miners.entry(block.get_miner().clone()).or_insert(0) += reward + total_fees;
                     }
 
                     trace!("Block was at topoheight {}", topo);

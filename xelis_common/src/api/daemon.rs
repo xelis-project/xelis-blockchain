@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{hash::Hash, address::Address};
+use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance};
 
 #[derive(Serialize)]
 pub struct DataHash<T> {
@@ -73,8 +73,21 @@ pub struct GetBalanceParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetBalanceAtTopoHeightParams<'a> {
+    pub address: Address<'a>,
+    pub asset: Hash,
+    pub topoheight: u64
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetNonceParams<'a> {
     pub address: Address<'a>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetLastBalanceResult {
+    pub balance: VersionedBalance,
+    pub topoheight: Option<u64>
 }
 
 #[derive(Serialize, Deserialize)]

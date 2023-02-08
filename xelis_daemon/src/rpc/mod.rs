@@ -21,6 +21,7 @@ use anyhow::Error as AnyError;
 use thiserror::Error;
 use self::getwork_server::{GetWorkWebSocketHandler, SharedGetWorkServer};
 use self::websocket::{NotifyEvent, Response};
+use log::error;
 
 pub type SharedRpcServer = web::Data<Arc<RpcServer>>;
 pub type Handler = fn(Arc<Blockchain>, Value) -> Pin<Box<dyn Future<Output = Result<Value, RpcError>>>>;
@@ -41,11 +42,11 @@ pub enum RpcError {
     InvalidVersion,
     #[error("Method '{}' in request was not found", _0)]
     MethodNotFound(String),
-    #[error("Error: {}", _0)]
+    #[error(transparent)]
     BlockchainError(#[from] BlockchainError),
-    #[error("Error: {}", _0)]
+    #[error(transparent)]
     DeserializerError(#[from] ReaderError),
-    #[error("Error: {}", _0)]
+    #[error(transparent)]
     AnyError(#[from] AnyError),
     #[error("Error, expected a normal wallet address")]
     ExpectedNormalAddress,
@@ -54,7 +55,7 @@ pub enum RpcError {
     #[error("WebSocket client is not registered")]
     ClientNotRegistered,
     #[error("Could not send message to address: {}", _0)]
-    WebSocketSendError(#[from] MailboxError)
+    WebSocketSendError(#[from] MailboxError),
 }
 
 impl RpcError {
@@ -205,7 +206,9 @@ impl RpcServer {
     }
 
     pub fn register_method(&mut self, name: &str, handler: Handler) {
-        self.methods.insert(name.into(), handler);
+        if self.methods.insert(name.into(), handler).is_some() {
+            error!("The method '{}' was already registered !", name);
+        }
     }
 
     pub fn get_blockchain(&self) -> &Arc<Blockchain> {

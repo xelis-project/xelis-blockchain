@@ -138,7 +138,11 @@ pub enum BlockchainError {
     #[error("Invalid asset ID: {}", _0)]
     AssetNotFound(Hash),
     #[error(transparent)]
-    DifficultyError(#[from] DifficultyError)
+    DifficultyError(#[from] DifficultyError),
+    #[error("No balance found on disk")]
+    NoBalance,
+    #[error("No balance changes for specific topoheight and asset")]
+    NoBalanceChanges
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {
