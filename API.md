@@ -350,11 +350,11 @@ Each nonce represents how many TX has been made by this address.
 }
 ```
 
-#### Get Balance
-Get asset's balance for a specific address
+#### Get Last Balance
+Get up-to-date asset's balance for a specific address
 
 NOTE: Balance is returned in atomic units
-##### Method `get_balance`
+##### Method `get_last_balance`
 
 ##### Parameters
 |   Name  |   Type  | Required |                Note               |
@@ -378,9 +378,53 @@ NOTE: Balance is returned in atomic units
 ##### Response
 ```json
 {
-	"id": 1,
-	"jsonrpc": "2.0",
-	"result": 157000
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "balance": {
+            "balance": 37726957,
+            "previous_topoheight": 41
+        },
+        "topoheight": 42
+    }
+}
+```
+
+#### Get Balance At TopoHeight
+Get asset's balance from address at exact topoheight
+
+NOTE: Balance is returned in atomic units
+##### Method `get_balance_at_topoheight`
+
+##### Parameters
+|   Name  |   Type  | Required |                Note               |
+|:-------:|:-------:|:--------:|:---------------------------------:|
+| address | Address | Required | Valid address registered on chain |
+|  asset  |   Hash  | Required |    Asset ID registered on chain   |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "get_balance_at_topoheight",
+    "params": {
+        "address": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+        "topoheight": 30
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "balance": 27198582,
+        "previous_topoheight": 29
+    }
 }
 ```
 
