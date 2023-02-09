@@ -4,7 +4,7 @@ pub mod p2p;
 pub mod core;
 
 use fern::colors::Color;
-use log::{info, error, debug};
+use log::{info, error};
 use p2p::P2pServer;
 use rpc::getwork_server::SharedGetWorkServer;
 use xelis_common::{
@@ -156,9 +156,13 @@ async fn show_balance(manager: &CommandManager<Arc<Blockchain>>, mut arguments: 
     let address = arguments.get_value("address")?.to_string_value()?;
     let asset = arguments.get_value("asset")?.to_hash()?;
     let mut history = if arguments.has_argument("history") {
-        arguments.get_value("history")?.to_number()?
+        let value = arguments.get_value("history")?.to_number()?;
+        if value == 0 {
+            return Err(CommandError::InvalidArgument("history must be a positive number".into()));
+        }
+        value
     } else {
-        0
+        1
     };
 
     let address = Address::from_string(&address)?;
@@ -166,28 +170,22 @@ async fn show_balance(manager: &CommandManager<Arc<Blockchain>>, mut arguments: 
 
     let blockchain = manager.get_data()?;
     let storage = blockchain.get_storage().read().await;
-    let (topo, mut version) = storage.get_last_balance(&key, &asset).await.context("Error while retrieving last balance")?;
-    match topo {
-        Some(mut topo) => {
-            loop {
-                manager.message(format!("Balance found at topoheight {}: {}", topo, version.get_balance()));
-                if history == 0 || topo == 0 {
-                    break;
-                }
-                history -= 1;
+    let (mut topo, mut version) = storage.get_last_balance(&key, &asset).await.context("Error while retrieving last balance")?;
+    loop {
+        history -= 1;
+        manager.message(format!("Balance found at topoheight {}: {}", topo, version.get_balance()));
 
-                if let Some(previous) = version.get_previous_topoheight() {
-                    version = storage.get_balance_at_topoheight(&key, &asset, previous).await.context("Error while retrieving history balance")?;
-                    topo = previous;
-                } else {
-                    break;
-                }
-            }
-        },
-        None => {
-            manager.message("No balance found for this address");
+        if history == 0 || topo == 0 {
+            break;
         }
-    };
+
+        if let Some(previous) = version.get_previous_topoheight() {
+            version = storage.get_balance_at_exact_topoheight(&key, &asset, previous).await.context("Error while retrieving history balance")?;
+            topo = previous;
+        } else {
+            break;
+        }
+    }
 
     Ok(())
 }

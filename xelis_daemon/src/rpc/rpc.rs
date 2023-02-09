@@ -168,7 +168,7 @@ async fn get_balance_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> 
     }
 
     let storage = blockchain.get_storage().read().await;
-    let balance = storage.get_balance_at_topoheight(params.address.get_public_key(), &params.asset, params.topoheight).await?;
+    let balance = storage.get_balance_at_exact_topoheight(params.address.get_public_key(), &params.asset, params.topoheight).await?;
     Ok(json!(balance))
 }
 

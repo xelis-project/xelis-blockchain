@@ -13,7 +13,7 @@ use crate::p2p::P2pServer;
 use crate::rpc::RpcServer;
 use crate::rpc::websocket::NotifyEvent;
 use crate::storage::Storage;
-use std::sync::atomic::{Ordering, AtomicU64};
+use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry};
 use std::collections::{HashMap, HashSet, VecDeque};
 use async_recursion::async_recursion;
 use tokio::sync::{Mutex, RwLock};
@@ -747,7 +747,7 @@ impl Blockchain {
             }
 
             let distance = self.calculate_distance_from_mainchain(storage, hash).await?;
-            if current_height - distance >= STABLE_HEIGHT_LIMIT {
+            if distance > current_height || current_height - distance >= STABLE_HEIGHT_LIMIT {
                 error!("{} have deviated too much, maximum allowed is {} but got {} (current height: {}, distance: {})", block, STABLE_HEIGHT_LIMIT, current_height - distance, current_height, distance);
                 return Err(BlockchainError::BlockDeviation)
             }
@@ -861,15 +861,24 @@ impl Blockchain {
         let full_order = self.generate_full_order(storage, &best_tip, &base_hash, base_topo_height).await?;
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
 
-        // track all changes in nonces
+        // track all changes in nonces to clean mempool from invalid txs stuck
         let mut nonces: HashMap<PublicKey, u64> = HashMap::new();
 
         // order the DAG (up to TOP_HEIGHT - STABLE_HEIGHT_LIMIT)
         let mut highest_topo = 0;
         {
-            let mut i = 0;
-            for hash in full_order {
-                highest_topo = base_topo_height + i;
+            let mut is_written = false;
+            for (i, hash) in full_order.into_iter().enumerate() {
+                highest_topo = base_topo_height + i as u64;
+
+                // if block is not re-ordered and it's not genesis block
+                // because we don't need to recompute everything as it's still good in chain
+                if !is_written && tips_count != 0 && storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == highest_topo {
+                    debug!("Block ordered {} stay at topoheight {}. Skipping...", hash, highest_topo);
+                    continue;
+                }
+                is_written = true;
+
                 debug!("Ordering block {} at topoheight {}", hash, highest_topo);
                 storage.set_topo_height_for_block(&hash, highest_topo).await?;
                 let past_supply = if highest_topo == 0 {
@@ -890,26 +899,26 @@ impl Blockchain {
                 storage.set_supply_for_block(&hash, past_supply + block_reward)?;
 
                 // track all changes in balances
-                let mut balances = HashMap::new();
+                let mut balances: HashMap<&PublicKey, HashMap<&Hash, VersionedBalance>> = HashMap::new();
                 let block = storage.get_complete_block(&hash).await?;
                 let mut total_fees = 0;
                 // compute rewards & execute txs
                 for tx in block.get_transactions() { // execute all txs
                     debug!("executing tx {}", tx.hash());
-                    self.execute_transaction(storage, &tx, &mut nonces, &mut balances).await?;
+                    self.execute_transaction(storage, &tx, &mut nonces, &mut balances, highest_topo).await?;
                     total_fees += tx.get_fee();
                 }
 
-                self.reward_miner(storage, &block, block_reward, total_fees, &mut balances).await?;
+                // reward the miner
+                self.reward_miner(storage, &block, block_reward, total_fees, &mut balances, highest_topo).await?;
 
                 // save balances for each topoheight
                 for (key, assets) in balances {
                     for (asset, balance) in assets {
+                        debug!("Saving balance at topo {}, previous: {:?}", highest_topo, balance.get_previous_topoheight());
                         storage.set_balance_to(key, asset, highest_topo, &balance).await?;
                     }
                 }
-
-                i += 1;
             }
 
         }
@@ -919,11 +928,12 @@ impl Blockchain {
         let mut new_tips = Vec::new();
         for hash in tips {
             let tip_base_distance = self.calculate_distance_from_mainchain(storage, &hash).await?;
-            if best_height - tip_base_distance < STABLE_HEIGHT_LIMIT - 1 {
+            debug!("tip base distance: {}, best height: {}", tip_base_distance, best_height);
+            if tip_base_distance <= best_height && best_height - tip_base_distance < STABLE_HEIGHT_LIMIT - 1 {
                 debug!("Adding {} as new tips", hash);
                 new_tips.push(hash);
             } else {
-                warn!("Rusty TIP declared stale {} with best height: {}, deviation: {}, tip base distance: {}", hash, best_height, best_height - tip_base_distance, tip_base_distance);
+                warn!("Rusty TIP declared stale {} with best height: {}, tip base distance: {}", hash, best_height, tip_base_distance);
                 // TODO rewind stale TIP
             }
         }
@@ -1200,34 +1210,48 @@ impl Blockchain {
         Ok(())
     }
 
-    async fn reward_miner<'a>(&self, storage: &Storage, block: &'a Block, mut block_reward: u64, total_fees: u64, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>) -> Result<(), BlockchainError> {
-        if DEV_FEE_PERCENT != 0 {
-            let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
-            block_reward -= dev_fee;
-            let assets = balances.entry(&DEV_PUBLIC_KEY).or_insert_with(|| HashMap::new());
-            if let Some(version) = assets.get_mut(&XELIS_ASSET) {
-                version.add_balance(dev_fee);
-            } else {
-                let mut balance = storage.get_new_versioned_balance(&DEV_PUBLIC_KEY, &XELIS_ASSET).await?;
-                balance.add_balance(dev_fee);
-                assets.insert(&XELIS_ASSET, balance);
+    // retrieve the already added balance with changes OR generate a new versioned balance
+    async fn retrieve_balance<'a, 'b>(&self, storage: &Storage, balances: &'b mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, topoheight: u64) -> Result<&'b mut VersionedBalance, BlockchainError> {
+        let assets = balances.entry(key).or_insert_with(|| HashMap::new());
+        Ok(match assets.entry(asset) {
+            Entry::Occupied(v) => v.into_mut(),
+            Entry::Vacant(v) => {
+                let balance = storage.get_new_versioned_balance(key, asset, topoheight).await?;
+                v.insert(balance)
             }
-        }
-        block_reward += total_fees;
+        })
+    }
 
-        let assets = balances.entry(block.get_miner()).or_insert_with(|| HashMap::new());
-        if let Some(version) = assets.get_mut(&XELIS_ASSET) {
-            version.add_balance(block_reward);
-        } else {
-            let mut balance = storage.get_new_versioned_balance(block.get_miner(), &XELIS_ASSET).await?;
-            balance.add_balance(block_reward);
-            assets.insert(&XELIS_ASSET, balance);
-        }
-
+    // this function just add to balance
+    // its used to centralize all computation
+    async fn add_balance<'a>(&self, storage: &Storage, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, amount: u64, topoheight: u64) -> Result<(), BlockchainError> {
+        let version = self.retrieve_balance(storage, balances, key, asset, topoheight).await?;
+        version.add_balance(amount);
         Ok(())
     }
 
-    async fn execute_transaction<'a>(&self, storage: &mut Storage, transaction: &'a Transaction, nonces: &mut HashMap<PublicKey, u64>, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>) -> Result<(), BlockchainError> {
+    // this function just subtract from balance
+    // its used to centralize all computation
+    async fn sub_balance<'a>(&self, storage: &Storage, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, amount: u64, topoheight: u64) -> Result<(), BlockchainError> {
+        let version = self.retrieve_balance(storage, balances, key, asset, topoheight).await?;
+        version.sub_balance(amount);
+        Ok(())
+    }
+
+    // reward block miner and dev fees if any.
+    async fn reward_miner<'a>(&self, storage: &Storage, block: &'a Block, mut block_reward: u64, total_fees: u64, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, topoheight: u64) -> Result<(), BlockchainError> {
+        // if dev fee are enabled, give % from block reward only
+        if DEV_FEE_PERCENT != 0 {
+            let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
+            block_reward -= dev_fee;
+            self.add_balance(storage, balances, &DEV_PUBLIC_KEY, &XELIS_ASSET, dev_fee, topoheight).await?;
+        }
+
+        // now we reward the miner with block reward and total fees
+        self.add_balance(storage, balances, block.get_miner(), &XELIS_ASSET, block_reward + total_fees, topoheight).await
+    }
+
+    async fn execute_transaction<'a>(&self, storage: &mut Storage, transaction: &'a Transaction, nonces: &mut HashMap<PublicKey, u64>, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, topoheight: u64) -> Result<(), BlockchainError> {
         let mut total_deducted: HashMap<&'a Hash, u64> = HashMap::new();
         total_deducted.insert(&XELIS_ASSET, transaction.get_fee());
 
@@ -1238,16 +1262,7 @@ impl Blockchain {
             TransactionType::Transfer(txs) => {
                 for output in txs {
                     // update receiver's account
-                    let receiver = balances.entry(&output.to).or_insert_with(|| HashMap::new());
-                    if let Some(balance) = receiver.get_mut(&output.asset) {
-                        balance.add_balance(output.amount);
-                    } else {
-                        // We add the balance so we can perform the computation directly here
-                        let mut balance = storage.get_new_versioned_balance(&output.to, &output.asset).await?;
-                        balance.add_balance(output.amount);
-                        receiver.insert(&output.asset, balance);
-                    }
-
+                    self.add_balance(storage, balances, &output.to, &output.asset, output.amount, topoheight).await?;
                     *total_deducted.entry(&output.asset).or_insert(0) += output.amount;
                 }
             }
@@ -1256,17 +1271,9 @@ impl Blockchain {
             }
         };
 
-        let sender = balances.entry(transaction.get_owner()).or_insert_with(|| HashMap::new());
         // now we substract all assets spent from this sender
         for (asset, amount) in total_deducted {
-            if let Some(balance) = sender.get_mut(asset) {
-                balance.sub_balance(amount);
-            } else {
-                // We add the balance so we can perform the computation directly here
-                let mut balance = storage.get_new_versioned_balance(transaction.get_owner(), asset).await?;
-                balance.sub_balance(amount);
-                sender.insert(asset, balance);
-            }
+            self.sub_balance(storage, balances, transaction.get_owner(), asset, amount, topoheight).await?;
         }
 
         // no need to read from disk, transaction nonce has been verified already

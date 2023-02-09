@@ -87,7 +87,7 @@ pub struct GetNonceParams<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct GetLastBalanceResult {
     pub balance: VersionedBalance,
-    pub topoheight: Option<u64>
+    pub topoheight: u64
 }
 
 #[derive(Serialize, Deserialize)]
