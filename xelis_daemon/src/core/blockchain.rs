@@ -241,6 +241,10 @@ impl Blockchain {
         }
     }
 
+    pub async fn get_mempool_size(&self) -> usize {
+        self.mempool.read().await.size()
+    }
+
     pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
         let storage = self.storage.read().await;
         self.get_top_block_hash_for_storage(&storage).await

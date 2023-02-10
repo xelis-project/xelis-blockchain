@@ -19,13 +19,13 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetDagOrderParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult
+        GetDagOrderParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult
     },
     async_handler,
     serializer::Serializer,
     transaction::Transaction,
     crypto::hash::Hash,
-    block::Block,
+    block::Block, config::{BLOCK_TIME, VERSION},
 };
 use std::sync::Arc;
 use log::{info, debug};
@@ -75,6 +75,7 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("submit_block", async_handler!(submit_block));
     server.register_method("get_last_balance", async_handler!(get_last_balance));
     server.register_method("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight));
+    server.register_method("get_info", async_handler!(get_info));
     server.register_method("get_nonce", async_handler!(get_nonce));
     server.register_method("get_assets", async_handler!(get_assets));
     server.register_method("count_transactions", async_handler!(count_transactions));
@@ -157,6 +158,38 @@ async fn get_last_balance(blockchain: Arc<Blockchain>, body: Value) -> Result<Va
     Ok(json!(GetLastBalanceResult {
         balance,
         topoheight
+    }))
+}
+
+async fn get_info(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+
+    let height = blockchain.get_height();
+    let topoheight = blockchain.get_topo_height();
+    let stableheight = blockchain.get_stable_height();
+    let (top_hash, native_supply) = {
+        let storage = blockchain.get_storage().read().await;
+        let top_hash = storage.get_hash_at_topo_height(topoheight).await?;
+        let supply = storage.get_supply_for_hash(&top_hash)?;
+        (top_hash, supply)
+    };
+    let difficulty = blockchain.get_difficulty();
+    let block_time_target = BLOCK_TIME;
+    let mempool_size = blockchain.get_mempool_size().await;
+    let version = VERSION.into();
+
+    Ok(json!(GetInfoResult {
+        height,
+        topoheight,
+        stableheight,
+        top_hash,
+        native_supply,
+        difficulty,
+        block_time_target,
+        mempool_size,
+        version,
     }))
 }
 

@@ -4,6 +4,42 @@
 
 ### JSON-RPC methods
 
+#### Get Info
+Retrieve current info from chain
+
+##### Method `get_info`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_info",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "block_time_target": 15000,
+        "difficulty": 310532,
+        "height": 9,
+        "mempool_size": 0,
+        "native_supply": 8773780,
+        "stableheight": 1,
+        "top_hash": "00000d5f00dc3cf5873f9bd09963a011a2c007b4d1a987b93f5d3bed3d050ef0",
+        "topoheight": 9,
+        "version": "alpha-0.0.1"
+    }
+}
+```
+
 #### Get Height
 Retrieve current height of the chain
 

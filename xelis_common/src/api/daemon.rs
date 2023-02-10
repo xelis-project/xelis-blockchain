@@ -91,6 +91,20 @@ pub struct GetLastBalanceResult {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetInfoResult {
+    pub height: u64,
+    pub topoheight: u64,
+    pub stableheight: u64,
+    pub top_hash: Hash,
+    pub native_supply: u64,
+    pub difficulty: u64,
+    pub block_time_target: u64,
+    // count how many transactions are present in mempool
+    pub mempool_size: usize,
+    pub version: String
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct SubmitTransactionParams {
     pub data: String // should be in hex format
 }
