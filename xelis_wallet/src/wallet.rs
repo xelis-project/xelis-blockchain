@@ -8,6 +8,7 @@ use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey};
 use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
+use crate::api::DaemonAPI;
 use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
 use crate::storage::{EncryptedStorage, Storage};
@@ -48,14 +49,17 @@ pub enum WalletError {
     #[error("Invalid address params")]
     InvalidAddressParams,
     #[error("Invalid extra data in this transaction, expected maximum {} bytes but got {} bytes", _0, _1)]
-    ExtraDataTooBig(usize, usize)
+    ExtraDataTooBig(usize, usize),
+    #[error("Wallet is not in online mode")]
+    NotOnlineMode,
 }
 
 pub struct Wallet {
     // Encrypted Wallet Storage
     storage: EncryptedStorage,
     // Private & Public key linked for this wallet
-    keypair: KeyPair
+    keypair: KeyPair,
+    api: Option<DaemonAPI>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -106,7 +110,8 @@ impl Wallet {
 
         let wallet = Self {
             storage,
-            keypair
+            keypair,
+            api: None
         };
 
         Ok(wallet)
@@ -148,7 +153,8 @@ impl Wallet {
 
         let wallet = Self {
             storage,
-            keypair
+            keypair,
+            api: None
         };
 
         Ok(wallet)
@@ -250,6 +256,29 @@ impl Wallet {
         Ok(builder.build(&self.keypair)?)
     }
 
+    pub async fn set_online_mode(&mut self, daemon_address: &String) -> Result<(), Error> {
+        let api = DaemonAPI::new(format!("{}/json_rpc", daemon_address));
+        // check that we can correctly get version from daemon
+        let version = api.get_version().await?;
+        debug!("Connected to daemon running version {}", version);
+
+        self.api = Some(api);
+        Ok(())
+    }
+
+    pub fn set_offline_mode(&mut self) -> Result<(), WalletError> {
+        if self.api.is_none() {
+            return Err(WalletError::NotOnlineMode)
+        }
+
+        self.api = None;
+        Ok(())
+    }
+
+    pub fn is_online(&self) -> bool {
+        self.api.is_some()
+    }
+
     pub fn get_balance(&self, asset: &Hash) -> u64 {
         self.storage.get_balance_for(asset).unwrap_or(0)
     }
@@ -260,5 +289,37 @@ impl Wallet {
 
     pub fn get_address_with(&self, data: DataType) -> Address<'_> {
         self.keypair.get_public_key().to_address_with(data)
-    }    
+    }
+
+    pub async fn start_syncing(&self) -> Result<(), Error> {
+        let api = match self.api {
+            Some(ref api) => api,
+            None => return Err(WalletError::NotOnlineMode.into())
+        };
+
+        // get infos from chain
+        // TODO compare them with already stored to not resync fully each time
+        let info = api.get_info().await?;
+        self.storage.set_topoheight(info.topoheight)?;
+        self.storage.set_top_block_hash(&info.top_hash)?;
+
+        let address = self.get_address();
+        let assets = api.get_assets().await?;
+        for asset in &assets {
+            debug!("Checking balance for asset {}", asset);
+            let result = api.get_last_balance(&address, asset).await?;
+            let mut balance = result.balance;
+            debug!("Balance: {}", balance.get_balance());
+    
+            // save current balance
+            self.storage.set_balance_for(asset, balance.get_balance())?;
+
+            while let Some(previous_topo) = balance.get_previous_topoheight() {
+                balance = api.get_balance_at_topoheight(&address, asset, previous_topo).await?;
+                debug!("Detected balance change for {} at topoheight {}", asset, previous_topo);
+            }    
+        }
+
+        Ok(())
+    }
 }

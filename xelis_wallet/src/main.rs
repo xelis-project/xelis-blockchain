@@ -3,6 +3,7 @@ pub mod storage;
 pub mod wallet;
 pub mod config;
 pub mod cipher;
+pub mod api;
 
 use std::{sync::Arc, time::Duration, path::Path};
 
@@ -24,6 +25,8 @@ pub struct Config {
     /// Daemon address to use
     #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String,
+    #[clap(short, long, default_value_t = false)]
+    offline_mode: bool,
     /// Enable the debug mode
     #[clap(short, long)]
     debug: bool,
@@ -47,13 +50,24 @@ async fn main() -> Result<()> {
     let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging)?;
     let dir = format!("{}{}", DIR_PATH, config.name);
 
-    let wallet = if Path::new(&dir).is_dir() {
+    let mut wallet = if Path::new(&dir).is_dir() {
         info!("Opening wallet {}", dir);
         Wallet::open(dir, config.password)?
     } else {
         info!("Creating a new wallet at {}", dir);
         Wallet::new(dir, config.password)?
     };
+
+    if !config.offline_mode {
+        if let Err(e) = wallet.set_online_mode(&config.daemon_address).await {
+            error!("Error while setting online mode: {}", e);
+        } else {
+            info!("Online mode enabled");
+            if let Err(e) = wallet.start_syncing().await {
+                error!("Error while syncing: {}", e);
+            };
+        }
+    }
 
     if let Err(e) = run_prompt(prompt, wallet).await {
         error!("Error while running prompt: {}", e);

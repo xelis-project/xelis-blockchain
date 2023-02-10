@@ -65,6 +65,7 @@ async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Storage,
 
 pub fn register_methods(server: &mut RpcServer) {
     info!("Registering RPC methods...");
+    server.register_method("get_version", async_handler!(version));
     server.register_method("get_height", async_handler!(get_height));
     server.register_method("get_topoheight", async_handler!(get_topoheight));
     server.register_method("get_stableheight", async_handler!(get_stableheight));
@@ -86,6 +87,14 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("get_mempool", async_handler!(get_mempool));
     server.register_method("get_tips", async_handler!(get_tips));
     server.register_method("get_dag_order", async_handler!(get_dag_order));
+}
+
+async fn version(_: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    if body != Value::Null {
+        return Err(RpcError::UnexpectedParams)
+    }
+
+    Ok(json!(VERSION))
 }
 
 async fn get_height(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {

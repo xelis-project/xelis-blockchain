@@ -16,6 +16,10 @@ const PASSWORD_SALT_KEY: &[u8] = b"PSALT";
 const MASTER_KEY: &[u8] = b"MKEY";
 const KEY_PAIR: &[u8] = b"KPAIR";
 
+// const used for online mode
+const TOPOHEIGHT_KEY: &[u8] = b"TOPH";
+const TOP_BLOCK_HASH_KEY: &[u8] = b"TOPBH";
+
 // Use this struct to get access to non-encrypted keys (such as salt for KDF and encrypted master key)
 pub struct Storage {
     db: Db
@@ -89,6 +93,22 @@ impl EncryptedStorage {
 
     pub fn get_keypair(&self) -> Result<KeyPair> {
         self.load_from_disk(&self.extra, KEY_PAIR)
+    }
+
+    pub fn set_topoheight(&self, topoheight: u64) -> Result<()> {
+        self.save_to_disk(&self.extra, KEY_PAIR, &topoheight.to_be_bytes())
+    }
+
+    pub fn get_topoheight(&self) -> Result<u64> {
+        self.load_from_disk(&self.extra, TOPOHEIGHT_KEY)
+    }
+
+    pub fn set_top_block_hash(&self, hash: &Hash) -> Result<()> {
+        self.save_to_disk(&self.extra, KEY_PAIR, hash.as_bytes())
+    }
+
+    pub fn get_top_block_hash(&self) -> Result<Hash> {
+        self.load_from_disk(&self.extra, TOP_BLOCK_HASH_KEY)
     }
 
     pub fn get_public_storage(&self) -> &Storage {
