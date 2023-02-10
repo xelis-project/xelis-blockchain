@@ -15,7 +15,7 @@ use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
     VERSION, XELIS_ASSET
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType};
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::format_coin};
 use wallet::Wallet;
 
 
@@ -25,7 +25,8 @@ pub struct Config {
     /// Daemon address to use
     #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String,
-    #[clap(short, long, default_value_t = false)]
+    /// Disable online mode
+    #[clap(short, long)]
     offline_mode: bool,
     /// Enable the debug mode
     #[clap(short, long)]
@@ -59,8 +60,9 @@ async fn main() -> Result<()> {
     };
 
     if !config.offline_mode {
+        info!("Trying to connect to daemon at '{}'", config.daemon_address);
         if let Err(e) = wallet.set_online_mode(&config.daemon_address).await {
-            error!("Error while setting online mode: {}", e);
+            error!("Couldn't connect to daemon: {}", e);
         } else {
             info!("Online mode enabled");
             if let Err(e) = wallet.start_syncing().await {
@@ -69,6 +71,7 @@ async fn main() -> Result<()> {
         }
     }
 
+    let wallet = Arc::new(wallet);
     if let Err(e) = run_prompt(prompt, wallet).await {
         error!("Error while running prompt: {}", e);
     }
@@ -76,22 +79,38 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_prompt(prompt: Arc<Prompt>, wallet: Wallet) -> Result<()> {
-    let mut command_manager: CommandManager<Wallet> = CommandManager::default();
+async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>) -> Result<()> {
+    let mut command_manager: CommandManager<Arc<Wallet>> = CommandManager::default();
     command_manager.add_command(Command::with_required_arguments("set_password", "Set a new password to open your wallet", vec![Arg::new("old_password", ArgType::String), Arg::new("password", ArgType::String)], None, CommandHandler::Async(async_handler!(set_password))));
     command_manager.add_command(Command::with_required_arguments("transfer", "Send asset to a specified address", vec![Arg::new("address", ArgType::String), Arg::new("amount", ArgType::Number)], Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(transfer))));
     command_manager.add_command(Command::new("display_address", "Show your wallet address", None, CommandHandler::Async(async_handler!(display_address))));
     command_manager.add_command(Command::new("balance", "Show your current balance", Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(balance))));
 
-    command_manager.set_data(Some(wallet));
+    command_manager.set_data(Some(wallet.clone()));
 
     let closure = || async {
-        let height_str = format!("{}/{}", 0, 0); // TODO
-        let status = Prompt::colorize_str(Color::Red, "Offline");
+        let height_str = format!(
+            "{}: {}/{}",
+            Prompt::colorize_str(Color::Yellow, "Height"),
+            Prompt::colorize_string(Color::Green, &format!("{}", wallet.get_topoheight())), // TODO Color based on height / peer
+            Prompt::colorize_string(Color::Green, &format!("{}", wallet.get_daemon_topoheight()))
+        );
+        let balance = format!(
+            "{}: {}",
+            Prompt::colorize_str(Color::Yellow, "Balance"),
+            Prompt::colorize_string(Color::Green, &format_coin(wallet.get_balance(&XELIS_ASSET))),
+        );
+        let status = if wallet.is_online() {
+            Prompt::colorize_str(Color::Green, "Online")
+        } else {
+            Prompt::colorize_str(Color::Red, "Offline")
+        };
+
         format!(
-            "{} | {} | {} | {} ",
+            "{} | {} | {} | {} {} ",
             Prompt::colorize_str(Color::Blue, "XELIS Wallet"),
             height_str,
+            balance,
             status,
             Prompt::colorize_str(Color::BrightBlack, ">>")
         )
@@ -101,7 +120,7 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Wallet) -> Result<()> {
 }
 
 // Change wallet password
-async fn set_password(manager: &CommandManager<Wallet>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+async fn set_password(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let wallet = manager.get_data()?;
     let old_password = arguments.get_value("old_password")?.to_string_value()?;
     let password = arguments.get_value("password")?.to_string_value()?;
@@ -113,7 +132,7 @@ async fn set_password(manager: &CommandManager<Wallet>, mut arguments: ArgumentM
 }
 
 // Create a new transfer to a specified address
-async fn transfer(manager: &CommandManager<Wallet>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+async fn transfer(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let str_address = arguments.get_value("address")?.to_string_value()?;
     let amount = arguments.get_value("amount")?.to_number()?;
     let address = Address::from_string(&str_address).context("Invalid address")?;
@@ -143,14 +162,14 @@ async fn transfer(manager: &CommandManager<Wallet>, mut arguments: ArgumentManag
 }
 
 // Show current wallet address
-async fn display_address(manager: &CommandManager<Wallet>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn display_address(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
     let wallet = manager.get_data()?;
     manager.message(format!("Wallet address: {}", wallet.get_address()));
     Ok(())
 }
 
 // Show current balance for specified asset
-async fn balance(manager: &CommandManager<Wallet>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+async fn balance(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let asset = if arguments.has_argument("asset") {
         arguments.get_value("asset")?.to_hash()?
     } else {

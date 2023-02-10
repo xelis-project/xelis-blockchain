@@ -291,6 +291,16 @@ impl Wallet {
         self.keypair.get_public_key().to_address_with(data)
     }
 
+    // returns until which topoheight we are synced
+    pub fn get_topoheight(&self) -> u64 {
+        self.storage.get_wallet_topoheight().unwrap_or(0)
+    }
+
+    // returns daemon topoheight
+    pub fn get_daemon_topoheight(&self) -> u64 {
+        self.storage.get_topoheight().unwrap_or(0)
+    }
+
     pub async fn start_syncing(&self) -> Result<(), Error> {
         let api = match self.api {
             Some(ref api) => api,

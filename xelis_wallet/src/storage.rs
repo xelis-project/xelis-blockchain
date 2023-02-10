@@ -17,7 +17,13 @@ const MASTER_KEY: &[u8] = b"MKEY";
 const KEY_PAIR: &[u8] = b"KPAIR";
 
 // const used for online mode
+// this one represent the current wallet topoheight
+const WALLET_TOPOHEIGHT_KEY: &[u8] = b"WTOPH";
+// represent the wallet top block hash
+const WALLET_TOP_BLOCK_HASH_KEY: &[u8] = b"TOPBH";
+// represent the daemon topoheight
 const TOPOHEIGHT_KEY: &[u8] = b"TOPH";
+// represent the daemon top block hash
 const TOP_BLOCK_HASH_KEY: &[u8] = b"TOPBH";
 
 // Use this struct to get access to non-encrypted keys (such as salt for KDF and encrypted master key)
@@ -95,8 +101,24 @@ impl EncryptedStorage {
         self.load_from_disk(&self.extra, KEY_PAIR)
     }
 
+    pub fn set_wallet_topoheight(&self, topoheight: u64) -> Result<()> {
+        self.save_to_disk(&self.extra, WALLET_TOPOHEIGHT_KEY, &topoheight.to_be_bytes())
+    }
+
+    pub fn get_wallet_topoheight(&self) -> Result<u64> {
+        self.load_from_disk(&self.extra, WALLET_TOPOHEIGHT_KEY)
+    }
+
+    pub fn set_wallet_top_block_hash(&self, hash: &Hash) -> Result<()> {
+        self.save_to_disk(&self.extra, WALLET_TOP_BLOCK_HASH_KEY, hash.as_bytes())
+    }
+
+    pub fn get_wallet_top_block_hash(&self) -> Result<Hash> {
+        self.load_from_disk(&self.extra, WALLET_TOP_BLOCK_HASH_KEY)
+    }
+
     pub fn set_topoheight(&self, topoheight: u64) -> Result<()> {
-        self.save_to_disk(&self.extra, KEY_PAIR, &topoheight.to_be_bytes())
+        self.save_to_disk(&self.extra, TOPOHEIGHT_KEY, &topoheight.to_be_bytes())
     }
 
     pub fn get_topoheight(&self) -> Result<u64> {
@@ -104,7 +126,7 @@ impl EncryptedStorage {
     }
 
     pub fn set_top_block_hash(&self, hash: &Hash) -> Result<()> {
-        self.save_to_disk(&self.extra, KEY_PAIR, hash.as_bytes())
+        self.save_to_disk(&self.extra, TOP_BLOCK_HASH_KEY, hash.as_bytes())
     }
 
     pub fn get_top_block_hash(&self) -> Result<Hash> {

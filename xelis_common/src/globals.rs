@@ -27,7 +27,7 @@ pub fn get_current_timestamp() -> u128 {
 }
 
 pub fn format_coin(value: u64) -> String {
-    format!("{}", value as f64 / COIN_VALUE as f64)
+    format!("{:.5}", value as f64 / COIN_VALUE as f64)
 }
 
 // format a IP:port to byte format
