@@ -1,12 +1,14 @@
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance};
 
 #[derive(Serialize)]
-pub struct DataHash<T> {
-    pub hash: Hash,
+pub struct DataHash<'a, T: Clone> {
+    pub hash: Cow<'a, Hash>,
     #[serde(flatten)]
-    pub data: T
+    pub data: Cow<'a, T>
 }
 
 #[derive(Serialize)]
@@ -18,7 +20,7 @@ pub enum BlockType {
 }
 
 #[derive(Serialize)]
-pub struct BlockResponse<T> {
+pub struct BlockResponse<'a, T: Clone> {
     pub topoheight: Option<u64>,
     pub block_type: BlockType,
     pub difficulty: u64,
@@ -26,7 +28,7 @@ pub struct BlockResponse<T> {
     pub reward: u64,
     pub cumulative_difficulty: u64,
     #[serde(flatten)]
-    pub data: DataHash<T>
+    pub data: DataHash<'a, T>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -40,13 +42,13 @@ pub struct GetBlocksAtHeightParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetBlockByHashParams {
-    pub hash: Hash
+pub struct GetBlockByHashParams<'a> {
+    pub hash: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBlockTemplateParams<'a> {
-    pub address: Address<'a>
+    pub address: Cow<'a, Address<'a>>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -68,20 +70,20 @@ pub struct GetMessagesParams<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBalanceParams<'a> {
-    pub address: Address<'a>,
-    pub asset: Hash
+    pub address: Cow<'a, Address<'a>>,
+    pub asset: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBalanceAtTopoHeightParams<'a> {
-    pub address: Address<'a>,
-    pub asset: Hash,
+    pub address: Cow<'a, Address<'a>>,
+    pub asset: Cow<'a, Hash>,
     pub topoheight: u64
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetNonceParams<'a> {
-    pub address: Address<'a>,
+    pub address: Cow<'a, Address<'a>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -110,8 +112,8 @@ pub struct SubmitTransactionParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetTransactionParams {
-    pub hash: Hash
+pub struct GetTransactionParams<'a> {
+    pub hash: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize)]

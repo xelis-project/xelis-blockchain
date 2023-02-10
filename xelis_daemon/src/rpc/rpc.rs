@@ -27,7 +27,7 @@ use xelis_common::{
     crypto::hash::Hash,
     block::Block, config::{BLOCK_TIME, VERSION},
 };
-use std::sync::Arc;
+use std::{sync::Arc, borrow::Cow};
 use log::{info, debug};
 
 fn parse_params<P: DeserializeOwned>(value: Value) -> Result<P, RpcError> {
@@ -59,7 +59,8 @@ async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Storage,
     let supply = storage.get_supply_for_hash(&hash)?;
     let reward = storage.get_block_reward(&hash)?;
 
-    Ok(json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, data: DataHash { hash, data: block } }))
+    let data: DataHash<'_, Arc<Block>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block) };
+    Ok(json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, data }))
 }
 
 pub fn register_methods(server: &mut RpcServer) {
@@ -119,7 +120,7 @@ async fn get_block_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> Re
 async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBlockByHashParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
-    get_block_response_for_hash(&blockchain, &storage, params.hash).await
+    get_block_response_for_hash(&blockchain, &storage, params.hash.into_owned()).await
 }
 
 async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -137,7 +138,7 @@ async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<
         return Err(RpcError::ExpectedNormalAddress)
     }
     let storage = blockchain.get_storage().read().await;
-    let block = blockchain.get_block_template_for_storage(&storage, params.address.to_public_key()).await?;
+    let block = blockchain.get_block_template_for_storage(&storage, params.address.into_owned().to_public_key()).await?;
     let difficulty = blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await?;
     Ok(json!(GetBlockTemplateResult { template: block.to_hex(), difficulty }))
 }
@@ -283,7 +284,7 @@ async fn get_mempool(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, 
     let mut transactions: Vec<DataHash<Arc<Transaction>>> = Vec::new();
     for tx in mempool.get_sorted_txs() {
         let transaction = mempool.view_tx(tx.get_hash())?;
-        transactions.push(DataHash { hash: tx.get_hash().clone(), data: transaction });
+        transactions.push(DataHash { hash: Cow::Borrowed(tx.get_hash()), data: Cow::Owned(transaction) });
     }
 
     Ok(json!(transactions))
