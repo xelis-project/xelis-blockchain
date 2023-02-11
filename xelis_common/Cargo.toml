@@ -20,5 +20,8 @@ log = "0.4"
 fern = { version = "0.6", features = ["colored"] }
 chrono = "0.4.19"
 tokio = { version = "1", features = ["macros", "signal"] }
-reqwest = { version = "0.11.10", features = ["json"] }
+reqwest = { version = "0.11.10", features = ["json"], optional = true }
 lazy_static = "1.4.0"
+
+[features]
+json_rpc = ["dep:reqwest"]
