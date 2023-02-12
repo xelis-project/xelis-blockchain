@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use sled::{Tree, Db};
 use xelis_common::{
     crypto::{hash::Hash, key::KeyPair},
@@ -17,8 +19,6 @@ const MASTER_KEY: &[u8] = b"MKEY";
 const KEY_PAIR: &[u8] = b"KPAIR";
 
 // const used for online mode
-// this one represent the current wallet topoheight
-const WALLET_TOPOHEIGHT_KEY: &[u8] = b"WTOPH";
 // represent the wallet top block hash
 const WALLET_TOP_BLOCK_HASH_KEY: &[u8] = b"TOPBH";
 // represent the daemon topoheight
@@ -37,6 +37,7 @@ pub struct EncryptedStorage {
     transactions: Tree,
     balances: Tree,
     extra: Tree,
+    assets: Tree,
     inner: Storage
 }
 
@@ -47,6 +48,7 @@ impl EncryptedStorage {
             transactions: inner.db.open_tree(&cipher.hash_key("transactions"))?,
             balances: inner.db.open_tree(&cipher.hash_key("balances"))?,
             extra: inner.db.open_tree(&cipher.hash_key("extra"))?,
+            assets: inner.db.open_tree(&cipher.hash_key("assets"))?,
             cipher,
             inner
         };
@@ -69,6 +71,45 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    fn contains_data(&self, tree: &Tree, key: &[u8]) -> Result<bool> {
+        let hashed_key = self.cipher.hash_key(key);
+        Ok(tree.contains_key(hashed_key)?)
+    }
+    // this function is specific because we save the key in encrypted form (and not hashed as others)
+    // returns all saved assets
+    pub fn get_assets(&self) -> Result<HashSet<Hash>> {
+        let mut assets = HashSet::new();
+        for res in self.assets.iter() {
+            let (key, _) = res?;
+            let raw_key = &self.cipher.decrypt_value(&key)?;
+            let mut reader = Reader::new(raw_key);
+            let asset = Hash::read(&mut reader)?;
+            assets.insert(asset);
+        }
+
+        Ok(assets)
+    }
+
+    // we can't use a simple Tree#contains_key because of the encrypted form
+    // and we can't encrypt it first because of the random nonce generated each time
+    // so we currently read the whole tree
+    // TODO build a cache instead of read the whole tree each time
+    // will be necessary when we will have a lot of assets registered on chain
+    pub fn contains_asset(&self, asset: &Hash) -> Result<bool> {
+        Ok(self.get_assets()?.contains(asset))
+    }
+
+    // save asset in encrypted form
+    pub fn add_asset(&self, asset: &Hash) -> Result<()> {
+        if self.contains_asset(asset)? {
+            return Err(WalletError::AssetAlreadyRegistered.into());
+        }
+
+        let encrypted_asset = self.cipher.encrypt_value(asset.as_bytes())?;
+        self.assets.insert(encrypted_asset, &[])?;
+        Ok(())
+    }
+
     pub fn get_balance_for(&self, asset: &Hash) -> Result<u64> {
         self.load_from_disk(&self.balances, asset.as_bytes())
     }
@@ -79,6 +120,20 @@ impl EncryptedStorage {
 
     pub fn get_transaction(&self, hash: &Hash) -> Result<Transaction> {
         self.load_from_disk(&self.transactions, hash.as_bytes())
+    }
+
+    // read whole disk and returns all transactions
+    pub fn get_transactions(&self) -> Result<Vec<Transaction>> {
+        let mut transactions = Vec::new();
+        for res in self.transactions.iter() {
+            let (_, value) = res?;
+            let raw_value = &self.cipher.decrypt_value(&value)?;
+            let mut reader = Reader::new(raw_value);
+            let transaction = Transaction::read(&mut reader)?;
+            transactions.push(transaction);
+        }
+
+        Ok(transactions)
     }
 
     pub fn save_transaction(&self, hash: &Hash, transaction: &Transaction) -> Result<()> {
@@ -101,14 +156,6 @@ impl EncryptedStorage {
         self.load_from_disk(&self.extra, KEY_PAIR)
     }
 
-    pub fn set_wallet_topoheight(&self, topoheight: u64) -> Result<()> {
-        self.save_to_disk(&self.extra, WALLET_TOPOHEIGHT_KEY, &topoheight.to_be_bytes())
-    }
-
-    pub fn get_wallet_topoheight(&self) -> Result<u64> {
-        self.load_from_disk(&self.extra, WALLET_TOPOHEIGHT_KEY)
-    }
-
     pub fn set_wallet_top_block_hash(&self, hash: &Hash) -> Result<()> {
         self.save_to_disk(&self.extra, WALLET_TOP_BLOCK_HASH_KEY, hash.as_bytes())
     }
@@ -117,16 +164,20 @@ impl EncryptedStorage {
         self.load_from_disk(&self.extra, WALLET_TOP_BLOCK_HASH_KEY)
     }
 
-    pub fn set_topoheight(&self, topoheight: u64) -> Result<()> {
+    pub fn set_daemon_topoheight(&self, topoheight: u64) -> Result<()> {
         self.save_to_disk(&self.extra, TOPOHEIGHT_KEY, &topoheight.to_be_bytes())
     }
 
-    pub fn get_topoheight(&self) -> Result<u64> {
+    pub fn get_daemon_topoheight(&self) -> Result<u64> {
         self.load_from_disk(&self.extra, TOPOHEIGHT_KEY)
     }
 
     pub fn set_top_block_hash(&self, hash: &Hash) -> Result<()> {
         self.save_to_disk(&self.extra, TOP_BLOCK_HASH_KEY, hash.as_bytes())
+    }
+
+    pub fn has_top_block_hash(&self) -> Result<bool> {
+        self.contains_data(&self.extra, TOP_BLOCK_HASH_KEY)
     }
 
     pub fn get_top_block_hash(&self) -> Result<Hash> {

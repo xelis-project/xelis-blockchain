@@ -16,7 +16,7 @@ use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
     VERSION, XELIS_ASSET
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::format_coin};
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::format_coin, serializer::Serializer};
 use wallet::Wallet;
 
 
@@ -81,20 +81,23 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>) -> Result<()> {
     command_manager.add_command(Command::with_required_arguments("transfer", "Send asset to a specified address", vec![Arg::new("address", ArgType::String), Arg::new("amount", ArgType::Number)], Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(transfer))));
     command_manager.add_command(Command::new("display_address", "Show your wallet address", None, CommandHandler::Async(async_handler!(display_address))));
     command_manager.add_command(Command::new("balance", "Show your current balance", Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(balance))));
+    command_manager.add_command(Command::new("history", "Show all your transactions", None, CommandHandler::Async(async_handler!(history))));
+    command_manager.add_command(Command::new("online_mode", "Set your wallet in online mode", Some(Arg::new("daemon_address", ArgType::String)), CommandHandler::Async(async_handler!(online_mode))));
+    command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", None, CommandHandler::Async(async_handler!(offline_mode))));
 
     command_manager.set_data(Some(wallet.clone()));
 
     let closure = || async {
+        let storage = wallet.get_storage().read().await;
         let height_str = format!(
-            "{}: {}/{}",
+            "{}: {}",
             Prompt::colorize_str(Color::Yellow, "Height"),
-            Prompt::colorize_string(Color::Green, &format!("{}", wallet.get_topoheight())), // TODO Color based on height / peer
-            Prompt::colorize_string(Color::Green, &format!("{}", wallet.get_daemon_topoheight()))
+            Prompt::colorize_string(Color::Green, &format!("{}", storage.get_daemon_topoheight().unwrap_or(0)))
         );
         let balance = format!(
             "{}: {}",
             Prompt::colorize_str(Color::Yellow, "Balance"),
-            Prompt::colorize_string(Color::Green, &format_coin(wallet.get_balance(&XELIS_ASSET))),
+            Prompt::colorize_string(Color::Green, &format_coin(storage.get_balance_for(&XELIS_ASSET).unwrap_or(0))),
         );
         let status = if wallet.is_online().await {
             Prompt::colorize_str(Color::Green, "Online")
@@ -122,7 +125,7 @@ async fn set_password(manager: &CommandManager<Arc<Wallet>>, mut arguments: Argu
     let password = arguments.get_value("password")?.to_string_value()?;
 
     manager.message("Changing password...");
-    wallet.set_password(old_password, password)?;
+    wallet.set_password(old_password, password).await?;
     manager.message("Your password has been changed!");
     Ok(())
 }
@@ -147,12 +150,24 @@ async fn transfer(manager: &CommandManager<Arc<Wallet>>, mut arguments: Argument
         AddressType::Data(data) => Some(data)
     };
 
-    let transfer = wallet.create_transfer(asset, key, extra_data, amount)?;
-    let tx = wallet.create_transaction(TransactionType::Transfer(vec![transfer]))?;
+    let tx = {
+        let storage = wallet.get_storage().read().await;
+        let transfer = wallet.create_transfer(&storage, asset, key, extra_data, amount)?;
+        wallet.create_transaction(&storage, TransactionType::Transfer(vec![transfer]))?
+    };
     let tx_hash = tx.hash();
     manager.message(format!("Transaction hash: {}", tx_hash));
 
-    // TODO send transaction
+    if wallet.is_online().await {
+        if let Err(e) = wallet.submit_transaction(&tx).await {
+            manager.error(format!("Couldn't submit transaction: {}", e));
+        } else {
+            manager.message("Transaction submitted successfully!");
+        }
+    } else {
+        manager.warn("You are currently offline, transaction cannot be send automatically. Please send it manually to the network.");
+        manager.message(format!("Transaction Hex: {}", tx.to_hex()));
+    }
 
     Ok(())
 }
@@ -173,8 +188,50 @@ async fn balance(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentM
     };
 
     let wallet = manager.get_data()?;
-    let balance = wallet.get_balance(&asset);
+    let storage = wallet.get_storage().read().await;
+    let balance = storage.get_balance_for(&asset).unwrap_or(0);
     manager.message(format!("Balance for asset {}: {}", asset, balance));
 
+    Ok(())
+}
+
+// Show all transactions
+async fn history(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let wallet = manager.get_data()?;
+    let storage = wallet.get_storage().read().await;
+    for tx in storage.get_transactions()? { // TODO
+        manager.message(format!("Transaction: {}", tx.hash()));
+    }
+    manager.message(format!("Wallet address: {}", wallet.get_address()));
+    Ok(())
+}
+
+// Set your wallet in online mode
+async fn online_mode(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let wallet = manager.get_data()?;
+    if wallet.is_online().await {
+        manager.error("Wallet is already online");
+    } else {
+        let daemon_address = if arguments.has_argument("daemon_address") {
+            arguments.get_value("daemon_address")?.to_string_value()?
+        } else {
+            DEFAULT_DAEMON_ADDRESS.to_string()
+        };
+
+        wallet.set_online_mode(&daemon_address).await?;
+        manager.message("Wallet is now online");
+    }
+    Ok(())
+}
+
+// Set your wallet in offline mode
+async fn offline_mode(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let wallet = manager.get_data()?;
+    if !wallet.is_online().await {
+        manager.error("Wallet is already offline");
+    } else {
+        wallet.set_offline_mode().await.context("Error on offline mode")?;
+        manager.message("Wallet is now offline");
+    }
     Ok(())
 }

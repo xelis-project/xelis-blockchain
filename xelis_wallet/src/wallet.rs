@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Error, Context};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use xelis_common::api::DataType;
 use xelis_common::config::XELIS_ASSET;
 use xelis_common::crypto::address::Address;
@@ -55,16 +55,20 @@ pub enum WalletError {
     #[error("Wallet is not in online mode")]
     NotOnlineMode,
     #[error("Wallet is already in online mode")]
-    AlreadyOnlineMode
+    AlreadyOnlineMode,
+    #[error("Asset is already present on disk")]
+    AssetAlreadyRegistered,
+    #[error(transparent)]
+    Any(#[from] Error)
 }
 
 pub struct Wallet {
     // Encrypted Wallet Storage
-    storage: EncryptedStorage,
+    storage: RwLock<EncryptedStorage>,
     // Private & Public key linked for this wallet
     keypair: KeyPair,
     // network handler for online mode to keep wallet synced
-    network_handler: Mutex<Option<SharedNetworkHandler>>
+    network_handler: Mutex<Option<SharedNetworkHandler>>,
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -76,7 +80,7 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 impl Wallet {
     fn new(storage: EncryptedStorage, keypair: KeyPair) -> Arc<Self> {
         let zelf = Self {
-            storage,
+            storage: RwLock::new(storage),
             keypair,
             network_handler: Mutex::new(None)
         };
@@ -163,8 +167,9 @@ impl Wallet {
         Ok(Self::new(storage, keypair))
     }
 
-    pub fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {
-        let storage = self.storage.get_public_storage();
+    pub async fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {
+        let encrypted_storage = self.storage.read().await;
+        let storage = encrypted_storage.get_public_storage();
         let (master_key, storage_salt) = {
             // retrieve old salt to build key from current password
             let salt = storage.get_password_salt()?;
@@ -202,8 +207,11 @@ impl Wallet {
         Ok(())
     }
 
-    pub fn create_transfer(&self, asset: Hash, key: PublicKey, extra_data: Option<DataType>, amount: u64) -> Result<Transfer, Error> {
-        let balance = self.get_balance(&asset);
+    // create a transfer from the wallet to the given address to send the given amount of the given asset
+    // and include extra data if present
+    // TODO encrypt all the extra data for the receiver
+    pub fn create_transfer(&self, storage: &EncryptedStorage, asset: Hash, key: PublicKey, extra_data: Option<DataType>, amount: u64) -> Result<Transfer, Error> {
+        let balance = storage.get_balance_for(&asset).unwrap_or(0);
         // check if we have enough funds for this asset
         if amount > balance {
             return Err(WalletError::NotEnoughFunds(balance, amount, asset).into())
@@ -236,14 +244,16 @@ impl Wallet {
         Ok(transfer)
     }
 
-    pub fn create_transaction(&self, transaction_type: TransactionType) -> Result<Transaction, Error> {
+    // create the final transaction with calculated fees and signature
+    // also check that we have enough funds for the transaction
+    pub fn create_transaction(&self, storage: &EncryptedStorage, transaction_type: TransactionType) -> Result<Transaction, Error> {
         let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), transaction_type, 1f64);
         let assets_spent: HashMap<&Hash, u64> = builder.total_spent();
 
         // check that we have enough balance for every assets spent
         for (asset, amount) in &assets_spent {
             let asset: &Hash = *asset;
-            let balance = self.get_balance(asset);
+            let balance = storage.get_balance_for(asset).unwrap_or(0);
             if balance < *amount {
                 return Err(WalletError::NotEnoughFunds(balance, *amount, asset.clone()).into())
             }
@@ -251,12 +261,24 @@ impl Wallet {
 
         // now we have to check that we have enough funds for spent + fees
         let total_native_spent = assets_spent.get(&XELIS_ASSET).unwrap_or(&0) +  builder.estimate_fees();
-        let native_balance = self.get_balance(&XELIS_ASSET);
+        let native_balance = storage.get_balance_for(&XELIS_ASSET).unwrap_or(0);
         if total_native_spent > native_balance {
             return Err(WalletError::NotEnoughFundsForFee(native_balance, total_native_spent).into())
         }
 
         Ok(builder.build(&self.keypair)?)
+    }
+
+    // submit a transaction to the network through the connection to daemon
+    // returns error if the wallet is in offline mode
+    pub async fn submit_transaction(&self, transaction: &Transaction) -> Result<(), WalletError> {
+        let network_handler = self.network_handler.lock().await;
+        if let Some(network_handler) = network_handler.as_ref() {
+            network_handler.get_api().submit_transaction(transaction).await?;
+            Ok(())
+        } else {
+            Err(WalletError::NotOnlineMode)
+        }
     }
 
     // set wallet in online mode: start a communication task which will keep the wallet synced
@@ -297,10 +319,6 @@ impl Wallet {
         &self.network_handler
     }
 
-    pub fn get_balance(&self, asset: &Hash) -> u64 {
-        self.storage.get_balance_for(asset).unwrap_or(0)
-    }
-
     pub fn get_address(&self) -> Address<'_> {
         self.keypair.get_public_key().to_address()
     }
@@ -309,13 +327,7 @@ impl Wallet {
         self.keypair.get_public_key().to_address_with(data)
     }
 
-    // returns until which topoheight we are synced
-    pub fn get_topoheight(&self) -> u64 {
-        self.storage.get_wallet_topoheight().unwrap_or(0)
-    }
-
-    // returns daemon topoheight
-    pub fn get_daemon_topoheight(&self) -> u64 {
-        self.storage.get_topoheight().unwrap_or(0)
+    pub fn get_storage(&self) -> &RwLock<EncryptedStorage> {
+        &self.storage
     }
 }

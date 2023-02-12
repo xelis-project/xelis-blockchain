@@ -7,7 +7,7 @@ use crate::serializer::{Serializer, Writer, Reader, ReaderError};
 pub const EXTRA_NONCE_SIZE: usize = 32;
 pub const BLOCK_WORK_SIZE: usize = 160;
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Block {
     pub tips: Vec<Hash>,
     #[serde(skip_serializing)] // TODO https://github.com/serde-rs/json/issues/625
@@ -19,7 +19,7 @@ pub struct Block {
     pub txs_hashes: Vec<Hash>
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct CompleteBlock {
     #[serde(flatten)]
     block: Immutable<Block>,

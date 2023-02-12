@@ -75,6 +75,14 @@ impl serde::Serialize for PublicKey {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for PublicKey {
+    fn deserialize<D: serde::Deserializer<'de> >(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        let address = Address::from_string(&s).map_err(serde::de::Error::custom)?;
+        Ok(address.to_public_key())
+    }
+}
+
 impl Display for PublicKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         write!(f, "{}", &self.to_address())
@@ -183,6 +191,16 @@ impl serde::Serialize for Signature {
         S: serde::Serializer,
     {
         serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Signature {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).and_then(|s| {
+            let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+            let signature = ed25519_dalek::Signature::from_bytes(&bytes).map_err(serde::de::Error::custom)?;
+            Ok(Signature(signature))
+        })
     }
 }
 

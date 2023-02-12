@@ -1,8 +1,8 @@
 use std::{/*rc::Rc,*/ sync::Arc, ops::Deref};
 
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 
-#[derive(Clone, Serialize, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, Hash, PartialEq)]
 #[serde(untagged)]
 pub enum Immutable<T: Clone> {
     Owned(T),

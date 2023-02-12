@@ -4,14 +4,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance};
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct DataHash<'a, T: Clone> {
     pub hash: Cow<'a, Hash>,
     #[serde(flatten)]
     pub data: Cow<'a, T>
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub enum BlockType {
     Sync,
     Side,
@@ -19,7 +19,7 @@ pub enum BlockType {
     Normal
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct BlockResponse<'a, T: Clone> {
     pub topoheight: Option<u64>,
     pub block_type: BlockType,
