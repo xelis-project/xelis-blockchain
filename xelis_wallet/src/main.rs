@@ -4,6 +4,7 @@ pub mod wallet;
 pub mod config;
 pub mod cipher;
 pub mod api;
+pub mod network_handler;
 
 use std::{sync::Arc, time::Duration, path::Path};
 
@@ -51,27 +52,22 @@ async fn main() -> Result<()> {
     let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging)?;
     let dir = format!("{}{}", DIR_PATH, config.name);
 
-    let mut wallet = if Path::new(&dir).is_dir() {
+    let wallet = if Path::new(&dir).is_dir() {
         info!("Opening wallet {}", dir);
         Wallet::open(dir, config.password)?
     } else {
         info!("Creating a new wallet at {}", dir);
-        Wallet::new(dir, config.password)?
+        Wallet::create(dir, config.password)?
     };
 
     if !config.offline_mode {
         info!("Trying to connect to daemon at '{}'", config.daemon_address);
         if let Err(e) = wallet.set_online_mode(&config.daemon_address).await {
             error!("Couldn't connect to daemon: {}", e);
-        } else {
-            info!("Online mode enabled");
-            if let Err(e) = wallet.start_syncing().await {
-                error!("Error while syncing: {}", e);
-            };
         }
+        info!("Online mode enabled");
     }
 
-    let wallet = Arc::new(wallet);
     if let Err(e) = run_prompt(prompt, wallet).await {
         error!("Error while running prompt: {}", e);
     }
@@ -100,7 +96,7 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>) -> Result<()> {
             Prompt::colorize_str(Color::Yellow, "Balance"),
             Prompt::colorize_string(Color::Green, &format_coin(wallet.get_balance(&XELIS_ASSET))),
         );
-        let status = if wallet.is_online() {
+        let status = if wallet.is_online().await {
             Prompt::colorize_str(Color::Green, "Online")
         } else {
             Prompt::colorize_str(Color::Red, "Offline")

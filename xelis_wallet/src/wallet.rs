@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::{Error, Context};
+use tokio::sync::Mutex;
 use xelis_common::api::DataType;
 use xelis_common::config::XELIS_ASSET;
 use xelis_common::crypto::address::Address;
@@ -8,9 +10,9 @@ use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey};
 use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
-use crate::api::DaemonAPI;
 use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
+use crate::network_handler::{NetworkHandler, SharedNetworkHandler};
 use crate::storage::{EncryptedStorage, Storage};
 use crate::transaction_builder::TransactionBuilder;
 use chacha20poly1305::{aead::OsRng, Error as CryptoError};
@@ -52,6 +54,8 @@ pub enum WalletError {
     ExtraDataTooBig(usize, usize),
     #[error("Wallet is not in online mode")]
     NotOnlineMode,
+    #[error("Wallet is already in online mode")]
+    AlreadyOnlineMode
 }
 
 pub struct Wallet {
@@ -59,7 +63,8 @@ pub struct Wallet {
     storage: EncryptedStorage,
     // Private & Public key linked for this wallet
     keypair: KeyPair,
-    api: Option<DaemonAPI>
+    // network handler for online mode to keep wallet synced
+    network_handler: Mutex<Option<SharedNetworkHandler>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -69,7 +74,17 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 }
 
 impl Wallet {
-    pub fn new(name: String, password: String) -> Result<Self, Error> {
+    fn new(storage: EncryptedStorage, keypair: KeyPair) -> Arc<Self> {
+        let zelf = Self {
+            storage,
+            keypair,
+            network_handler: Mutex::new(None)
+        };
+
+        Arc::new(zelf)
+    }
+
+    pub fn create(name: String, password: String) -> Result<Arc<Self>, Error> {
         // generate random salt for hashed password
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
         OsRng.fill_bytes(&mut salt);
@@ -108,16 +123,10 @@ impl Wallet {
         let keypair = KeyPair::new();
         storage.set_keypair(&keypair)?;
 
-        let wallet = Self {
-            storage,
-            keypair,
-            api: None
-        };
-
-        Ok(wallet)
+        Ok(Self::new(storage, keypair))
     }
 
-    pub fn open(name: String, password: String) -> Result<Self, Error> {
+    pub fn open(name: String, password: String) -> Result<Arc<Self>, Error> {
         debug!("Creating storage for {}", name);
         let storage = Storage::new(name)?;
         
@@ -151,13 +160,7 @@ impl Wallet {
         debug!("Retrieving keypair from encrypted storage");
         let keypair =  storage.get_keypair()?;
 
-        let wallet = Self {
-            storage,
-            keypair,
-            api: None
-        };
-
-        Ok(wallet)
+        Ok(Self::new(storage, keypair))
     }
 
     pub fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {
@@ -256,27 +259,42 @@ impl Wallet {
         Ok(builder.build(&self.keypair)?)
     }
 
-    pub async fn set_online_mode(&mut self, daemon_address: &String) -> Result<(), Error> {
-        let api = DaemonAPI::new(format!("{}/json_rpc", daemon_address));
-        // check that we can correctly get version from daemon
-        let version = api.get_version().await?;
-        debug!("Connected to daemon running version {}", version);
+    // set wallet in online mode: start a communication task which will keep the wallet synced
+    pub async fn set_online_mode(self: &Arc<Self>, daemon_address: &String) -> Result<(), Error> {
+        if self.is_online().await {
+            // user have to set in offline mode himself first
+            return Err(WalletError::AlreadyOnlineMode.into())
+        }
 
-        self.api = Some(api);
+        // create the network handler
+        let network_handler = NetworkHandler::new(Arc::clone(&self), daemon_address).await?;
+        // start the task
+        network_handler.start().await?;
+        *self.network_handler.lock().await = Some(network_handler);
+
         Ok(())
     }
 
-    pub fn set_offline_mode(&mut self) -> Result<(), WalletError> {
-        if self.api.is_none() {
+    // set wallet in offline mode: stop communication task if exists
+    pub async fn set_offline_mode(&self) -> Result<(), WalletError> {
+        let mut handler = self.network_handler.lock().await;
+        if let Some(network_handler) = handler.take() {
+            network_handler.stop().await;
+        } else {
             return Err(WalletError::NotOnlineMode)
         }
 
-        self.api = None;
         Ok(())
     }
 
-    pub fn is_online(&self) -> bool {
-        self.api.is_some()
+    pub async fn is_online(&self) -> bool {
+        self.network_handler.lock().await.is_some()
+    }
+
+    // this function allow to user to get the network handler in case in want to stay in online mode
+    // but want to pause / resume the syncing task through start/stop functions from it
+    pub async fn get_network_handler(&self) -> &Mutex<Option<Arc<NetworkHandler>>> {
+        &self.network_handler
     }
 
     pub fn get_balance(&self, asset: &Hash) -> u64 {
@@ -299,37 +317,5 @@ impl Wallet {
     // returns daemon topoheight
     pub fn get_daemon_topoheight(&self) -> u64 {
         self.storage.get_topoheight().unwrap_or(0)
-    }
-
-    pub async fn start_syncing(&self) -> Result<(), Error> {
-        let api = match self.api {
-            Some(ref api) => api,
-            None => return Err(WalletError::NotOnlineMode.into())
-        };
-
-        // get infos from chain
-        // TODO compare them with already stored to not resync fully each time
-        let info = api.get_info().await?;
-        self.storage.set_topoheight(info.topoheight)?;
-        self.storage.set_top_block_hash(&info.top_hash)?;
-
-        let address = self.get_address();
-        let assets = api.get_assets().await?;
-        for asset in &assets {
-            debug!("Checking balance for asset {}", asset);
-            let result = api.get_last_balance(&address, asset).await?;
-            let mut balance = result.balance;
-            debug!("Balance: {}", balance.get_balance());
-    
-            // save current balance
-            self.storage.set_balance_for(asset, balance.get_balance())?;
-
-            while let Some(previous_topo) = balance.get_previous_topoheight() {
-                balance = api.get_balance_at_topoheight(&address, asset, previous_topo).await?;
-                debug!("Detected balance change for {} at topoheight {}", asset, previous_topo);
-            }    
-        }
-
-        Ok(())
     }
 }
