@@ -5,7 +5,7 @@ use crate::config::VERSION;
 use super::argument::*;
 use anyhow::Error;
 use thiserror::Error;
-use log::{info, warn};
+use log::{info, warn, error};
 
 #[derive(Error, Debug)]
 pub enum CommandError {
@@ -178,7 +178,7 @@ impl<T> CommandManager<T> {
     }
 
     pub fn error<D: Display>(&self, message: D) {
-        warn!("{}", message);
+        error!("{}", message);
     }
 }
 
