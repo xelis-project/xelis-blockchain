@@ -190,6 +190,7 @@ Retrieve a block at a specific topo height
 		"nonce": 183776,
 		"reward": 877360,
 		"supply": 42113762,
+		"timestamp": 1674226439134,
 		"tips": [
 			"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 		],
@@ -238,6 +239,7 @@ Retrieve all blocks at a specific height
 			"nonce": 183776,
 			"reward": 877360,
 			"supply": 42113762,
+			"timestamp": 1674226439134,
 			"tips": [
 				"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 			],
@@ -286,6 +288,7 @@ Retrieve a block by its hash
 		"nonce": 183776,
 		"reward": 877360,
 		"supply": 42113762,
+		"timestamp": 1674226439134,
 		"tips": [
 			"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 		],
@@ -328,6 +331,7 @@ No parameters
 		"nonce": 183776,
 		"reward": 877360,
 		"supply": 42113762,
+		"timestamp": 1674226439134,
 		"tips": [
 			"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 		],
