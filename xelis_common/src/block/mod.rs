@@ -13,9 +13,9 @@ pub fn serialize_extra_nonce<S: serde::Serializer>(extra_nonce: &[u8; EXTRA_NONC
     s.serialize_str(&hex::encode(extra_nonce))
 }
 
-pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserialize: D) -> Result<[u8; EXTRA_NONCE_SIZE], D::Error> {
+pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<[u8; EXTRA_NONCE_SIZE], D::Error> {
     let mut extra_nonce = [0u8; EXTRA_NONCE_SIZE];
-    let hex = String::deserialize(deserialize)?;
+    let hex = String::deserialize(deserializer)?;
     let decoded = hex::decode(hex).map_err(serde::de::Error::custom)?;
     extra_nonce.copy_from_slice(&decoded);
     Ok(extra_nonce)
@@ -24,7 +24,6 @@ pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserialize: D)
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Block {
     pub tips: Vec<Hash>,
-    #[serde(skip_serializing)] // TODO https://github.com/serde-rs/json/issues/625
     pub timestamp: u128,
     pub height: u64,
     pub nonce: u64,

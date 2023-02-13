@@ -15,8 +15,8 @@ lazy_static = "1.4.0"
 
 # Common dependencies
 log = "0.4"
-serde = { version = "1.0.126", features = ["derive", "rc"] }
-serde_json = "1.0"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
 tokio = "1.24.1"
 anyhow = "1"
 fern = { version = "0.6", features = ["colored"] }
