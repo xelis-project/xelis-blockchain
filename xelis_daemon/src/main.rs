@@ -6,7 +6,7 @@ pub mod core;
 use fern::colors::Color;
 use log::{info, error};
 use p2p::P2pServer;
-use rpc::getwork_server::SharedGetWorkServer;
+use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
     prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}},
     config::{VERSION, BLOCK_TIME}, globals::format_hashrate, async_handler, crypto::address::Address
@@ -55,6 +55,8 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result
     command_manager.add_command(Command::new("list_peers", "List all peers connected", None, CommandHandler::Async(async_handler!(list_peers))));
     command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", None, CommandHandler::Async(async_handler!(list_assets))));
     command_manager.add_command(Command::with_required_arguments("show_balance", "Show balance of an address", vec![Arg::new("address", ArgType::String), Arg::new("asset", ArgType::Hash)], Some(Arg::new("history", ArgType::Number)), CommandHandler::Async(async_handler!(show_balance))));
+    command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], None, CommandHandler::Async(async_handler!(print_block))));
+    command_manager.add_command(Command::new("top_block", "Print top block", None, CommandHandler::Async(async_handler!(top_block))));
 
     let p2p: Option<Arc<P2pServer>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
@@ -186,6 +188,26 @@ async fn show_balance(manager: &CommandManager<Arc<Blockchain>>, mut arguments: 
             break;
         }
     }
+
+    Ok(())
+}
+
+async fn print_block(manager: &CommandManager<Arc<Blockchain>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain = manager.get_data()?;
+    let storage = blockchain.get_storage().read().await;
+    let hash = arguments.get_value("hash")?.to_hash()?;
+    let response = get_block_response_for_hash(blockchain, &storage, hash).await.context("Error while building block response")?;
+    manager.message(format!("{}", serde_json::to_string_pretty(&response).context("Error while serializing")?));
+
+    Ok(())
+}
+
+async fn top_block(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain = manager.get_data()?;
+    let storage = blockchain.get_storage().read().await;
+    let hash = blockchain.get_top_block_hash().await.context("Error on top block hash")?;
+    let response = get_block_response_for_hash(blockchain, &storage, hash).await.context("Error while building block response")?;
+    manager.message(format!("{}", serde_json::to_string_pretty(&response).context("Error while serializing")?));
 
     Ok(())
 }

@@ -46,7 +46,7 @@ async fn get_block_type_for_block(blockchain: &Blockchain, storage: &Storage, ha
     })
 }
 
-async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Storage, hash: Hash) -> Result<Value, RpcError> {
+pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Storage, hash: Hash) -> Result<Value, RpcError> {
     let block = storage.get_block_by_hash(&hash).await?;
     let topoheight = if storage.is_block_topological_ordered(&hash).await {
         Some(storage.get_topo_height_for_hash(&hash).await?)
