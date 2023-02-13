@@ -181,23 +181,19 @@ Retrieve a block at a specific topo height
 	"jsonrpc": "2.0",
 	"result": {
 		"block_type": "Normal",
-		"cumulative_difficulty": 16050593,
-		"supply": 1790008,
-		"difficulty": 234800,
-		"reward": 877380,
-		"hash": "0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692",
+		"cumulative_difficulty": 76173573,
+		"difficulty": 7902701,
+		"extra_nonce": "cac46116afea8a00d2d9f9ea10d20a3a5bc9c2ae7f47201f24450e3e3fe5ec09",
+		"hash": "0000019fab49717777dba2ee23f46f9f27706a9c5103a5550cf429f9c786b1e4",
 		"height": 23,
-		"miner_tx": {
-			"owner": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
-			"signature": null,
-			"variant": "Coinbase"
-		},
-		"nonce": 1370526,
+		"miner": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
+		"nonce": 183776,
+		"reward": 877360,
+		"supply": 42113762,
 		"tips": [
-			"000002144bb86d9fcbe223aff1f6c2526d0c47eef0b8f7433b3abec22685fb31"
+			"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 		],
 		"topoheight": 23,
-		"transactions": [],
 		"txs_hashes": []
 	}
 }
@@ -233,23 +229,19 @@ Retrieve all blocks at a specific height
 	"result": [
 		{
 			"block_type": "Normal",
-			"cumulative_difficulty": 16050593,
-			"supply": 1790008,
-			"difficulty": 234800,
-			"reward": 877380,
-			"hash": "0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692",
+			"cumulative_difficulty": 76173573,
+			"difficulty": 7902701,
+			"extra_nonce": "cac46116afea8a00d2d9f9ea10d20a3a5bc9c2ae7f47201f24450e3e3fe5ec09",
+			"hash": "0000019fab49717777dba2ee23f46f9f27706a9c5103a5550cf429f9c786b1e4",
 			"height": 23,
-			"miner_tx": {
-				"owner": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
-				"signature": null,
-				"variant": "Coinbase"
-			},
-			"nonce": 1370526,
+			"miner": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
+			"nonce": 183776,
+			"reward": 877360,
+			"supply": 42113762,
 			"tips": [
-				"000002144bb86d9fcbe223aff1f6c2526d0c47eef0b8f7433b3abec22685fb31"
+				"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 			],
 			"topoheight": 23,
-			"transactions": [],
 			"txs_hashes": []
 		}
 	]
@@ -285,22 +277,19 @@ Retrieve a block by its hash
 	"jsonrpc": "2.0",
 	"result": {
 		"block_type": "Normal",
-		"cumulative_difficulty": 14125125,
-		"supply": 1790008,
-		"difficulty": 234800,
-		"reward": 877380,
-		"hash": "000002144bb86d9fcbe223aff1f6c2526d0c47eef0b8f7433b3abec22685fb31",
-		"height": 22,
-		"miner_tx": {
-			"owner": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
-			"signature": null,
-			"variant": "Coinbase"
-		},
-		"nonce": 1940650,
+		"cumulative_difficulty": 76173573,
+		"difficulty": 7902701,
+		"extra_nonce": "cac46116afea8a00d2d9f9ea10d20a3a5bc9c2ae7f47201f24450e3e3fe5ec09",
+		"hash": "0000019fab49717777dba2ee23f46f9f27706a9c5103a5550cf429f9c786b1e4",
+		"height": 23,
+		"miner": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
+		"nonce": 183776,
+		"reward": 877360,
+		"supply": 42113762,
 		"tips": [
-			"000007691f86da1d48f67d56c5a8ea4410ba37628702c629618e2ac7f5234cba"
+			"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 		],
-		"topoheight": 22,
+		"topoheight": 23,
 		"txs_hashes": []
 	}
 }
@@ -330,23 +319,19 @@ No parameters
 	"jsonrpc": "2.0",
 	"result": {
 		"block_type": "Normal",
-		"cumulative_difficulty": 16050593,
-		"supply": 1790008,
-		"difficulty": 234800,
-		"reward": 877380,
-		"hash": "0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692",
+		"cumulative_difficulty": 76173573,
+		"difficulty": 7902701,
+		"extra_nonce": "cac46116afea8a00d2d9f9ea10d20a3a5bc9c2ae7f47201f24450e3e3fe5ec09",
+		"hash": "0000019fab49717777dba2ee23f46f9f27706a9c5103a5550cf429f9c786b1e4",
 		"height": 23,
-		"miner_tx": {
-			"owner": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
-			"signature": null,
-			"variant": "Coinbase"
-		},
-		"nonce": 1370526,
+		"miner": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
+		"nonce": 183776,
+		"reward": 877360,
+		"supply": 42113762,
 		"tips": [
-			"000002144bb86d9fcbe223aff1f6c2526d0c47eef0b8f7433b3abec22685fb31"
+			"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 		],
 		"topoheight": 23,
-		"transactions": [],
 		"txs_hashes": []
 	}
 }
