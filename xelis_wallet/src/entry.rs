@@ -171,7 +171,7 @@ impl TransactionEntry {
         &self.hash
     }
 
-    pub fn topoheight(&self) -> u64 {
+    pub fn get_topoheight(&self) -> u64 {
         self.topoheight
     }
 

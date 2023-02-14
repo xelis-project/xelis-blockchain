@@ -206,7 +206,10 @@ async fn balance(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentM
 async fn history(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
     let wallet = manager.get_data()?;
     let storage = wallet.get_storage().read().await;
-    let transactions = storage.get_transactions()?;
+    let mut transactions = storage.get_transactions()?;
+    // desc ordered
+    transactions.sort_by(|a, b| b.get_topoheight().cmp(&a.get_topoheight()));
+
     manager.message(format!("Transactions available: {}", transactions.len()));
     for tx in transactions {
         manager.message(format!("- {}", tx));
