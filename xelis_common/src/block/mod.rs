@@ -21,9 +21,15 @@ pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserializer: D
     Ok(extra_nonce)
 }
 
+// TODO fix deserializer
+pub fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(_: D) -> Result<u128, D::Error> {
+    Ok(0)
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Block {
     pub tips: Vec<Hash>,
+    #[serde(deserialize_with = "deserialize_timestamp")]
     pub timestamp: u128,
     pub height: u64,
     pub nonce: u64,

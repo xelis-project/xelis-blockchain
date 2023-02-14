@@ -172,7 +172,7 @@ impl Transaction {
     pub fn get_data(&self) -> &TransactionType {
         &self.data
     }
-    
+
     pub fn get_fee(&self) -> u64 {
         self.fee
     }
@@ -186,6 +186,10 @@ impl Transaction {
         let bytes = self.to_bytes();
         let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
         self.get_owner().verify_signature(&hash(bytes), &self.signature)
+    }
+
+    pub fn consume(self) -> (PublicKey, TransactionType) {
+        (self.owner, self.data)
     }
 }
 

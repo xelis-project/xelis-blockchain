@@ -58,6 +58,8 @@ pub enum WalletError {
     AlreadyOnlineMode,
     #[error("Asset is already present on disk")]
     AssetAlreadyRegistered,
+    #[error("Topoheight is too high to rescan")]
+    RescanTopoheightTooHigh,
     #[error(transparent)]
     Any(#[from] Error)
 }
@@ -302,6 +304,36 @@ impl Wallet {
         let mut handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.take() {
             network_handler.stop().await;
+        } else {
+            return Err(WalletError::NotOnlineMode)
+        }
+
+        Ok(())
+    }
+
+    pub async fn rescan(&self, topoheight: u64) -> Result<(), WalletError> {
+        if !self.is_online().await {
+            // user have to set in offline mode himself first
+            return Err(WalletError::AlreadyOnlineMode.into())
+        }
+
+        let handler = self.network_handler.lock().await;
+        if let Some(network_handler) = handler.as_ref() {
+            network_handler.stop().await;
+            {
+                let storage = self.get_storage().write().await;
+                if topoheight >= storage.get_daemon_topoheight()? {
+                    return Err(WalletError::RescanTopoheightTooHigh)
+                }
+                storage.set_daemon_topoheight(topoheight)?;
+                storage.delete_top_block_hash()?;
+                if topoheight == 0 {
+                    storage.delete_transactions()?;
+                } else {
+                    // TODO check only those who have to be deleted
+                }
+            }
+            network_handler.start().await.context("Error while restarting network handler")?;
         } else {
             return Err(WalletError::NotOnlineMode)
         }

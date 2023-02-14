@@ -5,6 +5,7 @@ pub mod config;
 pub mod cipher;
 pub mod api;
 pub mod network_handler;
+pub mod entry;
 
 use std::{sync::Arc, time::Duration, path::Path};
 
@@ -84,9 +85,14 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>) -> Result<()> {
     command_manager.add_command(Command::new("history", "Show all your transactions", None, CommandHandler::Async(async_handler!(history))));
     command_manager.add_command(Command::new("online_mode", "Set your wallet in online mode", Some(Arg::new("daemon_address", ArgType::String)), CommandHandler::Async(async_handler!(online_mode))));
     command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", None, CommandHandler::Async(async_handler!(offline_mode))));
+    command_manager.add_command(Command::new("rescan", "Rescan balance and transactions", Some(Arg::new("topoheight", ArgType::Number)), CommandHandler::Async(async_handler!(rescan))));
 
     command_manager.set_data(Some(wallet.clone()));
 
+    let addr_str = {
+        let addr = &wallet.get_address().to_string()[..8];
+        Prompt::colorize_str(Color::Yellow, addr)
+    };
     let closure = || async {
         let storage = wallet.get_storage().read().await;
         let height_str = format!(
@@ -106,8 +112,9 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>) -> Result<()> {
         };
 
         format!(
-            "{} | {} | {} | {} {} ",
+            "{} | {} | {} | {} | {} {} ",
             Prompt::colorize_str(Color::Blue, "XELIS Wallet"),
+            addr_str,
             height_str,
             balance,
             status,
@@ -199,10 +206,12 @@ async fn balance(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentM
 async fn history(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
     let wallet = manager.get_data()?;
     let storage = wallet.get_storage().read().await;
-    for tx in storage.get_transactions()? { // TODO
-        manager.message(format!("Transaction: {}", tx.hash()));
+    let transactions = storage.get_transactions()?;
+    manager.message(format!("Transactions available: {}", transactions.len()));
+    for tx in transactions { // TODO
+        manager.message(format!("Transaction: {}", tx.get_hash()));
     }
-    manager.message(format!("Wallet address: {}", wallet.get_address()));
+
     Ok(())
 }
 
@@ -233,5 +242,19 @@ async fn offline_mode(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager)
         wallet.set_offline_mode().await.context("Error on offline mode")?;
         manager.message("Wallet is now offline");
     }
+    Ok(())
+}
+
+// Show current wallet address
+async fn rescan(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let wallet = manager.get_data()?;
+    let topoheight = if arguments.has_argument("topoheight") {
+        arguments.get_value("topoheight")?.to_number()?
+    } else {
+        0
+    };
+
+    wallet.rescan(topoheight).await.context("error while restarting network handler")?;
+    manager.message("Network handler has been restarted!");
     Ok(())
 }

@@ -4,10 +4,9 @@ use sled::{Tree, Db};
 use xelis_common::{
     crypto::{hash::Hash, key::KeyPair},
     serializer::{Reader, Serializer},
-    transaction::Transaction
 };
 use anyhow::{Context, Result};
-use crate::{config::SALT_SIZE, cipher::Cipher, wallet::WalletError};
+use crate::{config::SALT_SIZE, cipher::Cipher, wallet::WalletError, entry::TransactionEntry};
 
 // keys used to retrieve from storage
 const NONCE_KEY: &[u8] = b"NONCE";
@@ -19,8 +18,6 @@ const MASTER_KEY: &[u8] = b"MKEY";
 const KEY_PAIR: &[u8] = b"KPAIR";
 
 // const used for online mode
-// represent the wallet top block hash
-const WALLET_TOP_BLOCK_HASH_KEY: &[u8] = b"TOPBH";
 // represent the daemon topoheight
 const TOPOHEIGHT_KEY: &[u8] = b"TOPH";
 // represent the daemon top block hash
@@ -71,6 +68,13 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // hash key, encrypt data and then save to disk 
+    fn delete_from_disk(&self, tree: &Tree, key: &[u8]) -> Result<()> {
+        let hashed_key = self.cipher.hash_key(key);
+        tree.remove(hashed_key)?;
+        Ok(())
+    }
+
     fn contains_data(&self, tree: &Tree, key: &[u8]) -> Result<bool> {
         let hashed_key = self.cipher.hash_key(key);
         Ok(tree.contains_key(hashed_key)?)
@@ -118,25 +122,30 @@ impl EncryptedStorage {
         self.save_to_disk(&self.balances, asset.as_bytes(), &value.to_be_bytes())
     }
 
-    pub fn get_transaction(&self, hash: &Hash) -> Result<Transaction> {
+    pub fn get_transaction(&self, hash: &Hash) -> Result<TransactionEntry> {
         self.load_from_disk(&self.transactions, hash.as_bytes())
     }
 
     // read whole disk and returns all transactions
-    pub fn get_transactions(&self) -> Result<Vec<Transaction>> {
+    pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
         let mut transactions = Vec::new();
         for res in self.transactions.iter() {
             let (_, value) = res?;
             let raw_value = &self.cipher.decrypt_value(&value)?;
             let mut reader = Reader::new(raw_value);
-            let transaction = Transaction::read(&mut reader)?;
+            let transaction = TransactionEntry::read(&mut reader)?;
             transactions.push(transaction);
         }
 
         Ok(transactions)
     }
 
-    pub fn save_transaction(&self, hash: &Hash, transaction: &Transaction) -> Result<()> {
+    pub fn delete_transactions(&self) -> Result<()> {
+        self.transactions.clear()?;
+        Ok(())
+    }
+
+    pub fn save_transaction(&self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
         self.save_to_disk(&self.transactions, hash.as_bytes(), &transaction.to_bytes())
     }
 
@@ -156,20 +165,16 @@ impl EncryptedStorage {
         self.load_from_disk(&self.extra, KEY_PAIR)
     }
 
-    pub fn set_wallet_top_block_hash(&self, hash: &Hash) -> Result<()> {
-        self.save_to_disk(&self.extra, WALLET_TOP_BLOCK_HASH_KEY, hash.as_bytes())
-    }
-
-    pub fn get_wallet_top_block_hash(&self) -> Result<Hash> {
-        self.load_from_disk(&self.extra, WALLET_TOP_BLOCK_HASH_KEY)
-    }
-
     pub fn set_daemon_topoheight(&self, topoheight: u64) -> Result<()> {
         self.save_to_disk(&self.extra, TOPOHEIGHT_KEY, &topoheight.to_be_bytes())
     }
 
     pub fn get_daemon_topoheight(&self) -> Result<u64> {
         self.load_from_disk(&self.extra, TOPOHEIGHT_KEY)
+    }
+
+    pub fn delete_top_block_hash(&self) -> Result<()> {
+        self.delete_from_disk(&self.extra, TOP_BLOCK_HASH_KEY)
     }
 
     pub fn set_top_block_hash(&self, hash: &Hash) -> Result<()> {

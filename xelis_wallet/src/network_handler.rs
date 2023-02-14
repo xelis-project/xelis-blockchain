@@ -7,7 +7,7 @@ use log::{debug, error};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
 use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType};
 
-use crate::{api::DaemonAPI, wallet::Wallet};
+use crate::{api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
 
 // NetworkHandler must be behind a Arc to be accessed from Wallet (to stop it) or from tokio task
 pub type SharedNetworkHandler = Arc<NetworkHandler>;
@@ -101,25 +101,56 @@ impl NetworkHandler {
 
         let response = self.api.get_block_at_topoheight(topoheight).await?;
         let block: Block = response.data.data.into_owned();
+        
+        // create Coinbase entry
+        if *block.get_miner() == *address.get_public_key() {
+            let coinbase = EntryData::Coinbase(response.reward);
+            let entry = TransactionEntry::new(response.data.hash.into_owned(), topoheight, None, None, coinbase);
+            let storage = self.wallet.get_storage().write().await;
+            storage.save_transaction(entry.get_hash(), &entry)?;
+        }
+
         for tx_hash in block.get_transactions() {
             let tx = self.api.get_transaction(tx_hash).await?;
-            let mut should_save = false;
-            if *tx.get_owner() == *address.get_public_key() {
-                should_save = true;
-            } else {
-                if let TransactionType::Transfer(transfers) = tx.get_data() {
-                    for transfer in transfers {
-                        if transfer.to == *address.get_public_key() {
-                            should_save = true;
-                            break;
+            let is_owner = *tx.get_owner() == *address.get_public_key();
+
+            let fee = if is_owner { Some(tx.get_fee()) } else { None };
+            let nonce = if is_owner { Some(tx.get_nonce()) } else { None };
+
+            let (owner, data) = tx.consume();
+            let entry: Option<EntryData> = match data {
+                TransactionType::Burn(asset, amount) => {
+                    if is_owner {
+                        Some(EntryData::Burn { asset, amount })
+                    } else {
+                        None
+                    }
+                },
+                TransactionType::Transfer(txs) => {
+                    let mut transfers: Vec<Transfer> = Vec::new();
+                    for tx in txs {
+                        if is_owner || tx.to == *address.get_public_key() {
+                            let transfer = Transfer::new(tx.to, tx.asset, tx.amount, tx.extra_data);
+                            transfers.push(transfer);
                         }
                     }
-                }
-            }
 
-            if should_save {
+                    if is_owner {
+                        Some(EntryData::Outgoing(owner, transfers))
+                    } else {
+                        Some(EntryData::Incoming(transfers))
+                    }
+                },
+                _ => {
+                    error!("Transaction type not supported");
+                    None
+                }
+            };
+
+            if let Some(entry) = entry {
+                let entry = TransactionEntry::new(tx_hash.clone(), topoheight, fee, nonce, entry);
                 let storage = self.wallet.get_storage().write().await;
-                storage.save_transaction(tx_hash, &tx)?;
+                storage.save_transaction(entry.get_hash(), &entry)?;
             }
         }
 
