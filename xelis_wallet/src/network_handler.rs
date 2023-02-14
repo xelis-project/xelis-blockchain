@@ -79,7 +79,7 @@ impl NetworkHandler {
     }
 
     #[async_recursion]
-    async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, current_topoheight: u64, topoheight: Option<u64>) -> Result<(), Error> {
+    async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, min_topoheight: u64, topoheight: Option<u64>) -> Result<(), Error> {
         let (topoheight, balance) = match topoheight {
             Some(topoheight) => (topoheight, self.api.get_balance_at_topoheight(address, asset, topoheight).await?),
             None => {
@@ -95,7 +95,7 @@ impl NetworkHandler {
         };
 
         // don't sync already synced blocks
-        if current_topoheight > topoheight {
+        if min_topoheight > topoheight {
             return Ok(())
         }
 
@@ -136,9 +136,9 @@ impl NetworkHandler {
                     }
 
                     if is_owner {
-                        Some(EntryData::Outgoing(owner, transfers))
+                        Some(EntryData::Outgoing(transfers))
                     } else {
-                        Some(EntryData::Incoming(transfers))
+                        Some(EntryData::Incoming(owner, transfers))
                     }
                 },
                 _ => {
@@ -155,7 +155,7 @@ impl NetworkHandler {
         }
 
         if let Some(previous_topo) = balance.get_previous_topoheight() {
-            self.get_balance_and_transactions(address, asset, current_topoheight, Some(previous_topo)).await?;
+            self.get_balance_and_transactions(address, asset, min_topoheight, Some(previous_topo)).await?;
         }
 
         Ok(())
@@ -181,17 +181,19 @@ impl NetworkHandler {
                 continue;
             }
             debug!("New height detected for chain: {}", info.topoheight);
-            current_topoheight = info.topoheight;
-
-            {
-                let storage = self.wallet.get_storage().write().await;
-                storage.set_daemon_topoheight(info.topoheight)?;
-                storage.set_top_block_hash(&info.top_hash)?;
-            }
-
+            
+            
             if let Err(e) = self.sync_new_blocks(current_topoheight).await {
                 error!("Error while syncing new blocks: {}", e);
             }
+
+            // save current topoheight in daemon
+            {
+                let storage = self.wallet.get_storage().write().await;
+                storage.set_daemon_topoheight(current_topoheight)?;
+                storage.set_top_block_hash(&info.top_hash)?;
+            }
+            current_topoheight = info.topoheight;
         }
     }
 

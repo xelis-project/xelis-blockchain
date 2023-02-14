@@ -208,8 +208,8 @@ async fn history(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> R
     let storage = wallet.get_storage().read().await;
     let transactions = storage.get_transactions()?;
     manager.message(format!("Transactions available: {}", transactions.len()));
-    for tx in transactions { // TODO
-        manager.message(format!("Transaction: {}", tx.get_hash()));
+    for tx in transactions {
+        manager.message(format!("- {}", tx));
     }
 
     Ok(())

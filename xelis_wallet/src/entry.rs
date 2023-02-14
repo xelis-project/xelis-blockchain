@@ -1,4 +1,6 @@
-use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, transaction::EXTRA_DATA_LIMIT_SIZE};
+use std::fmt::{self, Display, Formatter};
+
+use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, transaction::EXTRA_DATA_LIMIT_SIZE, globals::format_coin};
 
 pub struct Transfer {
     key: PublicKey,
@@ -80,29 +82,20 @@ pub enum EntryData {
         asset: Hash,
         amount: u64
     },
-    Incoming(Vec<Transfer>),
-    Outgoing(PublicKey, Vec<Transfer>)
+    Incoming(PublicKey, Vec<Transfer>),
+    Outgoing(Vec<Transfer>)
 }
 
 impl Serializer for EntryData {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let id = reader.read_u8()?;
         Ok(match id  {
-            0 => EntryData::Coinbase(reader.read_u64()?),
-            1 => EntryData::Burn {
+            0 => Self::Coinbase(reader.read_u64()?),
+            1 => Self::Burn {
                 asset: reader.read_hash()?,
                 amount: reader.read_u64()?
             },
             2 => {
-                let size = reader.read_u16()? as usize;
-                let mut transfers = Vec::new();
-                for _ in 0..size {
-                    let transfer = Transfer::read(reader)?;
-                    transfers.push(transfer);
-                }
-                EntryData::Incoming(transfers)
-            }
-            3 => {
                 let key = PublicKey::read(reader)?;
                 let size = reader.read_u16()? as usize;
                 let mut transfers = Vec::new();
@@ -110,7 +103,16 @@ impl Serializer for EntryData {
                     let transfer = Transfer::read(reader)?;
                     transfers.push(transfer);
                 }
-                EntryData::Outgoing(key, transfers)
+                Self::Incoming(key, transfers)
+            }
+            3 => {
+                let size = reader.read_u16()? as usize;
+                let mut transfers = Vec::new();
+                for _ in 0..size {
+                    let transfer = Transfer::read(reader)?;
+                    transfers.push(transfer);
+                }
+                Self::Outgoing(transfers)
             }
             _ => return Err(ReaderError::InvalidValue)
         }) 
@@ -118,25 +120,25 @@ impl Serializer for EntryData {
 
     fn write(&self, writer: &mut Writer) {
         match &self {
-            EntryData::Coinbase(amount) => {
+            Self::Coinbase(amount) => {
                 writer.write_u8(0);
                 writer.write_u64(amount);
             },
-            EntryData::Burn { asset, amount } => {
+            Self::Burn { asset, amount } => {
                 writer.write_u8(1);
                 writer.write_hash(asset);
                 writer.write_u64(amount);
             },
-            EntryData::Incoming(transfers) => {
+            Self::Incoming(key, transfers) => {
                 writer.write_u8(2);
+                key.write(writer);
                 writer.write_u16(&(transfers.len() as u16));
                 for transfer in transfers {
                     transfer.write(writer);
                 }
             },
-            EntryData::Outgoing(key, transfers) => {
+            Self::Outgoing(transfers) => {
                 writer.write_u8(3);
-                key.write(writer);
                 writer.write_u16(&(transfers.len() as u16));
                 for transfer in transfers {
                     transfer.write(writer);
@@ -227,6 +229,35 @@ impl Serializer for TransactionEntry {
         writer.write_bool(&self.nonce.is_some());
         if let Some(nonce) = self.nonce {
             writer.write_u64(&nonce);
+        }
+    }
+}
+
+impl Display for TransactionEntry {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let entry_str = match self.get_entry() {
+            EntryData::Coinbase(reward) => format!("Coinbase {} XELIS", format_coin(*reward)),
+            EntryData::Burn { asset, amount } => format!("Burn {} of {}", amount, asset),
+            EntryData::Incoming(sender, txs) => {
+                if txs.len() == 1 {
+                    format!("Received from {} {} {}", sender, format_coin(txs[0].amount), txs[0].asset)
+                } else {
+                    format!("Incoming from {} {} transfers", sender, txs.len())
+                }
+            },
+            EntryData::Outgoing(txs) => {
+                if txs.len() == 1 {
+                    format!("Sent to {} {} {}", txs[0].key, format_coin(txs[0].amount), txs[0].asset)
+                } else {
+                    format!("{} differents transfers", txs.len())
+                }
+            }
+        };
+
+        if let (Some(fee), Some(nonce)) = (self.fee, self.nonce) {
+            write!(f, "Hash {} at TopoHeight {}, Nonce {}, Fee: {}, Data: {}", self.hash, self.topoheight, nonce, format_coin(fee), entry_str)
+        } else { // mostly coinbase
+            write!(f, "Hash {} at TopoHeight {}: {}", self.hash, self.topoheight, entry_str)
         }
     }
 }
