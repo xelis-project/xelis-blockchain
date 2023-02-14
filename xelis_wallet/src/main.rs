@@ -65,8 +65,10 @@ async fn main() -> Result<()> {
         info!("Trying to connect to daemon at '{}'", config.daemon_address);
         if let Err(e) = wallet.set_online_mode(&config.daemon_address).await {
             error!("Couldn't connect to daemon: {}", e);
+            info!("You can activate online mode using 'online_mode [daemon_address]'");
+        } else {
+            info!("Online mode enabled");
         }
-        info!("Online mode enabled");
     }
 
     if let Err(e) = run_prompt(prompt, wallet).await {
