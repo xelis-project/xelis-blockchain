@@ -232,7 +232,7 @@ async fn online_mode(manager: &CommandManager<Arc<Wallet>>, mut arguments: Argum
             DEFAULT_DAEMON_ADDRESS.to_string()
         };
 
-        wallet.set_online_mode(&daemon_address).await?;
+        wallet.set_online_mode(&daemon_address).await.context("Couldn't enable online mode")?;
         manager.message("Wallet is now online");
     }
     Ok(())

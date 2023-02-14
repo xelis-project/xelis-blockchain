@@ -82,8 +82,14 @@ impl NetworkHandler {
     async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, min_topoheight: u64, topoheight: Option<u64>) -> Result<(), Error> {
         let (topoheight, balance) = match topoheight {
             Some(topoheight) => (topoheight, self.api.get_balance_at_topoheight(address, asset, topoheight).await?),
-            None => {
-                let res = self.api.get_last_balance(&address, asset).await?;
+            None => { // try to get last balance
+                let res = match self.api.get_last_balance(&address, asset).await {
+                    Ok(res) => res,
+                    Err(e) => { // balance doesn't exist on chain for this asset
+                        debug!("Error while getting last balance: {}", e);
+                        return Ok(())
+                    }
+                };
                 let balance = res.balance;
 
                 // lets write the final balance
