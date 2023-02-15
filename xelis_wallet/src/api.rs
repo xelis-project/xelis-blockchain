@@ -1,7 +1,7 @@
 use std::{borrow::Cow, collections::HashSet};
 
 use anyhow::{Context, Result};
-use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::Block};
+use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::Block};
 
 pub struct DaemonAPI {
     client: JsonRPCClient,
@@ -65,5 +65,12 @@ impl DaemonAPI {
             data: transaction.to_hex()
         }).await.context("Error while sending transaction")?;
         Ok(())
+    }
+
+    pub async fn get_nonce(&self, address: &Address<'_>) -> Result<u64> {
+        let nonce = self.client.call_with("get_nonce", &GetNonceParams {
+            address: Cow::Borrowed(address)
+        }).await.context(format!("Error while fetching nonce from address {}", address))?;
+        Ok(nonce)
     }
 }
