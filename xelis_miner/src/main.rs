@@ -71,7 +71,6 @@ static CURRENT_HEIGHT: AtomicU64 = AtomicU64::new(0);
 static BLOCKS_FOUND: AtomicUsize = AtomicUsize::new(0);
 static BLOCKS_REJECTED: AtomicUsize = AtomicUsize::new(0);
 static HASHRATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
-static HASHRATE_LAST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 lazy_static! {
     static ref HASHRATE_LAST_TIME: Mutex<Instant> = Mutex::new(Instant::now());
@@ -361,11 +360,9 @@ async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
         };
         let hashrate = {
             let mut last_time = HASHRATE_LAST_TIME.lock().await;
-            let counter = HASHRATE_COUNTER.load(Ordering::SeqCst);
-            let last_counter = HASHRATE_LAST_COUNTER.load(Ordering::SeqCst);
+            let counter = HASHRATE_COUNTER.swap(0, Ordering::SeqCst);
 
-            let hashrate = (counter - last_counter) as f64 / last_time.elapsed().as_millis() as u64 as f64;
-            HASHRATE_LAST_COUNTER.store(counter, Ordering::SeqCst);
+            let hashrate = 1000f64 / (last_time.elapsed().as_millis() as f64 / counter as f64);
             *last_time = Instant::now();
 
             Prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(hashrate)))

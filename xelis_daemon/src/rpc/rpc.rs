@@ -25,7 +25,7 @@ use xelis_common::{
     serializer::Serializer,
     transaction::Transaction,
     crypto::hash::Hash,
-    block::Block, config::{BLOCK_TIME, VERSION},
+    block::Block, config::{BLOCK_TIME_MILLIS, VERSION},
 };
 use std::{sync::Arc, borrow::Cow};
 use log::{info, debug};
@@ -186,7 +186,7 @@ async fn get_info(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, Rpc
         (top_hash, supply)
     };
     let difficulty = blockchain.get_difficulty();
-    let block_time_target = BLOCK_TIME;
+    let block_time_target = BLOCK_TIME_MILLIS;
     let mempool_size = blockchain.get_mempool_size().await;
     let version = VERSION.into();
 
