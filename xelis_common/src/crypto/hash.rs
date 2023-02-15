@@ -2,7 +2,7 @@ use crate::serializer::{Writer, Serializer, ReaderError, Reader};
 use std::fmt::{Display, Error, Formatter};
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha3::{Keccak256, Digest};
 use std::convert::TryInto;
 use std::hash::Hasher;
 
@@ -90,8 +90,12 @@ pub trait Hashable: Serializer {
 }
 
 pub fn hash(value: &[u8]) -> Hash {
-    let mut hasher = Sha256::new();
+    let mut hasher = get_hasher();
     hasher.update(value);
     let result: [u8; HASH_SIZE] = hasher.finalize()[..].try_into().unwrap();
     Hash(result)
+}
+
+pub fn get_hasher() -> impl Digest {
+    Keccak256::new()
 }
