@@ -752,7 +752,7 @@ impl Blockchain {
 
             let distance = self.calculate_distance_from_mainchain(storage, hash).await?;
             if distance > current_height || current_height - distance >= STABLE_HEIGHT_LIMIT {
-                error!("{} have deviated too much, maximum allowed is {} but got {} (current height: {}, distance: {})", block, STABLE_HEIGHT_LIMIT, current_height - distance, current_height, distance);
+                error!("{} have deviated too much, maximum allowed is {} (current height: {}, distance: {})", block, STABLE_HEIGHT_LIMIT, current_height, distance);
                 return Err(BlockchainError::BlockDeviation)
             }
         }

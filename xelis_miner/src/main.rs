@@ -83,7 +83,10 @@ async fn main() -> Result<()> {
         }
     };
     info!("Miner address: {}", address);
-    
+    if address.to_string() == *DEV_ADDRESS {
+        warn!("You are using the default developer address. Please consider using your own address.");
+    }
+
     let threads_count = num_cpus::get();
     let mut threads = config.num_threads;
     if threads_count > u8::MAX as usize {
@@ -136,7 +139,7 @@ async fn main() -> Result<()> {
 // This allow mining threads to only focus on mining and receiving jobs through memory channels.
 async fn communication_task(daemon_address: String, job_sender: broadcast::Sender<ThreadNotification>, mut block_receiver: mpsc::Receiver<Block>, address: Address<'_>, worker: String) {
     info!("Starting communication task");
-    loop {
+    'main: loop {
         info!("Trying to connect to {}", daemon_address);
         let client = match connect_async(format!("ws://{}/getwork/{}/{}", daemon_address, address.to_string(), worker)).await {
             Ok((client, response)) => {
@@ -145,7 +148,7 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
                     error!("Error while connecting to {}, got an unexpected response: {}", daemon_address, status.as_str());
                     warn!("Trying to connect to WebSocket again in 10 seconds...");
                     tokio::time::sleep(Duration::from_secs(10)).await;
-                    continue;
+                    continue 'main;
                 }
                 client
             },
@@ -153,10 +156,10 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
                 error!("Error while connecting to {}: {}", daemon_address, e);
                 warn!("Trying to connect to WebSocket again in 10 seconds...");
                 tokio::time::sleep(Duration::from_secs(10)).await;
-                continue;
+                continue 'main;
             }
         };
-        WEBSOCKET_CONNECTED.store(true, Ordering::Relaxed);
+        WEBSOCKET_CONNECTED.store(true, Ordering::SeqCst);
         info!("Connected successfully to {}", daemon_address);
         let (mut write, mut read) = client.split();
         loop {
@@ -170,6 +173,7 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
                         },
                         Err(e) => {
                             error!("Error while handling message from WebSocket: {}", e);
+                            break;
                         }
                     }
                 },
@@ -177,12 +181,13 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
                     let submit = serde_json::json!(SubmitBlockParams { block_template: block.to_hex() }).to_string();
                     if let Err(e) = write.send(Message::Text(submit)).await {
                         error!("Error while sending the block found to the daemon: {}", e);
+                        break;
                     }
                 }
             }
         }
 
-        WEBSOCKET_CONNECTED.store(false, Ordering::Relaxed);
+        WEBSOCKET_CONNECTED.store(false, Ordering::SeqCst);
         warn!("Trying to connect to WebSocket again in 10 seconds...");
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
@@ -196,18 +201,18 @@ async fn handle_websocket_message(message: Result<Message, tokio_tungstenite::tu
                 SocketMessage::NewJob(job) => {
                     info!("New job received from daemon: difficulty = {}", job.difficulty);
                     let block = Block::from_hex(job.template).context("Error while decoding new job received from daemon")?;
-                    CURRENT_HEIGHT.store(block.get_height(), Ordering::Relaxed);
+                    CURRENT_HEIGHT.store(block.get_height(), Ordering::SeqCst);
 
                     if let Err(e) = job_sender.send(ThreadNotification::NewJob(block, job.difficulty)) {
                         error!("Error while sending new job to threads: {}", e);
                     }
                 },
                 SocketMessage::BlockAccepted => {
-                    BLOCKS_FOUND.fetch_add(1, Ordering::Relaxed);
+                    BLOCKS_FOUND.fetch_add(1, Ordering::SeqCst);
                     info!("Block submitted has been accepted by network !");
                 },
                 SocketMessage::BlockRejected => {
-                    BLOCKS_REJECTED.fetch_add(1, Ordering::Relaxed);
+                    BLOCKS_REJECTED.fetch_add(1, Ordering::SeqCst);
                     error!("Block submitted has been rejected by network !");
                 }
             }
@@ -260,8 +265,8 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                                 continue 'main;
                             }
                         } {
-                            // check if we have a new job pending
-                            if !job_receiver.is_empty() {
+                            // check if we have a new job pending or that we're not connected to the daemon anymore
+                            if !job_receiver.is_empty() || !WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
                                 continue 'main;
                             }
 
@@ -273,11 +278,16 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                         info!("Mining Thread #{}: block {} found at height {}", id, hash, block.get_height());
                         if let Err(_) = block_sender.blocking_send(block) {
                             error!("Mining Thread #{}: error while sending block found with hash {}", id, hash);
+                            continue 'main;
+                        }
+
+                        if !WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
+                            continue 'main;
                         }
                     }
                 };
             } else {
-                if WEBSOCKET_CONNECTED.load(Ordering::Relaxed) {
+                if WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
                     continue 'main;
                 } else {
                     std::thread::sleep(Duration::from_millis(100));
@@ -295,19 +305,19 @@ async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
         let height_str = format!(
             "{}: {}",
             Prompt::colorize_str(Color::Yellow, "Height"),
-            Prompt::colorize_string(Color::Green, &format!("{}", CURRENT_HEIGHT.load(Ordering::Relaxed))),
+            Prompt::colorize_string(Color::Green, &format!("{}", CURRENT_HEIGHT.load(Ordering::SeqCst))),
         );
         let blocks_found = format!(
             "{}: {}",
             Prompt::colorize_str(Color::Yellow, "Accepted"),
-            Prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_FOUND.load(Ordering::Relaxed))),
+            Prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_FOUND.load(Ordering::SeqCst))),
         );
         let blocks_rejected = format!(
             "{}: {}",
             Prompt::colorize_str(Color::Yellow, "Rejected"),
-            Prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_REJECTED.load(Ordering::Relaxed))),
+            Prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_REJECTED.load(Ordering::SeqCst))),
         );
-        let status = if WEBSOCKET_CONNECTED.load(Ordering::Relaxed) {
+        let status = if WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
             Prompt::colorize_str(Color::Green, "Online")
         } else {
             Prompt::colorize_str(Color::Red, "Offline")

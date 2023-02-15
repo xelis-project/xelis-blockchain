@@ -51,7 +51,7 @@ pub struct GetBlockTemplateParams<'a> {
     pub address: Cow<'a, Address<'a>>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq)]
 pub struct GetBlockTemplateResult {
     pub template: String,
     pub difficulty: u64
