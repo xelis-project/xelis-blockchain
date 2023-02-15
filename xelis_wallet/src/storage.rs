@@ -104,7 +104,7 @@ impl EncryptedStorage {
     }
 
     // save asset in encrypted form
-    pub fn add_asset(&self, asset: &Hash) -> Result<()> {
+    pub fn add_asset(&mut self, asset: &Hash) -> Result<()> {
         if self.contains_asset(asset)? {
             return Err(WalletError::AssetAlreadyRegistered.into());
         }
@@ -118,7 +118,7 @@ impl EncryptedStorage {
         self.load_from_disk(&self.balances, asset.as_bytes())
     }
 
-    pub fn set_balance_for(&self, asset: &Hash, value: u64) -> Result<()> {
+    pub fn set_balance_for(&mut self, asset: &Hash, value: u64) -> Result<()> {
         self.save_to_disk(&self.balances, asset.as_bytes(), &value.to_be_bytes())
     }
 
@@ -140,12 +140,12 @@ impl EncryptedStorage {
         Ok(transactions)
     }
 
-    pub fn delete_transactions(&self) -> Result<()> {
+    pub fn delete_transactions(&mut self) -> Result<()> {
         self.transactions.clear()?;
         Ok(())
     }
 
-    pub fn save_transaction(&self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
+    pub fn save_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
         self.save_to_disk(&self.transactions, hash.as_bytes(), &transaction.to_bytes())
     }
 
@@ -153,11 +153,11 @@ impl EncryptedStorage {
         self.load_from_disk(&self.extra, NONCE_KEY)
     }
 
-    pub fn set_nonce(&self, nonce: u64) -> Result<()> {
+    pub fn set_nonce(&mut self, nonce: u64) -> Result<()> {
         self.save_to_disk(&self.extra, NONCE_KEY, &nonce.to_be_bytes())
     }
 
-    pub fn set_keypair(&self, keypair: &KeyPair) -> Result<()> {
+    pub fn set_keypair(&mut self, keypair: &KeyPair) -> Result<()> {
         self.save_to_disk(&self.extra, KEY_PAIR, &keypair.to_bytes())
     }
 
@@ -165,7 +165,7 @@ impl EncryptedStorage {
         self.load_from_disk(&self.extra, KEY_PAIR)
     }
 
-    pub fn set_daemon_topoheight(&self, topoheight: u64) -> Result<()> {
+    pub fn set_daemon_topoheight(&mut self, topoheight: u64) -> Result<()> {
         self.save_to_disk(&self.extra, TOPOHEIGHT_KEY, &topoheight.to_be_bytes())
     }
 
@@ -173,15 +173,15 @@ impl EncryptedStorage {
         self.load_from_disk(&self.extra, TOPOHEIGHT_KEY)
     }
 
-    pub fn delete_top_block_hash(&self) -> Result<()> {
+    pub fn delete_top_block_hash(&mut self) -> Result<()> {
         self.delete_from_disk(&self.extra, TOP_BLOCK_HASH_KEY)
     }
 
-    pub fn set_top_block_hash(&self, hash: &Hash) -> Result<()> {
+    pub fn set_top_block_hash(&mut self, hash: &Hash) -> Result<()> {
         self.save_to_disk(&self.extra, TOP_BLOCK_HASH_KEY, hash.as_bytes())
     }
 
-    pub fn has_top_block_hash(&self) -> Result<bool> {
+    pub fn has_top_block_hash(&mut self) -> Result<bool> {
         self.contains_data(&self.extra, TOP_BLOCK_HASH_KEY)
     }
 
@@ -191,6 +191,10 @@ impl EncryptedStorage {
 
     pub fn get_public_storage(&self) -> &Storage {
         &self.inner
+    }
+
+    pub fn get_mutable_public_storage(&mut self) -> &mut Storage {
+        &mut self.inner
     }
 }
 
@@ -205,7 +209,7 @@ impl Storage {
 
     // save the encrypted form of the master key
     // it can only be decrypted using the password-based key
-    pub fn set_encrypted_master_key(&self, encrypted_key: &[u8]) -> Result<()> {
+    pub fn set_encrypted_master_key(&mut self, encrypted_key: &[u8]) -> Result<()> {
         self.db.insert(MASTER_KEY, encrypted_key)?;
         Ok(())
     }
@@ -221,7 +225,7 @@ impl Storage {
         }
     }
 
-    pub fn set_password_salt(&self, salt: &[u8]) -> Result<()> {
+    pub fn set_password_salt(&mut self, salt: &[u8]) -> Result<()> {
         self.db.insert(PASSWORD_SALT_KEY, salt)?;
         Ok(())
     }
@@ -252,7 +256,7 @@ impl Storage {
         Ok(encrypted_salt)
     }
 
-    pub fn set_encrypted_storage_salt(&self, salt: &[u8]) -> Result<()> {
+    pub fn set_encrypted_storage_salt(&mut self, salt: &[u8]) -> Result<()> {
         self.db.insert(SALT_KEY, salt)?;
         Ok(())
     }

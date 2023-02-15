@@ -12,14 +12,16 @@ use crate::wallet::WalletError;
 pub struct TransactionBuilder {
     owner: PublicKey,
     data: TransactionType,
-    fee_multiplier: f64
+    nonce: u64,
+    fee_multiplier: f64,
 }
 
 impl TransactionBuilder {
-    pub fn new(owner: PublicKey, data: TransactionType, fee_multiplier: f64) -> Self {
+    pub fn new(owner: PublicKey, data: TransactionType, nonce: u64, fee_multiplier: f64) -> Self {
         Self {
             owner,
             data,
+            nonce,
             fee_multiplier
         }
     }
@@ -104,9 +106,8 @@ impl TransactionBuilder {
         let fee = self.estimate_fees_internal(&writer);
         writer.write_u64(&fee);
 
-        let nonce = 0; // TODO
         let signature = keypair.sign(&writer.bytes());
-        let tx = Transaction::new(self.owner, self.data, fee, nonce, signature);
+        let tx = Transaction::new(self.owner, self.data, fee, self.nonce, signature);
 
         Ok(tx)
     }

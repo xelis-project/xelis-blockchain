@@ -93,7 +93,7 @@ impl NetworkHandler {
                 let balance = res.balance;
 
                 // lets write the final balance
-                let storage = self.wallet.get_storage().write().await;
+                let mut storage = self.wallet.get_storage().write().await;
                 storage.set_balance_for(asset, balance.get_balance())?;
 
                 (res.topoheight, balance)
@@ -112,7 +112,7 @@ impl NetworkHandler {
         if *block.get_miner() == *address.get_public_key() {
             let coinbase = EntryData::Coinbase(response.reward);
             let entry = TransactionEntry::new(response.data.hash.into_owned(), topoheight, None, None, coinbase);
-            let storage = self.wallet.get_storage().write().await;
+            let mut storage = self.wallet.get_storage().write().await;
             storage.save_transaction(entry.get_hash(), &entry)?;
         }
 
@@ -155,7 +155,7 @@ impl NetworkHandler {
 
             if let Some(entry) = entry {
                 let entry = TransactionEntry::new(tx_hash.clone(), topoheight, fee, nonce, entry);
-                let storage = self.wallet.get_storage().write().await;
+                let mut storage = self.wallet.get_storage().write().await;
                 storage.save_transaction(entry.get_hash(), &entry)?;
             }
         }
@@ -195,7 +195,7 @@ impl NetworkHandler {
 
             // save current topoheight in daemon
             {
-                let storage = self.wallet.get_storage().write().await;
+                let mut storage = self.wallet.get_storage().write().await;
                 storage.set_daemon_topoheight(current_topoheight)?;
                 storage.set_top_block_hash(&info.top_hash)?;
             }
@@ -214,7 +214,7 @@ impl NetworkHandler {
             debug!("No assets registered on disk, fetching from chain...");
             assets = self.api.get_assets().await?;
             debug!("Found {} assets", assets.len());
-            let storage = self.wallet.get_storage().write().await;
+            let mut storage = self.wallet.get_storage().write().await;
             for asset in &assets {
                 storage.add_asset(asset)?;
             }

@@ -100,7 +100,7 @@ impl Wallet {
         let hashed_password = hash_password(password, &salt)?;
 
         debug!("Creating storage for {}", name);
-        let inner = Storage::new(name)?;
+        let mut inner = Storage::new(name)?;
 
         // generate the Cipher
         let cipher = Cipher::new(&hashed_password, None)?;
@@ -123,7 +123,7 @@ impl Wallet {
         inner.set_encrypted_storage_salt(&encrypted_storage_salt)?;
 
         debug!("Creating encrypted storage");
-        let storage = EncryptedStorage::new(inner, &master_key, storage_salt)?;
+        let mut storage = EncryptedStorage::new(inner, &master_key, storage_salt)?;
 
         // generate random keypair and save it to encrypted storage
         let keypair = KeyPair::new();
@@ -170,8 +170,8 @@ impl Wallet {
     }
 
     pub async fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {
-        let encrypted_storage = self.storage.read().await;
-        let storage = encrypted_storage.get_public_storage();
+        let mut encrypted_storage = self.storage.write().await;
+        let storage = encrypted_storage.get_mutable_public_storage();
         let (master_key, storage_salt) = {
             // retrieve old salt to build key from current password
             let salt = storage.get_password_salt()?;
@@ -249,7 +249,8 @@ impl Wallet {
     // create the final transaction with calculated fees and signature
     // also check that we have enough funds for the transaction
     pub fn create_transaction(&self, storage: &EncryptedStorage, transaction_type: TransactionType) -> Result<Transaction, Error> {
-        let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), transaction_type, 1f64);
+        let nonce = storage.get_nonce().unwrap_or(0);
+        let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), transaction_type, nonce, 1f64);
         let assets_spent: HashMap<&Hash, u64> = builder.total_spent();
 
         // check that we have enough balance for every assets spent
@@ -321,7 +322,7 @@ impl Wallet {
         if let Some(network_handler) = handler.as_ref() {
             network_handler.stop().await;
             {
-                let storage = self.get_storage().write().await;
+                let mut storage = self.get_storage().write().await;
                 if topoheight >= storage.get_daemon_topoheight()? {
                     return Err(WalletError::RescanTopoheightTooHigh)
                 }
