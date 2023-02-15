@@ -20,3 +20,4 @@ serde_json = "1"
 tokio = "1.24.1"
 anyhow = "1"
 fern = { version = "0.6", features = ["colored"] }
+rand = "0.8.4"

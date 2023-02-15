@@ -1,6 +1,6 @@
 pub mod config;
 
-use std::{time::Duration, sync::{Arc, atomic::{AtomicU64, Ordering, AtomicUsize, AtomicBool}}};
+use std::{time::Duration, sync::{Arc, atomic::{AtomicU64, Ordering, AtomicUsize, AtomicBool}}, thread};
 use crate::config::DEFAULT_DAEMON_ADDRESS;
 use fern::colors::Color;
 use futures_util::{StreamExt, SinkExt};
@@ -13,7 +13,7 @@ use xelis_common::{
     difficulty::check_difficulty,
     config::{VERSION, DEV_ADDRESS},
     globals::{get_current_timestamp, format_hashrate},
-    crypto::{hash::{Hashable, Hash}, address::Address},
+    crypto::{hash::{Hashable, Hash, hash}, address::Address},
     api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager}
 };
 use clap::Parser;
@@ -33,6 +33,12 @@ pub struct MinerConfig {
     /// Enable the debug mode
     #[clap(short, long)]
     debug: bool,
+    /// Enable the benchmark mode
+    #[clap(short, long)]
+    benchmark: bool,
+    /// Iterations to run the benchmark
+    #[clap(short, long, default_value_t = 100_000)]
+    iterations: usize,
     /// Disable the log file
     #[clap(short = 'f', long)]
     disable_file_logging: bool,
@@ -82,11 +88,6 @@ async fn main() -> Result<()> {
             return Ok(())
         }
     };
-    info!("Miner address: {}", address);
-    if address.to_string() == *DEV_ADDRESS {
-        warn!("You are using the default developer address. Please consider using your own address.");
-    }
-
     let threads_count = num_cpus::get();
     let mut threads = config.num_threads;
     if threads_count > u8::MAX as usize {
@@ -99,6 +100,18 @@ async fn main() -> Result<()> {
     }
 
     info!("Total threads to use: {}", threads);
+    if config.benchmark {
+        info!("Benchmark mode enabled, miner will try up to {} threads", threads_count);
+        benchmark(threads as usize, config.iterations);
+        info!("Benchmark finished");
+        return Ok(())
+    }
+
+    info!("Miner address: {}", address);
+    if address.to_string() == *DEV_ADDRESS {
+        warn!("You are using the default developer address. Please consider using your own address.");
+    }
+
     
     if config.num_threads != 0 && threads as usize != threads_count {
         warn!("Attention, the number of threads used may not be optimal, recommended is: {}", threads_count);
@@ -131,6 +144,30 @@ async fn main() -> Result<()> {
     task.abort();
 
     Ok(())
+}
+
+fn benchmark(threads: usize, iterations: usize) {
+    println!("{0: <10} | {1: <10} | {2: <16} | {3: <13} | {4: <13}", "Threads", "Total Time", "Total Iterations", "Time/PoW (ms)", "Hashrate");
+    for bench in 1..=threads {
+        let start = Instant::now();
+        let mut handles = vec![];
+        for _ in 0..bench {
+            let handle = thread::spawn(move || {
+                for _ in 0..iterations {
+                    let random_bytes: Vec<u8> = (0..255).map(|_| { rand::random::<u8>() }).collect();
+                    let _ = hash(&random_bytes);
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles { // wait on all threads
+            handle.join().unwrap();
+        }
+        let duration = start.elapsed().as_millis();
+        let hashrate = format_hashrate(1000f64 / (duration as f64 / (bench*iterations) as f64));
+        println!("{0: <10} | {1: <10} | {2: <16} | {3: <13} | {4: <13}", bench, duration, bench*iterations, duration/(bench*iterations) as u128, hashrate);
+    }
 }
 
 // this Tokio task will runs indefinitely until the user stop himself the miner.
@@ -236,7 +273,7 @@ async fn handle_websocket_message(message: Result<Message, tokio_tungstenite::tu
 }
 
 fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification>, block_sender: mpsc::Sender<Block>) -> Result<(), Error> {
-    let builder = std::thread::Builder::new().name(format!("Mining Thread #{}", id));
+    let builder = thread::Builder::new().name(format!("Mining Thread #{}", id));
     builder.spawn(move || {
         let mut block: Block;
         let mut hash: Hash;
