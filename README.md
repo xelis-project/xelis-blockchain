@@ -129,7 +129,7 @@ Wallet implement a fully-encrypted storage system with following features:
 - Keys data are hashed with generated salt
 - Values are encrypted using XChaCha20Poly1305 and a random newly generated Nonce each time its saved. 
 
-Hash algorithm used is SHA256 for keys / tree names.
+Hash algorithm used is Keccak-256 for keys / tree names.
 The random salt generated is a 64 bytes length.
 This simple system prevent someone to read / use the data without the necessary secret key.
 
@@ -154,30 +154,11 @@ And these types:
 
 ## API
 
-### JSON-RPC
 Http Server run using Actix Framework and serve the JSON-RPC API and WebSocket.
 
-JSON-RPC methods available:
-- `get_height`
-- `get_topoheight`
-- `get_stableheight`
-- `get_block_template`
-- `get_block_at_topoheight`
-- `get_blocks_at_height`
-- `get_block_by_hash`
-- `get_top_block`
-- `submit_block`
-- `get_nonce`
-- `get_balance`
-- `get_assets`
-- `count_transactions`
-- `submit_transaction`
-- `get_transaction`
-- `p2p_status`
-- `get_mempool`
-- `get_tips`
-- `get_dag_order`
+### JSON-RPC
 
+JSON-RPC is available on `/json_rpc` route on RPC server address that you set (or default one).
 For a much more detailed API, see the API documentation [here](API.md).
 
 ### WebSocket
