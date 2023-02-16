@@ -5,7 +5,7 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType};
+use xelis_common::{crypto::{hash::Hash, address::Address}, block::CompleteBlock, transaction::TransactionType};
 
 use crate::{api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
 
@@ -105,8 +105,8 @@ impl NetworkHandler {
             return Ok(())
         }
 
-        let response = self.api.get_block_at_topoheight(topoheight).await?;
-        let block: Block = response.data.data.into_owned();
+        let response = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
+        let block: CompleteBlock = response.data.data.into_owned();
         
         // create Coinbase entry
         if *block.get_miner() == *address.get_public_key() {
@@ -117,10 +117,10 @@ impl NetworkHandler {
         }
 
         let mut latest_nonce_sent = None;
-        for tx_hash in block.get_transactions() {
-            let tx = self.api.get_transaction(tx_hash).await?;
+        let (block, txs) = block.split();
+        for (tx_hash, tx) in block.get_txs_hashes().iter().zip(txs) {
+            let tx = tx.into_owned();
             let is_owner = *tx.get_owner() == *address.get_public_key();
-
             let fee = if is_owner { Some(tx.get_fee()) } else { None };
             let nonce = if is_owner { Some(tx.get_nonce()) } else { None };
             let (owner, data) = tx.consume();

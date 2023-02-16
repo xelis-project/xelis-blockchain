@@ -1,7 +1,7 @@
 use std::{borrow::Cow, collections::HashSet};
 
 use anyhow::{Context, Result};
-use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::Block};
+use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::{Block, CompleteBlock}};
 
 pub struct DaemonAPI {
     client: JsonRPCClient,
@@ -48,7 +48,16 @@ impl DaemonAPI {
 
     pub async fn get_block_at_topoheight(&self, topoheight: u64) -> Result<BlockResponse<'_, Block>> {
         let block = self.client.call_with("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
-            topoheight
+            topoheight,
+            include_txs: false
+        }).await.context(format!("Error while fetching block at topoheight {}", topoheight))?;
+        Ok(block)
+    }
+
+    pub async fn get_block_with_txs_at_topoheight(&self, topoheight: u64) -> Result<BlockResponse<'_, CompleteBlock>> {
+        let block = self.client.call_with("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
+            topoheight,
+            include_txs: true
         }).await.context(format!("Error while fetching block at topoheight {}", topoheight))?;
         Ok(block)
     }
