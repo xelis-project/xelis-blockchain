@@ -27,23 +27,37 @@ pub struct BlockResponse<'a, T: Clone> {
     pub supply: u64,
     pub reward: u64,
     pub cumulative_difficulty: u64,
+    pub total_fees: u64,
+    pub total_size_in_bytes: usize,
     #[serde(flatten)]
     pub data: DataHash<'a, T>
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetTopBlockParams {
+    #[serde(default)]
+    pub include_txs: bool
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetBlockAtTopoHeightParams {
-    pub topoheight: u64
+    pub topoheight: u64,
+    #[serde(default)]
+    pub include_txs: bool
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBlocksAtHeightParams {
-    pub height: u64
+    pub height: u64,
+    #[serde(default)]
+    pub include_txs: bool
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBlockByHashParams<'a> {
-    pub hash: Cow<'a, Hash>
+    pub hash: Cow<'a, Hash>,
+    #[serde(default)]
+    pub include_txs: bool
 }
 
 #[derive(Serialize, Deserialize)]

@@ -158,9 +158,10 @@ Retrieve a block at a specific topo height
 ##### Method `get_block_at_topoheight`
 
 ##### Parameters
-|    Name    |   Type  | Required |                           Note                           |
-|:----------:|:-------:|:--------:|:--------------------------------------------------------:|
-| topoheight | Integer | Required | Topoheight must be equal or less than current topoheight |
+|     Name    |   Type  | Required |                           Note                           |
+|:-----------:|:-------:|:--------:|:--------------------------------------------------------:|
+|  topoheight | Integer | Required | Topoheight must be equal or less than current topoheight |
+| include_txs | Boolean | Optional |                  Include txs serialized                  |
 
 ##### Request
 ```json
@@ -195,6 +196,8 @@ Retrieve a block at a specific topo height
 			"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 		],
 		"topoheight": 23,
+		"total_fees": 0,
+		"total_size_in_bytes": 131,
 		"txs_hashes": []
 	}
 }
@@ -206,9 +209,10 @@ Retrieve all blocks at a specific height
 ##### Method `get_blocks_at_height`
 
 ##### Parameters
-|  Name  |   Type  | Required |                       Note                       |
-|:------:|:-------:|:--------:|:------------------------------------------------:|
-| height | Integer | Required | Height must be equal or less than current height |
+|     Name    |   Type  | Required |                       Note                       |
+|:-----------:|:-------:|:--------:|:------------------------------------------------:|
+|    height   | Integer | Required | Height must be equal or less than current height |
+| include_txs | Boolean | Optional |              Include txs serialized              |
 
 ##### Request
 ```json
@@ -244,6 +248,8 @@ Retrieve all blocks at a specific height
 				"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 			],
 			"topoheight": 23,
+			"total_fees": 0,
+			"total_size_in_bytes": 131,
 			"txs_hashes": []
 		}
 	]
@@ -256,9 +262,10 @@ Retrieve a block by its hash
 ##### Method `get_block_by_hash`
 
 ##### Parameters
-| Name | Type | Required |                  Note                 |
-|:----:|:----:|:--------:|:-------------------------------------:|
-| hash | Hash | Required | Valid block Hash present in the chain |
+|     Name    |   Type  | Required |                  Note                 |
+|:-----------:|:-------:|:--------:|:-------------------------------------:|
+|     hash    |   Hash  | Required | Valid block Hash present in the chain |
+| include_txs | Boolean | Optional |         Include txs serialized        |
 
 ##### Request
 ```json
@@ -293,6 +300,8 @@ Retrieve a block by its hash
 			"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 		],
 		"topoheight": 23,
+		"total_fees": 0,
+		"total_size_in_bytes": 131,
 		"txs_hashes": []
 	}
 }
@@ -304,14 +313,17 @@ Retrieve the highest block based on the topological height
 ##### Method `get_top_block`
 
 ##### Parameters
-No parameters
+|     Name    |   Type  | Required |          Note          |
+|:-----------:|:-------:|:--------:|:----------------------:|
+| include_txs | Boolean | Optional | Include txs serialized |
 
 ##### Request
 ```json
 {
 	"jsonrpc": "2.0",
 	"method": "get_top_block",
-	"id": 1
+	"id": 1,
+	"params": {}
 }
 ```
 
@@ -336,6 +348,8 @@ No parameters
 			"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 		],
 		"topoheight": 23,
+		"total_fees": 0,
+		"total_size_in_bytes": 131,
 		"txs_hashes": []
 	}
 }

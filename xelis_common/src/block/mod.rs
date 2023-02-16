@@ -151,6 +151,10 @@ impl CompleteBlock {
         }
     }
 
+    pub fn to_header(self) -> Arc<Block> {
+        self.block.to_arc()
+    }
+
     pub fn get_header(&self) -> &Block {
         &self.block
     }
@@ -261,6 +265,7 @@ impl Deref for CompleteBlock {
 
 use std::fmt::{Error, Display, Formatter};
 use std::ops::Deref;
+use std::sync::Arc;
 
 impl Display for Block {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {

@@ -19,13 +19,13 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetDagOrderParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult
+        GetDagOrderParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams
     },
     async_handler,
     serializer::Serializer,
     transaction::Transaction,
     crypto::hash::Hash,
-    block::Block, config::{BLOCK_TIME_MILLIS, VERSION},
+    block::{Block, CompleteBlock}, config::{BLOCK_TIME_MILLIS, VERSION},
 };
 use std::{sync::Arc, borrow::Cow};
 use log::{info, debug};
@@ -46,8 +46,7 @@ async fn get_block_type_for_block(blockchain: &Blockchain, storage: &Storage, ha
     })
 }
 
-pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Storage, hash: Hash) -> Result<Value, RpcError> {
-    let block = storage.get_block_by_hash(&hash).await?;
+pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Storage, hash: Hash, include_txs: bool) -> Result<Value, RpcError> {
     let topoheight = if storage.is_block_topological_ordered(&hash).await {
         Some(storage.get_topo_height_for_hash(&hash).await?)
     } else {
@@ -58,9 +57,22 @@ pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Stor
     let difficulty = storage.get_difficulty_for_block(&hash)?;
     let supply = storage.get_supply_for_hash(&hash)?;
     let reward = storage.get_block_reward(&hash)?;
+    let block = storage.get_complete_block(&hash).await?;
+    let total_size_in_bytes = block.size();
+    let mut total_fees = 0;
+    for tx in block.get_transactions() {
+        total_fees += tx.get_fee();
+    }
 
-    let data: DataHash<'_, Arc<Block>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block) };
-    Ok(json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, data }))
+    let value: Value = if include_txs {
+        let data: DataHash<'_, CompleteBlock> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block) };
+        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees, total_size_in_bytes, data })
+    } else {
+        let data: DataHash<'_, Arc<Block>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block.to_header()) };
+        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees, total_size_in_bytes, data })
+    };
+
+    Ok(value)
 }
 
 pub fn register_methods(server: &mut RpcServer) {
@@ -123,22 +135,20 @@ async fn get_block_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> Re
     let params: GetBlockAtTopoHeightParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
     let hash = storage.get_hash_at_topo_height(params.topoheight).await?;
-    get_block_response_for_hash(&blockchain, &storage, hash).await
+    get_block_response_for_hash(&blockchain, &storage, hash, params.include_txs).await
 }
 
 async fn get_block_by_hash(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBlockByHashParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
-    get_block_response_for_hash(&blockchain, &storage, params.hash.into_owned()).await
+    get_block_response_for_hash(&blockchain, &storage, params.hash.into_owned(), params.include_txs).await
 }
 
 async fn get_top_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
-    if body != Value::Null {
-        return Err(RpcError::UnexpectedParams)
-    }
+    let params: GetTopBlockParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
     let hash = blockchain.get_top_block_hash_for_storage(&storage).await?;
-    get_block_response_for_hash(&blockchain, &storage, hash).await
+    get_block_response_for_hash(&blockchain, &storage, hash, params.include_txs).await
 }
 
 async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -305,7 +315,7 @@ async fn get_blocks_at_height(blockchain: Arc<Blockchain>, body: Value) -> Resul
 
     let mut blocks = Vec::new();
     for hash in storage.get_blocks_at_height(params.height).await? {
-        blocks.push(get_block_response_for_hash(&blockchain, &storage, hash).await?)
+        blocks.push(get_block_response_for_hash(&blockchain, &storage, hash, params.include_txs).await?)
     }
     Ok(json!(blocks))
 }
