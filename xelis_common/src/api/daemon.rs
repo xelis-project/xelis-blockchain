@@ -141,7 +141,7 @@ pub struct P2pStatusResult {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetDagOrderParams {
+pub struct GetRangeParams {
     pub start_topoheight: Option<u64>,
     pub end_topoheight: Option<u64>
 }

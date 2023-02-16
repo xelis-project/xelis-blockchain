@@ -19,7 +19,7 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetDagOrderParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams
+        GetRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams
     },
     async_handler,
     serializer::Serializer,
@@ -99,6 +99,8 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("get_mempool", async_handler!(get_mempool));
     server.register_method("get_tips", async_handler!(get_tips));
     server.register_method("get_dag_order", async_handler!(get_dag_order));
+    server.register_method("get_blocks", async_handler!(get_blocks));
+
 }
 
 async fn version(_: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -333,7 +335,7 @@ const MAX_DAG_ORDER: u64 = 64;
 // get dag order based on params
 // if no params found, get order of last 64 blocks
 async fn get_dag_order(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
-    let params: GetDagOrderParams = parse_params(body)?;
+    let params: GetRangeParams = parse_params(body)?;
 
     let current_topoheight = blockchain.get_topo_height();
     let start_topoheight = params.start_topoheight.unwrap_or_else(|| {
@@ -364,4 +366,42 @@ async fn get_dag_order(blockchain: Arc<Blockchain>, body: Value) -> Result<Value
     }
 
     Ok(json!(order))
+}
+
+const MAX_BLOCKS: u64 = 20;
+// get blocks between range of topoheight
+// if no params found, get last 20 blocks header
+async fn get_blocks(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    let params: GetRangeParams = parse_params(body)?;
+
+    let current_topoheight = blockchain.get_topo_height();
+    let start_topoheight = params.start_topoheight.unwrap_or_else(|| {
+        if params.end_topoheight.is_none() && current_topoheight > MAX_BLOCKS {
+            current_topoheight - MAX_BLOCKS
+        } else {
+            0
+        }
+    });
+
+    let end_topoheight = params.end_topoheight.unwrap_or(current_topoheight);
+    if end_topoheight < start_topoheight || end_topoheight > current_topoheight {
+        debug!("get blocks range: start = {}, end = {}, max = {}", start_topoheight, end_topoheight, current_topoheight);
+        return Err(RpcError::InvalidRequest)
+    }
+
+    let count = end_topoheight - start_topoheight;
+    if count > MAX_BLOCKS { // only retrieve max 20 blocks hash per request
+        debug!("get blocks requested count: {}", count);
+        return Err(RpcError::InvalidRequest) 
+    }
+
+    let storage = blockchain.get_storage().read().await;
+    let mut blocks = Vec::with_capacity(count as usize);
+    for i in start_topoheight..=end_topoheight {
+        let hash = storage.get_hash_at_topo_height(i).await?;
+        let response = get_block_response_for_hash(&blockchain, &storage, hash, false).await?;
+        blocks.push(response);
+    }
+
+    Ok(json!(blocks))
 }
