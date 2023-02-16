@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+
 use actix::{Actor, StreamHandler, AsyncContext, Message as TMessage, Handler, Addr};
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
 use serde::Deserialize;
@@ -5,7 +7,7 @@ use serde_json::Value;
 use super::{SharedRpcServer, RpcError, RpcResponseError};
 use log::debug;
 
-pub struct Response(pub Value);
+pub struct Response<T: Borrow<Value> + ToString>(pub T);
 
 #[derive(Deserialize)]
 pub struct SubscribeParams {
@@ -26,7 +28,7 @@ pub enum NotifyEvent {
     NewAsset
 }
 
-impl TMessage for Response {
+impl<T: Borrow<Value> + ToString> TMessage for Response<T> {
     type Result = Result<(), RpcError>;
 }
 
@@ -78,10 +80,10 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
     }
 }
 
-impl Handler<Response> for WebSocketHandler {
+impl<T: Borrow<Value> + ToString> Handler<Response<T>> for WebSocketHandler {
     type Result = Result<(), RpcError>;
 
-    fn handle(&mut self, msg: Response, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: Response<T>, ctx: &mut Self::Context) -> Self::Result {
         ctx.text(msg.0.to_string());
         Ok(())
     }

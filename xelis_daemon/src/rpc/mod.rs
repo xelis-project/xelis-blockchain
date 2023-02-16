@@ -240,11 +240,27 @@ impl RpcServer {
         Ok(())
     }
 
+    // notify all clients connected to the websocket which have subscribed to the event sent.
+    // each client message is sent through a tokio task in case an error happens and to prevent waiting on others clients
     pub async fn notify_clients<V: Serialize>(&self, notify: NotifyEvent, value: V) -> Result<(), RpcError> {
+        let value = Arc::new(json!(value));
         let clients = self.clients.lock().await;
         for (addr, subs) in clients.iter() {
             if subs.contains(&notify) {
-                addr.send(Response(json!(value))).await??;
+                let addr = addr.clone();
+                let cloned_value = Arc::clone(&value);
+                tokio::spawn(async move {
+                    match addr.send(Response(cloned_value)).await {
+                        Ok(response) => {
+                            if let Err(e) = response {
+                                error!("Error while sending websocket event: {} ", e);
+                            } 
+                        }
+                        Err(e) => {
+                            error!("Error while sending on mailbox: {}", e);
+                        }
+                    };
+                });
             }
         }
         Ok(())
