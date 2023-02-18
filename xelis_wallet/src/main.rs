@@ -84,7 +84,7 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>) -> Result<()> {
     command_manager.add_command(Command::with_required_arguments("transfer", "Send asset to a specified address", vec![Arg::new("address", ArgType::String), Arg::new("amount", ArgType::Number)], Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(transfer))));
     command_manager.add_command(Command::new("display_address", "Show your wallet address", None, CommandHandler::Async(async_handler!(display_address))));
     command_manager.add_command(Command::new("balance", "Show your current balance", Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(balance))));
-    command_manager.add_command(Command::new("history", "Show all your transactions", None, CommandHandler::Async(async_handler!(history))));
+    command_manager.add_command(Command::new("history", "Show all your transactions", Some(Arg::new("page", ArgType::Number)), CommandHandler::Async(async_handler!(history))));
     command_manager.add_command(Command::new("online_mode", "Set your wallet in online mode", Some(Arg::new("daemon_address", ArgType::String)), CommandHandler::Async(async_handler!(online_mode))));
     command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", None, CommandHandler::Async(async_handler!(offline_mode))));
     command_manager.add_command(Command::new("rescan", "Rescan balance and transactions", Some(Arg::new("topoheight", ArgType::Number)), CommandHandler::Async(async_handler!(rescan))));
@@ -205,15 +205,34 @@ async fn balance(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentM
 }
 
 // Show all transactions
-async fn history(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+const TXS_PER_PAGE: usize = 10;
+async fn history(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let page = if arguments.has_argument("page") {
+        arguments.get_value("page")?.to_number()? as usize
+    } else {
+        1
+    };
+
+    if page == 0 {
+        return Err(CommandError::InvalidArgument("Page must be greater than 0".to_string()));
+    }
+
     let wallet = manager.get_data()?;
     let storage = wallet.get_storage().read().await;
     let mut transactions = storage.get_transactions()?;
     // desc ordered
     transactions.sort_by(|a, b| b.get_topoheight().cmp(&a.get_topoheight()));
+    let mut max_pages = transactions.len() / TXS_PER_PAGE;
+    if transactions.len() % TXS_PER_PAGE != 0 {
+        max_pages += 1;
+    }
 
-    manager.message(format!("Transactions available: {}", transactions.len()));
-    for tx in transactions {
+    if page > max_pages {
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages - 1)));
+    }
+
+    manager.message(format!("Transactions (total {}) page {}/{}:", transactions.len(), page, max_pages));
+    for tx in transactions.iter().skip((page - 1) * TXS_PER_PAGE).take(TXS_PER_PAGE) {
         manager.message(format!("- {}", tx));
     }
 
