@@ -1,11 +1,9 @@
 use std::{sync::Arc, time::Duration};
-
-use async_recursion::async_recursion;
 use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::CompleteBlock, transaction::TransactionType};
+use xelis_common::{crypto::{hash::Hash, address::Address}, block::CompleteBlock, transaction::TransactionType, account::VersionedBalance};
 
 use crate::{api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
 
@@ -78,8 +76,7 @@ impl NetworkHandler {
         }
     }
 
-    #[async_recursion]
-    async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, min_topoheight: u64, current_topoheight: Option<u64>) -> Result<(), Error> {
+    async fn get_versioned_balance_and_topoheight(&self, address: &Address<'_>, asset: &Hash, current_topoheight: Option<u64>) -> Result<Option<(u64, VersionedBalance)>, Error> {
         let (topoheight, balance) = match &current_topoheight {
             Some(topoheight) => (*topoheight, self.api.get_balance_at_topoheight(address, asset, *topoheight).await?),
             None => { // try to get last balance
@@ -87,7 +84,7 @@ impl NetworkHandler {
                     Ok(res) => res,
                     Err(e) => { // balance doesn't exist on chain for this asset
                         debug!("Error while getting last balance: {}", e);
-                        return Ok(())
+                        return Ok(None)
                     }
                 };
                 let balance = res.balance;
@@ -99,88 +96,94 @@ impl NetworkHandler {
                 (res.topoheight, balance)
             }
         };
+        Ok(Some((topoheight, balance)))
+    }
 
-        // don't sync already synced blocks
-        if min_topoheight > topoheight {
-            return Ok(())
-        }
+    async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, min_topoheight: u64, current_topoheight: Option<u64>) -> Result<(), Error> {
+        let mut res = self.get_versioned_balance_and_topoheight(address, asset, current_topoheight).await?;
+        while let Some((topoheight, balance)) = res.take() {
+            // don't sync already synced blocks
+            if min_topoheight > topoheight {
+                return Ok(())
+            }
 
-        let response = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
-        let block: CompleteBlock = response.data.data.into_owned();
-        
-        // create Coinbase entry
-        if *block.get_miner() == *address.get_public_key() {
-            let coinbase = EntryData::Coinbase(response.reward);
-            let entry = TransactionEntry::new(response.data.hash.into_owned(), topoheight, None, None, coinbase);
-            let mut storage = self.wallet.get_storage().write().await;
-            storage.save_transaction(entry.get_hash(), &entry)?;
-        }
+            let response = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
+            let block: CompleteBlock = response.data.data.into_owned();
 
-        let mut latest_nonce_sent = None;
-        let (block, txs) = block.split();
-        for (tx_hash, tx) in block.get_txs_hashes().iter().zip(txs) {
-            let tx = tx.into_owned();
-            let is_owner = *tx.get_owner() == *address.get_public_key();
-            let fee = if is_owner { Some(tx.get_fee()) } else { None };
-            let nonce = if is_owner { Some(tx.get_nonce()) } else { None };
-            let (owner, data) = tx.consume();
-            let entry: Option<EntryData> = match data {
-                TransactionType::Burn(asset, amount) => {
-                    if is_owner {
-                        Some(EntryData::Burn { asset, amount })
-                    } else {
-                        None
-                    }
-                },
-                TransactionType::Transfer(txs) => {
-                    let mut transfers: Vec<Transfer> = Vec::new();
-                    for tx in txs {
-                        if is_owner || tx.to == *address.get_public_key() {
-                            let transfer = Transfer::new(tx.to, tx.asset, tx.amount, tx.extra_data);
-                            transfers.push(transfer);
-                        }
-                    }
-
-                    if is_owner {
-                        // because txs are sorted by nonces, we don't need to check it ourself
-                        latest_nonce_sent = nonce;
-                        Some(EntryData::Outgoing(transfers))
-                    } else {
-                        Some(EntryData::Incoming(owner, transfers))
-                    }
-                },
-                _ => {
-                    error!("Transaction type not supported");
-                    None
-                }
-            };
-
-            if let Some(entry) = entry {
-                let entry = TransactionEntry::new(tx_hash.clone(), topoheight, fee, nonce, entry);
+            // create Coinbase entry
+            if *block.get_miner() == *address.get_public_key() {
+                let coinbase = EntryData::Coinbase(response.reward);
+                let entry = TransactionEntry::new(response.data.hash.into_owned(), topoheight, None, None, coinbase);
                 let mut storage = self.wallet.get_storage().write().await;
                 storage.save_transaction(entry.get_hash(), &entry)?;
             }
-        }
 
-        // check that we have a outgoing tx (in case of same wallets used in differents places at same time)
-        if let (Some(last_nonce), None) = (latest_nonce_sent, current_topoheight) {
-            // don't keep the lock in case of a request
-            let local_nonce = {
-                let storage = self.wallet.get_storage().read().await;
-                storage.get_nonce()?
-            };
+            let mut latest_nonce_sent = None;
+            let (block, txs) = block.split();
+            for (tx_hash, tx) in block.get_txs_hashes().iter().zip(txs) {
+                let tx = tx.into_owned();
+                let is_owner = *tx.get_owner() == *address.get_public_key();
+                let fee = if is_owner { Some(tx.get_fee()) } else { None };
+                let nonce = if is_owner { Some(tx.get_nonce()) } else { None };
+                let (owner, data) = tx.consume();
+                let entry: Option<EntryData> = match data {
+                    TransactionType::Burn(asset, amount) => {
+                        if is_owner {
+                            Some(EntryData::Burn { asset, amount })
+                        } else {
+                            None
+                        }
+                    },
+                    TransactionType::Transfer(txs) => {
+                        let mut transfers: Vec<Transfer> = Vec::new();
+                        for tx in txs {
+                            if is_owner || tx.to == *address.get_public_key() {
+                                let transfer = Transfer::new(tx.to, tx.asset, tx.amount, tx.extra_data);
+                                transfers.push(transfer);
+                            }
+                        }
 
-            if local_nonce != last_nonce {
-                debug!("Detected a nonce changes for balance at topoheight {}", topoheight);
-                let nonce = self.api.get_nonce(&address).await.unwrap_or(0);
+                        if is_owner {
+                            // because txs are sorted by nonces, we don't need to check it ourself
+                            latest_nonce_sent = nonce;
+                            Some(EntryData::Outgoing(transfers))
+                        } else {
+                            Some(EntryData::Incoming(owner, transfers))
+                        }
+                    },
+                    _ => {
+                        error!("Transaction type not supported");
+                        None
+                    }
+                };
 
-                let mut storage = self.wallet.get_storage().write().await;
-                storage.set_nonce(nonce)?;
+                if let Some(entry) = entry {
+                    let entry = TransactionEntry::new(tx_hash.clone(), topoheight, fee, nonce, entry);
+                    let mut storage = self.wallet.get_storage().write().await;
+                    storage.save_transaction(entry.get_hash(), &entry)?;
+                }
             }
-        }
 
-        if let Some(previous_topo) = balance.get_previous_topoheight() {
-            self.get_balance_and_transactions(address, asset, min_topoheight, Some(previous_topo)).await?;
+            // check that we have a outgoing tx (in case of same wallets used in differents places at same time)
+            if let (Some(last_nonce), None) = (latest_nonce_sent, current_topoheight) {
+                // don't keep the lock in case of a request
+                let local_nonce = {
+                    let storage = self.wallet.get_storage().read().await;
+                    storage.get_nonce()?
+                };
+
+                if local_nonce != last_nonce {
+                    debug!("Detected a nonce changes for balance at topoheight {}", topoheight);
+                    let nonce = self.api.get_nonce(&address).await.unwrap_or(0);
+
+                    let mut storage = self.wallet.get_storage().write().await;
+                    storage.set_nonce(nonce)?;
+                }
+            }
+
+            if let Some(previous_topo) = balance.get_previous_topoheight() {
+                res = self.get_versioned_balance_and_topoheight(address, asset, Some(previous_topo)).await?;
+            }
         }
 
         Ok(())
@@ -211,14 +214,14 @@ impl NetworkHandler {
                 continue;
             }
             debug!("New height detected for chain: {}", info.topoheight);
-            
-            
+
             if let Err(e) = self.sync_new_blocks(&address, current_topoheight).await {
                 error!("Error while syncing new blocks: {}", e);
             }
 
             // save current topoheight in daemon
             {
+                debug!("Saving current topoheight daemon: {}", current_topoheight);
                 let mut storage = self.wallet.get_storage().write().await;
                 storage.set_daemon_topoheight(current_topoheight)?;
                 storage.set_top_block_hash(&info.top_hash)?;
