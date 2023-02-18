@@ -9,7 +9,7 @@ use xelis_common::{
     immutable::Immutable,
     serializer::Serializer, account::VersionedBalance
 };
-use crate::p2p::P2pServer;
+use crate::{p2p::P2pServer, rpc::rpc::get_block_response_for_hash};
 use crate::rpc::RpcServer;
 use crate::rpc::websocket::NotifyEvent;
 use crate::storage::Storage;
@@ -1009,13 +1009,20 @@ impl Blockchain {
                 });
             }
 
-            let rpc = rpc.clone();
-            // don't block mutex/lock more than necessary, we move it in another task
-            tokio::spawn(async move {
-                if let Err(e) = rpc.notify_clients(NotifyEvent::NewBlock, block).await {
-                    debug!("Error while broadcasting event NewBlock to websocket: {}", e);
+            match get_block_response_for_hash(self, storage, block_hash, false).await {
+                Ok(response) => {
+                    let rpc = rpc.clone();
+                    // don't block mutex/lock more than necessary, we move it in another task
+                    tokio::spawn(async move {
+                        if let Err(e) = rpc.notify_clients(NotifyEvent::NewBlock, response).await {
+                            debug!("Error while broadcasting event NewBlock to websocket: {}", e);
+                        }
+                    });
+                },
+                Err(e) => {
+                    debug!("Error while getting block response for websocket: {}", e);
                 }
-            });
+            };
         }
 
         // Clean all old txs
