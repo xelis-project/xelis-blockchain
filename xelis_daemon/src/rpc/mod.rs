@@ -12,21 +12,22 @@ use actix_web_actors::ws::WsResponseBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, Error as SerdeError, json};
 use tokio::sync::Mutex;
+use xelis_common::api::daemon::{NotifyEvent, EventResult};
 use xelis_common::config;
 use xelis_common::crypto::address::Address;
 use xelis_common::serializer::ReaderError;
-use std::{sync::Arc, collections::{HashMap, HashSet}, pin::Pin, future::Future, fmt::{Display, Formatter}};
+use std::{sync::Arc, collections::HashMap, pin::Pin, future::Future, fmt::{Display, Formatter}};
 use log::{trace, info, debug};
 use anyhow::Error as AnyError;
 use thiserror::Error;
 use self::getwork_server::{GetWorkWebSocketHandler, SharedGetWorkServer};
-use self::websocket::{NotifyEvent, Response};
+use self::websocket::Response;
 use log::error;
 
 pub type SharedRpcServer = web::Data<Arc<RpcServer>>;
 pub type Handler = fn(Arc<Blockchain>, Value) -> Pin<Box<dyn Future<Output = Result<Value, RpcError>>>>;
 
-const JSON_RPC_VERSION: &str = "2.0";
+pub const JSON_RPC_VERSION: &str = "2.0";
 
 #[derive(Error, Debug)]
 pub enum RpcError {
@@ -127,7 +128,7 @@ pub struct RpcServer {
     handle: Mutex<Option<ServerHandle>>, // keep the server handle to stop it gracefully
     methods: HashMap<String, Handler>, // all rpc methods registered
     blockchain: Arc<Blockchain>, // pointer to blockchain data
-    clients: Mutex<HashMap<Addr<WebSocketHandler>, HashSet<NotifyEvent>>>, // all websocket clients connected with subscriptions linked
+    clients: Mutex<HashMap<Addr<WebSocketHandler>, HashMap<NotifyEvent, Option<usize>>>>, // all websocket clients connected with subscriptions linked
     getwork: Option<SharedGetWorkServer>
 }
 
@@ -217,7 +218,7 @@ impl RpcServer {
 
     pub async fn add_client(&self, addr: Addr<WebSocketHandler>) {
         let mut clients = self.clients.lock().await;
-        clients.insert(addr, HashSet::new());
+        clients.insert(addr, HashMap::new());
     }
 
     pub async fn remove_client(&self, addr: &Addr<WebSocketHandler>) {
@@ -226,10 +227,10 @@ impl RpcServer {
         debug!("WebSocket client {:?} deleted: {}", addr, deleted);
     }
 
-    pub async fn subscribe_client_to(&self, addr: &Addr<WebSocketHandler>, subscribe: NotifyEvent) -> Result<(), RpcError> {
+    pub async fn subscribe_client_to(&self, addr: &Addr<WebSocketHandler>, subscribe: NotifyEvent, id: Option<usize>) -> Result<(), RpcError> {
         let mut clients = self.clients.lock().await;
         let subscriptions = clients.get_mut(addr).ok_or_else(|| RpcError::ClientNotRegistered)?;
-        subscriptions.insert(subscribe);
+        subscriptions.insert(subscribe, id);
         Ok(())
     }
 
@@ -243,14 +244,18 @@ impl RpcServer {
     // notify all clients connected to the websocket which have subscribed to the event sent.
     // each client message is sent through a tokio task in case an error happens and to prevent waiting on others clients
     pub async fn notify_clients<V: Serialize>(&self, notify: NotifyEvent, value: V) -> Result<(), RpcError> {
-        let value = Arc::new(json!(value));
+        let value = json!(EventResult { event: notify.clone(), value: json!(value) });
         let clients = self.clients.lock().await;
         for (addr, subs) in clients.iter() {
-            if subs.contains(&notify) {
+            if let Some(id) = subs.get(&notify) {
                 let addr = addr.clone();
-                let cloned_value = Arc::clone(&value);
+                let response = Response(json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "id": id,
+                    "result": value
+                }));
                 tokio::spawn(async move {
-                    match addr.send(Response(cloned_value)).await {
+                    match addr.send(response).await {
                         Ok(response) => {
                             if let Err(e) = response {
                                 debug!("Error while sending websocket event: {} ", e);

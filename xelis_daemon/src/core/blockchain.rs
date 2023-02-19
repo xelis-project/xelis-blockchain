@@ -7,11 +7,10 @@ use xelis_common::{
     globals::get_current_timestamp,
     block::{CompleteBlock, Block},
     immutable::Immutable,
-    serializer::Serializer, account::VersionedBalance
+    serializer::Serializer, account::VersionedBalance, api::daemon::NotifyEvent
 };
 use crate::{p2p::P2pServer, rpc::rpc::get_block_response_for_hash};
 use crate::rpc::RpcServer;
-use crate::rpc::websocket::NotifyEvent;
 use crate::storage::Storage;
 use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::Duration};
 use std::collections::{HashMap, HashSet, VecDeque};

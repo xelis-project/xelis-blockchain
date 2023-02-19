@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance};
 
@@ -144,4 +145,26 @@ pub struct P2pStatusResult<'a> {
 pub struct GetRangeParams {
     pub start_topoheight: Option<u64>,
     pub end_topoheight: Option<u64>
+}
+
+
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum NotifyEvent {
+    // When a new block is accepted by chain
+    NewBlock,
+    // When a new transaction is added in mempool
+    TransactionAddedInMempool,
+    // When a transaction has been included in a valid block & executed on chain
+    TransactionExecuted,
+    // When a registered TX SC Call hash has been executed by chain
+    TransactionSCResult,
+    // When a new asset has been registered
+    NewAsset
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EventResult {
+    pub event: NotifyEvent,
+    #[serde(flatten)]
+    pub value: Value
 }
