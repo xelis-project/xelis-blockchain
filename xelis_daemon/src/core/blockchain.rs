@@ -1,6 +1,6 @@
 use anyhow::Error;
 use xelis_common::{
-    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY},
+    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME},
     crypto::{key::PublicKey, hash::{Hashable, Hash}},
     difficulty::{check_difficulty, calculate_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
@@ -13,10 +13,10 @@ use crate::{p2p::P2pServer, rpc::rpc::get_block_response_for_hash};
 use crate::rpc::RpcServer;
 use crate::rpc::websocket::NotifyEvent;
 use crate::storage::Storage;
-use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry};
+use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::Duration};
 use std::collections::{HashMap, HashSet, VecDeque};
 use async_recursion::async_recursion;
-use tokio::sync::{Mutex, RwLock};
+use tokio::{time::interval, sync::{Mutex, RwLock}};
 use log::{info, error, debug, warn};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -51,7 +51,10 @@ pub struct Config {
     cache_size: usize,
     /// Disable GetWork Server (WebSocket for miners)
     #[clap(short = 'g', long)]
-    disable_getwork_server: bool
+    disable_getwork_server: bool,
+    /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME)
+    #[clap(long)]
+    simulator: bool
 }
 
 pub struct Blockchain {
@@ -61,7 +64,9 @@ pub struct Blockchain {
     storage: RwLock<Storage>, // storage to retrieve/add blocks
     p2p: Mutex<Option<Arc<P2pServer>>>, // P2p module
     rpc: Mutex<Option<Arc<RpcServer>>>, // Rpc module
-    difficulty: AtomicU64 // current difficulty
+    difficulty: AtomicU64, // current difficulty
+    // used to skip PoW verification
+    simulator: bool
 }
 
 impl Blockchain {
@@ -90,7 +95,8 @@ impl Blockchain {
             storage: RwLock::new(storage),
             p2p: Mutex::new(None),
             rpc: Mutex::new(None),
-            difficulty: AtomicU64::new(GENESIS_BLOCK_DIFFICULTY)
+            difficulty: AtomicU64::new(GENESIS_BLOCK_DIFFICULTY),
+            simulator: config.simulator
         };
 
         // include genesis block
@@ -138,6 +144,22 @@ impl Blockchain {
                 Err(e) => error!("Error while starting RPC server: {}", e)
             };
         }
+
+        if arc.simulator {
+            warn!("Simulator mode enabled!");
+            let zelf = Arc::clone(&arc);
+            tokio::spawn(async move {
+                let mut interval = interval(Duration::from_secs(BLOCK_TIME));
+                loop {
+                    interval.tick().await;
+                    info!("Adding new simulated block...");
+                    if let Err(e) = zelf.mine_block(&DEV_PUBLIC_KEY).await {
+                        error!("Simulator error: {}", e);
+                    }
+                }
+            });
+        }
+
         Ok(arc)
     }
 
@@ -204,7 +226,7 @@ impl Blockchain {
         };
         let mut hash = block.hash();
         let mut current_height = self.get_height();
-        while !check_difficulty(&hash, difficulty)? {
+        while !self.simulator && !check_difficulty(&hash, difficulty)? {
             if self.get_height() != current_height {
                 current_height = self.get_height();
                 block = self.get_block_template(key.clone()).await?;
@@ -562,7 +584,7 @@ impl Blockchain {
     // if the difficulty is valid, returns it (prevent to re-compute it)
     async fn verify_proof_of_work(&self, storage: &Storage, hash: &Hash, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
         let difficulty = self.get_difficulty_at_tips(storage, tips).await?;
-        if check_difficulty(hash, difficulty)? {
+        if self.simulator || check_difficulty(hash, difficulty)? {
             Ok(difficulty)
         } else {
             Err(BlockchainError::InvalidDifficulty)
