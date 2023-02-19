@@ -70,7 +70,7 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result
     let closure = || async {
         let height = blockchain.get_height();
         let (peers, best) = match &p2p {
-            Some(p2p) => (p2p.get_peer_count().await, p2p.get_best_height().await),
+            Some(p2p) => (p2p.get_peer_count().await, p2p.get_best_topoheight().await),
             None => (0, height)
         };
 
@@ -79,30 +79,34 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result
             None => 0
         };
 
+        let mempool = {
+            let mempool = blockchain.get_mempool().read().await;
+            mempool.size()
+        };
+
         let network_hashrate = (blockchain.get_difficulty() / BLOCK_TIME) as f64;
-        build_prompt_message(blockchain.get_topo_height(), height, best, network_hashrate, peers, miners)
+        build_prompt_message(blockchain.get_topo_height(), best, network_hashrate, peers, miners, mempool)
     };
 
     prompt.start(Duration::from_millis(100), &closure, command_manager).await
 }
 
-fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, network_hashrate: f64, peers_count: usize, miners_count: usize) -> String {
-    let height_str = format!(
-        "{}: {}/{}",
-        Prompt::colorize_str(Color::Yellow, "Height"),
-        Prompt::colorize_string(Color::Green, &format!("{}", height)), // TODO Color based on height / peer
-        Prompt::colorize_string(Color::Green, &format!("{}", best_height))
-    );
+fn build_prompt_message(topoheight: u64, best_topoheight: u64, network_hashrate: f64, peers_count: usize, miners_count: usize, mempool: usize) -> String {
     let topoheight_str = format!(
-        "{}: {}",
+        "{}: {}/{}",
         Prompt::colorize_str(Color::Yellow, "TopoHeight"),
         Prompt::colorize_string(Color::Green, &format!("{}", topoheight)),
+        Prompt::colorize_string(Color::Green, &format!("{}", best_topoheight))
     );
-
     let network_hashrate_str = format!(
         "{}: {}",
         Prompt::colorize_str(Color::Yellow, "Network"),
         Prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(network_hashrate))),
+    );
+    let mempool_str = format!(
+        "{}: {}",
+        Prompt::colorize_str(Color::Yellow, "Mempool"),
+        Prompt::colorize_string(Color::Green, &format!("{}", mempool))
     );
     let peers_str = format!(
         "{}: {}",
@@ -117,9 +121,9 @@ fn build_prompt_message(topoheight: u64, height: u64, best_height: u64, network_
     format!(
         "{} | {} | {} | {} | {} | {} {} ",
         Prompt::colorize_str(Color::Blue, "XELIS"),
-        height_str,
         topoheight_str,
         network_hashrate_str,
+        mempool_str,
         peers_str,
         miners_str,
         Prompt::colorize_str(Color::BrightBlack, ">>")

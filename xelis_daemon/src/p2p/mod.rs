@@ -769,7 +769,7 @@ impl P2pServer {
         peer_list.size()
     }
 
-    pub async fn get_best_height(&self) -> u64 {
+    pub async fn get_best_topoheight(&self) -> u64 {
         let our_height = self.blockchain.get_height();
         let peer_list = self.peer_list.read().await;
         let best_height = peer_list.get_best_topoheight();

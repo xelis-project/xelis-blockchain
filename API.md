@@ -572,9 +572,9 @@ No parameters
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": {
-		"best_height": 23,
+		"best_topoheight": 23,
 		"max_peers": 32,
-		"our_height": 23,
+		"our_topoheight": 23,
 		"peer_count": 1,
 		"peer_id": 17384099500704996810,
 		"tag": null

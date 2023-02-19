@@ -279,16 +279,16 @@ async fn p2p_status(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, R
             let peer_count = p2p.get_peer_count().await;
             let tag = p2p.get_tag();
             let peer_id = p2p.get_peer_id();
-            let best_height = p2p.get_best_height().await;
+            let best_topoheight = p2p.get_best_topoheight().await;
             let max_peers = p2p.get_max_peers();
-            let our_height = blockchain.get_height();
+            let our_topoheight = blockchain.get_topo_height();
 
             Ok(json!(P2pStatusResult {
                 peer_count,
-                tag: tag.clone(),
+                tag: Cow::Borrowed(tag),
                 peer_id,
-                our_height,
-                best_height,
+                our_topoheight,
+                best_topoheight,
                 max_peers
             }))
         },

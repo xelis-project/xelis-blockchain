@@ -131,12 +131,12 @@ pub struct GetTransactionParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct P2pStatusResult {
+pub struct P2pStatusResult<'a> {
     pub peer_count: usize,
     pub max_peers: usize,
-    pub tag: Option<String>,
-    pub our_height: u64,
-    pub best_height: u64,
+    pub tag: Cow<'a, Option<String>>,
+    pub our_topoheight: u64,
+    pub best_topoheight: u64,
     pub peer_id: u64
 }
 
