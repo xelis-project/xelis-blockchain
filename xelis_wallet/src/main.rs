@@ -6,6 +6,7 @@ pub mod cipher;
 pub mod api;
 pub mod network_handler;
 pub mod entry;
+pub mod mnemonics;
 
 use std::{sync::Arc, time::Duration, path::Path};
 
@@ -44,7 +45,10 @@ pub struct Config {
     name: String,
     /// Password used to open wallet
     #[clap(short, long)]
-    password: String
+    password: String,
+    /// Restore wallet using seed
+    #[clap(short, long)]
+    seed: Option<String>
 }
 
 #[tokio::main]
@@ -58,7 +62,7 @@ async fn main() -> Result<()> {
         Wallet::open(dir, config.password)?
     } else {
         info!("Creating a new wallet at {}", dir);
-        Wallet::create(dir, config.password)?
+        Wallet::create(dir, config.password, config.seed)?
     };
 
     if !config.offline_mode {
@@ -88,6 +92,7 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>) -> Result<()> {
     command_manager.add_command(Command::new("online_mode", "Set your wallet in online mode", Some(Arg::new("daemon_address", ArgType::String)), CommandHandler::Async(async_handler!(online_mode))));
     command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", None, CommandHandler::Async(async_handler!(offline_mode))));
     command_manager.add_command(Command::new("rescan", "Rescan balance and transactions", Some(Arg::new("topoheight", ArgType::Number)), CommandHandler::Async(async_handler!(rescan))));
+    command_manager.add_command(Command::new("seed", "Show seed of selected language", Some(Arg::new("language", ArgType::Number)), CommandHandler::Async(async_handler!(seed))));
 
     command_manager.set_data(Some(wallet.clone()));
 
@@ -280,5 +285,18 @@ async fn rescan(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentMa
 
     wallet.rescan(topoheight).await.context("error while restarting network handler")?;
     manager.message("Network handler has been restarted!");
+    Ok(())
+}
+
+async fn seed(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let wallet = manager.get_data()?;
+    let language = if arguments.has_argument("language") {
+        arguments.get_value("language")?.to_number()?
+    } else {
+        0
+    };
+
+    let seed = wallet.get_seed(language as usize)?;
+    manager.message(format!("Seed: {}", seed));
     Ok(())
 }

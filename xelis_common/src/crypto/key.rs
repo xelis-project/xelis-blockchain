@@ -41,6 +41,12 @@ impl PublicKey {
     }
 }
 
+impl PrivateKey {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self(ed25519_dalek::SecretKey::from_bytes(bytes).unwrap())
+    }
+}
+
 impl Serializer for PublicKey {
     fn write(&self, writer: &mut Writer) {
         writer.write_bytes(self.as_bytes());
@@ -122,6 +128,14 @@ impl KeyPair {
         }
     }
 
+    pub fn from_private_key(private_key: PrivateKey) -> Self {
+        let public_key: ed25519_dalek::PublicKey  = (&private_key.0).into();
+        Self {
+            public_key: PublicKey(public_key),
+            private_key
+        }
+    }
+
     pub fn from_keys(public_key: PublicKey, private_key: PrivateKey) -> Self {
         KeyPair {
             public_key,
@@ -131,6 +145,10 @@ impl KeyPair {
 
     pub fn get_public_key(&self) -> &PublicKey {
         &self.public_key
+    }
+
+    pub fn get_private_key(&self) -> &PrivateKey {
+        &self.private_key
     }
 
     pub fn sign(&self, data: &[u8]) -> Signature {

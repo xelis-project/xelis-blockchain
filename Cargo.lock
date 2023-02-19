@@ -2528,6 +2528,7 @@ dependencies = [
  "argon2",
  "chacha20poly1305",
  "clap",
+ "crc32fast",
  "fern",
  "lazy_static",
  "log",

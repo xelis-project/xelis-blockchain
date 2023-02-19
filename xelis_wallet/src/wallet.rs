@@ -12,6 +12,7 @@ use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
 use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
+use crate::mnemonics;
 use crate::network_handler::{NetworkHandler, SharedNetworkHandler};
 use crate::storage::{EncryptedStorage, Storage};
 use crate::transaction_builder::TransactionBuilder;
@@ -90,7 +91,7 @@ impl Wallet {
         Arc::new(zelf)
     }
 
-    pub fn create(name: String, password: String) -> Result<Arc<Self>, Error> {
+    pub fn create(name: String, password: String, seed: Option<String>) -> Result<Arc<Self>, Error> {
         // generate random salt for hashed password
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
         OsRng.fill_bytes(&mut salt);
@@ -126,7 +127,16 @@ impl Wallet {
         let mut storage = EncryptedStorage::new(inner, &master_key, storage_salt)?;
 
         // generate random keypair and save it to encrypted storage
-        let keypair = KeyPair::new();
+        let keypair = if let Some(seed) = seed {
+            debug!("Retrieving keypair from seed...");
+            let words: Vec<String> = seed.split_whitespace().map(str::to_string).collect();
+            let key = mnemonics::words_to_key(words)?;
+            KeyPair::from_private_key(key)
+        } else {
+            debug!("Generating a new keypair...");
+            KeyPair::new()
+        };
+
         storage.set_keypair(&keypair)?;
 
         Ok(Self::new(storage, keypair))
@@ -360,6 +370,10 @@ impl Wallet {
         self.keypair.get_public_key().to_address_with(data)
     }
 
+    pub fn get_seed(&self, language_index: usize) -> Result<String, Error> {
+        let words = mnemonics::key_to_words(self.keypair.get_private_key(), language_index)?;
+        Ok(words.join(" "))
+    }
     pub fn get_storage(&self) -> &RwLock<EncryptedStorage> {
         &self.storage
     }
