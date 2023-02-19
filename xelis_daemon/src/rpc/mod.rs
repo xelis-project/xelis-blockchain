@@ -223,7 +223,7 @@ impl RpcServer {
     pub async fn remove_client(&self, addr: &Addr<WebSocketHandler>) {
         let mut clients = self.clients.lock().await;
         let deleted = clients.remove(addr).is_some();
-        trace!("WebSocket client {:?} deleted: {}", addr, deleted);
+        debug!("WebSocket client {:?} deleted: {}", addr, deleted);
     }
 
     pub async fn subscribe_client_to(&self, addr: &Addr<WebSocketHandler>, subscribe: NotifyEvent) -> Result<(), RpcError> {
@@ -253,11 +253,11 @@ impl RpcServer {
                     match addr.send(Response(cloned_value)).await {
                         Ok(response) => {
                             if let Err(e) = response {
-                                error!("Error while sending websocket event: {} ", e);
+                                debug!("Error while sending websocket event: {} ", e);
                             } 
                         }
                         Err(e) => {
-                            error!("Error while sending on mailbox: {}", e);
+                            debug!("Error while sending on mailbox: {}", e);
                         }
                     };
                 });
