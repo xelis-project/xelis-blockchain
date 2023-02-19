@@ -622,11 +622,128 @@ Maximum of 64 blocks hash only per request.
 }
 ```
 
+#### Submit Transaction
+Submit a transaction in hex format to daemon mempool.
+
+##### Method `submit_transaction`
+
+##### Parameters
+| Name |  Type  | Required |            Note           |
+|:----:|:------:|:--------:|:-------------------------:|
+|  hex | String | Required | Transaction in HEX format |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 0,
+	"method": "submit_transaction",
+	"params": {
+		"data": "a15637c25cefd438998a2a043867ef8df905542078a8724ada1aabce003df3cc010100000000000000000000000000000000000000000000000000000000000000000000000000003a986c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd0000000000000003e80000000000000002d297ef720d388ff2aaedf6755a1f93b4ac1b55c987da5dc53c19350d8a779d970c7f4cfcc25d2f4ce3f4ef3a77d0f31d15635d221d5a72ef6651dbb7f1810301"
+	}
+}
+```
+
+##### Response
+```json
+{
+    "id": 0,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
+
+#### Get Transaction
+Fetch a transaction by its hash from daemon
+
+NOTE: result returned in `data` field can changes based on the TransactionType (transfer, burn, Smart Contract call, Deploy Code..)
+
+##### Method `get_transaction`
+
+##### Parameters
+| Name | Type | Required |            Note           |
+|:----:|:----:|:--------:|:-------------------------:|
+| hash | Hash | Required | Transaction hash to fetch |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 0,
+	"method": "get_transaction",
+	"params": {
+		"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2"
+	}
+}
+```
+
+##### Response
+```json
+{
+    "id": 0,
+    "jsonrpc": "2.0",
+    "result": {
+        "data": {
+            "Transfer": [
+                {
+                    "amount": 15000,
+                    "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "extra_data": null,
+                    "to": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"
+                }
+            ]
+        },
+        "fee": 1000,
+        "nonce": 2,
+        "owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
+        "signature": "d297ef720d388ff2aaedf6755a1f93b4ac1b55c987da5dc53c19350d8a779d970c7f4cfcc25d2f4ce3f4ef3a77d0f31d15635d221d5a72ef6651dbb7f1810301"
+    }
+}
+```
+
+#### Get Mempool
+Fetch all transactions presents in the mempool
+
+##### Method `get_mempool`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 0,
+	"method": "get_mempool"
+}
+```
+
+##### Response
+```json
+{
+    "id": 0,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "data": {
+                "Transfer": [
+                    {
+                        "amount": 1500,
+                        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                        "extra_data": null,
+                        "to": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"
+                    }
+                ]
+            },
+            "fee": 1000,
+            "hash": "d189cc7275e48fa84132579f80b6131aaf46d40ff97a08c2a7633d785b0664ab",
+            "nonce": 3,
+            "owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
+            "signature": "9e9fcd6be9b2e968b7d44ae15909e406b827b87f3108e08646b1d5e45754ffe3e166c4eaf26a63b8ddc0ac0668a893c339ed313fb522b46a4e95b8706a2ba005"
+        }
+    ]
+}
+```
+
 TODO:
 - `submit_block`
-
-- `submit_transaction`
-
-- `get_transaction`
-
-- `get_mempool`

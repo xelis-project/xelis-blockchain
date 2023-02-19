@@ -70,7 +70,7 @@ impl DaemonAPI {
     }
 
     pub async fn submit_transaction(&self, transaction: &Transaction) -> Result<()> {
-        let _ = self.client.call_with("submit_transaction", &SubmitTransactionParams {
+        let _: bool = self.client.call_with("submit_transaction", &SubmitTransactionParams {
             data: transaction.to_hex()
         }).await.context("Error while sending transaction")?;
         Ok(())
