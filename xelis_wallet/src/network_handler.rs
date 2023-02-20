@@ -99,7 +99,7 @@ impl NetworkHandler {
         Ok(Some((topoheight, balance)))
     }
 
-    async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, min_topoheight: u64, current_topoheight: Option<u64>) -> Result<(), Error> {
+    async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, min_topoheight: u64, mut current_topoheight: Option<u64>) -> Result<(), Error> {
         let mut res = self.get_versioned_balance_and_topoheight(address, asset, current_topoheight).await?;
         while let Some((topoheight, balance)) = res.take() {
             // don't sync already synced blocks
@@ -144,8 +144,6 @@ impl NetworkHandler {
                         }
 
                         if is_owner {
-                            // because txs are sorted by nonces, we don't need to check it ourself
-                            latest_nonce_sent = nonce;
                             Some(EntryData::Outgoing(transfers))
                         } else {
                             Some(EntryData::Incoming(owner, transfers))
@@ -162,23 +160,18 @@ impl NetworkHandler {
                     let mut storage = self.wallet.get_storage().write().await;
                     storage.save_transaction(entry.get_hash(), &entry)?;
                 }
+
+                if is_owner {
+                    latest_nonce_sent = nonce;
+                }
             }
 
             // check that we have a outgoing tx (in case of same wallets used in differents places at same time)
-            if let (Some(last_nonce), None) = (latest_nonce_sent, current_topoheight) {
+            if let (Some(last_nonce), None) = (latest_nonce_sent, current_topoheight.take()) {
                 // don't keep the lock in case of a request
-                let local_nonce = {
-                    let storage = self.wallet.get_storage().read().await;
-                    storage.get_nonce()?
-                };
-
-                if local_nonce != last_nonce {
-                    debug!("Detected a nonce changes for balance at topoheight {}", topoheight);
-                    let nonce = self.api.get_nonce(&address).await.unwrap_or(0);
-
-                    let mut storage = self.wallet.get_storage().write().await;
-                    storage.set_nonce(nonce)?;
-                }
+                debug!("Detected a nonce changes for balance at topoheight {}", topoheight);
+                let mut storage = self.wallet.get_storage().write().await;
+                storage.set_nonce(last_nonce + 1)?;
             }
 
             if let Some(previous_topo) = balance.get_previous_topoheight() {

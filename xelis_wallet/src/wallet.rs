@@ -288,6 +288,8 @@ impl Wallet {
         let network_handler = self.network_handler.lock().await;
         if let Some(network_handler) = network_handler.as_ref() {
             network_handler.get_api().submit_transaction(transaction).await?;
+            let mut storage = self.storage.write().await;
+            storage.set_nonce(transaction.get_nonce() + 1)?;
             Ok(())
         } else {
             Err(WalletError::NotOnlineMode)
