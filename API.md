@@ -683,6 +683,7 @@ NOTE: result returned in `data` field can changes based on the TransactionType (
     "id": 0,
     "jsonrpc": "2.0",
     "result": {
+		"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
         "data": {
             "Transfer": [
                 {
@@ -725,6 +726,7 @@ No parameters
     "jsonrpc": "2.0",
     "result": [
         {
+			"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
             "data": {
                 "Transfer": [
                     {
@@ -761,7 +763,7 @@ Fetch transactions by theirs hashes from daemon and keep the same order in respo
 {
 	"jsonrpc": "2.0",
 	"id": 0,
-	"method": "get_transaction",
+	"method": "get_transactions",
 	"params": {
 		"tx_hashes": [
 			"136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
@@ -778,6 +780,7 @@ Fetch transactions by theirs hashes from daemon and keep the same order in respo
     "jsonrpc": "2.0",
     "result": [
 		{
+			"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
 			"data": {
 				"Transfer": [
 					{
@@ -795,50 +798,6 @@ Fetch transactions by theirs hashes from daemon and keep the same order in respo
 		},
 		null
 	]
-}
-```
-
-#### Get Mempool
-Fetch all transactions presents in the mempool
-
-##### Method `get_mempool`
-
-##### Parameters
-No parameters
-
-##### Request
-```json
-{
-	"jsonrpc": "2.0",
-	"id": 0,
-	"method": "get_mempool"
-}
-```
-
-##### Response
-```json
-{
-    "id": 0,
-    "jsonrpc": "2.0",
-    "result": [
-        {
-            "data": {
-                "Transfer": [
-                    {
-                        "amount": 1500,
-                        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
-                        "extra_data": null,
-                        "to": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"
-                    }
-                ]
-            },
-            "fee": 1000,
-            "hash": "d189cc7275e48fa84132579f80b6131aaf46d40ff97a08c2a7633d785b0664ab",
-            "nonce": 3,
-            "owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
-            "signature": "9e9fcd6be9b2e968b7d44ae15909e406b827b87f3108e08646b1d5e45754ffe3e166c4eaf26a63b8ddc0ac0668a893c339ed313fb522b46a4e95b8706a2ba005"
-        }
-    ]
 }
 ```
 

@@ -7,12 +7,12 @@ use xelis_common::{
     globals::get_current_timestamp,
     block::{CompleteBlock, Block},
     immutable::Immutable,
-    serializer::Serializer, account::VersionedBalance, api::daemon::NotifyEvent
+    serializer::Serializer, account::VersionedBalance, api::daemon::{NotifyEvent, DataHash}
 };
 use crate::{p2p::P2pServer, rpc::rpc::get_block_response_for_hash};
 use crate::rpc::RpcServer;
 use crate::storage::Storage;
-use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::Duration};
+use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::Duration, borrow::Cow};
 use std::collections::{HashMap, HashSet, VecDeque};
 use async_recursion::async_recursion;
 use tokio::{time::interval, sync::{Mutex, RwLock}};
@@ -649,13 +649,14 @@ impl Blockchain {
             }
         }
         let tx = Arc::new(tx);
-        mempool.add_tx(hash, tx.clone())?;
+        mempool.add_tx(hash.clone(), tx.clone())?;
 
         // broadcast to websocket this tx
         if let Some(rpc) = self.rpc.lock().await.as_ref() {
             let rpc = rpc.clone();
             tokio::spawn(async move {
-                if let Err(e) = rpc.notify_clients(NotifyEvent::TransactionAddedInMempool, tx).await {
+                let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) };
+                if let Err(e) = rpc.notify_clients(NotifyEvent::TransactionAddedInMempool, data).await {
                     debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
                 }
             });

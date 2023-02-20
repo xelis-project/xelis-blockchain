@@ -266,7 +266,8 @@ async fn get_transaction(blockchain: Arc<Blockchain>, body: Value) -> Result<Val
     let params: GetTransactionParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
     let tx = storage.get_transaction(&params.hash).await?;
-    Ok(json!(tx))
+    let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&params.hash), data: Cow::Owned(tx) };
+    Ok(json!(data))
 }
 
 async fn p2p_status(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -419,10 +420,10 @@ async fn get_transactions(blockchain: Arc<Blockchain>, body: Value) -> Result<Va
     }
 
     let storage = blockchain.get_storage().read().await;
-    let mut transactions = Vec::with_capacity(hashes.len());
+    let mut transactions: Vec<Option<DataHash<Arc<Transaction>>>> = Vec::with_capacity(hashes.len());
     for hash in hashes {
         let tx = match storage.get_transaction(&hash).await {
-            Ok(tx) => Some(tx),
+            Ok(tx) => Some(DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) }),
             Err(e) => {
                 debug!("Error while retrieving tx {} from storage: {}", hash, e);
                 None
