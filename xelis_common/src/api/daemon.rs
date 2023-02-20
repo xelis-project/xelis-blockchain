@@ -147,6 +147,10 @@ pub struct GetRangeParams {
     pub end_topoheight: Option<u64>
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct GetTransactionsParams {
+    pub tx_hashes: Vec<Hash>
+}
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {

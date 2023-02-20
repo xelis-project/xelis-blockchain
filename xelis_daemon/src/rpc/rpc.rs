@@ -19,7 +19,7 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams
+        GetRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams
     },
     async_handler,
     serializer::Serializer,
@@ -100,6 +100,7 @@ pub fn register_methods(server: &mut RpcServer) {
     server.register_method("get_tips", async_handler!(get_tips));
     server.register_method("get_dag_order", async_handler!(get_dag_order));
     server.register_method("get_blocks", async_handler!(get_blocks));
+    server.register_method("get_transactions", async_handler!(get_transactions));
 
 }
 
@@ -404,4 +405,31 @@ async fn get_blocks(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, R
     }
 
     Ok(json!(blocks))
+}
+
+const MAX_TXS: usize = 20;
+// get up to 20 transactions at once
+// if a tx hash is not present, we keep the order and put json "null" value
+async fn get_transactions(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
+    let params: GetTransactionsParams = parse_params(body)?;
+
+    let hashes = params.tx_hashes;
+    if  hashes.len() > MAX_TXS {
+        return Err(RpcError::InvalidRequest) 
+    }
+
+    let storage = blockchain.get_storage().read().await;
+    let mut transactions = Vec::with_capacity(hashes.len());
+    for hash in hashes {
+        let tx = match storage.get_transaction(&hash).await {
+            Ok(tx) => Some(tx),
+            Err(e) => {
+                debug!("Error while retrieving tx {} from storage: {}", hash, e);
+                None
+            }
+        };
+        transactions.push(tx);
+    }
+
+    Ok(json!(transactions))
 }
