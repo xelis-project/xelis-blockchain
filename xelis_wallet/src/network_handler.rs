@@ -1,7 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
 use thiserror::Error;
 use anyhow::Error;
-use log::{debug, error};
+use log::{debug, error, info};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
 use xelis_common::{crypto::{hash::Hash, address::Address}, block::CompleteBlock, transaction::TransactionType, account::VersionedBalance};
 
@@ -23,6 +23,8 @@ pub struct NetworkHandler {
     wallet: Arc<Wallet>,
     // api to communicate with daemon
     api: DaemonAPI,
+    // used in case the daemon is not responding but we're already connected
+    is_paused: AtomicBool
 }
 
 impl NetworkHandler {
@@ -35,7 +37,8 @@ impl NetworkHandler {
         Ok(Arc::new(Self {
             task: Mutex::new(None),
             wallet,
-            api
+            api,
+            is_paused: AtomicBool::new(false)
         }))
     }
 
@@ -70,10 +73,14 @@ impl NetworkHandler {
     pub async fn is_running(&self) -> bool {
         let task = self.task.lock().await;
         if let Some(handle) = task.as_ref() {
-            !handle.is_finished()
+            !handle.is_finished() && !self.is_paused()
         } else {
             false
         }
+    }
+
+    fn is_paused(&self) -> bool {
+        self.is_paused.load(Ordering::SeqCst)
     }
 
     async fn get_versioned_balance_and_topoheight(&self, address: &Address<'_>, asset: &Hash, current_topoheight: Option<u64>) -> Result<Option<(u64, VersionedBalance)>, Error> {
@@ -202,7 +209,24 @@ impl NetworkHandler {
             interval.tick().await;
             // get infos from chain
             // TODO compare them with already stored to not resync fully each time
-            let info = self.api.get_info().await?;
+            let info = match self.api.get_info().await {
+                Ok(info) => info,
+                Err(e) => {
+                    debug!("Impossible to sync new blocks: {}", e);
+                    if !self.is_paused() { // show message only one time per disconnecting
+                        error!("Impossible to sync new blocks, daemon is not reachable");
+                        self.is_paused.store(true, Ordering::SeqCst);
+                    }
+                    continue;
+                }
+            };
+
+            // we are in paused mode, but we can connect again to daemon
+            if self.is_paused() {
+                info!("Daemon is reachable again, syncing...");
+                self.is_paused.store(false, Ordering::SeqCst);
+            }
+
             if info.topoheight == current_topoheight {
                 continue;
             }

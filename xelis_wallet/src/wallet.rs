@@ -355,7 +355,11 @@ impl Wallet {
     }
 
     pub async fn is_online(&self) -> bool {
-        self.network_handler.lock().await.is_some()
+        if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
+            network_handler.is_running().await
+        } else {
+            false
+        }
     }
 
     // this function allow to user to get the network handler in case in want to stay in online mode
