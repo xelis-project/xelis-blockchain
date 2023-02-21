@@ -24,19 +24,19 @@ No parameters
 ##### Response
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": {
-        "block_time_target": 15000,
-        "difficulty": 310532,
-        "height": 9,
-        "mempool_size": 0,
-        "native_supply": 8773780,
-        "stableheight": 1,
-        "top_hash": "00000d5f00dc3cf5873f9bd09963a011a2c007b4d1a987b93f5d3bed3d050ef0",
-        "topoheight": 9,
-        "version": "alpha-0.0.1"
-    }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"block_time_target": 15000,
+		"difficulty": 310532,
+		"height": 9,
+		"mempool_size": 0,
+		"native_supply": 8773780,
+		"stableheight": 1,
+		"top_hash": "00000d5f00dc3cf5873f9bd09963a011a2c007b4d1a987b93f5d3bed3d050ef0",
+		"topoheight": 9,
+		"version": "alpha-0.0.1"
+	}
 }
 ```
 
@@ -417,15 +417,15 @@ NOTE: Balance is returned in atomic units
 ##### Response
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": {
-        "balance": {
-            "balance": 37726957,
-            "previous_topoheight": 41
-        },
-        "topoheight": 42
-    }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"balance": {
+			"balance": 37726957,
+			"previous_topoheight": 41
+		},
+		"topoheight": 42
+	}
 }
 ```
 
@@ -444,26 +444,26 @@ NOTE: Balance is returned in atomic units
 ##### Request
 ```json
 {
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "get_balance_at_topoheight",
-    "params": {
-        "address": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
-        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
-        "topoheight": 30
-    }
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_balance_at_topoheight",
+	"params": {
+		"address": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+		"topoheight": 30
+	}
 }
 ```
 
 ##### Response
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": {
-        "balance": 27198582,
-        "previous_topoheight": 29
-    }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"balance": 27198582,
+		"previous_topoheight": 29
+	}
 }
 ```
 
@@ -647,9 +647,9 @@ Submit a transaction in hex format to daemon mempool.
 ##### Response
 ```json
 {
-    "id": 0,
-    "jsonrpc": "2.0",
-    "result": true
+	"id": 0,
+	"jsonrpc": "2.0",
+	"result": true
 }
 ```
 
@@ -680,28 +680,28 @@ NOTE: result returned in `data` field can changes based on the TransactionType (
 ##### Response
 ```json
 {
-    "id": 0,
-    "jsonrpc": "2.0",
-    "result": {
+	"id": 0,
+	"jsonrpc": "2.0",
+	"result": {
 		"blocks": [
 			"0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692"
 		],
-    	"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
-        "data": {
-            "Transfer": [
-                {
-                    "amount": 15000,
-                    "asset": "0000000000000000000000000000000000000000000000000000000000000000",
-                    "extra_data": null,
-                    "to": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"
-                }
-            ]
-        },
-        "fee": 1000,
-        "nonce": 2,
-        "owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
-        "signature": "d297ef720d388ff2aaedf6755a1f93b4ac1b55c987da5dc53c19350d8a779d970c7f4cfcc25d2f4ce3f4ef3a77d0f31d15635d221d5a72ef6651dbb7f1810301"
-    }
+		"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
+		"data": {
+			"Transfer": [
+				{
+					"amount": 15000,
+					"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+					"extra_data": null,
+					"to": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"
+				}
+			]
+		},
+		"fee": 1000,
+		"nonce": 2,
+		"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
+		"signature": "d297ef720d388ff2aaedf6755a1f93b4ac1b55c987da5dc53c19350d8a779d970c7f4cfcc25d2f4ce3f4ef3a77d0f31d15635d221d5a72ef6651dbb7f1810301"
+	}
 }
 ```
 
@@ -725,28 +725,28 @@ No parameters
 ##### Response
 ```json
 {
-    "id": 0,
-    "jsonrpc": "2.0",
-    "result": [
-        {
+	"id": 0,
+	"jsonrpc": "2.0",
+	"result": [
+		{
 			"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
-            "data": {
-                "Transfer": [
-                    {
-                        "amount": 1500,
-                        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
-                        "extra_data": null,
-                        "to": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"
-                    }
-                ]
-            },
-            "fee": 1000,
-            "hash": "d189cc7275e48fa84132579f80b6131aaf46d40ff97a08c2a7633d785b0664ab",
-            "nonce": 3,
-            "owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
-            "signature": "9e9fcd6be9b2e968b7d44ae15909e406b827b87f3108e08646b1d5e45754ffe3e166c4eaf26a63b8ddc0ac0668a893c339ed313fb522b46a4e95b8706a2ba005"
-        }
-    ]
+			"data": {
+				"Transfer": [
+					{
+						"amount": 1500,
+						"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+						"extra_data": null,
+						"to": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"
+					}
+				]
+			},
+			"fee": 1000,
+			"hash": "d189cc7275e48fa84132579f80b6131aaf46d40ff97a08c2a7633d785b0664ab",
+			"nonce": 3,
+			"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
+			"signature": "9e9fcd6be9b2e968b7d44ae15909e406b827b87f3108e08646b1d5e45754ffe3e166c4eaf26a63b8ddc0ac0668a893c339ed313fb522b46a4e95b8706a2ba005"
+		}
+	]
 }
 ```
 
@@ -779,9 +779,9 @@ Fetch transactions by theirs hashes from daemon and keep the same order in respo
 ##### Response
 ```json
 {
-    "id": 0,
-    "jsonrpc": "2.0",
-    "result": [
+	"id": 0,
+	"jsonrpc": "2.0",
+	"result": [
 		{
 			"blocks": [
 				"0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692"
