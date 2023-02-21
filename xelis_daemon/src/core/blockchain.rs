@@ -686,19 +686,29 @@ impl Blockchain {
         let mempool = self.mempool.read().await;
         let txs = mempool.get_sorted_txs();
         let mut tx_size = 0;
+        // TODO reference of public key (no clone!)
+        let mut nonces: HashMap<PublicKey, u64> = HashMap::new();
         for tx in txs {
             if block.size() + tx_size + tx.get_size() > MAX_BLOCK_SIZE {
                 break;
             }
 
             let transaction = mempool.view_tx(tx.get_hash())?;
-            let nonce = storage.get_nonce(transaction.get_owner()).await?;
-            if nonce < transaction.get_nonce() {
+            let account_nonce = if let Some(nonce) = nonces.get(transaction.get_owner()) {
+                *nonce
+            } else {
+                let nonce = storage.get_nonce(transaction.get_owner()).await?;
+                nonces.insert(transaction.get_owner().clone(), nonce);
+                nonce
+            };
+
+            if account_nonce < transaction.get_nonce() {
                 debug!("Skipping {} with {} fees because another TX should be selected first due to nonce", tx.get_hash(), tx.get_fee());
             } else {
                 // TODO no clone
                 block.txs_hashes.push(tx.get_hash().clone());
                 tx_size += tx.get_size();
+                *nonces.get_mut(transaction.get_owner()).unwrap() += 1;
             }
         }
         Ok(block)
