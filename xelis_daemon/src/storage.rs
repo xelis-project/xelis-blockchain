@@ -35,6 +35,7 @@ pub struct Storage {
     rewards: Tree, // all block rewards for blocks
     supply: Tree, // supply for each block hash
     difficulty: Tree, // difficulty for each block hash
+    tx_blocks: Tree, // tree to store all blocks hashes where a tx was included in 
     db: sled::Db, // opened DB used for assets to create dynamic assets
     // cached in memory
     transactions_cache: Option<Mutex<LruCache<Hash, Arc<Transaction>>>>,
@@ -75,6 +76,7 @@ impl Storage {
             rewards: sled.open_tree("rewards")?,
             supply: sled.open_tree("supply")?,
             difficulty: sled.open_tree("difficulty")?,
+            tx_blocks: sled.open_tree("tx_blocks")?,
             db: sled,
             transactions_cache: init_cache!(cache_size),
             blocks_cache: init_cache!(cache_size),
@@ -211,6 +213,34 @@ impl Storage {
         }
 
         Ok(assets)
+    }
+
+    pub fn has_tx_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+        let contains = self.tx_blocks.contains_key(hash.as_bytes())?;
+        Ok(contains)
+    }
+
+    pub fn has_block_linked_to_tx(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
+        Ok(self.has_tx_blocks(tx)? && self.get_blocks_for_tx(tx)?.contains(block))
+    }
+
+    pub fn get_blocks_for_tx(&self, hash: &Hash) -> Result<Tips, BlockchainError> {
+        self.load_from_disk(&self.tx_blocks, hash.as_bytes())
+    }
+
+    pub fn add_block_for_tx(&mut self, tx: &Hash, block: Hash) -> Result<(), BlockchainError> {
+        let mut blocks = if self.has_tx_blocks(tx)? {
+            self.get_blocks_for_tx(tx)?
+        } else {
+            Tips::new()
+        };
+        blocks.insert(block);
+        self.set_blocks_for_tx(tx, &blocks)
+    }
+
+    fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &HashSet<Hash>) -> Result<(), BlockchainError> {
+        self.tx_blocks.insert(tx.as_bytes(), blocks.to_bytes())?;
+        Ok(())
     }
 
     pub async fn has_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<bool, BlockchainError> {
@@ -507,9 +537,16 @@ impl Storage {
                 let reward: u64 = self.delete_data_no_arc(&self.rewards, &None, &hash).await?;
                 trace!("Reward for block {} was: {}", hash, reward);
 
-                for hash in block.get_transactions() {
-                    let tx = self.delete_data(&self.transactions, &self.transactions_cache, hash).await?;
-                    txs.push((hash.clone(), tx));
+                for tx_hash in block.get_transactions() {
+                    let tx = self.delete_data(&self.transactions, &self.transactions_cache, tx_hash).await?;
+                    if self.has_tx_blocks(tx_hash)? {
+                        let mut blocks: Tips = self.delete_data_no_arc(&self.tx_blocks, &None, tx_hash).await?;
+                        let blocks_len =  blocks.len();
+                        blocks.remove(&hash);
+                        self.set_blocks_for_tx(tx_hash, &blocks)?;
+                        trace!("Tx was included in {}, blocks left: {}", blocks_len, blocks.into_iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
+                    }
+                    txs.push((tx_hash.clone(), tx));
                 }
 
                 // if block is ordered, delete data that are linked to it

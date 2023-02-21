@@ -683,7 +683,10 @@ NOTE: result returned in `data` field can changes based on the TransactionType (
     "id": 0,
     "jsonrpc": "2.0",
     "result": {
-		"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
+		"blocks": [
+			"0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692"
+		],
+    	"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
         "data": {
             "Transfer": [
                 {
@@ -780,6 +783,9 @@ Fetch transactions by theirs hashes from daemon and keep the same order in respo
     "jsonrpc": "2.0",
     "result": [
 		{
+			"blocks": [
+				"0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692"
+			],
 			"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
 			"data": {
 				"Transfer": [

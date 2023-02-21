@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -150,6 +150,15 @@ pub struct GetRangeParams {
 #[derive(Serialize, Deserialize)]
 pub struct GetTransactionsParams {
     pub tx_hashes: Vec<Hash>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TransactionResponse<'a, T: Clone> {
+    // in which blocks it was included
+    pub blocks: HashSet<Hash>,
+    // TODO executed_block which give the hash of the block in which this tx got executed
+    #[serde(flatten)]
+    pub data: DataHash<'a, T>
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

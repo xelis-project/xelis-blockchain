@@ -19,7 +19,7 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams
+        GetRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse
     },
     async_handler,
     serializer::Serializer,
@@ -27,7 +27,7 @@ use xelis_common::{
     crypto::hash::Hash,
     block::{Block, CompleteBlock}, config::{BLOCK_TIME_MILLIS, VERSION},
 };
-use std::{sync::Arc, borrow::Cow};
+use std::{sync::Arc, borrow::Cow, collections::HashSet};
 use log::{info, debug};
 
 fn parse_params<P: DeserializeOwned>(value: Value) -> Result<P, RpcError> {
@@ -73,6 +73,18 @@ pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Stor
     };
 
     Ok(value)
+}
+
+pub async fn get_transaction_response_for_hash(storage: &Storage, hash: &Hash) -> Result<Value, RpcError> {
+    let tx = storage.get_transaction(hash).await?;
+    let blocks = if storage.has_tx_blocks(hash)? {
+        storage.get_blocks_for_tx(hash)?
+    } else {
+        HashSet::new()
+    };
+
+    let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(tx) };
+    Ok(json!(TransactionResponse { blocks, data }))
 }
 
 pub fn register_methods(server: &mut RpcServer) {
@@ -265,9 +277,7 @@ async fn submit_transaction(blockchain: Arc<Blockchain>, body: Value) -> Result<
 async fn get_transaction(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetTransactionParams = parse_params(body)?;
     let storage = blockchain.get_storage().read().await;
-    let tx = storage.get_transaction(&params.hash).await?;
-    let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&params.hash), data: Cow::Owned(tx) };
-    Ok(json!(data))
+    get_transaction_response_for_hash(&storage, &params.hash).await
 }
 
 async fn p2p_status(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
@@ -420,10 +430,10 @@ async fn get_transactions(blockchain: Arc<Blockchain>, body: Value) -> Result<Va
     }
 
     let storage = blockchain.get_storage().read().await;
-    let mut transactions: Vec<Option<DataHash<Arc<Transaction>>>> = Vec::with_capacity(hashes.len());
+    let mut transactions: Vec<Option<Value>> = Vec::with_capacity(hashes.len());
     for hash in hashes {
-        let tx = match storage.get_transaction(&hash).await {
-            Ok(tx) => Some(DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) }),
+        let tx = match get_transaction_response_for_hash(&storage, &hash).await {
+            Ok(data) => Some(data),
             Err(e) => {
                 debug!("Error while retrieving tx {} from storage: {}", hash, e);
                 None
