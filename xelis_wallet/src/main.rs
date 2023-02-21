@@ -1,17 +1,7 @@
-pub mod transaction_builder;
-pub mod storage;
-pub mod wallet;
-pub mod config;
-pub mod cipher;
-pub mod api;
-pub mod network_handler;
-pub mod entry;
-pub mod mnemonics;
-
 use std::{sync::Arc, time::Duration, path::Path};
 
 use anyhow::{Result, Context};
-use config::DIR_PATH;
+use xelis_wallet::config::DIR_PATH;
 use fern::colors::Color;
 use log::{error, info};
 use clap::Parser;
@@ -19,7 +9,7 @@ use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
     VERSION, XELIS_ASSET
 }, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::format_coin, serializer::Serializer};
-use wallet::Wallet;
+use xelis_wallet::wallet::Wallet;
 
 
 #[derive(Parser)]
