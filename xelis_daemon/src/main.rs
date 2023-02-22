@@ -226,8 +226,8 @@ async fn pop_blocks(manager: &CommandManager<Arc<Blockchain>>, mut arguments: Ar
     }
 
     info!("Trying to pop {} blocks from chain...", amount);
-    blockchain.rewind_chain(amount as usize).await.context("Error while rewinding chain")?;
-    info!("Success!");
+    let topoheight = blockchain.rewind_chain(amount as usize).await.context("Error while rewinding chain")?;
+    info!("Chain as been rewinded until topoheight {}", topoheight);
 
     Ok(())
 }

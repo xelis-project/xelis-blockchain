@@ -14,7 +14,7 @@ use std::{
 use tokio::sync::Mutex;
 use lru::LruCache;
 use sled::Tree;
-use log::{debug, trace};
+use log::{debug, trace, error};
 
 const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
@@ -341,6 +341,7 @@ impl Storage {
         }
 
         let (topo, mut version) = self.get_last_balance(key, asset).await?;
+        debug!("Last version balance {} for {} is at topoheight {}", asset, key, topo);
         // if it's the latest and its under the maximum topoheight
         if topo < topoheight {
             debug!("Last version balance (valid) found at {} (maximum topoheight = {})", topo, topoheight);
@@ -355,6 +356,12 @@ impl Storage {
                 return Ok(Some((topo, previous_version)))
             }
 
+            if let Some(value) = previous_version.get_previous_topoheight() {
+                if value > previous {
+                    error!("FATAL ERROR: Previous topoheight ({}) should not be higher than current version ({})!", value, previous);
+                    return Err(BlockchainError::Unknown)
+                }
+            }
             version = previous_version;
         }
 

@@ -1001,7 +1001,7 @@ impl Blockchain {
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
         if current_height == 0 || highest_topo > self.get_topo_height() {
-            debug!("Height changed: {}", current_height);
+            debug!("Blockchain height extended, current height is {}", current_height);
             storage.set_top_topoheight(highest_topo)?;
             self.topoheight.store(highest_topo, Ordering::Release);
         }
@@ -1118,23 +1118,28 @@ impl Blockchain {
         Ok(false)
     }
 
-    pub async fn rewind_chain(&self, count: usize) -> Result<(), BlockchainError> {
+    pub async fn rewind_chain(&self, count: usize) -> Result<u64, BlockchainError> {
         let mut storage = self.storage.write().await;
         self.rewind_chain_for_storage(&mut storage, count).await
     }
 
-    pub async fn rewind_chain_for_storage(&self, storage: &mut Storage, count: usize) -> Result<(), BlockchainError> {
+    pub async fn rewind_chain_for_storage(&self, storage: &mut Storage, count: usize) -> Result<u64, BlockchainError> {
         let current_height = self.get_height();
         let current_topoheight = self.get_topo_height();
         warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, current_height, current_topoheight);
         let (height, topoheight, txs, miners) = storage.pop_blocks(current_height, current_topoheight, count as u64).await?;
-
+        debug!("New topoheight: {} (diff: {})", topoheight, current_topoheight - topoheight);
         // rewind all txs
         {
             let mut keys = HashSet::new();
             // merge miners keys
             for key in &miners {
                 keys.insert(key);
+            }
+
+            // Add dev address in rewinding in case we receive dev fees
+            if DEV_FEE_PERCENT != 0 {
+                keys.insert(&DEV_PUBLIC_KEY);
             }
 
             let mut nonces = HashMap::new();
@@ -1152,10 +1157,14 @@ impl Blockchain {
                 // do it for every keys detected
                 for key in &keys {
                     for asset in &assets {
-                        let version = storage.delete_balance_at_topoheight(key, &asset, current_topoheight).await?;
-                        let previous = version.get_previous_topoheight();
-                        let assets = balances.entry(key).or_insert_with(|| HashMap::new());
-                        assets.insert(asset, previous);
+                        if storage.has_balance_at_exact_topoheight(key, asset, i).await? {
+                            debug!("Deleting balance {} at topoheight {} for {}", asset, i, key);
+                            let version = storage.delete_balance_at_topoheight(key, &asset, i).await?;
+                            let previous = version.get_previous_topoheight();
+                            debug!("Previous balance is {:?}", previous);
+                            let assets = balances.entry(key).or_insert_with(|| HashMap::new());
+                            assets.insert(asset, previous);
+                        }
                     }
                 }
             }
@@ -1165,9 +1174,11 @@ impl Blockchain {
                 for (asset, last) in previous {
                     match last {
                         Some(topo) => {
+                            debug!("Set last topoheight balance for {} {} to {}", key, asset, topo);
                             storage.set_last_topoheight_for_balance(key, asset, topo)?;
                         },
                         None => {
+                            debug!("delete last topoheight balance for {} {}", key, asset);
                             storage.delete_last_topoheight_for_balance(key, asset)?;
                         }
                     };
@@ -1189,7 +1200,7 @@ impl Blockchain {
         self.height.store(height, Ordering::Release);
         self.topoheight.store(topoheight, Ordering::Release);
 
-        Ok(())
+        Ok(topoheight)
     }
 
     // verify the transaction and returns fees available
@@ -1295,6 +1306,7 @@ impl Blockchain {
         // if dev fee are enabled, give % from block reward only
         if DEV_FEE_PERCENT != 0 {
             let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
+            debug!("adding {}% to dev address for dev fees", DEV_FEE_PERCENT);
             block_reward -= dev_fee;
             self.add_balance(storage, balances, &DEV_PUBLIC_KEY, &XELIS_ASSET, dev_fee, topoheight).await?;
         }

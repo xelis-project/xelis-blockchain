@@ -227,6 +227,7 @@ impl NetworkHandler {
                 self.is_paused.store(false, Ordering::SeqCst);
             }
 
+            debug!("current topoheight: {}, info topoheight: {}", info.topoheight, current_topoheight);
             if info.topoheight == current_topoheight {
                 continue;
             }
@@ -240,7 +241,7 @@ impl NetworkHandler {
             {
                 debug!("Saving current topoheight daemon: {}", current_topoheight);
                 let mut storage = self.wallet.get_storage().write().await;
-                storage.set_daemon_topoheight(current_topoheight)?;
+                storage.set_daemon_topoheight(info.topoheight)?;
                 storage.set_top_block_hash(&info.top_hash)?;
             }
             current_topoheight = info.topoheight;
