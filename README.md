@@ -40,9 +40,7 @@ Others objectives in mind are:
 
 ## Roadmap
 
-- Create a functional wallet (WIP)
 - Include extra fees when sending coins to a not-yet registered address
-- CLI Wallet
 - Support of Smart Contracts (xelis-vm)
 - Privacy (through Homomorphic Encryption)
 
