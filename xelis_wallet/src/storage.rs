@@ -140,8 +140,18 @@ impl EncryptedStorage {
         Ok(transactions)
     }
 
+    pub fn delete_transaction(&mut self, hash: &Hash) -> Result<()> {
+        self.transactions.remove(hash.as_bytes())?;
+        Ok(())
+    }
+
     pub fn delete_transactions(&mut self) -> Result<()> {
         self.transactions.clear()?;
+        Ok(())
+    }
+
+    pub fn delete_balances(&mut self) -> Result<()> {
+        self.balances.clear()?;
         Ok(())
     }
 

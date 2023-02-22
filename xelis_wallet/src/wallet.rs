@@ -340,10 +340,16 @@ impl Wallet {
                 }
                 storage.set_daemon_topoheight(topoheight)?;
                 storage.delete_top_block_hash()?;
+                // balances will be re-fetched from daemon
+                storage.delete_balances()?;
                 if topoheight == 0 {
                     storage.delete_transactions()?;
                 } else {
-                    // TODO check only those who have to be deleted
+                    for tx in storage.get_transactions()? {
+                        if tx.get_topoheight() > topoheight {
+                            storage.delete_transaction(tx.get_hash())?;
+                        }
+                    }
                 }
             }
             network_handler.start().await.context("Error while restarting network handler")?;
