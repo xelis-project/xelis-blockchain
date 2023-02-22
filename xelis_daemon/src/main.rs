@@ -57,6 +57,7 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result
     command_manager.add_command(Command::with_required_arguments("show_balance", "Show balance of an address", vec![Arg::new("address", ArgType::String), Arg::new("asset", ArgType::Hash)], Some(Arg::new("history", ArgType::Number)), CommandHandler::Async(async_handler!(show_balance))));
     command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], None, CommandHandler::Async(async_handler!(print_block))));
     command_manager.add_command(Command::new("top_block", "Print top block", None, CommandHandler::Async(async_handler!(top_block))));
+    command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(pop_blocks))));
 
     let p2p: Option<Arc<P2pServer>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
@@ -212,6 +213,21 @@ async fn top_block(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManager
     let hash = blockchain.get_top_block_hash().await.context("Error on top block hash")?;
     let response = get_block_response_for_hash(blockchain, &storage, hash, false).await.context("Error while building block response")?;
     manager.message(format!("{}", serde_json::to_string_pretty(&response).context("Error while serializing")?));
+
+    Ok(())
+}
+
+
+async fn pop_blocks(manager: &CommandManager<Arc<Blockchain>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let amount = arguments.get_value("amount")?.to_number()?;
+    let blockchain = manager.get_data()?;
+    if amount == 0 || amount >= blockchain.get_height() {
+        return Err(anyhow::anyhow!("Invalid amount of blocks to pop").into());
+    }
+
+    info!("Trying to pop {} blocks from chain...", amount);
+    blockchain.rewind_chain(amount as usize).await.context("Error while rewinding chain")?;
+    info!("Success!");
 
     Ok(())
 }
