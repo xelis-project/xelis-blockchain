@@ -428,19 +428,22 @@ impl Blockchain {
 
     async fn calculate_distance_from_mainchain(&self, storage: &Storage, hash: &Hash) -> Result<u64, BlockchainError> {
         if storage.is_block_topological_ordered(hash).await {
-            return Ok(storage.get_topo_height_for_hash(hash).await?)
+            let topoheight = storage.get_topo_height_for_hash(hash).await?;
+            debug!("calculate_distance: Block {} is ordered at topoheight {}", hash, topoheight);
+            return Ok(topoheight)
         }
-
+        debug!("calculate_distance: Block {} is not ordered, calculate distance from mainchain", hash);
         let mut set = HashSet::new(); // replace by a Vec and sort + remove first ?
         self.calculate_distance_from_mainchain_recursive(storage, &mut set, hash).await?;
 
         let mut lowest_height = u64::max_value();
-        for height in set {
-            if lowest_height > height {
-                lowest_height = height;
+        for height in &set {
+            if lowest_height > *height {
+                lowest_height = *height;
             }
         }
 
+        debug!("calculate_distance: lowest height found is {} on {} elements", lowest_height, set.len());
         Ok(lowest_height)
     }
 
@@ -783,7 +786,7 @@ impl Blockchain {
             }
 
             let distance = self.calculate_distance_from_mainchain(storage, hash).await?;
-            if distance > current_height || current_height - distance >= STABLE_HEIGHT_LIMIT {
+            if distance <= current_height && current_height - distance >= STABLE_HEIGHT_LIMIT {
                 error!("{} have deviated too much, maximum allowed is {} (current height: {}, distance: {})", block, STABLE_HEIGHT_LIMIT, current_height, distance);
                 return Err(BlockchainError::BlockDeviation)
             }
