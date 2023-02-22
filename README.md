@@ -91,21 +91,23 @@ Every data transfered is done through the Packet system which allow easily to re
 
 All theses data are saved in plaintext.
 
-|          Tree         |  Key Type  |    Value Type    |                          Comment                          |
-|:---------------------:|:----------:|:----------------:|:---------------------------------------------------------:|
-|      transactions     |    Hash    |    Transaction   |        Save the whole transaction based on its hash       |
-|         blocks        |    Hash    |   Block Header   |        Save the block header only based on its hash       |
-|        rewards        |    Hash    |      Integer     |                   Save the block reward                   |
-|         assets        |    Hash    |     No Value     | Used to verify if an assets is well registered and usable |
-|         nonces        | Public Key |      Integer     |        Nonce used to prevent replay attacks on TXs        |
-|         supply        |    Hash    |      Integer     |   Calculated supply (past + block reward) at each block   |
-|       difficulty      |    Hash    |      Integer     |                 Difficulty for each block                 |
-|      topo_by_hash     |    Hash    |      Integer     |        Save a block hash at a specific topo height        |
-|      hash_by_topo     |   Integer  |       Hash       |        Save a topo height for a specific block hash       |
-|    blocks_at_height   |   Integer  |   Array of Hash  |         Save all blocks hash at a specific height         |
-|         extra         |    Bytes   | No specific type |   Actually used to save the highest topo height and TIPS  |
-| cumulative_difficulty |    Hash    |      Integer     |     Save the cumulative difficulty for each block hash    |
-
+|          Tree         |  Key Type  |     Value Type    |                          Comment                          |
+|:---------------------:|:----------:|:-----------------:|:---------------------------------------------------------:|
+|      transactions     |    Hash    |    Transaction    |        Save the whole transaction based on its hash       |
+|         blocks        |    Hash    |    Block Header   |        Save the block header only based on its hash       |
+|    blocks_at_height   |   Integer  |   Array of Hash   |         Save all blocks hash at a specific height         |
+|         extra         |    Bytes   |  No specific type |   Actually used to save the highest topo height and TIPS  |
+|      topo_by_hash     |    Hash    |      Integer      |        Save a block hash at a specific topo height        |
+|      hash_by_topo     |   Integer  |        Hash       |        Save a topo height for a specific block hash       |
+| cumulative_difficulty |    Hash    |      Integer      |     Save the cumulative difficulty for each block hash    |
+|         assets        |    Hash    |      No Value     | Used to verify if an assets is well registered and usable |
+|         nonces        | Public Key |      Integer      |        Nonce used to prevent replay attacks on TXs        |
+|        rewards        |    Hash    |      Integer      |                   Save the block reward                   |
+|         supply        |    Hash    |      Integer      |   Calculated supply (past + block reward) at each block   |
+|       difficulty      |    Hash    |      Integer      |                 Difficulty for each block                 |
+|       tx_blocks       |    Hash    |   Array of Hash   |        All blocks in which this TX hash is included       |
+|      assets_hash      | Public Key |      Integer      |    Asset hash with last topoheight of versioned balance   |
+|    assets_balances    | Public Key | Versioned Balance |          Tree name is hash of asset + topoheight          |
 
 ## Wallet
 
