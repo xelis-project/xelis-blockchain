@@ -198,10 +198,7 @@ impl NetworkHandler {
     async fn start_syncing(self: Arc<Self>) -> Result<(), Error> {
         let address = self.wallet.get_address();
         let mut current_topoheight = {
-            // get nonce from chain in case local nonce is not right (chain rewind, TX stuck, TX lost...)
-            let nonce = self.api.get_nonce(&address).await.unwrap_or(0);
-            let mut storage = self.wallet.get_storage().write().await;
-            storage.set_nonce(nonce)?;
+            let storage = self.wallet.get_storage().read().await;
             storage.get_daemon_topoheight().unwrap_or(0)
         };
         let mut interval = interval(Duration::from_secs(5));
@@ -221,6 +218,13 @@ impl NetworkHandler {
                 }
             };
 
+            {
+                let network = self.wallet.get_network();
+                if info.network != *network {
+                    error!("Network mismatch! Our network is {} while daemon is {}", network, info.network);
+                    return Ok(())
+                }
+            }
             // we are in paused mode, but we can connect again to daemon
             if self.is_paused() {
                 info!("Daemon is reachable again, syncing...");

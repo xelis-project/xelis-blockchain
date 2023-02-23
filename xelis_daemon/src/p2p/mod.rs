@@ -150,6 +150,11 @@ impl P2pServer {
     // based on data size, network ID, peers address validity
     // block height and block top hash of this peer (to know if we are on the same chain)
     async fn verify_handshake(&self, mut connection: Connection, handshake: Handshake, out: bool, priority: bool) -> Result<(Peer, Vec<SocketAddr>), P2pError> {
+        if handshake.get_network() != self.blockchain.get_network() {
+            trace!("{} has an invalid network: {}", connection, handshake.get_network());
+            return Err(P2pError::InvalidNetwork)
+        }
+
         if *handshake.get_network_id() != NETWORK_ID {
             trace!("{} has an invalid network id: {:#?}", connection, handshake.get_network_id());
             connection.close().await?;
@@ -210,7 +215,7 @@ impl P2pServer {
         let storage = self.blockchain.get_storage().read().await;
         let top_hash = storage.get_top_block_hash().await.unwrap_or_else(|_| Hash::zero());
         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&top_hash).await.unwrap_or_else(|_| 0);
-        Ok(Handshake::new(VERSION.to_owned(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, height, top_hash, cumulative_difficulty, peers))
+        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, height, top_hash, cumulative_difficulty, peers))
     }
 
     // this function handle all new connections

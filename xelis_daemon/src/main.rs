@@ -9,7 +9,7 @@ use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
     prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}},
-    config::{VERSION, BLOCK_TIME}, globals::format_hashrate, async_handler, crypto::address::Address
+    config::{VERSION, BLOCK_TIME}, globals::{format_hashrate, set_network_to}, async_handler, crypto::address::Address, network::Network
 };
 use crate::core::blockchain::{Config, Blockchain};
 use std::sync::Arc;
@@ -30,18 +30,22 @@ pub struct NodeConfig {
     disable_file_logging: bool,
     /// Log filename
     #[clap(short = 'n', long, default_value_t = String::from("xelis.log"))]
-    filename_log: String
+    filename_log: String,
+    /// Network selected for chain
+    #[clap(long, arg_enum, default_value_t = Network::Mainnet)]
+    network: Network
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: NodeConfig = NodeConfig::parse();
+    set_network_to(config.network);
+
     let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging)?;
     info!("Xelis Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
-    let blockchain = Blockchain::new(config.nested).await?;
-
-    if let Err(e) = run_prompt(&prompt, blockchain.clone()).await {
+    let blockchain = Blockchain::new(config.nested, config.network).await?;
+    if let Err(e) = run_prompt(&prompt, blockchain.clone(), config.network).await {
         error!("Error while running prompt: {}", e);
     }
 
@@ -49,7 +53,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result<(), PromptError> {
+async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>, network: Network) -> Result<(), PromptError> {
     let mut command_manager: CommandManager<Arc<Blockchain>> = CommandManager::default();
     command_manager.set_data(Some(blockchain.clone()));
     command_manager.add_command(Command::new("list_peers", "List all peers connected", None, CommandHandler::Async(async_handler!(list_peers))));
@@ -67,7 +71,7 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result
         Some(rpc) => rpc.getwork_server().clone(),
         None => None
     };
- 
+
     let closure = || async {
         let height = blockchain.get_height();
         let (peers, best) = match &p2p {
@@ -86,13 +90,13 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>) -> Result
         };
 
         let network_hashrate = (blockchain.get_difficulty() / BLOCK_TIME) as f64;
-        build_prompt_message(blockchain.get_topo_height(), best, network_hashrate, peers, miners, mempool)
+        build_prompt_message(blockchain.get_topo_height(), best, network_hashrate, peers, miners, mempool, network)
     };
 
     prompt.start(Duration::from_millis(100), &closure, command_manager).await
 }
 
-fn build_prompt_message(topoheight: u64, best_topoheight: u64, network_hashrate: f64, peers_count: usize, miners_count: usize, mempool: usize) -> String {
+fn build_prompt_message(topoheight: u64, best_topoheight: u64, network_hashrate: f64, peers_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
     let topoheight_str = format!(
         "{}: {}/{}",
         Prompt::colorize_str(Color::Yellow, "TopoHeight"),
@@ -119,14 +123,24 @@ fn build_prompt_message(topoheight: u64, best_topoheight: u64, network_hashrate:
         Prompt::colorize_str(Color::Yellow, "Miners"),
         Prompt::colorize_string(Color::Green, &format!("{}", miners_count))
     );
+
+
+    let network_str = if !network.is_mainnet() {
+        format!(
+            "{} ",
+            Prompt::colorize_string(Color::Red, &network.to_string())
+        )
+    } else { "".into() };
+
     format!(
-        "{} | {} | {} | {} | {} | {} {} ",
+        "{} | {} | {} | {} | {} | {} {}{} ",
         Prompt::colorize_str(Color::Blue, "XELIS"),
         topoheight_str,
         network_hashrate_str,
         mempool_str,
         peers_str,
         miners_str,
+        network_str,
         Prompt::colorize_str(Color::BrightBlack, ">>")
     )
 }

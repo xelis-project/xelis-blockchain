@@ -4,7 +4,7 @@ use xelis_common::{
     crypto::{key::PublicKey, hash::{Hash, hash}},
     immutable::Immutable,
     transaction::Transaction,
-    block::{Block, CompleteBlock}, account::VersionedBalance,
+    block::{Block, CompleteBlock}, account::VersionedBalance, network::Network,
 };
 use std::{
     collections::HashSet,
@@ -19,6 +19,7 @@ use log::{debug, trace, error};
 const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
 const TOP_HEIGHT: &[u8; 4] = b"TOPH";
+const NETWORK: &[u8] = b"NET";
 
 pub type Tips = HashSet<Hash>;
 
@@ -61,7 +62,7 @@ macro_rules! init_cache {
 }
 
 impl Storage {
-    pub fn new(dir_path: String, cache_size: Option<usize>) -> Result<Self, BlockchainError> {
+    pub fn new(dir_path: String, cache_size: Option<usize>, network: Network) -> Result<Self, BlockchainError> {
         let sled = sled::open(dir_path)?;
         let mut storage = Self {
             transactions: sled.open_tree("transactions")?,
@@ -89,6 +90,15 @@ impl Storage {
             balances_trees_cache: init_cache!(cache_size),
             tips_cache: HashSet::new()
         };
+
+        if storage.has_network()? {
+            let storage_network = storage.get_network()?;
+            if storage_network != network {
+                return Err(BlockchainError::InvalidNetwork);
+            }
+        } else {
+            storage.set_network(&network)?;
+        }
 
         if let Ok(tips) = storage.load_from_disk::<Tips>(&storage.extra, TIPS) {
             debug!("Found tips: {}", tips.len());
@@ -187,6 +197,19 @@ impl Storage {
         }
 
         Ok(tree.contains_key(&key.to_bytes())?)
+    }
+
+    fn get_network(&self) -> Result<Network, BlockchainError> {
+        self.load_from_disk(&self.extra, NETWORK)
+    }
+
+    fn set_network(&mut self, network: &Network) -> Result<(), BlockchainError> {
+        self.extra.insert(NETWORK, network.to_bytes())?;
+        Ok(())
+    }
+
+    fn has_network(&self) -> Result<bool, BlockchainError> {
+        Ok(self.extra.contains_key(NETWORK)?)
     }
 
     pub async fn asset_exist(&self, asset: &Hash) -> Result<bool, BlockchainError> {

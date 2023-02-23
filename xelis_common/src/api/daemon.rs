@@ -3,7 +3,7 @@ use std::{borrow::Cow, collections::HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance};
+use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance, network::Network};
 
 #[derive(Serialize, Deserialize)]
 pub struct DataHash<'a, T: Clone> {
@@ -118,7 +118,8 @@ pub struct GetInfoResult {
     pub block_time_target: u64,
     // count how many transactions are present in mempool
     pub mempool_size: usize,
-    pub version: String
+    pub version: String,
+    pub network: Network
 }
 
 #[derive(Serialize, Deserialize)]

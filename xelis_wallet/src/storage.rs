@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use sled::{Tree, Db};
 use xelis_common::{
     crypto::{hash::Hash, key::KeyPair},
-    serializer::{Reader, Serializer},
+    serializer::{Reader, Serializer}, network::Network,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use crate::{config::SALT_SIZE, cipher::Cipher, wallet::WalletError, entry::TransactionEntry};
 
 // keys used to retrieve from storage
@@ -22,6 +22,7 @@ const KEY_PAIR: &[u8] = b"KPAIR";
 const TOPOHEIGHT_KEY: &[u8] = b"TOPH";
 // represent the daemon top block hash
 const TOP_BLOCK_HASH_KEY: &[u8] = b"TOPBH";
+const NETWORK: &[u8] = b"NET";
 
 // Use this struct to get access to non-encrypted keys (such as salt for KDF and encrypted master key)
 pub struct Storage {
@@ -39,7 +40,7 @@ pub struct EncryptedStorage {
 }
 
 impl EncryptedStorage {
-    pub fn new(inner: Storage, key: &[u8], salt: [u8; SALT_SIZE]) -> Result<Self> {
+    pub fn new(inner: Storage, key: &[u8], salt: [u8; SALT_SIZE], network: Network) -> Result<Self> {
         let cipher = Cipher::new(key, Some(salt))?;
         let storage = Self {
             transactions: inner.db.open_tree(&cipher.hash_key("transactions"))?,
@@ -49,6 +50,16 @@ impl EncryptedStorage {
             cipher,
             inner
         };
+
+        if storage.has_network()? {
+            let storage_network = storage.get_network()?;
+            if storage_network != network {
+                return Err(anyhow!("Network mismatch for this wallet storage (stored: {})!", storage_network));
+            }
+        } else {
+            storage.set_network(&network)?;
+        }
+
         Ok(storage)
     }
 
@@ -205,6 +216,17 @@ impl EncryptedStorage {
 
     pub fn get_mutable_public_storage(&mut self) -> &mut Storage {
         &mut self.inner
+    }
+
+    fn get_network(&self) -> Result<Network> {
+        self.load_from_disk(&self.extra, NETWORK)
+    }
+
+    fn set_network(&self, network: &Network) -> Result<()> {
+        self.save_to_disk(&self.extra, NETWORK, &network.to_bytes())
+    }
+    fn has_network(&self) -> Result<bool> {
+        self.contains_data(&self.extra, NETWORK)
     }
 }
 

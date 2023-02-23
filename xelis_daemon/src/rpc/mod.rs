@@ -317,6 +317,11 @@ async fn getwork_endpoint(server: SharedRpcServer, request: HttpRequest, stream:
             if !address.is_normal() {
                 return Ok(HttpResponse::BadRequest().reason("Address should be in normal format").finish())
             }
+
+            if address.is_mainnet() != server.get_blockchain().get_network().is_mainnet() {
+                return Ok(HttpResponse::BadRequest().reason("Address is not in same network state").finish())
+            }
+
             let key = address.to_public_key();
             let (addr, response) = WsResponseBuilder::new(GetWorkWebSocketHandler::new(getwork.clone()), &request, stream).start_with_addr()?;
             trace!("New miner connected to GetWork WebSocket: {:?}", addr);

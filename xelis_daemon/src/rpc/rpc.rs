@@ -1,4 +1,4 @@
-use crate::{storage::Storage, core::blockchain::Blockchain};
+use crate::{storage::Storage, core::{blockchain::Blockchain, error::BlockchainError}};
 use super::{RpcError, RpcServer};
 use anyhow::Context;
 use serde::de::DeserializeOwned;
@@ -120,7 +120,6 @@ async fn version(_: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     if body != Value::Null {
         return Err(RpcError::UnexpectedParams)
     }
-
     Ok(json!(VERSION))
 }
 
@@ -171,6 +170,11 @@ async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<
     if !params.address.is_normal() {
         return Err(RpcError::ExpectedNormalAddress)
     }
+
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(BlockchainError::InvalidNetwork.into())
+    }
+
     let storage = blockchain.get_storage().read().await;
     let block = blockchain.get_block_template_for_storage(&storage, params.address.into_owned().to_public_key()).await?;
     let difficulty = blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await?;
@@ -188,6 +192,10 @@ async fn submit_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value,
 
 async fn get_last_balance(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetBalanceParams = parse_params(body)?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(BlockchainError::InvalidNetwork.into())
+    }
+
     let storage = blockchain.get_storage().read().await;
     let (topoheight, balance) = storage.get_last_balance(params.address.get_public_key(), &params.asset).await?;
     Ok(json!(GetLastBalanceResult {
@@ -214,6 +222,7 @@ async fn get_info(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, Rpc
     let block_time_target = BLOCK_TIME_MILLIS;
     let mempool_size = blockchain.get_mempool_size().await;
     let version = VERSION.into();
+    let network = *blockchain.get_network();
 
     Ok(json!(GetInfoResult {
         height,
@@ -225,6 +234,7 @@ async fn get_info(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, Rpc
         block_time_target,
         mempool_size,
         version,
+        network
     }))
 }
 
@@ -235,6 +245,10 @@ async fn get_balance_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> 
         return Err(RpcError::UnexpectedParams).context("Topoheight cannot be greater than current chain topoheight")?
     }
 
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(BlockchainError::InvalidNetwork.into())
+    }
+
     let storage = blockchain.get_storage().read().await;
     let balance = storage.get_balance_at_exact_topoheight(params.address.get_public_key(), &params.asset, params.topoheight).await?;
     Ok(json!(balance))
@@ -242,6 +256,10 @@ async fn get_balance_at_topoheight(blockchain: Arc<Blockchain>, body: Value) -> 
 
 async fn get_nonce(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: GetNonceParams = parse_params(body)?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(BlockchainError::InvalidNetwork.into())
+    }
+
     let storage = blockchain.get_storage().read().await;
     let nonce = storage.get_nonce(params.address.get_public_key()).await?;
     Ok(json!(nonce))

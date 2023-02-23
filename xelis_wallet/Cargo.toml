@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-xelis_common = { path = "../xelis_common", features = ["json_rpc", "prompt"] }
+xelis_common = { path = "../xelis_common", features = ["json_rpc", "prompt", "clap"] }
 chacha20poly1305 = "0.10.1"
 sled = "0.34.7"
 clap = { version = "3.1.18", features = ["derive"] }

@@ -1,5 +1,7 @@
+use crate::network::Network;
 use crate::serializer::{Reader, ReaderError};
 use crate::config::{COIN_VALUE, FEE_PER_KB};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -92,4 +94,19 @@ pub fn format_hashrate(mut hashrate: f64) -> String {
     }
 
     return format!("{:.2} {}", hashrate, HASHRATE_FORMATS[count]);
+}
+
+// by default it start in mainnet mode
+static NETWORK: Mutex<Network> = Mutex::new(Network::Mainnet);
+pub fn get_network() -> Network {
+    let network = NETWORK.lock().unwrap();
+    *network
+}
+
+// it should never be called later, only at launch!!
+pub fn set_network_to(network: Network) {
+    // its already mainnet by default
+    if network != Network::Mainnet {
+        *NETWORK.lock().unwrap() = network;
+    }
 }

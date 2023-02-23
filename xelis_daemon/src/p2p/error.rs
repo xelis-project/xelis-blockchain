@@ -23,6 +23,8 @@ pub enum P2pError {
     ExpectedHandshake,
     #[error("Invalid peer address, {}", _0)]
     InvalidPeerAddress(String), // peer address from handshake
+    #[error("Invalid network")]
+    InvalidNetwork,
     #[error("Invalid network ID")]
     InvalidNetworkID,
     #[error("Peer id {} is already used!", _0)]

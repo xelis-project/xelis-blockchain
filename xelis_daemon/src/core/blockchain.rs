@@ -1,13 +1,13 @@
 use anyhow::Error;
 use xelis_common::{
-    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_DIR_PATH, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME},
+    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME},
     crypto::{key::PublicKey, hash::{Hashable, Hash}},
     difficulty::{check_difficulty, calculate_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     globals::get_current_timestamp,
     block::{CompleteBlock, Block},
     immutable::Immutable,
-    serializer::Serializer, account::VersionedBalance, api::daemon::{NotifyEvent, DataHash}
+    serializer::Serializer, account::VersionedBalance, api::daemon::{NotifyEvent, DataHash}, network::Network
 };
 use crate::{p2p::P2pServer, rpc::rpc::get_block_response_for_hash};
 use crate::rpc::RpcServer;
@@ -43,8 +43,8 @@ pub struct Config {
     #[clap(short = 'o', long)]
     priority_nodes: Vec<String>,
     /// Set dir path for blockchain storage
-    #[clap(short = 's', long, default_value_t = String::from(DEFAULT_DIR_PATH))]
-    dir_path: String,
+    #[clap(short = 's', long)]
+    dir_path: Option<String>,
     /// Set LRUCache size (0 = disabled)
     #[clap(short, long, default_value_t = DEFAULT_CACHE_SIZE)]
     cache_size: usize,
@@ -65,18 +65,30 @@ pub struct Blockchain {
     rpc: Mutex<Option<Arc<RpcServer>>>, // Rpc module
     difficulty: AtomicU64, // current difficulty
     // used to skip PoW verification
-    simulator: bool
+    simulator: bool,
+    network: Network
 }
 
 impl Blockchain {
-    pub async fn new(config: Config) -> Result<Arc<Self>, Error> {
+    pub async fn new(config: Config, network: Network) -> Result<Arc<Self>, Error> {
+        if config.simulator && network != Network::Dev {
+            error!("Impossible to enable simulator mode except in dev network!");
+            return Err(BlockchainError::InvalidNetwork.into())
+        }
+
         let use_cache = if config.cache_size > 0 {
             Some(config.cache_size)
         } else {
             None
         };
 
-        let storage = Storage::new(config.dir_path, use_cache)?;
+        let dir_path = if let Some(path) = config.dir_path {
+            path
+        } else {
+            network.to_string().to_lowercase()
+        };
+
+        let storage = Storage::new(dir_path, use_cache, network)?;
         let on_disk = storage.has_blocks();
         let (height, topoheight) = if on_disk {
             info!("Reading last metadata available...");
@@ -95,7 +107,8 @@ impl Blockchain {
             p2p: Mutex::new(None),
             rpc: Mutex::new(None),
             difficulty: AtomicU64::new(GENESIS_BLOCK_DIFFICULTY),
-            simulator: config.simulator
+            simulator: config.simulator,
+            network
         };
 
         // include genesis block
@@ -260,6 +273,10 @@ impl Blockchain {
         } else {
             0
         }
+    }
+
+    pub fn get_network(&self) -> &Network {
+        &self.network
     }
 
     pub async fn get_mempool_size(&self) -> usize {
@@ -967,7 +984,6 @@ impl Blockchain {
             }
 
         }
-
 
         let best_height = storage.get_height_for_block(best_tip).await?;
         let mut new_tips = Vec::new();

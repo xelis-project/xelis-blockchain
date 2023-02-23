@@ -9,6 +9,7 @@ pub mod globals;
 pub mod config;
 pub mod immutable;
 pub mod difficulty;
+pub mod network;
 
 #[cfg(feature = "json_rpc")]
 pub mod json_rpc;

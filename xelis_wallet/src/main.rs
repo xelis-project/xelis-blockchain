@@ -8,7 +8,7 @@ use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
     VERSION, XELIS_ASSET
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::format_coin, serializer::Serializer};
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::{format_coin, set_network_to}, serializer::Serializer, network::Network};
 use xelis_wallet::wallet::Wallet;
 
 
@@ -38,21 +38,26 @@ pub struct Config {
     password: String,
     /// Restore wallet using seed
     #[clap(short, long)]
-    seed: Option<String>
+    seed: Option<String>,
+    /// Network selected for chain
+    #[clap(long, arg_enum, default_value_t = Network::Mainnet)]
+    network: Network
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
+    set_network_to(config.network);
+
     let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging)?;
     let dir = format!("{}{}", DIR_PATH, config.name);
 
     let wallet = if Path::new(&dir).is_dir() {
         info!("Opening wallet {}", dir);
-        Wallet::open(dir, config.password)?
+        Wallet::open(dir, config.password, config.network)?
     } else {
         info!("Creating a new wallet at {}", dir);
-        Wallet::create(dir, config.password, config.seed)?
+        Wallet::create(dir, config.password, config.seed, config.network)?
     };
 
     if !config.offline_mode {
@@ -65,14 +70,14 @@ async fn main() -> Result<()> {
         }
     }
 
-    if let Err(e) = run_prompt(prompt, wallet).await {
+    if let Err(e) = run_prompt(prompt, wallet, config.network).await {
         error!("Error while running prompt: {}", e);
     }
 
     Ok(())
 }
 
-async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>) -> Result<()> {
+async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>, network: Network) -> Result<()> {
     let mut command_manager: CommandManager<Arc<Wallet>> = CommandManager::default();
     command_manager.add_command(Command::with_required_arguments("set_password", "Set a new password to open your wallet", vec![Arg::new("old_password", ArgType::String), Arg::new("password", ArgType::String)], None, CommandHandler::Async(async_handler!(set_password))));
     command_manager.add_command(Command::with_required_arguments("transfer", "Send asset to a specified address", vec![Arg::new("address", ArgType::String), Arg::new("amount", ArgType::Number)], Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(transfer))));
@@ -107,14 +112,21 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>) -> Result<()> {
         } else {
             Prompt::colorize_str(Color::Red, "Offline")
         };
+        let network_str = if !network.is_mainnet() {
+            format!(
+                "{} ",
+                Prompt::colorize_string(Color::Red, &network.to_string())
+            )
+        } else { "".into() };
 
         format!(
-            "{} | {} | {} | {} | {} {} ",
+            "{} | {} | {} | {} | {} {}{} ",
             Prompt::colorize_str(Color::Blue, "XELIS Wallet"),
             addr_str,
             height_str,
             balance,
             status,
+            network_str,
             Prompt::colorize_str(Color::BrightBlack, ">>")
         )
     };

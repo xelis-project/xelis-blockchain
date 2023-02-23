@@ -22,7 +22,9 @@ chrono = "0.4.19"
 tokio = { version = "1.25", features = ["macros", "signal", "time", "sync"], optional = true }
 reqwest = { version = "0.11.10", features = ["json"], optional = true }
 lazy_static = "1.4.0"
+clap = { version = "3.1.18", features = ["derive"], optional = true }
 
 [features]
 json_rpc = ["dep:reqwest"]
 prompt = ["dep:tokio"]
+clap = ["dep:clap"]

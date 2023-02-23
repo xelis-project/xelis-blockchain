@@ -1,13 +1,13 @@
 use lazy_static::lazy_static;
 
-use crate::crypto::{hash::Hash, key::PublicKey, address::Address};
+use crate::{crypto::{hash::Hash, key::PublicKey, address::Address}};
+pub const NETWORK_ID_SIZE: usize = 16;
 
 pub const VERSION: &str = "alpha-0.0.1";
-pub const NETWORK_ID: [u8; 16] = [0xA, 0xB, 0xC, 0xD, 0xE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF];
+pub const NETWORK_ID: [u8; NETWORK_ID_SIZE] = [0x73, 0x6c, 0x69, 0x78, 0x65, 0x5f, 0x78, 0x65, 0x6c, 0x69, 0x73, 0x5f, 0x62, 0x6c, 0x6f, 0x63];
 pub const SEED_NODES: [&str; 1] = ["127.0.0.1:2125"]; // ["127.0.0.1:2125", "127.0.0.1:2126", "127.0.0.1:2127", "127.0.0.1:2128"];
 pub const DEFAULT_P2P_BIND_ADDRESS: &str = "0.0.0.0:2125";
 pub const DEFAULT_RPC_BIND_ADDRESS: &str = "0.0.0.0:8080";
-pub const DEFAULT_DIR_PATH: &str = "mainnet";
 pub const DEFAULT_CACHE_SIZE: usize = 1024;
 pub const XELIS_ASSET: Hash = Hash::zero();
 pub const SIDE_BLOCK_REWARD_PERCENT: u64 = 30; // only 30% of reward for side block

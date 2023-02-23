@@ -8,6 +8,7 @@ use xelis_common::config::XELIS_ASSET;
 use xelis_common::crypto::address::Address;
 use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey};
+use xelis_common::network::Network;
 use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
 use crate::cipher::Cipher;
@@ -72,6 +73,7 @@ pub struct Wallet {
     keypair: KeyPair,
     // network handler for online mode to keep wallet synced
     network_handler: Mutex<Option<SharedNetworkHandler>>,
+    network: Network
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -81,17 +83,18 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 }
 
 impl Wallet {
-    fn new(storage: EncryptedStorage, keypair: KeyPair) -> Arc<Self> {
+    fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network) -> Arc<Self> {
         let zelf = Self {
             storage: RwLock::new(storage),
             keypair,
-            network_handler: Mutex::new(None)
+            network_handler: Mutex::new(None),
+            network
         };
 
         Arc::new(zelf)
     }
 
-    pub fn create(name: String, password: String, seed: Option<String>) -> Result<Arc<Self>, Error> {
+    pub fn create(name: String, password: String, seed: Option<String>, network: Network) -> Result<Arc<Self>, Error> {
         // generate random salt for hashed password
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
         OsRng.fill_bytes(&mut salt);
@@ -124,7 +127,7 @@ impl Wallet {
         inner.set_encrypted_storage_salt(&encrypted_storage_salt)?;
 
         debug!("Creating encrypted storage");
-        let mut storage = EncryptedStorage::new(inner, &master_key, storage_salt)?;
+        let mut storage = EncryptedStorage::new(inner, &master_key, storage_salt, network)?;
 
         // generate random keypair and save it to encrypted storage
         let keypair = if let Some(seed) = seed {
@@ -139,10 +142,10 @@ impl Wallet {
 
         storage.set_keypair(&keypair)?;
 
-        Ok(Self::new(storage, keypair))
+        Ok(Self::new(storage, keypair, network))
     }
 
-    pub fn open(name: String, password: String) -> Result<Arc<Self>, Error> {
+    pub fn open(name: String, password: String, network: Network) -> Result<Arc<Self>, Error> {
         debug!("Creating storage for {}", name);
         let storage = Storage::new(name)?;
         
@@ -172,11 +175,11 @@ impl Wallet {
         salt.copy_from_slice(&storage_salt);
 
         debug!("Creating encrypted storage");
-        let storage = EncryptedStorage::new(storage, &master_key, salt)?;
+        let storage = EncryptedStorage::new(storage, &master_key, salt, network)?;
         debug!("Retrieving keypair from encrypted storage");
         let keypair =  storage.get_keypair()?;
 
-        Ok(Self::new(storage, keypair))
+        Ok(Self::new(storage, keypair, network))
     }
 
     pub async fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {
@@ -386,7 +389,12 @@ impl Wallet {
         let words = mnemonics::key_to_words(self.keypair.get_private_key(), language_index)?;
         Ok(words.join(" "))
     }
+
     pub fn get_storage(&self) -> &RwLock<EncryptedStorage> {
         &self.storage
+    }
+
+    pub fn get_network(&self) -> &Network {
+        &self.network
     }
 }

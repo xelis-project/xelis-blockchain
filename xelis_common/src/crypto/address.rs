@@ -57,6 +57,10 @@ impl<'a> Address<'a> {
         }
     }
 
+    pub fn is_mainnet(&self) -> bool {
+        self.mainnet
+    }
+
     pub fn as_string(&self) -> Result<String, Bech32Error> {
         let bits = convert_bits(&self.to_bytes(), 8, 5, true)?;
         let result = encode(PREFIX_ADDRESS.to_owned(), &bits)?;
