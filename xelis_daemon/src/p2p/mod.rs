@@ -639,7 +639,7 @@ impl P2pServer {
                         let mempool = self.blockchain.get_mempool().read().await;
                         match mempool.view_tx(hash) {
                             Ok(tx) => {
-                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(&tx)))).await?;
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(tx)))).await?;
                             },
                             Err(e) => {
                                 debug!("Peer {} asked tx '{}' but got on error while retrieving it: {}", peer.get_connection().get_address(), hash, e);

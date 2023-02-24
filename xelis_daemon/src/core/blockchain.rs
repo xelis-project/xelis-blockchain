@@ -706,8 +706,7 @@ impl Blockchain {
         let mempool = self.mempool.read().await;
         let txs = mempool.get_sorted_txs();
         let mut tx_size = 0;
-        // TODO reference of public key (no clone!)
-        let mut nonces: HashMap<PublicKey, u64> = HashMap::new();
+        let mut nonces: HashMap<&PublicKey, u64> = HashMap::new();
         for tx in txs {
             if block.size() + tx_size + tx.get_size() > MAX_BLOCK_SIZE {
                 break;
@@ -718,7 +717,7 @@ impl Blockchain {
                 *nonce
             } else {
                 let nonce = storage.get_nonce(transaction.get_owner()).await?;
-                nonces.insert(transaction.get_owner().clone(), nonce);
+                nonces.insert(transaction.get_owner(), nonce);
                 nonce
             };
 
@@ -737,8 +736,8 @@ impl Blockchain {
     pub async fn build_complete_block_from_block(&self, block: Block) -> Result<CompleteBlock, BlockchainError> {
         let mut transactions: Vec<Immutable<Transaction>> = Vec::with_capacity(block.get_txs_count());
         let mempool = self.mempool.read().await;
-        for hash in &block.txs_hashes {
-            let tx = mempool.view_tx(hash)?; // at this point, we don't want to lose/remove any tx, we clone it only
+        for hash in block.get_txs_hashes() {
+            let tx = mempool.get_tx(hash)?; // at this point, we don't want to lose/remove any tx, we clone it only
             transactions.push(Immutable::Arc(tx));
         }
         let complete_block = CompleteBlock::new(Immutable::Owned(block), transactions);

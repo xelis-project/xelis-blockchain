@@ -335,7 +335,7 @@ async fn get_mempool(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, 
     let mut transactions: Vec<DataHash<Arc<Transaction>>> = Vec::new();
     for tx in mempool.get_sorted_txs() {
         let transaction = mempool.view_tx(tx.get_hash())?;
-        transactions.push(DataHash { hash: Cow::Borrowed(tx.get_hash()), data: Cow::Owned(transaction) });
+        transactions.push(DataHash { hash: Cow::Borrowed(tx.get_hash()), data: Cow::Borrowed(transaction) });
     }
 
     Ok(json!(transactions))

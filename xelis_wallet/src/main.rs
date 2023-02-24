@@ -11,7 +11,6 @@ use xelis_common::{config::{
 }, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::{format_coin, set_network_to}, serializer::Serializer, network::Network};
 use xelis_wallet::wallet::Wallet;
 
-
 #[derive(Parser)]
 #[clap(version = VERSION, about = "XELIS Wallet")]
 pub struct Config {
