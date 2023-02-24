@@ -2,5 +2,6 @@ target/
 *.log
 mainnet/
 testnet/
+dev/
 .vscode/
 wallets/
