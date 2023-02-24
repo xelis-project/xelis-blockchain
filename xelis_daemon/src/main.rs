@@ -4,7 +4,7 @@ pub mod p2p;
 pub mod core;
 
 use fern::colors::Color;
-use log::{info, error};
+use log::{info, error, warn};
 use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
@@ -38,7 +38,11 @@ pub struct NodeConfig {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config: NodeConfig = NodeConfig::parse();
+    let mut config: NodeConfig = NodeConfig::parse();
+    if config.nested.simulator && config.network != Network::Dev {
+        config.network = Network::Dev;
+        warn!("Switching automatically to network {} because of simulator enabled", config.network);
+    }
     set_network_to(config.network);
 
     let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging)?;
