@@ -436,7 +436,7 @@ impl Blockchain {
         let tips = storage.get_past_blocks_of(hash).await?;
         for hash in tips.iter() {
             if storage.is_block_topological_ordered(hash).await {
-                set.insert(storage.get_topo_height_for_hash(hash).await?);
+                set.insert(storage.get_height_for_block(hash).await?);
             } else {
                 self.calculate_distance_from_mainchain_recursive(storage, set, hash).await?;
             }
@@ -446,9 +446,9 @@ impl Blockchain {
 
     async fn calculate_distance_from_mainchain(&self, storage: &Storage, hash: &Hash) -> Result<u64, BlockchainError> {
         if storage.is_block_topological_ordered(hash).await {
-            let topoheight = storage.get_topo_height_for_hash(hash).await?;
-            debug!("calculate_distance: Block {} is ordered at topoheight {}", hash, topoheight);
-            return Ok(topoheight)
+            let height = storage.get_height_for_block(hash).await?;
+            debug!("calculate_distance: Block {} is at height {}", hash, height);
+            return Ok(height)
         }
         debug!("calculate_distance: Block {} is not ordered, calculate distance from mainchain", hash);
         let mut set = HashSet::new(); // replace by a Vec and sort + remove first ?
