@@ -16,6 +16,7 @@ use xelis_common::api::daemon::{NotifyEvent, EventResult};
 use xelis_common::config;
 use xelis_common::crypto::address::Address;
 use xelis_common::serializer::ReaderError;
+use std::borrow::Cow;
 use std::{sync::Arc, collections::HashMap, pin::Pin, future::Future, fmt::{Display, Formatter}};
 use log::{trace, info, debug};
 use anyhow::Error as AnyError;
@@ -243,11 +244,11 @@ impl RpcServer {
 
     // notify all clients connected to the websocket which have subscribed to the event sent.
     // each client message is sent through a tokio task in case an error happens and to prevent waiting on others clients
-    pub async fn notify_clients<V: Serialize>(&self, notify: NotifyEvent, value: V) -> Result<(), RpcError> {
-        let value = json!(EventResult { event: notify.clone(), value: json!(value) });
+    pub async fn notify_clients<V: Serialize>(&self, notify: &NotifyEvent, value: V) -> Result<(), RpcError> {
+        let value = json!(EventResult { event: Cow::Borrowed(notify), value: json!(value) });
         let clients = self.clients.lock().await;
         for (addr, subs) in clients.iter() {
-            if let Some(id) = subs.get(&notify) {
+            if let Some(id) = subs.get(notify) {
                 let addr = addr.clone();
                 let response = Response(json!({
                     "jsonrpc": JSON_RPC_VERSION,

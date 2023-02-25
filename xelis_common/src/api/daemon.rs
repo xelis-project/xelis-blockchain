@@ -166,6 +166,8 @@ pub struct TransactionResponse<'a, T: Clone> {
 pub enum NotifyEvent {
     // When a new block is accepted by chain
     NewBlock,
+    // When a block (already in chain or not) is ordered (new topoheight)
+    BlockOrdered,
     // When a new transaction is added in mempool
     TransactionAddedInMempool,
     // When a transaction has been included in a valid block & executed on chain
@@ -177,8 +179,23 @@ pub enum NotifyEvent {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct EventResult {
-    pub event: NotifyEvent,
+pub struct EventResult<'a> {
+    pub event: Cow<'a, NotifyEvent>,
     #[serde(flatten)]
     pub value: Value
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct BlockOrderedEvent<'a> {
+    // block hash in which this event was triggered
+    pub block_hash: Cow<'a, Hash>,
+    // the new topoheight of the block
+    pub topoheight: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TransactionExecutedEvent<'a> {
+    pub block_hash: Cow<'a, Hash>,
+    pub tx_hash: Cow<'a, Hash>,
+    pub topoheight: u64,
 }

@@ -199,6 +199,7 @@ Events currently available to subscribe are:
 - `TransactionExecuted`: when a transaction has been included in a valid block & executed on chain
 - `TransactionSCResult`: when a valid TX SC Call hash has been executed by chain
 - `NewAsset`: when a new asset has been registered
+- `BlockOrdered` when a block is ordered for the first time or reordered to a new topoheight
 
 ## XELIS Message
 

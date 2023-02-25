@@ -1,4 +1,5 @@
 use anyhow::Error;
+use serde_json::{Value, json};
 use xelis_common::{
     config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME},
     crypto::{key::PublicKey, hash::{Hashable, Hash}},
@@ -7,7 +8,7 @@ use xelis_common::{
     globals::get_current_timestamp,
     block::{CompleteBlock, Block},
     immutable::Immutable,
-    serializer::Serializer, account::VersionedBalance, api::daemon::{NotifyEvent, DataHash}, network::Network
+    serializer::Serializer, account::VersionedBalance, api::daemon::{NotifyEvent, DataHash, BlockOrderedEvent, TransactionExecutedEvent}, network::Network
 };
 use crate::{p2p::P2pServer, rpc::rpc::get_block_response_for_hash};
 use crate::rpc::RpcServer;
@@ -676,7 +677,7 @@ impl Blockchain {
             let rpc = rpc.clone();
             tokio::spawn(async move {
                 let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) };
-                if let Err(e) = rpc.notify_clients(NotifyEvent::TransactionAddedInMempool, data).await {
+                if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, data).await {
                     debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
                 }
             });
@@ -890,7 +891,7 @@ impl Blockchain {
             cumulative_difficulty
         };
 
-        // Transaction execution
+        // Delete all txs from mempool
         let mut mempool = self.mempool.write().await;
         for hash in block.get_txs_hashes() { // remove all txs present in mempool
             match mempool.remove_tx(hash) {
@@ -916,8 +917,13 @@ impl Blockchain {
         let full_order = self.generate_full_order(storage, &best_tip, &base_hash, base_topo_height).await?;
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
 
+        // rpc server lock
+        let rpc_server = self.rpc.lock().await;
+
         // track all changes in nonces to clean mempool from invalid txs stuck
         let mut nonces: HashMap<PublicKey, u64> = HashMap::new();
+        // track all events to notify websocket
+        let mut events: HashMap<NotifyEvent, Vec<Value>> = HashMap::new();
 
         // order the DAG (up to TOP_HEIGHT - STABLE_HEIGHT_LIMIT)
         let mut highest_topo = 0;
@@ -935,6 +941,15 @@ impl Blockchain {
                 is_written = true;
 
                 debug!("Ordering block {} at topoheight {}", hash, highest_topo);
+                if rpc_server.is_some() {
+                    let event = NotifyEvent::BlockOrdered;
+                    let value = json!(BlockOrderedEvent {
+                        block_hash: Cow::Borrowed(&hash),
+                        topoheight: highest_topo,
+                    });
+                    events.entry(event).or_insert_with(Vec::new).push(value);
+                }
+
                 storage.set_topo_height_for_block(&hash, highest_topo).await?;
                 let past_supply = if highest_topo == 0 {
                     0
@@ -957,6 +972,7 @@ impl Blockchain {
                 let mut balances: HashMap<&PublicKey, HashMap<&Hash, VersionedBalance>> = HashMap::new();
                 let block = storage.get_complete_block(&hash).await?;
                 let mut total_fees = 0;
+
                 // compute rewards & execute txs
                 for tx in block.get_transactions() { // execute all txs
                     let tx_hash = tx.hash();
@@ -967,6 +983,15 @@ impl Blockchain {
                         debug!("Block {} is now linked to tx {}", hash, tx_hash);
                     }
 
+                    // if the rpc_server is enable, track events
+                    if rpc_server.is_some() {
+                        let value = json!(TransactionExecutedEvent {
+                            tx_hash: Cow::Borrowed(&tx_hash),
+                            block_hash: Cow::Borrowed(&hash),
+                            topoheight: highest_topo,
+                        });
+                        events.entry(NotifyEvent::TransactionExecuted).or_insert_with(Vec::new).push(value);
+                    }
                     total_fees += tx.get_fee();
                 }
 
@@ -1054,7 +1079,7 @@ impl Blockchain {
         }
 
         // broadcast to websocket new block
-        if let Some(rpc) = self.rpc.lock().await.as_ref() {
+        if let Some(rpc) = rpc_server.as_ref() {
             // if we have a getwork server, notify miners
             if let Some(getwork) = rpc.getwork_server() {
                 let getwork = getwork.clone();
@@ -1065,20 +1090,27 @@ impl Blockchain {
                 });
             }
 
+            // notify websocket clients
             match get_block_response_for_hash(self, storage, block_hash, false).await {
                 Ok(response) => {
-                    let rpc = rpc.clone();
-                    // don't block mutex/lock more than necessary, we move it in another task
-                    tokio::spawn(async move {
-                        if let Err(e) = rpc.notify_clients(NotifyEvent::NewBlock, response).await {
-                            debug!("Error while broadcasting event NewBlock to websocket: {}", e);
-                        }
-                    });
+                    events.entry(NotifyEvent::NewBlock).or_insert_with(Vec::new).push(response);
                 },
                 Err(e) => {
                     debug!("Error while getting block response for websocket: {}", e);
                 }
             };
+
+            let rpc = rpc.clone();
+            // don't block mutex/lock more than necessary, we move it in another task
+            tokio::spawn(async move {
+                for (event, values) in events {
+                    for value in values {
+                        if let Err(e) = rpc.notify_clients(&event, value).await {
+                            debug!("Error while broadcasting event to websocket: {}", e);
+                        }
+                    }
+                }
+            });
         }
 
         // Clean all old txs
