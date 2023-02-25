@@ -76,7 +76,7 @@ lazy_static! {
     static ref HASHRATE_LAST_TIME: Mutex<Instant> = Mutex::new(Instant::now());
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
     let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging)?;
@@ -214,6 +214,7 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
                     }
                 },
                 Some(block) = block_receiver.recv() => { // send all valid blocks found to the daemon
+                    debug!("Block found: {}", block);
                     let submit = serde_json::json!(SubmitBlockParams { block_template: block.to_hex() }).to_string();
                     if let Err(e) = write.send(Message::Text(submit)).await {
                         error!("Error while sending the block found to the daemon: {}", e);
