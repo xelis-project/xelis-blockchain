@@ -6,3 +6,4 @@ dev/
 .vscode/
 wallets/
 peerlist-*.json
+build/
