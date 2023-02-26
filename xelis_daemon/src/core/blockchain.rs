@@ -141,6 +141,7 @@ impl Blockchain {
                                 continue;
                             }
                         };
+                        info!("Trying to connect to priority node: {}", addr);
                         p2p.try_to_connect_to_peer(addr, true);
                     }
                     *arc.p2p.lock().await = Some(p2p);
