@@ -146,7 +146,7 @@ impl Prompt {
                     target_with_pad = " ".to_owned() + &target_with_pad;
                 }
                 let res = out.finish(format_args!(
-                    "\r\x1B[90m{} {}\x1B[0m \x1B[{}m{}\x1B[0m \x1B[90m>\x1B[0m {}",
+                    "\x1b[2K\r\x1B[90m{} {}\x1B[0m \x1B[{}m{}\x1B[0m \x1B[90m>\x1B[0m {}",
                     chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
                     colors.color(record.level()),
                     Color::BrightBlue.to_fg_str(),
