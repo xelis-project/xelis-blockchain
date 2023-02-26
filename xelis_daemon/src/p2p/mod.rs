@@ -4,6 +4,7 @@ pub mod error;
 pub mod packet;
 pub mod peer_list;
 
+use serde_json::Value;
 use xelis_common::{
     config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT},
     serializer::{Writer, Serializer},
@@ -29,7 +30,7 @@ use log::{info, warn, error, debug, trace};
 use tokio::io::AsyncWriteExt;
 use tokio::time::interval;
 use tokio::time::timeout;
-use std::borrow::Cow;
+use std::{borrow::Cow, fs, path::Path};
 use std::convert::TryInto;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -81,6 +82,22 @@ impl P2pServer {
     pub async fn stop(&self) {
         info!("Stopping P2p Server...");
         let mut peers = self.peer_list.write().await;
+        match self.get_peers_from_file().await {
+            Ok(mut peers_from_file) => {
+                for (_, peer) in peers.get_peers() {
+                    let addr = peer.get_connection().get_address();
+                    if !peers_from_file.contains(&addr) {
+                        peers_from_file.push(addr.clone());
+                    }
+                }
+                if let Err(e) = self.save_peers_to_file(&peers_from_file).await {
+                    error!("Couldn't save peers to file: {}", e);
+                };
+            },
+            Err(e) => {
+                error!("Couldn't retrieve peers from file: {}", e);
+            }
+        }
         peers.close_all().await;
         info!("P2p Server is now stopped!");
     }
@@ -110,10 +127,93 @@ impl P2pServer {
             };
         }
     }
+
+    fn get_peerlist_file(&self) -> String {
+        format!("peerlist-{}.json", self.blockchain.get_network().to_string().to_lowercase())
+    }
+
+    // we save it in peerlist-{network}.json file in case we want to do custom peerlist files
+    async fn get_peers_from_file(&self) -> Result<Vec<SocketAddr>, P2pError> {
+        let mut peers = Vec::new();
+        let str_path = self.get_peerlist_file();
+        let path = Path::new(&str_path);
+        if !path.exists() {
+            info!("Peerlist at {} not found, creating file...", str_path);
+            self.save_peers_to_file(&peers).await?;
+            return Ok(peers);
+        }
+
+        let string = fs::read_to_string(path)?;
+        let json: Value = serde_json::from_str(&string).map_err(|_| P2pError::InvalidPeerlist)?;
+
+        if let Some(values) = json.as_array() {
+            for value in values {
+                if let Some(addr) = value.as_str() {
+                    let addr: SocketAddr = match addr.parse() {
+                        Ok(addr) => addr,
+                        Err(e) => return Err(P2pError::InvalidPeerAddress(format!("peerlist {}: {}", addr, e)))
+                    };
+                    peers.push(addr);
+                } else {
+                    debug!("Content in peerlist is not a string");
+                    return Err(P2pError::InvalidPeerlist);
+                }
+            }
+        } else {
+            debug!("Content in peerlist is not an array");
+            return Err(P2pError::InvalidPeerlist);
+        }
+
+        Ok(peers)
+    }
+
+    // save a new peer to peerlist.json file
+    // for this we have to fetch all, add it to Vec and save it
+    async fn save_peer_to_file(&self, addr: &SocketAddr) -> Result<(), P2pError> {
+        debug!("Saving peer {} to peerlist file...", addr);
+        let mut peers = self.get_peers_from_file().await?;
+        if peers.contains(addr) {
+            debug!("Peerlist file already contains {}", addr);
+            return Ok(())
+        }
+
+        peers.push(addr.clone());
+        self.save_peers_to_file(&peers).await
+    }
+
+    async fn save_peers_to_file(&self, peers: &Vec<SocketAddr>) -> Result<(), P2pError> {
+        let content = match serde_json::to_string_pretty(peers) {
+            Ok(content) => content,
+            Err(e) => {
+                error!("Error while serializing peerlist: {}", e);
+                return Err(P2pError::InvalidPeerlist)
+            }
+        };
+
+        let str_path = self.get_peerlist_file();
+        fs::write(str_path, content)?;
+
+        Ok(())
+    }
+
     // connect to seed nodes, start p2p server
     // and wait on all new connections
     async fn start(self: &Arc<Self>) -> Result<(), P2pError> {
         let zelf = Arc::clone(self);
+
+        // retrieve all peers from peerlist.json
+        let peers = self.get_peers_from_file().await?;
+        for peer in peers {
+            if !self.accept_new_connections().await {
+                debug!("Daemon has reached limit of connections");
+                break;
+            }
+
+            if !self.is_connected_to_addr(&peer).await? {
+                self.try_to_connect_to_peer(peer, true);
+            }
+        }
+
         tokio::spawn(async move {
             info!("Connecting to seed nodes...");
             if let Err(e) = zelf.maintains_seed_nodes().await {
@@ -238,6 +338,11 @@ impl P2pServer {
         }
 
         // if we reach here, handshake is all good, we can start listening this new peer
+        // we can save the peer in our peerlist
+        if let Err(e) = self.save_peer_to_file(peer.get_connection().get_address()).await {
+            error!("Error while saving peer on disk: {}", e);
+        };
+
         let peer_id = peer.get_id(); // keep in memory the peer_id outside connection (because of moved value)
         let peer = {
             let mut peer_list = self.peer_list.write().await;
@@ -597,18 +702,20 @@ impl P2pServer {
             Packet::Ping(ping) => {
                 trace!("Received a ping packet from {}", peer.get_connection().get_address());
                 let current_time = get_current_time();
+                let last_ping = peer.get_last_ping();
+                peer.set_last_ping(current_time);
                 // verify the respect of the coutdown to prevent massive packet incoming
-                if current_time - peer.get_last_ping() < P2P_PING_DELAY {
+                if current_time - last_ping < P2P_PING_DELAY {
                     return Err(P2pError::PeerInvalidPingCoutdown)
                 }
-                peer.set_last_ping(current_time);
 
                 // we verify the respect of the countdown of peer list updates to prevent any spam
                 if ping.get_peers().len() > 0 {
-                    if current_time - peer.get_last_peer_list() < P2P_PING_PEER_LIST_DELAY {
+                    let last_peer_list = peer.get_last_peer_list();
+                    peer.set_last_peer_list(current_time);
+                    if current_time - last_peer_list < P2P_PING_PEER_LIST_DELAY {
                         return Err(P2pError::PeerInvalidPeerListCountdown)
                     }
-                    peer.set_last_peer_list(current_time);
                 }
 
                 for peer in ping.get_peers() {
@@ -830,8 +937,11 @@ impl P2pServer {
         for (_, peer) in peer_list.get_peers() {
             // if the peer can directly accept this new block, send it
             if block.get_height() - 1 == peer.get_height() || peer.get_height() - block.get_height() < STABLE_HEIGHT_LIMIT {
-                trace!("Broadcast to {}", peer);
-                peer_list.send_bytes_to_peer(peer, bytes.clone()).await;
+                // check that we don't send the block to the peer that sent it to us
+                if *hash != *peer.get_top_block_hash().lock().await {
+                    trace!("Broadcast to {}", peer);
+                    peer_list.send_bytes_to_peer(peer, bytes.clone()).await;
+                }
             }
         }
     }

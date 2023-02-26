@@ -68,7 +68,9 @@ pub enum P2pError {
     #[error("Peer sent us a ping packet faster than protocol rules")]
     PeerInvalidPingCoutdown,
     #[error(transparent)]
-    BlockchainError(#[from] Box<BlockchainError>)
+    BlockchainError(#[from] Box<BlockchainError>),
+    #[error("Invalid content in peerlist file")]
+    InvalidPeerlist,
 }
 
 impl From<BlockchainError> for P2pError {
