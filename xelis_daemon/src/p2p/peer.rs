@@ -1,3 +1,5 @@
+use xelis_common::config::PEER_FAIL_TIME_RESET;
+use xelis_common::globals::get_current_time;
 use xelis_common::{
     crypto::hash::Hash,
     config::PEER_TIMEOUT_REQUEST_OBJECT,
@@ -34,7 +36,7 @@ pub struct Peer {
     topoheight: AtomicU64, // current highest topo height for this peer
     height: AtomicU64, // current highest block height for this peer
     last_chain_sync: AtomicU64,
-    // TODO last_fail_count
+    last_fail_count: AtomicU64, // last time we got a fail
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
     peer_list: SharedPeerList,
     chain_requested: AtomicBool,
@@ -59,6 +61,7 @@ impl Peer {
             height: AtomicU64::new(height),
             out,
             priority,
+            last_fail_count: AtomicU64::new(0),
             fail_count: AtomicU8::new(0),
             last_chain_sync: AtomicU64::new(0),
             peer_list,
@@ -100,7 +103,6 @@ impl Peer {
         self.topoheight.store(topoheight, Ordering::Release);
     }
 
-
     pub fn get_height(&self) -> u64 {
         self.height.load(Ordering::Acquire)
     }
@@ -133,13 +135,31 @@ impl Peer {
         self.priority
     }
 
+    pub fn get_last_fail_count(&self) -> u64 {
+        self.last_fail_count.load(Ordering::Acquire)
+    }
+
+    pub fn set_last_fail_count(&self, value: u64) {
+        self.last_fail_count.store(value, Ordering::Release);
+    }
+
     pub fn get_fail_count(&self) -> u8 {
         self.fail_count.load(Ordering::Acquire)
     }
 
-    // TODO verify last fail count
     pub fn increment_fail_count(&self) {
-        self.fail_count.fetch_add(1, Ordering::Release);
+        let current_time = get_current_time();
+        let last_fail = self.get_last_fail_count();
+        self.set_last_fail_count(current_time);
+
+        // if its long time we didn't get a fail, reset the fail count to 1 (because of current fail)
+        // otherwise, add 1
+        if last_fail + PEER_FAIL_TIME_RESET < current_time {
+            self.fail_count.store(1, Ordering::Release);
+        } else {
+            self.fail_count.fetch_add(1, Ordering::Release);
+        }
+
     }
 
     pub fn get_last_chain_sync(&self) -> u64 {

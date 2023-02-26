@@ -40,6 +40,8 @@ pub const P2P_PING_DELAY: u64 = 10; // time between each ping
 pub const P2P_PING_PEER_LIST_DELAY: u64 = 15; // time in seconds between each update of peerlist
 pub const P2P_PING_PEER_LIST_LIMIT: usize = 16; // maximum number of addresses to be send
 pub const P2P_DEFAULT_MAX_PEERS: usize = 32; // default number of maximum peers
+pub const PEER_FAIL_TIME_RESET: u64 = 60 * 5; // number of seconds to reset the counter
+pub const PEER_FAIL_LIMIT: u8 = 20; // number of fail to disconnect the peer
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 1500; // millis until we timeout
 
 // Wallet config

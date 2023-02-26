@@ -6,7 +6,7 @@ pub mod peer_list;
 
 use serde_json::Value;
 use xelis_common::{
-    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT},
+    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT, PEER_FAIL_LIMIT},
     serializer::{Writer, Serializer},
     crypto::hash::{Hashable, Hash},
     block::{CompleteBlock, Block},
@@ -517,7 +517,7 @@ impl P2pServer {
                 }
             }
 
-            if peer.get_fail_count() >= 20 {
+            if peer.get_fail_count() >= PEER_FAIL_LIMIT {
                 error!("High fail count detected for {}!", peer);
                 if let Err(e) = peer.close().await {
                     error!("Error while trying to close connection {} due to high fail count: {}", peer.get_connection().get_address(), e);
