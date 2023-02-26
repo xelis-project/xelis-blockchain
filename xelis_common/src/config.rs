@@ -3,7 +3,7 @@ use lazy_static::lazy_static;
 use crate::{crypto::{hash::Hash, key::PublicKey, address::Address}};
 pub const NETWORK_ID_SIZE: usize = 16;
 
-pub const VERSION: &str = "alpha-0.0.1";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const NETWORK_ID: [u8; NETWORK_ID_SIZE] = [0x73, 0x6c, 0x69, 0x78, 0x65, 0x5f, 0x78, 0x65, 0x6c, 0x69, 0x73, 0x5f, 0x62, 0x6c, 0x6f, 0x63];
 pub const SEED_NODES: [&str; 1] = ["74.208.251.149:2125"];
 pub const DEFAULT_P2P_BIND_ADDRESS: &str = "0.0.0.0:2125";
