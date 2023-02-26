@@ -30,7 +30,7 @@ pub struct Config {
     #[clap(short = 'l', long, default_value_t = String::from("xelis-wallet.log"))]
     filename_log: String,
     /// Set name path for wallet storage
-    #[clap(short, long)]
+    #[clap(short, long, default_value_t = String::from("default"))]
     name: String,
     /// Password used to open wallet
     #[clap(short, long)]
