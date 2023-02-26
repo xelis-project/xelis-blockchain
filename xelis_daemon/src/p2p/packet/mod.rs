@@ -88,7 +88,7 @@ impl<'a> Serializer for Packet<'a> {
             OBJECT_REQUEST_ID => Packet::ObjectRequest(Cow::Owned(ObjectRequest::read(reader)?)),
             OBJECT_RESPONSE_ID => Packet::ObjectResponse(ObjectResponse::read(reader)?),
             id => {
-                error!("Received a invalid packet id: {}", id);
+                error!("invalid packet id received: {}", id);
                 return Err(ReaderError::InvalidValue)
             }
         })

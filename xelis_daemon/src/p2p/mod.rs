@@ -578,7 +578,7 @@ impl P2pServer {
                     let block_hash = block.hash();
                     let storage = self.blockchain.get_storage().read().await;
                     if storage.has_block(&block_hash).await? {
-                        debug!("{} with hash {} is already in our chain. Skipping", block, block_hash);
+                        debug!("{}: {} with hash {} is already in our chain. Skipping", peer, block, block_hash);
                         return Ok(())
                     }
                 }
@@ -703,7 +703,7 @@ impl P2pServer {
                 let last_ping = peer.get_last_ping();
                 peer.set_last_ping(current_time);
                 // verify the respect of the coutdown to prevent massive packet incoming
-                if current_time - last_ping < P2P_PING_DELAY {
+                if last_ping != 0 && current_time - last_ping < P2P_PING_DELAY {
                     return Err(P2pError::PeerInvalidPingCoutdown)
                 }
 
@@ -711,7 +711,7 @@ impl P2pServer {
                 if ping.get_peers().len() > 0 {
                     let last_peer_list = peer.get_last_peer_list();
                     peer.set_last_peer_list(current_time);
-                    if current_time - last_peer_list < P2P_PING_PEER_LIST_DELAY {
+                    if last_peer_list != 0 && current_time - last_peer_list < P2P_PING_PEER_LIST_DELAY {
                         return Err(P2pError::PeerInvalidPeerListCountdown)
                     }
                 }
