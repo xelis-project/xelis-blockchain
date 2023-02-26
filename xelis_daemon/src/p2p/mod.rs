@@ -201,6 +201,13 @@ impl P2pServer {
     async fn start(self: &Arc<Self>) -> Result<(), P2pError> {
         let zelf = Arc::clone(self);
 
+        tokio::spawn(async move {
+            info!("Connecting to seed nodes...");
+            if let Err(e) = zelf.maintains_seed_nodes().await {
+                error!("Error while maintening connection with seed nodes: {}", e);
+            };
+        });
+
         // retrieve all peers from peerlist.json
         let peers = self.get_peers_from_file().await?;
         for peer in peers {
@@ -209,17 +216,8 @@ impl P2pServer {
                 break;
             }
 
-            if !self.is_connected_to_addr(&peer).await? {
-                self.try_to_connect_to_peer(peer, true);
-            }
+            self.try_to_connect_to_peer(peer, false);
         }
-
-        tokio::spawn(async move {
-            info!("Connecting to seed nodes...");
-            if let Err(e) = zelf.maintains_seed_nodes().await {
-                error!("Error while maintening connection with seed nodes: {}", e);
-            };
-        });
 
         // start a new task for chain sync
         tokio::spawn(Arc::clone(&self).chain_sync_loop());
