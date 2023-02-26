@@ -243,7 +243,13 @@ impl Peer {
 
 impl Display for Peer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
-        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, height: {}, priority: {}, tag: {}, version: {}, out: {}]",
+        let peers_count = if let Ok(peers) = self.get_peers().try_lock() {
+            format!("{}", peers.len())
+        } else {
+            "Couldn't retrieve data".to_string()
+        };
+
+        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, height: {}, priority: {}, tag: {}, version: {}, out: {}, peers: {}]",
             self.get_connection(),
             self.get_id(),
             self.get_topoheight(),
@@ -251,7 +257,8 @@ impl Display for Peer {
             self.is_priority(),
             self.get_node_tag().as_ref().unwrap_or(&"None".to_owned()),
             self.get_version(),
-            self.is_out()
+            self.is_out(),
+            peers_count
         )
     }
 }
