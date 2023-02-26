@@ -4,9 +4,9 @@ pub mod argument;
 use self::command::{CommandManager, CommandError};
 use std::io::{Write, stdout, Error as IOError};
 use fern::colors::{ColoredLevelConfig, Color};
-use tokio::sync::oneshot;
+use tokio::sync::mpsc;
 use std::sync::{PoisonError, Arc, Mutex};
-use log::{info, error, Level};
+use log::{info, error, Level, debug};
 use tokio::time::interval;
 use std::future::Future;
 use std::time::Duration;
@@ -44,12 +44,12 @@ impl Prompt {
         Ok(prompt)
     }
 
-    pub async fn start<Fut>(self: &Arc<Self>, update_every: Duration, fn_message: &dyn Fn() -> Fut, command_manager: CommandManager) -> Result<(), PromptError>
+    pub async fn start<Fut, T: Send>(self: &Arc<Self>, update_every: Duration, fn_message: &dyn Fn() -> Fut, command_manager: CommandManager<T>) -> Result<(), PromptError>
     where Fut: Future<Output = String> {
         let mut interval = interval(update_every);
         let zelf = Arc::clone(self);
         // spawn a thread to prevent IO blocking - https://github.com/tokio-rs/tokio/issues/2466
-        let (sender, mut receiver) = oneshot::channel::<()>();
+        let (input_sender, mut input_receiver) = mpsc::unbounded_channel::<String>();
         std::thread::spawn(move || {
             let stdin = std::io::stdin();
             loop {
@@ -64,13 +64,9 @@ impl Prompt {
                         }
                     },
                     Ok(_) => {
-                        match command_manager.handle_command(line.to_string()) {
-                            Err(CommandError::Exit) => break,
-                            Err(e) => {
-                                error!("Error while executing command: {}", e);
-                            }
-                            _ => {},
-                        };
+                        if let Err(e) = input_sender.send(line) {
+                            error!("Error while sending input to command handler: {}", e);
+                        }
                     },
                     Err(e) => {
                         error!("Error while reading from stdin: {}", e);
@@ -79,9 +75,6 @@ impl Prompt {
                 }
             }
             info!("Command Manager is now stopped");
-            if let Err(_) = sender.send(()) {
-                error!("Error while notifying main thread");
-            }
         });
 
         loop {
@@ -94,9 +87,21 @@ impl Prompt {
                     }
                     break;
                 },
-                _ = &mut receiver => {
-                    break;
-                },
+                res = input_receiver.recv() => {
+                    match res {
+                        Some(input) => match command_manager.handle_command(input).await {
+                            Err(CommandError::Exit) => break,
+                            Err(e) => {
+                                error!("Error while executing command: {}", e);
+                            }
+                            _ => {},
+                        },
+                        None => { // if None, it means the sender has been dropped (and so, the thread is stopped)
+                            debug!("Command Manager has been stopped");
+                            break;
+                        }
+                    }
+                }
                 _ = interval.tick() => {
                     let prompt = (fn_message)().await;
                     self.update_prompt(prompt)?;

@@ -12,20 +12,23 @@ use actix_web_actors::ws::WsResponseBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, Error as SerdeError, json};
 use tokio::sync::Mutex;
+use xelis_common::api::daemon::{NotifyEvent, EventResult};
 use xelis_common::config;
 use xelis_common::crypto::address::Address;
 use xelis_common::serializer::ReaderError;
-use std::{sync::Arc, collections::{HashMap, HashSet}, pin::Pin, future::Future, fmt::{Display, Formatter}};
+use std::borrow::Cow;
+use std::{sync::Arc, collections::HashMap, pin::Pin, future::Future, fmt::{Display, Formatter}};
 use log::{trace, info, debug};
 use anyhow::Error as AnyError;
 use thiserror::Error;
 use self::getwork_server::{GetWorkWebSocketHandler, SharedGetWorkServer};
-use self::websocket::{NotifyEvent, Response};
+use self::websocket::Response;
+use log::error;
 
 pub type SharedRpcServer = web::Data<Arc<RpcServer>>;
-pub type Handler = Box<dyn Fn(Arc<Blockchain>, Value) -> Pin<Box<dyn Future<Output = Result<Value, RpcError>>>> + Send + Sync>;
+pub type Handler = fn(Arc<Blockchain>, Value) -> Pin<Box<dyn Future<Output = Result<Value, RpcError>>>>;
 
-const JSON_RPC_VERSION: &str = "2.0";
+pub const JSON_RPC_VERSION: &str = "2.0";
 
 #[derive(Error, Debug)]
 pub enum RpcError {
@@ -41,11 +44,11 @@ pub enum RpcError {
     InvalidVersion,
     #[error("Method '{}' in request was not found", _0)]
     MethodNotFound(String),
-    #[error("Error: {}", _0)]
+    #[error(transparent)]
     BlockchainError(#[from] BlockchainError),
-    #[error("Error: {}", _0)]
+    #[error(transparent)]
     DeserializerError(#[from] ReaderError),
-    #[error("Error: {}", _0)]
+    #[error(transparent)]
     AnyError(#[from] AnyError),
     #[error("Error, expected a normal wallet address")]
     ExpectedNormalAddress,
@@ -54,7 +57,7 @@ pub enum RpcError {
     #[error("WebSocket client is not registered")]
     ClientNotRegistered,
     #[error("Could not send message to address: {}", _0)]
-    WebSocketSendError(#[from] MailboxError)
+    WebSocketSendError(#[from] MailboxError),
 }
 
 impl RpcError {
@@ -126,7 +129,7 @@ pub struct RpcServer {
     handle: Mutex<Option<ServerHandle>>, // keep the server handle to stop it gracefully
     methods: HashMap<String, Handler>, // all rpc methods registered
     blockchain: Arc<Blockchain>, // pointer to blockchain data
-    clients: Mutex<HashMap<Addr<WebSocketHandler>, HashSet<NotifyEvent>>>, // all websocket clients connected with subscriptions linked
+    clients: Mutex<HashMap<Addr<WebSocketHandler>, HashMap<NotifyEvent, Option<usize>>>>, // all websocket clients connected with subscriptions linked
     getwork: Option<SharedGetWorkServer>
 }
 
@@ -205,7 +208,9 @@ impl RpcServer {
     }
 
     pub fn register_method(&mut self, name: &str, handler: Handler) {
-        self.methods.insert(name.into(), handler);
+        if self.methods.insert(name.into(), handler).is_some() {
+            error!("The method '{}' was already registered !", name);
+        }
     }
 
     pub fn get_blockchain(&self) -> &Arc<Blockchain> {
@@ -214,19 +219,19 @@ impl RpcServer {
 
     pub async fn add_client(&self, addr: Addr<WebSocketHandler>) {
         let mut clients = self.clients.lock().await;
-        clients.insert(addr, HashSet::new());
+        clients.insert(addr, HashMap::new());
     }
 
     pub async fn remove_client(&self, addr: &Addr<WebSocketHandler>) {
         let mut clients = self.clients.lock().await;
         let deleted = clients.remove(addr).is_some();
-        trace!("WebSocket client {:?} deleted: {}", addr, deleted);
+        debug!("WebSocket client {:?} deleted: {}", addr, deleted);
     }
 
-    pub async fn subscribe_client_to(&self, addr: &Addr<WebSocketHandler>, subscribe: NotifyEvent) -> Result<(), RpcError> {
+    pub async fn subscribe_client_to(&self, addr: &Addr<WebSocketHandler>, subscribe: NotifyEvent, id: Option<usize>) -> Result<(), RpcError> {
         let mut clients = self.clients.lock().await;
         let subscriptions = clients.get_mut(addr).ok_or_else(|| RpcError::ClientNotRegistered)?;
-        subscriptions.insert(subscribe);
+        subscriptions.insert(subscribe, id);
         Ok(())
     }
 
@@ -237,11 +242,31 @@ impl RpcServer {
         Ok(())
     }
 
-    pub async fn notify_clients<V: Serialize>(&self, notify: NotifyEvent, value: V) -> Result<(), RpcError> {
+    // notify all clients connected to the websocket which have subscribed to the event sent.
+    // each client message is sent through a tokio task in case an error happens and to prevent waiting on others clients
+    pub async fn notify_clients<V: Serialize>(&self, notify: &NotifyEvent, value: V) -> Result<(), RpcError> {
+        let value = json!(EventResult { event: Cow::Borrowed(notify), value: json!(value) });
         let clients = self.clients.lock().await;
         for (addr, subs) in clients.iter() {
-            if subs.contains(&notify) {
-                addr.send(Response(json!(value))).await??;
+            if let Some(id) = subs.get(notify) {
+                let addr = addr.clone();
+                let response = Response(json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "id": id,
+                    "result": value
+                }));
+                tokio::spawn(async move {
+                    match addr.send(response).await {
+                        Ok(response) => {
+                            if let Err(e) = response {
+                                debug!("Error while sending websocket event: {} ", e);
+                            } 
+                        }
+                        Err(e) => {
+                            debug!("Error while sending on mailbox: {}", e);
+                        }
+                    };
+                });
             }
         }
         Ok(())
@@ -293,6 +318,11 @@ async fn getwork_endpoint(server: SharedRpcServer, request: HttpRequest, stream:
             if !address.is_normal() {
                 return Ok(HttpResponse::BadRequest().reason("Address should be in normal format").finish())
             }
+
+            if address.is_mainnet() != server.get_blockchain().get_network().is_mainnet() {
+                return Ok(HttpResponse::BadRequest().reason("Address is not in same network state").finish())
+            }
+
             let key = address.to_public_key();
             let (addr, response) = WsResponseBuilder::new(GetWorkWebSocketHandler::new(getwork.clone()), &request, stream).start_with_addr()?;
             trace!("New miner connected to GetWork WebSocket: {:?}", addr);

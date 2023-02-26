@@ -95,17 +95,18 @@ impl<'a> Serializer for Packet<'a> {
     }
 
     fn write(&self, writer: &mut Writer) {
-        let (id, packet) = match self { // TODO optimize to_bytes()
-            Packet::Handshake(handshake) => (HANDSHAKE_ID, handshake.to_bytes()),
-            Packet::TransactionPropagation(tx) => (TX_PROPAGATION_ID, tx.to_bytes()),
-            Packet::BlockPropagation(block) => (BLOCK_PROPAGATION_ID, block.to_bytes()),
-            Packet::ChainRequest(request) => (CHAIN_REQUEST_ID, request.to_bytes()),
-            Packet::ChainResponse(response) => (CHAIN_RESPONSE_ID, response.to_bytes()),
-            Packet::Ping(ping) => (PING_ID, ping.to_bytes()),
-            Packet::ObjectRequest(request) => (OBJECT_REQUEST_ID, request.to_bytes()),
-            Packet::ObjectResponse(response) => (OBJECT_RESPONSE_ID, response.to_bytes())
+        let (id, serializer): (u8, &dyn Serializer) = match self {
+            Packet::Handshake(handshake) => (HANDSHAKE_ID, handshake.as_ref()),
+            Packet::TransactionPropagation(tx) => (TX_PROPAGATION_ID, tx),
+            Packet::BlockPropagation(block) => (BLOCK_PROPAGATION_ID, block),
+            Packet::ChainRequest(request) => (CHAIN_REQUEST_ID, request),
+            Packet::ChainResponse(response) => (CHAIN_RESPONSE_ID, response),
+            Packet::Ping(ping) => (PING_ID, ping.as_ref()),
+            Packet::ObjectRequest(request) => (OBJECT_REQUEST_ID, request.as_ref()),
+            Packet::ObjectResponse(response) => (OBJECT_RESPONSE_ID, response)
         };
 
+        let packet = serializer.to_bytes();
         let packet_len: u32 = packet.len() as u32 + 1;
         writer.write_u32(&packet_len);
         writer.write_u8(id);

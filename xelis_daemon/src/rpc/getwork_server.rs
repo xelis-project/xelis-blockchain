@@ -1,18 +1,17 @@
 use std::{sync::Arc, collections::HashMap, fmt::Display};
 use actix::{Actor, AsyncContext, Handler, Message as TMessage, StreamHandler, Addr};
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
-use anyhow::Context;
 use log::{debug, warn, error};
 use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
-use xelis_common::{crypto::key::PublicKey, globals::get_current_timestamp, api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, serializer::Serializer, block::{EXTRA_NONCE_SIZE, Block}};
+use xelis_common::{crypto::key::PublicKey, globals::get_current_timestamp, api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, serializer::Serializer, block::{EXTRA_NONCE_SIZE, Block}, config::DEV_PUBLIC_KEY};
 use crate::{rpc::{RpcResponseError, RpcError}, core::blockchain::Blockchain};
 
 pub type SharedGetWorkServer = Arc<GetWorkServer>;
 
-#[derive(Serialize)]
+#[derive(Serialize, PartialEq)]
 pub enum Response {
     NewJob(GetBlockTemplateResult),
     BlockAccepted,
@@ -150,6 +149,31 @@ impl GetWorkServer {
         self.miners.lock().await.len()
     }
 
+    async fn send_new_job(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler>, key: PublicKey) {
+        let (template, difficulty) = {
+            let storage = self.blockchain.get_storage().read().await;
+            let block = match self.blockchain.get_block_template_for_storage(&storage, key).await {
+                Ok(block) => block,
+                Err(e) => {
+                    error!("Error while generating block template: {}", e);
+                    return;
+                }
+            };
+            let difficulty = match self.blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await {
+                Ok(difficulty) => difficulty,
+                Err(e) => {
+                    error!("Error while calculating difficulty at tips for block template: {}", e);
+                    return;
+                }
+            };
+            (block.to_hex(), difficulty)
+        };
+        debug!("Sending job to new miner");
+        if let Err(e) = addr.send(Response::NewJob(GetBlockTemplateResult { template, difficulty })).await {
+            error!("Error while sending new job to new miner: {}", e);
+        }
+
+    }
     pub async fn add_miner(self: &Arc<Self>, addr: Addr<GetWorkWebSocketHandler>, key: PublicKey, worker: String) {
         {
             let mut miners = self.miners.lock().await;
@@ -159,31 +183,8 @@ impl GetWorkServer {
         }
 
         // notify the new miner so he can work ASAP
-        let blockchain = Arc::clone(&self.blockchain);
-        tokio::spawn(async move {
-            let (template, difficulty) = {
-                let storage = blockchain.get_storage().read().await;
-                let block = match blockchain.get_block_template_for_storage(&storage, key).await {
-                    Ok(block) => block,
-                    Err(e) => {
-                        error!("Error while generating block template: {}", e);
-                        return;
-                    }
-                };
-                let difficulty = match blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await {
-                    Ok(difficulty) => difficulty,
-                    Err(e) => {
-                        error!("Error while calculating difficulty at tips for block template: {}", e);
-                        return;
-                    }
-                };
-                (block.to_hex(), difficulty)
-            };
-            debug!("Sending job to new miner");
-            if let Err(e) = addr.send(Response::NewJob(GetBlockTemplateResult { template, difficulty })).await {
-                error!("Error while sending new job to new miner: {}", e);
-            }
-        });
+        let zelf = Arc::clone(&self);
+        tokio::spawn(zelf.send_new_job(addr, key));
     }
 
     pub async fn delete_miner(&self, addr: &Addr<GetWorkWebSocketHandler>) {
@@ -194,14 +195,7 @@ impl GetWorkServer {
         }
     }
 
-    pub async fn handle_block_for(&self, addr: Addr<GetWorkWebSocketHandler>, template: SubmitBlockParams) -> Result<(), RpcError> {
-        let block = Block::from_hex(template.block_template)?;
-        {
-            let mut miners = self.miners.lock().await;
-            let miner = miners.get_mut(&addr).context("Unregistered miner found, cannot handle this block")?;
-            debug!("Handle job found by {} at height {}", miner, block.get_height());
-        }
-
+    async fn accept_block(&self, block: Block) -> Result<Response, RpcError> {
         let complete_block = self.blockchain.build_complete_block_from_block(block).await?;
         let response = match self.blockchain.add_new_block(complete_block, true).await {
             Ok(_) => Response::BlockAccepted,
@@ -210,11 +204,33 @@ impl GetWorkServer {
                 Response::BlockRejected
             }
         };
+        Ok(response)
+    }
+
+    pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler>, template: SubmitBlockParams) -> Result<(), RpcError> {
+        let block = Block::from_hex(template.block_template)?;
+        let response = self.accept_block(block).await?;
 
         tokio::spawn(async move {
+            let resend_job = response == Response::BlockRejected;
             debug!("Sending response to the miner");
             if let Err(e) = addr.send(response).await {
                 error!("Error while sending block rejected response: {}", e);
+            }
+            if resend_job {
+                debug!("Resending job to the miner");
+                let key = {
+                    let miners = self.miners.lock().await;
+                    if let Some(miner) = miners.get(&addr) {
+                        Some(miner.get_public_key().clone())
+                    } else {
+                        error!("Miner not found in the list of miners! (should not happen)");
+                        None
+                    }
+                };
+                if let Some(key) = key {
+                    self.send_new_job(addr, key).await;
+                }
             }
             debug!("Response sent!");
         });
@@ -228,7 +244,7 @@ impl GetWorkServer {
         debug!("Notify all miners for a new job");
         let (mut block, difficulty) = {
             let storage = self.blockchain.get_storage().read().await;
-            let block = self.blockchain.get_block_template_for_storage(&storage, self.blockchain.get_dev_address().clone()).await?;
+            let block = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await?;
             let difficulty = self.blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await?;
             (block, difficulty)
         };

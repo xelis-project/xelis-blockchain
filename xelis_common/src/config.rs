@@ -1,16 +1,19 @@
-use crate::crypto::hash::Hash;
+use lazy_static::lazy_static;
 
-pub const VERSION: &str = "alpha-0.0.1";
-pub const NETWORK_ID: [u8; 16] = [0xA, 0xB, 0xC, 0xD, 0xE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF];
-pub const SEED_NODES: [&str; 1] = ["127.0.0.1:2125"]; // ["127.0.0.1:2125", "127.0.0.1:2126", "127.0.0.1:2127", "127.0.0.1:2128"];
+use crate::{crypto::{hash::Hash, key::PublicKey, address::Address}};
+pub const NETWORK_ID_SIZE: usize = 16;
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const NETWORK_ID: [u8; NETWORK_ID_SIZE] = [0x73, 0x6c, 0x69, 0x78, 0x65, 0x5f, 0x78, 0x65, 0x6c, 0x69, 0x73, 0x5f, 0x62, 0x6c, 0x6f, 0x63];
+pub const SEED_NODES: [&str; 2] = ["74.208.251.149:2125", "217.160.96.80:2125"];
 pub const DEFAULT_P2P_BIND_ADDRESS: &str = "0.0.0.0:2125";
 pub const DEFAULT_RPC_BIND_ADDRESS: &str = "0.0.0.0:8080";
-pub const DEFAULT_DIR_PATH: &str = "mainnet";
 pub const DEFAULT_CACHE_SIZE: usize = 1024;
 pub const XELIS_ASSET: Hash = Hash::zero();
 pub const SIDE_BLOCK_REWARD_PERCENT: u64 = 30; // only 30% of reward for side block
-pub const BLOCK_TIME: u64 = 15 * 1000; // Block Time in milliseconds
-pub const MINIMUM_DIFFICULTY: u64 = BLOCK_TIME * 10;
+pub const BLOCK_TIME: u64 = 15; // Block Time in seconds
+pub const BLOCK_TIME_MILLIS: u64 = BLOCK_TIME * 1000; // Block Time in milliseconds
+pub const MINIMUM_DIFFICULTY: u64 = BLOCK_TIME_MILLIS * 10;
 pub const GENESIS_BLOCK_DIFFICULTY: u64 = 1;
 pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024); // 1.25 MB
 pub const FEE_PER_KB: u64 = 1000; // 0.01000 XLS per KB
@@ -25,8 +28,8 @@ pub const COIN_VALUE: u64 = 100_000; // 5 decimals for a full coin
 pub const MAX_SUPPLY: u64 = 18_400_000 * COIN_VALUE; // 18.4M full coin
 pub const EMISSION_SPEED_FACTOR: u64 = 21;
 
-pub const GENESIS_BLOCK: &str = "00000000000000000000000000000000000001846e1e9234000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd"; // Genesis block in hexadecimal format
-pub const GENESIS_BLOCK_HASH: &str = "81cf282f5818edb220d43ec79fdbd2d8f40e94a9e6afb786b3a45bb6a085e5e9";
+pub const GENESIS_BLOCK: &str = "000000000000000000000000000000000000018656cff68a000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd"; // Genesis block in hexadecimal format
+pub const GENESIS_BLOCK_HASH: &str = "007957a0f04d08ff6f75a99ae37a25e43c640be68bd223c6af86c7f572352d73";
 pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"; // Dev address
 
 pub const MAX_BLOCK_REWIND: u64 = STABLE_HEIGHT_LIMIT - 1; // maximum X blocks can be rewinded
@@ -40,4 +43,8 @@ pub const P2P_DEFAULT_MAX_PEERS: usize = 32; // default number of maximum peers
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 1500; // millis until we timeout
 
 // Wallet config
-pub const DEFAULT_DAEMON_ADDRESS: &str = DEFAULT_RPC_BIND_ADDRESS;
+pub const DEFAULT_DAEMON_ADDRESS: &str = "http://127.0.0.1:8080";
+
+lazy_static! {
+    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
+}

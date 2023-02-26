@@ -1,4 +1,4 @@
-use xelis_common::crypto::{hash::{Hash, Hashable}, key::PublicKey};
+/*use xelis_common::crypto::{hash::{Hash, Hashable}, key::PublicKey};
 use super::message::{Message, MessageReply, MessageData};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -73,4 +73,4 @@ impl XPool {
         }).map(|v| v as &dyn MessageData).collect();
         messages
     }
-}
+}*/

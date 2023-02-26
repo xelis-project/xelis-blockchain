@@ -3,14 +3,17 @@ use crate::crypto::hash::{Hashable, hash, Hash};
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
 use std::collections::HashMap;
 
-#[derive(serde::Serialize, Clone)]
+pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Transfer {
     pub amount: u64,
     pub asset: Hash,
-    pub to: PublicKey
+    pub to: PublicKey,
+    pub extra_data: Option<Vec<u8>> // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct SmartContractCall {
     pub contract: Hash,
     pub assets: HashMap<Hash, u64>,
@@ -21,7 +24,7 @@ pub struct SmartContractCall {
 // you're able to send multi assets in one TX to different addresses
 // you can burn one asset at a time (so the TX Hash can be used as unique proof)
 // Smart Contract system is not yet available but types are already there
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub enum TransactionType {
     Transfer(Vec<Transfer>),
     Burn(Hash, u64),
@@ -29,7 +32,7 @@ pub enum TransactionType {
     DeployContract(String), // represent the code to deploy
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Transaction {
     owner: PublicKey, // creator of this transaction
     data: TransactionType,
@@ -54,6 +57,12 @@ impl Serializer for TransactionType {
                     writer.write_hash(&tx.asset);
                     writer.write_u64(&tx.amount);
                     tx.to.write(writer);
+
+                    writer.write_bool(&tx.extra_data.is_some());
+                    if let Some(extra_data) = &tx.extra_data {
+                        writer.write_u16(&(extra_data.len() as u16));
+                        writer.write_bytes(extra_data);
+                    }
                 }
             }
             TransactionType::CallContract(tx) => {
@@ -93,10 +102,24 @@ impl Serializer for TransactionType {
                     let amount = reader.read_u64()?;
                     let to = PublicKey::read(reader)?;
 
+                    // read any data transfered
+                    let has_extra_data = reader.read_bool()?;
+                    let extra_data = if has_extra_data {
+                        let extra_data_size = reader.read_u16()? as usize;
+                        if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
+                            return Err(ReaderError::InvalidSize)
+                        }
+
+                        Some(reader.read_bytes(extra_data_size)?)
+                    } else {
+                        None
+                    };
+
                     txs.push(Transfer {
                         asset,
                         amount,
-                        to
+                        to,
+                        extra_data
                     });
                 }
                 TransactionType::Transfer(txs)
@@ -149,7 +172,7 @@ impl Transaction {
     pub fn get_data(&self) -> &TransactionType {
         &self.data
     }
-    
+
     pub fn get_fee(&self) -> u64 {
         self.fee
     }
@@ -164,6 +187,10 @@ impl Transaction {
         let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
         self.get_owner().verify_signature(&hash(bytes), &self.signature)
     }
+
+    pub fn consume(self) -> (PublicKey, TransactionType) {
+        (self.owner, self.data)
+    }
 }
 
 impl Serializer for Transaction {
@@ -176,12 +203,18 @@ impl Serializer for Transaction {
     }
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
+        let owner = PublicKey::read(reader)?;
+        let data = TransactionType::read(reader)?;
+        let fee = reader.read_u64()?;
+        let nonce = reader.read_u64()?;
+        let signature = Signature::read(reader)?;
+
         Ok(Transaction {
-            owner: PublicKey::read(reader)?,
-            data: TransactionType::read(reader)?,
-            fee: reader.read_u64()?,
-            nonce: reader.read_u64()?,  
-            signature: Signature::read(reader)?
+            owner,
+            data,
+            fee,
+            nonce,
+            signature
         })
     }
 }

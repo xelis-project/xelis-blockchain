@@ -159,6 +159,10 @@ impl<'a> Reader<'a> {
         Ok(u16::from_be_bytes(self.read_bytes(2)?))
     }
 
+    pub fn read_u32(&mut self) -> Result<u32, ReaderError> {
+        Ok(u32::from_be_bytes(self.read_bytes(4)?))
+    }
+
     pub fn read_u64(&mut self) -> Result<u64, ReaderError> {
         Ok(u64::from_be_bytes(self.read_bytes(8)?))
     }

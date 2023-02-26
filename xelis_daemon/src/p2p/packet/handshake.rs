@@ -1,7 +1,7 @@
 use xelis_common::{
     serializer::{Serializer, Writer, ReaderError, Reader},
     globals::{ip_from_bytes, ip_to_bytes},
-    crypto::hash::Hash
+    crypto::hash::Hash, network::Network
 };
 
 use crate::p2p::peer_list::SharedPeerList;
@@ -18,6 +18,7 @@ use std::net::SocketAddr;
 #[derive(Clone)]
 pub struct Handshake {
     version: String, // daemon version
+    network: Network,
     node_tag: Option<String>, // node tag
     network_id: [u8; 16],
     peer_id: u64, // unique peer id randomly generated
@@ -33,7 +34,7 @@ pub struct Handshake {
 impl Handshake {
     pub const MAX_LEN: usize = 16;
 
-    pub fn new(version: String, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, top_hash: Hash, cumulative_difficulty: u64, peers: Vec<SocketAddr>) -> Self {
+    pub fn new(version: String, network: Network, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, top_hash: Hash, cumulative_difficulty: u64, peers: Vec<SocketAddr>) -> Self {
         assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN); // version cannot be greater than 16 chars
         if let Some(node_tag) = &node_tag {
             assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN); // node tag cannot be greater than 16 chars
@@ -43,6 +44,7 @@ impl Handshake {
 
         Self {
             version,
+            network,
             node_tag,
             network_id,
             peer_id,
@@ -66,6 +68,10 @@ impl Handshake {
 
     pub fn get_version(&self) -> &String {
         &self.version
+    }
+
+    pub fn get_network(&self) -> &Network {
+        &self.network
     }
 
     pub fn get_network_id(&self) -> &[u8; 16] {
@@ -103,6 +109,9 @@ impl Serializer for Handshake {
         // daemon version
         writer.write_string(&self.version);
 
+        // network
+        self.network.write(writer);
+
         // node tag
         writer.write_optional_string(&self.node_tag);
 
@@ -132,6 +141,9 @@ impl Serializer for Handshake {
             return Err(ReaderError::InvalidSize)
         }
 
+        // Network
+        let network = Network::read(reader)?;
+
         // Node Tag
         let node_tag = reader.read_optional_string()?;
         if let Some(tag) = &node_tag {
@@ -158,7 +170,7 @@ impl Serializer for Handshake {
             let peer = ip_from_bytes(reader)?;
             peers.push(peer);
         }
-        Ok(Handshake::new(version, node_tag, network_id, peer_id, local_port, utc_time, topoheight, height, top_hash, cumulative_difficulty, peers))
+        Ok(Handshake::new(version, network, node_tag, network_id, peer_id, local_port, utc_time, topoheight, height, top_hash, cumulative_difficulty, peers))
     }
 }
 

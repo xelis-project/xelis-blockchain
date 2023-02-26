@@ -23,6 +23,8 @@ pub enum P2pError {
     ExpectedHandshake,
     #[error("Invalid peer address, {}", _0)]
     InvalidPeerAddress(String), // peer address from handshake
+    #[error("Invalid network")]
+    InvalidNetwork,
     #[error("Invalid network ID")]
     InvalidNetworkID,
     #[error("Peer id {} is already used!", _0)]
@@ -66,7 +68,9 @@ pub enum P2pError {
     #[error("Peer sent us a ping packet faster than protocol rules")]
     PeerInvalidPingCoutdown,
     #[error(transparent)]
-    BlockchainError(#[from] Box<BlockchainError>)
+    BlockchainError(#[from] Box<BlockchainError>),
+    #[error("Invalid content in peerlist file")]
+    InvalidPeerlist,
 }
 
 impl From<BlockchainError> for P2pError {

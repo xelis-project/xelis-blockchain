@@ -1,9 +1,9 @@
-use reqwest::blocking::{Client as HttpClient};
+use reqwest::{Client as HttpClient};
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use thiserror::Error;
-use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const PARSE_ERROR_CODE: i16 = -32700;
@@ -54,7 +54,7 @@ pub enum JsonRPCError {
 pub struct JsonRPCClient {
     http: HttpClient,
     target: String,
-    count: Cell<usize>,
+    count: AtomicUsize,
 }
 
 impl JsonRPCClient {
@@ -62,42 +62,42 @@ impl JsonRPCClient {
         JsonRPCClient {
             http: HttpClient::new(),
             target,
-            count: Cell::new(0),
+            count: AtomicUsize::new(0),
         }
     }
 
-    pub fn call<R: DeserializeOwned>(&self, method: &str) -> JsonRPCResult<R> {
-        self.count.set(self.count.get() + 1);
+    pub async fn call<R: DeserializeOwned>(&self, method: &str) -> JsonRPCResult<R> {
+        let id = self.count.fetch_add(1, Ordering::SeqCst);
         self.send(json!({
             "jsonrpc": JSON_RPC_VERSION,
             "method": method,
-            "id": self.count.get()
-        }))
+            "id": id
+        })).await
     }
 
-    pub fn call_with<P, R>(&self, method: &str, params: &P) -> JsonRPCResult<R>
+    pub async fn call_with<P, R>(&self, method: &str, params: &P) -> JsonRPCResult<R>
         where P: Serialize + Sized, R: DeserializeOwned
     {
-        self.count.set(self.count.get() + 1);
+        let id = self.count.fetch_add(1, Ordering::SeqCst);
         self.send(json!({
             "jsonrpc": JSON_RPC_VERSION,
             "method": method,
-            "id": self.count.get(),
+            "id": id,
             "params": params
-        }))
+        })).await
     }
 
-    pub fn notify(&self, method: &str) -> JsonRPCResult<()> {
+    pub async fn notify(&self, method: &str) -> JsonRPCResult<()> {
         self.http.post(&self.target)
             .json(&json!({
                 "jsonrpc": JSON_RPC_VERSION,
                 "method": method
             }))
-            .send()?;
+            .send().await?;
         Ok(())
     }
 
-    pub fn notify_with<P>(&self, method: &str, params: P) -> JsonRPCResult<()>
+    pub async fn notify_with<P>(&self, method: &str, params: P) -> JsonRPCResult<()>
         where P: Serialize + Sized
     {
         self.http
@@ -107,15 +107,15 @@ impl JsonRPCClient {
                 "method": method,
                 "params": &params
             }))
-            .send()?;
+            .send().await?;
         Ok(())
     }
 
-    fn send<R: DeserializeOwned>(&self, value: Value) -> JsonRPCResult<R> {
+    async fn send<R: DeserializeOwned>(&self, value: Value) -> JsonRPCResult<R> {
         let mut response: Value = self.http.post(&self.target)
             .json(&value)
-            .send()?
-            .json()?;
+            .send().await?
+            .json().await?;
 
         if let Some(error) = response.get_mut("error") {
             let error: JsonRPCErrorResponse = serde_json::from_value(error.take())?;

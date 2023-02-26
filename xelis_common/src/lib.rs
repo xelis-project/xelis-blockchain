@@ -1,12 +1,18 @@
 pub mod crypto;
-pub mod prompt;
 pub mod serializer;
 pub mod transaction;
 pub mod block;
+pub mod account;
 pub mod api;
 
 pub mod globals;
 pub mod config;
 pub mod immutable;
-pub mod json_rpc;
 pub mod difficulty;
+pub mod network;
+
+#[cfg(feature = "json_rpc")]
+pub mod json_rpc;
+
+#[cfg(feature = "prompt")]
+pub mod prompt;

@@ -2,4 +2,8 @@ target/
 *.log
 mainnet/
 testnet/
+dev/
 .vscode/
+wallets/
+peerlist-*.json
+build/

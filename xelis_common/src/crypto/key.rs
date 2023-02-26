@@ -1,3 +1,5 @@
+use crate::api::DataType;
+use crate::globals::get_network;
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 use super::address::{Address, AddressType};
 use super::hash::Hash;
@@ -31,8 +33,18 @@ impl PublicKey {
         self.0.as_bytes()
     }
 
-    pub fn to_address(&self) -> Address { // TODO mainnet mode based on config
-        Address::new(true, AddressType::Normal, Cow::Borrowed(self))
+    pub fn to_address(&self) -> Address {
+        Address::new(get_network().is_mainnet(), AddressType::Normal, Cow::Borrowed(self))
+    }
+
+    pub fn to_address_with(&self, data: DataType) -> Address {
+        Address::new(get_network().is_mainnet(), AddressType::Data(data), Cow::Borrowed(self))
+    }
+}
+
+impl PrivateKey {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self(ed25519_dalek::SecretKey::from_bytes(bytes).unwrap())
     }
 }
 
@@ -67,6 +79,14 @@ impl serde::Serialize for PublicKey {
         S: serde::Serializer,
     {
         serializer.serialize_str(&self.to_address().to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PublicKey {
+    fn deserialize<D: serde::Deserializer<'de> >(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        let address = Address::from_string(&s).map_err(serde::de::Error::custom)?;
+        Ok(address.to_public_key())
     }
 }
 
@@ -109,6 +129,14 @@ impl KeyPair {
         }
     }
 
+    pub fn from_private_key(private_key: PrivateKey) -> Self {
+        let public_key: ed25519_dalek::PublicKey  = (&private_key.0).into();
+        Self {
+            public_key: PublicKey(public_key),
+            private_key
+        }
+    }
+
     pub fn from_keys(public_key: PublicKey, private_key: PrivateKey) -> Self {
         KeyPair {
             public_key,
@@ -118,6 +146,10 @@ impl KeyPair {
 
     pub fn get_public_key(&self) -> &PublicKey {
         &self.public_key
+    }
+
+    pub fn get_private_key(&self) -> &PrivateKey {
+        &self.private_key
     }
 
     pub fn sign(&self, data: &[u8]) -> Signature {
@@ -178,6 +210,16 @@ impl serde::Serialize for Signature {
         S: serde::Serializer,
     {
         serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Signature {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).and_then(|s| {
+            let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+            let signature = ed25519_dalek::Signature::from_bytes(&bytes).map_err(serde::de::Error::custom)?;
+            Ok(Signature(signature))
+        })
     }
 }
 

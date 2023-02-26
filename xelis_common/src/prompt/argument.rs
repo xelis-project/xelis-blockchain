@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
 use thiserror::Error;
+use crate::crypto::hash::Hash;
+use crate::serializer::Serializer;
 
 #[derive(Error, Debug)]
 pub enum ArgError {
@@ -14,6 +16,7 @@ pub enum ArgValue {
     Bool(bool),
     Number(u64),
     String(String),
+    Hash(Hash),
     Array(Vec<ArgValue>)
 }
 
@@ -39,6 +42,13 @@ impl ArgValue {
         }
     }
 
+    pub fn to_hash(self) -> Result<Hash, ArgError> {
+        match self {
+            ArgValue::Hash(hash) => Ok(hash),
+            _ => Err(ArgError::InvalidType)
+        }
+    }
+
     pub fn to_vec(self) -> Result<Vec<ArgValue>, ArgError> {
         match self {
             ArgValue::Array(v) => Ok(v),
@@ -51,6 +61,7 @@ pub enum ArgType {
     Bool,
     Number,
     String,
+    Hash,
     Array(Box<ArgType>),
 }
 
@@ -60,6 +71,7 @@ impl ArgType {
             ArgType::Bool => ArgValue::Bool(value.parse().map_err(|_| ArgError::InvalidType)?),
             ArgType::Number => ArgValue::Number(value.parse().map_err(|_| ArgError::InvalidType)?),
             ArgType::String => ArgValue::String(value.to_owned()),
+            ArgType::Hash => ArgValue::Hash(Hash::from_hex(value.to_string()).map_err(|_| ArgError::InvalidType)?),
             ArgType::Array(value_type) => {
                 let values = value.split(",");
                 let mut array: Vec<ArgValue> = Vec::new();
@@ -68,7 +80,7 @@ impl ArgType {
                     array.push(arg_value);
                 }
                 ArgValue::Array(array)
-            },
+            }
         })
     }
 }

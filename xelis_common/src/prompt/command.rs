@@ -1,8 +1,11 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display};
+
+use crate::config::VERSION;
 
 use super::argument::*;
+use anyhow::Error;
 use thiserror::Error;
-use log::info;
+use log::{info, warn, error};
 
 #[derive(Error, Debug)]
 pub enum CommandError {
@@ -19,21 +22,31 @@ pub enum CommandError {
     #[error("Invalid argument: {}", _0)]
     InvalidArgument(String),
     #[error("Exit command was called")]
-    Exit
+    Exit,
+    #[error("No data was set in command manager")]
+    NoData,
+    #[error(transparent)]
+    Any(#[from] Error)
 }
 
-pub type CommandCallback = fn(&CommandManager, ArgumentManager) -> Result<(), CommandError>;
+pub type SyncCommandCallback<T> = fn(&CommandManager<T>, ArgumentManager) -> Result<(), CommandError>;
+pub type AsyncCommandCallback<T> = fn(&'_ CommandManager<T>, ArgumentManager) -> Pin<Box<dyn Future<Output = Result<(), CommandError>> + '_>>;
 
-pub struct Command {
+pub enum CommandHandler<T> {
+    Sync(SyncCommandCallback<T>),
+    Async(AsyncCommandCallback<T>)
+}
+
+pub struct Command<T> {
     name: String,
     description: String,
     required_args: Vec<Arg>,
     optional_arg: Option<Arg>,
-    callback: CommandCallback
+    callback: CommandHandler<T>
 }
 
-impl Command {
-    pub fn new(name: &str, description: &str, optional_arg: Option<Arg>, callback: CommandCallback) -> Self {
+impl<T> Command<T> {
+    pub fn new(name: &str, description: &str, optional_arg: Option<Arg>, callback: CommandHandler<T>) -> Self {
         Self {
             name: name.to_owned(),
             description: description.to_owned(),
@@ -43,7 +56,7 @@ impl Command {
         }
     }
 
-    pub fn with_required_arguments(name: &str, description: &str, required_args: Vec<Arg>, optional_arg: Option<Arg>, callback: CommandCallback) -> Self {
+    pub fn with_required_arguments(name: &str, description: &str, required_args: Vec<Arg>, optional_arg: Option<Arg>, callback: CommandHandler<T>) -> Self {
         Self {
             name: name.to_owned(),
             description: description.to_owned(),
@@ -53,8 +66,15 @@ impl Command {
         }
     }
 
-    pub fn execute(&self, manager: &CommandManager, values: ArgumentManager) -> Result<(), CommandError> {
-        (self.callback)(manager, values)
+    pub async fn execute(&self, manager: &CommandManager<T>, values: ArgumentManager) -> Result<(), CommandError> {
+        match &self.callback {
+            CommandHandler::Sync(handler) => {
+                handler(manager, values)
+            },
+            CommandHandler::Async(handler) => {
+                handler(manager, values).await
+            },
+        }
     }
 
     pub fn get_name(&self) -> &String {
@@ -83,30 +103,48 @@ impl Command {
     }
 }
 
-pub struct CommandManager {
-    commands: Vec<Command>
+pub struct CommandManager<T> {
+    commands: Vec<Command<T>>,
+    data: Option<T>
 }
 
-impl CommandManager {
-    pub fn new() -> Self {
+impl<T> CommandManager<T> {
+    pub fn new(data: Option<T>) -> Self {
         Self {
-            commands: Vec::new()
+            commands: Vec::new(),
+            data
         }
     }
 
-    pub fn add_command(&mut self, command: Command) {
+    pub fn default() -> Self {
+        let mut zelf = CommandManager::new(None);
+        zelf.add_command(Command::new("help", "Show this help", Some(Arg::new("command", ArgType::String)), CommandHandler::Sync(help)));
+        zelf.add_command(Command::new("version", "Show the current version", None, CommandHandler::Sync(version)));
+        zelf.add_command(Command::new("exit", "Shutdown the daemon", None, CommandHandler::Sync(exit)));
+        zelf
+    }
+
+    pub fn set_data(&mut self, data: Option<T>) {
+        self.data = data;
+    }
+
+    pub fn get_data<'a>(&'a self) -> Result<&'a T, CommandError> {
+        self.data.as_ref().ok_or(CommandError::NoData)
+    }
+
+    pub fn add_command(&mut self, command: Command<T>) {
         self.commands.push(command);
     }
 
-    pub fn get_commands(&self) -> &Vec<Command> {
+    pub fn get_commands(&self) -> &Vec<Command<T>> {
         &self.commands
     }
 
-    pub fn get_command(&self, name: &str) -> Option<&Command> {
+    pub fn get_command(&self, name: &str) -> Option<&Command<T>> {
         self.commands.iter().find(|command| *command.get_name() == *name)
     }
 
-    pub fn handle_command(&self, value: String) -> Result<(), CommandError> {
+    pub async fn handle_command(&self, value: String) -> Result<(), CommandError> {
         let mut command_split = value.split_whitespace();
         let command_name = command_split.next().ok_or(CommandError::ExpectedCommandName)?;
         let command = self.get_command(command_name).ok_or(CommandError::CommandNotFound)?;
@@ -128,10 +166,43 @@ impl CommandManager {
             return Err(CommandError::TooManyArguments);
         }
 
-        command.execute(self, ArgumentManager::new(arguments))
+        command.execute(self, ArgumentManager::new(arguments)).await
     }
 
-    pub fn message(&self, message: &str) {
+    pub fn message<D: Display>(&self, message: D) {
         info!("{}", message);
     }
+
+    pub fn warn<D: Display>(&self, message: D) {
+        warn!("{}", message);
+    }
+
+    pub fn error<D: Display>(&self, message: D) {
+        error!("{}", message);
+    }
+}
+
+fn help<T>(manager: &CommandManager<T>, mut args: ArgumentManager) -> Result<(), CommandError> {
+    if args.has_argument("command") {
+        let arg_value = args.get_value("command")?.to_string_value()?;
+        let cmd = manager.get_command(&arg_value).ok_or(CommandError::CommandNotFound)?;
+        manager.message(&format!("Usage: {}", cmd.get_usage()));
+    } else {
+        manager.message("Available commands:");
+        for cmd in manager.get_commands() {
+            manager.message(format!("- {}: {}", cmd.get_name(), cmd.get_description()));
+        }
+        manager.message("See how to use a command using /help <command>");
+    }
+    Ok(())
+}
+
+fn exit<T>(manager: &CommandManager<T>, _: ArgumentManager) -> Result<(), CommandError> {
+    manager.message("Stopping...");
+    Err(CommandError::Exit)
+}
+
+fn version<T>(manager: &CommandManager<T>, _: ArgumentManager) -> Result<(), CommandError> {
+    manager.message(format!("Version: {}", VERSION));
+    Ok(())
 }

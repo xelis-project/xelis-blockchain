@@ -1,32 +1,21 @@
+use std::borrow::Borrow;
+
 use actix::{Actor, StreamHandler, AsyncContext, Message as TMessage, Handler, Addr};
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
 use serde::Deserialize;
-use serde_json::Value;
-use super::{SharedRpcServer, RpcError, RpcResponseError};
+use serde_json::{Value, json};
+use xelis_common::api::daemon::NotifyEvent;
+use super::{SharedRpcServer, RpcError, RpcResponseError, JSON_RPC_VERSION};
 use log::debug;
 
-pub struct Response(pub Value);
+pub struct Response<T: Borrow<Value> + ToString>(pub T);
 
 #[derive(Deserialize)]
 pub struct SubscribeParams {
     notify: NotifyEvent
 }
 
-#[derive(PartialEq, Eq, Hash, Deserialize)]
-pub enum NotifyEvent {
-    // When a new block is accepted by chain
-    NewBlock,
-    // When a new transaction is added in mempool
-    TransactionAddedInMempool,
-    // When a transaction has been included in a valid block & executed on chain
-    TransactionExecuted,
-    // When a registered TX SC Call hash has been executed by chain
-    TransactionSCResult,
-    // When a new asset has been registered
-    NewAsset
-}
-
-impl TMessage for Response {
+impl<T: Borrow<Value> + ToString> TMessage for Response<T> {
     type Result = Result<(), RpcError>;
 }
 
@@ -78,10 +67,10 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
     }
 }
 
-impl Handler<Response> for WebSocketHandler {
+impl<T: Borrow<Value> + ToString> Handler<Response<T>> for WebSocketHandler {
     type Result = Result<(), RpcError>;
 
-    fn handle(&mut self, msg: Response, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: Response<T>, ctx: &mut Self::Context) -> Self::Result {
         ctx.text(msg.0.to_string());
         Ok(())
     }
@@ -101,13 +90,17 @@ impl WebSocketHandler {
             "subscribe" | "unsubscribe" => {
                 let params: SubscribeParams = serde_json::from_value(request.params.take().unwrap_or(Value::Null)).map_err(|e| RpcResponseError::new(request.id, RpcError::InvalidParams(e)))?;
                 let res = if method == "subscribe" {
-                    server.subscribe_client_to(addr, params.notify).await
+                    server.subscribe_client_to(addr, params.notify, request.id).await
                 } else {
                     server.unsubscribe_client_from(addr, &params.notify).await
                 };
                 res.map_err(|e| RpcResponseError::new(request.id, e))?;
 
-                Ok(Value::Bool(true)) 
+                Ok(json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "id": request.id,
+                    "result": json!(true)
+                }))
             },
             _ => server.execute_method(request).await
         }

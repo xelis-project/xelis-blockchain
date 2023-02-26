@@ -75,6 +75,10 @@ pub enum BlockchainError {
     InvalidTransactionNonce(u64, u64),
     #[error("Invalid transaction, sender trying to send coins to himself: {}", _0)]
     InvalidTransactionToSender(Hash),
+    #[error("Invalid extra data in this transaction, expected maximum {} bytes but got {} bytes", _0, _1)]
+    InvalidTransactionExtraDataTooBig(usize, usize),
+    #[error("Invalid network state")]
+    InvalidNetwork,
     #[error("Error while retrieving block by hash: {} not found", _0)]
     BlockNotFound(Hash),
     #[error("Error while retrieving block by height: {} not found", _0)]
@@ -136,7 +140,11 @@ pub enum BlockchainError {
     #[error("Invalid asset ID: {}", _0)]
     AssetNotFound(Hash),
     #[error(transparent)]
-    DifficultyError(#[from] DifficultyError)
+    DifficultyError(#[from] DifficultyError),
+    #[error("No balance found on disk")]
+    NoBalance,
+    #[error("No balance changes for specific topoheight and asset")]
+    NoBalanceChanges
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

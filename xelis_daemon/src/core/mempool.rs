@@ -67,9 +67,17 @@ impl Mempool {
         Ok(tx)
     }
 
-    pub fn view_tx(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
+    pub fn get_tx(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
         let tx = self.txs.get(hash).ok_or_else(|| BlockchainError::TxNotFound(hash.clone()))?;
         Ok(Arc::clone(tx))
+    }
+
+    pub fn view_tx<'a>(&'a self, hash: &Hash) -> Result<&'a Arc<Transaction>, BlockchainError> {
+        if let Some(tx) = self.txs.get(hash) {
+            return Ok(tx)
+        }
+
+        Err(BlockchainError::TxNotFound(hash.clone()))
     }
 
     pub fn get_sorted_txs(&self) -> &Vec<SortedTx> {
@@ -80,8 +88,12 @@ impl Mempool {
         &self.txs
     }
 
+    pub fn size(&self) -> usize {
+        self.txs_sorted.len()
+    }
+
     // delete all old txs not compatible anymore with current state of account
-    pub async fn clean_up(&mut self, storage: &Storage, nonces: HashMap<&PublicKey, u64>) {
+    pub async fn clean_up(&mut self, storage: &Storage, nonces: HashMap<PublicKey, u64>) {
         let txs_sorted = std::mem::replace(&mut self.txs_sorted, vec!());
         for sorted in txs_sorted {
             let tx_nonce;

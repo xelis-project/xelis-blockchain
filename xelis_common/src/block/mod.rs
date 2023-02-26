@@ -1,3 +1,5 @@
+use serde::Deserialize;
+
 use crate::crypto::hash::{Hash, Hashable, hash};
 use crate::crypto::key::PublicKey;
 use crate::immutable::Immutable;
@@ -7,19 +9,38 @@ use crate::serializer::{Serializer, Writer, Reader, ReaderError};
 pub const EXTRA_NONCE_SIZE: usize = 32;
 pub const BLOCK_WORK_SIZE: usize = 160;
 
-#[derive(serde::Serialize, Clone)]
+pub fn serialize_extra_nonce<S: serde::Serializer>(extra_nonce: &[u8; EXTRA_NONCE_SIZE], s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&hex::encode(extra_nonce))
+}
+
+pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<[u8; EXTRA_NONCE_SIZE], D::Error> {
+    let mut extra_nonce = [0u8; EXTRA_NONCE_SIZE];
+    let hex = String::deserialize(deserializer)?;
+    let decoded = hex::decode(hex).map_err(serde::de::Error::custom)?;
+    extra_nonce.copy_from_slice(&decoded);
+    Ok(extra_nonce)
+}
+
+// TODO fix deserializer
+pub fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(_: D) -> Result<u128, D::Error> {
+    Ok(0)
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Block {
     pub tips: Vec<Hash>,
-    #[serde(skip_serializing)] // TODO https://github.com/serde-rs/json/issues/625
+    #[serde(deserialize_with = "deserialize_timestamp")]
     pub timestamp: u128,
     pub height: u64,
     pub nonce: u64,
+    #[serde(serialize_with = "serialize_extra_nonce")]
+    #[serde(deserialize_with = "deserialize_extra_nonce")]
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE],
     pub miner: PublicKey,
     pub txs_hashes: Vec<Hash>
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct CompleteBlock {
     #[serde(flatten)]
     block: Immutable<Block>,
@@ -128,6 +149,10 @@ impl CompleteBlock {
             block,
             transactions
         }
+    }
+
+    pub fn to_header(self) -> Arc<Block> {
+        self.block.to_arc()
     }
 
     pub fn get_header(&self) -> &Block {
@@ -240,6 +265,7 @@ impl Deref for CompleteBlock {
 
 use std::fmt::{Error, Display, Formatter};
 use std::ops::Deref;
+use std::sync::Arc;
 
 impl Display for Block {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {

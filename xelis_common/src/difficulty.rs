@@ -1,4 +1,4 @@
-use crate::config::{MINIMUM_DIFFICULTY, BLOCK_TIME};
+use crate::config::{MINIMUM_DIFFICULTY, BLOCK_TIME_MILLIS};
 use crate::crypto::hash::Hash;
 use num_bigint::{BigUint, ToBigUint};
 use thiserror::Error;
@@ -43,11 +43,11 @@ pub fn hash_to_big(hash: &Hash) -> BigUint {
 
 pub fn calculate_difficulty(parent_timestamp: u128, new_timestamp: u128, previous_difficulty: u64) -> u64 {
     let mut solve_time: u128 = new_timestamp - parent_timestamp;
-    if solve_time > (BLOCK_TIME as u128 * 2) {
-        solve_time = BLOCK_TIME as u128 * 2;
+    if solve_time > (BLOCK_TIME_MILLIS as u128 * 2) {
+        solve_time = BLOCK_TIME_MILLIS as u128 * 2;
     }
 
-    let easypart = (E.powf((1f64 - solve_time as f64 / BLOCK_TIME as f64) / M) * 10000f64) as i64;
+    let easypart = (E.powf((1f64 - solve_time as f64 / BLOCK_TIME_MILLIS as f64) / M) * 10000f64) as i64;
     let diff = ((previous_difficulty as i64 * easypart) / 10000) as u64;
     debug!("Difficulty calculated, easypart: {}, previous diff: {}, diff: {}", easypart, previous_difficulty, diff);
 
