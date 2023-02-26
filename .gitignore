@@ -5,3 +5,4 @@ testnet/
 dev/
 .vscode/
 wallets/
+peerlist-*.json
