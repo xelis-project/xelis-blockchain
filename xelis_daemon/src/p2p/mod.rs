@@ -804,14 +804,18 @@ impl P2pServer {
         Ok(())
     }
 
+    // search a common point between our blockchain and the peer's one
+    // when the common point is found, start sending blocks from this point
     async fn handle_chain_request(self: Arc<Self>, peer: &Arc<Peer>, blocks: Vec<BlockId>) -> Result<(), BlockchainError> {
         let storage = self.blockchain.get_storage().read().await;
         let mut response_blocks = Vec::new();
         let mut common_point = None;
         for block_id in blocks { // search a common point
-            if let Ok(common_block) = storage.get_block_by_hash(block_id.get_hash()).await {
+            if storage.has_block(block_id.get_hash()).await? {
+                let common_block = storage.get_block_by_hash(block_id.get_hash()).await?;
                 let (hash, topoheight) = block_id.consume();
-                debug!("Block {} found for topoheight: {}", hash, topoheight);
+                debug!("Block {} is common, expected topoheight from peer: {}", hash, topoheight);
+                // check that the block is ordered like us
                 if storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
                     debug!("common point with peer found at block {} with same topoheight at {}", hash, topoheight);
                     common_point = Some(CommonPoint::new(Cow::Owned(hash), topoheight));
@@ -819,7 +823,7 @@ impl P2pServer {
                     let mut height = common_block.get_height();
                     while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && height <= top_height {
                         for hash in storage.get_blocks_at_height(height).await? {
-                            debug!("for request, adding hash {} at height {}", hash, height);
+                            debug!("for chain request, adding hash {} at height {}", hash, height);
                             response_blocks.push(Cow::Owned(hash));
                         }
                         height += 1;

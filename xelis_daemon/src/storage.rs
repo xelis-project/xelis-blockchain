@@ -739,17 +739,22 @@ impl Storage {
         Ok(tips)
     }
 
+    pub async fn has_blocks_at_height(&self, height: u64) -> Result<bool, BlockchainError> {
+        Ok(self.blocks_at_height.contains_key(&height.to_be_bytes())?)
+    }
+
     // returns all blocks hash at specified height
     pub async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError> {
-        // TODO cache
         self.load_from_disk(&self.blocks_at_height, &height.to_be_bytes())
     }
 
     pub async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError> {
-        trace!("add block {} at height {}", hash, height);
-        let mut tips = match self.get_blocks_at_height(height).await {
-            Ok(tips) => tips,
-            Err(_) => Tips::new()
+        debug!("add block {} at height {}", hash, height);
+        let mut tips = if self.has_blocks_at_height(height).await? {
+            self.get_blocks_at_height(height).await?
+        } else {
+            debug!("No blocks found at this height");
+            Tips::new()
         };
         tips.insert(hash);
 
