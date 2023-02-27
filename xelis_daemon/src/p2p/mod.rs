@@ -681,7 +681,7 @@ impl P2pServer {
                 }
 
                 if let Some(common_point) = response.get_common_point() {
-                    debug!("Peer found a common point for sync, received {} blocks", response.size());
+                    debug!("Peer found a common point with block {} at {} for sync, received {} blocks", common_point.get_hash(), common_point.get_topoheight(), response.size());
                     let pop_count = {
                         let storage = self.blockchain.get_storage().read().await;
                         let block_height = match storage.get_height_for_block(common_point.get_hash()).await {
@@ -693,7 +693,7 @@ impl P2pServer {
                         };
                         let topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
                         if topoheight != common_point.get_topoheight() {
-                            error!("Peer {} sent us a valid block hash, but at invalid height (expected: {}, got: {})!", peer.get_connection().get_address(), block_height, common_point.get_topoheight());
+                            error!("Peer {} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer.get_connection().get_address(), block_height, common_point.get_topoheight());
                             return Err(P2pError::InvalidPacket)
                         }
                         self.blockchain.get_height() - block_height
@@ -812,8 +812,8 @@ impl P2pServer {
             if let Ok(common_block) = storage.get_block_by_hash(block_id.get_hash()).await {
                 let (hash, topoheight) = block_id.consume();
                 debug!("Block {} found for topoheight: {}", hash, topoheight);
-                if storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
-                    debug!("common point with peer found at block {} with same topoheight at {}", topoheight, hash);
+                if storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
+                    debug!("common point with peer found at block {} with same topoheight at {}", hash, topoheight);
                     common_point = Some(CommonPoint::new(Cow::Owned(hash), topoheight));
                     let top_height = self.blockchain.get_height();
                     let mut height = common_block.get_height();
@@ -880,7 +880,6 @@ impl P2pServer {
                 return true
             }
         }
-
         false
     }
 
@@ -975,12 +974,18 @@ impl P2pServer {
         peer_list.broadcast(Bytes::from(packet.to_bytes())).await;
     }
 
+    // this function basically send all our blocks based on topological order (topoheight)
+    // we send up to CHAIN_SYNC_REQUEST_MAX_BLOCKS blocks id (combinaison of block hash and topoheight)
+    // we add at the end the genesis block to be sure to be on the same chain as others peers
+    // its used to find a common point with the peer to which we ask the chain
     pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         let mut request = ChainRequest::new();
         {
             let storage = self.blockchain.get_storage().read().await;
             let topoheight = self.blockchain.get_topo_height();
             let mut i = 0;
+
+            // we add 1 for the genesis block added below
             while i < topoheight && request.size() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
                 trace!("Requesting hash at topo {}", topoheight - i);
                 let hash = storage.get_hash_at_topo_height(topoheight - i).await?;
