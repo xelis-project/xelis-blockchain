@@ -13,7 +13,7 @@ use xelis_common::{
     },
 };
 use crate::p2p::error::P2pError;
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::{Display, Formatter, self}};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ObjectRequest {
@@ -51,6 +51,15 @@ impl Serializer for ObjectRequest {
             1 => ObjectRequest::Transaction(reader.read_hash()?),
             _ => return Err(ReaderError::InvalidValue)
         })
+    }
+}
+
+impl Display for ObjectRequest {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Block(hash) => write!(f, "ObjectRequest[type=Block, {}]", hash),
+            Self::Transaction(hash) => write!(f, "ObjectRequest[type=Transaction, {}]", hash)
+        }
     }
 }
 
