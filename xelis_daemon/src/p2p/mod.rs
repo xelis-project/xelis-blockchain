@@ -849,6 +849,8 @@ impl P2pServer {
                     error!("Peer {} sent us an invalid block response", peer.get_connection().get_address());
                     return Err(P2pError::ExpectedBlock.into())
                 }
+            } else {
+                debug!("Block {} is already in chain, skipping it", hash);
             }
         }
 
@@ -858,11 +860,13 @@ impl P2pServer {
         // if no, check that the pop count request is less or equal than the configured limit
         if pop_count > 0 && (peer.is_priority() || ((pop_count <= MAX_BLOCK_REWIND) && !self.is_connected_to_a_priority_node().await)) {
             warn!("Rewinding chain because of peer {} (priority: {}, pop count: {})", peer.get_connection().get_address(), peer.is_priority(), pop_count);
-            if let Err(e) = self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
-                error!("Error on rewind chain with pop count at {}, error: {}", pop_count, e);
-            }
+            match self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
+                Ok(topoheight) => debug!("Chain has been rewinded to topoheight {}", topoheight),
+                Err(e) => error!("Error on rewind chain with pop count at {}, error: {}", pop_count, e)
+            };
         }
 
+        debug!("Adding blocks to chain");
         for block in blocks {
             self.blockchain.add_new_block_for_storage(&mut storage, block, false).await?;
         }
