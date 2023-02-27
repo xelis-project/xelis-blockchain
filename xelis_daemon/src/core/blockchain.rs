@@ -631,10 +631,11 @@ impl Blockchain {
     pub async fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
         let mut mempool = self.mempool.write().await;
-        self.add_tx_for_mempool(&mut mempool, tx, hash, broadcast).await
+        let storage = self.storage.read().await;
+        self.add_tx_for_mempool(&storage, &mut mempool, tx, hash, broadcast).await
     }
 
-    async fn add_tx_for_mempool(&self, mempool: &mut Mempool, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
+    async fn add_tx_for_mempool<'a>(&'a self, storage: &Storage, mempool: &mut Mempool, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
         if mempool.contains_tx(&hash) {
             return Err(BlockchainError::TxAlreadyInMempool(hash))
         }
@@ -661,7 +662,6 @@ impl Blockchain {
                 }
             }
 
-            let storage = self.storage.read().await;
             let mut balances = HashMap::new();
             self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, Some(&mut nonces)).await?
         }
@@ -846,7 +846,7 @@ impl Blockchain {
                     error!("Invalid tx {} vs {} in block header", tx_hash, hash);
                     return Err(BlockchainError::InvalidTxInBlock(tx_hash))
                 }
-
+                debug!("Verifying TX {}", tx_hash);
                 // block can't contains the same tx and should have tx hash in block header
                 if cache_tx.contains_key(&tx_hash) {
                     error!("Block cannot contains the same TX {}", tx_hash);
@@ -1237,12 +1237,15 @@ impl Blockchain {
 
             // apply all changes to nonce
             for (key, nonce) in nonces {
+                debug!("Set nonce for {} to {}", key, nonce);
                 storage.set_nonce(key, nonce).await?;
             }
 
+            debug!("Locking mempool");
             let mut mempool = self.mempool.write().await;
             for (hash, tx) in txs {
-                if let Err(e) = self.add_tx_for_mempool(&mut mempool, tx.as_ref().clone(), hash, false).await {
+                debug!("Adding TX {} to mempool", hash);
+                if let Err(e) = self.add_tx_for_mempool(&storage, &mut mempool, tx.as_ref().clone(), hash, false).await {
                     debug!("TX rewinded is not compatible anymore: {}", e);
                 }
             }
