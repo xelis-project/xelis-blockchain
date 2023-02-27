@@ -169,15 +169,15 @@ impl P2pServer {
 
     // save a new peer to peerlist.json file
     // for this we have to fetch all, add it to Vec and save it
-    async fn save_peer_to_file(&self, addr: &SocketAddr) -> Result<(), P2pError> {
+    async fn save_peer_to_file(&self, addr: SocketAddr) -> Result<(), P2pError> {
         debug!("Saving peer {} to peerlist file...", addr);
         let mut peers = self.get_peers_from_file().await?;
-        if peers.contains(addr) {
+        if peers.contains(&addr) {
             debug!("Peerlist file already contains {}", addr);
             return Ok(())
         }
 
-        peers.push(addr.clone());
+        peers.push(addr);
         self.save_peers_to_file(&peers).await
     }
 
@@ -271,7 +271,7 @@ impl P2pServer {
             match storage.get_block_by_hash(handshake.get_block_top_hash()).await {
                 Ok(block) => {
                     if block.get_height() != handshake.get_block_height() {
-                        debug!("{} is not on the same chain! Block height: {}, handshake height: {}", connection, block.get_height(), handshake.get_block_height());
+                        debug!("{} (block {}) is not on the same chain! Block height: {}, handshake height: {}", connection, handshake.get_block_top_hash(), block.get_height(), handshake.get_block_height());
                         connection.close().await?;
                         return Err(P2pError::InvalidHandshake)
                     }
@@ -308,12 +308,11 @@ impl P2pServer {
             }
         }
 
-        let topoheight = self.blockchain.get_topo_height();
-        let height = self.blockchain.get_height();
         let storage = self.blockchain.get_storage().read().await;
-        let top_hash = storage.get_top_block_hash().await.unwrap_or_else(|_| Hash::zero());
+        let (block, top_hash) = storage.get_top_block().await?;
+        let topoheight = self.blockchain.get_topo_height();
         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&top_hash).await.unwrap_or_else(|_| 0);
-        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, height, top_hash, cumulative_difficulty, peers))
+        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, block.get_height(), top_hash, cumulative_difficulty, peers))
     }
 
     // this function handle all new connections
@@ -337,7 +336,11 @@ impl P2pServer {
 
         // if we reach here, handshake is all good, we can start listening this new peer
         // we can save the peer in our peerlist
-        if let Err(e) = self.save_peer_to_file(peer.get_connection().get_address()).await {
+        let mut addr = peer.get_connection().get_address().clone();
+        if !peer.is_out() {
+            addr.set_port(peer.get_local_port());
+        }
+        if let Err(e) = self.save_peer_to_file(addr).await {
             error!("Error while saving peer on disk: {}", e);
         };
 
@@ -909,7 +912,7 @@ impl P2pServer {
     }
 
     pub async fn get_best_topoheight(&self) -> u64 {
-        let our_height = self.blockchain.get_height();
+        let our_height = self.blockchain.get_topo_height();
         let peer_list = self.peer_list.read().await;
         let best_height = peer_list.get_best_topoheight();
         if best_height > our_height {

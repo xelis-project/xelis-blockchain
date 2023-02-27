@@ -183,7 +183,14 @@ impl Prompt {
         } else {
             base.level(log::LevelFilter::Info)
         };
-        base.apply()?;
+
+        base.level_for("sled", log::LevelFilter::Warn)
+        .level_for("actix_server", log::LevelFilter::Warn)
+        .level_for("actix_web", log::LevelFilter::Warn)
+        .level_for("actix_http", log::LevelFilter::Warn)
+        .level_for("mio", log::LevelFilter::Warn)
+        .apply()?;
+
         Ok(())
     }
 
