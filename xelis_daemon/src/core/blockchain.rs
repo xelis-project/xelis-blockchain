@@ -630,6 +630,10 @@ impl Blockchain {
 
     pub async fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
+        self.add_tx_with_hash_to_mempool(tx, hash, broadcast).await
+    }
+
+    pub async fn add_tx_with_hash_to_mempool(&self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
         let mut mempool = self.mempool.write().await;
         let storage = self.storage.read().await;
         self.add_tx_for_mempool(&storage, &mut mempool, tx, hash, broadcast).await

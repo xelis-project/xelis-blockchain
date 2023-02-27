@@ -551,8 +551,8 @@ impl P2pServer {
                                 return;
                             }
                         };
-                        if let OwnedObjectResponse::Transaction(tx) = response {
-                            if let Err(e) = zelf.blockchain.add_tx_to_mempool(tx, true).await {
+                        if let OwnedObjectResponse::Transaction(tx, hash) = response {
+                            if let Err(e) = zelf.blockchain.add_tx_with_hash_to_mempool(tx, hash, true).await {
                                 match e {
                                     // another peer was faster than us
                                     BlockchainError::TxAlreadyInMempool(_) => {}, // TODO: synced request list
@@ -574,8 +574,8 @@ impl P2pServer {
                 let (block, ping) = packet_wrapper.consume();
                 ping.into_owned().update_peer(peer).await;
                 let block = block.into_owned();
+                let block_hash = block.hash();
                 {
-                    let block_hash = block.hash();
                     let storage = self.blockchain.get_storage().read().await;
                     if storage.has_block(&block_hash).await? {
                         debug!("{}: {} with hash {} is already in our chain. Skipping", peer, block, block_hash);
@@ -587,7 +587,7 @@ impl P2pServer {
                 let zelf = Arc::clone(self);
                 let peer = Arc::clone(peer);
                 // verify that we have all txs in local or ask peer to get missing txs
-                tokio::spawn(async move { // TODO handle errors
+                tokio::spawn(async move {
                     for hash in block.get_txs_hashes() {
                         let contains = { // we don't lock one time because we may wait on p2p response
                             let mempool = zelf.blockchain.get_mempool().read().await;
@@ -595,22 +595,47 @@ impl P2pServer {
                         };
 
                         if !contains { // retrieve one by one to prevent the acquiring the lock for nothing
-                            let response = peer.request_blocking_object(ObjectRequest::Transaction(hash.clone())).await?; // TODO delete clone
-                            if let OwnedObjectResponse::Transaction(tx) = response {
-                                zelf.blockchain.add_tx_to_mempool(tx, false).await?;
+                            debug!("Requesting TX {} to {} for block {}", hash, peer, block_hash);
+                            let response = match peer.request_blocking_object(ObjectRequest::Transaction(hash.clone())).await {
+                                Ok(response) => response,
+                                Err(e) => {
+                                    error!("Error while requesting TX {} to peer {}: {}", hash, peer, e);
+                                    peer.increment_fail_count();
+                                    return;
+                                }
+                            };
+                            if let OwnedObjectResponse::Transaction(tx, _) = response {
+                                if let Err(e) = zelf.blockchain.add_tx_to_mempool(tx, false).await {
+                                    if let BlockchainError::TxAlreadyInMempool(_) = e {
+                                        debug!("TX {} is already in mempool finally, another peer was faster", hash);
+                                    } else {
+                                        error!("Error while adding new requested tx to mempool: {}", e);
+                                        peer.increment_fail_count();
+                                    }
+                                }
                             } else {
-                                return Err(P2pError::InvalidObjectResponse(response.get_hash()))
+                                error!("Invalid object response received from {}, expected {} got {}", peer, hash, response.get_hash());
+                                peer.increment_fail_count();
+                                return;
                             }
                         }
                     }
 
                     // add immediately the block to chain as we are synced with
-                    let complete_block = zelf.blockchain.build_complete_block_from_block(block).await?;
+                    let complete_block = match zelf.blockchain.build_complete_block_from_block(block).await {
+                        Ok(block) => block,
+                        Err(e) => {
+                            error!("Error while building complete block {} from peer {}: {}", block_hash, peer, e);
+                            peer.increment_fail_count();
+                            return;
+                        }
+                    };
+
+                    debug!("Adding received block {} to chain", block_hash);
                     if let Err(e) = zelf.blockchain.add_new_block(complete_block, true).await {
                         error!("Error while adding new block: {}", e);
                         peer.increment_fail_count();
                     }
-                    Ok(())
                 });
             },
             Packet::ChainRequest(packet_wrapper) => {
@@ -813,14 +838,11 @@ impl P2pServer {
         let mut storage = self.blockchain.get_storage().write().await; // lock until we get all blocks
         let mut blocks: Vec<CompleteBlock> = Vec::with_capacity(blocks_request.len());
         for hash in blocks_request { // Request all complete blocks now
-            if !storage.has_block(&hash).await? { // TODO parallelize
+            if !storage.has_block(&hash).await? {
+                debug!("Block {} is not found, asking it to peer", hash);
                 let object_request = ObjectRequest::Block(hash.clone());
                 let response = peer.request_blocking_object(object_request).await?;
-                if let OwnedObjectResponse::Block(block) = response {
-                    let block_hash = block.hash();
-                    if hash != block_hash {
-                        return Err(P2pError::InvalidObjectResponse(block_hash).into())
-                    } 
+                if let OwnedObjectResponse::Block(block, hash) = response {
                     debug!("Received block {} at height {} from peer {}", hash, block.get_height(), peer.get_connection().get_address());
                     blocks.push(block);
                 } else {

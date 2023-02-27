@@ -64,15 +64,15 @@ impl Display for ObjectRequest {
 }
 
 pub enum OwnedObjectResponse {
-    Block(CompleteBlock),
-    Transaction(Transaction)
+    Block(CompleteBlock, Hash),
+    Transaction(Transaction, Hash)
 }
 
 impl OwnedObjectResponse {
-    pub fn get_hash(&self) -> Hash {
+    pub fn get_hash(&self) -> &Hash {
         match self {
-            OwnedObjectResponse::Block(block) => block.hash(),
-            OwnedObjectResponse::Transaction(transaction) => transaction.hash()
+            OwnedObjectResponse::Block(_, hash) => hash,
+            OwnedObjectResponse::Transaction(_, hash) => hash
         }
     }
 }
@@ -94,8 +94,16 @@ impl ObjectResponse<'_> {
 
     pub fn to_owned(self) -> Result<OwnedObjectResponse, P2pError> {
         Ok(match self {
-            ObjectResponse::Block(block) => OwnedObjectResponse::Block(block.into_owned()),
-            ObjectResponse::Transaction(tx) => OwnedObjectResponse::Transaction(tx.into_owned()),
+            ObjectResponse::Block(block) => {
+                let block = block.into_owned();
+                let hash = block.hash();
+                OwnedObjectResponse::Block(block, hash)
+            },
+            ObjectResponse::Transaction(tx) => {
+                let tx = tx.into_owned();
+                let hash = tx.hash();
+                OwnedObjectResponse::Transaction(tx, hash)
+            },
             ObjectResponse::NotFound(request) => return Err(P2pError::ObjectNotFound(request))
         })
     }

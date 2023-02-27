@@ -208,8 +208,8 @@ impl Peer {
             }
         };
         let object_hash = object.get_hash();
-        if object_hash != *request.get_hash() {
-            return Err(P2pError::InvalidObjectResponse(object_hash))
+        if *object_hash != *request.get_hash() {
+            return Err(P2pError::InvalidObjectResponse(object_hash.clone()))
         }
 
         Ok(object)
