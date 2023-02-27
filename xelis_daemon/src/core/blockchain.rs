@@ -780,6 +780,14 @@ impl Blockchain {
             error!("Expected at least one previous block for this block");
             return Err(BlockchainError::ExpectedTips)
         }
+
+        for tip in block.get_tips() {
+            if !storage.has_block(tip).await? {
+                error!("This block has a TIP ({}) which is not present in chain", tip);
+                return Err(BlockchainError::InvalidTips)
+            }
+        }
+
         let block_height_by_tips = blockdag::calculate_height_at_tips(storage, block.get_tips()).await?;
         if block_height_by_tips != block.get_height() {
             error!("Invalid block height {}, expected {} for this block", block.get_height(), block_height_by_tips);
