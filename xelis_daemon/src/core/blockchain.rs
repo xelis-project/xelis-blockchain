@@ -662,7 +662,8 @@ impl Blockchain {
             }
 
             let storage = self.storage.read().await;
-            self.verify_transaction_with_hash(&storage, &tx, &hash, Some(&mut nonces)).await?
+            let mut balances = HashMap::new();
+            self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, Some(&mut nonces)).await?
         }
 
         if broadcast {
@@ -838,6 +839,7 @@ impl Blockchain {
 
             let mut cache_account: HashMap<&PublicKey, u64> = HashMap::new();
             let mut cache_tx: HashMap<Hash, bool> = HashMap::new(); // avoid using a TX multiple times
+            let mut balances = HashMap::new();
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_hash = tx.hash();
                 if tx_hash != *hash {
@@ -851,7 +853,7 @@ impl Blockchain {
                     return Err(BlockchainError::TxAlreadyInBlock(tx_hash));
                 }
 
-                self.verify_transaction_with_hash(storage, tx, &tx_hash, Some(&mut cache_account)).await?;
+                self.verify_transaction_with_hash(storage, tx, &tx_hash, &mut balances, Some(&mut cache_account)).await?;
                 cache_tx.insert(tx_hash, true);
                 total_tx_size += tx.size();
             }
@@ -1210,7 +1212,7 @@ impl Blockchain {
                             let version = storage.delete_balance_at_topoheight(key, &asset, i).await?;
                             let previous = version.get_previous_topoheight();
                             debug!("Previous balance is {:?}", previous);
-                            let assets = balances.entry(key).or_insert_with(|| HashMap::new());
+                            let assets = balances.entry(key).or_insert_with(HashMap::new);
                             assets.insert(asset, previous);
                         }
                     }
@@ -1254,8 +1256,8 @@ impl Blockchain {
     // verify the transaction and returns fees available
     // nonces allow us to support multiples tx from same owner in the same block
     // txs must be sorted in ascending order based on account nonce 
-    async fn verify_transaction_with_hash<'a>(&self, storage: &Storage, tx: &'a Transaction, hash: &Hash, nonces: Option<&mut HashMap<&'a PublicKey, u64>>) -> Result<(), BlockchainError> {
-        let mut total_deducted: HashMap<&'a Hash, u64> = HashMap::new();
+    async fn verify_transaction_with_hash<'a>(&self, storage: &Storage, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>) -> Result<(), BlockchainError> {
+        let total_deducted: &mut HashMap<&'a Hash, u64>  = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
         total_deducted.insert(&XELIS_ASSET, tx.get_fee());
 
         match tx.get_data() {
@@ -1273,7 +1275,13 @@ impl Blockchain {
                     if let Some(data) = &output.extra_data {
                         extra_data_size += data.len();
                     }
-                    *total_deducted.entry(&output.asset).or_insert(0) += output.amount;
+                    let balance = total_deducted.entry(&output.asset).or_insert(0);
+                    if let Some(value) = balance.checked_add(output.amount) {
+                        *balance = value;
+                    } else {
+                        warn!("Overflow detected with transaction {}", hash);
+                        return Err(BlockchainError::Overflow)
+                    }
                 }
 
                 if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
@@ -1281,7 +1289,13 @@ impl Blockchain {
                 }
             }
             TransactionType::Burn(asset, amount) => {
-                *total_deducted.entry(asset).or_insert(0) += amount;
+                let balance = total_deducted.entry(asset).or_insert(0);
+                if let Some(value) = balance.checked_add(*amount) {
+                    *balance = value;
+                } else {
+                    warn!("Overflow detected with transaction {}", hash);
+                    return Err(BlockchainError::Overflow)
+                }
             },
             _ => {
                 // TODO implement SC
@@ -1292,8 +1306,8 @@ impl Blockchain {
          // verify that the user have enough funds for each assets spent
         for (asset, amount) in total_deducted {
             let (_, version) = storage.get_last_balance(tx.get_owner(), asset).await?;
-            if version.get_balance() < amount {
-                return Err(BlockchainError::NotEnoughFunds(tx.get_owner().clone(), asset.clone(), version.get_balance(), amount))
+            if version.get_balance() < *amount {
+                return Err(BlockchainError::NotEnoughFunds(tx.get_owner().clone(), (*asset).clone(), version.get_balance(), *amount))
             }
         }
 
@@ -1323,7 +1337,7 @@ impl Blockchain {
 
     // retrieve the already added balance with changes OR generate a new versioned balance
     async fn retrieve_balance<'a, 'b>(&self, storage: &Storage, balances: &'b mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, topoheight: u64) -> Result<&'b mut VersionedBalance, BlockchainError> {
-        let assets = balances.entry(key).or_insert_with(|| HashMap::new());
+        let assets = balances.entry(key).or_insert_with(HashMap::new);
         Ok(match assets.entry(asset) {
             Entry::Occupied(v) => v.into_mut(),
             Entry::Vacant(v) => {

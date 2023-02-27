@@ -144,7 +144,9 @@ pub enum BlockchainError {
     #[error("No balance found on disk")]
     NoBalance,
     #[error("No balance changes for specific topoheight and asset")]
-    NoBalanceChanges
+    NoBalanceChanges,
+    #[error("Overflow detected")]
+    Overflow
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {
