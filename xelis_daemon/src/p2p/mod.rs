@@ -258,14 +258,14 @@ impl P2pServer {
                     MessageChannel::Exit => break,
                     MessageChannel::Connect((addr, priority)) => {
                         if !self.accept_new_connections().await {
-                            debug!("Coudln't connect to {}, limit has been reached!", addr);
+                            trace!("Coudln't connect to {}, limit has been reached!", addr);
                             continue;
                         }
 
                         match self.connect_to_peer(addr).await {
                             Ok(connection) => (connection, true, priority),
                             Err(e) => {
-                                debug!("Error while trying to connect to new outgoing peer: {}", e);
+                                trace!("Error while trying to connect to new outgoing peer: {}", e);
                                 continue;
                             }
                         }
@@ -274,7 +274,7 @@ impl P2pServer {
             };
             trace!("Handling new connection: {} (out = {}, priority = {})", connection, out, priority);
             if let Err(e) = self.handle_new_connection(connection, out, priority).await {
-                trace!("Error on occured on handled connection: {}", e);
+                debug!("Error on occured on handled connection: {}", e);
                 // no need to close it here, as it will be automatically closed in drop
             }
         }
@@ -592,6 +592,15 @@ impl P2pServer {
                 trace!("{}: Transaction Propagation packet", peer);
                 let (hash, ping) = packet_wrapper.consume();
                 let hash = hash.into_owned();
+
+                // peer should not send us twice the same transaction
+                let mut txs_cache = peer.get_txs_cache().lock().await;
+                if txs_cache.contains(&hash) {
+                    warn!("{} send us a transaction ({}) already tracked by him", peer, hash);
+                    return Err(P2pError::InvalidProtocolRules)
+                }
+                txs_cache.put(hash.clone(), ());
+
                 ping.into_owned().update_peer(peer).await;
                 let mempool = self.blockchain.get_mempool().read().await;
                 if !mempool.contains_tx(&hash) {
@@ -902,18 +911,18 @@ impl P2pServer {
         let mut blocks: Vec<CompleteBlock> = Vec::with_capacity(blocks_request.len());
         for hash in blocks_request { // Request all complete blocks now
             if !storage.has_block(&hash).await? {
-                debug!("Block {} is not found, asking it to peer", hash);
+                trace!("Block {} is not found, asking it to peer", hash);
                 let object_request = ObjectRequest::Block(hash.clone());
                 let response = peer.request_blocking_object(object_request).await?;
                 if let OwnedObjectResponse::Block(block, hash) = response {
-                    debug!("Received block {} at height {} from {}", hash, block.get_height(), peer);
+                    trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
                     blocks.push(block);
                 } else {
                     error!("{} sent us an invalid block response", peer);
                     return Err(P2pError::ExpectedBlock.into())
                 }
             } else {
-                debug!("Block {} is already in chain, skipping it", hash);
+                trace!("Block {} is already in chain, skipping it", hash);
             }
         }
 
@@ -1007,7 +1016,29 @@ impl P2pServer {
 
     pub async fn broadcast_tx_hash(&self, tx: &Hash) {
         let ping = self.build_ping_packet(None).await;
-        self.broadcast_packet(Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(tx), Cow::Owned(ping)))).await;
+        let current_height = ping.get_height();
+        let packet = Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(tx), Cow::Owned(ping)));
+        // transform packet to bytes (so we don't need to transform it for each peer)
+        let bytes = Bytes::from(packet.to_bytes());
+        let peer_list = self.peer_list.read().await;
+        for peer in peer_list.get_peers().values() {
+            // check that the peer is not too far from us
+            // otherwise we may spam him for nothing
+            if peer.get_height() + CHAIN_SYNC_REQUEST_MAX_BLOCKS as u64 > current_height {
+                trace!("Peer {} is not too far from us, checking cache for tx hash {}", peer, tx);
+                let mut txs_cache = peer.get_txs_cache().lock().await;
+                // check that we didn't already send this tx to this peer or that he don't already have it
+                if !txs_cache.contains(tx) {
+                    trace!("Broadcasting tx hash {} to {}", tx, peer);
+                    if let Err(e) = peer.send_bytes(bytes.clone()).await {
+                        error!("Error while broadcasting tx hash {} to {}: {}", tx, peer, e);
+                    };
+                    txs_cache.put(tx.clone(), ());
+                } else {
+                    trace!("{} have tx hash {} in cache, skipping", peer, tx);
+                }
+            }
+        }
     }
 
     // broadcast block to all peers that can accept directly this new block
@@ -1026,7 +1057,9 @@ impl P2pServer {
                 // check that we don't send the block to the peer that sent it to us
                 if *hash != *peer.get_top_block_hash().lock().await {
                     trace!("Broadcast to {}", peer);
-                    peer_list.send_bytes_to_peer(peer, bytes.clone()).await;
+                    if let Err(e) = peer.send_bytes(bytes.clone()).await {
+                        debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
+                    };
                 }
             }
         }
@@ -1034,7 +1067,7 @@ impl P2pServer {
 
     pub async fn broadcast_packet(&self, packet: Packet<'_>) {
         let peer_list = self.peer_list.read().await;
-        peer_list.broadcast(Bytes::from(packet.to_bytes())).await;
+        peer_list.broadcast(packet).await;
     }
 
     // this function basically send all our blocks based on topological order (topoheight)

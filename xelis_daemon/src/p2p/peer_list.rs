@@ -1,9 +1,10 @@
-use super::peer::Peer;
+use super::{peer::Peer, packet::Packet};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
+use xelis_common::serializer::Serializer;
 use std::sync::Arc;
 use bytes::Bytes;
-use log::{info, debug, error};
+use log::{info, debug, trace, error};
 
 pub type SharedPeerList = Arc<RwLock<PeerList>>;
 
@@ -59,22 +60,24 @@ impl PeerList {
         self.peers.clear();
     }
 
-    pub async fn broadcast(&self, bytes: Bytes) {
+    pub async fn broadcast(&self, packet: Packet<'_>) {
+        trace!("broadcast to all peers");
+        let bytes = Bytes::from(packet.to_bytes());
         for (_, peer) in self.peers.iter() {
-            self.send_bytes_to_peer(peer, bytes.clone()).await;
+            if let Err(e) = peer.send_bytes(bytes.clone()).await {
+                error!("Error while trying to broadcast packet to peer {}: {}", peer.get_connection().get_address(), e);
+            };
         }
     }
 
-    pub async fn broadcast_filter<P>(&self, predicate: P, bytes: Bytes)
+    pub async fn broadcast_filter<P>(&self, predicate: P, packet: Packet<'_>)
     where P: FnMut(&(&u64, &Arc<Peer>)) -> bool {
+        trace!("broadcast with filter");
+        let bytes = Bytes::from(packet.to_bytes());
         for (_, peer) in self.peers.iter().filter(predicate) {
-            self.send_bytes_to_peer(peer, bytes.clone()).await;
-        }
-    }
-
-    pub async fn send_bytes_to_peer(&self, peer: &Arc<Peer>, bytes: Bytes) {
-        if let Err(e) = peer.send_bytes(bytes).await {
-            error!("Error while trying to broadcast to peer {}: {}", peer.get_connection().get_address(), e);
+            if let Err(e) = peer.send_bytes(bytes.clone()).await {
+                error!("Error while trying to broadcast packet to peer {}: {}", peer.get_connection().get_address(), e);
+            };
         }
     }
 

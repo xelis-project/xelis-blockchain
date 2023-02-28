@@ -15,6 +15,8 @@ use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Invalid protocol rules")]
+    InvalidProtocolRules,
     #[error("Peer disconnected")]
     Disconnected,
     #[error("Invalid handshake")]

@@ -56,6 +56,10 @@ impl<'a> Ping<'a> {
         }
     }
 
+    pub fn get_height(&self) -> u64 {
+        self.height
+    }
+
     pub fn get_peers(&self) -> &Vec<SocketAddr> {
         &self.peer_list
     }

@@ -17,7 +17,7 @@ use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, tim
 use std::collections::{HashMap, HashSet, VecDeque};
 use async_recursion::async_recursion;
 use tokio::{time::interval, sync::{Mutex, RwLock}};
-use log::{info, error, debug, warn};
+use log::{info, error, debug, warn, trace};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use rand::Rng;
@@ -925,12 +925,12 @@ impl Blockchain {
 
         let (base_hash, base_height) = self.find_common_base(storage, &tips).await?;
         let best_tip = self.find_best_tip(storage, &tips, &base_hash, base_height).await?;
-        debug!("Best tip selected: {}", best_tip);
+        trace!("Best tip selected: {}", best_tip);
 
         let base_topo_height = storage.get_topo_height_for_hash(&base_hash).await?;
         // generate a full order until base_topo_height
         let full_order = self.generate_full_order(storage, &best_tip, &base_hash, base_topo_height).await?;
-        debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
+        trace!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
 
         // rpc server lock
         let rpc_server = self.rpc.lock().await;
@@ -950,12 +950,12 @@ impl Blockchain {
                 // if block is not re-ordered and it's not genesis block
                 // because we don't need to recompute everything as it's still good in chain
                 if !is_written && tips_count != 0 && storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == highest_topo {
-                    debug!("Block ordered {} stay at topoheight {}. Skipping...", hash, highest_topo);
+                    trace!("Block ordered {} stay at topoheight {}. Skipping...", hash, highest_topo);
                     continue;
                 }
                 is_written = true;
 
-                debug!("Ordering block {} at topoheight {}", hash, highest_topo);
+                trace!("Ordering block {} at topoheight {}", hash, highest_topo);
                 if rpc_server.is_some() {
                     let event = NotifyEvent::BlockOrdered;
                     let value = json!(BlockOrderedEvent {
