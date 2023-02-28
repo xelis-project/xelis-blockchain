@@ -1433,14 +1433,20 @@ impl Blockchain {
         Ok(())
     }
 
+    // rewind a transaction, save all keys used in a TX (sender / receiver) and update nonces with the lowest available
     async fn rewind_transaction<'a>(&self, _: &mut Storage, transaction: &'a Transaction, keys: &mut HashSet<&'a PublicKey>, nonces: &mut HashMap<&'a PublicKey, u64>) -> Result<(), BlockchainError> {
         // add sender
         keys.insert(transaction.get_owner());
 
-        // TODO for Smart Contracts we have to rewind them too
-        if let TransactionType::Transfer(txs) = transaction.get_data() {
-            for output in txs {
-                keys.insert(&output.to);
+        // TODO for Smart Contracts we will have to rewind them too
+        match transaction.get_data() {
+            TransactionType::Transfer(txs) => {
+                for output in txs {
+                    keys.insert(&output.to);
+                }
+            },
+            _ => {
+                return Err(BlockchainError::SmartContractTodo)
             }
         }
 
