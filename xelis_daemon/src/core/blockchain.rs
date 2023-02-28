@@ -1176,7 +1176,6 @@ impl Blockchain {
                 return Ok(true)
             }
         }
-
         Ok(false)
     }
 
@@ -1272,8 +1271,16 @@ impl Blockchain {
     // nonces allow us to support multiples tx from same owner in the same block
     // txs must be sorted in ascending order based on account nonce 
     async fn verify_transaction_with_hash<'a>(&self, storage: &Storage, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>) -> Result<(), BlockchainError> {
-        let total_deducted: &mut HashMap<&'a Hash, u64>  = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
-        total_deducted.insert(&XELIS_ASSET, tx.get_fee());
+        let total_deducted: &mut HashMap<&'a Hash, u64> = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
+        {
+            let balance = total_deducted.entry(&XELIS_ASSET).or_insert(0);
+            if let Some(value) = balance.checked_add(tx.get_fee()) {
+                *balance = value;
+            } else {
+                warn!("Overflow detected using fees in transaction {}", hash);
+                return Err(BlockchainError::Overflow)
+            }
+        }
 
         match tx.get_data() {
             TransactionType::Transfer(txs) => {
@@ -1290,6 +1297,7 @@ impl Blockchain {
                     if let Some(data) = &output.extra_data {
                         extra_data_size += data.len();
                     }
+
                     let balance = total_deducted.entry(&output.asset).or_insert(0);
                     if let Some(value) = balance.checked_add(output.amount) {
                         *balance = value;
@@ -1319,10 +1327,10 @@ impl Blockchain {
         };
 
          // verify that the user have enough funds for each assets spent
-        for (asset, amount) in total_deducted {
+        for (asset, amount) in total_deducted.iter() {
             let (_, version) = storage.get_last_balance(tx.get_owner(), asset).await?;
             if version.get_balance() < *amount {
-                return Err(BlockchainError::NotEnoughFunds(tx.get_owner().clone(), (*asset).clone(), version.get_balance(), *amount))
+                return Err(BlockchainError::NotEnoughFunds(tx.get_owner().clone(), (*asset).clone(), *amount, version.get_balance()))
             }
         }
 
