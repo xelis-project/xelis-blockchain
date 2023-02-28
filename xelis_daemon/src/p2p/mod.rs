@@ -6,7 +6,7 @@ pub mod peer_list;
 
 use serde_json::Value;
 use xelis_common::{
-    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT, PEER_FAIL_LIMIT, PEER_TIMEOUT_REQUEST_OBJECT},
+    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT, PEER_FAIL_LIMIT},
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::{CompleteBlock, Block},
@@ -360,7 +360,7 @@ impl P2pServer {
     // if the handshake is valid, we accept it & register it on server
     async fn handle_new_connection(self: &Arc<Self>, buf: &mut [u8], mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
         trace!("New connection: {}", connection);
-        let handshake: Handshake = match timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), connection.read_packet(buf, buf.len() as u32)).await?? {
+        let handshake: Handshake = match timeout(Duration::from_millis(800), connection.read_packet(buf, buf.len() as u32)).await?? {
             Packet::Handshake(h) => h.into_owned(), // only allow handshake packet
             _ => return Err(P2pError::ExpectedHandshake)
         };
@@ -408,8 +408,10 @@ impl P2pServer {
         tokio::spawn(async move {
             if let Err(e) = zelf.handle_connection(peer.clone()).await {
                 error!("Error while handling connection {}: {}", peer, e);
-                if let Err(e) = peer.close().await {
-                    error!("Couldn't close {}: {}", peer, e);
+                if !peer.get_connection().is_closed() {
+                    if let Err(e) = peer.close().await {
+                        error!("Couldn't close {}: {}", peer, e);
+                    }
                 }
             }
         });
