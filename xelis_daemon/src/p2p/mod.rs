@@ -455,7 +455,7 @@ impl P2pServer {
             }
             
             let packet = Packet::Ping(Cow::Owned(self.build_ping_packet_for_peer(&peer).await));
-            trace!("Sending ping packet to peer: {}", peer.get_connection().get_address());
+            trace!("Sending ping packet to {}", peer);
             if let Err(e) = peer.send_packet(packet).await {
                 debug!("Error occured on ping: {}", e);
                 break;
@@ -489,7 +489,7 @@ impl P2pServer {
         loop {
             interval.tick().await;
             if let Some(peer) = self.select_random_best_peer().await {
-                trace!("Peer selected for chain sync: {}", peer.get_connection().get_address());
+                trace!("Selected for chain sync is {}", peer);
                 if let Err(e) = self.request_sync_chain_for(&peer).await {
                     debug!("Error occured on chain sync: {}", e);
                 }
@@ -504,7 +504,7 @@ impl P2pServer {
             tokio::select! {
                 res = self.listen_connection(buf, &peer) => {
                     if let Err(e) = res { // close on any error
-                        debug!("Error while reading packet from peer {}: {}", peer.get_connection().get_address(), e);
+                        debug!("Error while reading packet from {}: {}", peer, e);
                         peer.close().await?;
                         break;
                     }
@@ -512,7 +512,7 @@ impl P2pServer {
                 Some(data) = rx.recv() => {
                     match data {
                         ConnectionMessage::Packet(bytes) => {
-                            trace!("Data to send to {} received!", peer.get_connection().get_address());
+                            trace!("Data to send to {} received!", peer);
                             trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[5], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len() - 4);
                             peer.get_connection().send_bytes(&bytes).await?;
                             trace!("data sucessfully sent!");
@@ -528,7 +528,7 @@ impl P2pServer {
             if peer.get_fail_count() >= PEER_FAIL_LIMIT {
                 error!("High fail count detected for {}!", peer);
                 if let Err(e) = peer.close().await {
-                    error!("Error while trying to close connection {} due to high fail count: {}", peer.get_connection().get_address(), e);
+                    error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
                 }
                 break;
             }
@@ -594,7 +594,7 @@ impl P2pServer {
                     }
                 }
                 let block_height = block.get_height();
-                debug!("Received block at height {} from {}", block_height, peer.get_connection().get_address());
+                debug!("Received block at height {} from {}", block_height, peer);
                 let zelf = Arc::clone(self);
                 let peer = Arc::clone(peer);
                 // verify that we have all txs in local or ask peer to get missing txs
@@ -665,7 +665,7 @@ impl P2pServer {
 
                 // at least one block necessary (genesis block)
                 if request.size() == 0 || request.size() > CHAIN_SYNC_REQUEST_MAX_BLOCKS { // allows maximum 64 blocks id (2560 bytes max)
-                    warn!("Peer {} sent us a malformed chain request ({} blocks)!", peer.get_connection().get_address(), request.size());
+                    warn!("{} sent us a malformed chain request ({} blocks)!", peer, request.size());
                     return Err(P2pError::InvalidPacket)
                 }
 
@@ -699,13 +699,13 @@ impl P2pServer {
                         let block_height = match storage.get_height_for_block(common_point.get_hash()).await {
                             Ok(height) => height,
                             Err(e) => {
-                                warn!("Peer {} sent us an invalid common point: {}", peer, e);
+                                warn!("{} sent us an invalid common point: {}", peer, e);
                                 return Err(P2pError::InvalidPacket)
                             }
                         };
                         let topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
                         if topoheight != common_point.get_topoheight() {
-                            error!("Peer {} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer.get_connection().get_address(), block_height, common_point.get_topoheight());
+                            error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, block_height, common_point.get_topoheight());
                             return Err(P2pError::InvalidPacket)
                         }
                         self.blockchain.get_height() - block_height
@@ -722,12 +722,12 @@ impl P2pServer {
                     // start a new task to wait on all requested blocks
                     tokio::spawn(async move {
                         if let Err(e) = zelf.handle_chain_response(&peer, blocks, pop_count).await {
-                            error!("Error while handling chain response from {}: {}", peer.get_connection().get_address(), e);
+                            error!("Error while handling chain response from {}: {}", peer, e);
                             peer.increment_fail_count();
                         }
                     });
                 } else {
-                    warn!("No common block was found with peer {}", peer.get_connection().get_address());
+                    warn!("No common block was found with {}", peer);
                     if response.size() > 0 {
                         debug!("Peer have no common block but send us {} blocks!", response.size());
                         return Err(P2pError::InvalidPacket)
@@ -772,7 +772,7 @@ impl P2pServer {
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::Block(Cow::Owned(block)))).await?;
                             },
                             Err(e) => {
-                                debug!("Peer {} asked block '{}' but got on error while retrieving it: {}", peer.get_connection().get_address(), hash, e);
+                                debug!("{} asked block '{}' but got on error while retrieving it: {}", peer, hash, e);
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
                             }
                         }
@@ -784,7 +784,7 @@ impl P2pServer {
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(tx)))).await?;
                             },
                             Err(e) => {
-                                debug!("Peer {} asked tx '{}' but got on error while retrieving it: {}", peer.get_connection().get_address(), hash, e);
+                                debug!("{} asked tx '{}' but got on error while retrieving it: {}", peer, hash, e);
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
                             }
                         }
@@ -792,7 +792,7 @@ impl P2pServer {
                 }
             },
             Packet::ObjectResponse(response) => {
-                trace!("Received a object response from {}", peer.get_connection().get_address());
+                trace!("Received a object response from {}", peer);
                 let request = response.get_request();
 
                 // check if we have requested this object & get the sender from it
@@ -810,7 +810,7 @@ impl P2pServer {
     async fn listen_connection(self: &Arc<Self>, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
         let packet = peer.get_connection().read_packet(buf, MAX_BLOCK_SIZE as u32).await?;
         if let Err(e) = self.handle_incoming_packet(peer, packet).await {
-            error!("Error occured while handling incoming packet from {}: {}", peer.get_connection().get_address(), e);
+            error!("Error occured while handling incoming packet from {}: {}", peer, e);
             peer.increment_fail_count();
         }
         Ok(())
@@ -862,10 +862,10 @@ impl P2pServer {
                 let object_request = ObjectRequest::Block(hash.clone());
                 let response = peer.request_blocking_object(object_request).await?;
                 if let OwnedObjectResponse::Block(block, hash) = response {
-                    debug!("Received block {} at height {} from peer {}", hash, block.get_height(), peer.get_connection().get_address());
+                    debug!("Received block {} at height {} from {}", hash, block.get_height(), peer);
                     blocks.push(block);
                 } else {
-                    error!("Peer {} sent us an invalid block response", peer.get_connection().get_address());
+                    error!("{} sent us an invalid block response", peer);
                     return Err(P2pError::ExpectedBlock.into())
                 }
             } else {
@@ -878,7 +878,7 @@ impl P2pServer {
         // if yes, don't accept the pop count from this peer
         // if no, check that the pop count request is less or equal than the configured limit
         if pop_count > 0 && (peer.is_priority() || ((pop_count <= MAX_BLOCK_REWIND) && !self.is_connected_to_a_priority_node().await)) {
-            warn!("Rewinding chain because of peer {} (priority: {}, pop count: {})", peer.get_connection().get_address(), peer.is_priority(), pop_count);
+            warn!("Rewinding chain because of {} (priority: {}, pop count: {})", peer, peer.is_priority(), pop_count);
             match self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
                 Ok(topoheight) => debug!("Chain has been rewinded to topoheight {}", topoheight),
                 Err(e) => error!("Error on rewind chain with pop count at {}, error: {}", pop_count, e)
