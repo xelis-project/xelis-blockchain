@@ -147,18 +147,29 @@ impl Peer {
         self.fail_count.load(Ordering::Acquire)
     }
 
+    fn update_fail_count_default(&self) -> bool {
+        self.update_fail_count(get_current_time(), 0)
+    }
+
+    fn update_fail_count(&self, current_time: u64, to_store: u8) -> bool {
+        let last_fail = self.get_last_fail_count();
+        let reset = last_fail + PEER_FAIL_TIME_RESET < current_time;
+        if reset {
+            // reset counter
+            self.fail_count.store(to_store, Ordering::Release);
+        }
+        reset
+    }
+
     pub fn increment_fail_count(&self) {
         let current_time = get_current_time();
-        let last_fail = self.get_last_fail_count();
-        self.set_last_fail_count(current_time);
-
         // if its long time we didn't get a fail, reset the fail count to 1 (because of current fail)
         // otherwise, add 1
-        if last_fail + PEER_FAIL_TIME_RESET < current_time {
-            self.fail_count.store(1, Ordering::Release);
-        } else {
+        if !self.update_fail_count(current_time, 1) {
             self.fail_count.fetch_add(1, Ordering::Release);
         }
+        self.set_last_fail_count(current_time);
+
 
     }
 
@@ -265,13 +276,15 @@ impl Peer {
 
 impl Display for Peer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
+        // update fail counter to have up-to-date data to display
+        self.update_fail_count_default();
         let peers_count = if let Ok(peers) = self.get_peers().try_lock() {
             format!("{}", peers.len())
         } else {
             "Couldn't retrieve data".to_string()
         };
 
-        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, height: {}, priority: {}, tag: {}, version: {}, out: {}, peers: {}]",
+        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, height: {}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}]",
             self.get_connection(),
             self.get_id(),
             self.get_topoheight(),
@@ -279,6 +292,7 @@ impl Display for Peer {
             self.is_priority(),
             self.get_node_tag().as_ref().unwrap_or(&"None".to_owned()),
             self.get_version(),
+            self.get_fail_count(),
             self.is_out(),
             peers_count
         )
