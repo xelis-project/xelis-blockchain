@@ -119,9 +119,9 @@ impl P2pServer {
 
     // every 10 seconds, verify
     async fn maintains_seed_nodes(self: &Arc<Self>) -> Result<(), P2pError> {
-        let mut ping_interval = interval(Duration::from_secs(10));
+        let mut interval = interval(Duration::from_secs(10));
         loop {
-            ping_interval.tick().await;
+            interval.tick().await;
             if let Err(e) = self.connect_to_seed_nodes().await {
                 debug!("Error while connecting to seed nodes: {}", e);
             };
@@ -447,24 +447,27 @@ impl P2pServer {
     // send a ping packet to specific peer every 10s
     async fn loop_ping(self: Arc<Self>, peer: Arc<Peer>) {
         let mut ping_interval = interval(Duration::from_secs(P2P_PING_DELAY));
+        // first tick is immediately elapsed
+        ping_interval.tick().await;
         loop {
-            ping_interval.tick().await;
             if peer.get_connection().is_closed() {
                 break;
             }
-
+            
             let packet = Packet::Ping(Cow::Owned(self.build_ping_packet_for_peer(&peer).await));
             trace!("Sending ping packet to peer: {}", peer.get_connection().get_address());
             if let Err(e) = peer.send_packet(packet).await {
                 debug!("Error occured on ping: {}", e);
                 break;
             }
+            ping_interval.tick().await;
         }
     }
 
     // select a random peer which is greater than us to sync chain
     // candidate peer should have a greater topoheight or a higher block height than us
     async fn select_random_best_peer(&self) -> Option<Arc<Peer>> {
+        trace!("select random best peer");
         let peer_list = self.peer_list.read().await;
         let our_height = self.blockchain.get_height();
         let our_topoheight = self.blockchain.get_topo_height();
@@ -475,8 +478,10 @@ impl P2pServer {
             return None
         }
         let selected = rand::thread_rng().gen_range(0..count);
+        let peer = peers.get(selected)?;
+        trace!("selected peer: ({}) {}", selected, peer);
         // clone the Arc to prevent the lock until the end of the sync request
-        Some(Arc::clone(peers.get(selected)?))
+        Some(Arc::clone(peer))
     }
 
     async fn chain_sync_loop(self: Arc<Self>) {
@@ -535,9 +540,12 @@ impl P2pServer {
     async fn handle_incoming_packet(self: &Arc<Self>, peer: &Arc<Peer>, packet: Packet<'_>) -> Result<(), P2pError> {
         match packet {
             Packet::Handshake(_) => {
+                error!("{} sent us handshake packet (not valid!)", peer);
+                peer.get_connection().close().await?;
                 return Err(P2pError::InvalidPacket)
             },
             Packet::TransactionPropagation(packet_wrapper) => { // TODO prevent spam
+                trace!("{}: Transaction Propagation packet", peer);
                 let (hash, ping) = packet_wrapper.consume();
                 let hash = hash.into_owned();
                 ping.into_owned().update_peer(peer).await;
@@ -573,7 +581,7 @@ impl P2pServer {
                 }
             },
             Packet::BlockPropagation(packet_wrapper) => {
-                trace!("Received a block propagation packet from {}", peer.get_connection().get_address());
+                trace!("Received a block propagation packet from {}", peer);
                 let (block, ping) = packet_wrapper.consume();
                 ping.into_owned().update_peer(peer).await;
                 let block = block.into_owned();
@@ -642,6 +650,7 @@ impl P2pServer {
                 });
             },
             Packet::ChainRequest(packet_wrapper) => {
+                trace!("Received a chain request from {}", peer);
                 let (request, ping) = packet_wrapper.consume();
                 ping.into_owned().update_peer(peer).await;
                 let request = request.into_owned();
@@ -665,21 +674,21 @@ impl P2pServer {
                 let blocks = request.get_blocks();
                 tokio::spawn(async move {
                     if let Err(e) = zelf.handle_chain_request(&peer, blocks).await {
-                        error!("Error while handling chain request from {}: {}", peer.get_connection().get_address(), e);
+                        error!("Error while handling chain request from {}: {}", peer, e);
                         peer.increment_fail_count();
                     }
                 });
             },
             Packet::ChainResponse(response) => {
-                trace!("Received a chain response from {}", peer.get_connection().get_address());
+                trace!("Received a chain response from {}", peer);
                 if !peer.chain_sync_requested() {
-                    warn!("Peer {} sent us a chain response but we haven't requested any.", peer.get_connection().get_address());
+                    warn!("{} sent us a chain response but we haven't requested any.", peer);
                     return Err(P2pError::InvalidPacket)
                 }
                 peer.set_chain_sync_requested(false);
 
                 if response.size() > CHAIN_SYNC_REQUEST_MAX_BLOCKS { // peer is trying to spam us
-                    warn!("Peer {} is maybe trying to spam us", peer.get_connection().get_address());
+                    warn!("{} is maybe trying to spam us", peer);
                     return Err(P2pError::InvalidPacket)
                 }
 
@@ -690,7 +699,7 @@ impl P2pServer {
                         let block_height = match storage.get_height_for_block(common_point.get_hash()).await {
                             Ok(height) => height,
                             Err(e) => {
-                                warn!("Peer {} sent us an invalid common point: {}", peer.get_connection().get_address(), e);
+                                warn!("Peer {} sent us an invalid common point: {}", peer, e);
                                 return Err(P2pError::InvalidPacket)
                             }
                         };
@@ -726,9 +735,9 @@ impl P2pServer {
                 }
             },
             Packet::Ping(ping) => {
-                trace!("Received a ping packet from {}", peer.get_connection().get_address());
-                let current_time = get_current_time();
+                trace!("Received a ping packet from {}", peer);
                 let last_ping = peer.get_last_ping();
+                let current_time = get_current_time();
                 peer.set_last_ping(current_time);
                 // verify the respect of the coutdown to prevent massive packet incoming
                 if last_ping != 0 && current_time - last_ping < P2P_PING_DELAY {
@@ -753,7 +762,7 @@ impl P2pServer {
                 ping.into_owned().update_peer(peer).await;
             },
             Packet::ObjectRequest(request) => {
-                trace!("Received a object request from {}", peer.get_connection().get_address());
+                trace!("Received a object request from {}", peer);
                 let request = request.into_owned();
                 match &request {
                     ObjectRequest::Block(hash) => {
@@ -810,10 +819,12 @@ impl P2pServer {
     // search a common point between our blockchain and the peer's one
     // when the common point is found, start sending blocks from this point
     async fn handle_chain_request(self: Arc<Self>, peer: &Arc<Peer>, blocks: Vec<BlockId>) -> Result<(), BlockchainError> {
+        trace!("handle chain request for peer {} with {} blocks", peer, blocks.len());
         let storage = self.blockchain.get_storage().read().await;
         let mut response_blocks = Vec::new();
         let mut common_point = None;
         for block_id in blocks { // search a common point
+            trace!("Searching common point for block {} at topoheight {}", block_id.get_hash(), block_id.get_topoheight());
             if storage.has_block(block_id.get_hash()).await? {
                 let common_block = storage.get_block_by_hash(block_id.get_hash()).await?;
                 let (hash, topoheight) = block_id.consume();
@@ -826,7 +837,7 @@ impl P2pServer {
                     let mut height = common_block.get_height();
                     while response_blocks.len() < CHAIN_SYNC_REQUEST_MAX_BLOCKS && height <= top_height {
                         for hash in storage.get_blocks_at_height(height).await? {
-                            debug!("for chain request, adding hash {} at height {}", hash, height);
+                            trace!("for chain request, adding hash {} at height {}", hash, height);
                             response_blocks.push(Cow::Owned(hash));
                         }
                         height += 1;
@@ -836,6 +847,7 @@ impl P2pServer {
             }
         }
 
+        trace!("Sending {} blocks as response to {}", response_blocks.len(), peer);
         peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, response_blocks))).await?;
         Ok(())
     }

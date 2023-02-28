@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 use std::borrow::Cow;
 use bytes::Bytes;
-use log::warn;
+use log::{warn, trace};
 
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
@@ -189,6 +189,7 @@ impl Peer {
 
     // Request a object from this peer and wait on it until we receive it or until timeout 
     pub async fn request_blocking_object(&self, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
+        trace!("Requesting {} from {}", request, self);
         let receiver = {
             let mut objects = self.objects_requested.lock().await;
             if objects.contains_key(&request) {
@@ -202,6 +203,7 @@ impl Peer {
         let object = match timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver).await {
             Ok(res) => res?,
             Err(e) => {
+                trace!("Requested data has timed out");
                 let mut objects = self.objects_requested.lock().await;
                 objects.remove(&request); // remove it from request list
                 return Err(P2pError::AsyncTimeOut(e));
