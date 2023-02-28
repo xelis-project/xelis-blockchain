@@ -25,7 +25,7 @@ use self::packet::ping::Ping;
 use self::error::P2pError;
 use self::packet::{Packet, PacketWrapper};
 use self::peer::Peer;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, UnboundedSender, UnboundedReceiver}, select};
 use log::{info, warn, error, debug, trace};
 use tokio::io::AsyncWriteExt;
 use tokio::time::interval;
@@ -38,6 +38,11 @@ use std::sync::Arc;
 use bytes::Bytes;
 use rand::Rng;
 
+enum MessageChannel {
+    Exit,
+    Connect((SocketAddr, bool))
+}
+
 // P2pServer is a fully async TCP server
 // Each connection will block on a data to send or to receive
 // useful for low end hardware
@@ -48,6 +53,7 @@ pub struct P2pServer {
     bind_address: SocketAddr, // ip:port address to receive connections
     peer_list: SharedPeerList, // all peers accepted
     blockchain: Arc<Blockchain>, // reference to the chain to add blocks/txs
+    connections_sender: UnboundedSender<MessageChannel> // this sender allows to create a queue system in one task only
 }
 
 impl P2pServer {
@@ -60,19 +66,22 @@ impl P2pServer {
         let mut rng = rand::thread_rng();
         let peer_id: u64 = rng.gen(); // generate a random peer id for network
         let addr: SocketAddr = bind_address.parse()?; // parse the bind address
+        // create mspc channel
+        let (connections_sender, receiver) = mpsc::unbounded_channel();
         let server = Self {
             peer_id,
             tag,
             max_peers,
             bind_address: addr,
             peer_list: PeerList::new(max_peers),
-            blockchain
+            blockchain,
+            connections_sender
         };
 
         let arc = Arc::new(server);
         let zelf = Arc::clone(&arc);
         tokio::spawn(async move {
-            if let Err(e) = zelf.start().await {
+            if let Err(e) = zelf.start(receiver).await {
                 error!("Unexpected error on P2p module: {}", e);
             }
         });
@@ -81,6 +90,10 @@ impl P2pServer {
 
     pub async fn stop(&self) {
         info!("Stopping P2p Server...");
+        if let Err(e) = self.connections_sender.send(MessageChannel::Exit) {
+            error!("Error while sending Exit message to stop accepting new connections: {}", e);
+        }
+
         let mut peers = self.peer_list.write().await;
         match self.get_peers_from_file().await {
             Ok(mut peers_from_file) => {
@@ -198,15 +211,17 @@ impl P2pServer {
 
     // connect to seed nodes, start p2p server
     // and wait on all new connections
-    async fn start(self: &Arc<Self>) -> Result<(), P2pError> {
-        let zelf = Arc::clone(self);
-
-        tokio::spawn(async move {
-            info!("Connecting to seed nodes...");
-            if let Err(e) = zelf.maintains_seed_nodes().await {
-                error!("Error while maintening connection with seed nodes: {}", e);
-            };
-        });
+    async fn start(self: &Arc<Self>, mut receiver: UnboundedReceiver<MessageChannel>) -> Result<(), P2pError> {
+        // create tokio task to maintains connection to seed nodes
+        {
+            let zelf = Arc::clone(self);
+            tokio::spawn(async move {
+                info!("Connecting to seed nodes...");
+                if let Err(e) = zelf.maintains_seed_nodes().await {
+                    error!("Error while maintening connection with seed nodes: {}", e);
+                };
+            });
+        }
 
         // retrieve all peers from peerlist.json
         let peers = self.get_peers_from_file().await?;
@@ -216,6 +231,7 @@ impl P2pServer {
                 break;
             }
 
+            info!("Adding peer address {} from peerlist to queue", peer);
             self.try_to_connect_to_peer(peer, false);
         }
 
@@ -225,23 +241,45 @@ impl P2pServer {
         let listener = TcpListener::bind(self.get_bind_address()).await?;
         info!("P2p Server will listen on: {}", self.get_bind_address());
         loop {
-            let (mut stream, addr) = listener.accept().await?;
-            if !self.accept_new_connections().await { // if we have already reached the limit, we ignore this new connection
-                debug!("Max peers reached, rejecting connection");
-                if let Err(e) = stream.shutdown().await {
-                    debug!("Error while closing & ignoring incoming connection {}: {}", addr, e);
-                }
-                continue;
-            }
+            let (connection, out, priority) = select! {
+                res = listener.accept() => {
+                    trace!("New listener result received (is err: {})", res.is_err());
+                    let (mut stream, addr) = res?;
+                    if !self.accept_new_connections().await { // if we have already reached the limit, we ignore this new connection
+                        debug!("Max peers reached, rejecting connection");
+                        if let Err(e) = stream.shutdown().await {
+                            debug!("Error while closing & ignoring incoming connection {}: {}", addr, e);
+                        }
+                        continue;
+                    }
+                    (Connection::new(stream, addr), false, false)
+                },
+                Some(msg) = receiver.recv() => match msg {
+                    MessageChannel::Exit => break,
+                    MessageChannel::Connect((addr, priority)) => {
+                        if !self.accept_new_connections().await {
+                            debug!("Coudln't connect to {}, limit has been reached!", addr);
+                            continue;
+                        }
 
-            let connection = Connection::new(stream, addr.clone());
-            let zelf = Arc::clone(self);
-            tokio::spawn(async move {
-                if let Err(e) = zelf.handle_new_connection(connection, false, false).await {
-                    trace!("Error on {}: {}", addr, e);
+                        match self.connect_to_peer(addr).await {
+                            Ok(connection) => (connection, true, priority),
+                            Err(e) => {
+                                debug!("Error while trying to connect to new outgoing peer: {}", e);
+                                continue;
+                            }
+                        }
+                    }
                 }
-            });
+            };
+            trace!("Handling new connection: {} (out = {}, priority = {})", connection, out, priority);
+            if let Err(e) = self.handle_new_connection(connection, out, priority).await {
+                trace!("Error on occured on handled connection: {}", e);
+                // no need to close it here, as it will be automatically closed in drop
+            }
         }
+
+        Ok(())
     }
 
     // Verify handshake send by a new connection
@@ -318,7 +356,7 @@ impl P2pServer {
     // this function handle all new connections
     // A new connection have to send an Handshake
     // if the handshake is valid, we accept it & register it on server
-    async fn handle_new_connection(self: Arc<Self>,mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
+    async fn handle_new_connection(self: &Arc<Self>, mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
         trace!("New connection: {}", connection);
         let mut buf = [0u8; 1024];
         let handshake: Handshake = match timeout(Duration::from_millis(800), connection.read_packet(&mut buf, 1024)).await?? {
@@ -357,26 +395,32 @@ impl P2pServer {
             }
 
             if !self.is_connected_to_addr(&peer_addr).await? {
-                debug!("Trying to extend peer list with {}", peer_addr);
+                debug!("Trying to extend peer list with {} from {}", peer_addr, peer);
                 self.try_to_connect_to_peer(peer_addr, false);
             }
         }
 
-        self.handle_connection(&mut buf, peer).await
+        let zelf = Arc::clone(self);
+        tokio::spawn(async move {
+            if let Err(e) = zelf.handle_connection(&mut buf, peer.clone()).await {
+                error!("Error while handling connection {}: {}", peer, e);
+                if let Err(e) = peer.close().await {
+                    error!("Couldn't close {}: {}", peer, e);
+                }
+            }
+        });
+        Ok(())
     }
 
     // Connect to a specific peer address
     // Buffer is passed in parameter to prevent the re-allocation each time
-    pub fn try_to_connect_to_peer(self: &Arc<Self>, addr: SocketAddr, priority: bool) {
-        let zelf = Arc::clone(self);
-        tokio::spawn(async move {
-            if let Err(e) = zelf.connect_to_peer(addr, priority).await {
-                trace!("Error occured on outgoing peer {}: {}", addr, e);
-            }
-        });
+    pub fn try_to_connect_to_peer(&self, addr: SocketAddr, priority: bool) {
+        if let Err(e) = self.connections_sender.send(MessageChannel::Connect((addr, priority))) {
+            error!("Error while trying to connect to address {} (priority = {}): {}", addr, priority, e);
+        }
     }
 
-    async fn connect_to_peer(self: Arc<Self>, addr: SocketAddr, priority: bool) -> Result<(), P2pError> {
+    async fn connect_to_peer(&self, addr: SocketAddr) -> Result<Connection, P2pError> {
         trace!("Trying to connect to {}", addr);
         if self.is_connected_to_addr(&addr).await? {
             return Err(P2pError::PeerAlreadyConnected(format!("{}", addr)));
@@ -384,7 +428,7 @@ impl P2pServer {
         let stream = timeout(Duration::from_millis(800), TcpStream::connect(&addr)).await??; // allow maximum 800ms of latency
         let connection = Connection::new(stream, addr);
         self.send_handshake(&connection).await?;
-        self.handle_new_connection(connection, true, priority).await
+        Ok(connection)
     }
 
     async fn send_handshake(&self, connection: &Connection) -> Result<(), P2pError> {
