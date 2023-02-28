@@ -409,6 +409,7 @@ impl P2pServer {
             if let Err(e) = zelf.handle_connection(peer.clone()).await {
                 error!("Error while handling connection {}: {}", peer, e);
                 if !peer.get_connection().is_closed() {
+                    debug!("{} is not closed, closing it ourself", peer);
                     if let Err(e) = peer.close().await {
                         error!("Couldn't close {}: {}", peer, e);
                     }
@@ -558,7 +559,7 @@ impl P2pServer {
             tokio::select! {
                 res = self.listen_connection(&mut buf, &peer) => {
                     if let Err(e) = res { // close on any error
-                        debug!("Error while reading packet from {}: {}", peer, e);
+                        warn!("Closing connection because we coudln't read packet correctly from {}: {}", peer, e);
                         peer.close().await?;
                         break;
                     }
@@ -582,7 +583,7 @@ impl P2pServer {
             // check that we don't have too many fails
             // otherwise disconnect peer
             if peer.get_fail_count() >= PEER_FAIL_LIMIT {
-                error!("High fail count detected for {}!", peer);
+                warn!("High fail count detected for {}! Closing connection...", peer);
                 if let Err(e) = peer.close().await {
                     error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
                 }
@@ -884,7 +885,7 @@ impl P2pServer {
     // search a common point between our blockchain and the peer's one
     // when the common point is found, start sending blocks from this point
     async fn handle_chain_request(self: Arc<Self>, peer: &Arc<Peer>, blocks: Vec<BlockId>) -> Result<(), BlockchainError> {
-        trace!("handle chain request for peer {} with {} blocks", peer, blocks.len());
+        debug!("handle chain request for peer {} with {} blocks", peer, blocks.len());
         let storage = self.blockchain.get_storage().read().await;
         let mut response_blocks = Vec::new();
         let mut common_point = None;
@@ -893,10 +894,10 @@ impl P2pServer {
             if storage.has_block(block_id.get_hash()).await? {
                 let common_block = storage.get_block_by_hash(block_id.get_hash()).await?;
                 let (hash, topoheight) = block_id.consume();
-                debug!("Block {} is common, expected topoheight from peer: {}", hash, topoheight);
+                trace!("Block {} is common, expected topoheight from {}: {}", hash, peer, topoheight);
                 // check that the block is ordered like us
                 if storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
-                    debug!("common point with peer found at block {} with same topoheight at {}", hash, topoheight);
+                    debug!("common point with {} found at block {} with same topoheight at {}", peer, hash, topoheight);
                     common_point = Some(CommonPoint::new(Cow::Owned(hash), topoheight));
                     let top_height = self.blockchain.get_height();
                     let mut height = common_block.get_height();
@@ -912,7 +913,7 @@ impl P2pServer {
             }
         }
 
-        trace!("Sending {} blocks as response to {}", response_blocks.len(), peer);
+        debug!("Sending {} blocks as response to {}", response_blocks.len(), peer);
         peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, response_blocks))).await?;
         Ok(())
     }
@@ -1087,7 +1088,7 @@ impl P2pServer {
     // we add at the end the genesis block to be sure to be on the same chain as others peers
     // its used to find a common point with the peer to which we ask the chain
     pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
-        debug!("Requesting chain for from {}", peer);
+        debug!("Requesting chain from {}", peer);
         let mut request = ChainRequest::new();
         {
             let storage = self.blockchain.get_storage().read().await;

@@ -87,8 +87,8 @@ impl Connection {
         let mut reader = Reader::new(&bytes);
         let packet = Packet::read(&mut reader)?;
         if reader.total_read() != bytes.len() {
-            warn!("read only {}/{} on bytes available", reader.total_read(), bytes.len());
-            return Err(P2pError::InvalidPacketNotFullRead)
+            warn!("read {:?} only {}/{} on bytes available", packet, reader.total_read(), bytes.len());
+            //return Err(P2pError::InvalidPacketNotFullRead)
         }
         Ok(packet)
     }

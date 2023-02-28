@@ -77,6 +77,7 @@ impl OwnedObjectResponse {
     }
 }
 
+#[derive(Debug)]
 pub enum ObjectResponse<'a> {
     Block(Cow<'a, CompleteBlock>),
     Transaction(Cow<'a, Transaction>),

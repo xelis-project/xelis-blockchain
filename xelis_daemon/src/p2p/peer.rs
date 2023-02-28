@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 use std::borrow::Cow;
 use bytes::Bytes;
-use log::{warn, trace, debug};
+use log::{warn, trace};
 
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
@@ -264,11 +264,11 @@ impl Peer {
     }
 
     pub async fn close(&self) -> Result<(), P2pError> {
-        debug!("Closing connection with {}", self);
+        trace!("Closing connection with {}", self);
         let mut peer_list = self.peer_list.write().await;
         peer_list.remove_peer(&self);
         self.get_connection().close().await?;
-        debug!("{} has been disconnected", self);
+        trace!("{} has been disconnected", self);
         Ok(())
     }
 

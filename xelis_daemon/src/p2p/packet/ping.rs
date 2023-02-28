@@ -21,7 +21,7 @@ use std::{
 };
 use log::trace;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Ping<'a> {
     top_hash: Cow<'a, Hash>,
     topoheight: u64,

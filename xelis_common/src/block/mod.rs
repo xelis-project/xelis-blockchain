@@ -26,7 +26,7 @@ pub fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(_: D) -> Result<u
     Ok(0)
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Block {
     pub tips: Vec<Hash>,
     #[serde(deserialize_with = "deserialize_timestamp")]
@@ -40,7 +40,7 @@ pub struct Block {
     pub txs_hashes: Vec<Hash>
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct CompleteBlock {
     #[serde(flatten)]
     block: Immutable<Block>,

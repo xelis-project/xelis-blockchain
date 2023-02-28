@@ -9,7 +9,7 @@ use xelis_common::{
 };
 use std::borrow::Cow;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockId {
     hash: Hash,
     topoheight: u64
@@ -47,7 +47,7 @@ impl Serializer for BlockId {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChainRequest {
     blocks: Vec<BlockId>
 }
@@ -97,6 +97,7 @@ impl Serializer for ChainRequest {
     }
 }
 
+#[derive(Debug)]
 pub struct CommonPoint<'a> {
     hash: Cow<'a, Hash>,
     topoheight: u64
@@ -132,6 +133,7 @@ impl Serializer for CommonPoint<'_> {
     }
 }
 
+#[derive(Debug)]
 pub struct ChainResponse<'a> {
     common_point: Option<CommonPoint<'a>>,
     blocks: Vec<Cow<'a, Hash>>,

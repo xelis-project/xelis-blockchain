@@ -15,7 +15,7 @@ pub const SIGNATURE_LENGTH: usize = 64;
 pub struct PublicKey(ed25519_dalek::PublicKey);
 pub struct PrivateKey(ed25519_dalek::SecretKey);
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Signature(ed25519_dalek::Signature); // ([u8; SIGNATURE_LENGTH]);
 
 pub struct KeyPair {
