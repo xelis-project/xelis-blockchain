@@ -33,7 +33,7 @@ impl Writer {
         self.bytes.push(value);
     }
 
-    pub fn write_u16(&mut self, value: &u16) {
+    pub fn write_u16(&mut self, value: u16) {
         self.bytes.extend(value.to_be_bytes());
     }
 

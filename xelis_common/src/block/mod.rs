@@ -183,7 +183,7 @@ impl Serializer for Block {
             writer.write_hash(tip); // 32
         }
 
-        writer.write_u16(&(self.txs_hashes.len() as u16)); // 65 + 2 = 67
+        writer.write_u16(self.txs_hashes.len() as u16); // 65 + 2 = 67
         for tx in &self.txs_hashes {
             writer.write_hash(tx); // 32
         }

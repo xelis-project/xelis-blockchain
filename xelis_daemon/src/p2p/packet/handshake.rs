@@ -117,7 +117,7 @@ impl Serializer for Handshake {
 
         writer.write_bytes(&self.network_id); // network ID
         writer.write_u64(&self.peer_id); // transform peer ID to bytes
-        writer.write_u16(&self.local_port); // local port
+        writer.write_u16(self.local_port); // local port
         writer.write_u64(&self.utc_time); // UTC Time
         writer.write_u64(&self.topoheight); // Topo height
         writer.write_u64(&self.height); // Block Height
