@@ -6,8 +6,8 @@ pub mod peer_list;
 
 use serde_json::Value;
 use xelis_common::{
-    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT, PEER_FAIL_LIMIT},
-    serializer::{Writer, Serializer},
+    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT, PEER_FAIL_LIMIT, PEER_TIMEOUT_REQUEST_OBJECT},
+    serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::{CompleteBlock, Block},
     globals::get_current_time
@@ -240,6 +240,8 @@ impl P2pServer {
 
         let listener = TcpListener::bind(self.get_bind_address()).await?;
         info!("P2p Server will listen on: {}", self.get_bind_address());
+        // only allocate one time the buffer for this packet
+        let mut handshake_buffer = [0; 512];
         loop {
             let (connection, out, priority) = select! {
                 res = listener.accept() => {
@@ -273,8 +275,8 @@ impl P2pServer {
                 }
             };
             trace!("Handling new connection: {} (out = {}, priority = {})", connection, out, priority);
-            if let Err(e) = self.handle_new_connection(connection, out, priority).await {
-                debug!("Error on occured on handled connection: {}", e);
+            if let Err(e) = self.handle_new_connection(&mut handshake_buffer, connection, out, priority).await {
+                trace!("Error occured on handled connection: {}", e);
                 // no need to close it here, as it will be automatically closed in drop
             }
         }
@@ -349,17 +351,16 @@ impl P2pServer {
         let storage = self.blockchain.get_storage().read().await;
         let (block, top_hash) = storage.get_top_block().await?;
         let topoheight = self.blockchain.get_topo_height();
-        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&top_hash).await.unwrap_or_else(|_| 0);
+        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&top_hash).await.unwrap_or(0);
         Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, block.get_height(), top_hash, cumulative_difficulty, peers))
     }
 
     // this function handle all new connections
     // A new connection have to send an Handshake
     // if the handshake is valid, we accept it & register it on server
-    async fn handle_new_connection(self: &Arc<Self>, mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
+    async fn handle_new_connection(self: &Arc<Self>, buf: &mut [u8], mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
         trace!("New connection: {}", connection);
-        let mut buf = [0u8; 1024];
-        let handshake: Handshake = match timeout(Duration::from_millis(800), connection.read_packet(&mut buf, 1024)).await?? {
+        let handshake: Handshake = match timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), connection.read_packet(buf, buf.len() as u32)).await?? {
             Packet::Handshake(h) => h.into_owned(), // only allow handshake packet
             _ => return Err(P2pError::ExpectedHandshake)
         };
@@ -374,13 +375,15 @@ impl P2pServer {
 
         // if we reach here, handshake is all good, we can start listening this new peer
         // we can save the peer in our peerlist
-        let mut addr = peer.get_connection().get_address().clone();
-        if !peer.is_out() {
-            addr.set_port(peer.get_local_port());
+        {
+            let mut addr = peer.get_connection().get_address().clone();
+            if !peer.is_out() {
+                addr.set_port(peer.get_local_port());
+            }
+            if let Err(e) = self.save_peer_to_file(addr).await {
+                error!("Error while saving peer on disk: {}", e);
+            };
         }
-        if let Err(e) = self.save_peer_to_file(addr).await {
-            error!("Error while saving peer on disk: {}", e);
-        };
 
         let peer_id = peer.get_id(); // keep in memory the peer_id outside connection (because of moved value)
         let peer = {
@@ -401,8 +404,9 @@ impl P2pServer {
         }
 
         let zelf = Arc::clone(self);
+        // create a new tokio task to completely handle this peer
         tokio::spawn(async move {
-            if let Err(e) = zelf.handle_connection(&mut buf, peer.clone()).await {
+            if let Err(e) = zelf.handle_connection(peer.clone()).await {
                 error!("Error while handling connection {}: {}", peer, e);
                 if let Err(e) = peer.close().await {
                     error!("Couldn't close {}: {}", peer, e);
@@ -433,11 +437,11 @@ impl P2pServer {
 
     async fn send_handshake(&self, connection: &Connection) -> Result<(), P2pError> {
         let handshake: Handshake = self.build_handshake().await?;
-        let mut writer = Writer::new();
-        Packet::Handshake(Cow::Owned(handshake)).write(&mut writer);
-        connection.send_bytes(&writer.bytes()).await
+        connection.send_bytes(&Packet::Handshake(Cow::Owned(handshake)).to_bytes()).await
     }
 
+    // build a ping packet with the current state of the blockchain
+    // if a peer is given, we will check and update the peers list
     async fn build_ping_packet(&self, peer: Option<&Arc<Peer>>) -> Ping<'_> {
         let (cumulative_difficulty, block_top_hash) = {
             let storage = self.blockchain.get_storage().read().await;
@@ -446,7 +450,7 @@ impl P2pServer {
                     error!("Couldn't get the top block hash from storage: {}", e);
                     (0, Hash::zero())
                 },
-                Ok(hash) => (storage.get_cumulative_difficulty_for_block(&hash).await.unwrap_or_else(|_| 0), hash)
+                Ok(hash) => (storage.get_cumulative_difficulty_for_block(&hash).await.unwrap_or(0), hash)
             }
         };
         let highest_topo_height = self.blockchain.get_topo_height();
@@ -541,12 +545,16 @@ impl P2pServer {
         }
     }
 
-    async fn handle_connection(self: Arc<Self>, buf: &mut [u8], peer: Arc<Peer>) -> Result<(), P2pError> {
+    // this function handle the whole connection with a peer
+    // when we have a packet to read from him, and when we want to send a packet to him
+    async fn handle_connection(self: Arc<Self>, peer: Arc<Peer>) -> Result<(), P2pError> {
         tokio::spawn(Arc::clone(&self).loop_ping(Arc::clone(&peer)));
+        // allocate the unique buffer for this connection
+        let mut buf = [0u8; 1024];
         let mut rx = peer.get_connection().get_rx().lock().await;
         loop {
             tokio::select! {
-                res = self.listen_connection(buf, &peer) => {
+                res = self.listen_connection(&mut buf, &peer) => {
                     if let Err(e) = res { // close on any error
                         debug!("Error while reading packet from {}: {}", peer, e);
                         peer.close().await?;
@@ -569,6 +577,8 @@ impl P2pServer {
                 }
             }
 
+            // check that we don't have too many fails
+            // otherwise disconnect peer
             if peer.get_fail_count() >= PEER_FAIL_LIMIT {
                 error!("High fail count detected for {}!", peer);
                 if let Err(e) = peer.close().await {
@@ -1075,6 +1085,7 @@ impl P2pServer {
     // we add at the end the genesis block to be sure to be on the same chain as others peers
     // its used to find a common point with the peer to which we ask the chain
     pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
+        debug!("Requesting chain for from {}", peer);
         let mut request = ChainRequest::new();
         {
             let storage = self.blockchain.get_storage().read().await;
