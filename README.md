@@ -87,6 +87,28 @@ This serialization is done using the fixed position of each fields and their cor
 
 Every data transfered is done through the Packet system which allow easily to read & transfer data and doing the whole serialization itself.
 
+The connection for a new peer (took from the queue or a new incoming connections) is executed through a unique tokio task with the same allocated buffer for handshake. This prevents any DoS attack on creating multiple task and verifying connection.
+When the peer is verified and valid, we create him his own tasks. One for reading incoming packets, and another one for writing packets to him.
+By separating both directions in two differents task it prevents to block the communication of opposed side.
+
+For transactions propagation, we keep in cache last N transactions sent or received from a peer to not send the same data twice during propagation.
+
+### Handshake
+
+Handshake packet must be the first packet sent with the blockchain state inside when connecting to a peer.
+If valid, the peer will send the same packet with is own blockchain state.
+
+Except at beginning, this packet should never be sent again.
+
+### Ping
+
+Ping packet is sent at an regular interval and inform peers of the our blockchain state.
+Every 15 minutes, the packet can up to 16 sockets addresses (IPv4 or IPv6) to help others nodes to extends theirs peers list.
+
+### Chain Sync
+
+TODO
+
 ## Storage
 
 All theses data are saved in plaintext.
