@@ -103,11 +103,19 @@ Except at beginning, this packet should never be sent again.
 ### Ping
 
 Ping packet is sent at an regular interval and inform peers of the our blockchain state.
-Every 15 minutes, the packet can up to 16 sockets addresses (IPv4 or IPv6) to help others nodes to extends theirs peers list.
+Every 15 minutes, the packet can up to `MAX_LEN` sockets addresses (IPv4 or IPv6) to help others nodes to extends theirs peers list.
 
 ### Chain Sync
 
-TODO
+We select randomly a peer which is higher in height from the peers list than us and send him a chain request.
+
+The chain request includes last `CHAIN_SYNC_REQUEST_MAX_BLOCKS` blocks hashes of our chain with theirs topoheight espaced exponentially.
+This data is used by the select peer to try to find a common point with our chain and his own (block hash must be at same topoheight as other peer).
+If selected peer found a common point, he add up to `CHAIN_SYNC_RESPONSE_MAX_BLOCKS` blocks hashes ordered by block height.
+
+Through the "ask and await" request object system, we ask the complete block (block header with transactions included) and add it to chain directly.
+
+Chain sync is requested with a minimum interval of `CHAIN_SYNC_DELAY` seconds.
 
 ## Storage
 
