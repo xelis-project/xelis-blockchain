@@ -125,7 +125,8 @@ If a transaction is not found in the mempool, we request it from the same peer i
 
 ### Transaction Propagation
 
-Transaction propagation packet contains the hash only to prevent sending the TX. Its already backed by a cache per peer.
+Transaction propagation packet contains the hash only to prevent sending the TX.
+Its also backed by a cache per peer to knows if the transaction was already received from him / send to him.
 
 ## Storage
 
