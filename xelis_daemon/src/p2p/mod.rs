@@ -732,7 +732,7 @@ impl P2pServer {
                 // at least one block necessary (genesis block)
                 if request.size() == 0 || request.size() > CHAIN_SYNC_REQUEST_MAX_BLOCKS { // allows maximum 64 blocks id (2560 bytes max)
                     warn!("{} sent us a malformed chain request ({} blocks)!", peer, request.size());
-                    return Err(P2pError::InvalidPacket)
+                    return Err(P2pError::InvalidProtocolRules)
                 }
 
                 let zelf = Arc::clone(self);
@@ -749,13 +749,13 @@ impl P2pServer {
                 trace!("Received a chain response from {}", peer);
                 if !peer.chain_sync_requested() {
                     warn!("{} sent us a chain response but we haven't requested any.", peer);
-                    return Err(P2pError::InvalidPacket)
+                    return Err(P2pError::InvalidProtocolRules)
                 }
                 peer.set_chain_sync_requested(false);
 
-                if response.size() > CHAIN_SYNC_REQUEST_MAX_BLOCKS { // peer is trying to spam us
+                if response.size() > CHAIN_SYNC_RESPONSE_MAX_BLOCKS { // peer is trying to spam us
                     warn!("{} is maybe trying to spam us", peer);
-                    return Err(P2pError::InvalidPacket)
+                    return Err(P2pError::InvalidProtocolRules)
                 }
 
                 if let Some(common_point) = response.get_common_point() {
@@ -1037,7 +1037,7 @@ impl P2pServer {
         for peer in peer_list.get_peers().values() {
             // check that the peer is not too far from us
             // otherwise we may spam him for nothing
-            if peer.get_height() + CHAIN_SYNC_REQUEST_MAX_BLOCKS as u64 > current_height {
+            if peer.get_height() + CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u64 > current_height {
                 trace!("Peer {} is not too far from us, checking cache for tx hash {}", peer, tx);
                 let mut txs_cache = peer.get_txs_cache().lock().await;
                 // check that we didn't already send this tx to this peer or that he don't already have it
