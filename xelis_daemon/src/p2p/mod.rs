@@ -686,6 +686,14 @@ impl P2pServer {
                 trace!("Received a block propagation packet from {}", peer);
                 let (block, ping) = packet_wrapper.consume();
                 ping.into_owned().update_peer(peer).await;
+                let block_height = block.get_height();
+
+                // check that the block height is valid
+                if block_height < self.blockchain.get_stable_height() {
+                    error!("{} send us a block propagation packet which is under stable height (height = {})!", peer, block_height);
+                    return Err(P2pError::InvalidProtocolRules)
+                }
+
                 let block = block.into_owned();
                 let block_hash = block.hash();
                 {
