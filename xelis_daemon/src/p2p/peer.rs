@@ -176,8 +176,6 @@ impl Peer {
             self.fail_count.fetch_add(1, Ordering::Release);
         }
         self.set_last_fail_count(current_time);
-
-
     }
 
     pub fn get_last_chain_sync(&self) -> u64 {

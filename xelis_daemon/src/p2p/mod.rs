@@ -9,7 +9,7 @@ use xelis_common::{
     config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS},
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
-    block::{CompleteBlock, Block},
+    block::Block,
     globals::get_current_time
 };
 use crate::core::blockchain::Blockchain;
@@ -25,12 +25,12 @@ use self::packet::ping::Ping;
 use self::error::P2pError;
 use self::packet::{Packet, PacketWrapper};
 use self::peer::Peer;
-use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, UnboundedSender, UnboundedReceiver}, select};
+use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, UnboundedSender, UnboundedReceiver}, select, task::JoinHandle};
 use log::{info, warn, error, debug, trace};
 use tokio::io::AsyncWriteExt;
 use tokio::time::interval;
 use tokio::time::timeout;
-use std::{borrow::Cow, fs, path::Path};
+use std::{borrow::Cow, fs, path::Path, sync::atomic::{AtomicBool, Ordering}};
 use std::convert::TryInto;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -53,7 +53,8 @@ pub struct P2pServer {
     bind_address: SocketAddr, // ip:port address to receive connections
     peer_list: SharedPeerList, // all peers accepted
     blockchain: Arc<Blockchain>, // reference to the chain to add blocks/txs
-    connections_sender: UnboundedSender<MessageChannel> // this sender allows to create a queue system in one task only
+    connections_sender: UnboundedSender<MessageChannel>, // this sender allows to create a queue system in one task only
+    syncing: AtomicBool // used to check if we are already syncing with one peer or not
 }
 
 impl P2pServer {
@@ -75,7 +76,8 @@ impl P2pServer {
             bind_address: addr,
             peer_list: PeerList::new(max_peers),
             blockchain,
-            connections_sender
+            connections_sender,
+            syncing: AtomicBool::new(false)
         };
 
         let arc = Arc::new(server);
@@ -403,20 +405,7 @@ impl P2pServer {
             }
         }
 
-        let zelf = Arc::clone(self);
-        // create a new tokio task to completely handle this peer
-        tokio::spawn(async move {
-            if let Err(e) = zelf.handle_connection(peer.clone()).await {
-                error!("Error while handling connection {}: {}", peer, e);
-                if !peer.get_connection().is_closed() {
-                    debug!("{} is not closed, closing it ourself", peer);
-                    if let Err(e) = peer.close().await {
-                        error!("Couldn't close {}: {}", peer, e);
-                    }
-                }
-            }
-        });
-        Ok(())
+        self.handle_connection(peer.clone()).await
     }
 
     // Connect to a specific peer address
@@ -495,26 +484,6 @@ impl P2pServer {
         self.build_ping_packet(Some(peer)).await
     }
 
-    // send a ping packet to specific peer every 10s
-    async fn loop_ping(self: Arc<Self>, peer: Arc<Peer>) {
-        let mut ping_interval = interval(Duration::from_secs(P2P_PING_DELAY));
-        // first tick is immediately elapsed
-        ping_interval.tick().await;
-        loop {
-            if peer.get_connection().is_closed() {
-                break;
-            }
-            
-            let packet = Packet::Ping(Cow::Owned(self.build_ping_packet_for_peer(&peer).await));
-            trace!("Sending ping packet to {}", peer);
-            if let Err(e) = peer.send_packet(packet).await {
-                debug!("Error occured on ping: {}", e);
-                break;
-            }
-            ping_interval.tick().await;
-        }
-    }
-
     // select a random peer which is greater than us to sync chain
     // candidate peer should have a greater topoheight or a higher block height than us
     async fn select_random_best_peer(&self) -> Option<Arc<Peer>> {
@@ -539,6 +508,10 @@ impl P2pServer {
         let mut interval = interval(Duration::from_secs(CHAIN_SYNC_DELAY));
         loop {
             interval.tick().await;
+            if self.is_syncing() {
+                trace!("We are already syncing, skipping...");
+                continue;
+            }
             if let Some(peer) = self.select_random_best_peer().await {
                 trace!("Selected for chain sync is {}", peer);
                 if let Err(e) = self.request_sync_chain_for(&peer).await {
@@ -548,26 +521,32 @@ impl P2pServer {
         }
     }
 
-    // this function handle the whole connection with a peer
-    // when we have a packet to read from him, and when we want to send a packet to him
-    async fn handle_connection(self: Arc<Self>, peer: Arc<Peer>) -> Result<(), P2pError> {
-        tokio::spawn(Arc::clone(&self).loop_ping(Arc::clone(&peer)));
-        // allocate the unique buffer for this connection
-        let mut buf = [0u8; 1024];
-        let mut rx = peer.get_connection().get_rx().lock().await;
+    async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut UnboundedReceiver<ConnectionMessage>) -> Result<(), P2pError> {
+        let mut ping_interval = interval(Duration::from_secs(P2P_PING_DELAY));
         loop {
-            tokio::select! {
-                res = self.listen_connection(&mut buf, &peer) => {
-                    if let Err(e) = res { // close on any error
-                        warn!("Closing connection because we coudln't read packet correctly from {}: {}", peer, e);
-                        peer.close().await?;
+            select! {
+                biased;
+                // ping packet interval
+                _ = ping_interval.tick() => {
+                    if peer.get_connection().is_closed() {
+                        break;
+                    }
+
+                    let packet = Packet::Ping(Cow::Owned(self.build_ping_packet_for_peer(&peer).await));
+                    trace!("Sending ping packet to {}", peer);
+                    if let Err(e) = peer.send_packet(packet).await {
+                        debug!("Error occured on ping: {}", e);
                         break;
                     }
                 }
+                // all packets to be sent
                 Some(data) = rx.recv() => {
+                    if peer.get_connection().is_closed() {
+                        break;
+                    }
+
                     match data {
                         ConnectionMessage::Packet(bytes) => {
-                            trace!("Data to send to {} received!", peer);
                             trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[5], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len() - 4);
                             peer.get_connection().send_bytes(&bytes).await?;
                             trace!("data sucessfully sent!");
@@ -579,18 +558,75 @@ impl P2pServer {
                     };
                 }
             }
+        }
+        Ok(())
+    }
 
-            // check that we don't have too many fails
-            // otherwise disconnect peer
-            if peer.get_fail_count() >= PEER_FAIL_LIMIT {
-                warn!("High fail count detected for {}! Closing connection...", peer);
-                if let Err(e) = peer.close().await {
-                    error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
+    async fn handle_connection_read_side(self: Arc<Self>, peer: &Arc<Peer>, mut write_task: JoinHandle<()>) -> Result<(), P2pError> {
+        // allocate the unique buffer for this connection
+        let mut buf = [0u8; 1024];
+        loop {
+            select! {
+                biased;
+                _ = &mut write_task => {
+                    debug!("write task has finished, stopping...");
+                    break;
+                },
+                res = self.listen_connection(&mut buf, &peer) => {
+                    res?;
+
+                    // check that we don't have too many fails
+                    // otherwise disconnect peer
+                    if peer.get_fail_count() >= PEER_FAIL_LIMIT {
+                        warn!("High fail count detected for {}! Closing connection...", peer);
+                        if let Err(e) = peer.close().await {
+                            error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
+                        }
+                        break;
+                    }
                 }
-                break;
             }
         }
-        rx.close(); // clean shutdown
+        Ok(())
+    }
+
+    // this function handle the whole connection with a peer
+    // create a task for each part (reading and writing)
+    // so we can do both at the same time without blocking / waiting on other part when important traffic
+    async fn handle_connection(self: &Arc<Self>, peer: Arc<Peer>) -> Result<(), P2pError> {
+        // task for writing to peer
+        let write_task = {
+            let zelf = Arc::clone(&self);
+            let peer = Arc::clone(&peer);
+            tokio::spawn(async move {
+                let mut rx = peer.get_connection().get_rx().lock().await;
+                if let Err(e) = zelf.handle_connection_write_side(&peer, &mut rx).await {
+                    debug!("Error while writing to {}: {}", peer, e);
+                    if !peer.get_connection().is_closed() {
+                        if let Err(e) = peer.close().await {
+                            debug!("Error while closing {} from write side: {}", peer, e);
+                        }
+                    }
+                }
+                rx.close(); // clean shutdown
+            })
+        };
+
+        // task for reading from peer
+        {
+            let zelf = Arc::clone(&self);
+            tokio::spawn(async move {
+                if let Err(e) = zelf.handle_connection_read_side(&peer, write_task).await {
+                    debug!("Error while running read part from peer {}: {}", peer, e);
+                    if !peer.get_connection().is_closed() {
+                        if let Err(e) = peer.close().await {
+                            debug!("Error while closing {} from read side: {}", peer, e);
+                        }
+                    }
+                }
+            });
+        }
+
         Ok(())
     }
 
@@ -739,10 +775,12 @@ impl P2pServer {
                 let peer = Arc::clone(peer);
                 let blocks = request.get_blocks();
                 tokio::spawn(async move {
+                    zelf.set_syncing(true);
                     if let Err(e) = zelf.handle_chain_request(&peer, blocks).await {
                         error!("Error while handling chain request from {}: {}", peer, e);
                         peer.increment_fail_count();
                     }
+                    zelf.set_syncing(false);
                 });
             },
             Packet::ChainResponse(response) => {
@@ -787,10 +825,12 @@ impl P2pServer {
 
                     // start a new task to wait on all requested blocks
                     tokio::spawn(async move {
+                        zelf.set_syncing(true);
                         if let Err(e) = zelf.handle_chain_response(&peer, blocks, pop_count).await {
                             error!("Error while handling chain response from {}: {}", peer, e);
                             peer.increment_fail_count();
                         }
+                        zelf.set_syncing(false);
                     });
                 } else {
                     warn!("No common block was found with {}", peer);
@@ -884,7 +924,7 @@ impl P2pServer {
 
     // search a common point between our blockchain and the peer's one
     // when the common point is found, start sending blocks from this point
-    async fn handle_chain_request(self: Arc<Self>, peer: &Arc<Peer>, blocks: Vec<BlockId>) -> Result<(), BlockchainError> {
+    async fn handle_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, blocks: Vec<BlockId>) -> Result<(), BlockchainError> {
         debug!("handle chain request for peer {} with {} blocks", peer, blocks.len());
         let storage = self.blockchain.get_storage().read().await;
         let mut response_blocks = Vec::new();
@@ -918,10 +958,23 @@ impl P2pServer {
         Ok(())
     }
 
-    async fn handle_chain_response(self: Arc<Self>, peer: &Arc<Peer>, blocks_request: Vec<Hash>, pop_count: u64) -> Result<(), BlockchainError> {
+    async fn handle_chain_response(self: &Arc<Self>, peer: &Arc<Peer>, blocks_request: Vec<Hash>, pop_count: u64) -> Result<(), BlockchainError> {
         debug!("handling chain response from peer {}, {} blocks, pop count {}", peer, blocks_request.len(), pop_count);
+
+        // if node asks us to pop blocks, verify if it's a priority one
+        // if it's not a priority node, check if we are connected to one
+        // if yes, don't accept the pop count from this peer
+        // if no, check that the pop count request is less or equal than the configured limit
         let mut storage = self.blockchain.get_storage().write().await; // lock until we get all blocks
-        let mut blocks: Vec<CompleteBlock> = Vec::with_capacity(blocks_request.len());
+        if pop_count > 0 && (peer.is_priority() || ((pop_count <= MAX_BLOCK_REWIND) && !self.is_connected_to_a_priority_node().await)) {
+            warn!("Rewinding chain because of {} (priority: {}, pop count: {})", peer, peer.is_priority(), pop_count);
+            match self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
+                Ok(topoheight) => debug!("Chain has been rewinded to topoheight {}", topoheight),
+                Err(e) => error!("Error on rewind chain with pop count at {}, error: {}", pop_count, e)
+            };
+        }
+
+        let blocks_count = blocks_request.len();
         for hash in blocks_request { // Request all complete blocks now
             if !storage.has_block(&hash).await? {
                 trace!("Block {} is not found, asking it to peer", hash);
@@ -929,7 +982,7 @@ impl P2pServer {
                 let response = peer.request_blocking_object(object_request).await?;
                 if let OwnedObjectResponse::Block(block, hash) = response {
                     trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
-                    blocks.push(block);
+                    self.blockchain.add_new_block_for_storage(&mut storage, block, false).await?;
                 } else {
                     error!("{} sent us an invalid block response", peer);
                     return Err(P2pError::ExpectedBlock.into())
@@ -939,22 +992,7 @@ impl P2pServer {
             }
         }
 
-        // if node asks us to pop blocks, verify if it's a priority one
-        // if it's not a priority node, check if we are connected to one
-        // if yes, don't accept the pop count from this peer
-        // if no, check that the pop count request is less or equal than the configured limit
-        if pop_count > 0 && (peer.is_priority() || ((pop_count <= MAX_BLOCK_REWIND) && !self.is_connected_to_a_priority_node().await)) {
-            warn!("Rewinding chain because of {} (priority: {}, pop count: {})", peer, peer.is_priority(), pop_count);
-            match self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
-                Ok(topoheight) => debug!("Chain has been rewinded to topoheight {}", topoheight),
-                Err(e) => error!("Error on rewind chain with pop count at {}, error: {}", pop_count, e)
-            };
-        }
-
-        debug!("Adding blocks to chain");
-        for block in blocks {
-            self.blockchain.add_new_block_for_storage(&mut storage, block, false).await?;
-        }
+        debug!("we've synced {} blocks from {}", blocks_count, peer);
         Ok(())
     }
 
@@ -998,6 +1036,13 @@ impl P2pServer {
         } else {
             our_height
         }
+    }
+
+    fn set_syncing(&self, value: bool) {
+        self.syncing.store(value, Ordering::SeqCst);
+    }
+    pub fn is_syncing(&self) -> bool {
+        self.syncing.load(Ordering::SeqCst)
     }
 
     pub async fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError> {

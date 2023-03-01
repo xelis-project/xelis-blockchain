@@ -3,6 +3,7 @@ use super::packet::Packet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
+use tokio::net::tcp::{OwnedWriteHalf, OwnedReadHalf};
 use xelis_common::{
     globals::get_current_time,
     serializer::{Reader, Serializer},
@@ -32,7 +33,8 @@ pub enum State {
 
 pub struct Connection {
     state: State,
-    stream: Mutex<TcpStream>, // Stream for read & write
+    write: Mutex<OwnedWriteHalf>, // write to stream
+    read: Mutex<OwnedReadHalf>, // read from stream
     addr: SocketAddr, // TCP Address
     tx: Mutex<Tx>, // Tx to send bytes
     rx: Mutex<Rx>, // Rx to read bytes to send
@@ -45,9 +47,11 @@ pub struct Connection {
 impl Connection {
     pub fn new(stream: TcpStream, addr: SocketAddr) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
+        let (read, write) = stream.into_split();
         Self {
             state: State::Pending,
-            stream: Mutex::new(stream),
+            write: Mutex::new(write),
+            read: Mutex::new(read),
             addr,
             tx: Mutex::new(tx),
             rx: Mutex::new(rx),
@@ -67,7 +71,7 @@ impl Connection {
     }
 
     pub async fn send_bytes(&self, buf: &[u8]) -> P2pResult<()> {
-        let mut stream = self.stream.lock().await;
+        let mut stream = self.write.lock().await;
         stream.write_all(buf).await?;
         self.bytes_out.fetch_add(buf.len(), Ordering::Relaxed);
         stream.flush().await?;
@@ -75,7 +79,7 @@ impl Connection {
     }
 
     pub async fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<Packet<'_>> {
-        let mut stream = self.stream.lock().await;
+        let mut stream = self.read.lock().await;
         let size = self.read_packet_size(&mut stream, buf).await?;
         if size == 0 || size > max_size {
             warn!("Received invalid packet size: {} bytes (max: {} bytes) from peer {}", size, max_size, self.get_address());
@@ -93,7 +97,7 @@ impl Connection {
         Ok(packet)
     }
 
-    async fn read_packet_size(&self, stream: &mut TcpStream, buf: &mut [u8]) -> P2pResult<u32> {
+    async fn read_packet_size(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<u32> {
         let read = self.read_bytes_from_stream(stream, &mut buf[0..4]).await?;
         if read != 4 {
             warn!("Received invalid packet size: expected to read 4 bytes but read only {} bytes from peer {}", read, self.get_address());
@@ -104,7 +108,7 @@ impl Connection {
         Ok(size)
     }
 
-    async fn read_all_bytes(&self, stream: &mut TcpStream, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
+    async fn read_all_bytes(&self, stream: &mut OwnedReadHalf, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
         let buf_size = buf.len() as u32;
         let mut bytes = Vec::new();
         while left > 0 {
@@ -123,7 +127,7 @@ impl Connection {
     // this function will wait until something is sent to the socket if it's in blocking mode
     // this return the size of data read & set in the buffer.
     // used to only lock one time the stream and read on it
-    async fn read_bytes_from_stream(&self, stream: &mut TcpStream, buf: &mut [u8]) -> P2pResult<usize> {
+    async fn read_bytes_from_stream(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<usize> {
         let result = stream.read(buf).await?;
         match result {
             0 => {
@@ -140,7 +144,7 @@ impl Connection {
         self.closed.store(true, Ordering::Relaxed);
         let tx = self.get_tx().lock().await;
         tx.send(ConnectionMessage::Exit)?; // send a exit message to stop the current lock of stream
-        let mut stream = self.stream.lock().await;
+        let mut stream = self.write.lock().await;
         stream.shutdown().await?; // sometimes the peer is not removed on other peer side
         Ok(())
     }
