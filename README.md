@@ -117,6 +117,16 @@ Through the "ask and await" request object system, we ask the complete block (bl
 
 Chain sync is requested with a minimum interval of `CHAIN_SYNC_DELAY` seconds.
 
+### Block Propagation
+
+Block propagation packet contains the block header only. Its sent to all peers who have theirs height minus our height less than `STABLE_HEIGHT_LIMIT`.
+To build the complete block, we retrieve transactions from mempool.
+If a transaction is not found in the mempool, we request it from the same peer in order to build it.
+
+### Transaction Propagation
+
+Transaction propagation packet contains the hash only to prevent sending the TX. Its already backed by a cache per peer.
+
 ## Storage
 
 All theses data are saved in plaintext.
