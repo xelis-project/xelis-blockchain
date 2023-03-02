@@ -25,7 +25,7 @@ use self::packet::ping::Ping;
 use self::error::P2pError;
 use self::packet::{Packet, PacketWrapper};
 use self::peer::Peer;
-use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, UnboundedSender, UnboundedReceiver}, select, task::JoinHandle};
+use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, UnboundedSender, UnboundedReceiver}, select, task::JoinHandle, time::MissedTickBehavior};
 use log::{info, warn, error, debug, trace};
 use tokio::io::AsyncWriteExt;
 use tokio::time::interval;
@@ -506,6 +506,8 @@ impl P2pServer {
 
     async fn chain_sync_loop(self: Arc<Self>) {
         let mut interval = interval(Duration::from_secs(CHAIN_SYNC_DELAY));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
         loop {
             interval.tick().await;
             if self.is_syncing() {
@@ -524,6 +526,8 @@ impl P2pServer {
     // send a ping packet to specific peer every 10s
     async fn loop_ping(self: Arc<Self>, peer: Arc<Peer>) {
         let mut ping_interval = interval(Duration::from_secs(P2P_PING_DELAY));
+        ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
         // first tick is immediately elapsed
         ping_interval.tick().await;
         loop {
