@@ -47,24 +47,18 @@ async fn get_block_type_for_block(blockchain: &Blockchain, storage: &Storage, ha
 }
 
 pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Storage, hash: Hash, include_txs: bool) -> Result<Value, RpcError> {
-    let is_ordered = storage.is_block_topological_ordered(&hash).await;
-
-    let topoheight = if is_ordered {
-        Some(storage.get_topo_height_for_hash(&hash).await?)
+    let (topoheight, supply, reward) = if  storage.is_block_topological_ordered(&hash).await {
+        (
+            Some(storage.get_topo_height_for_hash(&hash).await?),
+            Some( storage.get_supply_for_hash(&hash)?),
+            Some(storage.get_block_reward(&hash)?),
+        )
     } else {
-        None
-    };
-
-    let supply = if is_ordered {
-        Some( storage.get_supply_for_hash(&hash)?)
-    } else {
-        None
-    };
-
-    let reward = if is_ordered {
-        Some(storage.get_block_reward(&hash)?)
-    } else {
-        None
+        (
+            None,
+            None,
+            None,
+        )
     };
 
     let block_type = get_block_type_for_block(&blockchain, &storage, &hash).await?;
