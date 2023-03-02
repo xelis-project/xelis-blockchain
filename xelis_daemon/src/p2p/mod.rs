@@ -881,14 +881,12 @@ impl P2pServer {
                 match &request {
                     ObjectRequest::Block(hash) => {
                         let storage = self.blockchain.get_storage().read().await;
-                        match storage.get_complete_block(hash).await {
-                            Ok(block) => {
-                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Block(Cow::Owned(block)))).await?;
-                            },
-                            Err(e) => {
-                                debug!("{} asked block '{}' but got on error while retrieving it: {}", peer, hash, e);
-                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
-                            }
+                        if storage.has_block(hash).await? {
+                            let block = storage.get_complete_block(hash).await?;
+                            peer.send_packet(Packet::ObjectResponse(ObjectResponse::Block(Cow::Owned(block)))).await?;
+                        } else {
+                            debug!("{} asked block '{}' but not present in our chain", peer, hash);
+                            peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
                         }
                     },
                     ObjectRequest::Transaction(hash) => {
