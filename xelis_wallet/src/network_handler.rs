@@ -1,7 +1,7 @@
 use std::{sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
 use thiserror::Error;
 use anyhow::Error;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
 use xelis_common::{crypto::{hash::Hash, address::Address}, block::CompleteBlock, transaction::TransactionType, account::VersionedBalance};
 
@@ -119,10 +119,14 @@ impl NetworkHandler {
 
             // create Coinbase entry
             if *block.get_miner() == *address.get_public_key() {
-                let coinbase = EntryData::Coinbase(response.reward);
-                let entry = TransactionEntry::new(response.data.hash.into_owned(), topoheight, None, None, coinbase);
-                let mut storage = self.wallet.get_storage().write().await;
-                storage.save_transaction(entry.get_hash(), &entry)?;
+                if let Some(reward) = response.reward {
+                    let coinbase = EntryData::Coinbase(reward);
+                    let entry = TransactionEntry::new(response.data.hash.into_owned(), topoheight, None, None, coinbase);
+                    let mut storage = self.wallet.get_storage().write().await;
+                    storage.save_transaction(entry.get_hash(), &entry)?;
+                } else {
+                    warn!("No reward for block {} at topoheight {}", response.data.hash, topoheight);
+                }
             }
 
             let mut latest_nonce_sent = None;
