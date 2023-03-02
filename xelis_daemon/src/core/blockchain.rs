@@ -392,14 +392,17 @@ impl Blockchain {
     }
 
     #[async_recursion] // TODO no recursion
-    async fn build_reachability_recursive(&self, storage: &Storage, set: &mut HashSet<Hash>, hash: Hash, level: u8) -> Result<(), BlockchainError> {
-        let tips = storage.get_past_blocks_of(&hash).await?;
-        set.insert(hash);
-
-        if level < STABLE_HEIGHT_LIMIT as u8 * 2 {
-            for hash in tips.iter() {
-                if !set.contains(hash) {
-                    self.build_reachability_recursive(storage, set, hash.clone(), level + 1).await?;
+    async fn build_reachability_recursive(&self, storage: &Storage, set: &mut HashSet<Hash>, hash: Hash, level: u64) -> Result<(), BlockchainError> {
+        if level >= 2 * STABLE_HEIGHT_LIMIT {
+            trace!("Level limit reached, adding {}", hash);
+            set.insert(hash);
+        } else {
+            trace!("Level {} reached with hash {}", level, hash);
+            let tips = storage.get_past_blocks_of(&hash).await?;
+            set.insert(hash);
+            for past_hash in tips.iter() {
+                if !set.contains(past_hash) {
+                    self.build_reachability_recursive(storage, set, past_hash.clone(), level + 1).await?;
                 }
             }
         }
@@ -407,6 +410,7 @@ impl Blockchain {
         Ok(())
     }
 
+    // this function check that a TIP cannot be refered as past block in another TIP
     async fn verify_non_reachability(&self, storage: &Storage, block: &Block) -> Result<bool, BlockchainError> {
         let tips = block.get_tips();
         let tips_count = tips.len();
@@ -420,11 +424,10 @@ impl Blockchain {
 
         for i in 0..tips_count {
             for j in 0..tips_count {
-                if i == j { // avoid self test
-                    continue;
-                }
-
-                if reach[j].contains(&tips[i]) {
+                // if a tip can be referenced as another's past block, its not a tip
+                if i != j && reach[j].contains(&tips[i]) {
+                    debug!("Tip {} (index {}) is reachable from tip {} (index {})", tips[i], i, tips[j], j);
+                    trace!("reach: {}", reach[j].iter().map(|x| x.to_string()).collect::<Vec<String>>().join(", "));
                     return Ok(false)
                 }
             }
@@ -1028,9 +1031,9 @@ impl Blockchain {
         let mut new_tips = Vec::new();
         for hash in tips {
             let tip_base_distance = self.calculate_distance_from_mainchain(storage, &hash).await?;
-            debug!("tip base distance: {}, best height: {}", tip_base_distance, best_height);
+            trace!("tip base distance: {}, best height: {}", tip_base_distance, best_height);
             if tip_base_distance <= best_height && best_height - tip_base_distance < STABLE_HEIGHT_LIMIT - 1 {
-                debug!("Adding {} as new tips", hash);
+                trace!("Adding {} as new tips", hash);
                 new_tips.push(hash);
             } else {
                 warn!("Rusty TIP declared stale {} with best height: {}, tip base distance: {}", hash, best_height, tip_base_distance);
