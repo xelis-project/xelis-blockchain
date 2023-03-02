@@ -521,42 +521,48 @@ impl P2pServer {
         }
     }
 
-    async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut UnboundedReceiver<ConnectionMessage>) -> Result<(), P2pError> {
+    // send a ping packet to specific peer every 10s
+    async fn loop_ping(self: Arc<Self>, peer: Arc<Peer>) {
         let mut ping_interval = interval(Duration::from_secs(P2P_PING_DELAY));
+        // first tick is immediately elapsed
+        ping_interval.tick().await;
         loop {
-            select! {
-                biased;
-                // ping packet interval
-                _ = ping_interval.tick() => {
-                    if peer.get_connection().is_closed() {
-                        break;
-                    }
+            if peer.get_connection().is_closed() {
+                break;
+            }
 
-                    let packet = Packet::Ping(Cow::Owned(self.build_ping_packet_for_peer(&peer).await));
-                    trace!("Sending ping packet to {}", peer);
-                    if let Err(e) = peer.send_packet(packet).await {
-                        debug!("Error occured on ping: {}", e);
-                        break;
-                    }
-                }
-                // all packets to be sent
-                Some(data) = rx.recv() => {
-                    if peer.get_connection().is_closed() {
-                        break;
-                    }
+            let packet = Packet::Ping(Cow::Owned(self.build_ping_packet_for_peer(&peer).await));
+            trace!("Sending ping packet to {}", peer);
+            if let Err(e) = peer.send_packet(packet).await {
+                debug!("Error occured on ping: {}", e);
+                break;
+            }
+            ping_interval.tick().await;
+        }
+    }
 
-                    match data {
-                        ConnectionMessage::Packet(bytes) => {
-                            trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[5], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len() - 4);
-                            peer.get_connection().send_bytes(&bytes).await?;
-                            trace!("data sucessfully sent!");
-                        }
-                        ConnectionMessage::Exit => {
-                            trace!("Exit message received for peer {}", peer);
-                            break;
-                        }
-                    };
+    async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut UnboundedReceiver<ConnectionMessage>) -> Result<(), P2pError> {
+        loop {
+            // all packets to be sent
+            if let Some(data) = rx.recv().await {
+                if peer.get_connection().is_closed() {
+                    break;
                 }
+
+                match data {
+                    ConnectionMessage::Packet(bytes) => {
+                        trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[5], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len() - 4);
+                        peer.get_connection().send_bytes(&bytes).await?;
+                        trace!("data sucessfully sent!");
+                    }
+                    ConnectionMessage::Exit => {
+                        trace!("Exit message received for peer {}", peer);
+                        break;
+                    }
+                };
+            } else {
+                debug!("Closing write side because all senders are dropped");
+                break;
             }
         }
         Ok(())
@@ -594,9 +600,12 @@ impl P2pServer {
     // create a task for each part (reading and writing)
     // so we can do both at the same time without blocking / waiting on other part when important traffic
     async fn handle_connection(self: &Arc<Self>, peer: Arc<Peer>) -> Result<(), P2pError> {
+        // ping task with regular interval
+        tokio::spawn(Arc::clone(self).loop_ping(peer.clone()));
+
         // task for writing to peer
         let write_task = {
-            let zelf = Arc::clone(&self);
+            let zelf = Arc::clone(self);
             let peer = Arc::clone(&peer);
             tokio::spawn(async move {
                 let mut rx = peer.get_connection().get_rx().lock().await;
