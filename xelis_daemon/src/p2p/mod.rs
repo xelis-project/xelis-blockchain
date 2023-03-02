@@ -985,7 +985,7 @@ impl P2pServer {
         // if yes, don't accept the pop count from this peer
         // if no, check that the pop count request is less or equal than the configured limit
         let mut storage = self.blockchain.get_storage().write().await; // lock until we get all blocks
-        if pop_count > 0 && (peer.is_priority() || ((pop_count <= MAX_BLOCK_REWIND) && !self.is_connected_to_a_priority_node().await)) {
+        if pop_count > 0 && (peer.is_priority() || ((pop_count <= MAX_BLOCK_REWIND) && !self.is_connected_to_a_synced_priority_node().await)) {
             warn!("Rewinding chain because of {} (priority: {}, pop count: {})", peer, peer.is_priority(), pop_count);
             match self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
                 Ok(topoheight) => debug!("Chain has been rewinded to topoheight {}", topoheight),
@@ -1015,11 +1015,16 @@ impl P2pServer {
         Ok(())
     }
 
-    async fn is_connected_to_a_priority_node(&self) -> bool {
+    // determine if we are connected to a priority node and that this node is equal / greater to our chain
+    async fn is_connected_to_a_synced_priority_node(&self) -> bool {
+        let topoheight = self.blockchain.get_topo_height();
         let peer_list = self.peer_list.read().await;
         for peer in peer_list.get_peers().values() {
             if peer.is_priority() {
-                return true
+                let peer_topoheight = peer.get_topoheight();
+                if peer_topoheight >= topoheight || topoheight - peer_topoheight <= MAX_BLOCK_REWIND {
+                    return true
+                }
             }
         }
         false
