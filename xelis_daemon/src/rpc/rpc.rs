@@ -47,16 +47,29 @@ async fn get_block_type_for_block(blockchain: &Blockchain, storage: &Storage, ha
 }
 
 pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Storage, hash: Hash, include_txs: bool) -> Result<Value, RpcError> {
-    let topoheight = if storage.is_block_topological_ordered(&hash).await {
+    let is_ordered = storage.is_block_topological_ordered(&hash).await;
+
+    let topoheight = if is_ordered {
         Some(storage.get_topo_height_for_hash(&hash).await?)
     } else {
         None
     };
+
+    let supply = if is_ordered {
+        Some( storage.get_supply_for_hash(&hash)?)
+    } else {
+        None
+    };
+
+    let reward = if is_ordered {
+        Some(storage.get_block_reward(&hash)?)
+    } else {
+        None
+    };
+
     let block_type = get_block_type_for_block(&blockchain, &storage, &hash).await?;
     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
     let difficulty = storage.get_difficulty_for_block(&hash)?;
-    let supply = storage.get_supply_for_hash(&hash)?;
-    let reward = storage.get_block_reward(&hash)?;
     let block = storage.get_complete_block(&hash).await?;
     let total_size_in_bytes = block.size();
     let mut total_fees = 0;

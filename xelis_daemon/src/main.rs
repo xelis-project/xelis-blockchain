@@ -77,10 +77,9 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>, network: 
     };
 
     let closure = || async {
-        let height = blockchain.get_height();
         let (peers, best) = match &p2p {
             Some(p2p) => (p2p.get_peer_count().await, p2p.get_best_topoheight().await),
-            None => (0, height)
+            None => (0, blockchain.get_topo_height())
         };
 
         let miners = match &getwork {
