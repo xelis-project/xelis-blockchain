@@ -291,10 +291,17 @@ impl Display for Peer {
             "Couldn't retrieve data".to_string()
         };
 
-        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, height: {}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}]",
+        let top_hash = if let Ok(hash) = self.get_top_block_hash().try_lock() {
+            hash.to_string()
+        } else {
+            "Couldn't retrieve data".to_string()
+        };
+
+        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, top hash: {}, height: {}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}]",
             self.get_connection(),
             self.get_id(),
             self.get_topoheight(),
+            top_hash,
             self.get_height(),
             self.is_priority(),
             self.get_node_tag().as_ref().unwrap_or(&"None".to_owned()),
