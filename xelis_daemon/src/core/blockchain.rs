@@ -54,7 +54,10 @@ pub struct Config {
     pub disable_getwork_server: bool,
     /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME)
     #[clap(long)]
-    pub simulator: bool
+    pub simulator: bool,
+    /// Disable the p2p connections
+    #[clap(long)]
+    pub disable_p2p_server: bool
 }
 
 pub struct Blockchain {
@@ -67,6 +70,7 @@ pub struct Blockchain {
     difficulty: AtomicU64, // current difficulty
     // used to skip PoW verification
     simulator: bool,
+    // current network type on which one we're using/connected to
     network: Network
 }
 
@@ -129,7 +133,7 @@ impl Blockchain {
 
         let arc = Arc::new(blockchain);
         // create P2P Server
-        {
+        if !config.disable_p2p_server {
             info!("Starting P2p server...");
             match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc)) {
                 Ok(p2p) => {
