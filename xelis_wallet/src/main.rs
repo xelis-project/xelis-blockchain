@@ -8,7 +8,7 @@ use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
     VERSION, XELIS_ASSET
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::{format_coin, set_network_to}, serializer::Serializer, network::Network};
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::{format_coin, set_network_to}, serializer::Serializer, network::Network};
 use xelis_wallet::wallet::Wallet;
 
 #[derive(Parser)]
@@ -20,9 +20,9 @@ pub struct Config {
     /// Disable online mode
     #[clap(short, long)]
     offline_mode: bool,
-    /// Enable the debug mode
-    #[clap(short, long)]
-    debug: bool,
+    /// Set log level
+    #[clap(short, long, default_value_t = LogLevel::Info)]
+    log_level: LogLevel,
     /// Disable the log file
     #[clap(short = 'f', long)]
     disable_file_logging: bool,
@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     let config: Config = Config::parse();
     set_network_to(config.network);
 
-    let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging)?;
+    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
     let dir = format!("{}{}", DIR_PATH, config.name);
 
     let wallet = if Path::new(&dir).is_dir() {

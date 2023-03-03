@@ -2,15 +2,71 @@ pub mod command;
 pub mod argument;
 
 use self::command::{CommandManager, CommandError};
+use std::fmt::{Display, Formatter, self};
 use std::io::{Write, stdout, Error as IOError};
+use std::str::FromStr;
 use fern::colors::{ColoredLevelConfig, Color};
 use tokio::sync::mpsc;
 use std::sync::{PoisonError, Arc, Mutex};
-use log::{info, error, Level, debug};
+use log::{info, error, Level, debug, LevelFilter};
 use tokio::time::interval;
 use std::future::Future;
 use std::time::Duration;
 use thiserror::Error;
+
+// used for launch param
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "clap", derive(clap::ArgEnum))]
+pub enum LogLevel {
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace
+}
+
+impl From<LogLevel> for LevelFilter {
+    fn from(value: LogLevel) -> Self {
+        match value {
+            LogLevel::Off => Self::Off,
+            LogLevel::Error => Self::Error,
+            LogLevel::Warn => Self::Warn,
+            LogLevel::Info => Self::Info,
+            LogLevel::Debug => Self::Debug,
+            LogLevel::Trace => Self::Trace
+        }
+    }
+}
+
+impl Display for LogLevel {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let str = match &self {
+            Self::Off => "off",
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        };
+        write!(f, "{}", str)
+    }
+}
+
+impl FromStr for LogLevel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "error" => Self::Error,
+            "warn" => Self::Warn,
+            "info" => Self::Info,
+            "debug" => Self::Debug,
+            "trace" => Self::Trace,
+            _ => return Err("Invalid log level".into())
+        })
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum PromptError {
@@ -35,12 +91,12 @@ pub struct Prompt {
 }
 
 impl Prompt {
-    pub fn new(debug: bool, filename_log: String, disable_file_logging: bool) -> Result<Arc<Self>, PromptError>  {
+    pub fn new(level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<Arc<Self>, PromptError>  {
         let v = Self {
             prompt: Mutex::new(None)
         };
         let prompt = Arc::new(v);
-        Arc::clone(&prompt).setup_logger(debug, filename_log, disable_file_logging)?;
+        Arc::clone(&prompt).setup_logger(level, filename_log, disable_file_logging)?;
         Ok(prompt)
     }
 
@@ -131,7 +187,7 @@ impl Prompt {
     }
 
     // configure fern and print prompt message after each new output
-    fn setup_logger(self: Arc<Self>, debug: bool, filename_log: String, disable_file_logging: bool) -> Result<(), fern::InitError> {
+    fn setup_logger(self: Arc<Self>, level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<(), fern::InitError> {
         let colors = ColoredLevelConfig::new()
             .debug(Color::Green)
             .info(Color::Cyan)
@@ -178,11 +234,7 @@ impl Prompt {
             base = base.chain(file_log);
         }
 
-        base = if debug {
-            base.level(log::LevelFilter::Debug)
-        } else {
-            base.level(log::LevelFilter::Info)
-        };
+        base = base.level(level.into());
 
         base.level_for("sled", log::LevelFilter::Warn)
         .level_for("actix_server", log::LevelFilter::Warn)
