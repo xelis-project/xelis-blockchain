@@ -1,4 +1,4 @@
-pub mod english;
+pub mod languages;
 
 use std::collections::HashMap;
 
@@ -6,6 +6,7 @@ use anyhow::{Result, Context, anyhow};
 use lazy_static::lazy_static;
 use log::debug;
 use xelis_common::{crypto::key::PrivateKey, serializer::Serializer};
+use languages::*;
 
 const KEY_SIZE: usize = 32;
 const SEED_LENGTH: usize = 24;
@@ -15,6 +16,16 @@ const WORDS_LIST_U32: u32 = WORDS_LIST as u32;
 lazy_static! {
     pub static ref LANGUAGES: Vec<Language<'static>> = vec![
         english::ENGLISH,
+        french::FRENCH,
+        italian::ITALIAN,
+        spanish::SPANISH,
+        portuguese::PORTUGUESE,
+        japanese::JAPANESE,
+        chinese_simplified::CHINESE_SIMPLIFIED,
+        russian::RUSSIAN,
+        esperanto::ESPERANTO,
+        dutch::DUTCH,
+        german::GERMAN
     ];
 }
 
