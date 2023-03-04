@@ -987,7 +987,9 @@ impl Blockchain {
                     get_block_reward(past_supply)
                 };
 
+                trace!("set block {} reward to {}", hash, block_reward);
                 storage.set_block_reward(&hash, block_reward)?;
+                trace!("set block {} supply to {}", hash, past_supply + block_reward);
                 storage.set_supply_for_block(&hash, past_supply + block_reward)?;
 
                 // track all changes in balances
@@ -1046,6 +1048,7 @@ impl Blockchain {
         }
 
         tips = HashSet::new();
+        debug!("find best tip by cumulative difficulty");
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&storage, &new_tips).await?.clone();
         for hash in new_tips {
             if best_tip != hash {
@@ -1062,16 +1065,21 @@ impl Blockchain {
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
-        if current_height == 0 || highest_topo > self.get_topo_height() {
-            debug!("Blockchain height extended, current height is {}", current_height);
+        let mut current_topoheight = self.get_topo_height();
+        if current_height == 0 || highest_topo > current_topoheight {
+            debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
             storage.set_top_topoheight(highest_topo)?;
             self.topoheight.store(highest_topo, Ordering::Release);
+            current_topoheight = highest_topo;
         }
         storage.store_tips(&tips)?;
 
-        if current_height == 0 || block.get_height() > self.get_height() {
+        let mut current_height = current_height;
+        if current_height == 0 || block.get_height() > current_height {
+            debug!("storing new top height {}", block.get_height());
             storage.set_top_height(block.get_height())?;
             self.height.store(block.get_height(), Ordering::Release);
+            current_height = block.get_height();
         }
 
         if storage.is_block_topological_ordered(&block_hash).await {
@@ -1083,6 +1091,7 @@ impl Blockchain {
 
         // update difficulty in cache
         {
+            trace!("update difficulty in cache");
             let tips_set = storage.get_tips().await?;
             let mut tips = Vec::with_capacity(tips_set.len());
             for hash in tips_set {
@@ -1096,7 +1105,7 @@ impl Blockchain {
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
-                p2p.broadcast_block(&block, cumulative_difficulty, self.get_topo_height(), self.get_height(), &block_hash).await;
+                p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, &block_hash).await;
             }
         }
 
@@ -1113,6 +1122,7 @@ impl Blockchain {
             }
 
             // notify websocket clients
+            trace!("Notifying websocket clients");
             match get_block_response_for_hash(self, storage, block_hash, false).await {
                 Ok(response) => {
                     events.entry(NotifyEvent::NewBlock).or_insert_with(Vec::new).push(response);
@@ -1143,11 +1153,13 @@ impl Blockchain {
 
     // if a block is not ordered, it's an orphaned block and its transactions are not honoured
     pub async fn is_block_orphaned_for_storage(&self, storage: &Storage, hash: &Hash) -> bool {
+        trace!("is block {} orphaned", hash);
         !storage.is_block_topological_ordered(hash).await
     }
 
     // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
     pub async fn is_side_block(&self, storage: &Storage, hash: &Hash) -> Result<bool, BlockchainError> {
+        trace!("is block {} a side block", hash);
         if !storage.is_block_topological_ordered(hash).await {
             return Ok(false)
         }
@@ -1177,11 +1189,10 @@ impl Blockchain {
 
     // to have stable order: it must be ordered, and be under the stable height limit
     pub async fn has_block_stable_order(&self, storage: &Storage, hash: &Hash, topoheight: u64) -> Result<bool, BlockchainError> {
+        trace!("has block {} stable order at topoheight {}", hash, topoheight);
         if storage.is_block_topological_ordered(hash).await {
             let block_topo_height = storage.get_topo_height_for_hash(hash).await?;
-            if  block_topo_height + STABLE_HEIGHT_LIMIT <= topoheight {
-                return Ok(true)
-            }
+            return Ok(block_topo_height + STABLE_HEIGHT_LIMIT <= topoheight)
         }
         Ok(false)
     }
@@ -1192,6 +1203,7 @@ impl Blockchain {
     }
 
     pub async fn rewind_chain_for_storage(&self, storage: &mut Storage, count: usize) -> Result<u64, BlockchainError> {
+        trace!("rewind chain with count = {}", count);
         let current_height = self.get_height();
         let current_topoheight = self.get_topo_height();
         warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, current_height, current_topoheight);
@@ -1278,6 +1290,7 @@ impl Blockchain {
     // nonces allow us to support multiples tx from same owner in the same block
     // txs must be sorted in ascending order based on account nonce 
     async fn verify_transaction_with_hash<'a>(&self, storage: &Storage, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>) -> Result<(), BlockchainError> {
+        trace!("Verify transaction with hash {}", hash);
         let total_deducted: &mut HashMap<&'a Hash, u64> = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
         {
             let balance = total_deducted.entry(&XELIS_ASSET).or_insert(0);
@@ -1367,6 +1380,7 @@ impl Blockchain {
 
     // retrieve the already added balance with changes OR generate a new versioned balance
     async fn retrieve_balance<'a, 'b>(&self, storage: &Storage, balances: &'b mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, topoheight: u64) -> Result<&'b mut VersionedBalance, BlockchainError> {
+        trace!("retrieve balance {} for {} at topoheight {}", asset, key, topoheight);
         let assets = balances.entry(key).or_insert_with(HashMap::new);
         Ok(match assets.entry(asset) {
             Entry::Occupied(v) => v.into_mut(),
@@ -1380,6 +1394,7 @@ impl Blockchain {
     // this function just add to balance
     // its used to centralize all computation
     async fn add_balance<'a>(&self, storage: &Storage, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, amount: u64, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("add balance {} for {} at topoheight {} with {}", asset, key, topoheight, amount);
         let version = self.retrieve_balance(storage, balances, key, asset, topoheight).await?;
         version.add_balance(amount);
         Ok(())
@@ -1388,6 +1403,7 @@ impl Blockchain {
     // this function just subtract from balance
     // its used to centralize all computation
     async fn sub_balance<'a>(&self, storage: &Storage, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, amount: u64, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("sub balance {} for {} at topoheight {} with {}", asset, key, topoheight, amount);
         let version = self.retrieve_balance(storage, balances, key, asset, topoheight).await?;
         version.sub_balance(amount);
         Ok(())
@@ -1395,6 +1411,7 @@ impl Blockchain {
 
     // reward block miner and dev fees if any.
     async fn reward_miner<'a>(&self, storage: &Storage, block: &'a Block, mut block_reward: u64, total_fees: u64, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, topoheight: u64) -> Result<(), BlockchainError> {
+        debug!("reward miner {} at topoheight {} with block reward = {}, total fees = {}", block.get_miner(), topoheight, block_reward, total_fees);
         // if dev fee are enabled, give % from block reward only
         if DEV_FEE_PERCENT != 0 {
             let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
