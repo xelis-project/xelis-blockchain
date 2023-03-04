@@ -23,7 +23,7 @@ pub struct NodeConfig {
     #[structopt(flatten)]
     nested: Config,
     /// Set log level
-    #[clap(short, long, default_value_t = LogLevel::Info)]
+    #[clap(long, arg_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
     /// Disable the log file
     #[clap(short = 'f', long)]

@@ -31,7 +31,7 @@ pub struct MinerConfig {
     #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String,
     /// Set log level
-    #[clap(short, long, default_value_t = LogLevel::Info)]
+    #[clap(long, arg_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
     /// Enable the benchmark mode
     #[clap(short, long)]
