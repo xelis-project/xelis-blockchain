@@ -1,3 +1,6 @@
+use lru::LruCache;
+use xelis_common::config::PEER_FAIL_TIME_RESET;
+use xelis_common::globals::get_current_time;
 use xelis_common::{
     crypto::hash::Hash,
     config::PEER_TIMEOUT_REQUEST_OBJECT,
@@ -18,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 use std::borrow::Cow;
 use bytes::Bytes;
-use log::warn;
+use log::{warn, trace};
 
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
@@ -34,7 +37,7 @@ pub struct Peer {
     topoheight: AtomicU64, // current highest topo height for this peer
     height: AtomicU64, // current highest block height for this peer
     last_chain_sync: AtomicU64,
-    // TODO last_fail_count
+    last_fail_count: AtomicU64, // last time we got a fail
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
     peer_list: SharedPeerList,
     chain_requested: AtomicBool,
@@ -43,7 +46,8 @@ pub struct Peer {
     last_peer_list_update: AtomicU64, // last time we send our peerlist to this peer
     last_peer_list: AtomicU64, // last time we received a peerlist from this peer
     last_ping: AtomicU64, // last time we got a ping packet from this peer
-    cumulative_difficulty: AtomicU64 // cumulative difficulty of peer chain
+    cumulative_difficulty: AtomicU64, // cumulative difficulty of peer chain
+    txs_cache: Mutex<LruCache<Hash, ()>>, // All transactions propagated to/from this peer
 }
 
 impl Peer {
@@ -59,6 +63,7 @@ impl Peer {
             height: AtomicU64::new(height),
             out,
             priority,
+            last_fail_count: AtomicU64::new(0),
             fail_count: AtomicU8::new(0),
             last_chain_sync: AtomicU64::new(0),
             peer_list,
@@ -68,8 +73,13 @@ impl Peer {
             last_peer_list_update: AtomicU64::new(0),
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
-            cumulative_difficulty: AtomicU64::new(cumulative_difficulty)
+            cumulative_difficulty: AtomicU64::new(cumulative_difficulty),
+            txs_cache: Mutex::new(LruCache::new(128))
         }
+    }
+
+    pub fn get_txs_cache(&self) -> &Mutex<LruCache<Hash, ()>> {
+        &self.txs_cache
     }
 
     pub fn get_connection(&self) -> &Connection {
@@ -99,7 +109,6 @@ impl Peer {
     pub fn set_topoheight(&self, topoheight: u64) {
         self.topoheight.store(topoheight, Ordering::Release);
     }
-
 
     pub fn get_height(&self) -> u64 {
         self.height.load(Ordering::Acquire)
@@ -133,13 +142,40 @@ impl Peer {
         self.priority
     }
 
+    pub fn get_last_fail_count(&self) -> u64 {
+        self.last_fail_count.load(Ordering::Acquire)
+    }
+
+    pub fn set_last_fail_count(&self, value: u64) {
+        self.last_fail_count.store(value, Ordering::Release);
+    }
+
     pub fn get_fail_count(&self) -> u8 {
         self.fail_count.load(Ordering::Acquire)
     }
 
-    // TODO verify last fail count
+    fn update_fail_count_default(&self) -> bool {
+        self.update_fail_count(get_current_time(), 0)
+    }
+
+    fn update_fail_count(&self, current_time: u64, to_store: u8) -> bool {
+        let last_fail = self.get_last_fail_count();
+        let reset = last_fail + PEER_FAIL_TIME_RESET < current_time;
+        if reset {
+            // reset counter
+            self.fail_count.store(to_store, Ordering::Release);
+        }
+        reset
+    }
+
     pub fn increment_fail_count(&self) {
-        self.fail_count.fetch_add(1, Ordering::Release);
+        let current_time = get_current_time();
+        // if its long time we didn't get a fail, reset the fail count to 1 (because of current fail)
+        // otherwise, add 1
+        if !self.update_fail_count(current_time, 1) {
+            self.fail_count.fetch_add(1, Ordering::Release);
+        }
+        self.set_last_fail_count(current_time);
     }
 
     pub fn get_last_chain_sync(&self) -> u64 {
@@ -169,6 +205,7 @@ impl Peer {
 
     // Request a object from this peer and wait on it until we receive it or until timeout 
     pub async fn request_blocking_object(&self, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
+        trace!("Requesting {} from {}", request, self);
         let receiver = {
             let mut objects = self.objects_requested.lock().await;
             if objects.contains_key(&request) {
@@ -182,14 +219,15 @@ impl Peer {
         let object = match timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver).await {
             Ok(res) => res?,
             Err(e) => {
+                trace!("Requested data has timed out");
                 let mut objects = self.objects_requested.lock().await;
                 objects.remove(&request); // remove it from request list
                 return Err(P2pError::AsyncTimeOut(e));
             }
         };
         let object_hash = object.get_hash();
-        if object_hash != *request.get_hash() {
-            return Err(P2pError::InvalidObjectResponse(object_hash))
+        if *object_hash != *request.get_hash() {
+            return Err(P2pError::InvalidObjectResponse(object_hash.clone()))
         }
 
         Ok(object)
@@ -224,9 +262,11 @@ impl Peer {
     }
 
     pub async fn close(&self) -> Result<(), P2pError> {
+        trace!("Closing connection with {}", self);
         let mut peer_list = self.peer_list.write().await;
         peer_list.remove_peer(&self);
         self.get_connection().close().await?;
+        trace!("{} has been disconnected", self);
         Ok(())
     }
 
@@ -243,20 +283,30 @@ impl Peer {
 
 impl Display for Peer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
+        // update fail counter to have up-to-date data to display
+        self.update_fail_count_default();
         let peers_count = if let Ok(peers) = self.get_peers().try_lock() {
             format!("{}", peers.len())
         } else {
             "Couldn't retrieve data".to_string()
         };
 
-        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, height: {}, priority: {}, tag: {}, version: {}, out: {}, peers: {}]",
+        let top_hash = if let Ok(hash) = self.get_top_block_hash().try_lock() {
+            hash.to_string()
+        } else {
+            "Couldn't retrieve data".to_string()
+        };
+
+        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, top hash: {}, height: {}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}]",
             self.get_connection(),
             self.get_id(),
             self.get_topoheight(),
+            top_hash,
             self.get_height(),
             self.is_priority(),
             self.get_node_tag().as_ref().unwrap_or(&"None".to_owned()),
             self.get_version(),
+            self.get_fail_count(),
             self.is_out(),
             peers_count
         )

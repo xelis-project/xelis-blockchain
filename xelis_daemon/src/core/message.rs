@@ -69,7 +69,7 @@ impl Serializer for Message {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(&self.hashed_secret_code);
         writer.write_bytes(&self.secret_code);
-        writer.write_u16(&(self.message.len() as u16));
+        writer.write_u16(self.message.len() as u16);
         writer.write_bytes(&self.message);
         self.receiver.write(writer);
         self.sender.write(writer);

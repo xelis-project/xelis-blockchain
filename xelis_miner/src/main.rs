@@ -14,7 +14,7 @@ use xelis_common::{
     config::{VERSION, DEV_ADDRESS},
     globals::{get_current_timestamp, format_hashrate},
     crypto::{hash::{Hashable, Hash, hash}, address::Address},
-    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager}
+    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel}
 };
 use clap::Parser;
 use log::{error, info, debug, warn};
@@ -30,9 +30,9 @@ pub struct MinerConfig {
     /// Daemon address to connect to for mining
     #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String,
-    /// Enable the debug mode
-    #[clap(short, long)]
-    debug: bool,
+    /// Set log level
+    #[clap(short, long, default_value_t = LogLevel::Info)]
+    log_level: LogLevel,
     /// Enable the benchmark mode
     #[clap(short, long)]
     benchmark: bool,
@@ -79,7 +79,7 @@ lazy_static! {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
-    let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging)?;
+    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
     let address = match Address::from_string(&config.miner_address) {
         Ok(address) => address,
         Err(e) => {

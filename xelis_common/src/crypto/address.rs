@@ -111,11 +111,7 @@ impl<'a> Serializer for Address<'a> {
     }
 
     fn read(reader: &mut Reader) -> Result<Address<'a>, ReaderError> {
-        let mainnet = match reader.read_u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(ReaderError::InvalidValue)
-        };
+        let mainnet = reader.read_bool()?;
         let addr_type = AddressType::read(reader)?;
         let pub_key = PublicKey::read(reader)?;
 

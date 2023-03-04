@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::serializer::{Serializer, Reader, ReaderError, Writer};
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "clap", derive(clap::ArgEnum))]
 pub enum Network {
     Mainnet,

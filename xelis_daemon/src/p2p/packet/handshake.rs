@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 // If handshake is valid, server reply with his own handshake
 // We just have to repeat this request to all peers until we reach max connection
 // Network ID, Block Height & block top hash is to verify that we are on the same network & chain.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Handshake {
     version: String, // daemon version
     network: Network,
@@ -117,7 +117,7 @@ impl Serializer for Handshake {
 
         writer.write_bytes(&self.network_id); // network ID
         writer.write_u64(&self.peer_id); // transform peer ID to bytes
-        writer.write_u16(&self.local_port); // local port
+        writer.write_u16(self.local_port); // local port
         writer.write_u64(&self.utc_time); // UTC Time
         writer.write_u64(&self.topoheight); // Topo height
         writer.write_u64(&self.height); // Block Height

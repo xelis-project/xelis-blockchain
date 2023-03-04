@@ -13,7 +13,7 @@ use xelis_common::{
     },
 };
 use crate::p2p::error::P2pError;
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::{Display, Formatter, self}};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ObjectRequest {
@@ -54,20 +54,30 @@ impl Serializer for ObjectRequest {
     }
 }
 
-pub enum OwnedObjectResponse {
-    Block(CompleteBlock),
-    Transaction(Transaction)
-}
-
-impl OwnedObjectResponse {
-    pub fn get_hash(&self) -> Hash {
+impl Display for ObjectRequest {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            OwnedObjectResponse::Block(block) => block.hash(),
-            OwnedObjectResponse::Transaction(transaction) => transaction.hash()
+            Self::Block(hash) => write!(f, "ObjectRequest[type=Block, {}]", hash),
+            Self::Transaction(hash) => write!(f, "ObjectRequest[type=Transaction, {}]", hash)
         }
     }
 }
 
+pub enum OwnedObjectResponse {
+    Block(CompleteBlock, Hash),
+    Transaction(Transaction, Hash)
+}
+
+impl OwnedObjectResponse {
+    pub fn get_hash(&self) -> &Hash {
+        match self {
+            OwnedObjectResponse::Block(_, hash) => hash,
+            OwnedObjectResponse::Transaction(_, hash) => hash
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum ObjectResponse<'a> {
     Block(Cow<'a, CompleteBlock>),
     Transaction(Cow<'a, Transaction>),
@@ -85,8 +95,16 @@ impl ObjectResponse<'_> {
 
     pub fn to_owned(self) -> Result<OwnedObjectResponse, P2pError> {
         Ok(match self {
-            ObjectResponse::Block(block) => OwnedObjectResponse::Block(block.into_owned()),
-            ObjectResponse::Transaction(tx) => OwnedObjectResponse::Transaction(tx.into_owned()),
+            ObjectResponse::Block(block) => {
+                let block = block.into_owned();
+                let hash = block.hash();
+                OwnedObjectResponse::Block(block, hash)
+            },
+            ObjectResponse::Transaction(tx) => {
+                let tx = tx.into_owned();
+                let hash = tx.hash();
+                OwnedObjectResponse::Transaction(tx, hash)
+            },
             ObjectResponse::NotFound(request) => return Err(P2pError::ObjectNotFound(request))
         })
     }

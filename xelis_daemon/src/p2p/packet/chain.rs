@@ -1,3 +1,4 @@
+use log::debug;
 use xelis_common::{
     crypto::hash::Hash,
     serializer::{
@@ -5,11 +6,11 @@ use xelis_common::{
         Writer,
         ReaderError,
         Reader
-    }
+    }, config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS}
 };
 use std::borrow::Cow;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockId {
     hash: Hash,
     topoheight: u64
@@ -47,7 +48,7 @@ impl Serializer for BlockId {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChainRequest {
     blocks: Vec<BlockId>
 }
@@ -85,7 +86,8 @@ impl Serializer for ChainRequest {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let len = reader.read_u8()?;
-        if len == 0 {
+        if len == 0 || len > CHAIN_SYNC_REQUEST_MAX_BLOCKS as u8 {
+            debug!("Invalid chain request length: {}", len);
             return Err(ReaderError::InvalidValue)
         }
 
@@ -97,6 +99,7 @@ impl Serializer for ChainRequest {
     }
 }
 
+#[derive(Debug)]
 pub struct CommonPoint<'a> {
     hash: Cow<'a, Hash>,
     topoheight: u64
@@ -132,6 +135,7 @@ impl Serializer for CommonPoint<'_> {
     }
 }
 
+#[derive(Debug)]
 pub struct ChainResponse<'a> {
     common_point: Option<CommonPoint<'a>>,
     blocks: Vec<Cow<'a, Hash>>,
@@ -169,7 +173,7 @@ impl<'a> Serializer for ChainResponse<'a> {
                 point.write(writer);
             }
         };
-        writer.write_u8(self.blocks.len() as u8);
+        writer.write_u16(self.blocks.len() as u16);
         for hash in &self.blocks {
             writer.write_hash(hash);
         }
@@ -181,8 +185,13 @@ impl<'a> Serializer for ChainResponse<'a> {
             false => None
         };
 
-        let len = reader.read_u8()?;
-        let mut blocks: Vec<Cow<'a, Hash>> = Vec::new(); 
+        let len = reader.read_u16()?;
+        if len > CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u16 {
+            debug!("Invalid chain response length: {}", len);
+            return Err(ReaderError::InvalidValue)
+        }
+
+        let mut blocks: Vec<Cow<'a, Hash>> = Vec::with_capacity(len as usize); 
         for _ in 0..len {
             let hash = reader.read_hash()?;
             blocks.push(Cow::Owned(hash));

@@ -21,7 +21,7 @@ use std::{
 };
 use log::trace;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Ping<'a> {
     top_hash: Cow<'a, Hash>,
     topoheight: u64,
@@ -54,6 +54,10 @@ impl<'a> Ping<'a> {
                 peers.insert(peer);
             }
         }
+    }
+
+    pub fn get_height(&self) -> u64 {
+        self.height
     }
 
     pub fn get_peers(&self) -> &Vec<SocketAddr> {

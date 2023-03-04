@@ -1,6 +1,7 @@
 use crate::crypto::hash::Hash;
 use super::{Serializer, Writer, Reader, ReaderError};
 use std::collections::HashSet;
+use log::error;
 
 impl Serializer for HashSet<Hash> {
     fn write(&self, writer: &mut Writer) {
@@ -12,13 +13,15 @@ impl Serializer for HashSet<Hash> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let total_size = reader.total_size();
         if total_size % 32 != 0 {
+            error!("Invalid size: {}, expected a multiple of 32 for hashes", total_size);
             return Err(ReaderError::InvalidSize)
         }
 
-        let count = total_size % 32;
+        let count = total_size / 32;
         let mut tips = HashSet::with_capacity(count);
-        for _ in 0..=count {
-            tips.insert(reader.read_hash()?);
+        for _ in 0..count {
+            let hash = reader.read_hash()?;
+            tips.insert(hash);
         }
         Ok(tips)
     }

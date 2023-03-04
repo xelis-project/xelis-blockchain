@@ -15,6 +15,8 @@ use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Invalid protocol rules")]
+    InvalidProtocolRules,
     #[error("Peer disconnected")]
     Disconnected,
     #[error("Invalid handshake")]
@@ -53,9 +55,9 @@ pub enum P2pError {
     RequestSyncChainTooFast,
     #[error(transparent)]
     AsyncTimeOut(#[from] Elapsed),
-    #[error("Object requested {:?} not found", _0)]
+    #[error("Object requested {} not found", _0)]
     ObjectNotFound(ObjectRequest),
-    #[error("Object requested {:?} already requested", _0)]
+    #[error("Object requested {} already requested", _0)]
     ObjectAlreadyRequested(ObjectRequest),
     #[error("Invalid object response for request, received hash: {}", _0)]
     InvalidObjectResponse(Hash),

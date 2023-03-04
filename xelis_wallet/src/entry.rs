@@ -69,7 +69,7 @@ impl Serializer for Transfer {
 
         writer.write_bool(&self.extra_data.is_some());
         if let Some(extra_data) = &self.extra_data {
-            writer.write_u16(&(extra_data.len() as u16));
+            writer.write_u16(extra_data.len() as u16);
             writer.write_bytes(extra_data);
         }
     }
@@ -132,14 +132,14 @@ impl Serializer for EntryData {
             Self::Incoming(key, transfers) => {
                 writer.write_u8(2);
                 key.write(writer);
-                writer.write_u16(&(transfers.len() as u16));
+                writer.write_u16(transfers.len() as u16);
                 for transfer in transfers {
                     transfer.write(writer);
                 }
             },
             Self::Outgoing(transfers) => {
                 writer.write_u8(3);
-                writer.write_u16(&(transfers.len() as u16));
+                writer.write_u16(transfers.len() as u16);
                 for transfer in transfers {
                     transfer.write(writer);
                 }

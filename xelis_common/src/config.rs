@@ -34,13 +34,16 @@ pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq4
 
 pub const MAX_BLOCK_REWIND: u64 = STABLE_HEIGHT_LIMIT - 1; // maximum X blocks can be rewinded
 pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = 3; // wait maximum between each chain sync request to peers
-pub const CHAIN_SYNC_DELAY: u64 = 3; // minimum X seconds between each chain sync request per peer
-pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to X blocks id (hash + height) 
+pub const CHAIN_SYNC_DELAY: u64 = 5; // minimum X seconds between each chain sync request per peer
+pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to X blocks id (hash + height) sent for request
+pub const CHAIN_SYNC_RESPONSE_MAX_BLOCKS: usize = 512; // allows up to X blocks hashes sent for response
 pub const P2P_PING_DELAY: u64 = 10; // time between each ping
 pub const P2P_PING_PEER_LIST_DELAY: u64 = 15; // time in seconds between each update of peerlist
 pub const P2P_PING_PEER_LIST_LIMIT: usize = 16; // maximum number of addresses to be send
 pub const P2P_DEFAULT_MAX_PEERS: usize = 32; // default number of maximum peers
-pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 1500; // millis until we timeout
+pub const PEER_FAIL_TIME_RESET: u64 = 60 * 5; // number of seconds to reset the counter
+pub const PEER_FAIL_LIMIT: u8 = 20; // number of fail to disconnect the peer
+pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 3000; // millis until we timeout
 
 // Wallet config
 pub const DEFAULT_DAEMON_ADDRESS: &str = "http://127.0.0.1:8080";

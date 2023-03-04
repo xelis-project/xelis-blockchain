@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Transfer {
     pub amount: u64,
     pub asset: Hash,
@@ -13,7 +13,7 @@ pub struct Transfer {
     pub extra_data: Option<Vec<u8>> // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct SmartContractCall {
     pub contract: Hash,
     pub assets: HashMap<Hash, u64>,
@@ -24,7 +24,7 @@ pub struct SmartContractCall {
 // you're able to send multi assets in one TX to different addresses
 // you can burn one asset at a time (so the TX Hash can be used as unique proof)
 // Smart Contract system is not yet available but types are already there
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum TransactionType {
     Transfer(Vec<Transfer>),
     Burn(Hash, u64),
@@ -32,7 +32,7 @@ pub enum TransactionType {
     DeployContract(String), // represent the code to deploy
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Transaction {
     owner: PublicKey, // creator of this transaction
     data: TransactionType,
@@ -60,7 +60,7 @@ impl Serializer for TransactionType {
 
                     writer.write_bool(&tx.extra_data.is_some());
                     if let Some(extra_data) = &tx.extra_data {
-                        writer.write_u16(&(extra_data.len() as u16));
+                        writer.write_u16(extra_data.len() as u16);
                         writer.write_bytes(extra_data);
                     }
                 }

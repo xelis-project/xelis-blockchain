@@ -111,7 +111,7 @@ impl Serializer for DataValue {
             },
             Self::U16(value) => {
                 writer.write_u8(4);
-                writer.write_u16(value);
+                writer.write_u16(*value);
             },
             Self::U32(value) => {
                 writer.write_u8(5);

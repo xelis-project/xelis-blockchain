@@ -26,6 +26,7 @@ const OBJECT_REQUEST_ID: u8 = 6;
 const OBJECT_RESPONSE_ID: u8 = 7;
 
 // PacketWrapper allows us to link any Packet to a Ping
+#[derive(Debug)]
 pub struct PacketWrapper<'a, T: Serializer + Clone> {
     packet: Cow<'a, T>,
     ping: Cow<'a, Ping<'a>>
@@ -59,6 +60,7 @@ impl<'a, T: Serializer + Clone> Serializer for PacketWrapper<'a, T> {
     }
 }
 
+#[derive(Debug)]
 pub enum Packet<'a> {
     Handshake(Cow<'a, Handshake>), // first packet to connect to a node
     // packet contains tx hash, view this packet as a "notification"
@@ -88,7 +90,7 @@ impl<'a> Serializer for Packet<'a> {
             OBJECT_REQUEST_ID => Packet::ObjectRequest(Cow::Owned(ObjectRequest::read(reader)?)),
             OBJECT_RESPONSE_ID => Packet::ObjectResponse(ObjectResponse::read(reader)?),
             id => {
-                error!("Received a invalid packet id: {}", id);
+                error!("invalid packet id received: {}", id);
                 return Err(ReaderError::InvalidValue)
             }
         })

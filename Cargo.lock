@@ -2358,7 +2358,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_common"
-version = "1.0.0"
+version = "1.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2381,7 +2381,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_daemon"
-version = "1.0.0"
+version = "1.1.2"
 dependencies = [
  "actix",
  "actix-web",

@@ -8,7 +8,7 @@ use log::{info, error, warn};
 use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
-    prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}},
+    prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel},
     config::{VERSION, BLOCK_TIME}, globals::{format_hashrate, set_network_to}, async_handler, crypto::address::Address, network::Network
 };
 use crate::core::blockchain::{Config, Blockchain};
@@ -22,9 +22,9 @@ use anyhow::{Result, Context};
 pub struct NodeConfig {
     #[structopt(flatten)]
     nested: Config,
-    /// Enable the debug mode
-    #[clap(short, long)]
-    debug: bool,
+    /// Set log level
+    #[clap(short, long, default_value_t = LogLevel::Info)]
+    log_level: LogLevel,
     /// Disable the log file
     #[clap(short = 'f', long)]
     disable_file_logging: bool,
@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
     }
     set_network_to(config.network);
 
-    let prompt = Prompt::new(config.debug, config.filename_log, config.disable_file_logging)?;
+    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
     info!("Xelis Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
     let blockchain = Blockchain::new(config.nested, config.network).await?;
@@ -77,10 +77,9 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>, network: 
     };
 
     let closure = || async {
-        let height = blockchain.get_height();
         let (peers, best) = match &p2p {
             Some(p2p) => (p2p.get_peer_count().await, p2p.get_best_topoheight().await),
-            None => (0, height)
+            None => (0, blockchain.get_topo_height())
         };
 
         let miners = match &getwork {

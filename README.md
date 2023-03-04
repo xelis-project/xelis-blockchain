@@ -87,6 +87,47 @@ This serialization is done using the fixed position of each fields and their cor
 
 Every data transfered is done through the Packet system which allow easily to read & transfer data and doing the whole serialization itself.
 
+The connection for a new peer (took from the queue or a new incoming connections) is executed through a unique tokio task with the same allocated buffer for handshake. This prevents any DoS attack on creating multiple task and verifying connection.
+When the peer is verified and valid, we create him his own tasks. One for reading incoming packets, one for writing packets to him, and another one for ping loop.
+By separating both directions in two differents task it prevents to block the communication of opposed side.
+
+For transactions propagation, we keep in cache last N transactions sent or received from a peer to not send the same data twice during propagation.
+
+### Handshake
+
+Handshake packet must be the first packet sent with the blockchain state inside when connecting to a peer.
+If valid, the peer will send the same packet with is own blockchain state.
+
+Except at beginning, this packet should never be sent again.
+
+### Ping
+
+Ping packet is sent at an regular interval and inform peers of the our blockchain state.
+Every 15 minutes, the packet can up to `MAX_LEN` sockets addresses (IPv4 or IPv6) to help others nodes to extends theirs peers list.
+
+### Chain Sync
+
+We select randomly a peer which is higher in height from the peers list than us and send him a chain request.
+
+The chain request includes last `CHAIN_SYNC_REQUEST_MAX_BLOCKS` blocks hashes of our chain with theirs topoheight espaced exponentially.
+This data is used by the select peer to try to find a common point with our chain and his own (block hash must be at same topoheight as other peer).
+If selected peer found a common point, he add up to `CHAIN_SYNC_RESPONSE_MAX_BLOCKS` blocks hashes ordered by block height.
+
+Through the "ask and await" request object system, we ask the complete block (block header with transactions included) and add it to chain directly.
+
+Chain sync is requested with a minimum interval of `CHAIN_SYNC_DELAY` seconds.
+
+### Block Propagation
+
+Block propagation packet contains the block header only. Its sent to all peers who have theirs height minus our height less than `STABLE_HEIGHT_LIMIT`.
+To build the complete block, we retrieve transactions from mempool.
+If a transaction is not found in the mempool, we request it from the same peer in order to build it.
+
+### Transaction Propagation
+
+Transaction propagation packet contains the hash only to prevent sending the TX.
+Its also backed by a cache per peer to knows if the transaction was already received from him / send to him.
+
 ## Storage
 
 All theses data are saved in plaintext.
