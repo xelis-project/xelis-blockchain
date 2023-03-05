@@ -88,10 +88,15 @@ This serialization is done using the fixed position of each fields and their cor
 Every data transfered is done through the Packet system which allow easily to read & transfer data and doing the whole serialization itself.
 
 The connection for a new peer (took from the queue or a new incoming connections) is executed through a unique tokio task with the same allocated buffer for handshake. This prevents any DoS attack on creating multiple task and verifying connection.
-When the peer is verified and valid, we create him his own tasks. One for reading incoming packets, one for writing packets to him, and another one for ping loop.
-By separating both directions in two differents task it prevents to block the communication of opposed side.
+When the peer is verified and valid, we create him his own tasks. One for reading incoming packets and one for writing packets to him.
+By separating both directions in two differents task it prevents blocking the communication of opposed side.
 
 For transactions propagation, we keep in cache last N transactions sent or received from a peer to not send the same data twice during propagation.
+
+The daemon also have 3 tokio tasks running:
+- Maintains connections with seed nodes
+- Chain sync (which select a random peer for syncing its chain)
+- Ping task which build a generic ping packet which is send to every peers connected (or build a specific one for each when its necessary)
 
 ### Handshake
 
