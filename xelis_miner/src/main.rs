@@ -173,11 +173,15 @@ fn benchmark(threads: usize, iterations: usize) {
 // It maintains a WebSocket connection with the daemon and notify all threads when it receive a new job.
 // Its also the task who have the job to send directly the new block found by one of the threads.
 // This allow mining threads to only focus on mining and receiving jobs through memory channels.
-async fn communication_task(daemon_address: String, job_sender: broadcast::Sender<ThreadNotification>, mut block_receiver: mpsc::Receiver<Block>, address: Address<'_>, worker: String) {
+async fn communication_task(mut daemon_address: String, job_sender: broadcast::Sender<ThreadNotification>, mut block_receiver: mpsc::Receiver<Block>, address: Address<'_>, worker: String) {
     info!("Starting communication task");
     'main: loop {
+        if !daemon_address.starts_with("ws://") && !daemon_address.starts_with("wss://") {
+            daemon_address = format!("ws://{}", daemon_address);
+        }
+
         info!("Trying to connect to {}", daemon_address);
-        let client = match connect_async(format!("ws://{}/getwork/{}/{}", daemon_address, address.to_string(), worker)).await {
+        let client = match connect_async(format!("{}/getwork/{}/{}", daemon_address, address.to_string(), worker)).await {
             Ok((client, response)) => {
                 let status = response.status();
                 if status.is_server_error() || status.is_client_error() {
