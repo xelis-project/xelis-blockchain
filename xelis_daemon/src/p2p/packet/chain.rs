@@ -6,7 +6,7 @@ use xelis_common::{
         Writer,
         ReaderError,
         Reader
-    }, config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS}
+    }, config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS}
 };
 use std::borrow::Cow;
 
@@ -139,13 +139,15 @@ impl Serializer for CommonPoint<'_> {
 pub struct ChainResponse<'a> {
     common_point: Option<CommonPoint<'a>>,
     blocks: Vec<Cow<'a, Hash>>,
+    top_blocks: Vec<Cow<'a, Hash>>
 }
 
 impl<'a> ChainResponse<'a> {
-    pub fn new(common_point: Option<CommonPoint<'a>>, blocks: Vec<Cow<'a, Hash>>) -> Self {
+    pub fn new(common_point: Option<CommonPoint<'a>>, blocks: Vec<Cow<'a, Hash>>, top_blocks:Vec<Cow<'a, Hash>>) -> Self {
         Self {
             common_point,
-            blocks
+            blocks,
+            top_blocks
         }
     }
 
@@ -177,6 +179,11 @@ impl<'a> Serializer for ChainResponse<'a> {
         for hash in &self.blocks {
             writer.write_hash(hash);
         }
+
+        writer.write_u8(self.top_blocks.len() as u8);
+        for hash in &self.top_blocks {
+            writer.write_hash(hash);
+        }
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -197,6 +204,18 @@ impl<'a> Serializer for ChainResponse<'a> {
             blocks.push(Cow::Owned(hash));
         }
 
-        Ok(Self::new(common_point, blocks))
+        let len = reader.read_u8()?;
+        if len > CHAIN_SYNC_TOP_BLOCKS as u8 {
+            debug!("Invalid chain response top blocks length: {}", len);
+            return Err(ReaderError::InvalidValue)
+        }
+
+        let mut top_blocks: Vec<Cow<'a, Hash>> = Vec::with_capacity(len as usize); 
+        for _ in 0..len {
+            let hash = reader.read_hash()?;
+            top_blocks.push(Cow::Owned(hash));
+        }
+
+        Ok(Self::new(common_point, blocks, top_blocks))
     }
 }

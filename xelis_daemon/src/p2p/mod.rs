@@ -6,7 +6,7 @@ pub mod peer_list;
 
 use serde_json::Value;
 use xelis_common::{
-    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS},
+    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS},
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::Block,
@@ -956,34 +956,61 @@ impl P2pServer {
     async fn handle_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, blocks: Vec<BlockId>) -> Result<(), BlockchainError> {
         debug!("handle chain request for peer {} with {} blocks", peer, blocks.len());
         let storage = self.blockchain.get_storage().read().await;
+        // blocks hashes sent for syncing (topoheight ordered)
         let mut response_blocks = Vec::new();
+        let mut top_blocks = Vec::new();
+        // common point used to notify peer if he should rewind or not
         let mut common_point = None;
         for block_id in blocks { // search a common point
             trace!("Searching common point for block {} at topoheight {}", block_id.get_hash(), block_id.get_topoheight());
             if storage.has_block(block_id.get_hash()).await? {
-                let common_block = storage.get_block_by_hash(block_id.get_hash()).await?;
-                let (hash, topoheight) = block_id.consume();
+                let (hash, mut topoheight) = block_id.consume();
                 trace!("Block {} is common, expected topoheight from {}: {}", hash, peer, topoheight);
                 // check that the block is ordered like us
                 if storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
                     debug!("common point with {} found at block {} with same topoheight at {}", peer, hash, topoheight);
                     common_point = Some(CommonPoint::new(Cow::Owned(hash), topoheight));
-                    let top_height = self.blockchain.get_height();
-                    let mut height = common_block.get_height();
-                    while response_blocks.len() < CHAIN_SYNC_RESPONSE_MAX_BLOCKS && height <= top_height {
-                        for hash in storage.get_blocks_at_height(height).await? {
-                            trace!("for chain request, adding hash {} at height {}", hash, height);
-                            response_blocks.push(Cow::Owned(hash));
+                    // lets add all blocks ordered hash
+                    let top_topoheight = self.blockchain.get_topo_height();
+                    let stable_height = self.blockchain.get_stable_height();
+                    let mut potential_unstable_height = None;
+                    while response_blocks.len() < CHAIN_SYNC_RESPONSE_MAX_BLOCKS && topoheight <= top_topoheight {
+                        trace!("looking for hash at topoheight {}", topoheight);
+                        let hash = storage.get_hash_at_topo_height(topoheight).await?;
+                        // TODO only check for near peer synced
+                        if potential_unstable_height.is_none() {
+                            let height = storage.get_height_for_block(&hash).await?;
+                            if height >= stable_height {
+                                debug!("Found unstable height at {}", height);
+                                potential_unstable_height = Some(height);
+                            }
                         }
-                        height += 1;
+                        trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
+                        response_blocks.push(Cow::Owned(hash));
+                        topoheight += 1;
                     }
+
+                    // now, lets check if peer is near to be synced, and send him alt tips blocks
+                    if let Some(mut height) = potential_unstable_height {
+                        let top_height = self.blockchain.get_height();
+                        trace!("unstable height: {}, top height: {}", height, top_height);
+                        while height <= top_height && top_blocks.len() < CHAIN_SYNC_TOP_BLOCKS {
+                            trace!("get blocks at height {} for top blocks", height);
+                            for hash in storage.get_blocks_at_height(height).await? {
+                                trace!("block at height {}: {}", height, hash);
+                                top_blocks.push(Cow::Owned(hash));
+                            }
+                            height += 1;
+                        }
+                    }
+
                     break;
                 }
             }
         }
 
-        debug!("Sending {} blocks as response to {}", response_blocks.len(), peer);
-        peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, response_blocks))).await?;
+        debug!("Sending {} blocks & {} top blocks as response to {}", response_blocks.len(), top_blocks.len(), peer);
+        peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, response_blocks, top_blocks))).await?;
         Ok(())
     }
 

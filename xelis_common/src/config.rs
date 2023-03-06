@@ -37,6 +37,7 @@ pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = 3; // wait maximum between each chain s
 pub const CHAIN_SYNC_DELAY: u64 = 5; // minimum X seconds between each chain sync request per peer
 pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to X blocks id (hash + height) sent for request
 pub const CHAIN_SYNC_RESPONSE_MAX_BLOCKS: usize = 512; // allows up to X blocks hashes sent for response
+pub const CHAIN_SYNC_TOP_BLOCKS: usize = 10; // send last 10 heights
 pub const P2P_PING_DELAY: u64 = 10; // time between each ping
 pub const P2P_PING_PEER_LIST_DELAY: u64 = 60 * 5; // time in seconds between each update of peerlist
 pub const P2P_PING_PEER_LIST_LIMIT: usize = 16; // maximum number of addresses to be send

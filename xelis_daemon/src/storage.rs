@@ -14,7 +14,7 @@ use std::{
 use tokio::sync::Mutex;
 use lru::LruCache;
 use sled::Tree;
-use log::{debug, trace, error};
+use log::{debug, trace, error, warn};
 
 const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
@@ -543,15 +543,20 @@ impl Storage {
         // search the lowest topo height available based on count + 1
         // (last lowest topo height accepted)
         let mut lowest_topo = topoheight;
+        trace!("search lowest topo height available, height = {}, count = {}", height, count);
         for i in (height-count..=height).rev() {
             trace!("checking lowest topoheight for blocks at {}", i);
-            for hash in self.get_blocks_at_height(i).await? {
-                if self.is_block_topological_ordered(&hash).await {
-                    let topo = self.get_topo_height_for_hash(&hash).await?;
-                    if topo < lowest_topo {
-                        lowest_topo = topo;
+            if self.has_blocks_at_height(i).await? {
+                for hash in self.get_blocks_at_height(i).await? {
+                    if self.is_block_topological_ordered(&hash).await {
+                        let topo = self.get_topo_height_for_hash(&hash).await?;
+                        if topo < lowest_topo {
+                            lowest_topo = topo;
+                        }
                     }
                 }
+            } else {
+                warn!("No blocks found at {}, how ?", i);
             }
         }
         trace!("Lowest topoheight for rewind: {}", lowest_topo);
