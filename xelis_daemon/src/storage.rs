@@ -394,9 +394,10 @@ impl Storage {
         // otherwise, we have to go through the whole chain
         while let Some(previous) = version.get_previous_topoheight() {
             let previous_version = self.get_balance_at_exact_topoheight(key, asset, previous).await?;
+            trace!("previous version {}", previous);
             if previous < topoheight {
-                debug!("Highest version balance found at {} (maximum topoheight = {})", topo, topoheight);
-                return Ok(Some((topo, previous_version)))
+                trace!("Highest version balance found at {} (maximum topoheight = {})", topo, topoheight);
+                return Ok(Some((previous, previous_version)))
             }
 
             if let Some(value) = previous_version.get_previous_topoheight() {
@@ -423,8 +424,10 @@ impl Storage {
         trace!("get new versioned balance {} for {} at {}", asset, key, topoheight);
         let version = match self.get_balance_at_maximum_topoheight(key, asset, topoheight).await? {
             Some((topo, mut version)) => {
+                trace!("new versioned balance (balance at maximum topoheight) topo: {}, previous: {:?}", topo, version.get_previous_topoheight());
                 // if its not at exact topoheight, then we set it as "previous topoheight"
                 if topo != topoheight {
+                    trace!("topo {} != topoheight {}, set topo {} as previous topoheight", topo, topoheight, topo);
                     version.set_previous_topoheight(Some(topo));
                 }
                 version

@@ -851,12 +851,11 @@ impl P2pServer {
 
                     let peer = Arc::clone(peer);
                     let zelf = Arc::clone(self);
-                    let blocks: Vec<Hash> = response.get_blocks().into_iter().map(|b| b.into_owned()).collect();
 
                     // start a new task to wait on all requested blocks
                     tokio::spawn(async move {
                         zelf.set_syncing(true);
-                        if let Err(e) = zelf.handle_chain_response(&peer, blocks, pop_count).await {
+                        if let Err(e) = zelf.handle_chain_response(&peer, response, pop_count).await {
                             error!("Error while handling chain response from {}: {}", peer, e);
                             peer.increment_fail_count();
                         }
@@ -969,16 +968,17 @@ impl P2pServer {
                 // check that the block is ordered like us
                 if storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
                     debug!("common point with {} found at block {} with same topoheight at {}", peer, hash, topoheight);
-                    common_point = Some(CommonPoint::new(Cow::Owned(hash), topoheight));
+                    common_point = Some(CommonPoint::new(hash, topoheight));
                     // lets add all blocks ordered hash
                     let top_topoheight = self.blockchain.get_topo_height();
                     let stable_height = self.blockchain.get_stable_height();
                     let mut potential_unstable_height = None;
+                    let should_search_alt_tips = top_topoheight - topoheight < CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u64;
                     while response_blocks.len() < CHAIN_SYNC_RESPONSE_MAX_BLOCKS && topoheight <= top_topoheight {
                         trace!("looking for hash at topoheight {}", topoheight);
                         let hash = storage.get_hash_at_topo_height(topoheight).await?;
                         // TODO only check for near peer synced
-                        if potential_unstable_height.is_none() {
+                        if should_search_alt_tips && potential_unstable_height.is_none() {
                             let height = storage.get_height_for_block(&hash).await?;
                             if height >= stable_height {
                                 debug!("Found unstable height at {}", height);
@@ -986,7 +986,7 @@ impl P2pServer {
                             }
                         }
                         trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
-                        response_blocks.push(Cow::Owned(hash));
+                        response_blocks.push(hash);
                         topoheight += 1;
                     }
 
@@ -998,7 +998,7 @@ impl P2pServer {
                             trace!("get blocks at height {} for top blocks", height);
                             for hash in storage.get_blocks_at_height(height).await? {
                                 trace!("block at height {}: {}", height, hash);
-                                top_blocks.push(Cow::Owned(hash));
+                                top_blocks.push(hash);
                             }
                             height += 1;
                         }
@@ -1014,8 +1014,9 @@ impl P2pServer {
         Ok(())
     }
 
-    async fn handle_chain_response(self: &Arc<Self>, peer: &Arc<Peer>, blocks_request: Vec<Hash>, pop_count: u64) -> Result<(), BlockchainError> {
-        debug!("handling chain response from peer {}, {} blocks, pop count {}", peer, blocks_request.len(), pop_count);
+    async fn handle_chain_response(self: &Arc<Self>, peer: &Arc<Peer>, response: ChainResponse, pop_count: u64) -> Result<(), BlockchainError> {
+        let (mut blocks, top_blocks) = response.consume();
+        debug!("handling chain response from peer {}, {} blocks, pop count {}", peer, blocks.len(), pop_count);
 
         // if node asks us to pop blocks, verify if it's a priority one
         // if it's not a priority node, check if we are connected to one
@@ -1030,8 +1031,12 @@ impl P2pServer {
             };
         }
 
-        let blocks_count = blocks_request.len();
-        for hash in blocks_request { // Request all complete blocks now
+        let blocks_count = blocks.len();
+        let top_blocks_count = top_blocks.len();
+        blocks.extend(top_blocks);
+
+        // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
+        for hash in blocks { // Request all complete blocks now
             if !storage.has_block(&hash).await? {
                 trace!("Block {} is not found, asking it to peer", hash);
                 let object_request = ObjectRequest::Block(hash.clone());
@@ -1047,8 +1052,8 @@ impl P2pServer {
                 trace!("Block {} is already in chain, skipping it", hash);
             }
         }
+        debug!("we've synced {} blocks and {} top blocks from {}", blocks_count, top_blocks_count, peer);
 
-        debug!("we've synced {} blocks from {}", blocks_count, peer);
         Ok(())
     }
 

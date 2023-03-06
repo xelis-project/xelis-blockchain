@@ -1026,7 +1026,7 @@ impl Blockchain {
                 // save balances for each topoheight
                 for (key, assets) in balances {
                     for (asset, balance) in assets {
-                        debug!("Saving balance at topo {}, previous: {:?}", highest_topo, balance.get_previous_topoheight());
+                        debug!("Saving balance {} for {} at topo {}, previous: {:?}", asset, key, highest_topo, balance.get_previous_topoheight());
                         storage.set_balance_to(key, asset, highest_topo, &balance).await?;
                     }
                 }
