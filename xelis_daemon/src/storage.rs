@@ -14,7 +14,7 @@ use std::{
 use tokio::sync::Mutex;
 use lru::LruCache;
 use sled::Tree;
-use log::{debug, trace, error};
+use log::{debug, trace, error, warn};
 
 const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
@@ -394,9 +394,10 @@ impl Storage {
         // otherwise, we have to go through the whole chain
         while let Some(previous) = version.get_previous_topoheight() {
             let previous_version = self.get_balance_at_exact_topoheight(key, asset, previous).await?;
+            trace!("previous version {}", previous);
             if previous < topoheight {
-                debug!("Highest version balance found at {} (maximum topoheight = {})", topo, topoheight);
-                return Ok(Some((topo, previous_version)))
+                trace!("Highest version balance found at {} (maximum topoheight = {})", topo, topoheight);
+                return Ok(Some((previous, previous_version)))
             }
 
             if let Some(value) = previous_version.get_previous_topoheight() {
@@ -423,8 +424,10 @@ impl Storage {
         trace!("get new versioned balance {} for {} at {}", asset, key, topoheight);
         let version = match self.get_balance_at_maximum_topoheight(key, asset, topoheight).await? {
             Some((topo, mut version)) => {
+                trace!("new versioned balance (balance at maximum topoheight) topo: {}, previous: {:?}", topo, version.get_previous_topoheight());
                 // if its not at exact topoheight, then we set it as "previous topoheight"
                 if topo != topoheight {
+                    trace!("topo {} != topoheight {}, set topo {} as previous topoheight", topo, topoheight, topo);
                     version.set_previous_topoheight(Some(topo));
                 }
                 version
@@ -543,15 +546,20 @@ impl Storage {
         // search the lowest topo height available based on count + 1
         // (last lowest topo height accepted)
         let mut lowest_topo = topoheight;
+        trace!("search lowest topo height available, height = {}, count = {}", height, count);
         for i in (height-count..=height).rev() {
             trace!("checking lowest topoheight for blocks at {}", i);
-            for hash in self.get_blocks_at_height(i).await? {
-                if self.is_block_topological_ordered(&hash).await {
-                    let topo = self.get_topo_height_for_hash(&hash).await?;
-                    if topo < lowest_topo {
-                        lowest_topo = topo;
+            if self.has_blocks_at_height(i).await? {
+                for hash in self.get_blocks_at_height(i).await? {
+                    if self.is_block_topological_ordered(&hash).await {
+                        let topo = self.get_topo_height_for_hash(&hash).await?;
+                        if topo < lowest_topo {
+                            lowest_topo = topo;
+                        }
                     }
                 }
+            } else {
+                warn!("No blocks found at {}, how ?", i);
             }
         }
         trace!("Lowest topoheight for rewind: {}", lowest_topo);

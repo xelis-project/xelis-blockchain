@@ -817,12 +817,13 @@ impl Blockchain {
         }
 
         for hash in block.get_tips() {
-            let previous_block = storage.get_block_by_hash(hash).await?;
-            if previous_block.get_timestamp() > block.get_timestamp() { // block timestamp can't be less than previous block.
+            let previous_timestamp = storage.get_timestamp_for_block(hash).await?;
+            if previous_timestamp > block.get_timestamp() { // block timestamp can't be less than previous block.
                 error!("Invalid block timestamp, parent is less than new block");
                 return Err(BlockchainError::TimestampIsLessThanParent(block.get_timestamp()));
             }
 
+            trace!("calculate distance from mainchain for tips: {}", hash);
             let distance = self.calculate_distance_from_mainchain(storage, hash).await?;
             if distance <= current_height && current_height - distance >= STABLE_HEIGHT_LIMIT {
                 error!("{} have deviated too much, maximum allowed is {} (current height: {}, distance: {})", block, STABLE_HEIGHT_LIMIT, current_height, distance);
@@ -1025,7 +1026,7 @@ impl Blockchain {
                 // save balances for each topoheight
                 for (key, assets) in balances {
                     for (asset, balance) in assets {
-                        debug!("Saving balance at topo {}, previous: {:?}", highest_topo, balance.get_previous_topoheight());
+                        debug!("Saving balance {} for {} at topo {}, previous: {:?}", asset, key, highest_topo, balance.get_previous_topoheight());
                         storage.set_balance_to(key, asset, highest_topo, &balance).await?;
                     }
                 }

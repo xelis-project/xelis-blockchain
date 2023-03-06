@@ -70,7 +70,7 @@ pub enum Packet<'a> {
     TransactionPropagation(PacketWrapper<'a, Hash>),
     BlockPropagation(PacketWrapper<'a, Block>),
     ChainRequest(PacketWrapper<'a, ChainRequest>),
-    ChainResponse(ChainResponse<'a>),
+    ChainResponse(ChainResponse),
     Ping(Cow<'a, Ping<'a>>),
     ObjectRequest(Cow<'a, ObjectRequest>),
     ObjectResponse(ObjectResponse<'a>)
