@@ -390,6 +390,11 @@ impl Wallet {
         Ok(words.join(" "))
     }
 
+    pub async fn get_nonce(&self) -> u64 {
+        let storage = self.storage.read().await;
+        storage.get_nonce().unwrap_or(0)
+    }
+
     pub fn get_storage(&self) -> &RwLock<EncryptedStorage> {
         &self.storage
     }

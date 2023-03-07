@@ -1365,6 +1365,7 @@ impl Blockchain {
 
             let nonce = nonces.entry(tx.get_owner()).or_insert(nonce);
             if *nonce != tx.get_nonce() {
+                debug!("Tx {} has nonce {} but expected {}", hash, tx.get_nonce(), nonce);
                 return Err(BlockchainError::InvalidTxNonce)
             }
             // we increment it in case any new tx for same owner is following
