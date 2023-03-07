@@ -27,6 +27,7 @@ pub struct Handshake {
     topoheight: u64, // current topo height
     height: u64, // current block height
     top_hash: Hash, // current block top hash
+    genesis_hash: Hash, // genesis hash
     cumulative_difficulty: u64,
     peers: Vec<SocketAddr> // all peers that we are already connected to
 } // Server reply with his own list of peers, but we remove all already known by requester for the response.
@@ -34,7 +35,7 @@ pub struct Handshake {
 impl Handshake {
     pub const MAX_LEN: usize = 16;
 
-    pub fn new(version: String, network: Network, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, top_hash: Hash, cumulative_difficulty: u64, peers: Vec<SocketAddr>) -> Self {
+    pub fn new(version: String, network: Network, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, top_hash: Hash, genesis_hash: Hash, cumulative_difficulty: u64, peers: Vec<SocketAddr>) -> Self {
         assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN); // version cannot be greater than 16 chars
         if let Some(node_tag) = &node_tag {
             assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN); // node tag cannot be greater than 16 chars
@@ -53,6 +54,7 @@ impl Handshake {
             topoheight,
             height,
             top_hash,
+            genesis_hash,
             cumulative_difficulty,
             peers
         }
@@ -98,6 +100,10 @@ impl Handshake {
         &self.top_hash
     }
 
+    pub fn get_block_genesis_hash(&self) -> &Hash {
+        &self.genesis_hash
+    }
+
     pub fn get_peers(&self) -> &Vec<SocketAddr> {
         &self.peers
     }
@@ -122,6 +128,7 @@ impl Serializer for Handshake {
         writer.write_u64(&self.topoheight); // Topo height
         writer.write_u64(&self.height); // Block Height
         writer.write_hash(&self.top_hash); // Block Top Hash (32 bytes)
+        writer.write_hash(&self.genesis_hash); // Genesis Hash
         writer.write_u64(&self.cumulative_difficulty);
 
         writer.write_u8(self.peers.len() as u8);
@@ -158,7 +165,8 @@ impl Serializer for Handshake {
         let utc_time = reader.read_u64()?;
         let topoheight = reader.read_u64()?;
         let height = reader.read_u64()?;
-        let top_hash = Hash::new(reader.read_bytes_32()?);
+        let top_hash = reader.read_hash()?;
+        let genesis_hash = reader.read_hash()?;
         let cumulative_difficulty = reader.read_u64()?;
         let peers_len = reader.read_u8()? as usize;
         if peers_len > Handshake::MAX_LEN {
@@ -170,7 +178,7 @@ impl Serializer for Handshake {
             let peer = ip_from_bytes(reader)?;
             peers.push(peer);
         }
-        Ok(Handshake::new(version, network, node_tag, network_id, peer_id, local_port, utc_time, topoheight, height, top_hash, cumulative_difficulty, peers))
+        Ok(Handshake::new(version, network, node_tag, network_id, peer_id, local_port, utc_time, topoheight, height, top_hash, genesis_hash, cumulative_difficulty, peers))
     }
 }
 

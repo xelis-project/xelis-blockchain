@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
 
-use crate::{crypto::{hash::Hash, key::PublicKey, address::Address}};
+use crate::{crypto::{hash::Hash, key::PublicKey, address::Address}, serializer::Serializer};
 pub const NETWORK_ID_SIZE: usize = 16;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -29,7 +29,7 @@ pub const MAX_SUPPLY: u64 = 18_400_000 * COIN_VALUE; // 18.4M full coin
 pub const EMISSION_SPEED_FACTOR: u64 = 21;
 
 pub const GENESIS_BLOCK: &str = "000000000000000000000000000000000000018656cff68a000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd"; // Genesis block in hexadecimal format
-pub const GENESIS_BLOCK_HASH: &str = "007957a0f04d08ff6f75a99ae37a25e43c640be68bd223c6af86c7f572352d73";
+pub const GENESIS_BLOCK_HASH_STR: &str = "007957a0f04d08ff6f75a99ae37a25e43c640be68bd223c6af86c7f572352d73";
 pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"; // Dev address
 
 pub const MAX_BLOCK_REWIND: u64 = STABLE_HEIGHT_LIMIT - 1; // maximum X blocks can be rewinded
@@ -51,4 +51,5 @@ pub const DEFAULT_DAEMON_ADDRESS: &str = "http://127.0.0.1:8080";
 
 lazy_static! {
     pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
+    pub static ref GENESIS_BLOCK_HASH: Hash = Hash::from_hex(GENESIS_BLOCK_HASH_STR.to_string()).unwrap();
 }

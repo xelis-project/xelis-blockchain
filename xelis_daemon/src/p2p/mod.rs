@@ -6,7 +6,7 @@ pub mod peer_list;
 
 use serde_json::Value;
 use xelis_common::{
-    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS},
+    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_HEIGHT_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH},
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::Block,
@@ -310,23 +310,9 @@ impl P2pServer {
             return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }
 
-        // check if peer is not greater than us and that we can rewind his top chain in case he is not on not the same chain
-        if handshake.get_block_height() <= self.blockchain.get_height() && self.blockchain.get_height() - handshake.get_block_height() > MAX_BLOCK_REWIND {
-            let storage = self.blockchain.get_storage().read().await;
-            match storage.get_block_by_hash(handshake.get_block_top_hash()).await {
-                Ok(block) => {
-                    if block.get_height() != handshake.get_block_height() {
-                        debug!("{} (block {}) is not on the same chain! Block height: {}, handshake height: {}", connection, handshake.get_block_top_hash(), block.get_height(), handshake.get_block_height());
-                        connection.close().await?;
-                        return Err(P2pError::InvalidHandshake)
-                    }
-                },
-                Err(_) => {
-                    debug!("{} has a block '{}' which is not found at height '{}'.", connection, handshake.get_block_top_hash(), handshake.get_block_height());
-                    connection.close().await?;
-                    return Err(P2pError::InvalidHandshake)
-                }
-            };
+        if *handshake.get_block_genesis_hash() != Hash::from_hex(GENESIS_BLOCK_HASH.to_string()).unwrap() {
+            debug!("Invalid genesis block hash {}", handshake.get_block_genesis_hash());
+            return Err(P2pError::InvalidHandshake)
         }
 
         connection.set_state(State::Success);
@@ -357,7 +343,7 @@ impl P2pServer {
         let (block, top_hash) = storage.get_top_block().await?;
         let topoheight = self.blockchain.get_topo_height();
         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&top_hash).await.unwrap_or(0);
-        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, block.get_height(), top_hash, cumulative_difficulty, peers))
+        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, block.get_height(), top_hash, GENESIS_BLOCK_HASH.clone(), cumulative_difficulty, peers))
     }
 
     // this function handle all new connections

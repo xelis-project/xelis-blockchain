@@ -210,11 +210,11 @@ impl Blockchain {
                 return Err(BlockchainError::GenesisBlockMiner)
             }
 
-            if Hash::from_hex(GENESIS_BLOCK_HASH.to_owned())? != genesis.hash() {
+            if *GENESIS_BLOCK_HASH != genesis.hash() {
                 return Err(BlockchainError::InvalidGenesisHash)
             }
 
-            debug!("Adding genesis block '{}' to chain", GENESIS_BLOCK_HASH);
+            debug!("Adding genesis block '{}' to chain", *GENESIS_BLOCK_HASH);
             genesis
         } else {
             error!("No genesis block found!");
@@ -539,7 +539,7 @@ impl Blockchain {
     async fn generate_full_order(&self, storage: &Storage, hash: &Hash, base: &Hash, base_topo_height: u64) -> Result<Vec<Hash>, BlockchainError> {
         let block_tips = storage.get_past_blocks_of(hash).await?;
         if block_tips.len() == 0 {
-            return Ok(vec![Hash::from_hex(GENESIS_BLOCK_HASH.to_owned())?])
+            return Ok(vec![GENESIS_BLOCK_HASH.clone()])
         }
 
         // if the block has been previously ordered, return it as base
