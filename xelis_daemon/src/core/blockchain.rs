@@ -964,15 +964,6 @@ impl Blockchain {
                 is_written = true;
 
                 trace!("Ordering block {} at topoheight {}", hash, highest_topo);
-                if rpc_server.is_some() {
-                    let event = NotifyEvent::BlockOrdered;
-                    let value = json!(BlockOrderedEvent {
-                        block_hash: Cow::Borrowed(&hash),
-                        block_type: get_block_type_for_block(self, &storage, &hash).await.unwrap_or(BlockType::Normal),
-                        topoheight: highest_topo,
-                    });
-                    events.entry(event).or_insert_with(Vec::new).push(value);
-                }
 
                 storage.set_topo_height_for_block(&hash, highest_topo).await?;
                 let past_supply = if highest_topo == 0 {
@@ -1030,6 +1021,16 @@ impl Blockchain {
                         debug!("Saving balance {} for {} at topo {}, previous: {:?}", asset, key, highest_topo, balance.get_previous_topoheight());
                         storage.set_balance_to(key, asset, highest_topo, &balance).await?;
                     }
+                }
+
+                if rpc_server.is_some() {
+                    let event = NotifyEvent::BlockOrdered;
+                    let value = json!(BlockOrderedEvent {
+                        block_hash: Cow::Borrowed(&hash),
+                        block_type: get_block_type_for_block(self, &storage, &hash).await.unwrap_or(BlockType::Normal),
+                        topoheight: highest_topo,
+                    });
+                    events.entry(event).or_insert_with(Vec::new).push(value);
                 }
             }
 
