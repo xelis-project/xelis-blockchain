@@ -189,6 +189,7 @@ pub struct EventResult<'a> {
 pub struct BlockOrderedEvent<'a> {
     // block hash in which this event was triggered
     pub block_hash: Cow<'a, Hash>,
+    pub block_type: BlockType,
     // the new topoheight of the block
     pub topoheight: u64,
 }

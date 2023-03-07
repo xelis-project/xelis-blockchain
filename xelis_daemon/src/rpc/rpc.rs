@@ -34,7 +34,7 @@ fn parse_params<P: DeserializeOwned>(value: Value) -> Result<P, RpcError> {
     serde_json::from_value(value).map_err(|e| RpcError::InvalidParams(e))
 }
 
-async fn get_block_type_for_block(blockchain: &Blockchain, storage: &Storage, hash: &Hash) -> Result<BlockType, RpcError> {
+pub async fn get_block_type_for_block(blockchain: &Blockchain, storage: &Storage, hash: &Hash) -> Result<BlockType, RpcError> {
     Ok(if blockchain.is_block_orphaned_for_storage(storage, hash).await {
         BlockType::Orphaned
     } else if blockchain.is_block_sync(storage, hash).await? {

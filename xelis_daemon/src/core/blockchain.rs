@@ -8,9 +8,9 @@ use xelis_common::{
     globals::get_current_timestamp,
     block::{CompleteBlock, Block},
     immutable::Immutable,
-    serializer::Serializer, account::VersionedBalance, api::daemon::{NotifyEvent, DataHash, BlockOrderedEvent, TransactionExecutedEvent}, network::Network
+    serializer::Serializer, account::VersionedBalance, api::daemon::{NotifyEvent, DataHash, BlockOrderedEvent, TransactionExecutedEvent, BlockType}, network::Network
 };
-use crate::{p2p::P2pServer, rpc::rpc::get_block_response_for_hash};
+use crate::{p2p::P2pServer, rpc::rpc::{get_block_response_for_hash, get_block_type_for_block}};
 use crate::rpc::RpcServer;
 use crate::storage::Storage;
 use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::Duration, borrow::Cow};
@@ -968,6 +968,7 @@ impl Blockchain {
                     let event = NotifyEvent::BlockOrdered;
                     let value = json!(BlockOrderedEvent {
                         block_hash: Cow::Borrowed(&hash),
+                        block_type: get_block_type_for_block(self, &storage, &hash).await.unwrap_or(BlockType::Normal),
                         topoheight: highest_topo,
                     });
                     events.entry(event).or_insert_with(Vec::new).push(value);
