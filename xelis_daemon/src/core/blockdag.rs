@@ -30,7 +30,6 @@ pub async fn sort_tips(storage: &Storage, tips: &Vec<Hash>) -> Result<Vec<Hash>,
 
     sort_descending_by_cumulative_difficulty(&mut scores);
 
-
     let mut sorted = Vec::with_capacity(scores.len());
     for (hash, _) in scores {
         sorted.push(hash.clone());

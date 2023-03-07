@@ -210,7 +210,9 @@ impl Blockchain {
                 return Err(BlockchainError::GenesisBlockMiner)
             }
 
-            if *GENESIS_BLOCK_HASH != genesis.hash() {
+            let expected_hash = genesis.hash();
+            if *GENESIS_BLOCK_HASH != expected_hash {
+                error!("Genesis block hash is invalid! Expected: {}, got: {}", expected_hash, *GENESIS_BLOCK_HASH);
                 return Err(BlockchainError::InvalidGenesisHash)
             }
 
