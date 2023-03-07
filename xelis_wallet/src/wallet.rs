@@ -345,6 +345,8 @@ impl Wallet {
                 storage.delete_top_block_hash()?;
                 // balances will be re-fetched from daemon
                 storage.delete_balances()?;
+                storage.set_nonce(0)?;
+
                 if topoheight == 0 {
                     storage.delete_transactions()?;
                 } else {

@@ -278,7 +278,7 @@ impl NetworkHandler {
         }
 
         for asset in assets {
-            info!("calling get balances and transactions {}", current_topoheight);
+            debug!("calling get balances and transactions {}", current_topoheight);
             if let Err(e) = self.get_balance_and_transactions(&address, &asset, current_topoheight, None).await {
                 error!("Error while syncing balance for asset {}: {}", asset, e);
             }
