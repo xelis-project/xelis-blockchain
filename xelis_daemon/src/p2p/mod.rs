@@ -813,7 +813,7 @@ impl P2pServer {
                 }
 
                 if let Some(common_point) = response.get_common_point() {
-                    debug!("Peer found a common point with block {} at {} for sync, received {} blocks", common_point.get_hash(), common_point.get_topoheight(), response.size());
+                    debug!("{} found a common point with block {} at {} for sync, received {} blocks", peer, common_point.get_hash(), common_point.get_topoheight(), response.size());
                     let pop_count = {
                         let storage = self.blockchain.get_storage().read().await;
                         let block_height = match storage.get_height_for_block(common_point.get_hash()).await {
@@ -1013,7 +1013,10 @@ impl P2pServer {
             warn!("Rewinding chain because of {} (priority: {}, pop count: {})", peer, peer.is_priority(), pop_count);
             match self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
                 Ok(topoheight) => debug!("Chain has been rewinded to topoheight {}", topoheight),
-                Err(e) => error!("Error on rewind chain with pop count at {}, error: {}", pop_count, e)
+                Err(e) => {
+                    error!("Error on rewind chain with pop count at {}, error: {}", pop_count, e);
+                    return Ok(())
+                }
             };
         }
 
@@ -1159,11 +1162,11 @@ impl P2pServer {
         let ping = Ping::new(Cow::Borrowed(hash), highest_topoheight, highest_height, cumulative_difficulty, Vec::new());
         let packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Owned(ping)));
         let bytes = Bytes::from(packet.to_bytes());
-        // TODO should we move it in another async task ?
+
         let peer_list = self.peer_list.read().await;
         for (_, peer) in peer_list.get_peers() {
             // if the peer can directly accept this new block, send it
-            if block.get_height() - 1 == peer.get_height() || peer.get_height() - block.get_height() < STABLE_HEIGHT_LIMIT {
+            if block.get_height() - 1 == peer.get_height() || peer.get_height() - block.get_height() <= STABLE_HEIGHT_LIMIT {
                 // check that we don't send the block to the peer that sent it to us
                 if *hash != *peer.get_top_block_hash().lock().await {
                     trace!("Broadcast to {}", peer);

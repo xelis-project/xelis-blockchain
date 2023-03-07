@@ -5,9 +5,9 @@ use super::error::BlockchainError;
 pub fn sort_descending_by_cumulative_difficulty(scores: &mut Vec<(&Hash, u64)>) {
     scores.sort_by(|(a_hash, a), (b_hash, b)| {
         if a != b {
-            a.cmp(b)
+            b.cmp(a)
         } else {
-            a_hash.cmp(b_hash)
+            b_hash.cmp(a_hash)
         }
     });
 }
