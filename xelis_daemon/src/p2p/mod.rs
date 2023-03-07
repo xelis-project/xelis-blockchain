@@ -310,7 +310,7 @@ impl P2pServer {
             return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }
 
-        if *handshake.get_block_genesis_hash() != Hash::from_hex(GENESIS_BLOCK_HASH.to_string()).unwrap() {
+        if *handshake.get_block_genesis_hash() != *GENESIS_BLOCK_HASH {
             debug!("Invalid genesis block hash {}", handshake.get_block_genesis_hash());
             return Err(P2pError::InvalidHandshake)
         }
