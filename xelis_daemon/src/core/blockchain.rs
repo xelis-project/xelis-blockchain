@@ -808,8 +808,8 @@ impl Blockchain {
             debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
 
             if block_height_by_tips < stable_height {
-                error!("Invalid block height at tips, got {} but should be {}", block_height_by_tips, stable_height);
-                return Err(BlockchainError::InvalidBlockHeight(stable_height, block_height_by_tips))
+                error!("Invalid block height by tips {} for this block, its height is in stable height {}", block_height_by_tips, stable_height);
+                return Err(BlockchainError::InvalidBlockHeightStableHeight)
             }
         }
 
