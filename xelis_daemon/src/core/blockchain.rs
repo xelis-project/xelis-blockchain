@@ -993,8 +993,7 @@ impl Blockchain {
                 let mut total_fees = 0;
 
                 // compute rewards & execute txs
-                for tx in block.get_transactions() { // execute all txs
-                    let tx_hash = tx.hash();
+                for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     debug!("executing tx {}", tx_hash);
                     self.execute_transaction(storage, &tx, &mut nonces, &mut balances, highest_topo).await?;
                     if !storage.has_block_linked_to_tx(&tx_hash, &hash)? {
