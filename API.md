@@ -750,7 +750,6 @@ No parameters
 }
 ```
 
-
 #### Get Transactions
 Fetch transactions by theirs hashes from daemon and keep the same order in response
 
@@ -807,5 +806,33 @@ Fetch transactions by theirs hashes from daemon and keep the same order in respo
 }
 ```
 
-TODO:
-- `submit_block`
+#### Submit Block
+Submit a block to the daemon
+
+##### Method `submit_block`
+
+##### Parameters
+|      Name      |  Type  | Required |         Note        |
+|:--------------:|:------:|:--------:|:-------------------:|
+| block_template | String | Required | Block in hex format |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 0,
+	"method": "submit_block",
+	"params": {
+		"block_template": "0000000000000be0000000000000000000000186c0d2dac5000000000003e33798b264214181b57720a6e6cdf87cd9bcd80391dde6780223f87176aff03b45080100000040453896c70b2be2d7088860f179a9e9fc3d03941170d6bf8c2dc6d3e60000d549622a55c88b5c14c263ec0db5f5ffae249c7288f68b0c1333cb105df89450"
+	}
+}
+```
+
+##### Response
+```json
+{
+    "id": 0,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
