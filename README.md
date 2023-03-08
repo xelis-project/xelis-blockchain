@@ -47,11 +47,11 @@ Others objectives in mind are:
 ## BlockDAG
 
 XELIS try to implement & use a blockDAG which the rules are the following:
-- A block is considered `Sync Block` when the block height is less than `TOP_HEIGHT - STABLE_HEIGHT_LIMIT` and it's the unique block at a specific height ~~or if it's the heaviest block by cumulative difficulty at its height~~.
+- A block is considered `Sync Block` when the block height is less than `TOP_HEIGHT - STABLE_LIMIT` and it's the unique block at a specific height (or only ordered block at its height and don't have lower cumulative difficulty than previous blocks).
 - A block is considered `Side Block` when block height is less than or equal to height of past 8 topographical blocks.
 - A block is considered `Orphaned` when the block is not ordered in DAG (no topological height for it).
 - A height is not unique anymore.
-- Topo height is unique for each block, but can change when the DAG is re-ordered up to `TOP_HEIGHT - STABLE_HEIGHT_LIMIT`.
+- Topo height is unique for each block, but can change when the DAG is re-ordered up to `TOP_HEIGHT - STABLE_LIMIT`.
 - You can have up to 3 previous blocks in a block.
 - For mining, you have to mine on one of 3 of the most heavier tips.
 - Block should not have deviated too much from main chain / heavier tips.
@@ -124,7 +124,7 @@ Chain sync is requested with a minimum interval of `CHAIN_SYNC_DELAY` seconds.
 
 ### Block Propagation
 
-Block propagation packet contains the block header only. Its sent to all peers who have theirs height minus our height less than `STABLE_HEIGHT_LIMIT`.
+Block propagation packet contains the block header only. Its sent to all peers who have theirs height minus our height less than `STABLE_LIMIT`.
 To build the complete block, we retrieve transactions from mempool.
 If a transaction is not found in the mempool, we request it from the same peer in order to build it.
 

@@ -19,7 +19,7 @@ pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024); // 1.25 MB
 pub const FEE_PER_KB: u64 = 1000; // 0.01000 XLS per KB
 pub const DEV_FEE_PERCENT: u64 = 5; // 5% per block going to dev address
 pub const TIPS_LIMIT: usize = 3; // maximum 3 previous blocks
-pub const STABLE_HEIGHT_LIMIT: u64 = 8;
+pub const STABLE_LIMIT: u64 = 8;
 pub const TIMESTAMP_IN_FUTURE_LIMIT: u128 = 2 * 1000; // 2 seconds maximum in future
 
 pub const PREFIX_ADDRESS: &str = "xel"; // mainnet prefix address
@@ -32,7 +32,7 @@ pub const GENESIS_BLOCK: &str = "0000000000000000000000000000000000000186bd6f450
 pub const GENESIS_BLOCK_HASH_STR: &str = "55a162b8e0e137bb6a8de9f4c4b214fb60bcd2df15ec32fdd8f06759b863f06e";
 pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"; // Dev address
 
-pub const MAX_BLOCK_REWIND: u64 = STABLE_HEIGHT_LIMIT - 1; // maximum X blocks can be rewinded
+pub const MAX_BLOCK_REWIND: u64 = STABLE_LIMIT - 1; // maximum X blocks can be rewinded
 pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = 3; // wait maximum between each chain sync request to peers
 pub const CHAIN_SYNC_DELAY: u64 = 5; // minimum X seconds between each chain sync request per peer
 pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to X blocks id (hash + height) sent for request

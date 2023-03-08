@@ -1,7 +1,7 @@
 use anyhow::Error;
 use serde_json::{Value, json};
 use xelis_common::{
-    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_HEIGHT_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME},
+    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME},
     crypto::{key::PublicKey, hash::{Hashable, Hash}},
     difficulty::{check_difficulty, calculate_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
@@ -316,41 +316,43 @@ impl Blockchain {
             return Ok(true)
         }
 
-        if block_height + STABLE_HEIGHT_LIMIT > height || !storage.is_block_topological_ordered(hash).await {
+        // block must be ordered and in stable height
+        if block_height + STABLE_LIMIT > height || !storage.is_block_topological_ordered(hash).await {
             return Ok(false)
         }
 
+        // if block is alone at its height, it is a sync block
         let tips_at_height = storage.get_blocks_at_height(block_height).await?;
         if tips_at_height.len() == 1 {
             return Ok(true)
         }
 
-        if tips_at_height.len() > 1 {
-            let mut blocks_in_main_chain = 0;
-            for hash in tips_at_height {
-                if storage.is_block_topological_ordered(&hash).await {
-                    blocks_in_main_chain += 1;
-                    if blocks_in_main_chain > 1 {
-                        return Ok(false)
-                    }
-                }
-            }
-
-            let mut i = block_height - 1;
-            let mut pre_blocks = HashSet::new();
-            while i >= (block_height - STABLE_HEIGHT_LIMIT) && i != 0 {
-                let blocks = storage.get_blocks_at_height(i).await?;
-                pre_blocks.extend(blocks);
-                i -= 1;
-            }
-
-            let sync_block_cumulative_difficulty = storage.get_cumulative_difficulty_for_block(hash).await?;
-
-            for hash in pre_blocks {
-                let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
-                if cumulative_difficulty >= sync_block_cumulative_difficulty {
+        // if block is not alone at its height and they are ordered (not orphaned), it can't be a sync block
+        let mut blocks_in_main_chain = 0;
+        for hash in tips_at_height {
+            if storage.is_block_topological_ordered(&hash).await {
+                blocks_in_main_chain += 1;
+                if blocks_in_main_chain > 1 {
                     return Ok(false)
                 }
+            }
+        }
+
+        // now lets check all blocks until STABLE_LIMIT height before the block
+        let mut i = block_height - 1;
+        let mut pre_blocks = HashSet::new();
+        while i >= (block_height - STABLE_LIMIT) && i != 0 {
+            let blocks = storage.get_blocks_at_height(i).await?;
+            pre_blocks.extend(blocks);
+            i -= 1;
+        }
+
+        let sync_block_cumulative_difficulty = storage.get_cumulative_difficulty_for_block(hash).await?;
+        // if potential sync block has lower cumulative difficulty than one of past blocks, it is not a sync block
+        for hash in pre_blocks {
+            let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
+            if cumulative_difficulty >= sync_block_cumulative_difficulty {
+                return Ok(false)
             }
         }
 
@@ -404,7 +406,7 @@ impl Blockchain {
 
     #[async_recursion] // TODO no recursion
     async fn build_reachability_recursive(&self, storage: &Storage, set: &mut HashSet<Hash>, hash: Hash, level: u64) -> Result<(), BlockchainError> {
-        if level >= 2 * STABLE_HEIGHT_LIMIT {
+        if level >= 2 * STABLE_LIMIT {
             trace!("Level limit reached, adding {}", hash);
             set.insert(hash);
         } else {
@@ -835,8 +837,8 @@ impl Blockchain {
 
             trace!("calculate distance from mainchain for tips: {}", hash);
             let distance = self.calculate_distance_from_mainchain(storage, hash).await?;
-            if distance <= current_height && current_height - distance >= STABLE_HEIGHT_LIMIT {
-                error!("{} have deviated too much, maximum allowed is {} (current height: {}, distance: {})", block, STABLE_HEIGHT_LIMIT, current_height, distance);
+            if distance <= current_height && current_height - distance >= STABLE_LIMIT {
+                error!("{} have deviated too much, maximum allowed is {} (current height: {}, distance: {})", block, STABLE_LIMIT, current_height, distance);
                 return Err(BlockchainError::BlockDeviation)
             }
         }
@@ -1050,7 +1052,7 @@ impl Blockchain {
         for hash in tips {
             let tip_base_distance = self.calculate_distance_from_mainchain(storage, &hash).await?;
             trace!("tip base distance: {}, best height: {}", tip_base_distance, best_height);
-            if tip_base_distance <= best_height && best_height - tip_base_distance < STABLE_HEIGHT_LIMIT - 1 {
+            if tip_base_distance <= best_height && best_height - tip_base_distance < STABLE_LIMIT - 1 {
                 trace!("Adding {} as new tips", hash);
                 new_tips.push(hash);
             } else {
@@ -1186,7 +1188,7 @@ impl Blockchain {
 
         let mut counter = 0;
         let mut i = topoheight - 1;
-        while counter < STABLE_HEIGHT_LIMIT && i > 0 {
+        while counter < STABLE_LIMIT && i > 0 {
             let hash = storage.get_hash_at_topo_height(i).await?;
             let previous_height = storage.get_height_for_block(&hash).await?;
             
@@ -1205,7 +1207,7 @@ impl Blockchain {
         trace!("has block {} stable order at topoheight {}", hash, topoheight);
         if storage.is_block_topological_ordered(hash).await {
             let block_topo_height = storage.get_topo_height_for_hash(hash).await?;
-            return Ok(block_topo_height + STABLE_HEIGHT_LIMIT <= topoheight)
+            return Ok(block_topo_height + STABLE_LIMIT <= topoheight)
         }
         Ok(false)
     }

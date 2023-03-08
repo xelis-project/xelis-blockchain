@@ -1,5 +1,5 @@
 use lru::LruCache;
-use xelis_common::config::{PEER_FAIL_TIME_RESET, STABLE_HEIGHT_LIMIT, TIPS_LIMIT};
+use xelis_common::config::{PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT};
 use xelis_common::globals::get_current_time;
 use xelis_common::{
     crypto::hash::Hash,
@@ -74,7 +74,7 @@ impl Peer {
             last_ping: AtomicU64::new(0),
             cumulative_difficulty: AtomicU64::new(cumulative_difficulty),
             txs_cache: Mutex::new(LruCache::new(128)),
-            blocks_propagation: Mutex::new(LruCache::new(STABLE_HEIGHT_LIMIT as usize * TIPS_LIMIT))
+            blocks_propagation: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT))
         }
     }
 
