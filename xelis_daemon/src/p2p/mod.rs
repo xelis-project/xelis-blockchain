@@ -1186,14 +1186,20 @@ impl P2pServer {
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock
         let ping = Ping::new(Cow::Borrowed(hash), highest_topoheight, highest_height, cumulative_difficulty, Vec::new());
-        let packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Owned(ping)));
-        let bytes = Bytes::from(packet.to_bytes());
+        let block_packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Borrowed(&ping)));
+        let bytes = Bytes::from(block_packet.to_bytes());
 
         let peer_list = self.peer_list.read().await;
         trace!("start broadcasting block {} to all peers", hash);
         for (_, peer) in peer_list.get_peers() {
             // if the peer can directly accept this new block, send it
-            if block.get_height() - 1 == peer.get_height() || peer.get_height() - block.get_height() <= STABLE_LIMIT {
+            let peer_height = peer.get_height();
+
+            // if the peer is not too far from us, send the block
+            // check that peer height is greater or equal to block height but still under or equal to STABLE_LIMIT
+            // or, check that peer height is less or equal to block height but still under 2
+            // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
+            if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height < 2) {
                 let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                 // check that we don't send the block to the peer that sent it to us
                 if !blocks_propagation.contains(hash) {
