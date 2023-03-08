@@ -704,6 +704,17 @@ impl P2pServer {
 
                 let block = block.into_owned();
                 let block_hash = block.hash();
+
+                {
+                    let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
+                    if blocks_propagation.contains(&block_hash) {
+                        warn!("{} send us a block ({}) already tracked by him", peer, block_hash);
+                        return Err(P2pError::InvalidProtocolRules)
+                    }
+                    trace!("Saving {} in blocks propagation cache", block_hash);
+                    blocks_propagation.put(block_hash.clone(), ());
+                }
+
                 {
                     let storage = self.blockchain.get_storage().read().await;
                     if storage.has_block(&block_hash).await? {
@@ -1164,9 +1175,19 @@ impl P2pServer {
         let bytes = Bytes::from(packet.to_bytes());
 
         let peer_list = self.peer_list.read().await;
+        trace!("start broadcasting block {} to all peers", hash);
         for (_, peer) in peer_list.get_peers() {
             // if the peer can directly accept this new block, send it
             if block.get_height() - 1 == peer.get_height() || peer.get_height() - block.get_height() <= STABLE_HEIGHT_LIMIT {
+                {
+                    let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
+                    if blocks_propagation.contains(hash) {
+                        trace!("{} contains {}, don't broadcast block to him", peer, hash);
+                        continue;
+                    }
+                    blocks_propagation.put(hash.clone(), ());
+                }
+
                 // check that we don't send the block to the peer that sent it to us
                 if *hash != *peer.get_top_block_hash().lock().await {
                     trace!("Broadcast to {}", peer);
@@ -1176,6 +1197,7 @@ impl P2pServer {
                 }
             }
         }
+        trace!("broadcasting block {} is done", hash);
     }
 
     pub async fn broadcast_packet(&self, packet: Packet<'_>) {
