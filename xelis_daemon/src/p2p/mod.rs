@@ -950,7 +950,7 @@ impl P2pServer {
     // search a common point between our blockchain and the peer's one
     // when the common point is found, start sending blocks from this point
     async fn handle_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, blocks: Vec<BlockId>) -> Result<(), BlockchainError> {
-        debug!("handle chain request for peer {} with {} blocks", peer, blocks.len());
+        debug!("handle chain request for {} with {} blocks", peer, blocks.len());
         let storage = self.blockchain.get_storage().read().await;
         // blocks hashes sent for syncing (topoheight ordered)
         let mut response_blocks = Vec::new();
@@ -966,15 +966,22 @@ impl P2pServer {
                 if storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
                     debug!("common point with {} found at block {} with same topoheight at {}", peer, hash, topoheight);
                     common_point = Some(CommonPoint::new(hash, topoheight));
+
                     // lets add all blocks ordered hash
                     let top_topoheight = self.blockchain.get_topo_height();
                     let stable_height = self.blockchain.get_stable_height();
+                    // used to detect if we find unstable height for alt tips
                     let mut potential_unstable_height = None;
+                    // check to see if we should search for alt tips (and above unstable height)
                     let should_search_alt_tips = top_topoheight - topoheight < CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u64;
+
+                    // peer already have this topoheight because of common point, so we skip it and send the next one
+                    topoheight += 1;
+
+                    // complete ChainResponse blocks until we are full or that we reach the top topheight
                     while response_blocks.len() < CHAIN_SYNC_RESPONSE_MAX_BLOCKS && topoheight <= top_topoheight {
                         trace!("looking for hash at topoheight {}", topoheight);
                         let hash = storage.get_hash_at_topo_height(topoheight).await?;
-                        // TODO only check for near peer synced
                         if should_search_alt_tips && potential_unstable_height.is_none() {
                             let height = storage.get_height_for_block(&hash).await?;
                             if height >= stable_height {
@@ -994,8 +1001,12 @@ impl P2pServer {
                         while height <= top_height && top_blocks.len() < CHAIN_SYNC_TOP_BLOCKS {
                             trace!("get blocks at height {} for top blocks", height);
                             for hash in storage.get_blocks_at_height(height).await? {
-                                trace!("block at height {}: {}", height, hash);
-                                top_blocks.push(hash);
+                                if !response_blocks.contains(&hash) {
+                                    trace!("Adding top block at height {}: {}", height, hash);
+                                    top_blocks.push(hash);
+                                } else {
+                                    trace!("Top block at height {}: {} was skipped because its already present in response blocks", height, hash);
+                                }
                             }
                             height += 1;
                         }

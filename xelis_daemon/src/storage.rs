@@ -384,10 +384,10 @@ impl Storage {
         }
 
         let (topo, mut version) = self.get_last_balance(key, asset).await?;
-        debug!("Last version balance {} for {} is at topoheight {}", asset, key, topo);
+        trace!("Last version balance {} for {} is at topoheight {}", asset, key, topo);
         // if it's the latest and its under the maximum topoheight
         if topo < topoheight {
-            debug!("Last version balance (valid) found at {} (maximum topoheight = {})", topo, topoheight);
+            trace!("Last version balance (valid) found at {} (maximum topoheight = {})", topo, topoheight);
             return Ok(Some((topo, version)))
         }
 

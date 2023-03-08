@@ -965,7 +965,7 @@ impl Blockchain {
                 }
                 is_written = true;
 
-                trace!("Ordering block {} at topoheight {}", hash, highest_topo);
+                debug!("Ordering block {} at topoheight {}", hash, highest_topo);
 
                 storage.set_topo_height_for_block(&hash, highest_topo).await?;
                 let past_supply = if highest_topo == 0 {
@@ -1019,7 +1019,7 @@ impl Blockchain {
                 // save balances for each topoheight
                 for (key, assets) in balances {
                     for (asset, balance) in assets {
-                        debug!("Saving balance {} for {} at topo {}, previous: {:?}", asset, key, highest_topo, balance.get_previous_topoheight());
+                        trace!("Saving balance {} for {} at topo {}, previous: {:?}", asset, key, highest_topo, balance.get_previous_topoheight());
                         storage.set_balance_to(key, asset, highest_topo, &balance).await?;
                     }
                 }
