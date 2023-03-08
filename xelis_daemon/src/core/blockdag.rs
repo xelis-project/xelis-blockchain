@@ -2,6 +2,7 @@ use xelis_common::crypto::hash::Hash;
 use crate::storage::Storage;
 use super::error::BlockchainError;
 
+// sort the scores by cumulative difficulty and, if equals, by hash value
 pub fn sort_descending_by_cumulative_difficulty(scores: &mut Vec<(&Hash, u64)>) {
     scores.sort_by(|(a_hash, a), (b_hash, b)| {
         if a != b {
@@ -38,6 +39,7 @@ pub async fn sort_tips(storage: &Storage, tips: &Vec<Hash>) -> Result<Vec<Hash>,
     Ok(sorted)
 }
 
+// determine he lowest height possible based on tips and do N+1
 pub async fn calculate_height_at_tips(storage: &Storage, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
     let mut height = 0;
     for hash in tips {
@@ -53,6 +55,7 @@ pub async fn calculate_height_at_tips(storage: &Storage, tips: &Vec<Hash>) -> Re
     Ok(height)
 }
 
+// find the best tip based on cumulative difficulty of the blocks
 pub async fn find_best_tip_by_cumulative_difficulty<'a>(storage: &Storage, tips: &'a Vec<Hash>) -> Result<&'a Hash, BlockchainError> {
     if tips.len() == 0 {
         return Err(BlockchainError::ExpectedTips)

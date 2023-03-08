@@ -536,7 +536,10 @@ impl Blockchain {
         Ok(best_tip)
     }
 
-    // TODO implement cache
+    // this function generate a DAG paritial order into a full order using recursive calls.
+    // hash represents the best tip (biggest cumulative difficulty)
+    // base represents the block hash of a block already ordered and in stable height
+    // the full order is re generated each time a new block is added based on new TIPS
     #[async_recursion]
     async fn generate_full_order(&self, storage: &Storage, hash: &Hash, base: &Hash, base_topo_height: u64) -> Result<Vec<Hash>, BlockchainError> {
         let block_tips = storage.get_past_blocks_of(hash).await?;

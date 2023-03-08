@@ -1041,6 +1041,9 @@ impl P2pServer {
             };
         }
 
+        let top_len = top_blocks.len();
+        let blocks_len = blocks.len();
+
         // merge both list together
         blocks.extend(top_blocks);
 
@@ -1063,7 +1066,7 @@ impl P2pServer {
                 trace!("Block {} is already in chain, skipping it", hash);
             }
         }
-        debug!("we've synced {} blocks from {}", total_requested, peer);
+        debug!("we've synced {} on {} blocks and {} top blocks from {}", total_requested, blocks_len, top_len, peer);
 
         Ok(())
     }
