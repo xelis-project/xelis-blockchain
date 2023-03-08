@@ -63,6 +63,7 @@ pub struct Config {
 pub struct Blockchain {
     height: AtomicU64, // current block height
     topoheight: AtomicU64, // current topo height
+    stable_height: AtomicU64, // current stable height
     mempool: RwLock<Mempool>, // mempool to retrieve/add all txs
     storage: RwLock<Storage>, // storage to retrieve/add blocks
     p2p: Mutex<Option<Arc<P2pServer>>>, // P2p module
@@ -107,6 +108,7 @@ impl Blockchain {
         let blockchain = Self {
             height: AtomicU64::new(height),
             topoheight: AtomicU64::new(topoheight),
+            stable_height: AtomicU64::new(0),
             mempool: RwLock::new(Mempool::new()),
             storage: RwLock::new(storage),
             p2p: Mutex::new(None),
@@ -129,6 +131,14 @@ impl Blockchain {
     
             let difficulty = blockchain.get_difficulty_at_tips(&storage, &tips).await?;
             blockchain.difficulty.store(difficulty, Ordering::SeqCst);
+        }
+
+        // now compute the stable height
+        {
+            let storage = blockchain.get_storage().read().await;
+            let tips = storage.get_tips().await?;
+            let (_, stable_height) = blockchain.find_common_base(&storage, &tips).await?;
+            blockchain.stable_height.store(stable_height, Ordering::SeqCst);
         }
 
         let arc = Arc::new(blockchain);
@@ -275,12 +285,7 @@ impl Blockchain {
     }
 
     pub fn get_stable_height(&self) -> u64 {
-        let height = self.get_height();
-        if height > STABLE_HEIGHT_LIMIT {
-            height - STABLE_HEIGHT_LIMIT
-        } else {
-            0
-        }
+        self.stable_height.load(Ordering::Acquire)
     }
 
     pub fn get_network(&self) -> &Network {
@@ -1096,16 +1101,17 @@ impl Blockchain {
             debug!("Adding new '{}' {} with no topoheight (not ordered)!", block_hash, block);
         }
 
-        // update difficulty in cache
+        // update stable height and difficulty in cache
         {
+            let (_, height) = self.find_common_base(&storage, &tips).await?;
+            self.stable_height.store(height, Ordering::SeqCst);
+
             trace!("update difficulty in cache");
-            let tips_set = storage.get_tips().await?;
-            let mut tips = Vec::with_capacity(tips_set.len());
-            for hash in tips_set {
-                tips.push(hash);
+            let mut tips_vec = Vec::with_capacity(tips.len());
+            for hash in tips {
+                tips_vec.push(hash);
             }
-    
-            let difficulty = self.get_difficulty_at_tips(&storage, &tips).await?;
+            let difficulty = self.get_difficulty_at_tips(&storage, &tips_vec).await?;
             self.difficulty.store(difficulty, Ordering::SeqCst);
         }
 
