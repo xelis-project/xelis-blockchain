@@ -1011,7 +1011,6 @@ impl P2pServer {
                             height += 1;
                         }
                     }
-
                     break;
                 }
             }
@@ -1024,7 +1023,7 @@ impl P2pServer {
 
     async fn handle_chain_response(self: &Arc<Self>, peer: &Arc<Peer>, response: ChainResponse, pop_count: u64) -> Result<(), BlockchainError> {
         let (mut blocks, top_blocks) = response.consume();
-        debug!("handling chain response from peer {}, {} blocks, pop count {}", peer, blocks.len(), pop_count);
+        debug!("handling chain response from {}, {} blocks, {} top blocks, pop count {}", peer, blocks.len(), top_blocks.len(), pop_count);
 
         // if node asks us to pop blocks, verify if it's a priority one
         // if it's not a priority node, check if we are connected to one
@@ -1042,11 +1041,11 @@ impl P2pServer {
             };
         }
 
-        let blocks_count = blocks.len();
-        let top_blocks_count = top_blocks.len();
+        // merge both list together
         blocks.extend(top_blocks);
 
         // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
+        let mut total_requested: usize = 0;
         for hash in blocks { // Request all complete blocks now
             if !storage.has_block(&hash).await? {
                 trace!("Block {} is not found, asking it to peer", hash);
@@ -1059,11 +1058,12 @@ impl P2pServer {
                     error!("{} sent us an invalid block response", peer);
                     return Err(P2pError::ExpectedBlock.into())
                 }
+                total_requested += 1;
             } else {
                 trace!("Block {} is already in chain, skipping it", hash);
             }
         }
-        debug!("we've synced {} blocks and {} top blocks from {}", blocks_count, top_blocks_count, peer);
+        debug!("we've synced {} blocks from {}", total_requested, peer);
 
         Ok(())
     }
