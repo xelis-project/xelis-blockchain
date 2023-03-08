@@ -711,7 +711,7 @@ impl P2pServer {
                         warn!("{} send us a block ({}) already tracked by him", peer, block_hash);
                         return Err(P2pError::InvalidProtocolRules)
                     }
-                    trace!("Saving {} in blocks propagation cache", block_hash);
+                    trace!("Saving {} in blocks propagation cache for {}", block_hash, peer);
                     blocks_propagation.put(block_hash.clone(), ());
                 }
 
@@ -1118,6 +1118,7 @@ impl P2pServer {
     fn set_syncing(&self, value: bool) {
         self.syncing.store(value, Ordering::SeqCst);
     }
+
     pub fn is_syncing(&self) -> bool {
         self.syncing.load(Ordering::SeqCst)
     }
@@ -1190,21 +1191,18 @@ impl P2pServer {
         for (_, peer) in peer_list.get_peers() {
             // if the peer can directly accept this new block, send it
             if block.get_height() - 1 == peer.get_height() || peer.get_height() - block.get_height() <= STABLE_HEIGHT_LIMIT {
-                {
-                    let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
-                    if blocks_propagation.contains(hash) {
-                        trace!("{} contains {}, don't broadcast block to him", peer, hash);
-                        continue;
-                    }
-                    blocks_propagation.put(hash.clone(), ());
-                }
-
+                let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                 // check that we don't send the block to the peer that sent it to us
-                if *hash != *peer.get_top_block_hash().lock().await {
+                if !blocks_propagation.contains(hash) {
                     trace!("Broadcast to {}", peer);
                     if let Err(e) = peer.send_bytes(bytes.clone()).await {
                         debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
-                    };
+                    } else {
+                        trace!("Adding {} to blocks_propagation cache for {}", hash, peer);
+                        blocks_propagation.put(hash.clone(), ());
+                    }
+                } else {
+                    trace!("{} contains {}, don't broadcast block to him", peer, hash);
                 }
             }
         }
