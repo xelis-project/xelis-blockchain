@@ -148,7 +148,9 @@ pub enum BlockchainError {
     #[error("No balance changes for specific topoheight and asset")]
     NoBalanceChanges,
     #[error("Overflow detected")]
-    Overflow
+    Overflow,
+    #[error("Error, block include a dead tx {}", _0)]
+    DeadTx(Hash),
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

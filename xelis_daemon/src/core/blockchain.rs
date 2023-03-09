@@ -814,8 +814,8 @@ impl Blockchain {
             return Err(BlockchainError::InvalidBlockHeight(block_height_by_tips, block.get_height()))
         }
 
+        let stable_height = self.get_stable_height();
         if tips_count > 0 {
-            let stable_height = self.get_stable_height();
             debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
 
             if block_height_by_tips < stable_height {
@@ -880,6 +880,19 @@ impl Blockchain {
                     return Err(BlockchainError::InvalidTxInBlock(tx_hash))
                 }
                 debug!("Verifying TX {}", tx_hash);
+                // check that the TX included is not executed in stable height
+                if storage.has_tx_executed_in_block(hash)? {
+                    let block = storage.get_tx_executed_in_block(hash)?;
+                    debug!("Tx {} was executed in {}", hash, block);
+                    let block_height = storage.get_height_for_block(&block).await?;
+                    if block_height <= stable_height {
+                        error!("Block {} contains a dead tx {}", block_hash, tx_hash);
+                        return Err(BlockchainError::DeadTx(tx_hash))
+                    } else {
+                        debug!("Tx {} was executed in block {} at height {} (unstable height: {})", tx_hash, block, block_height, stable_height);
+                    }
+                }
+
                 // block can't contains the same tx and should have tx hash in block header
                 if cache_tx.contains_key(&tx_hash) {
                     error!("Block cannot contains the same TX {}", tx_hash);
@@ -970,7 +983,6 @@ impl Blockchain {
             // detect which part of DAG reorg stay, for other part, undo all executed txs
             {
                 let mut topoheight = base_topo_height;
-                info!("topoheight {} current {}", topoheight, current_topoheight);
                 while topoheight <= current_topoheight {
                     let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await?;
                     if !is_written {
@@ -987,7 +999,7 @@ impl Blockchain {
                         is_written = true;
                     }
 
-                    warn!("Cleaning transactions executions at topo height {} (block {})", topoheight, hash_at_topo);
+                    debug!("Cleaning transactions executions at topo height {} (block {})", topoheight, hash_at_topo);
 
                     let block = storage.get_block_by_hash(&hash_at_topo).await?;
 
