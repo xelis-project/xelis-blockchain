@@ -25,6 +25,7 @@ pub type Tips = HashSet<Hash>;
 
 pub struct Storage {
     transactions: Tree, // all txs stored on disk
+    txs_executed: Tree, // all txs executed in block
     blocks: Tree, // all blocks on disk
     blocks_at_height: Tree, // all blocks height at specific height
     extra: Tree, // all extra data saved on disk
@@ -66,6 +67,7 @@ impl Storage {
         let sled = sled::open(dir_path)?;
         let mut storage = Self {
             transactions: sled.open_tree("transactions")?,
+            txs_executed: sled.open_tree("txs_executed")?,
             blocks: sled.open_tree("blocks")?,
             blocks_at_height: sled.open_tree("blocks_at_height")?,
             extra: sled.open_tree("extra")?,
@@ -199,6 +201,24 @@ impl Storage {
         Ok(tree.contains_key(&key.to_bytes())?)
     }
 
+    pub fn get_tx_executed_in_block(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
+        self.load_from_disk(&self.txs_executed, tx.as_bytes())
+    }
+
+    pub fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
+        self.txs_executed.insert(tx.as_bytes(), block.as_bytes())?;
+        Ok(())
+    }
+
+    pub fn remove_tx_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError> {
+        self.txs_executed.remove(tx.as_bytes())?;
+        Ok(())
+    }
+
+    pub fn has_tx_executed_in_block(&self, tx: &Hash) -> Result<bool, BlockchainError> {
+        Ok(self.txs_executed.contains_key(tx.as_bytes())?)
+    }
+
     fn get_network(&self) -> Result<Network, BlockchainError> {
         trace!("get network");
         self.load_from_disk(&self.extra, NETWORK)
@@ -267,8 +287,13 @@ impl Storage {
         } else {
             Tips::new()
         };
-        blocks.insert(block);
-        self.set_blocks_for_tx(tx, &blocks)
+
+        if !blocks.contains(&block) {
+            blocks.insert(block);
+            self.set_blocks_for_tx(tx, &blocks)?;
+        }
+
+        Ok(())
     }
 
     fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &HashSet<Hash>) -> Result<(), BlockchainError> {
@@ -508,6 +533,10 @@ impl Storage {
         self.get_arc_data(&self.transactions, &self.transactions_cache, hash).await
     }
 
+    pub async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+        self.contains_data(&self.transactions, &self.transactions_cache, hash).await
+    }
+
     pub fn count_transactions(&self) -> usize {
         trace!("count transactions");
         self.transactions.len()
@@ -518,7 +547,9 @@ impl Storage {
 
         // Store transactions
         for (hash, tx) in block.get_transactions().iter().zip(txs) { // first save all txs, then save block
-            self.transactions.insert(hash.as_bytes(), tx.to_bytes())?;
+            if !self.has_transaction(hash).await? {
+                self.transactions.insert(hash.as_bytes(), tx.to_bytes())?;
+            }
         }
 
         // Store block header

@@ -91,7 +91,8 @@ pub async fn get_transaction_response_for_hash(storage: &Storage, hash: &Hash) -
     };
 
     let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(tx) };
-    Ok(json!(TransactionResponse { blocks, data }))
+    let executed_in_block = storage.get_tx_executed_in_block(hash).ok();
+    Ok(json!(TransactionResponse { blocks, executed_in_block, data }))
 }
 
 pub fn register_methods(server: &mut RpcServer) {

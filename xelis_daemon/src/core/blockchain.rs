@@ -547,6 +547,7 @@ impl Blockchain {
     // hash represents the best tip (biggest cumulative difficulty)
     // base represents the block hash of a block already ordered and in stable height
     // the full order is re generated each time a new block is added based on new TIPS
+    // first hash in order is the base hash
     #[async_recursion]
     async fn generate_full_order(&self, storage: &Storage, hash: &Hash, base: &Hash, base_topo_height: u64) -> Result<Vec<Hash>, BlockchainError> {
         let block_tips = storage.get_past_blocks_of(hash).await?;
@@ -725,7 +726,7 @@ impl Blockchain {
         }
 
         let mut sorted_tips = blockdag::sort_tips(&storage, &tips).await?;
-        sorted_tips.truncate(3); // keep only first 3 heavier tips
+        sorted_tips.truncate(TIPS_LIMIT); // keep only first 3 heavier tips
         let height = blockdag::calculate_height_at_tips(storage, &tips).await?;
         let mut block = Block::new(height, get_current_timestamp(), sorted_tips, extra_nonce, address, Vec::new());
 
@@ -949,7 +950,7 @@ impl Blockchain {
 
         let base_topo_height = storage.get_topo_height_for_hash(&base_hash).await?;
         // generate a full order until base_topo_height
-        let full_order = self.generate_full_order(storage, &best_tip, &base_hash, base_topo_height).await?;
+        let mut full_order = self.generate_full_order(storage, &best_tip, &base_hash, base_topo_height).await?;
         trace!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
 
         // rpc server lock
@@ -960,12 +961,52 @@ impl Blockchain {
         // track all events to notify websocket
         let mut events: HashMap<NotifyEvent, Vec<Value>> = HashMap::new();
 
-        // order the DAG (up to TOP_HEIGHT - STABLE_HEIGHT_LIMIT)
+        let mut current_topoheight = self.get_topo_height();
+        // order the DAG (up to TOP_HEIGHT - STABLE_LIMIT)
         let mut highest_topo = 0;
         {
-            let mut is_written = false;
+            let mut is_written = base_topo_height == 0;
+            let mut skipped = 0;
+            // detect which part of DAG reorg stay, for other part, undo all executed txs
+            {
+                let mut topoheight = base_topo_height;
+                info!("topoheight {} current {}", topoheight, current_topoheight);
+                while topoheight <= current_topoheight {
+                    let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await?;
+                    if !is_written {
+                        if let Some(order) = full_order.get(0) {
+                            if storage.is_block_topological_ordered(order).await && *order == hash_at_topo {
+                                debug!("Hash {} at topo {} stay the same, skipping cleaning", hash_at_topo, topoheight);
+                                // remove the hash from the order because we don't need to recompute it
+                                full_order.remove(0);
+                                topoheight += 1;
+                                skipped += 1;
+                                continue;
+                            }
+                        }
+                        is_written = true;
+                    }
+
+                    warn!("Cleaning transactions executions at topo height {} (block {})", topoheight, hash_at_topo);
+
+                    let block = storage.get_block_by_hash(&hash_at_topo).await?;
+
+                    // mark txs as unexecuted
+                    for tx_hash in block.get_txs_hashes() {
+                        debug!("Removing execution of {}", tx_hash);
+                        storage.remove_tx_executed(&tx_hash)?;
+                    }
+
+                    if hash_at_topo == base_hash {
+                        break;
+                    }
+
+                    topoheight += 1;
+                }
+            }
+            // time to order the DAG that is moving
             for (i, hash) in full_order.into_iter().enumerate() {
-                highest_topo = base_topo_height + i as u64;
+                highest_topo = base_topo_height + skipped + i as u64;
 
                 // if block is not re-ordered and it's not genesis block
                 // because we don't need to recompute everything as it's still good in chain
@@ -1004,23 +1045,30 @@ impl Blockchain {
 
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
-                    debug!("executing tx {}", tx_hash);
-                    self.execute_transaction(storage, &tx, &mut nonces, &mut balances, highest_topo).await?;
+                    // TODO improve it (too much read/write that can be refactored)
                     if !storage.has_block_linked_to_tx(&tx_hash, &hash)? {
                         storage.add_block_for_tx(&tx_hash, hash.clone())?;
                         debug!("Block {} is now linked to tx {}", hash, tx_hash);
                     }
 
-                    // if the rpc_server is enable, track events
-                    if rpc_server.is_some() {
-                        let value = json!(TransactionExecutedEvent {
-                            tx_hash: Cow::Borrowed(&tx_hash),
-                            block_hash: Cow::Borrowed(&hash),
-                            topoheight: highest_topo,
-                        });
-                        events.entry(NotifyEvent::TransactionExecuted).or_insert_with(Vec::new).push(value);
+                    if storage.has_tx_executed_in_block(tx_hash)? {
+                        debug!("Tx {} was already executed in a previous block, skipping...", tx_hash);
+                    } else {
+                        debug!("Executing tx {} in block {}", tx_hash, hash);
+                        storage.set_tx_executed_in_block(tx_hash, &hash)?;
+
+                        self.execute_transaction(storage, &tx, &mut nonces, &mut balances, highest_topo).await?;    
+                        // if the rpc_server is enable, track events
+                        if rpc_server.is_some() {
+                            let value = json!(TransactionExecutedEvent {
+                                tx_hash: Cow::Borrowed(&tx_hash),
+                                block_hash: Cow::Borrowed(&hash),
+                                topoheight: highest_topo,
+                            });
+                            events.entry(NotifyEvent::TransactionExecuted).or_insert_with(Vec::new).push(value);
+                        }
+                        total_fees += tx.get_fee();
                     }
-                    total_fees += tx.get_fee();
                 }
 
                 // reward the miner
@@ -1079,7 +1127,6 @@ impl Blockchain {
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
-        let mut current_topoheight = self.get_topo_height();
         if current_height == 0 || highest_topo > current_topoheight {
             debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
             storage.set_top_topoheight(highest_topo)?;
