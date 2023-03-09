@@ -6,7 +6,7 @@ use xelis_common::{
     difficulty::{check_difficulty, calculate_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     globals::get_current_timestamp,
-    block::{CompleteBlock, Block},
+    block::{CompleteBlock, Block, EXTRA_NONCE_SIZE},
     immutable::Immutable,
     serializer::Serializer, account::VersionedBalance, api::daemon::{NotifyEvent, DataHash, BlockOrderedEvent, TransactionExecutedEvent, BlockType}, network::Network
 };
@@ -231,7 +231,7 @@ impl Blockchain {
         } else {
             error!("No genesis block found!");
             info!("Generating a new genesis block...");
-            let block = Block::new(0, get_current_timestamp(), Vec::new(), [0u8; 32], DEV_PUBLIC_KEY.clone(), Vec::new());
+            let block = Block::new(0, get_current_timestamp(), Vec::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), Vec::new());
             let complete_block = CompleteBlock::new(Immutable::Owned(block), Vec::new());
             info!("Genesis generated: {}", complete_block.to_hex());
             complete_block
@@ -718,7 +718,7 @@ impl Blockchain {
     }
 
     pub async fn get_block_template_for_storage(&self, storage: &Storage, address: PublicKey) -> Result<Block, BlockchainError> {
-        let extra_nonce: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>(); // generate random bytes
+        let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>(); // generate random bytes
         let tips_set = storage.get_tips().await?;
         let mut tips = Vec::with_capacity(tips_set.len());
         for hash in tips_set {
