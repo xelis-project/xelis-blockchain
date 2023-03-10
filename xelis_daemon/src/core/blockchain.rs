@@ -817,10 +817,19 @@ impl Blockchain {
             return Err(BlockchainError::ExpectedTips)
         }
 
-        for tip in block.get_tips() {
-            if !storage.has_block(tip).await? {
-                error!("This block has a TIP ({}) which is not present in chain", tip);
-                return Err(BlockchainError::InvalidTips)
+        {
+            let mut cache = HashSet::with_capacity(tips_count);
+            for tip in block.get_tips() {
+                if !storage.has_block(tip).await? {
+                    error!("This block has a TIP ({}) which is not present in chain", tip);
+                    return Err(BlockchainError::InvalidTips)
+                }
+
+                if cache.contains(tip) {
+                    error!("This block has a TIP ({}) which is duplicated", tip);
+                    return Err(BlockchainError::InvalidTips)
+                }
+                cache.insert(tip);
             }
         }
 
@@ -1278,21 +1287,33 @@ impl Blockchain {
 
     // retrieve all txs hashes until height or until genesis block
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
-    // TODO no recursion
-    #[async_recursion]
     async fn get_all_txs_until_height(&self, storage: &Storage, until_height: u64, tips: &Vec<Hash>) -> Result<HashSet<Hash>, BlockchainError> {
         let mut hashes = HashSet::new();
-        for tip in tips {
-            let block = storage.get_block_by_hash(tip).await?;
-            if until_height <= block.get_height() {
+        let mut blocks_processed: HashSet<Hash> = HashSet::new();
+        let mut queue: Vec<Hash> = Vec::new();
+        queue.extend_from_slice(tips);
+
+        while !queue.is_empty() {
+            // get last element from queue (order doesn't matter and its faster than moving all elements)
+            let hash = queue.remove(queue.len() - 1);
+            let block = storage.get_block_by_hash(&hash).await?;
+
+            // add it in cache to not re-process it again
+            blocks_processed.insert(hash);
+
+            // check that the block height is higher than the height passed in param
+            if until_height < block.get_height() {
+                // add all txs from block
                 for tx in block.get_txs_hashes() {
-                    if !hashes.contains(tx) {
-                        hashes.insert(tx.clone());
-                    }
+                    hashes.insert(tx.clone());
                 }
 
-                // retrieve all txs from block tips also
-                hashes.extend(self.get_all_txs_until_height(storage, until_height, block.get_tips()).await?);
+                // add all tips from block (but check that we didn't already added it)
+                for tip in block.get_tips() {
+                    if !blocks_processed.contains(tip) {
+                        queue.push(tip.clone());
+                    }
+                }
             }
         }
 
