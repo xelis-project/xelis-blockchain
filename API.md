@@ -436,10 +436,11 @@ NOTE: Balance is returned in atomic units
 ##### Method `get_balance_at_topoheight`
 
 ##### Parameters
-|   Name  |   Type  | Required |                Note               |
-|:-------:|:-------:|:--------:|:---------------------------------:|
-| address | Address | Required | Valid address registered on chain |
-|  asset  |   Hash  | Required |    Asset ID registered on chain   |
+|    Name    |   Type  | Required |                           Note                          |
+|:----------:|:-------:|:--------:|:-------------------------------------------------------:|
+|   address  | Address | Required |            Valid address registered on chain            |
+|    asset   |   Hash  | Required |               Asset ID registered on chain              |
+| topoheight | Integer | Required | Topoheight to retrieve a version (if exists) of balance |
 
 ##### Request
 ```json
