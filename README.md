@@ -64,6 +64,8 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 ## Client Protocol
 
 XELIS integrate along with BlockDAG a way to accept multiple times the same TX and only execute it one time.
+Instead of excluding the whole block because we have a collision with another blockDAG branch for a TX, we just don't execute the TX and keep its hash.
+
 The same TX can be contained in multiple blocks only if:
 - TX is not executed in stable height
 - TX is not included in block Tips (previous blocks)
