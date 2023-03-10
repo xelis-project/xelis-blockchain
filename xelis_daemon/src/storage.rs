@@ -650,6 +650,12 @@ impl Storage {
                         self.set_blocks_for_tx(tx_hash, &blocks)?;
                         trace!("Tx was included in {}, blocks left: {}", blocks_len, blocks.into_iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
                     }
+
+                    if self.has_tx_executed_in_block(tx_hash)? {
+                        trace!("Tx {} was executed, deleting", tx_hash);
+                        self.remove_tx_executed(&tx_hash)?;
+                    }
+
                     txs.push((tx_hash.clone(), tx));
                 }
 
