@@ -61,6 +61,17 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 - Supply is re-calculated each time the block is re-ordered because its based on topo order.
 - Transactions and miner rewards are re-computed when a new block is added and the block there linked to is not yet in stable topo height. 
 
+## Client Protocol
+
+XELIS integrate along with BlockDAG a way to accept multiple times the same TX and only execute it one time.
+The same TX can be contained in multiple blocks only if:
+- TX is not executed in stable height
+- TX is not included in block Tips (previous blocks)
+
+During the generation of the DAG order (linking unique topoheight to a block hash), the first block being ordered will execute the TX first.
+
+This feature allows to accept others branch tips even if transactions are the same and prevent more orphans blocks when branches are merged.
+
 ## Transaction
 
 Transaction types supported:

@@ -14,7 +14,7 @@ use crate::{p2p::P2pServer, rpc::rpc::{get_block_response_for_hash, get_block_ty
 use crate::rpc::RpcServer;
 use crate::storage::Storage;
 use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::Duration, borrow::Cow};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use async_recursion::async_recursion;
 use tokio::{time::interval, sync::{Mutex, RwLock}};
 use log::{info, error, debug, warn, trace};
@@ -377,14 +377,21 @@ impl Blockchain {
             bases.push(self.find_tip_base(storage, hash, height).await?);
         }
 
-        // sort ascending by height
-        bases.sort_by(|(_, a), (_, b)| a.cmp(b));
+        if bases.is_empty() {
+            return Err(BlockchainError::ExpectedTips)
+        }
 
-        VecDeque::from(bases).pop_front().ok_or(BlockchainError::ExpectedTips)
+        // now we sort descending by height and return the last element deleted
+        bases.sort_by(|(_, a), (_, b)| b.cmp(a));
+        // assert!(bases[0].1 >= bases[bases.len() - 1].1);
+
+        Ok(bases.remove(bases.len() - 1))
     }
 
+    // find the common base (block hash and block height) of all tips
     async fn find_common_base(&self, storage: &Storage, tips: &HashSet<Hash>) -> Result<(Hash, u64), BlockchainError> {
         let mut best_height = 0;
+        // first, we check the best (highest) height of all tips
         for hash in tips {
             let height = storage.get_height_for_block(hash).await?;
             if height > best_height {
@@ -397,11 +404,20 @@ impl Blockchain {
             bases.push(self.find_tip_base(storage, hash, best_height).await?);
         }
 
-        bases.sort_by(|(_, a), (_, b)| a.cmp(b));
+        
+        // check that we have at least one value
+        if bases.is_empty() {
+            error!("bases list is emppty");
+            return Err(BlockchainError::ExpectedTips)
+        }
 
-        let (common_hash, _) = VecDeque::from(bases).pop_front().ok_or(BlockchainError::ExpectedTips)?;
-        let common_height = storage.get_height_for_block(&common_hash).await?;
-        Ok((common_hash, common_height))
+        // sort it descending by height
+        // a = 5, b = 6, b.cmp(a) -> Ordering::Greater
+        bases.sort_by(|(_, a), (_, b)| b.cmp(a));
+        // assert!(bases[0].1 >= bases[bases.len() - 1].1);
+
+        // retrieve the first block hash with its height
+        Ok(bases.remove(bases.len() - 1))
     }
 
     #[async_recursion] // TODO no recursion
@@ -873,25 +889,16 @@ impl Blockchain {
             let mut cache_account: HashMap<&PublicKey, u64> = HashMap::new();
             let mut cache_tx: HashMap<Hash, bool> = HashMap::new(); // avoid using a TX multiple times
             let mut balances = HashMap::new();
+            let mut all_parents_txs: Option<HashSet<Hash>> = None;
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
+                // verification that the real TX Hash is the same as in block header (and also check the correct order)
                 let tx_hash = tx.hash();
                 if tx_hash != *hash {
                     error!("Invalid tx {} vs {} in block header", tx_hash, hash);
                     return Err(BlockchainError::InvalidTxInBlock(tx_hash))
                 }
+
                 debug!("Verifying TX {}", tx_hash);
-                // check that the TX included is not executed in stable height
-                if storage.has_tx_executed_in_block(hash)? {
-                    let block = storage.get_tx_executed_in_block(hash)?;
-                    debug!("Tx {} was executed in {}", hash, block);
-                    let block_height = storage.get_height_for_block(&block).await?;
-                    if block_height <= stable_height {
-                        error!("Block {} contains a dead tx {}", block_hash, tx_hash);
-                        return Err(BlockchainError::DeadTx(tx_hash))
-                    } else {
-                        debug!("Tx {} was executed in block {} at height {} (unstable height: {})", tx_hash, block, block_height, stable_height);
-                    }
-                }
 
                 // block can't contains the same tx and should have tx hash in block header
                 if cache_tx.contains_key(&tx_hash) {
@@ -899,9 +906,53 @@ impl Blockchain {
                     return Err(BlockchainError::TxAlreadyInBlock(tx_hash));
                 }
 
+                // check that the TX included is not executed in stable height or in block TIPS
+                if storage.has_tx_executed_in_block(hash)? {
+                    let block_executed = storage.get_tx_executed_in_block(hash)?;
+                    debug!("Tx {} was executed in {}", hash, block);
+                    let block_height = storage.get_height_for_block(&block_executed).await?;
+                    // if the tx was executed below stable height, reject whole block!
+                    if block_height <= stable_height {
+                        error!("Block {} contains a dead tx {}", block_hash, tx_hash);
+                        return Err(BlockchainError::DeadTx(tx_hash))
+                    } else {
+                        debug!("Tx {} was executed in block {} at height {} (unstable height: {})", tx_hash, block, block_height, stable_height);
+                        // now we should check that the TX was not executed in our TIP branch
+                        // because that mean the miner was aware of the TX execution and still include it
+                        if all_parents_txs.is_none() {
+                            // load it only one time
+                            all_parents_txs = Some(self.get_all_txs_until_height(storage, stable_height, block.get_tips()).await?);
+                        }
+
+                        // if its the case, we should reject the block
+                        if let Some(txs) = all_parents_txs.as_ref() {
+                            if txs.contains(&tx_hash) {
+                                error!("Malicious Block {} formed, contains a dead tx {}", block_hash, tx_hash);
+                                return Err(BlockchainError::DeadTx(tx_hash))
+                            } else {
+                                // otherwise, all looks good but because the TX was executed in another branch, we skip verification
+                                // DAG will choose which branch will execute the TX
+                                info!("TX {} was executed in another branch, skipping verification", tx_hash);
+                                // increase the total size
+                                total_tx_size += tx.size();
+                                // add tx hash in cache
+                                cache_tx.insert(tx_hash, true);
+                                continue;
+                            }
+                        } else {
+                            // impossible to happens because we compute it if value is None
+                            error!("FATAL ERROR! Unable to load all TXs until height {}", stable_height);
+                            return Err(BlockchainError::Unknown)
+                        }
+                    }
+                }
+
                 self.verify_transaction_with_hash(storage, tx, &tx_hash, &mut balances, Some(&mut cache_account)).await?;
-                cache_tx.insert(tx_hash, true);
+
+                // increase the total size
                 total_tx_size += tx.size();
+                // add tx hash in cache
+                cache_tx.insert(tx_hash, true);
             }
 
             if block.size() + total_tx_size > MAX_BLOCK_SIZE {
@@ -1223,6 +1274,29 @@ impl Blockchain {
         mempool.clean_up(storage, nonces).await;
 
         Ok(())
+    }
+
+    // retrieve all txs hashes until height or until genesis block
+    // for this we get all tips and recursively retrieve all txs from tips until we reach height
+    // TODO no recursion
+    #[async_recursion]
+    async fn get_all_txs_until_height(&self, storage: &Storage, until_height: u64, tips: &Vec<Hash>) -> Result<HashSet<Hash>, BlockchainError> {
+        let mut hashes = HashSet::new();
+        for tip in tips {
+            let block = storage.get_block_by_hash(tip).await?;
+            if until_height <= block.get_height() {
+                for tx in block.get_txs_hashes() {
+                    if !hashes.contains(tx) {
+                        hashes.insert(tx.clone());
+                    }
+                }
+
+                // retrieve all txs from block tips also
+                hashes.extend(self.get_all_txs_until_height(storage, until_height, block.get_tips()).await?);
+            }
+        }
+
+        Ok(hashes)
     }
 
     // if a block is not ordered, it's an orphaned block and its transactions are not honoured
