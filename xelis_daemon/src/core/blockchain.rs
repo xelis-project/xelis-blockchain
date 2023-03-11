@@ -1504,6 +1504,11 @@ impl Blockchain {
                 }
             }
             TransactionType::Burn(asset, amount) => {
+                if *amount == 0 {
+                    error!("Burn Tx {} has no value to burn", hash);
+                    return Err(BlockchainError::NoValueForBurn)
+                }
+
                 let balance = total_deducted.entry(asset).or_insert(0);
                 if let Some(value) = balance.checked_add(*amount) {
                     *balance = value;

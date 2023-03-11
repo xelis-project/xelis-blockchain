@@ -151,6 +151,8 @@ pub enum BlockchainError {
     Overflow,
     #[error("Error, block include a dead tx {}", _0)]
     DeadTx(Hash),
+    #[error("A non-zero value is required for burn")]
+    NoValueForBurn
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {
