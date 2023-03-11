@@ -1392,13 +1392,16 @@ impl Blockchain {
             }
 
             let mut nonces = HashMap::new();
+            let mut assets: HashSet<&Hash> = HashSet::new();
+            // add native asset (because its necessary for fees)
+            assets.insert(&XELIS_ASSET);
+
             for (hash, tx) in &txs {
                 debug!("Rewinding tx hash: {}", hash);
-                self.rewind_transaction(storage, tx, &mut keys, &mut nonces).await?;
+                self.rewind_transaction(storage, tx, &mut keys, &mut nonces, &mut assets).await?;
             }
 
             // lowest previous versioned balances topoheight for each key
-            let assets = storage.get_assets().await?;
             let mut balances: HashMap<&PublicKey, HashMap<&Hash, Option<u64>>> = HashMap::new();
             // delete all versioned balances topoheight per topoheight
             for i in (topoheight..=current_topoheight).rev() {
@@ -1628,7 +1631,7 @@ impl Blockchain {
     }
 
     // rewind a transaction, save all keys used in a TX (sender / receiver) and update nonces with the lowest available
-    async fn rewind_transaction<'a>(&self, _: &mut Storage, transaction: &'a Transaction, keys: &mut HashSet<&'a PublicKey>, nonces: &mut HashMap<&'a PublicKey, u64>) -> Result<(), BlockchainError> {
+    async fn rewind_transaction<'a>(&self, _: &mut Storage, transaction: &'a Transaction, keys: &mut HashSet<&'a PublicKey>, nonces: &mut HashMap<&'a PublicKey, u64>, assets: &mut HashSet<&'a Hash>) -> Result<(), BlockchainError> {
         // add sender
         keys.insert(transaction.get_owner());
 
@@ -1637,6 +1640,14 @@ impl Blockchain {
             TransactionType::Transfer(txs) => {
                 for output in txs {
                     keys.insert(&output.to);
+                    if !assets.contains(&output.asset) {
+                        assets.insert(&output.asset);
+                    }
+                }
+            },
+            TransactionType::Burn(asset, _) => {
+                if !assets.contains(asset) {
+                    assets.insert(asset);
                 }
             },
             _ => {
