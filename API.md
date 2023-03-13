@@ -862,3 +862,95 @@ Submit a block to the daemon
     "result": true
 }
 ```
+
+#### Get blocks
+Retrieve a specific range of blocks (up to 20 maximum) based on topoheight
+
+##### Method `get_blocks`
+
+##### Parameters
+|       Name       |   Type  | Required |                   Note                   |
+|:----------------:|:-------:|:--------:|:----------------------------------------:|
+| start_topoheight | Integer | Optional | If not set, will retrieve last 20 blocks |
+|  end_topoheight  | Integer | Optional |      Must be under current topoheight    |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_blocks",
+	"params": {
+		"start_topoheight": 0,
+		"end_topoheight": 2
+	}
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "block_type": "Sync",
+            "cumulative_difficulty": 1,
+            "difficulty": 1,
+            "extra_nonce": "0000000000000000000000000000000000000000000000000000000000000000",
+            "hash": "55a162b8e0e137bb6a8de9f4c4b214fb60bcd2df15ec32fdd8f06759b863f06e",
+            "height": 0,
+            "miner": "xel1qqqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680gtl9ky3",
+            "nonce": 0,
+            "reward": 877380,
+            "supply": 877380,
+            "timestamp": 1678215431432,
+            "tips": [],
+            "topoheight": 0,
+            "total_fees": 0,
+            "total_size_in_bytes": 99,
+            "txs_hashes": []
+        },
+        {
+            "block_type": "Sync",
+            "cumulative_difficulty": 150001,
+            "difficulty": 150000,
+            "extra_nonce": "e9a96f6130943e4ce3cbd6d4999efa1ca28020be6119f3da77dbcc837731600e",
+            "hash": "000011152d66bfe7a2b1d2e18a09a94c1d1593ae8ddeafcfc8f1b8c2b03b7995",
+            "height": 1,
+            "miner": "xel1qqqd2jtz9f2u3z6uznpx8mqdkh6llt3yn3eg3a5tpsfn8jcsthufg5q08670u",
+            "nonce": 3837,
+            "reward": 877379,
+            "supply": 1754759,
+            "timestamp": 1678215668838,
+            "tips": [
+                "55a162b8e0e137bb6a8de9f4c4b214fb60bcd2df15ec32fdd8f06759b863f06e"
+            ],
+            "topoheight": 1,
+            "total_fees": 0,
+            "total_size_in_bytes": 131,
+            "txs_hashes": []
+        },
+        {
+            "block_type": "Sync",
+            "cumulative_difficulty": 300001,
+            "difficulty": 150000,
+            "extra_nonce": "f7c22d4f517c384493fa271304b885d1f092ab969a87e901fe9245ad0ca4490d",
+            "hash": "0000631d920e582069e47149adc53dfe8bb009163c94715d33e81e71b7a8dca3",
+            "height": 2,
+            "miner": "xel1qqqd2jtz9f2u3z6uznpx8mqdkh6llt3yn3eg3a5tpsfn8jcsthufg5q08670u",
+            "nonce": 1113,
+            "reward": 877379,
+            "supply": 2632138,
+            "timestamp": 1678215668843,
+            "tips": [
+                "000011152d66bfe7a2b1d2e18a09a94c1d1593ae8ddeafcfc8f1b8c2b03b7995"
+            ],
+            "topoheight": 2,
+            "total_fees": 0,
+            "total_size_in_bytes": 131,
+            "txs_hashes": []
+        }
+    ]
+}
+```
