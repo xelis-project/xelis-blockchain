@@ -742,7 +742,6 @@ No parameters
 				]
 			},
 			"fee": 1000,
-			"hash": "d189cc7275e48fa84132579f80b6131aaf46d40ff97a08c2a7633d785b0664ab",
 			"nonce": 3,
 			"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
 			"signature": "9e9fcd6be9b2e968b7d44ae15909e406b827b87f3108e08646b1d5e45754ffe3e166c4eaf26a63b8ddc0ac0668a893c339ed313fb522b46a4e95b8706a2ba005"
