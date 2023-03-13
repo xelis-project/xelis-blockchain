@@ -27,7 +27,7 @@ use xelis_common::{
     crypto::hash::Hash,
     block::{Block, CompleteBlock}, config::{BLOCK_TIME_MILLIS, VERSION},
 };
-use std::{sync::Arc, borrow::Cow, collections::HashSet};
+use std::{sync::Arc, borrow::Cow};
 use log::{info, debug};
 
 fn parse_params<P: DeserializeOwned>(value: Value) -> Result<P, RpcError> {
@@ -82,17 +82,21 @@ pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Stor
     Ok(value)
 }
 
-pub async fn get_transaction_response_for_hash(storage: &Storage, hash: &Hash) -> Result<Value, RpcError> {
-    let tx = storage.get_transaction(hash).await?;
+pub async fn get_transaction_response(storage: &Storage, tx: &Arc<Transaction>, hash: &Hash) -> Result<Value, RpcError> {
     let blocks = if storage.has_tx_blocks(hash)? {
-        storage.get_blocks_for_tx(hash)?
+        Some(storage.get_blocks_for_tx(hash)?)
     } else {
-        HashSet::new()
+        None
     };
 
-    let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(tx) };
+    let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(tx) };
     let executed_in_block = storage.get_tx_executed_in_block(hash).ok();
     Ok(json!(TransactionResponse { blocks, executed_in_block, data }))
+}
+
+pub async fn get_transaction_response_for_hash(storage: &Storage, hash: &Hash) -> Result<Value, RpcError> {
+    let tx = storage.get_transaction(hash).await?;
+    get_transaction_response(storage, &tx, hash).await
 }
 
 pub fn register_methods(server: &mut RpcServer) {
@@ -340,10 +344,11 @@ async fn get_mempool(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, 
     }
 
     let mempool = blockchain.get_mempool().read().await;
-    let mut transactions: Vec<DataHash<Arc<Transaction>>> = Vec::new();
+    let storage = blockchain.get_storage().read().await;
+    let mut transactions: Vec<Value> = Vec::new();
     for tx in mempool.get_sorted_txs() {
         let transaction = mempool.view_tx(tx.get_hash())?;
-        transactions.push(DataHash { hash: Cow::Borrowed(tx.get_hash()), data: Cow::Borrowed(transaction) });
+        transactions.push(get_transaction_response(&storage, transaction, tx.get_hash()).await?);
     }
 
     Ok(json!(transactions))
