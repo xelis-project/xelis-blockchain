@@ -4,6 +4,32 @@
 
 ### JSON-RPC methods
 
+#### Get Version
+Retrieve current daemon version
+
+##### Method `get_version`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_version",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": "1.2.0"
+}
+```
+
 #### Get Info
 Retrieve current info from chain
 
