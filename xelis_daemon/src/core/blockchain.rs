@@ -145,7 +145,7 @@ impl Blockchain {
         // create P2P Server
         if !config.disable_p2p_server {
             info!("Starting P2p server...");
-            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc)) {
+            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), config.priority_nodes.is_empty()) {
                 Ok(p2p) => {
                     for addr in config.priority_nodes {
                         let addr: SocketAddr = match addr.parse() {

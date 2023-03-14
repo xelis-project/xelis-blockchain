@@ -25,11 +25,10 @@ use self::packet::ping::Ping;
 use self::error::P2pError;
 use self::packet::{Packet, PacketWrapper};
 use self::peer::Peer;
-use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, UnboundedSender, UnboundedReceiver}, select, task::JoinHandle, time::MissedTickBehavior};
+use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, UnboundedSender, UnboundedReceiver}, select, task::JoinHandle};
 use log::{info, warn, error, debug, trace};
 use tokio::io::AsyncWriteExt;
-use tokio::time::interval;
-use tokio::time::timeout;
+use tokio::time::{interval, timeout, sleep};
 use std::{borrow::Cow, fs, path::Path, sync::atomic::{AtomicBool, Ordering}};
 use std::convert::TryInto;
 use std::net::SocketAddr;
@@ -58,7 +57,7 @@ pub struct P2pServer {
 }
 
 impl P2pServer {
-    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain>) -> Result<Arc<Self>, P2pError> {
+    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain>, maintains_seed_nodes: bool) -> Result<Arc<Self>, P2pError> {
         if let Some(tag) = &tag {
             assert!(tag.len() > 0 && tag.len() <= 16);
         }
@@ -83,7 +82,7 @@ impl P2pServer {
         let arc = Arc::new(server);
         let zelf = Arc::clone(&arc);
         tokio::spawn(async move {
-            if let Err(e) = zelf.start(receiver).await {
+            if let Err(e) = zelf.start(receiver, maintains_seed_nodes).await {
                 error!("Unexpected error on P2p module: {}", e);
             }
         });
@@ -213,9 +212,9 @@ impl P2pServer {
 
     // connect to seed nodes, start p2p server
     // and wait on all new connections
-    async fn start(self: &Arc<Self>, mut receiver: UnboundedReceiver<MessageChannel>) -> Result<(), P2pError> {
+    async fn start(self: &Arc<Self>, mut receiver: UnboundedReceiver<MessageChannel>, maintains_seed_nodes: bool) -> Result<(), P2pError> {
         // create tokio task to maintains connection to seed nodes
-        {
+        if maintains_seed_nodes {
             let zelf = Arc::clone(self);
             tokio::spawn(async move {
                 info!("Connecting to seed nodes...");
@@ -461,11 +460,9 @@ impl P2pServer {
     }
 
     async fn chain_sync_loop(self: Arc<Self>) {
-        let mut interval = interval(Duration::from_secs(CHAIN_SYNC_DELAY));
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
+        let duration = Duration::from_secs(CHAIN_SYNC_DELAY);
         loop {
-            interval.tick().await;
+            sleep(duration).await;
             if self.is_syncing() {
                 trace!("We are already syncing, skipping...");
                 continue;
@@ -482,14 +479,12 @@ impl P2pServer {
     // broadcast generic ping packet every 10s
     // if we have to send our peerlist to all peers, we calculate the ping for each peer
     async fn ping_loop(self: Arc<Self>) {
-        let mut ping_interval = interval(Duration::from_secs(P2P_PING_DELAY));
-        ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
-        // first tick is immediately elapsed
         let mut last_peerlist_update = get_current_time();
+        let duration = Duration::from_secs(P2P_PING_DELAY);
         loop {
-            ping_interval.tick().await;
-            trace!("build generic ping packet");
+            trace!("Waiting for ping delay...");
+           sleep(duration).await;
+
             let mut ping = self.build_generic_ping_packet().await;
             trace!("generic ping packet finished");
 
@@ -530,19 +525,27 @@ impl P2pServer {
                     // update the ping packet with the new peers
                     ping.set_peers(new_peers);
                     // send the ping packet to the peer
-                    if let Err(e) = peer.send_packet(Packet::Ping(Cow::Borrowed(&ping))).await {
+                    if let Err(e) = peer.get_connection().send_bytes(&Packet::Ping(Cow::Borrowed(&ping)).to_bytes()).await {
                         debug!("Error sending specific ping packet to {}: {}", peer, e);
                     }
                 }
             } else {
                 trace!("Sending generic ping packet...");
                 let packet = Packet::Ping(Cow::Owned(ping));
+                let bytes = Bytes::from(packet.to_bytes());
                 let peerlist = self.peer_list.read().await;
-                peerlist.broadcast(packet).await;
+                // broadcast directly the ping packet asap to all peers
+                for peer in peerlist.get_peers().values() {
+                    trace!("broadcast to {}", peer);
+                    if let Err(e) = peer.get_connection().send_bytes(&bytes).await {
+                        error!("Error while trying to broadcast directly ping packet to {}: {}", peer, e);
+                    };
+                }
             }
         }
     }
 
+    // this function handle the logic to send all packets to the peer
     async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut UnboundedReceiver<ConnectionMessage>) -> Result<(), P2pError> {
         loop {
             // all packets to be sent
