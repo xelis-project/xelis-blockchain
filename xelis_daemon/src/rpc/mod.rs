@@ -225,7 +225,7 @@ impl RpcServer {
     pub async fn remove_client(&self, addr: &Addr<WebSocketHandler>) {
         let mut clients = self.clients.lock().await;
         let deleted = clients.remove(addr).is_some();
-        debug!("WebSocket client {:?} deleted: {}", addr, deleted);
+        trace!("WebSocket client {:?} deleted: {}", addr, deleted);
     }
 
     pub async fn subscribe_client_to(&self, addr: &Addr<WebSocketHandler>, subscribe: NotifyEvent, id: Option<usize>) -> Result<(), RpcError> {
