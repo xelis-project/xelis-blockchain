@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use xelis_common::api::daemon::NotifyEvent;
 use super::{SharedRpcServer, RpcError, RpcResponseError, JSON_RPC_VERSION};
-use log::debug;
+use log::{debug, trace};
 
 pub struct Response<T: Borrow<Value> + ToString>(pub T);
 
@@ -46,6 +46,13 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
                 ctx.spawn(fut);
             },
             Ok(Message::Close(reason)) => {
+                trace!("Received closing message, removing client");
+                let server = self.server.clone();
+                let address = ctx.address();
+                let fut = async move {
+                    server.remove_client(&address).await;
+                };
+                ctx.wait(actix::fut::wrap_future(fut));
                 ctx.close(reason);
             },
             msg => {
@@ -58,6 +65,7 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
     }
 
     fn finished(&mut self, ctx: &mut Self::Context) {
+        trace!("Websocket handler is finished, removing client");
         let server = self.server.clone();
         let address = ctx.address();
         let fut = async move {
