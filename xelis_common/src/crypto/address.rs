@@ -76,7 +76,7 @@ impl<'a> Address<'a> {
     pub fn from_string(address: &String) -> Result<Self, Error> {
         let (hrp, decoded) = decode(address)?;
         // check that hrp is valid one
-        if hrp != PREFIX_ADDRESS || hrp != TESTNET_PREFIX_ADDRESS {
+        if hrp != PREFIX_ADDRESS && hrp != TESTNET_PREFIX_ADDRESS {
             return Err(Bech32Error::InvalidPrefix(hrp).into())
         }
 
