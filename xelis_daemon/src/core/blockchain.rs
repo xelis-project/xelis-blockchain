@@ -305,6 +305,11 @@ impl Blockchain {
         storage.get_hash_at_topo_height(self.get_topo_height()).await
     }
 
+    pub async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+        let storage = self.storage.read().await;
+        storage.has_block(hash).await
+    }
+
     pub async fn is_block_sync(&self, storage: &Storage, hash: &Hash) -> Result<bool, BlockchainError> {
         let current_height = self.get_height();
         self.is_block_sync_at_height(storage, hash, current_height).await

@@ -357,9 +357,11 @@ impl P2pServer {
         trace!("received handshake packet!");
         connection.set_state(State::Handshake);
         let (peer, peers) = self.verify_handshake(connection, handshake, out, priority).await?;
+        trace!("Handshake has been verified");
         // if it's a outgoing connection, don't send the handshake back
         // because we have already sent it
         if !out {
+            trace!("Sending handshake back to {}", peer);
             self.send_handshake(peer.get_connection()).await?;
         }
 
@@ -370,6 +372,7 @@ impl P2pServer {
             if !peer.is_out() {
                 addr.set_port(peer.get_local_port());
             }
+            debug!("Saving address to peerlist: {}", addr);
             if let Err(e) = self.save_peer_to_file(addr).await {
                 error!("Error while saving peer on disk: {}", e);
             };
@@ -1032,10 +1035,9 @@ impl P2pServer {
         // if it's not a priority node, check if we are connected to one
         // if yes, don't accept the pop count from this peer
         // if no, check that the pop count request is less or equal than the configured limit
-        let mut storage = self.blockchain.get_storage().write().await; // lock until we get all blocks
         if pop_count > 0 && (peer.is_priority() || ((pop_count <= MAX_BLOCK_REWIND) && !self.is_connected_to_a_synced_priority_node().await)) {
             warn!("Rewinding chain because of {} (priority: {}, pop count: {})", peer, peer.is_priority(), pop_count);
-            match self.blockchain.rewind_chain_for_storage(&mut storage, pop_count as usize).await {
+            match self.blockchain.rewind_chain(pop_count as usize).await {
                 Ok(topoheight) => debug!("Chain has been rewinded to topoheight {}", topoheight),
                 Err(e) => {
                     error!("Error on rewind chain with pop count at {}, error: {}", pop_count, e);
@@ -1053,13 +1055,13 @@ impl P2pServer {
         // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
         let mut total_requested: usize = 0;
         for hash in blocks { // Request all complete blocks now
-            if !storage.has_block(&hash).await? {
+            if !self.blockchain.has_block(&hash).await? {
                 trace!("Block {} is not found, asking it to peer", hash);
                 let object_request = ObjectRequest::Block(hash.clone());
                 let response = peer.request_blocking_object(object_request).await?;
                 if let OwnedObjectResponse::Block(block, hash) = response {
                     trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
-                    self.blockchain.add_new_block_for_storage(&mut storage, block, false).await?;
+                    self.blockchain.add_new_block(block, false).await?;
                 } else {
                     error!("{} sent us an invalid block response", peer);
                     return Err(P2pError::ExpectedBlock.into())
