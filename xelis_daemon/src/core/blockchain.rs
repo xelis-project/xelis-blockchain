@@ -818,7 +818,7 @@ impl Blockchain {
 
         let current_height = self.get_height();
         if tips_count == 0 && current_height != 0 {
-            error!("Expected at least one previous block for this block");
+            error!("Expected at least one previous block for this block {}", block_hash);
             return Err(BlockchainError::ExpectedTips)
         }
 
@@ -826,12 +826,12 @@ impl Blockchain {
             let mut cache = HashSet::with_capacity(tips_count);
             for tip in block.get_tips() {
                 if !storage.has_block(tip).await? {
-                    error!("This block has a TIP ({}) which is not present in chain", tip);
+                    error!("This block ({}) has a TIP ({}) which is not present in chain", block_hash, tip);
                     return Err(BlockchainError::InvalidTips)
                 }
 
                 if cache.contains(tip) {
-                    error!("This block has a TIP ({}) which is duplicated", tip);
+                    error!("This block ({}) has a TIP ({}) which is duplicated", block_hash, tip);
                     return Err(BlockchainError::InvalidTips)
                 }
                 cache.insert(tip);
@@ -840,7 +840,7 @@ impl Blockchain {
 
         let block_height_by_tips = blockdag::calculate_height_at_tips(storage, block.get_tips()).await?;
         if block_height_by_tips != block.get_height() {
-            error!("Invalid block height {}, expected {} for this block", block.get_height(), block_height_by_tips);
+            error!("Invalid block height {}, expected {} for this block {}", block.get_height(), block_height_by_tips, block_hash);
             return Err(BlockchainError::InvalidBlockHeight(block_height_by_tips, block.get_height()))
         }
 
@@ -849,27 +849,27 @@ impl Blockchain {
             debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
 
             if block_height_by_tips < stable_height {
-                error!("Invalid block height by tips {} for this block, its height is in stable height {}", block_height_by_tips, stable_height);
+                error!("Invalid block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
                 return Err(BlockchainError::InvalidBlockHeightStableHeight)
             }
         }
 
         if !self.verify_non_reachability(storage, &block).await? {
-            error!("{} has an invalid reachability", block);
+            error!("{} with hash {} has an invalid reachability", block, block_hash);
             return Err(BlockchainError::InvalidReachability)
         }
 
         for hash in block.get_tips() {
             let previous_timestamp = storage.get_timestamp_for_block(hash).await?;
             if previous_timestamp > block.get_timestamp() { // block timestamp can't be less than previous block.
-                error!("Invalid block timestamp, parent is less than new block");
+                error!("Invalid block timestamp, parent ({}) is less than new block {}", hash, block_hash);
                 return Err(BlockchainError::TimestampIsLessThanParent(block.get_timestamp()));
             }
 
             trace!("calculate distance from mainchain for tips: {}", hash);
             let distance = self.calculate_distance_from_mainchain(storage, hash).await?;
             if distance <= current_height && current_height - distance >= STABLE_LIMIT {
-                error!("{} have deviated too much, maximum allowed is {} (current height: {}, distance: {})", block, STABLE_LIMIT, current_height, distance);
+                error!("{} with hash {} have deviated too much, maximum allowed is {} (current height: {}, distance: {})", block, block_hash, STABLE_LIMIT, current_height, distance);
                 return Err(BlockchainError::BlockDeviation)
             }
         }
@@ -896,7 +896,7 @@ impl Blockchain {
             let hashes_len = block.get_txs_hashes().len();
             let txs_len = block.get_transactions().len();
             if  hashes_len != txs_len {
-                error!("Block has an invalid block header, transaction count mismatch (expected {} got {})!", txs_len, hashes_len);
+                error!("Block {} has an invalid block header, transaction count mismatch (expected {} got {})!", block_hash, txs_len, hashes_len);
                 return Err(BlockchainError::InvalidBlockTxs(hashes_len, txs_len));
             }
 
@@ -1050,6 +1050,7 @@ impl Blockchain {
                 let mut topoheight = base_topo_height;
                 while topoheight <= current_topoheight {
                     let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await?;
+                    debug!("Cleaning txs at topoheight {} ({})", topoheight, hash_at_topo);
                     if !is_written {
                         if let Some(order) = full_order.get(0) {
                             if storage.is_block_topological_ordered(order).await && *order == hash_at_topo {
@@ -1075,12 +1076,14 @@ impl Blockchain {
                     }
 
                     if hash_at_topo == base_hash {
+                        debug!("Reached base hash {}, stopping cleaning", base_hash);
                         break;
                     }
 
                     topoheight += 1;
                 }
             }
+
             // time to order the DAG that is moving
             for (i, hash) in full_order.into_iter().enumerate() {
                 highest_topo = base_topo_height + skipped + i as u64;
