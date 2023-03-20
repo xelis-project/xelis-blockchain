@@ -8,7 +8,7 @@ use serde::{Serialize, Deserialize};
 use tokio::{sync::{broadcast, mpsc, Mutex}, select, time::Instant};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use xelis_common::{
-    block::{Block, EXTRA_NONCE_SIZE},
+    block::{BlockHeader, EXTRA_NONCE_SIZE},
     serializer::Serializer,
     difficulty::check_difficulty,
     config::{VERSION, DEV_ADDRESS},
@@ -55,7 +55,7 @@ pub struct MinerConfig {
 
 #[derive(Clone)]
 enum ThreadNotification {
-    NewJob(Block, u64),
+    NewJob(BlockHeader, u64),
     Exit
 }
 
@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
     // broadcast channel to send new jobs / exit command to all threads
     let (sender, _) = broadcast::channel::<ThreadNotification>(threads as usize);
     // mpsc channel to send from threads to the "communication" task.
-    let (block_sender, block_receiver) = mpsc::channel::<Block>(threads as usize);
+    let (block_sender, block_receiver) = mpsc::channel::<BlockHeader>(threads as usize);
     for id in 0..threads {
         debug!("Starting thread #{}", id);
         if let Err(e) = start_thread(id, sender.subscribe(), block_sender.clone()) {
@@ -173,7 +173,7 @@ fn benchmark(threads: usize, iterations: usize) {
 // It maintains a WebSocket connection with the daemon and notify all threads when it receive a new job.
 // Its also the task who have the job to send directly the new block found by one of the threads.
 // This allow mining threads to only focus on mining and receiving jobs through memory channels.
-async fn communication_task(mut daemon_address: String, job_sender: broadcast::Sender<ThreadNotification>, mut block_receiver: mpsc::Receiver<Block>, address: Address<'_>, worker: String) {
+async fn communication_task(mut daemon_address: String, job_sender: broadcast::Sender<ThreadNotification>, mut block_receiver: mpsc::Receiver<BlockHeader>, address: Address<'_>, worker: String) {
     info!("Starting communication task");
     'main: loop {
         if !daemon_address.starts_with("ws://") && !daemon_address.starts_with("wss://") {
@@ -241,7 +241,7 @@ async fn handle_websocket_message(message: Result<Message, tokio_tungstenite::tu
             match serde_json::from_slice::<SocketMessage>(text.as_bytes())? {
                 SocketMessage::NewJob(job) => {
                     info!("New job received from daemon: difficulty = {}", job.difficulty);
-                    let block = Block::from_hex(job.template).context("Error while decoding new job received from daemon")?;
+                    let block = BlockHeader::from_hex(job.template).context("Error while decoding new job received from daemon")?;
                     CURRENT_HEIGHT.store(block.get_height(), Ordering::SeqCst);
 
                     if let Err(e) = job_sender.send(ThreadNotification::NewJob(block, job.difficulty)) {
@@ -276,10 +276,10 @@ async fn handle_websocket_message(message: Result<Message, tokio_tungstenite::tu
     Ok(false)
 }
 
-fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification>, block_sender: mpsc::Sender<Block>) -> Result<(), Error> {
+fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification>, block_sender: mpsc::Sender<BlockHeader>) -> Result<(), Error> {
     let builder = thread::Builder::new().name(format!("Mining Thread #{}", id));
     builder.spawn(move || {
-        let mut block: Block;
+        let mut block: BlockHeader;
         let mut hash: Hash;
 
         info!("Mining Thread #{}: started", id);

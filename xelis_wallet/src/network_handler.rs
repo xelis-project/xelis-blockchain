@@ -3,7 +3,7 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::CompleteBlock, transaction::TransactionType, account::VersionedBalance};
+use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance};
 
 use crate::{api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
 
@@ -116,7 +116,7 @@ impl NetworkHandler {
             }
 
             let response = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
-            let block: CompleteBlock = response.data.data.into_owned();
+            let block: Block = response.data.data.into_owned();
 
             // create Coinbase entry
             if *block.get_miner() == *address.get_public_key() {

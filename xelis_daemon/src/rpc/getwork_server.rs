@@ -6,7 +6,7 @@ use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
-use xelis_common::{crypto::key::PublicKey, globals::get_current_timestamp, api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, serializer::Serializer, block::{EXTRA_NONCE_SIZE, Block}, config::DEV_PUBLIC_KEY};
+use xelis_common::{crypto::key::PublicKey, globals::get_current_timestamp, api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, serializer::Serializer, block::{EXTRA_NONCE_SIZE, BlockHeader}, config::DEV_PUBLIC_KEY};
 use crate::{rpc::{RpcResponseError, RpcError}, core::blockchain::Blockchain};
 
 pub type SharedGetWorkServer = Arc<GetWorkServer>;
@@ -195,9 +195,9 @@ impl GetWorkServer {
         }
     }
 
-    async fn accept_block(&self, block: Block) -> Result<Response, RpcError> {
-        let complete_block = self.blockchain.build_complete_block_from_block(block).await?;
-        let response = match self.blockchain.add_new_block(complete_block, true).await {
+    async fn accept_block(&self, header: BlockHeader) -> Result<Response, RpcError> {
+        let block = self.blockchain.build_block_from_header(header).await?;
+        let response = match self.blockchain.add_new_block(block, true).await {
             Ok(_) => Response::BlockAccepted,
             Err(e) => {
                 debug!("Error while accepting miner block: {}", e);
@@ -208,7 +208,7 @@ impl GetWorkServer {
     }
 
     pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler>, template: SubmitBlockParams) -> Result<(), RpcError> {
-        let block = Block::from_hex(template.block_template)?;
+        let block = BlockHeader::from_hex(template.block_template)?;
         let response = self.accept_block(block).await?;
 
         tokio::spawn(async move {

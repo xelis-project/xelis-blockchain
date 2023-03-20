@@ -6,10 +6,10 @@ pub mod peer_list;
 
 use serde_json::Value;
 use xelis_common::{
-    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, MAX_BLOCK_REWIND, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH},
+    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH},
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
-    block::Block,
+    block::BlockHeader,
     globals::get_current_time
 };
 use crate::core::blockchain::Blockchain;
@@ -339,7 +339,7 @@ impl P2pServer {
         }
 
         let storage = self.blockchain.get_storage().read().await;
-        let (block, top_hash) = storage.get_top_block().await?;
+        let (block, top_hash) = storage.get_top_block_header().await?;
         let topoheight = self.blockchain.get_topo_height();
         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&top_hash).await.unwrap_or(0);
         Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, block.get_height(), top_hash, GENESIS_BLOCK_HASH.clone(), cumulative_difficulty, peers))
@@ -768,17 +768,17 @@ impl P2pServer {
                     }
 
                     // add immediately the block to chain as we are synced with
-                    let complete_block = match zelf.blockchain.build_complete_block_from_block(block).await {
+                    let block = match zelf.blockchain.build_block_from_header(block).await {
                         Ok(block) => block,
                         Err(e) => {
-                            error!("Error while building complete block {} from peer {}: {}", block_hash, peer, e);
+                            error!("Error while building block {} from peer {}: {}", block_hash, peer, e);
                             peer.increment_fail_count();
                             return;
                         }
                     };
 
                     debug!("Adding received block {} to chain", block_hash);
-                    if let Err(e) = zelf.blockchain.add_new_block(complete_block, true).await {
+                    if let Err(e) = zelf.blockchain.add_new_block(block, true).await {
                         error!("Error while adding new block: {}", e);
                         peer.increment_fail_count();
                     }
@@ -831,7 +831,7 @@ impl P2pServer {
 
                 if let Some(common_point) = response.get_common_point() {
                     debug!("{} found a common point with block {} at {} for sync, received {} blocks", peer, common_point.get_hash(), common_point.get_topoheight(), response.size());
-                    let pop_count = {
+                    let (pop_count, block_height) = {
                         let storage = self.blockchain.get_storage().read().await;
                         let block_height = match storage.get_height_for_block(common_point.get_hash()).await {
                             Ok(height) => height,
@@ -845,12 +845,8 @@ impl P2pServer {
                             error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, block_height, common_point.get_topoheight());
                             return Err(P2pError::InvalidPacket)
                         }
-                        self.blockchain.get_height() - block_height
+                        (self.blockchain.get_height() - block_height, block_height)
                     };
-
-                    if pop_count > MAX_BLOCK_REWIND {
-                        warn!("We may have deviated too much! Pop count: {}", pop_count);
-                    }
 
                     let peer = Arc::clone(peer);
                     let zelf = Arc::clone(self);
@@ -858,7 +854,7 @@ impl P2pServer {
                     // start a new task to wait on all requested blocks
                     tokio::spawn(async move {
                         zelf.set_syncing(true);
-                        if let Err(e) = zelf.handle_chain_response(&peer, response, pop_count).await {
+                        if let Err(e) = zelf.handle_chain_response(&peer, response, pop_count, block_height).await {
                             error!("Error while handling chain response from {}: {}", peer, e);
                             peer.increment_fail_count();
                         }
@@ -907,10 +903,20 @@ impl P2pServer {
                     ObjectRequest::Block(hash) => {
                         let storage = self.blockchain.get_storage().read().await;
                         if storage.has_block(hash).await? {
-                            let block = storage.get_complete_block(hash).await?;
+                            let block = storage.get_block(hash).await?;
                             peer.send_packet(Packet::ObjectResponse(ObjectResponse::Block(Cow::Owned(block)))).await?;
                         } else {
                             debug!("{} asked block '{}' but not present in our chain", peer, hash);
+                            peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
+                        }
+                    },
+                    ObjectRequest::BlockHeader(hash) => {
+                        let storage = self.blockchain.get_storage().read().await;
+                        if storage.has_block(hash).await? {
+                            let header = storage.get_block_header_by_hash(hash).await?;
+                            peer.send_packet(Packet::ObjectResponse(ObjectResponse::BlockHeader(Cow::Borrowed(&header)))).await?;
+                        } else {
+                            debug!("{} asked block header '{}' but not present in our chain", peer, hash);
                             peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
                         }
                     },
@@ -1027,15 +1033,30 @@ impl P2pServer {
         Ok(())
     }
 
-    async fn handle_chain_response(self: &Arc<Self>, peer: &Arc<Peer>, response: ChainResponse, pop_count: u64) -> Result<(), BlockchainError> {
+    async fn handle_chain_response(self: &Arc<Self>, peer: &Arc<Peer>, response: ChainResponse, pop_count: u64, common_height: u64) -> Result<(), BlockchainError> {
         let (mut blocks, top_blocks) = response.consume();
         debug!("handling chain response from {}, {} blocks, {} top blocks, pop count {}", peer, blocks.len(), top_blocks.len(), pop_count);
 
-        // if node asks us to pop blocks, verify if it's a priority one
-        // if it's not a priority node, check if we are connected to one
-        // if yes, don't accept the pop count from this peer
-        // if no, check that the pop count request is less or equal than the configured limit
-        if pop_count > 0 && (peer.is_priority() || ((pop_count <= MAX_BLOCK_REWIND) && !self.is_connected_to_a_synced_priority_node().await)) {
+        let top_len = top_blocks.len();
+        let blocks_len = blocks.len();
+
+        // merge both list together
+        blocks.extend(top_blocks);
+
+        // if node asks us to pop blocks, check that the difference with peer's height is above STABLE_LIMIT
+        // then, verify if it's a priority node, otherwise, check if we are connected to a priority node so only him can rewind us
+        if pop_count > 0 && peer.get_height() - self.blockchain.get_height() > STABLE_LIMIT && (peer.is_priority() || !self.is_connected_to_a_synced_priority_node().await) {
+            // request all blocks header and verify basic chain structure
+            for hash in blocks {
+                let response = peer.request_blocking_object(ObjectRequest::BlockHeader(hash)).await?;
+                if let OwnedObjectResponse::BlockHeader(header, hash) = response {
+                    trace!("Received {} with hash {}", header, hash);
+                } else {
+                    error!("{} sent us an invalid object response", peer);
+                    return Err(P2pError::ExpectedBlock.into())
+                }
+            }
+
             warn!("Rewinding chain because of {} (priority: {}, pop count: {})", peer, peer.is_priority(), pop_count);
             match self.blockchain.rewind_chain(pop_count as usize).await {
                 Ok(topoheight) => debug!("Chain has been rewinded to topoheight {}", topoheight),
@@ -1044,34 +1065,29 @@ impl P2pServer {
                     return Ok(())
                 }
             };
-        }
-
-        let top_len = top_blocks.len();
-        let blocks_len = blocks.len();
-
-        // merge both list together
-        blocks.extend(top_blocks);
-
-        // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
-        let mut total_requested: usize = 0;
-        for hash in blocks { // Request all complete blocks now
-            if !self.blockchain.has_block(&hash).await? {
-                trace!("Block {} is not found, asking it to peer", hash);
-                let object_request = ObjectRequest::Block(hash.clone());
-                let response = peer.request_blocking_object(object_request).await?;
-                if let OwnedObjectResponse::Block(block, hash) = response {
-                    trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
-                    self.blockchain.add_new_block(block, false).await?;
+        } else {
+            // no rewind are needed, process normally
+            // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
+            let mut total_requested: usize = 0;
+            for hash in blocks { // Request all blocks now
+                if !self.blockchain.has_block(&hash).await? {
+                    trace!("Block {} is not found, asking it to peer", hash);
+                    let object_request = ObjectRequest::Block(hash.clone());
+                    let response = peer.request_blocking_object(object_request).await?;
+                    if let OwnedObjectResponse::Block(block, hash) = response {
+                        trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
+                        self.blockchain.add_new_block(block, false).await?;
+                    } else {
+                        error!("{} sent us an invalid block response", peer);
+                        return Err(P2pError::ExpectedBlock.into())
+                    }
+                    total_requested += 1;
                 } else {
-                    error!("{} sent us an invalid block response", peer);
-                    return Err(P2pError::ExpectedBlock.into())
+                    trace!("Block {} is already in chain, skipping it", hash);
                 }
-                total_requested += 1;
-            } else {
-                trace!("Block {} is already in chain, skipping it", hash);
             }
+            debug!("we've synced {} on {} blocks and {} top blocks from {}", total_requested, blocks_len, top_len, peer);
         }
-        debug!("we've synced {} on {} blocks and {} top blocks from {}", total_requested, blocks_len, top_len, peer);
 
         Ok(())
     }
@@ -1083,7 +1099,7 @@ impl P2pServer {
         for peer in peer_list.get_peers().values() {
             if peer.is_priority() {
                 let peer_topoheight = peer.get_topoheight();
-                if peer_topoheight >= topoheight || topoheight - peer_topoheight <= MAX_BLOCK_REWIND {
+                if peer_topoheight >= topoheight || topoheight - peer_topoheight < STABLE_LIMIT {
                     return true
                 }
             }
@@ -1186,7 +1202,7 @@ impl P2pServer {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &Block, cumulative_difficulty: u64, highest_topoheight: u64, highest_height: u64, hash: &Hash) {
+    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: u64, highest_topoheight: u64, highest_height: u64, hash: &Hash) {
         trace!("Broadcast block: {}", hash);
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock

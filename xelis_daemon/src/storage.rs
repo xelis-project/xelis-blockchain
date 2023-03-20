@@ -4,7 +4,7 @@ use xelis_common::{
     crypto::{key::PublicKey, hash::{Hash, hash}},
     immutable::Immutable,
     transaction::Transaction,
-    block::{Block, CompleteBlock}, account::VersionedBalance, network::Network,
+    block::{BlockHeader, Block}, account::VersionedBalance, network::Network,
 };
 use std::{
     collections::HashSet,
@@ -41,7 +41,7 @@ pub struct Storage {
     db: sled::Db, // opened DB used for assets to create dynamic assets
     // cached in memory
     transactions_cache: Option<Mutex<LruCache<Hash, Arc<Transaction>>>>,
-    blocks_cache: Option<Mutex<LruCache<Hash, Arc<Block>>>>,
+    blocks_cache: Option<Mutex<LruCache<Hash, Arc<BlockHeader>>>>,
     past_blocks_cache: Option<Mutex<LruCache<Hash, Arc<Vec<Hash>>>>>, // previous blocks saved at each new block
     topo_by_hash_cache: Option<Mutex<LruCache<Hash, u64>>>,
     hash_at_topo_cache: Option<Mutex<LruCache<u64, Hash>>>,
@@ -542,7 +542,7 @@ impl Storage {
         self.transactions.len()
     }
 
-    pub async fn add_new_block(&mut self, block: Arc<Block>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash) -> Result<(), BlockchainError> {
+    pub async fn add_new_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash) -> Result<(), BlockchainError> {
         debug!("Storing new {} with hash: {}, difficulty: {}", block, hash, difficulty);
 
         // Store transactions
@@ -721,29 +721,29 @@ impl Storage {
         self.contains_data(&self.blocks, &self.blocks_cache, hash).await
     }
 
-    pub async fn get_block_by_hash(&self, hash: &Hash) -> Result<Arc<Block>, BlockchainError> {
+    pub async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
         trace!("get block by hash: {}", hash);
         self.get_arc_data(&self.blocks, &self.blocks_cache, hash).await
     }
 
-    pub async fn get_block_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<Block>), BlockchainError> {
+    pub async fn get_block_header_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>), BlockchainError> {
         trace!("get block at topoheight: {}", topoheight);
         let hash = self.get_hash_at_topo_height(topoheight).await?;
-        let block = self.get_block_by_hash(&hash).await?;
+        let block = self.get_block_header_by_hash(&hash).await?;
         Ok((hash, block))
     }
 
-    pub async fn get_complete_block(&self, hash: &Hash) -> Result<CompleteBlock, BlockchainError> {
-        trace!("get complete block {}", hash);
-        let block = self.get_block_by_hash(hash).await?;
+    pub async fn get_block(&self, hash: &Hash) -> Result<Block, BlockchainError> {
+        trace!("get block {}", hash);
+        let block = self.get_block_header_by_hash(hash).await?;
         let mut transactions = Vec::new();
         for tx in block.get_transactions() {
             let transaction = self.get_transaction(tx).await?;
             transactions.push(Immutable::Arc(transaction));
         }
 
-        let complete_block = CompleteBlock::new(Immutable::Arc(block), transactions);
-        Ok(complete_block)
+        let block = Block::new(Immutable::Arc(block), transactions);
+        Ok(block)
     }
 
     pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
@@ -773,23 +773,23 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn get_top_block(&self) -> Result<(Arc<Block>, Hash), BlockchainError> {
-        trace!("get top block");
+    pub async fn get_top_block_header(&self) -> Result<(Arc<BlockHeader>, Hash), BlockchainError> {
+        trace!("get top block header");
         let hash = self.get_top_block_hash().await?;
-        Ok((self.get_block_by_hash(&hash).await?, hash))
+        Ok((self.get_block_header_by_hash(&hash).await?, hash))
     }
 
-    pub async fn get_top_complete_block(&self) -> Result<CompleteBlock, BlockchainError> {
-        trace!("get top complete block");
-        let (block, _) = self.get_top_block().await?;
+    pub async fn get_top_block(&self) -> Result<Block, BlockchainError> {
+        trace!("get top block");
+        let (block, _) = self.get_top_block_header().await?;
         let mut transactions = Vec::new();
         for tx in block.get_transactions() {
             let transaction = self.get_transaction(tx).await?;
             transactions.push(Immutable::Arc(transaction));
         }
 
-        let complete_block = CompleteBlock::new(Immutable::Arc(block), transactions);
-        Ok(complete_block)
+        let block = Block::new(Immutable::Arc(block), transactions);
+        Ok(block)
     }
 
     pub async fn get_tips(&self) -> Result<Tips, BlockchainError> {
@@ -812,7 +812,7 @@ impl Storage {
                 return Ok(tips.clone())
             }
     
-            let block = self.get_block_by_hash(hash).await?;
+            let block = self.get_block_header_by_hash(hash).await?;
             let mut tips = Vec::with_capacity(block.get_tips().len());
             for hash in block.get_tips() {
                 tips.push(hash.clone());
@@ -822,7 +822,7 @@ impl Storage {
             cache.put(hash.clone(), tips.clone());
             tips
         } else {
-            let block = self.get_block_by_hash(hash).await?;
+            let block = self.get_block_header_by_hash(hash).await?;
             let mut tips = Vec::with_capacity(block.get_tips().len());
             for hash in block.get_tips() {
                 tips.push(hash.clone());
@@ -864,7 +864,7 @@ impl Storage {
     // TODO optimize all these functions to read only what is necessary
     pub async fn get_height_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         trace!("get height for hash {}", hash);
-        let block = self.get_block_by_hash(hash).await?;
+        let block = self.get_block_header_by_hash(hash).await?;
         Ok(block.get_height())
     }
 
@@ -936,7 +936,7 @@ impl Storage {
 
     pub async fn get_timestamp_for_block(&self, hash: &Hash) -> Result<u128, BlockchainError> {
         trace!("get timestamp for hash {}", hash);
-        let block = self.get_block_by_hash(hash).await?;
+        let block = self.get_block_header_by_hash(hash).await?;
         Ok(block.get_timestamp())
     }
 

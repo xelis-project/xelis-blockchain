@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use log::{trace, error};
 use xelis_common::{
     serializer::{Serializer, Reader, ReaderError, Writer},
-    block::Block,
+    block::BlockHeader,
     crypto::hash::Hash
 };
 
@@ -68,7 +68,7 @@ pub enum Packet<'a> {
     // so the peer that already have this TX in mempool don't have to read it again
     // imo: can be useful when the network is spammed by alot of txs
     TransactionPropagation(PacketWrapper<'a, Hash>),
-    BlockPropagation(PacketWrapper<'a, Block>),
+    BlockPropagation(PacketWrapper<'a, BlockHeader>),
     ChainRequest(PacketWrapper<'a, ChainRequest>),
     ChainResponse(ChainResponse),
     Ping(Cow<'a, Ping<'a>>),

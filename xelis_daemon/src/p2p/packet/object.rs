@@ -3,7 +3,7 @@ use xelis_common::{
         Hash,
         Hashable
     },
-    block::CompleteBlock,
+    block::{Block, BlockHeader},
     transaction::Transaction,
     serializer::{
         Serializer,
@@ -18,14 +18,16 @@ use std::{borrow::Cow, fmt::{Display, Formatter, self}};
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ObjectRequest {
     Block(Hash),
+    BlockHeader(Hash),
     Transaction(Hash)
 }
 
 impl ObjectRequest {
     pub fn get_hash(&self) -> &Hash {
         match self {
-            ObjectRequest::Block(hash) => hash,
-            ObjectRequest::Transaction(hash) => hash
+            Self::Block(hash) => hash,
+            Self::BlockHeader(hash) => hash,
+            Self::Transaction(hash) => hash
         }
     }
 }
@@ -33,12 +35,16 @@ impl ObjectRequest {
 impl Serializer for ObjectRequest {
     fn write(&self, writer: &mut Writer) {
         match &self {
-            ObjectRequest::Block(hash) => {
+            Self::Block(hash) => {
                 writer.write_u8(0);
                 writer.write_hash(hash);
             },
-            ObjectRequest::Transaction(hash) => {
+            Self::BlockHeader(hash) => {
                 writer.write_u8(1);
+                writer.write_hash(hash);
+            },
+            Self::Transaction(hash) => {
+                writer.write_u8(2);
                 writer.write_hash(hash);
             }
         }
@@ -58,28 +64,32 @@ impl Display for ObjectRequest {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Block(hash) => write!(f, "ObjectRequest[type=Block, {}]", hash),
+            Self::BlockHeader(hash) => write!(f, "ObjectRequest[type=BlockHeader, {}]", hash),
             Self::Transaction(hash) => write!(f, "ObjectRequest[type=Transaction, {}]", hash)
         }
     }
 }
 
 pub enum OwnedObjectResponse {
-    Block(CompleteBlock, Hash),
+    Block(Block, Hash),
+    BlockHeader(BlockHeader, Hash),
     Transaction(Transaction, Hash)
 }
 
 impl OwnedObjectResponse {
     pub fn get_hash(&self) -> &Hash {
         match self {
-            OwnedObjectResponse::Block(_, hash) => hash,
-            OwnedObjectResponse::Transaction(_, hash) => hash
+            Self::Block(_, hash) => hash,
+            Self::BlockHeader(_, hash) => hash,
+            Self::Transaction(_, hash) => hash
         }
     }
 }
 
 #[derive(Debug)]
 pub enum ObjectResponse<'a> {
-    Block(Cow<'a, CompleteBlock>),
+    Block(Cow<'a, Block>),
+    BlockHeader(Cow<'a, BlockHeader>),
     Transaction(Cow<'a, Transaction>),
     NotFound(ObjectRequest)
 }
@@ -87,20 +97,25 @@ pub enum ObjectResponse<'a> {
 impl ObjectResponse<'_> {
     pub fn get_request(&self) -> Cow<'_, ObjectRequest> {
         match &self {
-            ObjectResponse::Block(block) => Cow::Owned(ObjectRequest::Block(block.hash())),
-            ObjectResponse::Transaction(tx) => Cow::Owned(ObjectRequest::Transaction(tx.hash())),
-            ObjectResponse::NotFound(request) => Cow::Borrowed(request)
+            Self::Block(block) => Cow::Owned(ObjectRequest::Block(block.hash())),
+            Self::BlockHeader(header) => Cow::Owned(ObjectRequest::BlockHeader(header.hash())),
+            Self::Transaction(tx) => Cow::Owned(ObjectRequest::Transaction(tx.hash())),
+            Self::NotFound(request) => Cow::Borrowed(request)
         }
     }
 
     pub fn to_owned(self) -> Result<OwnedObjectResponse, P2pError> {
         Ok(match self {
-            ObjectResponse::Block(block) => {
+            Self::Block(block) => {
                 let block = block.into_owned();
                 let hash = block.hash();
                 OwnedObjectResponse::Block(block, hash)
             },
-            ObjectResponse::Transaction(tx) => {
+            Self::BlockHeader(header) => {
+                let hash = header.hash();
+                OwnedObjectResponse::BlockHeader(header.into_owned(), hash)
+            },
+            Self::Transaction(tx) => {
                 let tx = tx.into_owned();
                 let hash = tx.hash();
                 OwnedObjectResponse::Transaction(tx, hash)
@@ -113,16 +128,20 @@ impl ObjectResponse<'_> {
 impl<'a> Serializer for ObjectResponse<'a> {
     fn write(&self, writer: &mut Writer) {
         match &self {
-            ObjectResponse::Block(block) => {
+            Self::Block(block) => {
                 writer.write_u8(0);
                 block.write(writer);
             },
-            ObjectResponse::Transaction(transaction) => {
+            Self::BlockHeader(header) => {
                 writer.write_u8(1);
+                header.write(writer);
+            }
+            Self::Transaction(transaction) => {
+                writer.write_u8(2);
                 transaction.write(writer);
             },
-            ObjectResponse::NotFound(obj) => {
-                writer.write_u8(2);
+            Self::NotFound(obj) => {
+                writer.write_u8(3);
                 obj.write(writer);
             }
         }
@@ -131,9 +150,10 @@ impl<'a> Serializer for ObjectResponse<'a> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let id = reader.read_u8()?;
         Ok(match id {
-            0 => ObjectResponse::Block(Cow::Owned(CompleteBlock::read(reader)?)),
-            1 => ObjectResponse::Transaction(Cow::Owned(Transaction::read(reader)?)),
-            2 => ObjectResponse::NotFound(ObjectRequest::read(reader)?),
+            0 => Self::Block(Cow::Owned(Block::read(reader)?)),
+            1 => Self::BlockHeader(Cow::Owned(BlockHeader::read(reader)?)),
+            2 => Self::Transaction(Cow::Owned(Transaction::read(reader)?)),
+            3 => Self::NotFound(ObjectRequest::read(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         })
     }

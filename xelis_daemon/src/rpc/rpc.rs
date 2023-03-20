@@ -25,7 +25,7 @@ use xelis_common::{
     serializer::Serializer,
     transaction::Transaction,
     crypto::hash::Hash,
-    block::{Block, CompleteBlock}, config::{BLOCK_TIME_MILLIS, VERSION},
+    block::{BlockHeader, Block}, config::{BLOCK_TIME_MILLIS, VERSION},
 };
 use std::{sync::Arc, borrow::Cow};
 use log::{info, debug};
@@ -64,7 +64,7 @@ pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Stor
     let block_type = get_block_type_for_block(&blockchain, &storage, &hash).await?;
     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await?;
     let difficulty = storage.get_difficulty_for_block(&hash)?;
-    let block = storage.get_complete_block(&hash).await?;
+    let block = storage.get_block(&hash).await?;
     let total_size_in_bytes = block.size();
     let mut total_fees = 0;
     for tx in block.get_transactions() {
@@ -72,10 +72,10 @@ pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Stor
     }
 
     let value: Value = if include_txs {
-        let data: DataHash<'_, CompleteBlock> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block) };
+        let data: DataHash<'_, Block> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block) };
         json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees, total_size_in_bytes, data })
     } else {
-        let data: DataHash<'_, Arc<Block>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block.to_header()) };
+        let data: DataHash<'_, Arc<BlockHeader>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block.to_header()) };
         json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees, total_size_in_bytes, data })
     };
 
@@ -195,10 +195,10 @@ async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<
 
 async fn submit_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: SubmitBlockParams = parse_params(body)?;
-    let block = Block::from_hex(params.block_template)?;
+    let header = BlockHeader::from_hex(params.block_template)?;
     // TODO add block hashing blob on block template
-    let complete_block = blockchain.build_complete_block_from_block(block).await?;
-    blockchain.add_new_block(complete_block, true).await?;
+    let block = blockchain.build_block_from_header(header).await?;
+    blockchain.add_new_block(block, true).await?;
     Ok(json!(true))
 }
 

@@ -27,7 +27,7 @@ pub fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(_: D) -> Result<u
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct Block {
+pub struct BlockHeader {
     pub tips: Vec<Hash>,
     #[serde(deserialize_with = "deserialize_timestamp")]
     pub timestamp: u128,
@@ -41,15 +41,15 @@ pub struct Block {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct CompleteBlock {
+pub struct Block {
     #[serde(flatten)]
-    block: Immutable<Block>,
+    block: Immutable<BlockHeader>,
     transactions: Vec<Immutable<Transaction>>
 }
 
-impl Block {
+impl BlockHeader {
     pub fn new(height: u64, timestamp: u128, tips: Vec<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: Vec<Hash>) -> Self {
-        Block {
+        BlockHeader {
             height,
             timestamp,
             tips,
@@ -143,19 +143,19 @@ impl Block {
     }
 }
 
-impl CompleteBlock {
-    pub fn new(block: Immutable<Block>, transactions: Vec<Immutable<Transaction>>) -> Self {
-        CompleteBlock {
+impl Block {
+    pub fn new(block: Immutable<BlockHeader>, transactions: Vec<Immutable<Transaction>>) -> Self {
+        Block {
             block,
             transactions
         }
     }
 
-    pub fn to_header(self) -> Arc<Block> {
+    pub fn to_header(self) -> Arc<BlockHeader> {
         self.block.to_arc()
     }
 
-    pub fn get_header(&self) -> &Block {
+    pub fn get_header(&self) -> &BlockHeader {
         &self.block
     }
 
@@ -167,12 +167,12 @@ impl CompleteBlock {
         &self.transactions
     }
 
-    pub fn split(self) -> (Immutable<Block>, Vec<Immutable<Transaction>>) {
+    pub fn split(self) -> (Immutable<BlockHeader>, Vec<Immutable<Transaction>>) {
         (self.block, self.transactions)
     }
 }
 
-impl Serializer for Block {
+impl Serializer for BlockHeader {
     fn write(&self, writer: &mut Writer) {
         writer.write_u64(&self.height); // 8
         writer.write_u128(&self.timestamp); // 8 + 16 = 24
@@ -190,7 +190,7 @@ impl Serializer for Block {
         self.miner.write(writer);
     }
 
-    fn read(reader: &mut Reader) -> Result<Block, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<BlockHeader, ReaderError> {
         let height = reader.read_u64()?;
         let timestamp = reader.read_u128()?;
         let nonce = reader.read_u64()?;
@@ -210,7 +210,7 @@ impl Serializer for Block {
 
         let miner = PublicKey::read(reader)?;
         Ok(
-            Block {
+            BlockHeader {
                 extra_nonce,
                 height,
                 timestamp,
@@ -223,13 +223,13 @@ impl Serializer for Block {
     }
 }
 
-impl Hashable for Block {
+impl Hashable for BlockHeader {
     fn hash(&self) -> Hash {
         hash(&self.get_block_work())
     }
 }
 
-impl Serializer for CompleteBlock {
+impl Serializer for Block {
     fn write(&self, writer: &mut Writer) {
         self.block.write(writer);
         for tx in &self.transactions {
@@ -237,26 +237,26 @@ impl Serializer for CompleteBlock {
         }
     }
 
-    fn read(reader: &mut Reader) -> Result<CompleteBlock, ReaderError> {
-        let block = Block::read(reader)?;
+    fn read(reader: &mut Reader) -> Result<Block, ReaderError> {
+        let block = BlockHeader::read(reader)?;
         let mut txs: Vec<Immutable<Transaction>> = Vec::new();
         for _ in 0..block.get_txs_count() {
             let tx = Transaction::read(reader)?;
             txs.push(Immutable::Owned(tx));     
         }
 
-        Ok(CompleteBlock::new(Immutable::Owned(block), txs))
+        Ok(Block::new(Immutable::Owned(block), txs))
     }
 }
 
-impl Hashable for CompleteBlock {
+impl Hashable for Block {
     fn hash(&self) -> Hash {
         self.block.hash()
     }
 }
 
-impl Deref for CompleteBlock {
-    type Target = Block;
+impl Deref for Block {
+    type Target = BlockHeader;
 
     fn deref(&self) -> &Self::Target {
         &self.get_header()        
@@ -267,6 +267,16 @@ use std::fmt::{Error, Display, Formatter};
 use std::ops::Deref;
 use std::sync::Arc;
 
+impl Display for BlockHeader {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        let mut tips = Vec::with_capacity(self.tips.len());
+        for hash in &self.tips {
+            tips.push(format!("{}", hash));
+        }
+        write!(f, "BlockHeader[height: {}, tips: [{}], timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.height, tips.join(", "), self.timestamp, self.nonce, hex::encode(self.extra_nonce), self.txs_hashes.len())
+    }
+}
+
 impl Display for Block {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         let mut tips = Vec::with_capacity(self.tips.len());
@@ -274,11 +284,5 @@ impl Display for Block {
             tips.push(format!("{}", hash));
         }
         write!(f, "Block[height: {}, tips: [{}], timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.height, tips.join(", "), self.timestamp, self.nonce, hex::encode(self.extra_nonce), self.txs_hashes.len())
-    }
-}
-
-impl Display for CompleteBlock {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "{}", self.block.get_inner())
     }
 }
