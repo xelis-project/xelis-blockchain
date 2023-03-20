@@ -412,7 +412,7 @@ impl Blockchain {
         
         // check that we have at least one value
         if bases.is_empty() {
-            error!("bases list is emppty");
+            error!("bases list is empty");
             return Err(BlockchainError::ExpectedTips)
         }
 
@@ -940,6 +940,8 @@ impl Blockchain {
 
                         // if its the case, we should reject the block
                         if let Some(txs) = all_parents_txs.as_ref() {
+                            // miner knows this tx was already executed because its present in block tips
+                            // reject the whole block
                             if txs.contains(&tx_hash) {
                                 error!("Malicious Block {} formed, contains a dead tx {}", block_hash, tx_hash);
                                 return Err(BlockchainError::DeadTx(tx_hash))
@@ -951,6 +953,8 @@ impl Blockchain {
                                 total_tx_size += tx.size();
                                 // add tx hash in cache
                                 cache_tx.insert(tx_hash, true);
+                                // because TX was already validated & executed and is not in block tips
+                                // we can safely skip the verification of this TX
                                 continue;
                             }
                         } else {
@@ -1073,11 +1077,6 @@ impl Blockchain {
                     for tx_hash in block.get_txs_hashes() {
                         debug!("Removing execution of {}", tx_hash);
                         storage.remove_tx_executed(&tx_hash)?;
-                    }
-
-                    if hash_at_topo == base_hash {
-                        debug!("Reached base hash {}, stopping cleaning", base_hash);
-                        break;
                     }
 
                     topoheight += 1;
