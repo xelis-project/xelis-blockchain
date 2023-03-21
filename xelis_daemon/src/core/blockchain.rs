@@ -12,7 +12,7 @@ use xelis_common::{
 };
 use crate::{p2p::P2pServer, rpc::rpc::{get_block_response_for_hash, get_block_type_for_block}};
 use crate::rpc::RpcServer;
-use crate::storage::Storage;
+use super::storage::{Storage, DifficultyProvider};
 use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::Duration, borrow::Cow};
 use std::collections::{HashMap, HashSet};
 use async_recursion::async_recursion;
@@ -129,7 +129,7 @@ impl Blockchain {
                 tips.push(hash);
             }
     
-            let difficulty = blockchain.get_difficulty_at_tips(&storage, &tips).await?;
+            let difficulty = blockchain.get_difficulty_at_tips(&*storage, &tips).await?;
             blockchain.difficulty.store(difficulty, Ordering::SeqCst);
         }
 
@@ -251,7 +251,7 @@ impl Blockchain {
         let (mut header, difficulty) = {
             let storage = self.storage.read().await;
             let block = self.get_block_template_for_storage(&storage, key.clone()).await?;
-            let difficulty = self.get_difficulty_at_tips(&storage, &block.get_tips()).await?;
+            let difficulty = self.get_difficulty_at_tips(&*storage, &block.get_tips()).await?;
             (block, difficulty)
         };
         let mut hash = header.hash();
@@ -316,7 +316,7 @@ impl Blockchain {
     }
 
     async fn is_block_sync_at_height(&self, storage: &Storage, hash: &Hash, height: u64) -> Result<bool, BlockchainError> {
-        let block_height = storage.get_height_for_block(hash).await?;
+        let block_height = storage.get_height_for_block_hash(hash).await?;
         if block_height == 0 { // genesis block is a sync block
             return Ok(true)
         }
@@ -376,7 +376,7 @@ impl Blockchain {
         let mut bases = Vec::with_capacity(tips_count);
         for hash in tips.iter() {
             if self.is_block_sync_at_height(storage, hash, height).await? {
-                let block_height = storage.get_height_for_block(hash).await?;
+                let block_height = storage.get_height_for_block_hash(hash).await?;
                 return Ok((hash.clone(), block_height))
             }
             bases.push(self.find_tip_base(storage, hash, height).await?);
@@ -394,18 +394,18 @@ impl Blockchain {
     }
 
     // find the common base (block hash and block height) of all tips
-    async fn find_common_base(&self, storage: &Storage, tips: &HashSet<Hash>) -> Result<(Hash, u64), BlockchainError> {
+    async fn find_common_base<'a, I: IntoIterator<Item = &'a Hash> + Copy>(&self, storage: &Storage, tips: I) -> Result<(Hash, u64), BlockchainError> {
         let mut best_height = 0;
         // first, we check the best (highest) height of all tips
-        for hash in tips {
-            let height = storage.get_height_for_block(hash).await?;
+        for hash in tips.into_iter() {
+            let height = storage.get_height_for_block_hash(hash).await?;
             if height > best_height {
                 best_height = height;
             }
         }
 
-        let mut bases = Vec::with_capacity(tips.len());
-        for hash in tips {
+        let mut bases = Vec::new();
+        for hash in tips.into_iter() {
             bases.push(self.find_tip_base(storage, hash, best_height).await?);
         }
 
@@ -474,7 +474,7 @@ impl Blockchain {
         let tips = storage.get_past_blocks_of(hash).await?;
         for hash in tips.iter() {
             if storage.is_block_topological_ordered(hash).await {
-                set.insert(storage.get_height_for_block(hash).await?);
+                set.insert(storage.get_height_for_block_hash(hash).await?);
             } else {
                 self.calculate_distance_from_mainchain_recursive(storage, set, hash).await?;
             }
@@ -484,7 +484,7 @@ impl Blockchain {
 
     async fn calculate_distance_from_mainchain(&self, storage: &Storage, hash: &Hash) -> Result<u64, BlockchainError> {
         if storage.is_block_topological_ordered(hash).await {
-            let height = storage.get_height_for_block(hash).await?;
+            let height = storage.get_height_for_block_hash(hash).await?;
             debug!("calculate_distance: Block {} is at height {}", hash, height);
             return Ok(height)
         }
@@ -615,23 +615,23 @@ impl Blockchain {
         Ok(best_difficulty * 91 / 100 < block_difficulty)
     }
 
-    pub async fn get_difficulty_at_tips(&self, storage: &Storage, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
+    pub async fn get_difficulty_at_tips<D: DifficultyProvider>(&self, provider: &D, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
         if tips.len() == 0 { // Genesis difficulty
             return Ok(GENESIS_BLOCK_DIFFICULTY)
         }
 
-        let height = blockdag::calculate_height_at_tips(storage, tips).await?;
+        let height = blockdag::calculate_height_at_tips(provider, tips).await?;
         if height < 3 {
             return Ok(MINIMUM_DIFFICULTY)
         }
 
-        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, tips).await?;
-        let biggest_difficulty = storage.get_difficulty_for_block(best_tip)?;
-        let best_tip_timestamp = storage.get_timestamp_for_block(best_tip).await?;
+        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, tips).await?;
+        let biggest_difficulty = provider.get_difficulty_for_block(best_tip).await?;
+        let best_tip_timestamp = provider.get_timestamp_for_block(best_tip).await?;
 
-        let parent_tips = storage.get_past_blocks_of(best_tip).await?;
-        let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &parent_tips).await?;
-        let parent_best_tip_timestamp = storage.get_block_header_by_hash(parent_best_tip).await?.get_timestamp();
+        let parent_tips = provider.get_past_blocks_of(best_tip).await?;
+        let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, &parent_tips).await?;
+        let parent_best_tip_timestamp = provider.get_timestamp_for_block(parent_best_tip).await?;
  
         let difficulty = calculate_difficulty(parent_best_tip_timestamp, best_tip_timestamp, biggest_difficulty);
         Ok(difficulty)
@@ -644,8 +644,8 @@ impl Blockchain {
     // pass in params the already computed block hash and its tips
     // check the difficulty calculated at tips
     // if the difficulty is valid, returns it (prevent to re-compute it)
-    async fn verify_proof_of_work(&self, storage: &Storage, hash: &Hash, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
-        let difficulty = self.get_difficulty_at_tips(storage, tips).await?;
+    pub async fn verify_proof_of_work<D: DifficultyProvider>(&self, provider: &D, hash: &Hash, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
+        let difficulty = self.get_difficulty_at_tips(provider, tips).await?;
         if self.simulator || check_difficulty(hash, difficulty)? {
             Ok(difficulty)
         } else {
@@ -875,7 +875,7 @@ impl Blockchain {
         }
 
         if tips_count > 1 {
-            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&storage, block.get_tips()).await?;
+            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, block.get_tips()).await?;
             debug!("Best tip selected for this new block is {}", best_tip);
             for hash in block.get_tips() {
                 if best_tip != hash {
@@ -888,7 +888,7 @@ impl Blockchain {
         }
 
         // verify PoW and get difficulty for this block based on tips
-        let difficulty = self.verify_proof_of_work(&storage, &block_hash, block.get_tips()).await?;
+        let difficulty = self.verify_proof_of_work(&*storage, &block_hash, block.get_tips()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
         let mut total_tx_size: usize = 0;
@@ -924,7 +924,7 @@ impl Blockchain {
                 if storage.has_tx_executed_in_block(hash)? {
                     let block_executed = storage.get_tx_executed_in_block(hash)?;
                     debug!("Tx {} was executed in {}", hash, block);
-                    let block_height = storage.get_height_for_block(&block_executed).await?;
+                    let block_height = storage.get_height_for_block_hash(&block_executed).await?;
                     // if the tx was executed below stable height, reject whole block!
                     if block_height <= stable_height {
                         error!("Block {} contains a dead tx {}", block_hash, tx_hash);
@@ -992,15 +992,11 @@ impl Blockchain {
         storage.add_new_block(block.clone(), &txs, difficulty, block_hash.clone()).await?;
 
         // Compute cumulative difficulty for block
-        let cumulative_difficulty = { // TODO Refactor: stop cloning hash
+        let cumulative_difficulty = {
             let cumulative_difficulty: u64 = if tips_count == 0 {
                 GENESIS_BLOCK_DIFFICULTY
             } else {
-                let mut tips = HashSet::with_capacity(block.get_tips().len());
-                for hash in block.get_tips() {
-                    tips.insert(hash.clone());
-                }
-                let (base, base_height) = self.find_common_base(storage, &tips).await?;
+                let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
                 let (_, cumulative_difficulty) = self.find_tip_work_score(&storage, &block_hash, &base, base_height).await?;
                 cumulative_difficulty
             };
@@ -1174,7 +1170,7 @@ impl Blockchain {
 
         }
 
-        let best_height = storage.get_height_for_block(best_tip).await?;
+        let best_height = storage.get_height_for_block_hash(best_tip).await?;
         let mut new_tips = Vec::new();
         for hash in tips {
             let tip_base_distance = self.calculate_distance_from_mainchain(storage, &hash).await?;
@@ -1190,7 +1186,7 @@ impl Blockchain {
 
         tips = HashSet::new();
         debug!("find best tip by cumulative difficulty");
-        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&storage, &new_tips).await?.clone();
+        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, &new_tips).await?.clone();
         for hash in new_tips {
             if best_tip != hash {
                 if !self.validate_tips(&storage, &best_tip, &hash).await? {
@@ -1239,7 +1235,7 @@ impl Blockchain {
             for hash in tips {
                 tips_vec.push(hash);
             }
-            let difficulty = self.get_difficulty_at_tips(&storage, &tips_vec).await?;
+            let difficulty = self.get_difficulty_at_tips(&*storage, &tips_vec).await?;
             self.difficulty.store(difficulty, Ordering::SeqCst);
         }
 
@@ -1345,13 +1341,13 @@ impl Blockchain {
             return Ok(false)
         }
 
-        let height = storage.get_height_for_block(hash).await?;
+        let height = storage.get_height_for_block_hash(hash).await?;
 
         let mut counter = 0;
         let mut i = topoheight - 1;
         while counter < STABLE_LIMIT && i > 0 {
             let hash = storage.get_hash_at_topo_height(i).await?;
-            let previous_height = storage.get_height_for_block(&hash).await?;
+            let previous_height = storage.get_height_for_block_hash(&hash).await?;
             
             if height <= previous_height {
                 return Ok(true)

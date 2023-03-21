@@ -1,4 +1,4 @@
-use crate::{storage::Storage, core::{blockchain::Blockchain, error::BlockchainError}};
+use crate::core::{blockchain::Blockchain, error::BlockchainError, storage::Storage};
 use super::{RpcError, RpcServer};
 use anyhow::Context;
 use serde::de::DeserializeOwned;
@@ -189,7 +189,7 @@ async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<
 
     let storage = blockchain.get_storage().read().await;
     let block = blockchain.get_block_template_for_storage(&storage, params.address.into_owned().to_public_key()).await?;
-    let difficulty = blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await?;
+    let difficulty = blockchain.get_difficulty_at_tips(&*storage, block.get_tips()).await?;
     Ok(json!(GetBlockTemplateResult { template: block.to_hex(), difficulty }))
 }
 

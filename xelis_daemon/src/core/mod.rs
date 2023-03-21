@@ -4,3 +4,4 @@ pub mod error;
 pub mod message;
 pub mod xpool;
 pub mod blockdag;
+pub mod storage;

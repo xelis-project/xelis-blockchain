@@ -159,7 +159,7 @@ impl GetWorkServer {
                     return;
                 }
             };
-            let difficulty = match self.blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await {
+            let difficulty = match self.blockchain.get_difficulty_at_tips(&*storage, block.get_tips()).await {
                 Ok(difficulty) => difficulty,
                 Err(e) => {
                     error!("Error while calculating difficulty at tips for block template: {}", e);
@@ -245,7 +245,7 @@ impl GetWorkServer {
         let (mut block, difficulty) = {
             let storage = self.blockchain.get_storage().read().await;
             let block = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await?;
-            let difficulty = self.blockchain.get_difficulty_at_tips(&storage, block.get_tips()).await?;
+            let difficulty = self.blockchain.get_difficulty_at_tips(&*storage, block.get_tips()).await?;
             (block, difficulty)
         };
         let miners = self.miners.lock().await;

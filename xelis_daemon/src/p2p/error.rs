@@ -65,6 +65,8 @@ pub enum P2pError {
     ObjectRequestError(#[from] RecvError),
     #[error("Expected a block type")]
     ExpectedBlock,
+    #[error("Expected a transaction type")]
+    ExpectedTransaction,
     #[error("Peer sent us a peerlist faster than protocol rules")]
     PeerInvalidPeerListCountdown,
     #[error("Peer sent us a ping packet faster than protocol rules")]
@@ -72,7 +74,7 @@ pub enum P2pError {
     #[error(transparent)]
     BlockchainError(#[from] Box<BlockchainError>),
     #[error("Invalid content in peerlist file")]
-    InvalidPeerlist,
+    InvalidPeerlist
 }
 
 impl From<BlockchainError> for P2pError {

@@ -3,16 +3,17 @@ pub mod peer;
 pub mod error;
 pub mod packet;
 pub mod peer_list;
+pub mod chain_validator;
 
 use serde_json::Value;
 use xelis_common::{
     config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH},
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
-    block::BlockHeader,
-    globals::get_current_time
+    block::{BlockHeader, Block},
+    globals::get_current_time, immutable::Immutable
 };
-use crate::core::blockchain::Blockchain;
+use crate::{core::blockchain::Blockchain, p2p::chain_validator::ChainValidator};
 use crate::core::error::BlockchainError;
 use crate::p2p::connection::ConnectionMessage;
 use crate::p2p::packet::chain::CommonPoint;
@@ -831,9 +832,9 @@ impl P2pServer {
 
                 if let Some(common_point) = response.get_common_point() {
                     debug!("{} found a common point with block {} at {} for sync, received {} blocks", peer, common_point.get_hash(), common_point.get_topoheight(), response.size());
-                    let (pop_count, block_height) = {
+                    let pop_count = {
                         let storage = self.blockchain.get_storage().read().await;
-                        let block_height = match storage.get_height_for_block(common_point.get_hash()).await {
+                        let block_height = match storage.get_height_for_block_hash(common_point.get_hash()).await {
                             Ok(height) => height,
                             Err(e) => {
                                 warn!("{} sent us an invalid common point: {}", peer, e);
@@ -845,7 +846,7 @@ impl P2pServer {
                             error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, block_height, common_point.get_topoheight());
                             return Err(P2pError::InvalidPacket)
                         }
-                        (self.blockchain.get_height() - block_height, block_height)
+                        self.blockchain.get_height() - block_height
                     };
 
                     let peer = Arc::clone(peer);
@@ -854,7 +855,7 @@ impl P2pServer {
                     // start a new task to wait on all requested blocks
                     tokio::spawn(async move {
                         zelf.set_syncing(true);
-                        if let Err(e) = zelf.handle_chain_response(&peer, response, pop_count, block_height).await {
+                        if let Err(e) = zelf.handle_chain_response(&peer, response, pop_count).await {
                             error!("Error while handling chain response from {}: {}", peer, e);
                             peer.increment_fail_count();
                         }
@@ -995,7 +996,7 @@ impl P2pServer {
                         trace!("looking for hash at topoheight {}", topoheight);
                         let hash = storage.get_hash_at_topo_height(topoheight).await?;
                         if should_search_alt_tips && potential_unstable_height.is_none() {
-                            let height = storage.get_height_for_block(&hash).await?;
+                            let height = storage.get_height_for_block_hash(&hash).await?;
                             if height >= stable_height {
                                 debug!("Found unstable height at {}", height);
                                 potential_unstable_height = Some(height);
@@ -1033,7 +1034,7 @@ impl P2pServer {
         Ok(())
     }
 
-    async fn handle_chain_response(self: &Arc<Self>, peer: &Arc<Peer>, response: ChainResponse, pop_count: u64, common_height: u64) -> Result<(), BlockchainError> {
+    async fn handle_chain_response(self: &Arc<Self>, peer: &Arc<Peer>, response: ChainResponse, pop_count: u64) -> Result<(), BlockchainError> {
         let (mut blocks, top_blocks) = response.consume();
         debug!("handling chain response from {}, {} blocks, {} top blocks, pop count {}", peer, blocks.len(), top_blocks.len(), pop_count);
 
@@ -1046,25 +1047,52 @@ impl P2pServer {
         // if node asks us to pop blocks, check that the difference with peer's height is above STABLE_LIMIT
         // then, verify if it's a priority node, otherwise, check if we are connected to a priority node so only him can rewind us
         if pop_count > 0 && peer.get_height() - self.blockchain.get_height() > STABLE_LIMIT && (peer.is_priority() || !self.is_connected_to_a_synced_priority_node().await) {
-            // request all blocks header and verify basic chain structure
-            for hash in blocks {
-                let response = peer.request_blocking_object(ObjectRequest::BlockHeader(hash)).await?;
-                if let OwnedObjectResponse::BlockHeader(header, hash) = response {
-                    trace!("Received {} with hash {}", header, hash);
-                } else {
-                    error!("{} sent us an invalid object response", peer);
-                    return Err(P2pError::ExpectedBlock.into())
+            // check that if we can trust him
+            if peer.is_priority() {
+                warn!("Rewinding chain without checking because {} is a priority node (pop count: {})", peer, pop_count);
+                self.blockchain.rewind_chain(pop_count as usize).await?;
+            } else {
+                // request all blocks header and verify basic chain structure
+                let mut chain_validator = ChainValidator::new();
+                for hash in blocks {
+                    trace!("Request block header for chain validator: {}", hash);
+                    let response = peer.request_blocking_object(ObjectRequest::BlockHeader(hash)).await?;
+                    if let OwnedObjectResponse::BlockHeader(header, hash) = response {
+                        trace!("Received {} with hash {}", header, hash);
+                        chain_validator.insert_block(&self.blockchain, hash, header).await?;
+                    } else {
+                        error!("{} sent us an invalid object response", peer);
+                        return Err(P2pError::ExpectedBlock.into())
+                    }
+                }
+                // peer chain looks correct, lets rewind our chain
+                warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
+                self.blockchain.rewind_chain(pop_count as usize).await?;
+
+                // now retrieve all txs from all blocks header and add block in chain
+                for hash in chain_validator.get_order() {
+                    let header = chain_validator.consume_block_header(&hash)?;
+                    // we don't already have this block, lets retrieve its txs and add in our chain
+                    if !self.blockchain.has_block(&hash).await? {
+                        let mut transactions = Vec::new(); // don't pre allocate
+                        for tx_hash in header.get_txs_hashes() {
+                            let response = peer.request_blocking_object(ObjectRequest::Transaction(Hash::max())).await?;
+                            if let OwnedObjectResponse::Transaction(tx, _) = response {
+                                trace!("Received transaction {} at block {} from {}", tx_hash, hash, peer);
+                                transactions.push(Immutable::Owned(tx));
+                            } else {
+                                error!("{} sent us an invalid block response", peer);
+                                return Err(P2pError::ExpectedTransaction.into())
+                            }
+                        }
+    
+                        let block = Block::new(Immutable::Arc(header), transactions);
+                        self.blockchain.add_new_block(block, false).await?; // don't broadcast block because it's syncing
+                    }
                 }
             }
 
-            warn!("Rewinding chain because of {} (priority: {}, pop count: {})", peer, peer.is_priority(), pop_count);
-            match self.blockchain.rewind_chain(pop_count as usize).await {
-                Ok(topoheight) => debug!("Chain has been rewinded to topoheight {}", topoheight),
-                Err(e) => {
-                    error!("Error on rewind chain with pop count at {}, error: {}", pop_count, e);
-                    return Ok(())
-                }
-            };
+
         } else {
             // no rewind are needed, process normally
             // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
