@@ -1457,6 +1457,12 @@ impl Blockchain {
         }
         self.height.store(height, Ordering::Release);
         self.topoheight.store(topoheight, Ordering::Release);
+        // update stable height
+        {
+            let tips = storage.get_tips().await?;
+            let (_, height) = self.find_common_base(&storage, &tips).await?;
+            self.stable_height.store(height, Ordering::Release);
+        }
 
         Ok(topoheight)
     }
