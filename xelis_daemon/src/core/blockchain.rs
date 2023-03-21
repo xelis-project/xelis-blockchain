@@ -1126,9 +1126,21 @@ impl Blockchain {
                         debug!("Block {} is now linked to tx {}", hash, tx_hash);
                     }
 
+                    // check that the tx was not yet executed in another tip branch
                     if storage.has_tx_executed_in_block(tx_hash)? {
                         debug!("Tx {} was already executed in a previous block, skipping...", tx_hash);
                     } else {
+                        // tx was not executed, but lets check that it is not a potential double spending
+                        // check that the nonce is not lower than the one already executed
+                        // nonce here is tx nonce of previous execution + 1
+                        if let Some(nonce) = nonces.get(tx.get_owner()) {
+                            if tx.get_nonce() < *nonce {
+                                warn!("Tx {} is a potential double spending, skipping...", tx_hash);
+                                // TX will be orphaned
+                                continue;
+                            }
+                        }
+                        // mark tx as executed
                         debug!("Executing tx {} in block {}", tx_hash, hash);
                         storage.set_tx_executed_in_block(tx_hash, &hash)?;
 
@@ -1148,6 +1160,12 @@ impl Blockchain {
 
                 // reward the miner
                 self.reward_miner(storage, &block, block_reward, total_fees, &mut balances, highest_topo).await?;
+
+                // save nonces for each pubkey
+                for (key, nonce) in &nonces {
+                    trace!("Saving nonce {} for {}", nonce, key);
+                    storage.set_nonce(key, *nonce).await?;
+                }
 
                 // save balances for each topoheight
                 for (key, assets) in balances {
@@ -1638,7 +1656,6 @@ impl Blockchain {
 
         // no need to read from disk, transaction nonce has been verified already
         let nonce = transaction.get_nonce() + 1;
-        storage.set_nonce(transaction.get_owner(), nonce).await?;
         nonces.insert(transaction.get_owner().clone(), nonce);
 
         Ok(())

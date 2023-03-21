@@ -70,6 +70,9 @@ The same TX can be contained in multiple blocks only if:
 - TX is not executed in stable height
 - TX is not included in block Tips (previous blocks)
 
+Also, for more security, user account should only do TXs on the same chain/tip to prevent any orphaned TX.
+An orphaned TX can happens when two differents TXs (but same owner) with the same nonce are sent in two differents branchs. 
+
 During the generation of the DAG order (linking unique topoheight to a block hash), the first block being ordered will execute the TX first.
 
 This feature allows to accept others branch tips even if transactions are the same and prevent more orphans blocks when branches are merged.
@@ -92,6 +95,9 @@ At this moment, transactions are public and have the following data.
 | signature |    Signature    |          Valid signature to prove that the owner validated this TX         |
 
 Transactions support any registered asset natively.
+
+To prevent any replay attack or double spending, each TX should include a nonce that match the account balance.
+After each TX, the nonce is incremented by 1.
 
 ## P2p
 
