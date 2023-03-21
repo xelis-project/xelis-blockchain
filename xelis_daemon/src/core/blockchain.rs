@@ -1656,7 +1656,15 @@ impl Blockchain {
 
         // no need to read from disk, transaction nonce has been verified already
         let nonce = transaction.get_nonce() + 1;
-        nonces.insert(transaction.get_owner().clone(), nonce);
+        if let Some(stored_nonce) = nonces.get_mut(transaction.get_owner()) {
+            // only put the new nonce if it's higher than the current one
+            // in case of "lost race" side blocks (block which are higher in topoheight and less in height)
+            if *stored_nonce < nonce {
+                *stored_nonce = nonce;
+            }
+        } else {
+            nonces.insert(transaction.get_owner().clone(), nonce);
+        }
 
         Ok(())
     }
