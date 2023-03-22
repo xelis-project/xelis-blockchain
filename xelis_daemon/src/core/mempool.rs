@@ -91,6 +91,10 @@ impl Mempool {
         self.txs_sorted.len()
     }
 
+    pub fn clear(&mut self) {
+        self.txs.clear();
+        self.txs_sorted.clear();
+    }
     // delete all old txs not compatible anymore with current state of account
     pub async fn clean_up(&mut self, storage: &Storage, nonces: HashMap<PublicKey, u64>) {
         let txs_sorted = std::mem::replace(&mut self.txs_sorted, vec!());

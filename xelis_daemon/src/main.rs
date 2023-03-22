@@ -65,6 +65,7 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>, network: 
     command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], None, CommandHandler::Async(async_handler!(print_block))));
     command_manager.add_command(Command::new("top_block", "Print top block", None, CommandHandler::Async(async_handler!(top_block))));
     command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(pop_blocks))));
+    command_manager.add_command(Command::new("clear_mempool", "Clear all transactions in mempool", None, CommandHandler::Async(async_handler!(clear_mempool))));
 
     let p2p: Option<Arc<P2pServer>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
@@ -244,6 +245,16 @@ async fn pop_blocks(manager: &CommandManager<Arc<Blockchain>>, mut arguments: Ar
     info!("Trying to pop {} blocks from chain...", amount);
     let topoheight = blockchain.rewind_chain(amount as usize).await.context("Error while rewinding chain")?;
     info!("Chain as been rewinded until topoheight {}", topoheight);
+
+    Ok(())
+}
+
+async fn clear_mempool(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain = manager.get_data()?;
+    info!("Clearing mempool...");
+    let mut mempool = blockchain.get_mempool().write().await;
+    mempool.clear();
+    info!("Mempool cleared");
 
     Ok(())
 }

@@ -689,13 +689,19 @@ impl Blockchain {
             // get the highest nonce for this owner
             let owner = tx.get_owner();
             let mut nonces = HashMap::new();
-            for (_, tx) in mempool.get_txs() {
+            let mut balances = HashMap::new();
+            
+            // list of potential TXs from same owner
+            let mut owner_txs = Vec::new();
+            let mempool_txs = mempool.get_txs();
+            for (hash, tx) in mempool_txs {
                 if tx.get_owner() == owner {
                     let nonce = nonces.entry(tx.get_owner()).or_insert(0);
                     // if the tx is in mempool, then the nonce should be valid.
                     if *nonce < tx.get_nonce() {
                         *nonce = tx.get_nonce();
                     }
+                    owner_txs.push((hash, tx));
                 }
             }
 
@@ -704,11 +710,17 @@ impl Blockchain {
             if let Some(nonce) = nonces.get_mut(owner) {
                 if *nonce + 1 == tx.get_nonce() {
                     *nonce += 1;
+                    // compute balances of previous pending TXs
+                    for (hash, tx) in owner_txs {
+                        if tx.get_owner() == owner {
+                            // we also need to pre-compute the balance of the owner
+                            self.verify_transaction_with_hash(storage, tx, &hash, &mut balances, None, true).await?;
+                        }
+                    }
                 }
             }
 
-            let mut balances = HashMap::new();
-            self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, Some(&mut nonces)).await?
+            self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, Some(&mut nonces), false).await?
         }
 
         if broadcast {
@@ -716,6 +728,7 @@ impl Blockchain {
                 p2p.broadcast_tx_hash(&hash).await;
             }
         }
+
         let tx = Arc::new(tx);
         mempool.add_tx(hash.clone(), tx.clone())?;
 
@@ -965,7 +978,7 @@ impl Blockchain {
                     }
                 }
 
-                self.verify_transaction_with_hash(storage, tx, &tx_hash, &mut balances, Some(&mut cache_account)).await?;
+                self.verify_transaction_with_hash(storage, tx, &tx_hash, &mut balances, Some(&mut cache_account), false).await?;
 
                 // increase the total size
                 total_tx_size += tx.size();
@@ -1488,12 +1501,19 @@ impl Blockchain {
     // verify the transaction and returns fees available
     // nonces allow us to support multiples tx from same owner in the same block
     // txs must be sorted in ascending order based on account nonce 
-    async fn verify_transaction_with_hash<'a>(&self, storage: &Storage, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>) -> Result<(), BlockchainError> {
+    async fn verify_transaction_with_hash<'a>(&self, storage: &Storage, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool) -> Result<(), BlockchainError> {
         trace!("Verify transaction with hash {}", hash);
-        let total_deducted: &mut HashMap<&'a Hash, u64> = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
+        let owner_balances: &mut HashMap<&'a Hash, u64> = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
         {
-            let balance = total_deducted.entry(&XELIS_ASSET).or_insert(0);
-            if let Some(value) = balance.checked_add(tx.get_fee()) {
+            let balance = match owner_balances.entry(&XELIS_ASSET) {
+                Entry::Vacant(entry) => {
+                    let (_, balance) = storage.get_last_balance(tx.get_owner(), &XELIS_ASSET).await?;
+                    entry.insert(balance.get_balance())
+                },
+                Entry::Occupied(entry) => entry.into_mut(),
+            };
+
+            if let Some(value) = balance.checked_sub(tx.get_fee()) {
                 *balance = value;
             } else {
                 warn!("Overflow detected using fees in transaction {}", hash);
@@ -1517,8 +1537,14 @@ impl Blockchain {
                         extra_data_size += data.len();
                     }
 
-                    let balance = total_deducted.entry(&output.asset).or_insert(0);
-                    if let Some(value) = balance.checked_add(output.amount) {
+                    let balance = match owner_balances.entry(&output.asset) {
+                        Entry::Vacant(entry) => {
+                            let (_, balance) = storage.get_last_balance(tx.get_owner(), &XELIS_ASSET).await?;
+                            entry.insert(balance.get_balance())
+                        },
+                        Entry::Occupied(entry) => entry.into_mut(),
+                    };
+                    if let Some(value) = balance.checked_sub(output.amount) {
                         *balance = value;
                     } else {
                         warn!("Overflow detected with transaction {}", hash);
@@ -1536,8 +1562,14 @@ impl Blockchain {
                     return Err(BlockchainError::NoValueForBurn)
                 }
 
-                let balance = total_deducted.entry(asset).or_insert(0);
-                if let Some(value) = balance.checked_add(*amount) {
+                let balance = match owner_balances.entry(asset) {
+                    Entry::Vacant(entry) => {
+                        let (_, balance) = storage.get_last_balance(tx.get_owner(), asset).await?;
+                        entry.insert(balance.get_balance())
+                    },
+                    Entry::Occupied(entry) => entry.into_mut(),
+                };
+                if let Some(value) = balance.checked_sub(*amount) {
                     *balance = value;
                 } else {
                     warn!("Overflow detected with transaction {}", hash);
@@ -1550,33 +1582,33 @@ impl Blockchain {
             }
         };
 
-         // verify that the user have enough funds for each assets spent
-        for (asset, amount) in total_deducted.iter() {
-            let (_, version) = storage.get_last_balance(tx.get_owner(), asset).await?;
-            if version.get_balance() < *amount {
-                return Err(BlockchainError::NotEnoughFunds(tx.get_owner().clone(), (*asset).clone(), *amount, version.get_balance()))
-            }
-        }
-
-        // nonces can be already pre-computed to support multi nonces at the same time in block/mempool
-        if let Some(nonces) = nonces {
-            let nonce = if !nonces.contains_key(tx.get_owner()) && storage.has_nonce(tx.get_owner()).await? {
-                storage.get_nonce(tx.get_owner()).await?
+        if !skip_nonces {
+            // nonces can be already pre-computed to support multi nonces at the same time in block/mempool
+            if let Some(nonces) = nonces {
+                // check that we don't have nonce from cache and that it exists in storage, otherwise set 0
+                let nonce = match nonces.entry(tx.get_owner()) {
+                    Entry::Vacant(entry) => {
+                        let nonce = if storage.has_nonce(tx.get_owner()).await? {
+                            storage.get_nonce(tx.get_owner()).await?
+                        } else {
+                            0
+                        };
+                        entry.insert(nonce)
+                    },
+                    Entry::Occupied(entry) => entry.into_mut(),
+                };
+    
+                if *nonce != tx.get_nonce() {
+                    debug!("Tx {} has nonce {} but expected {}", hash, tx.get_nonce(), nonce);
+                    return Err(BlockchainError::InvalidTxNonce)
+                }
+                // we increment it in case any new tx for same owner is following
+                *nonce += 1;
             } else {
-                0
-            };
-
-            let nonce = nonces.entry(tx.get_owner()).or_insert(nonce);
-            if *nonce != tx.get_nonce() {
-                debug!("Tx {} has nonce {} but expected {}", hash, tx.get_nonce(), nonce);
-                return Err(BlockchainError::InvalidTxNonce)
-            }
-            // we increment it in case any new tx for same owner is following
-            *nonce += 1;
-        } else {
-            let nonce = storage.get_nonce(tx.get_owner()).await?;
-            if nonce != tx.get_nonce() {
-                return Err(BlockchainError::InvalidTxNonce)
+                let nonce = storage.get_nonce(tx.get_owner()).await?;
+                if nonce != tx.get_nonce() {
+                    return Err(BlockchainError::InvalidTxNonce)
+                }
             }
         }
 
