@@ -181,7 +181,7 @@ impl GetWorkServer {
                 job = BlockMiner::from_header(&header);
                 height = header.height;
                 *hash = Some(job.header_work_hash.clone());
-                    mining_jobs.put(job.header_work_hash.clone(), (header, difficulty));
+                mining_jobs.put(job.header_work_hash.clone(), (header, difficulty));
             }
 
             (job, height, difficulty)
@@ -306,6 +306,8 @@ impl GetWorkServer {
 
         // save the header used for job in cache
         {
+            let mut last_header_hash = self.last_header_hash.lock().await;
+            *last_header_hash = Some(job.header_work_hash.clone());
             let mut mining_jobs = self.mining_jobs.lock().await;
             mining_jobs.put(job.header_work_hash.clone(), (header, difficulty));
         }
