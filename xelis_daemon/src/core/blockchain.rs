@@ -1368,18 +1368,20 @@ impl Blockchain {
         }
 
         let topoheight = storage.get_topo_height_for_hash(hash).await?;
+        // genesis block can't be a side block
         if topoheight == 0 {
             return Ok(false)
         }
 
         let height = storage.get_height_for_block_hash(hash).await?;
 
+        // verify if there is a block with height higher than this block in past 8 topo blocks
         let mut counter = 0;
         let mut i = topoheight - 1;
         while counter < STABLE_LIMIT && i > 0 {
             let hash = storage.get_hash_at_topo_height(i).await?;
             let previous_height = storage.get_height_for_block_hash(&hash).await?;
-            
+
             if height <= previous_height {
                 return Ok(true)
             }
