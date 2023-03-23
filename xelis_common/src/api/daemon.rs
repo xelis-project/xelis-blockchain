@@ -68,8 +68,9 @@ pub struct GetBlockTemplateParams<'a> {
 
 #[derive(Serialize, Deserialize, PartialEq)]
 pub struct GetBlockTemplateResult {
-    pub template: String,
-    pub difficulty: u64
+    pub template: String, // template is BlockMiner in hex format
+    pub height: u64, // block height
+    pub difficulty: u64 // difficulty required for valid block
 }
 
 #[derive(Serialize, Deserialize)]

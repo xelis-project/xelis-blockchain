@@ -61,6 +61,17 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 - Supply is re-calculated each time the block is re-ordered because its based on topo order.
 - Transactions and miner rewards are re-computed when a new block is added and the block there linked to is not yet in stable topo height. 
 
+## Mining
+
+Mining capabilities of XELIS are a bit differents from others chains because of standards being not implemented.
+Each job send to a miner is a `BlockMiner` instance in hex format.
+It includes the header work hash which represents the immutable data from daemon.
+
+Mining jobs are send only when a new block is found or when a new TX is added in mempool.
+Miners software are recommended to update themselves the block timestamp (or at least every 500ms) for best network difficulty calculation.
+
+Actually, the POW Hashing algorithm is `Keccak256` which is until we develop (or choose) our own algorithm.
+
 ## Client Protocol
 
 XELIS integrate along with BlockDAG a way to accept multiple times the same TX and only execute it one time.

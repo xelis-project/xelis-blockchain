@@ -699,9 +699,9 @@ impl P2pServer {
             },
             Packet::BlockPropagation(packet_wrapper) => {
                 trace!("Received a block propagation packet from {}", peer);
-                let (block, ping) = packet_wrapper.consume();
+                let (header, ping) = packet_wrapper.consume();
                 ping.into_owned().update_peer(peer).await;
-                let block_height = block.get_height();
+                let block_height = header.get_height();
 
                 // check that the block height is valid
                 if block_height < self.blockchain.get_stable_height() {
@@ -709,8 +709,8 @@ impl P2pServer {
                     return Err(P2pError::InvalidProtocolRules)
                 }
 
-                let block = block.into_owned();
-                let block_hash = block.hash();
+                let header = header.into_owned();
+                let block_hash = header.hash();
 
                 {
                     let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
@@ -725,23 +725,23 @@ impl P2pServer {
                 {
                     let storage = self.blockchain.get_storage().read().await;
                     if storage.has_block(&block_hash).await? {
-                        debug!("{}: {} with hash {} is already in our chain. Skipping", peer, block, block_hash);
+                        debug!("{}: {} with hash {} is already in our chain. Skipping", peer, header, block_hash);
                         return Ok(())
                     }
                 }
-                let block_height = block.get_height();
+                let block_height = header.get_height();
                 debug!("Received block at height {} from {}", block_height, peer);
                 let zelf = Arc::clone(self);
                 let peer = Arc::clone(peer);
                 // verify that we have all txs in local or ask peer to get missing txs
                 tokio::spawn(async move {
-                    for hash in block.get_txs_hashes() {
+                    for hash in header.get_txs_hashes() {
                         let contains = { // we don't lock one time because we may wait on p2p response
                             let mempool = zelf.blockchain.get_mempool().read().await;
                             mempool.contains_tx(hash)
                         };
 
-                        if !contains { // retrieve one by one to prevent the acquiring the lock for nothing
+                        if !contains { // retrieve one by one to prevent acquiring the lock for nothing
                             debug!("Requesting TX {} to {} for block {}", hash, peer, block_hash);
                             let response = match peer.request_blocking_object(ObjectRequest::Transaction(hash.clone())).await {
                                 Ok(response) => response,
@@ -769,7 +769,7 @@ impl P2pServer {
                     }
 
                     // add immediately the block to chain as we are synced with
-                    let block = match zelf.blockchain.build_block_from_header(block).await {
+                    let block = match zelf.blockchain.build_block_from_header(Immutable::Owned(header)).await {
                         Ok(block) => block,
                         Err(e) => {
                             error!("Error while building block {} from peer {}: {}", block_hash, peer, e);

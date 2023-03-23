@@ -8,13 +8,13 @@ use serde::{Serialize, Deserialize};
 use tokio::{sync::{broadcast, mpsc, Mutex}, select, time::Instant};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use xelis_common::{
-    block::{BlockHeader, EXTRA_NONCE_SIZE},
+    block::{EXTRA_NONCE_SIZE, BlockMiner, BLOCK_WORK_SIZE},
     serializer::Serializer,
     difficulty::check_difficulty,
     config::{VERSION, DEV_ADDRESS},
-    globals::{get_current_timestamp, format_hashrate},
+    globals::{get_current_timestamp, format_hashrate, format_difficulty},
     crypto::{hash::{Hashable, Hash, hash}, address::Address},
-    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel}
+    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel},
 };
 use clap::Parser;
 use log::{error, info, debug, warn};
@@ -55,7 +55,7 @@ pub struct MinerConfig {
 
 #[derive(Clone)]
 enum ThreadNotification {
-    NewJob(BlockHeader, u64),
+    NewJob(BlockMiner, u64),
     Exit
 }
 
@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
     // broadcast channel to send new jobs / exit command to all threads
     let (sender, _) = broadcast::channel::<ThreadNotification>(threads as usize);
     // mpsc channel to send from threads to the "communication" task.
-    let (block_sender, block_receiver) = mpsc::channel::<BlockHeader>(threads as usize);
+    let (block_sender, block_receiver) = mpsc::channel::<BlockMiner>(threads as usize);
     for id in 0..threads {
         debug!("Starting thread #{}", id);
         if let Err(e) = start_thread(id, sender.subscribe(), block_sender.clone()) {
@@ -153,7 +153,7 @@ fn benchmark(threads: usize, iterations: usize) {
         for _ in 0..bench {
             let handle = thread::spawn(move || {
                 for _ in 0..iterations {
-                    let random_bytes: Vec<u8> = (0..255).map(|_| { rand::random::<u8>() }).collect();
+                    let random_bytes: Vec<u8> = (0..BLOCK_WORK_SIZE).map(|_| { rand::random::<u8>() }).collect();
                     let _ = hash(&random_bytes);
                 }
             });
@@ -173,7 +173,7 @@ fn benchmark(threads: usize, iterations: usize) {
 // It maintains a WebSocket connection with the daemon and notify all threads when it receive a new job.
 // Its also the task who have the job to send directly the new block found by one of the threads.
 // This allow mining threads to only focus on mining and receiving jobs through memory channels.
-async fn communication_task(mut daemon_address: String, job_sender: broadcast::Sender<ThreadNotification>, mut block_receiver: mpsc::Receiver<BlockHeader>, address: Address<'_>, worker: String) {
+async fn communication_task(mut daemon_address: String, job_sender: broadcast::Sender<ThreadNotification>, mut block_receiver: mpsc::Receiver<BlockMiner>, address: Address<'_>, worker: String) {
     info!("Starting communication task");
     'main: loop {
         if !daemon_address.starts_with("ws://") && !daemon_address.starts_with("wss://") {
@@ -218,7 +218,7 @@ async fn communication_task(mut daemon_address: String, job_sender: broadcast::S
                     }
                 },
                 Some(block) = block_receiver.recv() => { // send all valid blocks found to the daemon
-                    debug!("Block found: {}", block);
+                    debug!("Block header work hash found: {}", block.header_work_hash);
                     let submit = serde_json::json!(SubmitBlockParams { block_template: block.to_hex() }).to_string();
                     if let Err(e) = write.send(Message::Text(submit)).await {
                         error!("Error while sending the block found to the daemon: {}", e);
@@ -241,8 +241,8 @@ async fn handle_websocket_message(message: Result<Message, tokio_tungstenite::tu
             match serde_json::from_slice::<SocketMessage>(text.as_bytes())? {
                 SocketMessage::NewJob(job) => {
                     info!("New job received from daemon: difficulty = {}", job.difficulty);
-                    let block = BlockHeader::from_hex(job.template).context("Error while decoding new job received from daemon")?;
-                    CURRENT_HEIGHT.store(block.get_height(), Ordering::SeqCst);
+                    let block = BlockMiner::from_hex(job.template).context("Error while decoding new job received from daemon")?;
+                    CURRENT_HEIGHT.store(job.height, Ordering::SeqCst);
 
                     if let Err(e) = job_sender.send(ThreadNotification::NewJob(block, job.difficulty)) {
                         error!("Error while sending new job to threads: {}", e);
@@ -276,10 +276,10 @@ async fn handle_websocket_message(message: Result<Message, tokio_tungstenite::tu
     Ok(false)
 }
 
-fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification>, block_sender: mpsc::Sender<BlockHeader>) -> Result<(), Error> {
+fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification>, block_sender: mpsc::Sender<BlockMiner>) -> Result<(), Error> {
     let builder = thread::Builder::new().name(format!("Mining Thread #{}", id));
     builder.spawn(move || {
-        let mut block: BlockHeader;
+        let mut job: BlockMiner;
         let mut hash: Hash;
 
         info!("Mining Thread #{}: started", id);
@@ -290,14 +290,14 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                         info!("Exiting Mining Thread #{}...", id);
                         break 'main;
                     },
-                    ThreadNotification::NewJob(job, expected_difficulty) => {
+                    ThreadNotification::NewJob(new_job, expected_difficulty) => {
                         debug!("Mining Thread #{} received a new job", id);
-                        block = job;
+                        job = new_job;
                         // set thread id in extra nonce for more work spread between threads
-                        block.extra_nonce[EXTRA_NONCE_SIZE - 1] = id;
+                        job.extra_nonce[EXTRA_NONCE_SIZE - 1] = id;
 
                         // Solve block
-                        hash = block.hash();
+                        hash = job.hash();
                         HASHRATE_COUNTER.fetch_add(1, Ordering::SeqCst);
                         while !match check_difficulty(&hash, expected_difficulty) {
                             Ok(value) => value,
@@ -311,13 +311,14 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                                 continue 'main;
                             }
 
-                            block.nonce += 1;
-                            block.timestamp = get_current_timestamp();
-                            hash = block.hash();
+                            job.nonce += 1;
+                            job.timestamp = get_current_timestamp();
+                            hash = job.hash();
                             HASHRATE_COUNTER.fetch_add(1, Ordering::SeqCst);
                         }
-                        info!("Mining Thread #{}: block {} found at height {}", id, hash, block.get_height());
-                        if let Err(_) = block_sender.blocking_send(block) {
+
+                        info!("Mining Thread #{}: block {} found at height {} with difficulty {}", id, hash, CURRENT_HEIGHT.load(Ordering::SeqCst), format_difficulty(expected_difficulty));
+                        if let Err(_) = block_sender.blocking_send(job) {
                             error!("Mining Thread #{}: error while sending block found with hash {}", id, hash);
                             continue 'main;
                         }

@@ -25,7 +25,7 @@ use xelis_common::{
     serializer::Serializer,
     transaction::Transaction,
     crypto::hash::Hash,
-    block::{BlockHeader, Block}, config::{BLOCK_TIME_MILLIS, VERSION},
+    block::{BlockHeader, Block}, config::{BLOCK_TIME_MILLIS, VERSION}, immutable::Immutable,
 };
 use std::{sync::Arc, borrow::Cow};
 use log::{info, debug};
@@ -190,14 +190,15 @@ async fn get_block_template(blockchain: Arc<Blockchain>, body: Value) -> Result<
     let storage = blockchain.get_storage().read().await;
     let block = blockchain.get_block_template_for_storage(&storage, params.address.into_owned().to_public_key()).await?;
     let difficulty = blockchain.get_difficulty_at_tips(&*storage, block.get_tips()).await?;
-    Ok(json!(GetBlockTemplateResult { template: block.to_hex(), difficulty }))
+    let height = block.height;
+    Ok(json!(GetBlockTemplateResult { template: block.to_hex(), height, difficulty }))
 }
 
 async fn submit_block(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, RpcError> {
     let params: SubmitBlockParams = parse_params(body)?;
     let header = BlockHeader::from_hex(params.block_template)?;
     // TODO add block hashing blob on block template
-    let block = blockchain.build_block_from_header(header).await?;
+    let block = blockchain.build_block_from_header(Immutable::Owned(header)).await?;
     blockchain.add_new_block(block, true).await?;
     Ok(json!(true))
 }

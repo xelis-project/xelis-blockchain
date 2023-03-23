@@ -266,7 +266,7 @@ impl Blockchain {
             hash = header.hash();
         }
 
-        let block = self.build_block_from_header(header).await?;
+        let block = self.build_block_from_header(Immutable::Owned(header)).await?;
         let zelf = Arc::clone(self);
         let block_height = block.get_height();
         zelf.add_new_block(block, true).await?;
@@ -794,14 +794,14 @@ impl Blockchain {
         Ok(block)
     }
 
-    pub async fn build_block_from_header(&self, header: BlockHeader) -> Result<Block, BlockchainError> {
+    pub async fn build_block_from_header(&self, header: Immutable<BlockHeader>) -> Result<Block, BlockchainError> {
         let mut transactions: Vec<Immutable<Transaction>> = Vec::with_capacity(header.get_txs_count());
         let mempool = self.mempool.read().await;
         for hash in header.get_txs_hashes() {
             let tx = mempool.get_tx(hash)?; // at this point, we don't want to lose/remove any tx, we clone it only
             transactions.push(Immutable::Arc(tx));
         }
-        let block = Block::new(Immutable::Owned(header), transactions);
+        let block = Block::new(header, transactions);
         Ok(block)
     }
 
@@ -901,7 +901,7 @@ impl Blockchain {
         }
 
         // verify PoW and get difficulty for this block based on tips
-        let difficulty = self.verify_proof_of_work(&*storage, &block_hash, block.get_tips()).await?;
+        let difficulty = self.verify_proof_of_work(&*storage, &block.get_pow_hash(), block.get_tips()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
         let mut total_tx_size: usize = 0;
