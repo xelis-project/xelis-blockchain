@@ -147,7 +147,7 @@ impl BlockHeader {
         hash(&bytes)
     }
 
-    pub fn get_pow_hash(&self) -> Hash {
+    fn get_pow_hash(&self) -> Hash {
         let header_work_hash = self.get_header_work_hash();
         let mut bytes = Vec::with_capacity(BLOCK_WORK_SIZE);
 
@@ -245,7 +245,11 @@ impl Serializer for BlockHeader {
     }
 }
 
-impl Hashable for BlockHeader {}
+impl Hashable for BlockHeader {
+    fn hash(&self) -> Hash {
+        self.get_pow_hash()
+    }
+}
 
 impl Serializer for Block {
     fn write(&self, writer: &mut Writer) {

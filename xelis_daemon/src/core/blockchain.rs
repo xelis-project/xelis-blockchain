@@ -901,7 +901,7 @@ impl Blockchain {
         }
 
         // verify PoW and get difficulty for this block based on tips
-        let difficulty = self.verify_proof_of_work(&*storage, &block.get_pow_hash(), block.get_tips()).await?;
+        let difficulty = self.verify_proof_of_work(&*storage, &block_hash, block.get_tips()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
         let mut total_tx_size: usize = 0;

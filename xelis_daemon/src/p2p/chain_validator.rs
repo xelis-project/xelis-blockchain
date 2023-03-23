@@ -57,7 +57,7 @@ impl ChainValidator {
             }
         }
 
-        let difficulty = blockchain.verify_proof_of_work(self, &header.get_pow_hash(), &tips).await?;
+        let difficulty = blockchain.verify_proof_of_work(self, &hash, &tips).await?;
         let cumulative_difficulty = 0;
 
         let hash = Arc::new(hash);
