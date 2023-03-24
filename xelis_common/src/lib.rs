@@ -16,3 +16,6 @@ pub mod json_rpc;
 
 #[cfg(feature = "prompt")]
 pub mod prompt;
+
+#[cfg(feature = "rpc_server")]
+pub mod rpc_server;

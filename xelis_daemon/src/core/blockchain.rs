@@ -10,8 +10,7 @@ use xelis_common::{
     immutable::Immutable,
     serializer::Serializer, account::VersionedBalance, api::daemon::{NotifyEvent, DataHash, BlockOrderedEvent, TransactionExecutedEvent, BlockType}, network::Network
 };
-use crate::{p2p::P2pServer, rpc::rpc::{get_block_response_for_hash, get_block_type_for_block}};
-use crate::rpc::RpcServer;
+use crate::{p2p::P2pServer, rpc::{rpc::{get_block_response_for_hash, get_block_type_for_block}, DaemonRpcServer, SharedDaemonRpcServer}};
 use super::storage::{Storage, DifficultyProvider};
 use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::Duration, borrow::Cow};
 use std::collections::{HashMap, HashSet};
@@ -67,7 +66,7 @@ pub struct Blockchain {
     mempool: RwLock<Mempool>, // mempool to retrieve/add all txs
     storage: RwLock<Storage>, // storage to retrieve/add blocks
     p2p: Mutex<Option<Arc<P2pServer>>>, // P2p module
-    rpc: Mutex<Option<Arc<RpcServer>>>, // Rpc module
+    rpc: Mutex<Option<SharedDaemonRpcServer>>, // Rpc module
     difficulty: AtomicU64, // current difficulty
     // used to skip PoW verification
     simulator: bool,
@@ -143,7 +142,7 @@ impl Blockchain {
 
         let arc = Arc::new(blockchain);
         // create P2P Server
-        if !config.disable_p2p_server {
+        if !config.disable_p2p_server && arc.network != Network::Dev  {
             info!("Starting P2p server...");
             match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), config.priority_nodes.is_empty()) {
                 Ok(p2p) => {
@@ -167,7 +166,7 @@ impl Blockchain {
         // create RPC Server
         {
             info!("Starting RPC server...");
-            match RpcServer::new(config.rpc_bind_address, Arc::clone(&arc), config.disable_getwork_server).await {
+            match DaemonRpcServer::new(config.rpc_bind_address, Arc::clone(&arc), config.disable_getwork_server).await {
                 Ok(server) => *arc.rpc.lock().await = Some(server),
                 Err(e) => error!("Error while starting RPC server: {}", e)
             };
@@ -657,7 +656,7 @@ impl Blockchain {
         &self.p2p
     }
 
-    pub fn get_rpc(&self) -> &Mutex<Option<Arc<RpcServer>>> {
+    pub fn get_rpc(&self) -> &Mutex<Option<SharedDaemonRpcServer>> {
         &self.rpc
     }
 

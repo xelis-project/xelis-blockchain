@@ -4,9 +4,11 @@ use actix::{Actor, StreamHandler, AsyncContext, Message as TMessage, Handler, Ad
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use xelis_common::api::daemon::NotifyEvent;
-use super::{SharedRpcServer, RpcError, RpcResponseError, JSON_RPC_VERSION};
+use xelis_common::{api::daemon::NotifyEvent, rpc_server::{InternalRpcError, RpcResponseError, JSON_RPC_VERSION}};
+
 use log::{debug, trace};
+
+use super::SharedDaemonRpcServer;
 
 pub struct Response<T: Borrow<Value> + ToString>(pub T);
 
@@ -16,11 +18,11 @@ pub struct SubscribeParams {
 }
 
 impl<T: Borrow<Value> + ToString> TMessage for Response<T> {
-    type Result = Result<(), RpcError>;
+    type Result = Result<(), InternalRpcError>;
 }
 
 pub struct WebSocketHandler {
-    server: SharedRpcServer
+    server: SharedDaemonRpcServer
 }
 
 impl Actor for WebSocketHandler {
@@ -57,7 +59,7 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
             },
             msg => {
                 debug!("Abnormal message received: {:?}. Closing connection", msg);
-                let error = RpcResponseError::new(None, RpcError::InvalidRequest);
+                let error = RpcResponseError::new(None, InternalRpcError::InvalidRequest);
                 ctx.text(error.to_json().to_string());
                 ctx.close(None);
             }
@@ -76,7 +78,7 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
 }
 
 impl<T: Borrow<Value> + ToString> Handler<Response<T>> for WebSocketHandler {
-    type Result = Result<(), RpcError>;
+    type Result = Result<(), InternalRpcError>;
 
     fn handle(&mut self, msg: Response<T>, ctx: &mut Self::Context) -> Self::Result {
         ctx.text(msg.0.to_string());
@@ -85,24 +87,24 @@ impl<T: Borrow<Value> + ToString> Handler<Response<T>> for WebSocketHandler {
 }
 
 impl WebSocketHandler {
-    pub fn new(server: SharedRpcServer) -> Self {
+    pub fn new(server: SharedDaemonRpcServer) -> Self {
         Self {
             server
         }
     }
 
-    pub async fn handle_request(addr: &Addr<WebSocketHandler>, server: SharedRpcServer, body: &[u8]) -> Result<Value, RpcResponseError> {
-        let mut request = server.parse_request(body)?;
+    pub async fn handle_request(addr: &Addr<WebSocketHandler>, server: SharedDaemonRpcServer, body: &[u8]) -> Result<Value, RpcResponseError> {
+        let mut request = server.inner.parse_request(body)?;
         let method = request.method.as_str(); 
         match method {
             "subscribe" | "unsubscribe" => {
-                let params: SubscribeParams = serde_json::from_value(request.params.take().unwrap_or(Value::Null)).map_err(|e| RpcResponseError::new(request.id, RpcError::InvalidParams(e)))?;
+                let params: SubscribeParams = serde_json::from_value(request.params.take().unwrap_or(Value::Null)).map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e)))?;
                 let res = if method == "subscribe" {
                     server.subscribe_client_to(addr, params.notify, request.id).await
                 } else {
                     server.unsubscribe_client_from(addr, &params.notify).await
                 };
-                res.map_err(|e| RpcResponseError::new(request.id, e))?;
+                res.map_err(|e| RpcResponseError::new(request.id, InternalRpcError::AnyError(e.into())))?;
 
                 Ok(json!({
                     "jsonrpc": JSON_RPC_VERSION,
@@ -110,7 +112,7 @@ impl WebSocketHandler {
                     "result": json!(true)
                 }))
             },
-            _ => server.execute_method(request).await
+            _ => server.inner.execute_method(server.get_blockchain().clone(), request).await
         }
     }
 }

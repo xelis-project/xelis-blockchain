@@ -7,3 +7,4 @@ pub mod api;
 pub mod network_handler;
 pub mod entry;
 pub mod mnemonics;
+pub mod rpc;
