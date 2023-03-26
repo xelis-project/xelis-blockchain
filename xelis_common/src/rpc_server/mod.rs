@@ -61,31 +61,6 @@ where
         }
     }
 
-    pub async fn start_with<A: ToSocketAddrs, W: RpcServerHandler<T, E> + Send + Sync + 'static>(&self, server: Arc<W>, bind_address: A, closure: fn() -> Vec<(&'static str, Route)>) -> Result<(), Error> {
-        {
-            let http_server = HttpServer::new(move || {
-                let server = server.clone();
-                let mut app = App::new().app_data(web::Data::new(server));
-                app = app.route("/json_rpc", web::post().to(json_rpc::<T, E, H>))
-                    .route("/ws", web::post().to(websocket::<T, E, H>));
-                for (path, route) in closure() {
-                    app = app.route(path, route);
-                }
-                app
-            })
-            .disable_signals()
-            .bind(&bind_address)?
-            .run();
-
-            let mut handle = self.handle.lock().await;
-            *handle = Some(http_server.handle());
-
-            tokio::spawn(http_server);
-        }
-
-        Ok(())
-    }
-
     pub async fn stop(&self, graceful: bool) {
         if let Some(handler) = self.handle.lock().await.take() {
             handler.stop(graceful).await;
@@ -183,6 +158,38 @@ where
     // get all websocket clients
     pub fn get_clients(&self) -> &Mutex<HashMap<Addr<WebSocketHandler<T, E, H>>, HashMap<E, Option<usize>>>> {
         &self.clients
+    }
+}
+
+impl<T, E, H> RpcServer<T, E, H>
+where
+    T: Clone + Send + Sync + Unpin + 'static,
+    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
+    H: RpcServerHandler<T, E> + Sync + Send + 'static
+{
+    pub async fn start_with<A: ToSocketAddrs>(&self, server: Arc<H>, bind_address: A, closure: fn() -> Vec<(&'static str, Route)>) -> Result<(), Error> {
+        {
+            let http_server = HttpServer::new(move || {
+                let server = server.clone();
+                let mut app = App::new().app_data(web::Data::new(server));
+                app = app.route("/json_rpc", web::post().to(json_rpc::<T, E, H>))
+                    .route("/ws", web::post().to(websocket::<T, E, H>));
+                for (path, route) in closure() {
+                    app = app.route(path, route);
+                }
+                app
+            })
+            .disable_signals()
+            .bind(&bind_address)?
+            .run();
+
+            let mut handle = self.handle.lock().await;
+            *handle = Some(http_server.handle());
+
+            tokio::spawn(http_server);
+        }
+
+        Ok(())
     }
 }
 
