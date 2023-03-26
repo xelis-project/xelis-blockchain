@@ -736,7 +736,7 @@ impl Blockchain {
             let rpc = rpc.clone();
             tokio::spawn(async move {
                 let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) };
-                if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, data).await {
+                if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
                     debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
                 }
             });

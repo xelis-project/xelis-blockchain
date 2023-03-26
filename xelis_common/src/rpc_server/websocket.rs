@@ -1,35 +1,32 @@
-use std::borrow::Borrow;
+use std::{borrow::Borrow, sync::Arc, marker::PhantomData, hash::Hash};
 
 use actix::{Actor, StreamHandler, AsyncContext, Message as TMessage, Handler, Addr};
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Value, json};
-use xelis_common::{api::daemon::NotifyEvent, rpc_server::{InternalRpcError, RpcResponseError, JSON_RPC_VERSION}};
-
 use log::{debug, trace};
 
-use super::SharedDaemonRpcServer;
+use crate::{rpc_server::RpcResponseError, api::daemon::SubscribeParams};
 
-pub struct Response<T: Borrow<Value> + ToString>(pub T);
+use super::{InternalRpcError, RpcServerHandler, JSON_RPC_VERSION};
 
-#[derive(Deserialize)]
-pub struct SubscribeParams {
-    notify: NotifyEvent
-}
+pub struct WSResponse<T: Borrow<Value> + ToString>(pub T);
 
-impl<T: Borrow<Value> + ToString> TMessage for Response<T> {
+
+impl<T: Borrow<Value> + ToString> TMessage for WSResponse<T> {
     type Result = Result<(), InternalRpcError>;
 }
 
-pub struct WebSocketHandler {
-    server: SharedDaemonRpcServer
+pub struct WebSocketHandler<T: Sync + Send + Clone + 'static + Unpin, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<T, E> + 'static> {
+    server: Arc<H>,
+    _phantom: PhantomData<(T, E)>
 }
 
-impl Actor for WebSocketHandler {
+impl<T: Sync + Send + Clone + 'static + Unpin, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<T, E> + 'static> Actor for WebSocketHandler<T, E, H> {
     type Context = WebsocketContext<Self>;
 }
 
-impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
+impl<T: Sync + Send + Clone + 'static + Unpin, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<T, E> + 'static> StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler<T, E, H> {
     fn handle(&mut self, msg: Result<Message, ProtocolError>, ctx: &mut Self::Context) {
         match msg {
             Ok(Message::Text(text)) => {
@@ -40,7 +37,7 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
                         Ok(result) => result,
                         Err(e) => e.to_json()
                     };
-                    if let Err(e) = address.send(Response(response)).await {
+                    if let Err(e) = address.send(WSResponse(response)).await {
                         debug!("Error while sending response to {:?}: {}", address, e);
                     }
                 };
@@ -52,7 +49,7 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
                 let server = self.server.clone();
                 let address = ctx.address();
                 let fut = async move {
-                    server.remove_client(&address).await;
+                    server.get_rpc_server().remove_client(&address).await;
                 };
                 ctx.wait(actix::fut::wrap_future(fut));
                 ctx.close(reason);
@@ -71,38 +68,39 @@ impl StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler {
         let server = self.server.clone();
         let address = ctx.address();
         let fut = async move {
-            server.remove_client(&address).await;
+            server.get_rpc_server().remove_client(&address).await;
         };
         ctx.wait(actix::fut::wrap_future(fut));
     }
 }
 
-impl<T: Borrow<Value> + ToString> Handler<Response<T>> for WebSocketHandler {
+impl<T: Borrow<Value> + ToString, D: Sync + Send + Clone + 'static + Unpin, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<D, E> + 'static> Handler<WSResponse<T>> for WebSocketHandler<D, E, H> {
     type Result = Result<(), InternalRpcError>;
 
-    fn handle(&mut self, msg: Response<T>, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: WSResponse<T>, ctx: &mut Self::Context) -> Self::Result {
         ctx.text(msg.0.to_string());
         Ok(())
     }
 }
 
-impl WebSocketHandler {
-    pub fn new(server: SharedDaemonRpcServer) -> Self {
+impl<T: Sync + Send + Clone + 'static + Unpin, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<T, E> + 'static> WebSocketHandler<T, E, H> {
+    pub fn new(server: Arc<H>) -> Self {
         Self {
-            server
+            server,
+            _phantom: PhantomData
         }
     }
 
-    pub async fn handle_request(addr: &Addr<WebSocketHandler>, server: SharedDaemonRpcServer, body: &[u8]) -> Result<Value, RpcResponseError> {
-        let mut request = server.inner.parse_request(body)?;
+    pub async fn handle_request(addr: &Addr<Self>, server: Arc<H>, body: &[u8]) -> Result<Value, RpcResponseError> {
+        let mut request = server.get_rpc_server().parse_request(body)?;
         let method = request.method.as_str(); 
         match method {
             "subscribe" | "unsubscribe" => {
-                let params: SubscribeParams = serde_json::from_value(request.params.take().unwrap_or(Value::Null)).map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e)))?;
+                let params: SubscribeParams<E> = serde_json::from_value(request.params.take().unwrap_or(Value::Null)).map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e)))?;
                 let res = if method == "subscribe" {
-                    server.subscribe_client_to(addr, params.notify, request.id).await
+                    server.get_rpc_server().subscribe_client_to(addr, params.notify, request.id).await
                 } else {
-                    server.unsubscribe_client_from(addr, &params.notify).await
+                    server.get_rpc_server().unsubscribe_client_from(addr, &params.notify).await
                 };
                 res.map_err(|e| RpcResponseError::new(request.id, InternalRpcError::AnyError(e.into())))?;
 
@@ -112,7 +110,7 @@ impl WebSocketHandler {
                     "result": json!(true)
                 }))
             },
-            _ => server.inner.execute_method(server.get_blockchain().clone(), request).await
+            _ => server.get_rpc_server().execute_method(server.get_data().clone(), request).await
         }
     }
 }

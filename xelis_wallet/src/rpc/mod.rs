@@ -7,7 +7,7 @@ use crate::wallet::Wallet;
 use log::error;
 
 pub struct WalletRpcServer {
-    inner:  RpcServer<Arc<Wallet>>,
+    inner:  RpcServer<Arc<Wallet>, (), WalletRpcServer>,
     wallet: Arc<Wallet>
 }
 
@@ -27,8 +27,8 @@ impl WalletRpcServer {
     }
 }
 
-impl RpcServerHandler<Arc<Wallet>> for WalletRpcServer {
-    fn get_rpc_server(&self) -> &RpcServer<Arc<Wallet>> {
+impl RpcServerHandler<Arc<Wallet>, ()> for WalletRpcServer {
+    fn get_rpc_server(&self) -> &RpcServer<Arc<Wallet>, (), WalletRpcServer> {
         &self.inner
     }
 

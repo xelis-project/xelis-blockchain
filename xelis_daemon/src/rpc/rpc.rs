@@ -1,5 +1,5 @@
 use crate::core::{blockchain::Blockchain, storage::Storage, error::BlockchainError};
-use super::{InternalRpcError, RpcServer, ApiError};
+use super::{InternalRpcError, RpcServer, ApiError, DaemonRpcServer};
 use anyhow::Context;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -19,7 +19,7 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse
+        GetRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse, NotifyEvent
     },
     async_handler,
     serializer::Serializer,
@@ -99,7 +99,7 @@ pub async fn get_transaction_response_for_hash(storage: &Storage, hash: &Hash) -
     get_transaction_response(storage, &tx, hash).await
 }
 
-pub fn register_methods(server: &mut RpcServer<Arc<Blockchain>>) {
+pub fn register_methods(server: &mut RpcServer<Arc<Blockchain>, NotifyEvent, DaemonRpcServer>) {
     info!("Registering RPC methods...");
     server.register_method("get_version", async_handler!(version));
     server.register_method("get_height", async_handler!(get_height));

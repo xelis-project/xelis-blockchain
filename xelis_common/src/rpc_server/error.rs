@@ -26,6 +26,8 @@ pub enum InternalRpcError {
     WebSocketSendError(#[from] MailboxError),
     #[error(transparent)]
     AnyError(#[from] AnyError),
+    #[error("Websocket client was not found")]
+    ClientNotFound
 }
 
 impl InternalRpcError {
