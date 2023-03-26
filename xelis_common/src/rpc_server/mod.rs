@@ -27,18 +27,32 @@ pub struct RpcRequest {
 
 pub type Handler<T> = fn(T, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>>>>;
 
-pub trait RpcServerHandler<T: Clone + Send + Sync + Unpin + 'static, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static>: Sized {
+pub trait RpcServerHandler<T, E>: Sized
+where
+    T: Clone + Send + Sync + Unpin + 'static,
+    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static
+{
     fn get_rpc_server(&self) -> &RpcServer<T, E, Self>;
     fn get_data(&self) -> &T;
 }
 
-pub struct RpcServer<T: Clone + Send + Sync + Unpin + 'static, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<T, E> + 'static> {
+pub struct RpcServer<T, E, H>
+where
+    T: Clone + Send + Sync + Unpin + 'static,
+    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
+    H: RpcServerHandler<T, E> + 'static
+{
     handle: Mutex<Option<ServerHandle>>, // keep the server handle to stop it gracefully
     clients: Mutex<HashMap<Addr<WebSocketHandler<T, E, H>>, HashMap<E, Option<usize>>>>, // all websocket clients connected with subscriptions linked
     methods: HashMap<String, Handler<T>>, // all rpc methods registered
 }
 
-impl<T: Clone + Send + Sync + Unpin + 'static, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<T, E> + 'static> RpcServer<T, E, H> {
+impl<T, E, H> RpcServer<T, E, H>
+where
+    T: Clone + Send + Sync + Unpin + 'static,
+    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
+    H: RpcServerHandler<T, E> + 'static
+{
     pub fn new() -> Self {
         Self {
             handle: Mutex::new(None),
@@ -173,7 +187,12 @@ impl<T: Clone + Send + Sync + Unpin + 'static, E: DeserializeOwned + Serialize +
 }
 
 // JSON RPC handler endpoint
-async fn json_rpc<T: Sync + Send + Clone + Unpin + 'static, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<T, E> + 'static>(server: Data<Arc<H>>, body: web::Bytes) -> Result<impl Responder, RpcResponseError> {
+async fn json_rpc<T, E, H>(server: Data<Arc<H>>, body: web::Bytes) -> Result<impl Responder, RpcResponseError>
+where
+    T: Clone + Send + Sync + Unpin + 'static,
+    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
+    H: RpcServerHandler<T, E> + 'static
+{
     let rpc_server = server.get_rpc_server();
     let request = rpc_server.parse_request(&body)?;
     let result = rpc_server.execute_method(server.get_data().clone(), request).await?;
@@ -181,7 +200,12 @@ async fn json_rpc<T: Sync + Send + Clone + Unpin + 'static, E: DeserializeOwned 
 }
 
 // JSON RPC handler websocket endpoint
-async fn websocket<T: Sync + Send + Clone + Unpin + 'static, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<T, E> + 'static>(server: Data<Arc<H>>, request: HttpRequest, stream: Payload) -> Result<HttpResponse, Error> {
+async fn websocket<T, E, H>(server: Data<Arc<H>>, request: HttpRequest, stream: Payload) -> Result<HttpResponse, Error>
+where
+    T: Clone + Send + Sync + Unpin + 'static,
+    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
+    H: RpcServerHandler<T, E> + 'static
+{
     let (addr, response) = WsResponseBuilder::new(WebSocketHandler::new(server.get_ref().clone()), &request, stream).start_with_addr()?;
     trace!("New client connected to WebSocket: {:?}", addr);
     server.get_rpc_server().add_client(addr).await;

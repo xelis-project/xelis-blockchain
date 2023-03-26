@@ -12,21 +12,35 @@ use super::{InternalRpcError, RpcServerHandler, JSON_RPC_VERSION};
 
 pub struct WSResponse<T: Borrow<Value> + ToString>(pub T);
 
-
 impl<T: Borrow<Value> + ToString> TMessage for WSResponse<T> {
     type Result = Result<(), InternalRpcError>;
 }
 
-pub struct WebSocketHandler<T: Sync + Send + Clone + 'static + Unpin, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<T, E> + 'static> {
+pub struct WebSocketHandler<T, E, H>
+where
+    T: Clone + Send + Sync + Unpin + 'static,
+    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
+    H: RpcServerHandler<T, E> + 'static
+{
     server: Arc<H>,
     _phantom: PhantomData<(T, E)>
 }
 
-impl<T: Sync + Send + Clone + 'static + Unpin, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<T, E> + 'static> Actor for WebSocketHandler<T, E, H> {
+impl<T, E, H> Actor for WebSocketHandler<T, E, H>
+where
+    T: Clone + Send + Sync + Unpin + 'static,
+    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
+    H: RpcServerHandler<T, E> + 'static
+{
     type Context = WebsocketContext<Self>;
 }
 
-impl<T: Sync + Send + Clone + 'static + Unpin, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<T, E> + 'static> StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler<T, E, H> {
+impl<T, E, H> StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler<T, E, H>
+where
+    T: Clone + Send + Sync + Unpin + 'static,
+    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
+    H: RpcServerHandler<T, E> + 'static
+{
     fn handle(&mut self, msg: Result<Message, ProtocolError>, ctx: &mut Self::Context) {
         match msg {
             Ok(Message::Text(text)) => {
@@ -74,16 +88,26 @@ impl<T: Sync + Send + Clone + 'static + Unpin, E: DeserializeOwned + Serialize +
     }
 }
 
-impl<T: Borrow<Value> + ToString, D: Sync + Send + Clone + 'static + Unpin, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<D, E> + 'static> Handler<WSResponse<T>> for WebSocketHandler<D, E, H> {
+impl<V: Borrow<Value> + ToString, T, E, H> Handler<WSResponse<V>> for WebSocketHandler<T, E, H>
+where
+    T: Clone + Send + Sync + Unpin + 'static,
+    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
+    H: RpcServerHandler<T, E> + 'static
+{
     type Result = Result<(), InternalRpcError>;
 
-    fn handle(&mut self, msg: WSResponse<T>, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: WSResponse<V>, ctx: &mut Self::Context) -> Self::Result {
         ctx.text(msg.0.to_string());
         Ok(())
     }
 }
 
-impl<T: Sync + Send + Clone + 'static + Unpin, E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static, H: RpcServerHandler<T, E> + 'static> WebSocketHandler<T, E, H> {
+impl<T, E, H> WebSocketHandler<T, E, H>
+where
+    T: Clone + Send + Sync + Unpin + 'static,
+    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
+    H: RpcServerHandler<T, E> + 'static
+{
     pub fn new(server: Arc<H>) -> Self {
         Self {
             server,
