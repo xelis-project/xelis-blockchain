@@ -138,8 +138,7 @@ impl BlockHeader {
         self.txs_hashes.len()
     }
 
-    // compute the header work hash (immutable part in mining process)
-    pub fn get_work_hash(&self) -> Hash {
+    pub fn get_work(&self) -> Vec<u8> {
         let mut bytes: Vec<u8> = Vec::with_capacity(HEADER_WORK_SIZE);
 
         bytes.push(self.version); // 1
@@ -150,11 +149,15 @@ impl BlockHeader {
         if bytes.len() != HEADER_WORK_SIZE {
             panic!("Error, invalid header work size, got {} but expected {}", bytes.len(), HEADER_WORK_SIZE)
         }
-
-        hash(&bytes)
+        bytes
     }
 
-    pub fn get_pow_hash(&self) -> Hash {
+    // compute the header work hash (immutable part in mining process)
+    pub fn get_work_hash(&self) -> Hash {
+        hash(&self.get_work())
+    }
+
+    fn get_serialized_header(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(BLOCK_WORK_SIZE);
         bytes.extend(self.get_work_hash().to_bytes());
         bytes.extend(self.timestamp.to_be_bytes());
@@ -166,7 +169,13 @@ impl BlockHeader {
             panic!("Error, invalid block work size, got {} but expected {}", bytes.len(), BLOCK_WORK_SIZE);
         }
 
-        hash(&bytes)
+        bytes
+    }
+
+    // compute the block POW hash
+    pub fn get_pow_hash(&self) -> Hash {
+        // TODO replace with the real POW algorithm
+        hash(&self.get_serialized_header())
     }
 
     pub fn get_transactions(&self) -> &Vec<Hash> {
@@ -257,7 +266,13 @@ impl Serializer for BlockHeader {
     }
 }
 
-impl Hashable for BlockHeader {}
+impl Hashable for BlockHeader {
+    // this function has the same behavior as the get_pow_hash function
+    // but we use a fast algorithm here
+    fn hash(&self) -> Hash {
+        hash(&self.get_serialized_header())
+    }
+}
 
 impl Serializer for Block {
     fn write(&self, writer: &mut Writer) {

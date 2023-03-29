@@ -1,9 +1,10 @@
 use std::borrow::Cow;
 
-use crate::{crypto::{hash::{Hash, Hashable}, key::PublicKey}, serializer::{Serializer, Writer, Reader, ReaderError}};
+use crate::{crypto::{hash::{Hash, Hashable, hash}, key::PublicKey}, serializer::{Serializer, Writer, Reader, ReaderError}};
 
 use super::{EXTRA_NONCE_SIZE, BLOCK_WORK_SIZE};
 
+// This structure is used by xelis-miner which allow to compute a valid block POW hash
 #[derive(Clone, Debug)]
 pub struct BlockMiner<'a> {
     pub header_work_hash: Hash, // include merkle tree of tips, txs, and height (immutable)
@@ -22,6 +23,11 @@ impl<'a> BlockMiner<'a> {
             miner: None,
             extra_nonce: [0u8; EXTRA_NONCE_SIZE]
         }
+    }
+
+    pub fn get_pow_hash(&self) -> Hash {
+        // TODO replace with real POW algorithm
+        hash(&self.to_bytes())
     }
 }
 
@@ -62,4 +68,5 @@ impl<'a> Serializer for BlockMiner<'a> {
     }
 }
 
+// no need to override hash() as its already serialized in good format
 impl Hashable for BlockMiner<'_> {}

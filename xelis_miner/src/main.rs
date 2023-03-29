@@ -297,7 +297,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                         job.extra_nonce[EXTRA_NONCE_SIZE - 1] = id;
 
                         // Solve block
-                        hash = job.hash();
+                        hash = job.get_pow_hash();
                         HASHRATE_COUNTER.fetch_add(1, Ordering::SeqCst);
                         while !match check_difficulty(&hash, expected_difficulty) {
                             Ok(value) => value,
@@ -313,13 +313,15 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
 
                             job.nonce += 1;
                             job.timestamp = get_current_timestamp();
-                            hash = job.hash();
+                            hash = job.get_pow_hash();
                             HASHRATE_COUNTER.fetch_add(1, Ordering::SeqCst);
                         }
 
-                        info!("Mining Thread #{}: block {} found at height {} with difficulty {}", id, hash, CURRENT_HEIGHT.load(Ordering::SeqCst), format_difficulty(expected_difficulty));
+                        // compute the reference hash for easier finding of the block
+                        let block_hash = job.hash();
+                        info!("Mining Thread #{}: block {} found at height {} with difficulty {}", id, block_hash, CURRENT_HEIGHT.load(Ordering::SeqCst), format_difficulty(expected_difficulty));
                         if let Err(_) = block_sender.blocking_send(job) {
-                            error!("Mining Thread #{}: error while sending block found with hash {}", id, hash);
+                            error!("Mining Thread #{}: error while sending block found with hash {}", id, block_hash);
                             continue 'main;
                         }
 
