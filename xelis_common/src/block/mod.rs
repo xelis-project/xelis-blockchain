@@ -11,8 +11,8 @@ use crate::transaction::Transaction;
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
 
 pub const EXTRA_NONCE_SIZE: usize = 32;
-pub const HEADER_WORK_SIZE: usize = 72;
-pub const BLOCK_WORK_SIZE: usize = 120; // 32 + 16 + 8 + 32 + 32
+pub const HEADER_WORK_SIZE: usize = 73;
+pub const BLOCK_WORK_SIZE: usize = 120; // 32 + 16 + 8 + 32 + 32 = 120
 
 pub type Difficulty = u64;
 
@@ -39,6 +39,7 @@ pub fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(deserializer: D) 
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct BlockHeader {
+    pub version: u8,
     pub tips: Vec<Hash>,
     #[serde(serialize_with = "serialize_timestamp")]
     #[serde(deserialize_with = "deserialize_timestamp")]
@@ -60,8 +61,9 @@ pub struct Block {
 }
 
 impl BlockHeader {
-    pub fn new(height: u64, timestamp: u128, tips: Vec<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: Vec<Hash>) -> Self {
+    pub fn new(version: u8, height: u64, timestamp: u128, tips: Vec<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: Vec<Hash>) -> Self {
         BlockHeader {
+            version,
             height,
             timestamp,
             tips,
@@ -70,6 +72,10 @@ impl BlockHeader {
             miner,
             txs_hashes
         }
+    }
+
+    pub fn get_version(&self) -> u8 {
+        self.version
     }
 
     pub fn set_miner(&mut self, key: PublicKey) {
@@ -133,12 +139,13 @@ impl BlockHeader {
     }
 
     // compute the header work hash (immutable part in mining process)
-    pub fn get_header_work_hash(&self) -> Hash {
+    pub fn get_work_hash(&self) -> Hash {
         let mut bytes: Vec<u8> = Vec::with_capacity(HEADER_WORK_SIZE);
 
-        bytes.extend(&self.height.to_be_bytes()); // 8
-        bytes.extend(self.get_tips_hash().as_bytes()); // 8 + 32 = 40
-        bytes.extend(self.get_txs_hash().as_bytes()); // 40 + 32 = 72
+        bytes.push(self.version); // 1
+        bytes.extend(&self.height.to_be_bytes()); // 1 + 8 = 9
+        bytes.extend(self.get_tips_hash().as_bytes()); // 9 + 32 = 41
+        bytes.extend(self.get_txs_hash().as_bytes()); // 41 + 32 = 73
 
         if bytes.len() != HEADER_WORK_SIZE {
             panic!("Error, invalid header work size, got {} but expected {}", bytes.len(), HEADER_WORK_SIZE)
@@ -147,15 +154,17 @@ impl BlockHeader {
         hash(&bytes)
     }
 
-    fn get_pow_hash(&self) -> Hash {
-        let header_work_hash = self.get_header_work_hash();
+    pub fn get_pow_hash(&self) -> Hash {
         let mut bytes = Vec::with_capacity(BLOCK_WORK_SIZE);
-
-        bytes.extend(header_work_hash.to_bytes());
+        bytes.extend(self.get_work_hash().to_bytes());
         bytes.extend(self.timestamp.to_be_bytes());
         bytes.extend(self.nonce.to_be_bytes());
         bytes.extend(self.extra_nonce);
         bytes.extend(self.miner.as_bytes());
+
+        if bytes.len() != BLOCK_WORK_SIZE {
+            panic!("Error, invalid block work size, got {} but expected {}", bytes.len(), BLOCK_WORK_SIZE);
+        }
 
         hash(&bytes)
     }
@@ -196,23 +205,25 @@ impl Block {
 
 impl Serializer for BlockHeader {
     fn write(&self, writer: &mut Writer) {
-        writer.write_u64(&self.height); // 8
-        writer.write_u128(&self.timestamp); // 8 + 16 = 24
-        writer.write_u64(&self.nonce); // 24 + 8 = 32
-        writer.write_bytes(&self.extra_nonce); // 32 + 32 = 64
-        writer.write_u8(self.tips.len() as u8); // 64 + 1 = 65
+        writer.write_u8(self.version); // 1
+        writer.write_u64(&self.height); // 1 + 8 = 9
+        writer.write_u128(&self.timestamp); // 9 + 16 = 25
+        writer.write_u64(&self.nonce); // 25 + 8 = 33
+        writer.write_bytes(&self.extra_nonce); // 33 + 32 = 65
+        writer.write_u8(self.tips.len() as u8); // 65 + 1 = 66
         for tip in &self.tips {
             writer.write_hash(tip); // 32
         }
 
-        writer.write_u16(self.txs_hashes.len() as u16); // 65 + 2 = 67
+        writer.write_u16(self.txs_hashes.len() as u16); // 66 + 2 = 68
         for tx in &self.txs_hashes {
             writer.write_hash(tx); // 32
         }
-        self.miner.write(writer);
+        self.miner.write(writer); // 68 + 32 = 100
     }
 
     fn read(reader: &mut Reader) -> Result<BlockHeader, ReaderError> {
+        let version = reader.read_u8()?;
         let height = reader.read_u64()?;
         let timestamp = reader.read_u128()?;
         let nonce = reader.read_u64()?;
@@ -233,6 +244,7 @@ impl Serializer for BlockHeader {
         let miner = PublicKey::read(reader)?;
         Ok(
             BlockHeader {
+                version,
                 extra_nonce,
                 height,
                 timestamp,
@@ -245,11 +257,7 @@ impl Serializer for BlockHeader {
     }
 }
 
-impl Hashable for BlockHeader {
-    fn hash(&self) -> Hash {
-        self.get_pow_hash()
-    }
-}
+impl Hashable for BlockHeader {}
 
 impl Serializer for Block {
     fn write(&self, writer: &mut Writer) {

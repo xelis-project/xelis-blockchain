@@ -230,7 +230,7 @@ impl Blockchain {
         } else {
             error!("No genesis block found!");
             info!("Generating a new genesis block...");
-            let header = BlockHeader::new(0, get_current_timestamp(), Vec::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), Vec::new());
+            let header = BlockHeader::new(0, 0, get_current_timestamp(), Vec::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), Vec::new());
             let block = Block::new(Immutable::Owned(header), Vec::new());
             info!("Genesis generated: {}", block.to_hex());
             block
@@ -745,6 +745,11 @@ impl Blockchain {
         Ok(())
     }
 
+    // this will be used in future for hard fork versions
+    pub fn get_version_at_height(&self, _height: u64) -> u8 {
+        0
+    }
+
     pub async fn get_block_template(&self, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
         let storage = self.storage.read().await;
         self.get_block_template_for_storage(&storage, address).await
@@ -761,7 +766,7 @@ impl Blockchain {
         let mut sorted_tips = blockdag::sort_tips(&storage, &tips).await?;
         sorted_tips.truncate(TIPS_LIMIT); // keep only first 3 heavier tips
         let height = blockdag::calculate_height_at_tips(storage, &tips).await?;
-        let mut block = BlockHeader::new(height, get_current_timestamp(), sorted_tips, extra_nonce, address, Vec::new());
+        let mut block = BlockHeader::new(self.get_version_at_height(height), height, get_current_timestamp(), sorted_tips, extra_nonce, address, Vec::new());
 
         let mempool = self.mempool.read().await;
         let txs = mempool.get_sorted_txs();
@@ -900,7 +905,9 @@ impl Blockchain {
         }
 
         // verify PoW and get difficulty for this block based on tips
-        let difficulty = self.verify_proof_of_work(&*storage, &block_hash, block.get_tips()).await?;
+        let pow_hash = block.get_pow_hash();
+        debug!("POW hash: {}", pow_hash);
+        let difficulty = self.verify_proof_of_work(&*storage, &pow_hash, block.get_tips()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
         let mut total_tx_size: usize = 0;

@@ -2,7 +2,7 @@ use std::{collections::{HashMap, HashSet}, sync::Arc};
 use async_trait::async_trait;
 use xelis_common::{crypto::hash::Hash, block::BlockHeader, config::TIPS_LIMIT};
 use crate::core::{error::BlockchainError, blockchain::Blockchain, storage::DifficultyProvider};
-use log::error;
+use log::{error, debug};
 
 struct Data {
     header: Arc<BlockHeader>,
@@ -57,7 +57,9 @@ impl ChainValidator {
             }
         }
 
-        let difficulty = blockchain.verify_proof_of_work(self, &hash, &tips).await?;
+        let pow_hash = header.get_pow_hash();
+        debug!("POW hash: {}", pow_hash);
+        let difficulty = blockchain.verify_proof_of_work(self, &pow_hash, &tips).await?;
         let cumulative_difficulty = 0;
 
         let hash = Arc::new(hash);

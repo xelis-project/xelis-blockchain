@@ -1,41 +1,47 @@
-use crate::{crypto::{key::PublicKey, hash::{Hash, Hashable}}, serializer::{Serializer, Writer, Reader, ReaderError}};
+use std::borrow::Cow;
 
-use super::{BlockHeader, EXTRA_NONCE_SIZE, BLOCK_WORK_SIZE};
+use crate::{crypto::{hash::{Hash, Hashable}, key::PublicKey}, serializer::{Serializer, Writer, Reader, ReaderError}};
+
+use super::{EXTRA_NONCE_SIZE, BLOCK_WORK_SIZE};
 
 #[derive(Clone, Debug)]
-pub struct BlockMiner {
+pub struct BlockMiner<'a> {
     pub header_work_hash: Hash, // include merkle tree of tips, txs, and height (immutable)
     pub timestamp: u128, // miners can update timestamp to keep it up-to-date
     pub nonce: u64,
-    pub extra_nonce: [u8; EXTRA_NONCE_SIZE],
-    pub miner: Option<PublicKey>,
+    pub miner: Option<Cow<'a, PublicKey>>,
+    pub extra_nonce: [u8; EXTRA_NONCE_SIZE]
 }
 
-impl BlockMiner {
-    pub fn from_header(header: &BlockHeader) -> Self {
+impl<'a> BlockMiner<'a> {
+    pub fn new(header_work_hash: Hash, timestamp: u128) -> Self {
         Self {
-            header_work_hash: header.get_header_work_hash(),
-            timestamp: header.timestamp,
-            nonce: header.nonce,
-            extra_nonce: header.extra_nonce,
+            header_work_hash,
+            timestamp,
+            nonce: 0,
             miner: None,
+            extra_nonce: [0u8; EXTRA_NONCE_SIZE]
         }
     }
 }
 
-impl Serializer for BlockMiner {
+impl<'a> Serializer for BlockMiner<'a> {
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.header_work_hash);
-        writer.write_u128(&self.timestamp);
-        writer.write_u64(&self.nonce);
-        writer.write_bytes(&self.extra_nonce);
+        writer.write_hash(&self.header_work_hash); // 32
+        writer.write_u128(&self.timestamp); // 32 + 16 = 48
+        writer.write_u64(&self.nonce); // 48 + 8 = 56
+        writer.write_bytes(&self.extra_nonce); // 56 + 32 = 88
 
         if let Some(miner) = &self.miner {
-            miner.write(writer);
+            miner.write(writer); // 88 + 32 = 120
+        }
+
+        if writer.total_write() != BLOCK_WORK_SIZE {
+            panic!("Invalid block miner size");
         }
     }
 
-    fn read(reader: &mut Reader) -> Result<BlockMiner, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<BlockMiner<'a>, ReaderError> {
         if reader.total_size() != BLOCK_WORK_SIZE {
             return Err(ReaderError::InvalidSize)
         }
@@ -43,17 +49,17 @@ impl Serializer for BlockMiner {
         let header_work_hash = reader.read_hash()?;
         let timestamp = reader.read_u128()?;
         let nonce = reader.read_u64()?;
-        let extra_nonce: [u8; EXTRA_NONCE_SIZE] = reader.read_bytes_32()?;
-        let miner = Some(PublicKey::read(reader)?);
+        let extra_nonce = reader.read_bytes_32()?;
+        let miner = Some(Cow::Owned(PublicKey::read(reader)?));
 
         Ok(BlockMiner {
             header_work_hash,
             timestamp,
             nonce,
             extra_nonce,
-            miner,
+            miner
         })
     }
 }
 
-impl Hashable for BlockMiner {}
+impl Hashable for BlockMiner<'_> {}

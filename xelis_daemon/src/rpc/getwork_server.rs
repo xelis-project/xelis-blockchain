@@ -1,4 +1,4 @@
-use std::{sync::Arc, collections::HashMap, fmt::Display};
+use std::{sync::Arc, collections::HashMap, fmt::Display, borrow::Cow};
 use actix::{Actor, AsyncContext, Handler, Message as TMessage, StreamHandler, Addr};
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
 use anyhow::Context;
@@ -170,7 +170,7 @@ impl GetWorkServer {
                     error!("No mining job found! How is it possible ?");
                     InternalRpcError::InvalidRequest
                 })?;
-                job = BlockMiner::from_header(header);
+                job = BlockMiner::new(header.get_work_hash(), get_current_timestamp());
                 height = header.height;
                 difficulty = *diff;
             } else {
@@ -179,8 +179,10 @@ impl GetWorkServer {
                 let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await.context("Error while retrieving block template")?;
                 difficulty = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips()).await.context("Error while retrieving difficulty at tips")?;
 
-                job = BlockMiner::from_header(&header);
+                job = BlockMiner::new(header.get_work_hash(), get_current_timestamp());
                 height = header.height;
+
+                // save the mining job, and set it as last job
                 *hash = Some(job.header_work_hash.clone());
                 mining_jobs.put(job.header_work_hash.clone(), (header, difficulty));
             }
@@ -189,7 +191,7 @@ impl GetWorkServer {
         };
 
         // set miner key and random extra nonce
-        job.miner = Some(key);
+        job.miner = Some(Cow::Owned(key));
         OsRng.fill_bytes(&mut job.extra_nonce);
 
         debug!("Sending job to new miner");
@@ -222,7 +224,7 @@ impl GetWorkServer {
     // we retrieve the block header saved in cache using the mining job "header_work_hash"
     // its used to check that the job come from our server
     // when it's found, we merge the miner job inside the block header
-    async fn accept_miner_job(&self, job: BlockMiner) -> Result<Response, InternalRpcError> {
+    async fn accept_miner_job(&self, job: BlockMiner<'_>) -> Result<Response, InternalRpcError> {
         if job.miner.is_none() {
             return Err(InternalRpcError::InvalidRequest);
         }
@@ -233,9 +235,9 @@ impl GetWorkServer {
             if let Some((header, _)) = mining_jobs.peek(&job.header_work_hash) {
                 // job is found in cache, clone it and put miner data inside
                 miner_header = header.clone();
-                miner_header.set_extra_nonce(job.extra_nonce);
                 miner_header.nonce = job.nonce;
-                miner_header.set_miner(job.miner.ok_or(InternalRpcError::InvalidRequest)?);
+                miner_header.extra_nonce = job.extra_nonce;
+                miner_header.set_miner(job.miner.ok_or(InternalRpcError::InvalidRequest)?.into_owned());
                 miner_header.timestamp = job.timestamp;
             } else {
                 // really old job, or miner send invalid job
@@ -302,7 +304,7 @@ impl GetWorkServer {
             (header, difficulty)
         };
 
-        let mut job = BlockMiner::from_header(&header);
+        let mut job = BlockMiner::new(header.get_work_hash(), header.timestamp);
         let height = header.height;
 
         // save the header used for job in cache
@@ -319,7 +321,7 @@ impl GetWorkServer {
             debug!("Notifying {} for new job", miner);
             let addr = addr.clone();
 
-            job.miner = Some(miner.get_public_key().clone());
+            job.miner = Some(Cow::Borrowed(miner.get_public_key()));
             OsRng.fill_bytes(&mut job.extra_nonce);
             let template = job.to_hex();
 

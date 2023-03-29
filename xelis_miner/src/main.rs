@@ -54,8 +54,8 @@ pub struct MinerConfig {
 }
 
 #[derive(Clone)]
-enum ThreadNotification {
-    NewJob(BlockMiner, u64),
+enum ThreadNotification<'a> {
+    NewJob(BlockMiner<'a>, u64),
     Exit
 }
 
@@ -173,7 +173,7 @@ fn benchmark(threads: usize, iterations: usize) {
 // It maintains a WebSocket connection with the daemon and notify all threads when it receive a new job.
 // Its also the task who have the job to send directly the new block found by one of the threads.
 // This allow mining threads to only focus on mining and receiving jobs through memory channels.
-async fn communication_task(mut daemon_address: String, job_sender: broadcast::Sender<ThreadNotification>, mut block_receiver: mpsc::Receiver<BlockMiner>, address: Address<'_>, worker: String) {
+async fn communication_task(mut daemon_address: String, job_sender: broadcast::Sender<ThreadNotification<'_>>, mut block_receiver: mpsc::Receiver<BlockMiner<'_>>, address: Address<'_>, worker: String) {
     info!("Starting communication task");
     'main: loop {
         if !daemon_address.starts_with("ws://") && !daemon_address.starts_with("wss://") {
@@ -234,7 +234,7 @@ async fn communication_task(mut daemon_address: String, job_sender: broadcast::S
     }
 }
 
-async fn handle_websocket_message(message: Result<Message, tokio_tungstenite::tungstenite::Error>, job_sender: &broadcast::Sender<ThreadNotification>) -> Result<bool, Error> {
+async fn handle_websocket_message(message: Result<Message, tokio_tungstenite::tungstenite::Error>, job_sender: &broadcast::Sender<ThreadNotification<'_>>) -> Result<bool, Error> {
     match message? {
         Message::Text(text) => {
             debug!("new message from daemon: {}", text);
@@ -276,7 +276,7 @@ async fn handle_websocket_message(message: Result<Message, tokio_tungstenite::tu
     Ok(false)
 }
 
-fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification>, block_sender: mpsc::Sender<BlockMiner>) -> Result<(), Error> {
+fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification<'static>>, block_sender: mpsc::Sender<BlockMiner<'static>>) -> Result<(), Error> {
     let builder = thread::Builder::new().name(format!("Mining Thread #{}", id));
     builder.spawn(move || {
         let mut job: BlockMiner;
