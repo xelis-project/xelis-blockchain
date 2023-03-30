@@ -1,5 +1,4 @@
 use std::fmt::{Display, Formatter};
-use actix::MailboxError;
 use actix_web::{ResponseError, HttpResponse};
 use serde_json::{Value, Error as SerdeError, json};
 use thiserror::Error;
@@ -22,8 +21,6 @@ pub enum InternalRpcError {
     MethodNotFound(String),
     #[error(transparent)]
     DeserializerError(#[from] ReaderError),
-    #[error("Could not send websocket message to address: {}", _0)]
-    WebSocketSendError(#[from] MailboxError),
     #[error(transparent)]
     AnyError(#[from] AnyError),
     #[error("Websocket client was not found")]

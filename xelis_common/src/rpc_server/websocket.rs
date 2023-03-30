@@ -2,10 +2,10 @@ use std::{sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashSet, hash
 use actix_web::{HttpRequest, web::Payload, HttpResponse};
 use actix_ws::{Session, MessageStream, Message, CloseReason, CloseCode};
 use futures_util::StreamExt;
-use log::{info, debug, warn};
+use log::debug;
 use tokio::sync::Mutex;
 
-pub type WebSocketServerShared = Arc<WebSocketServer>;
+pub type WebSocketServerShared<H> = Arc<WebSocketServer<H>>;
 pub type WebSocketSessionShared = Arc<WebSocketSession>;
 
 #[derive(Debug, thiserror::Error)]
@@ -16,7 +16,7 @@ pub enum WebSocketError {
     SessionAlreadyClosed,
 }
 
-struct WebSocketSession {
+pub struct WebSocketSession {
     id: u64,
     inner: Mutex<Option<Session>>
 }
@@ -49,17 +49,35 @@ impl Hash for WebSocketSession {
     }
 }
 
-pub struct WebSocketServer {
-    sessions: Mutex<HashSet<WebSocketSessionShared>>,
-    id_counter: AtomicU64
+pub trait WebSocketHandler {
+    // called when a new Session is added in websocket server
+    // if an error is returned, maintaining the session is aborted
+    fn on_connection(&self, session: &WebSocketSessionShared) -> Result<(), anyhow::Error>;
+
+    // called when a new message is received
+    fn on_message(&self, session: &WebSocketSessionShared, message: Message) -> Result<(), anyhow::Error>;
+
+    // called when a Session is closed
+    fn on_close(&self, session: &WebSocketSessionShared) -> Result<(), anyhow::Error>;
 }
 
-impl WebSocketServer {
-    pub fn new() -> WebSocketServerShared {
+pub struct WebSocketServer<H: WebSocketHandler + 'static> {
+    sessions: Mutex<HashSet<WebSocketSessionShared>>,
+    id_counter: AtomicU64,
+    handler: H
+}
+
+impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
+    pub fn new(handler: H) -> WebSocketServerShared<H> {
         Arc::new(Self {
             sessions: Mutex::new(HashSet::new()),
             id_counter: AtomicU64::new(0),
+            handler
         })
+    }
+
+    pub fn get_handler(&self) -> &H {
+        &self.handler
     }
 
     pub fn get_sessions(&self) -> &Mutex<HashSet<WebSocketSessionShared>> {
@@ -102,10 +120,22 @@ impl WebSocketServer {
         }
 
         let mut sessions = self.sessions.lock().await;
-        sessions.remove(session);
+        if sessions.remove(session) {
+            // call on_close
+            if let Err(e) = self.handler.on_close(session) {
+                debug!("Error while calling on_close: {}", e);
+            }
+        }
     }
     
     async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared, mut stream: MessageStream) {
+        // call on_connection
+        if let Err(e) = self.handler.on_connection(&session) {
+            debug!("Error while calling on_connection: {}", e);
+            self.delete_session(&session, Some(CloseReason::from(CloseCode::Error))).await;
+            return;
+        }
+
         let reason = loop {
             // wait for next message
             let msg = match stream.next().await {
@@ -120,29 +150,9 @@ impl WebSocketServer {
             };
     
             // handle message
-            match msg {
-                Message::Text(text) => {
-                    info!("received: {}", text);
-                    // TODO handle
-                }
-                Message::Ping(msg) => {
-                    warn!("ping not supported yet");
-                    break Some(CloseReason::from(CloseCode::Unsupported))
-                }
-                Message::Pong(_) => {
-                    debug!("Received pong");
-                }
-                Message::Close(reason) => {
-                    debug!("received close: {:?}", reason);
-                    break reason;
-                }
-                Message::Nop => {
-                    debug!("Received a Nop response, ignoring it");
-                }
-                _ => {
-                    debug!("Received an unsupported message!");
-                    break Some(CloseReason::from(CloseCode::Unsupported));
-                }
+            if let Err(e) = self.handler.on_message(&session, msg) {
+                debug!("Error while calling on_message: {}", e);
+                break Some(CloseReason::from(CloseCode::Error));
             }
         };
     
