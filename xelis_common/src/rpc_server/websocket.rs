@@ -1,140 +1,152 @@
-use std::{borrow::Borrow, sync::Arc, marker::PhantomData, hash::Hash};
+use std::{sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashSet, hash::{Hash, Hasher}};
+use actix_web::{HttpRequest, web::Payload, HttpResponse};
+use actix_ws::{Session, MessageStream, Message, CloseReason, CloseCode};
+use futures_util::StreamExt;
+use log::{info, debug, warn};
+use tokio::sync::Mutex;
 
-use actix::{Actor, StreamHandler, AsyncContext, Message as TMessage, Handler, Addr};
-use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
-use serde::{de::DeserializeOwned, Serialize};
-use serde_json::{Value, json};
-use log::{debug, trace};
+pub type WebSocketServerShared = Arc<WebSocketServer>;
+pub type WebSocketSessionShared = Arc<WebSocketSession>;
 
-use crate::{rpc_server::RpcResponseError, api::daemon::SubscribeParams};
-
-use super::{InternalRpcError, RpcServerHandler, JSON_RPC_VERSION};
-
-pub struct WSResponse<T: Borrow<Value> + ToString>(pub T);
-
-impl<T: Borrow<Value> + ToString> TMessage for WSResponse<T> {
-    type Result = Result<(), InternalRpcError>;
+#[derive(Debug, thiserror::Error)]
+pub enum WebSocketError {
+    #[error(transparent)]
+    SessionClosed(#[from] actix_ws::Closed),
+    #[error("this session was already closed")]
+    SessionAlreadyClosed,
 }
 
-pub struct WebSocketHandler<T, E, H>
-where
-    T: Clone + Send + Sync + Unpin + 'static,
-    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
-    H: RpcServerHandler<T, E> + 'static
-{
-    server: Arc<H>,
-    _phantom: PhantomData<(T, E)>
+struct WebSocketSession {
+    id: u64,
+    inner: Mutex<Option<Session>>
 }
 
-impl<T, E, H> Actor for WebSocketHandler<T, E, H>
-where
-    T: Clone + Send + Sync + Unpin + 'static,
-    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
-    H: RpcServerHandler<T, E> + 'static
-{
-    type Context = WebsocketContext<Self>;
-}
-
-impl<T, E, H> StreamHandler<Result<Message, ProtocolError>> for WebSocketHandler<T, E, H>
-where
-    T: Clone + Send + Sync + Unpin + 'static,
-    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
-    H: RpcServerHandler<T, E> + 'static
-{
-    fn handle(&mut self, msg: Result<Message, ProtocolError>, ctx: &mut Self::Context) {
-        match msg {
-            Ok(Message::Text(text)) => {
-                let address = ctx.address();
-                let server = self.server.clone();
-                let fut = async move {
-                    let response = match WebSocketHandler::handle_request(&address, server, &text.as_bytes()).await {
-                        Ok(result) => result,
-                        Err(e) => e.to_json()
-                    };
-                    if let Err(e) = address.send(WSResponse(response)).await {
-                        debug!("Error while sending response to {:?}: {}", address, e);
-                    }
-                };
-                let fut = actix::fut::wrap_future(fut);
-                ctx.spawn(fut);
-            },
-            Ok(Message::Close(reason)) => {
-                trace!("Received closing message, removing client");
-                let server = self.server.clone();
-                let address = ctx.address();
-                let fut = async move {
-                    server.get_rpc_server().remove_client(&address).await;
-                };
-                ctx.wait(actix::fut::wrap_future(fut));
-                ctx.close(reason);
-            },
-            msg => {
-                debug!("Abnormal message received: {:?}. Closing connection", msg);
-                let error = RpcResponseError::new(None, InternalRpcError::InvalidRequest);
-                ctx.text(error.to_json().to_string());
-                ctx.close(None);
-            }
-        }
+impl WebSocketSession {
+    async fn send_text<S: Into<String>>(&self, value: S) -> Result<(), WebSocketError> {
+        let mut inner = self.inner.lock().await;
+        inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?.text(value.into()).await?;
+        Ok(())
     }
 
-    fn finished(&mut self, ctx: &mut Self::Context) {
-        trace!("Websocket handler is finished, removing client");
-        let server = self.server.clone();
-        let address = ctx.address();
-        let fut = async move {
-            server.get_rpc_server().remove_client(&address).await;
-        };
-        ctx.wait(actix::fut::wrap_future(fut));
-    }
-}
-
-impl<V: Borrow<Value> + ToString, T, E, H> Handler<WSResponse<V>> for WebSocketHandler<T, E, H>
-where
-    T: Clone + Send + Sync + Unpin + 'static,
-    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
-    H: RpcServerHandler<T, E> + 'static
-{
-    type Result = Result<(), InternalRpcError>;
-
-    fn handle(&mut self, msg: WSResponse<V>, ctx: &mut Self::Context) -> Self::Result {
-        ctx.text(msg.0.to_string());
+    async fn close(&self, reason: Option<CloseReason>) -> Result<(), WebSocketError> {
+        let mut inner = self.inner.lock().await;
+        inner.take().ok_or(WebSocketError::SessionAlreadyClosed)?.close(reason).await?;
         Ok(())
     }
 }
 
-impl<T, E, H> WebSocketHandler<T, E, H>
-where
-    T: Clone + Send + Sync + Unpin + 'static,
-    E: DeserializeOwned + Serialize + Clone + ToOwned + Eq + Hash + Unpin + 'static,
-    H: RpcServerHandler<T, E> + 'static
-{
-    pub fn new(server: Arc<H>) -> Self {
-        Self {
-            server,
-            _phantom: PhantomData
-        }
+impl PartialEq for WebSocketSession {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for WebSocketSession {}
+
+impl Hash for WebSocketSession {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+pub struct WebSocketServer {
+    sessions: Mutex<HashSet<WebSocketSessionShared>>,
+    id_counter: AtomicU64
+}
+
+impl WebSocketServer {
+    pub fn new() -> WebSocketServerShared {
+        Arc::new(Self {
+            sessions: Mutex::new(HashSet::new()),
+            id_counter: AtomicU64::new(0),
+        })
     }
 
-    pub async fn handle_request(addr: &Addr<Self>, server: Arc<H>, body: &[u8]) -> Result<Value, RpcResponseError> {
-        let mut request = server.get_rpc_server().parse_request(body)?;
-        let method = request.method.as_str(); 
-        match method {
-            "subscribe" | "unsubscribe" => {
-                let params: SubscribeParams<E> = serde_json::from_value(request.params.take().unwrap_or(Value::Null)).map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e)))?;
-                let res = if method == "subscribe" {
-                    server.get_rpc_server().subscribe_client_to(addr, params.notify, request.id).await
-                } else {
-                    server.get_rpc_server().unsubscribe_client_from(addr, &params.notify).await
-                };
-                res.map_err(|e| RpcResponseError::new(request.id, InternalRpcError::AnyError(e.into())))?;
+    pub fn get_sessions(&self) -> &Mutex<HashSet<WebSocketSessionShared>> {
+        &self.sessions
+    }
 
-                Ok(json!({
-                    "jsonrpc": JSON_RPC_VERSION,
-                    "id": request.id,
-                    "result": json!(true)
-                }))
-            },
-            _ => server.get_rpc_server().execute_method(server.get_data().clone(), request).await
+    pub async fn send_text_to<S: Into<String>>(&self, session: &WebSocketSessionShared, value: S) -> Result<(), WebSocketError> {
+        let res = session.send_text(value).await;
+        if res.is_err() {
+            self.delete_session(session, None).await;
         }
+        res
+    }
+
+    pub async fn handle_connection(self: &Arc<Self>, request: &HttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
+        let (response, session, stream) = actix_ws::handle(request, body)?;
+        let session = Arc::new(WebSocketSession {
+            id: self.next_id(),
+            inner: Mutex::new(Some(session)),
+        });
+
+        {
+            let mut sessions = self.sessions.lock().await;
+            sessions.insert(Arc::clone(&session));
+        }
+
+        actix_rt::spawn(Arc::clone(self).handle_ws_internal(session.clone(), stream));
+        
+        Ok(response)
+    }
+
+    fn next_id(&self) -> u64 {
+        self.id_counter.fetch_add(1, Ordering::SeqCst)
+    }
+
+    async fn delete_session(&self, session: &WebSocketSessionShared, reason: Option<CloseReason>) {
+        // close session
+        if let Err(e) = session.close(reason).await {
+            debug!("Error while closing session: {}", e);
+        }
+
+        let mut sessions = self.sessions.lock().await;
+        sessions.remove(session);
+    }
+    
+    async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared, mut stream: MessageStream) {
+        let reason = loop {
+            // wait for next message
+            let msg = match stream.next().await {
+                Some(msg) => match msg {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        debug!("Error while receiving message: {}", e);
+                        break Some(CloseReason::from(CloseCode::Error));
+                    }
+                },
+                None => break None,
+            };
+    
+            // handle message
+            match msg {
+                Message::Text(text) => {
+                    info!("received: {}", text);
+                    // TODO handle
+                }
+                Message::Ping(msg) => {
+                    warn!("ping not supported yet");
+                    break Some(CloseReason::from(CloseCode::Unsupported))
+                }
+                Message::Pong(_) => {
+                    debug!("Received pong");
+                }
+                Message::Close(reason) => {
+                    debug!("received close: {:?}", reason);
+                    break reason;
+                }
+                Message::Nop => {
+                    debug!("Received a Nop response, ignoring it");
+                }
+                _ => {
+                    debug!("Received an unsupported message!");
+                    break Some(CloseReason::from(CloseCode::Unsupported));
+                }
+            }
+        };
+    
+        // attempt to close connection gracefully
+        self.delete_session(&session, reason).await;
     }
 }
