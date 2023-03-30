@@ -22,39 +22,35 @@ pub struct RpcRequest {
 
 pub type Handler<T> = fn(T, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>>>>;
 
-pub trait RpcServerHandler<T>: Sized
-where
-    T: Clone + Send + Sync + 'static,
-{
-    fn get_rpc_server(&self) -> &RpcServer<T>;
-    fn get_data(&self) -> &T;
-}
-
 pub struct RpcServer<T>
 where
     T: Clone + Send + Sync + 'static,
 {
     handle: Mutex<Option<ServerHandle>>, // keep the server handle to stop it gracefully
     methods: HashMap<String, Handler<T>>, // all rpc methods registered
+    data: T
 }
 
 impl<T> RpcServer<T>
 where
     T: Clone + Send + Sync + 'static,
 {
-    pub fn new() -> Self {
+    pub fn new(data: T) -> Self {
         Self {
             handle: Mutex::new(None),
             methods: HashMap::new(),
+            data
         }
     }
 
-    pub async fn start_with<A: ToSocketAddrs, H: RpcServerHandler<T> + Send + Sync + 'static>(&self, server: Arc<H>, bind_address: A, closure: fn() -> Vec<(&'static str, Route)>) -> Result<(), Error> {
+    pub async fn start_with<A: ToSocketAddrs>(self, bind_address: A, closure: fn() -> Vec<(&'static str, Route)>) -> Result<Arc<Self>, Error> {
+        let zelf = Arc::new(self);
         {
+            let clone = Arc::clone(&zelf);
             let http_server = HttpServer::new(move || {
-                let server = server.clone();
+                let server = Arc::clone(&clone);
                 let mut app = App::new().app_data(web::Data::new(server));
-                app = app.route("/json_rpc", web::post().to(json_rpc::<T, H>));
+                app = app.route("/json_rpc", web::post().to(json_rpc::<T>));
                 for (path, route) in closure() {
                     app = app.route(path, route);
                 }
@@ -64,13 +60,13 @@ where
             .bind(&bind_address)?
             .run();
 
-            let mut handle = self.handle.lock().await;
+            let mut handle = zelf.handle.lock().await;
             *handle = Some(http_server.handle());
 
             tokio::spawn(http_server);
         }
 
-        Ok(())
+        Ok(zelf)
     }
 
     pub async fn stop(&self, graceful: bool) {
@@ -107,16 +103,18 @@ where
             error!("The method '{}' was already registered !", name);
         }
     }
+
+    pub fn get_data(&self) -> &T {
+        &self.data
+    }
 }
 
 // JSON RPC handler endpoint
-async fn json_rpc<T, H>(server: Data<Arc<H>>, body: web::Bytes) -> Result<impl Responder, RpcResponseError>
+async fn json_rpc<T>(server: Data<Arc<RpcServer<T>>>, body: web::Bytes) -> Result<impl Responder, RpcResponseError>
 where
-    T: Clone + Send + Sync + 'static,
-    H: RpcServerHandler<T> + 'static
+    T: Clone + Send + Sync + 'static
 {
-    let rpc_server = server.get_rpc_server();
-    let request = rpc_server.parse_request(&body)?;
-    let result = rpc_server.execute_method(server.get_data().clone(), request).await?;
+    let request = server.parse_request(&body)?;
+    let result = server.execute_method(server.get_data().clone(), request).await?;
     Ok(HttpResponse::Ok().json(result))
 }
