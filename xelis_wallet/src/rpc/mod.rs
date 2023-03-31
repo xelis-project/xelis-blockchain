@@ -1,4 +1,4 @@
-use std::sync::Arc;
+/*use std::sync::Arc;
 
 use anyhow::Result;
 use xelis_common::rpc_server::{RpcServer, RpcServerHandler};
@@ -39,4 +39,4 @@ impl RpcServerHandler<Arc<Wallet>, ()> for WalletRpcServer {
 
 async fn index() -> impl Responder {
     HttpResponse::Ok().body(format!("Hello, world!\nRunning on"))
-}
+}*/

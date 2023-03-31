@@ -1,6 +1,7 @@
 use std::{sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashSet, hash::{Hash, Hasher}};
 use actix_web::{HttpRequest, web::Payload, HttpResponse};
 use actix_ws::{Session, MessageStream, Message, CloseReason, CloseCode};
+use async_trait::async_trait;
 use futures_util::StreamExt;
 use log::debug;
 use tokio::sync::Mutex;
@@ -49,16 +50,17 @@ impl Hash for WebSocketSession {
     }
 }
 
-pub trait WebSocketHandler {
+#[async_trait]
+pub trait WebSocketHandler: Sized {
     // called when a new Session is added in websocket server
     // if an error is returned, maintaining the session is aborted
-    fn on_connection(&self, session: &WebSocketSessionShared) -> Result<(), anyhow::Error>;
+    async fn on_connection(&self, ws: &WebSocketServerShared<Self>, session: &WebSocketSessionShared) -> Result<(), anyhow::Error>;
 
     // called when a new message is received
-    fn on_message(&self, session: &WebSocketSessionShared, message: Message) -> Result<(), anyhow::Error>;
+    async fn on_message(&self, ws: &WebSocketServerShared<Self>, session: &WebSocketSessionShared, message: Message) -> Result<(), anyhow::Error>;
 
     // called when a Session is closed
-    fn on_close(&self, session: &WebSocketSessionShared) -> Result<(), anyhow::Error>;
+    async fn on_close(&self, ws: &WebSocketServerShared<Self>, session: &WebSocketSessionShared) -> Result<(), anyhow::Error>;
 }
 
 pub struct WebSocketServer<H: WebSocketHandler + 'static> {
@@ -84,7 +86,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         &self.sessions
     }
 
-    pub async fn send_text_to<S: Into<String>>(&self, session: &WebSocketSessionShared, value: S) -> Result<(), WebSocketError> {
+    pub async fn send_text_to<S: Into<String>>(self: &Arc<Self>, session: &WebSocketSessionShared, value: S) -> Result<(), WebSocketError> {
         let res = session.send_text(value).await;
         if res.is_err() {
             self.delete_session(session, None).await;
@@ -113,7 +115,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         self.id_counter.fetch_add(1, Ordering::SeqCst)
     }
 
-    async fn delete_session(&self, session: &WebSocketSessionShared, reason: Option<CloseReason>) {
+    async fn delete_session(self: &Arc<Self>, session: &WebSocketSessionShared, reason: Option<CloseReason>) {
         // close session
         if let Err(e) = session.close(reason).await {
             debug!("Error while closing session: {}", e);
@@ -122,7 +124,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         let mut sessions = self.sessions.lock().await;
         if sessions.remove(session) {
             // call on_close
-            if let Err(e) = self.handler.on_close(session) {
+            if let Err(e) = self.handler.on_close(self, session).await {
                 debug!("Error while calling on_close: {}", e);
             }
         }
@@ -130,7 +132,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     
     async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared, mut stream: MessageStream) {
         // call on_connection
-        if let Err(e) = self.handler.on_connection(&session) {
+        if let Err(e) = self.handler.on_connection(&self, &session).await {
             debug!("Error while calling on_connection: {}", e);
             self.delete_session(&session, Some(CloseReason::from(CloseCode::Error))).await;
             return;
@@ -150,7 +152,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             };
     
             // handle message
-            if let Err(e) = self.handler.on_message(&session, msg) {
+            if let Err(e) = self.handler.on_message(&self, &session, msg).await {
                 debug!("Error while calling on_message: {}", e);
                 break Some(CloseReason::from(CloseCode::Error));
             }

@@ -195,7 +195,7 @@ impl GetWorkServer {
         OsRng.fill_bytes(&mut job.extra_nonce);
 
         debug!("Sending job to new miner");
-        addr.send(Response::NewJob(GetBlockTemplateResult { template: job.to_hex(), height, difficulty })).await??;
+        addr.send(Response::NewJob(GetBlockTemplateResult { template: job.to_hex(), height, difficulty })).await.context("error while sending block template")??;
         Ok(())
     }
 

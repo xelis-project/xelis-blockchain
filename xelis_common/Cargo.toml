@@ -28,9 +28,10 @@ actix-rt = { version = "2.8.0", optional = true }
 actix-web = { version = "4", optional = true }
 actix-ws = { version = "0.2.5", optional = true }
 futures-util = { version = "0.3.28", optional = true }
+async-trait = { version = "0.1.64", optional = true }
 
 [features]
 json_rpc = ["dep:reqwest"]
 prompt = ["dep:tokio"]
 clap = ["dep:clap"]
-rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "dep:tokio"]
+rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "dep:tokio", "dep:async-trait"]

@@ -6,10 +6,11 @@ use crate::rpc::getwork_server::GetWorkServer;
 use actix_web::web::{Path, Data};
 use actix_web::{web::{self, Payload}, error::Error, HttpResponse, Responder, HttpRequest};
 use actix_web_actors::ws::WsResponseBuilder;
+use serde_json::Value;
 use xelis_common::api::daemon::NotifyEvent;
 use xelis_common::config;
 use xelis_common::crypto::address::Address;
-use xelis_common::rpc_server::{RpcServer, InternalRpcError, RpcServerHandler};
+use xelis_common::rpc_server::{RpcServer, InternalRpcError, RPCHandler};
 use std::ops::Deref;
 use std::sync::Arc;
 use log::{trace, info, error, debug};
@@ -18,13 +19,9 @@ use self::getwork_server::{GetWorkWebSocketHandler, SharedGetWorkServer};
 pub type SharedDaemonRpcServer = Arc<DaemonRpcServer>;
 
 pub struct DaemonRpcServer {
-    inner: RpcServer<Arc<Blockchain>, NotifyEvent, Self>,
-    getwork: Option<SharedGetWorkServer>,
-    blockchain: Arc<Blockchain>
+    inner: Arc<RpcServer<Arc<Blockchain>, NotifyEvent>>,
+    getwork: Option<SharedGetWorkServer>
 }
-
-unsafe impl Sync for DaemonRpcServer {}
-unsafe impl Send for DaemonRpcServer {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
@@ -33,7 +30,9 @@ pub enum ApiError {
     #[error("invalid address")]
     ExpectedNormalAddress,
     #[error("P2p engine is not running")]
-    NoP2p
+    NoP2p,
+    #[error("WebSocket server is not started")]
+    NoWebSocketServer
 }
 
 impl DaemonRpcServer {
@@ -45,21 +44,24 @@ impl DaemonRpcServer {
             None
         };
 
-        let mut inner = RpcServer::new();
-        rpc::register_methods(&mut inner);
+        let mut rpc_handler = RPCHandler::new(blockchain);
+        rpc::register_methods(&mut rpc_handler);
+
+        let rpc_server = RpcServer::new(rpc_handler, true);
+        let inner = rpc_server.start_with(bind_address, || vec![("/",  web::get().to(index)), ("/getwork/{address}/{worker}", web::get().to(getwork_endpoint))]).await.unwrap();
 
         let server = Arc::new(Self {
             inner,
-            blockchain,
             getwork,
         });
 
-        info!("RPC Server will run at {}", bind_address);
-        if let Err(e) = server.inner.start_with(server.clone(), bind_address, || vec![("/",  web::get().to(index)), ("/getwork/{address}/{worker}", web::get().to(getwork_endpoint))]).await {
-            error!("Failed to start RPC Server: {}", e);
-        }
-
         Ok(server)
+    }
+
+    pub async fn notify_clients(&self, event: &NotifyEvent, value: Value) -> Result<(), anyhow::Error> {
+        let ws = self.inner.get_websocket().as_ref().ok_or(ApiError::NoWebSocketServer)?;
+        ws.get_handler().notify(event, value).await;
+        Ok(())
     }
 
     pub async fn stop(&self) {
@@ -68,27 +70,13 @@ impl DaemonRpcServer {
         info!("RPC Server is now stopped!");
     }
 
-    pub fn get_blockchain(&self) -> &Arc<Blockchain> {
-        &self.blockchain
-    }
-
     pub fn getwork_server(&self) -> &Option<SharedGetWorkServer> {
         &self.getwork
     }
 }
 
-impl RpcServerHandler<Arc<Blockchain>, NotifyEvent> for DaemonRpcServer {
-    fn get_rpc_server(&self) -> &RpcServer<Arc<Blockchain>, NotifyEvent, Self> {
-        &self.inner
-    }
-
-    fn get_data(&self) -> &Arc<Blockchain> {
-        &self.blockchain
-    }
-}
-
 impl Deref for DaemonRpcServer {
-    type Target = RpcServer<Arc<Blockchain>, NotifyEvent, Self>;
+    type Target = RpcServer<Arc<Blockchain>, NotifyEvent>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -118,7 +106,7 @@ async fn getwork_endpoint(server: Data<SharedDaemonRpcServer>, request: HttpRequ
                 return Ok(HttpResponse::BadRequest().reason("Address should be in normal format").finish())
             }
 
-            if address.is_mainnet() != server.get_blockchain().get_network().is_mainnet() {
+            if address.is_mainnet() != server.get_rpc_handler().get_data().get_network().is_mainnet() {
                 return Ok(HttpResponse::BadRequest().reason("Address is not in same network state").finish())
             }
 

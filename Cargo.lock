@@ -2475,6 +2475,7 @@ dependencies = [
  "actix-web",
  "actix-ws",
  "anyhow",
+ "async-trait",
  "chrono",
  "clap",
  "ed25519-dalek",
