@@ -225,7 +225,8 @@ Retrieve a block at a specific topo height
 		"topoheight": 23,
 		"total_fees": 0,
 		"total_size_in_bytes": 131,
-		"txs_hashes": []
+		"txs_hashes": [],
+        "version": 0
 	}
 }
 ```
@@ -277,7 +278,8 @@ Retrieve all blocks at a specific height
 			"topoheight": 23,
 			"total_fees": 0,
 			"total_size_in_bytes": 131,
-			"txs_hashes": []
+			"txs_hashes": [],
+            "version": 0
 		}
 	]
 }
@@ -329,7 +331,8 @@ Retrieve a block by its hash
 		"topoheight": 23,
 		"total_fees": 0,
 		"total_size_in_bytes": 131,
-		"txs_hashes": []
+		"txs_hashes": [],
+        "version": 0
 	}
 }
 ```
@@ -377,7 +380,8 @@ Retrieve the highest block based on the topological height
 		"topoheight": 23,
 		"total_fees": 0,
 		"total_size_in_bytes": 131,
-		"txs_hashes": []
+		"txs_hashes": [],
+        "version": 0
 	}
 }
 ```
@@ -914,7 +918,8 @@ Retrieve a specific range of blocks (up to 20 maximum) based on topoheight
             "topoheight": 0,
             "total_fees": 0,
             "total_size_in_bytes": 99,
-            "txs_hashes": []
+            "txs_hashes": [],
+            "version": 0
         },
         {
             "block_type": "Sync",
@@ -934,7 +939,8 @@ Retrieve a specific range of blocks (up to 20 maximum) based on topoheight
             "topoheight": 1,
             "total_fees": 0,
             "total_size_in_bytes": 131,
-            "txs_hashes": []
+            "txs_hashes": [],
+            "version": 0
         },
         {
             "block_type": "Sync",
@@ -954,7 +960,8 @@ Retrieve a specific range of blocks (up to 20 maximum) based on topoheight
             "topoheight": 2,
             "total_fees": 0,
             "total_size_in_bytes": 131,
-            "txs_hashes": []
+            "txs_hashes": [],
+            "version": 0
         }
     ]
 }
