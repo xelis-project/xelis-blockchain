@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use std::{collections::HashMap, net::ToSocketAddrs, sync::Arc, hash::Hash};
 use actix_web::{HttpResponse, dev::ServerHandle, HttpServer, App, web::{self, Data, Payload}, Responder, Error, Route, HttpRequest};
 use serde::{Deserialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use log::debug;
 
@@ -27,14 +27,14 @@ pub struct RpcRequest {
     pub params: Option<Value>
 }
 
-pub struct EventWebSocketHandler<T, E> {
-    sessions: Mutex<HashMap<WebSocketSessionShared, HashMap<E, Option<usize>>>>,
+pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: Send + Eq + Hash + 'static> {
+    sessions: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<E, Option<usize>>>>,
     handler: Arc<RPCHandler<T>>
 }
 
 impl<T, E> EventWebSocketHandler<T, E>
 where
-    T: Sync + Send + 'static,
+    T: Sync + Send + Clone + 'static,
     E: Send + Eq + Hash + 'static
 {
     pub fn new(handler: Arc<RPCHandler<T>>) -> Self {
@@ -48,7 +48,15 @@ where
         let sessions = self.sessions.lock().await;
         for (session, subscriptions) in sessions.iter() {
             if let Some(id) = subscriptions.get(event) {
-                
+                let response = json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "id": id,
+                    "result": value
+                });
+
+                if let Err(e) = session.send_text(response.to_string()).await {
+                    debug!("Error occured while notifying a new event: {}", e);
+                };
             }
         }
     }
@@ -58,27 +66,27 @@ where
 #[async_trait]
 impl<T, E> WebSocketHandler for EventWebSocketHandler<T, E>
 where
-    T: Sync + Send + 'static,
+    T: Sync + Send + Clone + 'static,
     E: Send + Eq + Hash + 'static
 {
-    async fn on_close(&self, _: &WebSocketServerShared<Self>, session: &WebSocketSessionShared) -> Result<(), anyhow::Error> {
+    async fn on_close(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
         let mut sessions = self.sessions.lock().await;
         sessions.remove(session);
         Ok(())
     }
 
-    async fn on_connection(&self, _: &WebSocketServerShared<Self>, _: &WebSocketSessionShared) -> Result<(), anyhow::Error> {
+    async fn on_connection(&self, _: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
         debug!("New connection detected on websocket");
         Ok(())
     }
 
-    async fn on_message(&self, ws: &WebSocketServerShared<Self>, session: &WebSocketSessionShared, message: Message) -> Result<(), anyhow::Error> {
+    async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: Message) -> Result<(), anyhow::Error> {
         if let Message::Text(text) = message {
             let response: Value = match self.handler.handle_request(text.as_bytes()).await {
                 Ok(result) => result,
                 Err(e) => e.to_json(),
             };
-            ws.send_text_to(session, response.to_string()).await?;
+            session.send_text(response.to_string()).await?;
         }
 
         Ok(())

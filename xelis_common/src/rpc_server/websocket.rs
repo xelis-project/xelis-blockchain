@@ -7,7 +7,7 @@ use log::debug;
 use tokio::sync::Mutex;
 
 pub type WebSocketServerShared<H> = Arc<WebSocketServer<H>>;
-pub type WebSocketSessionShared = Arc<WebSocketSession>;
+pub type WebSocketSessionShared<H> = Arc<WebSocketSession<H>>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebSocketError {
@@ -17,13 +17,25 @@ pub enum WebSocketError {
     SessionAlreadyClosed,
 }
 
-pub struct WebSocketSession {
+pub struct WebSocketSession<H: WebSocketHandler + 'static> {
     id: u64,
+    server: WebSocketServerShared<H>,
     inner: Mutex<Option<Session>>
 }
 
-impl WebSocketSession {
-    async fn send_text<S: Into<String>>(&self, value: S) -> Result<(), WebSocketError> {
+impl<H> WebSocketSession<H>
+where
+    H: WebSocketHandler + 'static
+{
+    pub async fn send_text<S: Into<String>>(self: &Arc<Self>, value: S) -> Result<(), WebSocketError> {
+        let res = self.send_text_internal(value).await;
+        if res.is_err() {
+            self.server.delete_session(self, None).await;
+        }
+        res
+    }
+
+    async fn send_text_internal<S: Into<String>>(&self, value: S) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?.text(value.into()).await?;
         Ok(())
@@ -34,18 +46,31 @@ impl WebSocketSession {
         inner.take().ok_or(WebSocketError::SessionAlreadyClosed)?.close(reason).await?;
         Ok(())
     }
+
+    pub fn get_server(&self) -> &WebSocketServerShared<H> {
+        &self.server
+    }
 }
 
-impl PartialEq for WebSocketSession {
+impl<H> PartialEq for WebSocketSession<H>
+where
+    H: WebSocketHandler + 'static
+{
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl Eq for WebSocketSession {}
+impl<H> Eq for WebSocketSession<H>
+where
+    H: WebSocketHandler + 'static
+{}
 
-impl Hash for WebSocketSession {
-    fn hash<H: Hasher>(&self, state: &mut H) {
+impl<H> Hash for WebSocketSession<H>
+where
+    H: WebSocketHandler + 'static
+{
+    fn hash<A: Hasher>(&self, state: &mut A) {
         self.id.hash(state);
     }
 }
@@ -54,17 +79,17 @@ impl Hash for WebSocketSession {
 pub trait WebSocketHandler: Sized {
     // called when a new Session is added in websocket server
     // if an error is returned, maintaining the session is aborted
-    async fn on_connection(&self, ws: &WebSocketServerShared<Self>, session: &WebSocketSessionShared) -> Result<(), anyhow::Error>;
+    async fn on_connection(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error>;
 
     // called when a new message is received
-    async fn on_message(&self, ws: &WebSocketServerShared<Self>, session: &WebSocketSessionShared, message: Message) -> Result<(), anyhow::Error>;
+    async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: Message) -> Result<(), anyhow::Error>;
 
     // called when a Session is closed
-    async fn on_close(&self, ws: &WebSocketServerShared<Self>, session: &WebSocketSessionShared) -> Result<(), anyhow::Error>;
+    async fn on_close(&self,session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error>;
 }
 
 pub struct WebSocketServer<H: WebSocketHandler + 'static> {
-    sessions: Mutex<HashSet<WebSocketSessionShared>>,
+    sessions: Mutex<HashSet<WebSocketSessionShared<H>>>,
     id_counter: AtomicU64,
     handler: H
 }
@@ -82,22 +107,15 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         &self.handler
     }
 
-    pub fn get_sessions(&self) -> &Mutex<HashSet<WebSocketSessionShared>> {
+    pub fn get_sessions(&self) -> &Mutex<HashSet<WebSocketSessionShared<H>>> {
         &self.sessions
-    }
-
-    pub async fn send_text_to<S: Into<String>>(self: &Arc<Self>, session: &WebSocketSessionShared, value: S) -> Result<(), WebSocketError> {
-        let res = session.send_text(value).await;
-        if res.is_err() {
-            self.delete_session(session, None).await;
-        }
-        res
     }
 
     pub async fn handle_connection(self: &Arc<Self>, request: &HttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
         let (response, session, stream) = actix_ws::handle(request, body)?;
         let session = Arc::new(WebSocketSession {
             id: self.next_id(),
+            server: Arc::clone(&self),
             inner: Mutex::new(Some(session)),
         });
 
@@ -115,7 +133,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         self.id_counter.fetch_add(1, Ordering::SeqCst)
     }
 
-    async fn delete_session(self: &Arc<Self>, session: &WebSocketSessionShared, reason: Option<CloseReason>) {
+    async fn delete_session(&self, session: &WebSocketSessionShared<H>, reason: Option<CloseReason>) {
         // close session
         if let Err(e) = session.close(reason).await {
             debug!("Error while closing session: {}", e);
@@ -124,15 +142,15 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         let mut sessions = self.sessions.lock().await;
         if sessions.remove(session) {
             // call on_close
-            if let Err(e) = self.handler.on_close(self, session).await {
+            if let Err(e) = self.handler.on_close(session).await {
                 debug!("Error while calling on_close: {}", e);
             }
         }
     }
     
-    async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared, mut stream: MessageStream) {
+    async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: MessageStream) {
         // call on_connection
-        if let Err(e) = self.handler.on_connection(&self, &session).await {
+        if let Err(e) = self.handler.on_connection(&session).await {
             debug!("Error while calling on_connection: {}", e);
             self.delete_session(&session, Some(CloseReason::from(CloseCode::Error))).await;
             return;
@@ -152,7 +170,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             };
     
             // handle message
-            if let Err(e) = self.handler.on_message(&self, &session, msg).await {
+            if let Err(e) = self.handler.on_message(&session, msg).await {
                 debug!("Error while calling on_message: {}", e);
                 break Some(CloseReason::from(CloseCode::Error));
             }

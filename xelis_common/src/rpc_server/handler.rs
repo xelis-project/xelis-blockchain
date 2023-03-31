@@ -3,14 +3,17 @@ use serde_json::{Value, json};
 use super::{InternalRpcError, RpcResponseError, RpcRequest, JSON_RPC_VERSION};
 use log::{error, trace};
 
-pub type Handler<T> = fn(&T, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send>>;
+pub type Handler<T> = fn(T, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send>>;
 
-pub struct RPCHandler<T> {
+pub struct RPCHandler<T: Clone> {
     methods: HashMap<String, Handler<T>>, // all RPC methods registered
     data: T
 }
 
-impl<T> RPCHandler<T> {
+impl<T> RPCHandler<T>
+where
+    T: Clone
+{
     pub fn new(data: T) -> Self {
         Self {
             methods: HashMap::new(),
@@ -38,7 +41,7 @@ impl<T> RPCHandler<T> {
         };
         trace!("executing '{}' RPC method", request.method);
         let params = request.params.take().unwrap_or(Value::Null);
-        let result = handler(self.get_data(), params).await.map_err(|err| RpcResponseError::new(request.id, err))?;
+        let result = handler(self.get_data().clone(), params).await.map_err(|err| RpcResponseError::new(request.id, err))?;
         Ok(json!({
             "jsonrpc": JSON_RPC_VERSION,
             "id": request.id,
