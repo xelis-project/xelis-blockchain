@@ -13,6 +13,8 @@ pub enum InternalRpcError {
     InvalidRequest,
     #[error("Invalid params: {}", _0)]
     InvalidParams(#[from] SerdeError),
+    #[error("Expected parameters for this method but was not present")]
+    ExpectedParams,
     #[error("Unexpected parameters for this method")]
     UnexpectedParams,
     #[error("Expected json_rpc set to '2.0'")]
@@ -24,7 +26,11 @@ pub enum InternalRpcError {
     #[error(transparent)]
     AnyError(#[from] AnyError),
     #[error("Websocket client was not found")]
-    ClientNotFound
+    ClientNotFound,
+    #[error("Event is not subscribed")]
+    EventNotSubscribed,
+    #[error("Event is already subscribed")]
+    EventAlreadySubscribed
 }
 
 impl InternalRpcError {

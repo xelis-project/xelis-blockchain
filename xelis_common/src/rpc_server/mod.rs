@@ -10,7 +10,7 @@ use async_trait::async_trait;
 
 use std::{collections::HashMap, net::ToSocketAddrs, sync::Arc, hash::Hash};
 use actix_web::{HttpResponse, dev::ServerHandle, HttpServer, App, web::{self, Data, Payload}, Responder, Error, Route, HttpRequest};
-use serde::{Deserialize};
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use log::debug;
@@ -27,7 +27,7 @@ pub struct RpcRequest {
     pub params: Option<Value>
 }
 
-pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: Send + Eq + Hash + 'static> {
+pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: DeserializeOwned + Send + Eq + Hash + 'static> {
     sessions: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<E, Option<usize>>>>,
     handler: Arc<RPCHandler<T>>
 }
@@ -35,7 +35,7 @@ pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: Send + Eq 
 impl<T, E> EventWebSocketHandler<T, E>
 where
     T: Sync + Send + Clone + 'static,
-    E: Send + Eq + Hash + 'static
+    E: DeserializeOwned + Send + Eq + Hash + 'static
 {
     pub fn new(handler: Arc<RPCHandler<T>>) -> Self {
         Self {
@@ -60,6 +60,58 @@ where
             }
         }
     }
+
+    async fn subscribe_session_to_event(&self, session: &WebSocketSessionShared<Self>, event: E, id: Option<usize>) -> Result<(), RpcResponseError> {
+        let mut sessions = self.sessions.lock().await;
+        let events = sessions.entry(session.clone()).or_insert_with(HashMap::new);
+        if events.contains_key(&event) {
+            return Err(RpcResponseError::new(id, InternalRpcError::EventAlreadySubscribed));
+        }
+
+        events.insert(event, id);
+        Ok(())
+    }
+
+    async fn unsubscribe_session_from_event(&self, session: &WebSocketSessionShared<Self>, event: E, id: Option<usize>) -> Result<(), RpcResponseError> {
+        let mut sessions = self.sessions.lock().await;
+        let events = sessions.entry(session.clone()).or_insert_with(HashMap::new);
+        if events.contains_key(&event) {
+            return Err(RpcResponseError::new(id, InternalRpcError::EventNotSubscribed));
+        }
+
+        events.remove(&event);
+        Ok(())
+    }
+
+    fn parse_event(&self, request: &mut RpcRequest) -> Result<E, RpcResponseError> {
+        let value = request.params.take().ok_or_else(|| RpcResponseError::new(request.id, InternalRpcError::ExpectedParams))?;
+        serde_json::from_value(value).map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e)))
+    }
+
+    async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: Message) -> Result<Value, RpcResponseError> {
+        if let Message::Text(text) = message {
+            let mut request: RpcRequest = self.handler.parse_request(text.as_bytes())?;
+            let response: Value = match request.method.as_str() {
+                "subscribe" => {
+                    let event = self.parse_event(&mut request)?;
+                    self.subscribe_session_to_event(session, event, request.id).await?;
+                    json!(true)
+                },
+                "unsubscribe" => {
+                    let event = self.parse_event(&mut request)?;
+                    self.unsubscribe_session_from_event(session, event, request.id).await?;
+                    json!(true)
+                },
+                _ => match self.handler.handle_request(text.as_bytes()).await {
+                    Ok(result) => result,
+                    Err(e) => e.to_json(),
+                }
+            };
+            Ok(response)
+        } else {
+            Err(RpcResponseError::new(None, InternalRpcError::InvalidRequest))
+        }
+    }
 }
 
 
@@ -67,7 +119,7 @@ where
 impl<T, E> WebSocketHandler for EventWebSocketHandler<T, E>
 where
     T: Sync + Send + Clone + 'static,
-    E: Send + Eq + Hash + 'static
+    E: DeserializeOwned + Send + Eq + Hash + 'static
 {
     async fn on_close(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
         let mut sessions = self.sessions.lock().await;
@@ -81,14 +133,11 @@ where
     }
 
     async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: Message) -> Result<(), anyhow::Error> {
-        if let Message::Text(text) = message {
-            let response: Value = match self.handler.handle_request(text.as_bytes()).await {
-                Ok(result) => result,
-                Err(e) => e.to_json(),
-            };
-            session.send_text(response.to_string()).await?;
-        }
-
+        let response: Value = match self.on_message_internal(session, message).await {
+            Ok(result) => result,
+            Err(e) => e.to_json(),
+        };
+        session.send_text(response.to_string()).await?;
         Ok(())
     }
 }
@@ -96,7 +145,7 @@ where
 pub struct RpcServer<T, E>
 where
     T: Clone + Send + Sync + 'static,
-    E: Send + Eq + Hash + 'static
+    E: DeserializeOwned + Send + Eq + Hash + 'static
 {
     handle: Mutex<Option<ServerHandle>>, // keep the server handle to stop it gracefully
     websocket: Option<WebSocketServerShared<EventWebSocketHandler<T, E>>>,
@@ -106,7 +155,7 @@ where
 impl<T, E> RpcServer<T, E>
 where
     T: Clone + Send + Sync + 'static,
-    E: Send + Eq + Hash + 'static
+    E: DeserializeOwned + Send + Eq + Hash + 'static
 {
     pub fn new(handler: RPCHandler<T>, use_websocket: bool) -> Self {
         let shared_handler = Arc::new(handler);
@@ -170,7 +219,7 @@ where
 async fn json_rpc<T, E>(server: Data<Arc<RpcServer<T, E>>>, body: web::Bytes) -> Result<impl Responder, RpcResponseError>
 where
     T: Clone + Send + Sync + 'static,
-    E: Send + Eq + Hash + 'static
+    E: DeserializeOwned + Send + Eq + Hash + 'static
 {
     let result = server.get_rpc_handler().handle_request(&body).await?;
     Ok(HttpResponse::Ok().json(result))
@@ -180,7 +229,7 @@ where
 async fn websocket<T, E>(server: Data<Arc<RpcServer<T, E>>>, request: HttpRequest, body: Payload) -> Result<impl Responder, actix_web::Error>
 where
     T: Clone + Send + Sync + 'static,
-    E: Send + Eq + Hash + 'static
+    E: DeserializeOwned + Send + Eq + Hash + 'static
 {
     if let Some(websocket) = server.get_websocket() {
         let response = websocket.handle_connection(&request, body).await?;
