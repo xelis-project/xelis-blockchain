@@ -165,11 +165,6 @@ pub struct TransactionResponse<'a, T: Clone> {
     pub data: DataHash<'a, T>
 }
 
-#[derive(Deserialize)]
-pub struct SubscribeParams<E> {
-    pub notify: E
-}
-
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {
     // When a new block is accepted by chain

@@ -15,6 +15,8 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use log::debug;
 
+use crate::api::SubscribeParams;
+
 use self::websocket::{WebSocketSessionShared, WebSocketServerShared, WebSocketServer, WebSocketHandler};
 
 pub const JSON_RPC_VERSION: &str = "2.0";
@@ -85,7 +87,8 @@ where
 
     fn parse_event(&self, request: &mut RpcRequest) -> Result<E, RpcResponseError> {
         let value = request.params.take().ok_or_else(|| RpcResponseError::new(request.id, InternalRpcError::ExpectedParams))?;
-        serde_json::from_value(value).map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e)))
+        let params: SubscribeParams<E> = serde_json::from_value(value).map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e)))?;
+        Ok(params.notify)
     }
 
     async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: Message) -> Result<Value, RpcResponseError> {

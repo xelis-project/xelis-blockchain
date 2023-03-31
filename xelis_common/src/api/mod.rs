@@ -1,5 +1,7 @@
 use std::{collections::HashMap, hash::Hash};
 
+use serde::Deserialize;
+
 use crate::serializer::{Serializer, Reader, ReaderError, Writer};
 
 pub mod wallet;
@@ -127,4 +129,9 @@ impl Serializer for DataValue {
             }
         };
     }
+}
+
+#[derive(Deserialize)]
+pub struct SubscribeParams<E> {
+    pub notify: E
 }
