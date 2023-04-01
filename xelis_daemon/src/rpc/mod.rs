@@ -47,11 +47,9 @@ impl DaemonRpcServer {
         let mut rpc_handler = RPCHandler::new(blockchain);
         rpc::register_methods(&mut rpc_handler);
 
-        let rpc_server = RpcServer::new(rpc_handler, true);
-        let inner = rpc_server.start_with(bind_address, || vec![("/",  web::get().to(index)), ("/getwork/{address}/{worker}", web::get().to(getwork_endpoint))]).await.unwrap();
-
+        let rpc_server = RpcServer::new(rpc_handler, true, bind_address, || vec![("/",  web::get().to(index)), ("/getwork/{address}/{worker}", web::get().to(getwork_endpoint))]).await.unwrap();
         let server = Arc::new(Self {
-            inner,
+            inner: rpc_server,
             getwork,
         });
 

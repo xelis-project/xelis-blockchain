@@ -160,24 +160,23 @@ where
     T: Clone + Send + Sync + 'static,
     E: DeserializeOwned + Send + Eq + Hash + 'static
 {
-    pub fn new(handler: RPCHandler<T>, use_websocket: bool) -> Self {
-        let shared_handler = Arc::new(handler);
-        let websocket = if use_websocket {
-            let ws_handler = EventWebSocketHandler::new(shared_handler.clone());
-            Some(WebSocketServer::new(ws_handler))
-        } else {
-            None
+    pub async fn new<A: ToSocketAddrs>(handler: RPCHandler<T>, use_websocket: bool, bind_address: A, closure: fn() -> Vec<(&'static str, Route)>) -> Result<Arc<Self>, Error> {
+        let zelf = {
+            let shared_handler = Arc::new(handler);
+            let websocket = if use_websocket {
+                let ws_handler = EventWebSocketHandler::new(shared_handler.clone());
+                Some(WebSocketServer::new(ws_handler))
+            } else {
+                None
+            };
+    
+            Arc::new(Self {
+                handle: Mutex::new(None),
+                handler: shared_handler,
+                websocket,
+            })
         };
 
-        Self {
-            handle: Mutex::new(None),
-            handler: shared_handler,
-            websocket,
-        }
-    }
-
-    pub async fn start_with<A: ToSocketAddrs>(self, bind_address: A, closure: fn() -> Vec<(&'static str, Route)>) -> Result<Arc<Self>, Error> {
-        let zelf = Arc::new(self);
         {
             let clone = Arc::clone(&zelf);
             let http_server = HttpServer::new(move || {
