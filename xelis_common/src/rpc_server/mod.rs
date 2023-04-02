@@ -2,13 +2,13 @@ pub mod websocket;
 mod error;
 mod rpc_handler;
 
-use std::sync::Arc;
+use std::{sync::Arc, borrow::Cow};
 
 pub use error::{RpcResponseError, InternalRpcError};
 pub use rpc_handler::{RPCHandler, Handler};
 
 use actix_web::{HttpResponse, web::{self, Data, Payload}, Responder, HttpRequest};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use self::websocket::{WebSocketServerShared, WebSocketHandler};
@@ -21,6 +21,23 @@ pub struct RpcRequest {
     pub id: Option<usize>,
     pub method: String,
     pub params: Option<Value>
+}
+
+#[derive(Serialize)]
+pub struct RpcResponse<'a> {
+    pub jsonrpc: &'a str,
+    pub id: Cow<'a, Option<usize>>,
+    pub result: Cow<'a, Value>
+}
+
+impl<'a> RpcResponse<'a> {
+    pub fn new(id: Cow<'a, Option<usize>>, result: Cow<'a, Value>) -> Self {
+        Self {
+            jsonrpc: JSON_RPC_VERSION,
+            id,
+            result
+        }
+    }
 }
 
 // trait to retrieve easily a JSON RPC handler for registered route

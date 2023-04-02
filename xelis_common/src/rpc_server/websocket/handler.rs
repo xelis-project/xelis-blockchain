@@ -1,11 +1,11 @@
-use std::{collections::HashMap, hash::Hash, sync::Arc};
+use std::{collections::HashMap, hash::Hash, sync::Arc, borrow::Cow};
 use actix_ws::Message;
 use async_trait::async_trait;
 use log::debug;
 use serde_json::{Value, json};
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
-use crate::{rpc_server::{RPCHandler, JSON_RPC_VERSION, RpcResponseError, InternalRpcError, RpcRequest}, api::SubscribeParams};
+use crate::{rpc_server::{RPCHandler, RpcResponseError, InternalRpcError, RpcRequest, RpcResponse}, api::SubscribeParams};
 use super::{WebSocketSessionShared, WebSocketHandler};
 
 // generic websocket handler supporting event subscriptions 
@@ -30,12 +30,7 @@ where
         let sessions = self.sessions.lock().await;
         for (session, subscriptions) in sessions.iter() {
             if let Some(id) = subscriptions.get(event) {
-                let response = json!({
-                    "jsonrpc": JSON_RPC_VERSION,
-                    "id": id,
-                    "result": value
-                });
-
+                let response = json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value)));
                 if let Err(e) = session.send_text(response.to_string()).await {
                     debug!("Error occured while notifying a new event: {}", e);
                 };
@@ -78,12 +73,12 @@ where
                 "subscribe" => {
                     let event = self.parse_event(&mut request)?;
                     self.subscribe_session_to_event(session, event, request.id).await?;
-                    json!(true)
+                    json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(json!(true))))
                 },
                 "unsubscribe" => {
                     let event = self.parse_event(&mut request)?;
                     self.unsubscribe_session_from_event(session, event, request.id).await?;
-                    json!(true)
+                    json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(json!(true))))
                 },
                 _ => match self.handler.handle_request(text.as_bytes()).await {
                     Ok(result) => result,
