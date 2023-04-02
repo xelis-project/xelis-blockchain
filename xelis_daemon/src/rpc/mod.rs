@@ -3,23 +3,31 @@ pub mod getwork_server;
 
 use crate::core::{error::BlockchainError, blockchain::Blockchain};
 use crate::rpc::getwork_server::GetWorkServer;
-use actix_web::web::{Path, Data};
-use actix_web::{web::{self, Payload}, error::Error, HttpResponse, Responder, HttpRequest};
+use actix_web::dev::ServerHandle;
+use actix_web::{
+    get, HttpServer, App, HttpResponse, Responder, HttpRequest, web::{
+        self, Path, Data, Payload
+    },
+    error::Error
+};
 use actix_web_actors::ws::WsResponseBuilder;
 use serde_json::Value;
+use tokio::sync::Mutex;
 use xelis_common::api::daemon::NotifyEvent;
 use xelis_common::config;
 use xelis_common::crypto::address::Address;
-use xelis_common::rpc_server::{RpcServer, InternalRpcError, RPCHandler};
-use std::ops::Deref;
+use xelis_common::rpc_server::websocket::{EventWebSocketHandler, WebSocketServerShared, WebSocketServer};
+use xelis_common::rpc_server::{InternalRpcError, RPCHandler, RPCServerHandler, json_rpc, websocket, WebSocketServerHandler};
 use std::sync::Arc;
-use log::{trace, info, error, debug};
+use log::{trace, info, error, debug, warn};
 use self::getwork_server::{GetWorkWebSocketHandler, SharedGetWorkServer};
 
 pub type SharedDaemonRpcServer = Arc<DaemonRpcServer>;
 
 pub struct DaemonRpcServer {
-    inner: Arc<RpcServer<Arc<Blockchain>, NotifyEvent>>,
+    handle: Mutex<Option<ServerHandle>>,
+    rpc_handler: Arc<RPCHandler<Arc<Blockchain>>>,
+    websocket: WebSocketServerShared<EventWebSocketHandler<Arc<Blockchain>, NotifyEvent>>,
     getwork: Option<SharedGetWorkServer>
 }
 
@@ -44,28 +52,61 @@ impl DaemonRpcServer {
             None
         };
 
+        // create the RPC Handler which will register and contains all available methods
         let mut rpc_handler = RPCHandler::new(blockchain);
         rpc::register_methods(&mut rpc_handler);
 
-        let rpc_server = RpcServer::new(rpc_handler, true, bind_address, || vec![("/",  web::get().to(index)), ("/getwork/{address}/{worker}", web::get().to(getwork_endpoint))]).await.unwrap();
+        let rpc_handler = Arc::new(rpc_handler);
+
+        // create the default websocket server (support event & rpc methods)
+        let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler.clone()));
+
         let server = Arc::new(Self {
-            inner: rpc_server,
+            handle: Mutex::new(None),
+            websocket: ws,
+            rpc_handler,
             getwork,
         });
 
+        {
+            let clone = Arc::clone(&server);
+            let http_server = HttpServer::new(move || {
+                let server = Arc::clone(&clone);
+                App::new().app_data(web::Data::new(server))
+                    .route("/json_rpc", web::post().to(json_rpc::<Arc<Blockchain>, DaemonRpcServer>))
+                    .route("/ws", web::get().to(websocket::<EventWebSocketHandler<Arc<Blockchain>, NotifyEvent>, DaemonRpcServer>))
+                    .service(index)
+                    .service(getwork_endpoint)
+            })
+            .disable_signals()
+            .bind(&bind_address)?
+            .run();
+
+            { // save the server handle to be able to stop it later
+                let handle = http_server.handle();
+                let mut lock = server.handle.lock().await;
+                *lock = Some(handle);
+
+            }
+            tokio::spawn(http_server);
+        }
         Ok(server)
     }
 
     pub async fn notify_clients(&self, event: &NotifyEvent, value: Value) -> Result<(), anyhow::Error> {
-        let ws = self.inner.get_websocket().as_ref().ok_or(ApiError::NoWebSocketServer)?;
-        ws.get_handler().notify(event, value).await;
+        self.get_websocket().get_handler().notify(event, value).await;
         Ok(())
     }
 
     pub async fn stop(&self) {
         info!("Stopping RPC Server...");
-        self.inner.stop(true).await;
-        info!("RPC Server is now stopped!");
+        let mut handle = self.handle.lock().await;
+        if let Some(handle) = handle.take() {
+            handle.stop(true).await;
+            info!("RPC Server is now stopped!");
+        } else {
+            warn!("RPC Server is not running!");
+        }
     }
 
     pub fn getwork_server(&self) -> &Option<SharedGetWorkServer> {
@@ -73,18 +114,25 @@ impl DaemonRpcServer {
     }
 }
 
-impl Deref for DaemonRpcServer {
-    type Target = RpcServer<Arc<Blockchain>, NotifyEvent>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+impl WebSocketServerHandler<EventWebSocketHandler<Arc<Blockchain>, NotifyEvent>> for DaemonRpcServer {
+    fn get_websocket(&self) -> &WebSocketServerShared<EventWebSocketHandler<Arc<Blockchain>, NotifyEvent>> {
+        &self.websocket
     }
 }
 
+impl RPCServerHandler<Arc<Blockchain>> for DaemonRpcServer {
+    fn get_rpc_handler(&self) -> &RPCHandler<Arc<Blockchain>> {
+        &self.rpc_handler
+    }
+}
+
+
+#[get("/")]
 async fn index() -> impl Responder {
     HttpResponse::Ok().body(format!("Hello, world!\nRunning on: {}", config::VERSION))
 }
 
+#[get("/getwork/{address}/{worker}")]
 async fn getwork_endpoint(server: Data<SharedDaemonRpcServer>, request: HttpRequest, stream: Payload, path: Path<(String, String)>) -> Result<HttpResponse, Error> {
     match &server.getwork {
         Some(getwork) => {

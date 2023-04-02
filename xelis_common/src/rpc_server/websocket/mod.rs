@@ -1,3 +1,5 @@
+mod handler;
+
 use std::{sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashSet, hash::{Hash, Hasher}};
 use actix_web::{HttpRequest, web::Payload, HttpResponse};
 use actix_ws::{Session, MessageStream, Message, CloseReason, CloseCode};
@@ -5,6 +7,8 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use log::debug;
 use tokio::sync::Mutex;
+
+pub use self::handler::EventWebSocketHandler;
 
 pub type WebSocketServerShared<H> = Arc<WebSocketServer<H>>;
 pub type WebSocketSessionShared<H> = Arc<WebSocketSession<H>>;
@@ -125,7 +129,6 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         }
 
         actix_rt::spawn(Arc::clone(self).handle_ws_internal(session.clone(), stream));
-        
         Ok(response)
     }
 
