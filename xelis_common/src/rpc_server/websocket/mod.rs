@@ -137,18 +137,23 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     }
 
     async fn delete_session(&self, session: &WebSocketSessionShared<H>, reason: Option<CloseReason>) {
+        debug!("deleting session");
         // close session
         if let Err(e) = session.close(reason).await {
             debug!("Error while closing session: {}", e);
         }
+        debug!("session closed");
 
         let mut sessions = self.sessions.lock().await;
+        debug!("sessions locked");
         if sessions.remove(session) {
+            debug!("deleted session");
             // call on_close
             if let Err(e) = self.handler.on_close(session).await {
                 debug!("Error while calling on_close: {}", e);
             }
         }
+        debug!("sessions unlocked");
     }
     
     async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: MessageStream) {
@@ -159,6 +164,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             return;
         }
 
+        // TODO implement heartbeat
         let reason = loop {
             // wait for next message
             let msg = match stream.next().await {
