@@ -2,6 +2,8 @@ pub mod websocket;
 mod error;
 mod rpc_handler;
 
+use std::sync::Arc;
+
 pub use error::{RpcResponseError, InternalRpcError};
 pub use rpc_handler::{RPCHandler, Handler};
 
@@ -27,7 +29,7 @@ pub trait RPCServerHandler<T: Sync + Send + Clone + 'static> {
 }
 
 // JSON RPC handler endpoint
-pub async fn json_rpc<T, H>(server: Data<H>, body: web::Bytes) -> Result<impl Responder, RpcResponseError>
+pub async fn json_rpc<T, H>(server: Data<Arc<H>>, body: web::Bytes) -> Result<impl Responder, RpcResponseError>
 where
     T: Clone + Send + Sync + 'static,
     H: RPCServerHandler<T>
@@ -42,7 +44,7 @@ pub trait WebSocketServerHandler<H: WebSocketHandler> {
 }
 
 // WebSocket JSON RPC handler endpoint
-pub async fn websocket<H, S>(server: Data<S>, request: HttpRequest, body: Payload) -> Result<impl Responder, actix_web::Error>
+pub async fn websocket<H, S>(server: Data<Arc<S>>, request: HttpRequest, body: Payload) -> Result<impl Responder, actix_web::Error>
 where
     H: WebSocketHandler + 'static,
     S: WebSocketServerHandler<H>

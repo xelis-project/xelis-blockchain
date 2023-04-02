@@ -1,42 +1,63 @@
-/*use std::sync::Arc;
+mod rpc;
+
+use std::sync::Arc;
 
 use anyhow::Result;
-use xelis_common::rpc_server::{RpcServer, RpcServerHandler};
-use actix_web::{HttpResponse, Responder, web};
+use tokio::sync::Mutex;
+use xelis_common::{config, rpc_server::{RPCHandler, RPCServerHandler, json_rpc}};
+use actix_web::{get, HttpResponse, Responder, HttpServer, web::{Data, self}, App, dev::ServerHandle};
 use crate::wallet::Wallet;
-use log::error;
 
 pub struct WalletRpcServer {
-    inner:  RpcServer<Arc<Wallet>, (), WalletRpcServer>,
-    wallet: Arc<Wallet>
+    handle: Mutex<Option<ServerHandle>>,
+    rpc_handler: Arc<RPCHandler<Arc<Wallet>>>,
 }
 
 impl WalletRpcServer {
-    pub async fn new(wallet: Arc<Wallet>) -> Result<Arc<Self>> {
-        let inner = RpcServer::new();
+    pub async fn new(bind_address: String, wallet: Arc<Wallet>) -> Result<Arc<Self>> {
+        let rpc_handler = RPCHandler::new(wallet);
+        // TODO register methods in rpc_handler
+
+        let rpc_handler = Arc::new(rpc_handler);
+
         let server = Arc::new(Self {
-            inner,
-            wallet
+            handle: Mutex::new(None),
+            rpc_handler
         });
 
-        if let Err(e) = server.inner.start_with(server.clone(), "127.0.0.1:2020", || vec![("/", web::get().to(index))]).await {
-            error!("Failed to start RPC Server: {}", e);
+        {
+            let clone = Arc::clone(&server);
+            let http_server = HttpServer::new(move || {
+                let server = Arc::clone(&clone);
+                App::new().app_data(Data::new(server))
+                    .route("/json_rpc", web::post().to(json_rpc::<Arc<Wallet>, WalletRpcServer>))
+                    .service(index)
+            })
+            .disable_signals()
+            .bind(&bind_address)?
+            .run();
+
+            { // save the server handle to be able to stop it later
+                let handle = http_server.handle();
+                let mut lock = server.handle.lock().await;
+                *lock = Some(handle);
+
+            }
+            tokio::spawn(http_server);
         }
 
         Ok(server)
     }
 }
 
-impl RpcServerHandler<Arc<Wallet>, ()> for WalletRpcServer {
-    fn get_rpc_server(&self) -> &RpcServer<Arc<Wallet>, (), WalletRpcServer> {
-        &self.inner
-    }
-
-    fn get_data(&self) -> &Arc<Wallet> {
-        &self.wallet
+impl RPCServerHandler<Arc<Wallet>> for WalletRpcServer {
+    fn get_rpc_handler(&self) -> &RPCHandler<Arc<Wallet>> {
+        &self.rpc_handler
     }
 }
 
+
+#[get("/")]
 async fn index() -> impl Responder {
-    HttpResponse::Ok().body(format!("Hello, world!\nRunning on"))
-}*/
+    HttpResponse::Ok().body(format!("Hello, world!\nRunning on: {}", config::VERSION))
+}
