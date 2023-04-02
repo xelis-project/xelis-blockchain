@@ -86,7 +86,7 @@ pub trait WebSocketHandler: Sized {
     async fn on_connection(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error>;
 
     // called when a new message is received
-    async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: Message) -> Result<(), anyhow::Error>;
+    async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<(), anyhow::Error>;
 
     // called when a Session is closed
     async fn on_close(&self,session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error>;
@@ -173,9 +173,17 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             };
     
             // handle message
-            if let Err(e) = self.handler.on_message(&session, msg).await {
-                debug!("Error while calling on_message: {}", e);
-                break Some(CloseReason::from(CloseCode::Error));
+            match msg {
+                Message::Text(text) => {
+                    if let Err(e) = self.handler.on_message(&session, text.as_bytes()).await {
+                        debug!("Error while calling on_message: {}", e);
+                        break Some(CloseReason::from(CloseCode::Error));
+                    }
+                },
+                Message::Close(reason) => break reason,
+                msg => {
+                    debug!("Received websocket message not supported: {:?}", msg);
+                }
             }
         };
     

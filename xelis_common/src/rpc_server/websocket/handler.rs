@@ -1,5 +1,4 @@
 use std::{collections::HashMap, hash::Hash, sync::Arc, borrow::Cow};
-use actix_ws::Message;
 use async_trait::async_trait;
 use log::debug;
 use serde_json::{Value, json};
@@ -66,29 +65,25 @@ where
         Ok(params.notify)
     }
 
-    async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: Message) -> Result<Value, RpcResponseError> {
-        if let Message::Text(text) = message {
-            let mut request: RpcRequest = self.handler.parse_request(text.as_bytes())?;
-            let response: Value = match request.method.as_str() {
-                "subscribe" => {
-                    let event = self.parse_event(&mut request)?;
-                    self.subscribe_session_to_event(session, event, request.id).await?;
-                    json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(json!(true))))
-                },
-                "unsubscribe" => {
-                    let event = self.parse_event(&mut request)?;
-                    self.unsubscribe_session_from_event(session, event, request.id).await?;
-                    json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(json!(true))))
-                },
-                _ => match self.handler.handle_request(text.as_bytes()).await {
-                    Ok(result) => result,
-                    Err(e) => e.to_json(),
-                }
-            };
-            Ok(response)
-        } else {
-            Err(RpcResponseError::new(None, InternalRpcError::InvalidRequest))
-        }
+    async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Value, RpcResponseError> {
+        let mut request: RpcRequest = self.handler.parse_request(message)?;
+        let response: Value = match request.method.as_str() {
+            "subscribe" => {
+                let event = self.parse_event(&mut request)?;
+                self.subscribe_session_to_event(session, event, request.id).await?;
+                json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(json!(true))))
+            },
+            "unsubscribe" => {
+                let event = self.parse_event(&mut request)?;
+                self.unsubscribe_session_from_event(session, event, request.id).await?;
+                json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(json!(true))))
+            },
+            _ => match self.handler.execute_method(request).await {
+                Ok(result) => result,
+                Err(e) => e.to_json(),
+            }
+        };
+        Ok(response)
     }
 }
 
@@ -99,6 +94,7 @@ where
     E: DeserializeOwned + Send + Eq + Hash + 'static
 {
     async fn on_close(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
+        debug!("closing websocket connection");
         let mut sessions = self.sessions.lock().await;
         sessions.remove(session);
         Ok(())
@@ -109,7 +105,8 @@ where
         Ok(())
     }
 
-    async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: Message) -> Result<(), anyhow::Error> {
+    async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<(), anyhow::Error> {
+        debug!("new message received on websocket");
         let response: Value = match self.on_message_internal(session, message).await {
             Ok(result) => result,
             Err(e) => e.to_json(),

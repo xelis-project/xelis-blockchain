@@ -102,7 +102,7 @@ impl DaemonRpcServer {
         info!("Stopping RPC Server...");
         let mut handle = self.handle.lock().await;
         if let Some(handle) = handle.take() {
-            handle.stop(true).await;
+            handle.stop(false).await;
             info!("RPC Server is now stopped!");
         } else {
             warn!("RPC Server is not running!");
