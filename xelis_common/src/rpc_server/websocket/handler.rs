@@ -2,13 +2,13 @@ use std::{collections::HashMap, hash::Hash, sync::Arc, borrow::Cow};
 use async_trait::async_trait;
 use log::debug;
 use serde_json::{Value, json};
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::Mutex;
-use crate::{rpc_server::{RPCHandler, RpcResponseError, InternalRpcError, RpcRequest, RpcResponse}, api::SubscribeParams};
+use crate::{rpc_server::{RPCHandler, RpcResponseError, InternalRpcError, RpcRequest, RpcResponse}, api::{SubscribeParams, EventResult}};
 use super::{WebSocketSessionShared, WebSocketHandler};
 
 // generic websocket handler supporting event subscriptions 
-pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: DeserializeOwned + Send + Eq + Hash + 'static> {
+pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: Serialize + DeserializeOwned + Send + Eq + Hash + Clone + 'static> {
     sessions: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<E, Option<usize>>>>,
     handler: Arc<RPCHandler<T>>
 }
@@ -16,7 +16,7 @@ pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: Deserializ
 impl<T, E> EventWebSocketHandler<T, E>
 where
     T: Sync + Send + Clone + 'static,
-    E: DeserializeOwned + Send + Eq + Hash + 'static
+    E: Serialize + DeserializeOwned + Send + Eq + Hash + Clone + 'static
 {
     pub fn new(handler: Arc<RPCHandler<T>>) -> Self {
         Self {
@@ -26,6 +26,7 @@ where
     }
 
     pub async fn notify(&self, event: &E, value: Value) {
+        let value = json!(EventResult { event: Cow::Borrowed(event), value });
         let sessions = self.sessions.lock().await;
         for (session, subscriptions) in sessions.iter() {
             if let Some(id) = subscriptions.get(event) {
@@ -91,7 +92,7 @@ where
 impl<T, E> WebSocketHandler for EventWebSocketHandler<T, E>
 where
     T: Sync + Send + Clone + 'static,
-    E: DeserializeOwned + Send + Eq + Hash + 'static
+    E: Serialize + DeserializeOwned + Send + Eq + Hash + Clone + 'static
 {
     async fn on_close(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
         debug!("closing websocket connection");

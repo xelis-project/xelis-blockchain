@@ -1,7 +1,6 @@
 use std::{borrow::Cow, collections::HashSet};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance, network::Network};
 
@@ -179,13 +178,6 @@ pub enum NotifyEvent {
     TransactionSCResult,
     // When a new asset has been registered
     NewAsset
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct EventResult<'a, E: Clone> {
-    pub event: Cow<'a, E>,
-    #[serde(flatten)]
-    pub value: Value
 }
 
 #[derive(Serialize, Deserialize)]
