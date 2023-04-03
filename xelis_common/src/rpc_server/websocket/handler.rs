@@ -31,9 +31,12 @@ where
         for (session, subscriptions) in sessions.iter() {
             if let Some(id) = subscriptions.get(event) {
                 let response = json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value)));
-                if let Err(e) = session.send_text(response.to_string()).await {
-                    debug!("Error occured while notifying a new event: {}", e);
-                };
+                let session = session.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = session.send_text(response.to_string()).await {
+                        debug!("Error occured while notifying a new event: {}", e);
+                    };
+                });
             }
         }
     }
