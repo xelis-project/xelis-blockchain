@@ -1,4 +1,4 @@
-use super::storage::Storage;
+use super::storage::{SledStorage, Storage};
 use super::error::BlockchainError;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -95,8 +95,9 @@ impl Mempool {
         self.txs.clear();
         self.txs_sorted.clear();
     }
+
     // delete all old txs not compatible anymore with current state of account
-    pub async fn clean_up(&mut self, storage: &Storage, nonces: HashMap<PublicKey, u64>) {
+    pub async fn clean_up(&mut self, storage: &SledStorage, nonces: HashMap<PublicKey, u64>) {
         let txs_sorted = std::mem::replace(&mut self.txs_sorted, vec!());
         for sorted in txs_sorted {
             let tx_nonce;

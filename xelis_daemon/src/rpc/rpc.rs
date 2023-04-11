@@ -1,4 +1,4 @@
-use crate::core::{blockchain::Blockchain, storage::Storage, error::BlockchainError};
+use crate::core::{blockchain::Blockchain, storage::{SledStorage, Storage}, error::BlockchainError};
 use super::{InternalRpcError, ApiError};
 use anyhow::Context;
 use serde::de::DeserializeOwned;
@@ -34,7 +34,7 @@ fn parse_params<P: DeserializeOwned>(value: Value) -> Result<P, InternalRpcError
     serde_json::from_value(value).map_err(|e| InternalRpcError::InvalidParams(e))
 }
 
-pub async fn get_block_type_for_block(blockchain: &Blockchain, storage: &Storage, hash: &Hash) -> Result<BlockType, InternalRpcError> {
+pub async fn get_block_type_for_block(blockchain: &Blockchain, storage: &SledStorage, hash: &Hash) -> Result<BlockType, InternalRpcError> {
     Ok(if blockchain.is_block_orphaned_for_storage(storage, hash).await {
         BlockType::Orphaned
     } else if blockchain.is_block_sync(storage, hash).await.context("Error while checking if block is sync")? {
@@ -46,11 +46,11 @@ pub async fn get_block_type_for_block(blockchain: &Blockchain, storage: &Storage
     })
 }
 
-pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Storage, hash: Hash, include_txs: bool) -> Result<Value, InternalRpcError> {
+pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &SledStorage, hash: Hash, include_txs: bool) -> Result<Value, InternalRpcError> {
     let (topoheight, supply, reward) = if  storage.is_block_topological_ordered(&hash).await {
         (
             Some(storage.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?),
-            Some( storage.get_supply_for_hash(&hash).context("Error while retrieving supply")?),
+            Some( storage.get_supply_for_block_hash(&hash).context("Error while retrieving supply")?),
             Some(storage.get_block_reward(&hash).context("Error while retrieving block reward")?),
         )
     } else {
@@ -62,8 +62,8 @@ pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Stor
     };
 
     let block_type = get_block_type_for_block(&blockchain, &storage, &hash).await?;
-    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&hash).await.context("Error while retrieving cumulative difficulty")?;
-    let difficulty = storage.get_difficulty_for_block(&hash).context("Error while retrieving difficulty")?;
+    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await.context("Error while retrieving cumulative difficulty")?;
+    let difficulty = storage.get_difficulty_for_block_hash(&hash).context("Error while retrieving difficulty")?;
     let block = storage.get_block(&hash).await.context("Error while retrieving block")?;
     let total_size_in_bytes = block.size();
     let mut total_fees = 0;
@@ -82,7 +82,7 @@ pub async fn get_block_response_for_hash(blockchain: &Blockchain, storage: &Stor
     Ok(value)
 }
 
-pub async fn get_transaction_response(storage: &Storage, tx: &Arc<Transaction>, hash: &Hash) -> Result<Value, InternalRpcError> {
+pub async fn get_transaction_response(storage: &SledStorage, tx: &Arc<Transaction>, hash: &Hash) -> Result<Value, InternalRpcError> {
     let blocks = if storage.has_tx_blocks(hash).context("Error while checking if tx in included in blocks")? {
         Some(storage.get_blocks_for_tx(hash).context("Error while retrieving in which blocks its included")?)
     } else {
@@ -94,7 +94,7 @@ pub async fn get_transaction_response(storage: &Storage, tx: &Arc<Transaction>, 
     Ok(json!(TransactionResponse { blocks, executed_in_block, data }))
 }
 
-pub async fn get_transaction_response_for_hash(storage: &Storage, hash: &Hash) -> Result<Value, InternalRpcError> {
+pub async fn get_transaction_response_for_hash(storage: &SledStorage, hash: &Hash) -> Result<Value, InternalRpcError> {
     let tx = storage.get_transaction(hash).await.context("Error while retrieving transaction")?;
     get_transaction_response(storage, &tx, hash).await
 }
@@ -228,7 +228,7 @@ async fn get_info(blockchain: Arc<Blockchain>, body: Value) -> Result<Value, Int
     let (top_hash, native_supply) = {
         let storage = blockchain.get_storage().read().await;
         let top_hash = storage.get_hash_at_topo_height(topoheight).await.context("Error while retrieving hash at topo height")?;
-        let supply = storage.get_supply_for_hash(&top_hash).context("Error while supply for hash")?;
+        let supply = storage.get_supply_for_block_hash(&top_hash).context("Error while supply for hash")?;
         (top_hash, supply)
     };
     let difficulty = blockchain.get_difficulty();

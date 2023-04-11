@@ -1,5 +1,5 @@
 use xelis_common::crypto::hash::Hash;
-use super::storage::Storage;
+use super::storage::{SledStorage, Storage};
 use super::{error::BlockchainError, storage::DifficultyProvider};
 
 // sort the scores by cumulative difficulty and, if equals, by hash value
@@ -14,7 +14,7 @@ pub fn sort_descending_by_cumulative_difficulty(scores: &mut Vec<(&Hash, u64)>) 
 }
 
 // TODO Refactor
-pub async fn sort_tips(storage: &Storage, tips: &Vec<Hash>) -> Result<Vec<Hash>, BlockchainError> {
+pub async fn sort_tips(storage: &SledStorage, tips: &Vec<Hash>) -> Result<Vec<Hash>, BlockchainError> {
     if tips.len() == 0 {
         return Err(BlockchainError::ExpectedTips)
     }
@@ -25,7 +25,7 @@ pub async fn sort_tips(storage: &Storage, tips: &Vec<Hash>) -> Result<Vec<Hash>,
 
     let mut scores = Vec::with_capacity(tips.len());
     for hash in tips {
-        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(hash).await?;
+        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(hash).await?;
         scores.push((hash, cumulative_difficulty));
     }
 

@@ -13,7 +13,7 @@ use xelis_common::{
     block::{BlockHeader, Block},
     globals::get_current_time, immutable::Immutable
 };
-use crate::{core::blockchain::Blockchain, p2p::chain_validator::ChainValidator};
+use crate::{core::{blockchain::Blockchain, storage::Storage}, p2p::chain_validator::ChainValidator};
 use crate::core::error::BlockchainError;
 use crate::p2p::connection::ConnectionMessage;
 use crate::p2p::packet::chain::CommonPoint;
@@ -342,7 +342,7 @@ impl P2pServer {
         let storage = self.blockchain.get_storage().read().await;
         let (block, top_hash) = storage.get_top_block_header().await?;
         let topoheight = self.blockchain.get_topo_height();
-        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block(&top_hash).await.unwrap_or(0);
+        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_hash).await.unwrap_or(0);
         Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, block.get_height(), top_hash, GENESIS_BLOCK_HASH.clone(), cumulative_difficulty, peers))
     }
 
@@ -434,7 +434,7 @@ impl P2pServer {
                     error!("Couldn't get the top block hash from storage for generic ping packet: {}", e);
                     (0, Hash::zero())
                 },
-                Ok(hash) => (storage.get_cumulative_difficulty_for_block(&hash).await.unwrap_or(0), hash)
+                Ok(hash) => (storage.get_cumulative_difficulty_for_block_hash(&hash).await.unwrap_or(0), hash)
             }
         };
         let highest_topo_height = self.blockchain.get_topo_height();

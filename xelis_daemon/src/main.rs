@@ -10,7 +10,10 @@ use xelis_common::{
     prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel},
     config::{VERSION, BLOCK_TIME}, globals::{format_hashrate, set_network_to}, async_handler, crypto::address::Address, network::Network
 };
-use crate::core::blockchain::{Config, Blockchain};
+use crate::core::{
+    blockchain::{Config, Blockchain},
+    storage::Storage
+};
 use std::sync::Arc;
 use std::time::Duration;
 use clap::Parser;
