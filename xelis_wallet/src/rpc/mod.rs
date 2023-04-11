@@ -15,11 +15,10 @@ pub struct WalletRpcServer {
 
 impl WalletRpcServer {
     pub async fn new(bind_address: String, wallet: Arc<Wallet>) -> Result<Arc<Self>> {
-        let rpc_handler = RPCHandler::new(wallet);
-        // TODO register methods in rpc_handler
+        let mut rpc_handler = RPCHandler::new(wallet);
+        rpc::register_methods(&mut rpc_handler);
 
         let rpc_handler = Arc::new(rpc_handler);
-
         let server = Arc::new(Self {
             handle: Mutex::new(None),
             rpc_handler
@@ -55,7 +54,6 @@ impl RPCServerHandler<Arc<Wallet>> for WalletRpcServer {
         &self.rpc_handler
     }
 }
-
 
 #[get("/")]
 async fn index() -> impl Responder {
