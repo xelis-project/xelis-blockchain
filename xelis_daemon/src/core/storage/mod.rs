@@ -1,6 +1,4 @@
-mod difficulty_provider;
 mod sled;
-pub use difficulty_provider::DifficultyProvider;
 pub use self::sled::SledStorage;
 
 use std::{collections::HashSet, sync::Arc};
@@ -15,8 +13,19 @@ use crate::core::error::BlockchainError;
 
 pub type Tips = HashSet<Hash>;
 
+// this trait is useful for P2p to check itself the validty of a chain
 #[async_trait]
-pub trait Storage: Sized {
+pub trait DifficultyProvider {
+    async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
+    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u128, BlockchainError>;
+    async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
+    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
+    async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError>;
+    async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError>;
+}
+
+#[async_trait]
+pub trait Storage: DifficultyProvider + Sync + Send + 'static { // TODO delete these traits
     fn get_tx_executed_in_block(&self, tx: &Hash) -> Result<Hash, BlockchainError>;
     fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError>;
     fn remove_tx_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError>;
@@ -66,7 +75,6 @@ pub trait Storage: Sized {
     fn count_blocks(&self) -> usize;
     async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError>;
     async fn has_blocks_at_height(&self, height: u64) -> Result<bool, BlockchainError>;
-    async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError>;
     async fn get_block_header_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>), BlockchainError>;
     async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError>;
     
@@ -74,25 +82,19 @@ pub trait Storage: Sized {
     async fn get_top_block(&self) -> Result<Block, BlockchainError>;
     async fn get_top_block_header(&self) -> Result<(Arc<BlockHeader>, Hash), BlockchainError>;
 
-    async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError>;
-
     async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError>;
     async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError>;
-    async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
 
     async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
     async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
     async fn is_block_topological_ordered(&self, hash: &Hash) -> bool;
     async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError>;
 
-    fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
-    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u128, BlockchainError>;
     async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError>;
 
     fn get_supply_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
     fn set_supply_for_block_hash(&mut self, hash: &Hash, supply: u64) -> Result<(), BlockchainError>;
 
-    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
     async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: u64) -> Result<(), BlockchainError>;
 
     fn get_top_topoheight(&self) -> Result<u64, BlockchainError>;

@@ -41,14 +41,14 @@ impl<'a> RpcResponse<'a> {
 }
 
 // trait to retrieve easily a JSON RPC handler for registered route
-pub trait RPCServerHandler<T: Sync + Send + Clone + 'static> {
+pub trait RPCServerHandler<T: Clone> {
     fn get_rpc_handler(&self) -> &RPCHandler<T>;
 }
 
 // JSON RPC handler endpoint
 pub async fn json_rpc<T, H>(server: Data<Arc<H>>, body: web::Bytes) -> Result<impl Responder, RpcResponseError>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone,
     H: RPCServerHandler<T>
 {
     let result = server.get_rpc_handler().handle_request(&body).await?;

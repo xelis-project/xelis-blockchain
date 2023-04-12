@@ -17,7 +17,7 @@ use lru::LruCache;
 use sled::Tree;
 use log::{debug, trace, error, warn};
 
-use super::{Tips, Storage};
+use super::{Tips, Storage, DifficultyProvider};
 
 const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
@@ -232,6 +232,67 @@ impl SledStorage {
         };
 
         Ok(tree)
+    }
+}
+
+
+#[async_trait]
+impl DifficultyProvider for SledStorage {
+    // TODO optimize all these functions to read only what is necessary
+    async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        trace!("get height for block hash {}", hash);
+        let block = self.get_block_header_by_hash(hash).await?;
+        Ok(block.get_height())
+    }
+
+    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u128, BlockchainError> {
+        trace!("get timestamp for hash {}", hash);
+        let block = self.get_block_header_by_hash(hash).await?;
+        Ok(block.get_timestamp())
+    }
+
+    async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        trace!("get difficulty for hash {}", hash);
+        self.load_from_disk(&self.difficulty, hash.as_bytes())
+    }
+
+    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        trace!("get cumulative difficulty for hash {}", hash);
+        self.get_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash).await
+    }
+
+    async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
+        trace!("get past blocks of {}", hash);
+        let tips = if let Some(cache) = &self.past_blocks_cache {
+            let mut cache = cache.lock().await;
+            if let Some(tips) = cache.get(hash) {
+                return Ok(tips.clone())
+            }
+    
+            let block = self.get_block_header_by_hash(hash).await?;
+            let mut tips = Vec::with_capacity(block.get_tips().len());
+            for hash in block.get_tips() {
+                tips.push(hash.clone());
+            }
+    
+            let tips = Arc::new(tips);
+            cache.put(hash.clone(), tips.clone());
+            tips
+        } else {
+            let block = self.get_block_header_by_hash(hash).await?;
+            let mut tips = Vec::with_capacity(block.get_tips().len());
+            for hash in block.get_tips() {
+                tips.push(hash.clone());
+            }
+            Arc::new(tips)
+        };
+
+        Ok(tips)
+    }
+
+    async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
+        trace!("get block by hash: {}", hash);
+        self.get_arc_data(&self.blocks, &self.blocks_cache, hash).await
     }
 }
 
@@ -726,11 +787,6 @@ impl Storage for SledStorage {
         self.contains_data(&self.blocks, &self.blocks_cache, hash).await
     }
 
-    async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
-        trace!("get block by hash: {}", hash);
-        self.get_arc_data(&self.blocks, &self.blocks_cache, hash).await
-    }
-
     async fn get_block_header_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>), BlockchainError> {
         trace!("get block at topoheight: {}", topoheight);
         let hash = self.get_hash_at_topo_height(topoheight).await?;
@@ -809,35 +865,6 @@ impl Storage for SledStorage {
         Ok(())
     }
 
-    async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
-        trace!("get past blocks of {}", hash);
-        let tips = if let Some(cache) = &self.past_blocks_cache {
-            let mut cache = cache.lock().await;
-            if let Some(tips) = cache.get(hash) {
-                return Ok(tips.clone())
-            }
-    
-            let block = self.get_block_header_by_hash(hash).await?;
-            let mut tips = Vec::with_capacity(block.get_tips().len());
-            for hash in block.get_tips() {
-                tips.push(hash.clone());
-            }
-    
-            let tips = Arc::new(tips);
-            cache.put(hash.clone(), tips.clone());
-            tips
-        } else {
-            let block = self.get_block_header_by_hash(hash).await?;
-            let mut tips = Vec::with_capacity(block.get_tips().len());
-            for hash in block.get_tips() {
-                tips.push(hash.clone());
-            }
-            Arc::new(tips)
-        };
-
-        Ok(tips)
-    }
-
     async fn has_blocks_at_height(&self, height: u64) -> Result<bool, BlockchainError> {
         trace!("get blocks at height {}", height);
         Ok(self.blocks_at_height.contains_key(&height.to_be_bytes())?)
@@ -864,13 +891,6 @@ impl Storage for SledStorage {
 
         self.blocks_at_height.insert(height.to_be_bytes(), tips.to_bytes())?;
         Ok(())
-    }
-
-    // TODO optimize all these functions to read only what is necessary
-    async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        trace!("get height for block hash {}", hash);
-        let block = self.get_block_header_by_hash(hash).await?;
-        Ok(block.get_height())
     }
 
     async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
@@ -934,17 +954,6 @@ impl Storage for SledStorage {
         Ok(hash)
     }
 
-    fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        trace!("get difficulty for hash {}", hash);
-        self.load_from_disk(&self.difficulty, hash.as_bytes())
-    }
-
-    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u128, BlockchainError> {
-        trace!("get timestamp for hash {}", hash);
-        let block = self.get_block_header_by_hash(hash).await?;
-        Ok(block.get_timestamp())
-    }
-
     async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {
         trace!("get supply at topo height {}", topoheight);
         let hash = self.get_hash_at_topo_height(topoheight).await?;
@@ -960,11 +969,6 @@ impl Storage for SledStorage {
         trace!("set difficulty for hash {}", hash);
         self.supply.insert(hash.as_bytes(), &supply.to_be_bytes())?;
         Ok(())
-    }
-
-    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        trace!("get cumulative difficulty for hash {}", hash);
-        self.get_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash).await
     }
 
     async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: u64) -> Result<(), BlockchainError> {

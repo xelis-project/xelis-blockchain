@@ -9,9 +9,9 @@ use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 use xelis_common::{crypto::{key::PublicKey, hash::Hash}, globals::get_current_timestamp, api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, serializer::Serializer, block::{BlockHeader, BlockMiner, Difficulty}, config::{DEV_PUBLIC_KEY, STABLE_LIMIT}, immutable::Immutable, rpc_server::{RpcResponseError, InternalRpcError}};
-use crate::core::blockchain::Blockchain;
+use crate::core::{blockchain::Blockchain, storage::Storage};
 
-pub type SharedGetWorkServer = Arc<GetWorkServer>;
+pub type SharedGetWorkServer<S> = Arc<GetWorkServer<S>>;
 
 #[derive(Serialize, PartialEq)]
 pub enum Response {
@@ -64,23 +64,23 @@ impl Display for Miner {
     }
 }
 
-pub struct GetWorkWebSocketHandler {
-    server: SharedGetWorkServer
+pub struct GetWorkWebSocketHandler<S: Storage> {
+    server: SharedGetWorkServer<S>
 }
 
-impl GetWorkWebSocketHandler {
-    pub fn new(server: SharedGetWorkServer) -> Self {
+impl<S: Storage> GetWorkWebSocketHandler<S> {
+    pub fn new(server: SharedGetWorkServer<S>) -> Self {
         Self {
             server
         }
     }
 }
 
-impl Actor for GetWorkWebSocketHandler {
+impl<S: Storage> Actor for GetWorkWebSocketHandler<S> {
     type Context = WebsocketContext<Self>;
 }
 
-impl StreamHandler<Result<Message, ProtocolError>> for GetWorkWebSocketHandler {
+impl<S: Storage> StreamHandler<Result<Message, ProtocolError>> for GetWorkWebSocketHandler<S> {
     fn handle(&mut self, msg: Result<Message, ProtocolError>, ctx: &mut Self::Context) {
         match msg {
             Ok(Message::Text(text)) => {
@@ -125,7 +125,7 @@ impl StreamHandler<Result<Message, ProtocolError>> for GetWorkWebSocketHandler {
     }
 }
 
-impl Handler<Response> for GetWorkWebSocketHandler {
+impl<S: Storage> Handler<Response> for GetWorkWebSocketHandler<S> {
     type Result = Result<(), InternalRpcError>;
 
     fn handle(&mut self, msg: Response, ctx: &mut Self::Context) -> Self::Result {
@@ -134,9 +134,9 @@ impl Handler<Response> for GetWorkWebSocketHandler {
     }
 }
 
-pub struct GetWorkServer {
-    miners: Mutex<HashMap<Addr<GetWorkWebSocketHandler>, Miner>>,
-    blockchain: Arc<Blockchain>,
+pub struct GetWorkServer<S: Storage> {
+    miners: Mutex<HashMap<Addr<GetWorkWebSocketHandler<S>>, Miner>>,
+    blockchain: Arc<Blockchain<S>>,
     // all potential jobs sent to miners
     // we can keep them in cache up to STABLE_LIMIT blocks
     // so even a late miner have a chance to not be orphaned and be included in chain
@@ -144,8 +144,8 @@ pub struct GetWorkServer {
     last_header_hash: Mutex<Option<Hash>>
 }
 
-impl GetWorkServer {
-    pub fn new(blockchain: Arc<Blockchain>) -> Self {
+impl<S: Storage> GetWorkServer<S> {
+    pub fn new(blockchain: Arc<Blockchain<S>>) -> Self {
         Self {
             miners: Mutex::new(HashMap::new()),
             blockchain,
@@ -160,7 +160,7 @@ impl GetWorkServer {
 
     // retrieve last mining job and set random extra nonce and miner public key
     // then, send it
-    async fn send_new_job(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler>, key: PublicKey) -> Result<(), InternalRpcError> {
+    async fn send_new_job(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, key: PublicKey) -> Result<(), InternalRpcError> {
         let (mut job, height, difficulty) = {
             let mut mining_jobs = self.mining_jobs.lock().await;
             let mut hash = self.last_header_hash.lock().await;
@@ -199,7 +199,7 @@ impl GetWorkServer {
         Ok(())
     }
 
-    pub async fn add_miner(self: &Arc<Self>, addr: Addr<GetWorkWebSocketHandler>, key: PublicKey, worker: String) {
+    pub async fn add_miner(self: &Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, key: PublicKey, worker: String) {
         {
             let mut miners = self.miners.lock().await;
             let miner = Miner::new(key.clone(), worker);
@@ -212,7 +212,7 @@ impl GetWorkServer {
         tokio::spawn(zelf.send_new_job(addr, key));
     }
 
-    pub async fn delete_miner(&self, addr: &Addr<GetWorkWebSocketHandler>) {
+    pub async fn delete_miner(&self, addr: &Addr<GetWorkWebSocketHandler<S>>) {
         debug!("Trying to delete miner...");
         let mut miners = self.miners.lock().await;
         if let Some(miner) = miners.remove(addr) {
@@ -259,7 +259,7 @@ impl GetWorkServer {
     // handle the incoming mining job from the miner
     // decode the block miner, and using its header work hash, retrieve the block header
     // if its block is rejected, resend him the job
-    pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler>, template: SubmitBlockParams) -> Result<(), InternalRpcError> {
+    pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, template: SubmitBlockParams) -> Result<(), InternalRpcError> {
         let job = BlockMiner::from_hex(template.block_template)?;
         let response = self.accept_miner_job(job).await?;
 

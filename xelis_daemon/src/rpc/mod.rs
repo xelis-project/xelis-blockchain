@@ -1,6 +1,7 @@
 pub mod rpc;
 pub mod getwork_server;
 
+use crate::core::storage::Storage;
 use crate::core::{error::BlockchainError, blockchain::Blockchain};
 use crate::rpc::getwork_server::GetWorkServer;
 use actix_web::dev::ServerHandle;
@@ -22,13 +23,13 @@ use std::sync::Arc;
 use log::{trace, info, error, debug, warn};
 use self::getwork_server::{GetWorkWebSocketHandler, SharedGetWorkServer};
 
-pub type SharedDaemonRpcServer = Arc<DaemonRpcServer>;
+pub type SharedDaemonRpcServer<S> = Arc<DaemonRpcServer<S>>;
 
-pub struct DaemonRpcServer {
+pub struct DaemonRpcServer<S: Storage> {
     handle: Mutex<Option<ServerHandle>>,
-    rpc_handler: Arc<RPCHandler<Arc<Blockchain>>>,
-    websocket: WebSocketServerShared<EventWebSocketHandler<Arc<Blockchain>, NotifyEvent>>,
-    getwork: Option<SharedGetWorkServer>
+    rpc_handler: Arc<RPCHandler<Arc<Blockchain<S>>>>,
+    websocket: WebSocketServerShared<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>>,
+    getwork: Option<SharedGetWorkServer<S>>
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -43,9 +44,9 @@ pub enum ApiError {
     NoWebSocketServer
 }
 
-impl DaemonRpcServer {
-    pub async fn new(bind_address: String, blockchain: Arc<Blockchain>, disable_getwork_server: bool) -> Result<SharedDaemonRpcServer, BlockchainError> {
-        let getwork: Option<SharedGetWorkServer> = if !disable_getwork_server {
+impl<S: Storage> DaemonRpcServer<S> {
+    pub async fn new(bind_address: String, blockchain: Arc<Blockchain<S>>, disable_getwork_server: bool) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
+        let getwork: Option<SharedGetWorkServer<S>> = if !disable_getwork_server {
             info!("Creating GetWork server...");
             Some(Arc::new(GetWorkServer::new(blockchain.clone())))
         } else {
@@ -73,10 +74,10 @@ impl DaemonRpcServer {
             let http_server = HttpServer::new(move || {
                 let server = Arc::clone(&clone);
                 App::new().app_data(web::Data::new(server))
-                    .route("/json_rpc", web::post().to(json_rpc::<Arc<Blockchain>, DaemonRpcServer>))
-                    .route("/ws", web::get().to(websocket::<EventWebSocketHandler<Arc<Blockchain>, NotifyEvent>, DaemonRpcServer>))
+                    .route("/json_rpc", web::post().to(json_rpc::<Arc<Blockchain<S>>, DaemonRpcServer<S>>))
+                    .route("/ws", web::get().to(websocket::<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>, DaemonRpcServer<S>>))
+                    .route("/getwork/{address}/{worker}", web::get().to(getwork_endpoint::<S>))
                     .service(index)
-                    .service(getwork_endpoint)
             })
             .disable_signals()
             .bind(&bind_address)?
@@ -109,19 +110,19 @@ impl DaemonRpcServer {
         }
     }
 
-    pub fn getwork_server(&self) -> &Option<SharedGetWorkServer> {
+    pub fn getwork_server(&self) -> &Option<SharedGetWorkServer<S>> {
         &self.getwork
     }
 }
 
-impl WebSocketServerHandler<EventWebSocketHandler<Arc<Blockchain>, NotifyEvent>> for DaemonRpcServer {
-    fn get_websocket(&self) -> &WebSocketServerShared<EventWebSocketHandler<Arc<Blockchain>, NotifyEvent>> {
+impl<S: Storage> WebSocketServerHandler<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>> for DaemonRpcServer<S> {
+    fn get_websocket(&self) -> &WebSocketServerShared<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>> {
         &self.websocket
     }
 }
 
-impl RPCServerHandler<Arc<Blockchain>> for DaemonRpcServer {
-    fn get_rpc_handler(&self) -> &RPCHandler<Arc<Blockchain>> {
+impl<S: Storage> RPCServerHandler<Arc<Blockchain<S>>> for DaemonRpcServer<S> {
+    fn get_rpc_handler(&self) -> &RPCHandler<Arc<Blockchain<S>>> {
         &self.rpc_handler
     }
 }
@@ -132,8 +133,7 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body(format!("Hello, world!\nRunning on: {}", config::VERSION))
 }
 
-#[get("/getwork/{address}/{worker}")]
-async fn getwork_endpoint(server: Data<SharedDaemonRpcServer>, request: HttpRequest, stream: Payload, path: Path<(String, String)>) -> Result<HttpResponse, Error> {
+async fn getwork_endpoint<S: Storage>(server: Data<SharedDaemonRpcServer<S>>, request: HttpRequest, stream: Payload, path: Path<(String, String)>) -> Result<HttpResponse, Error> {
     match &server.getwork {
         Some(getwork) => {
             let (addr, worker) = path.into_inner();

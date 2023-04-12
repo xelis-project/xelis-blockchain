@@ -1,5 +1,5 @@
 use xelis_common::crypto::hash::Hash;
-use super::storage::{SledStorage, Storage};
+use super::storage::Storage;
 use super::{error::BlockchainError, storage::DifficultyProvider};
 
 // sort the scores by cumulative difficulty and, if equals, by hash value
@@ -14,7 +14,7 @@ pub fn sort_descending_by_cumulative_difficulty(scores: &mut Vec<(&Hash, u64)>) 
 }
 
 // TODO Refactor
-pub async fn sort_tips(storage: &SledStorage, tips: &Vec<Hash>) -> Result<Vec<Hash>, BlockchainError> {
+pub async fn sort_tips<S: Storage>(storage: &S, tips: &Vec<Hash>) -> Result<Vec<Hash>, BlockchainError> {
     if tips.len() == 0 {
         return Err(BlockchainError::ExpectedTips)
     }
@@ -43,7 +43,7 @@ pub async fn sort_tips(storage: &SledStorage, tips: &Vec<Hash>) -> Result<Vec<Ha
 pub async fn calculate_height_at_tips<D: DifficultyProvider>(provider: &D, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
     let mut height = 0;
     for hash in tips {
-        let past_height = provider.get_height_for_block(hash).await?;
+        let past_height = provider.get_height_for_block_hash(hash).await?;
         if height <= past_height {
             height = past_height;
         }
@@ -67,7 +67,7 @@ pub async fn find_best_tip_by_cumulative_difficulty<'a, D: DifficultyProvider>(p
 
     let mut scores = Vec::with_capacity(tips.len());
     for hash in tips {
-        let cumulative_difficulty = provider.get_cumulative_difficulty_for_block(hash).await?;
+        let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash).await?;
         scores.push((hash, cumulative_difficulty));
     }
 

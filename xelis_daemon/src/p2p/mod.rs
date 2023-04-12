@@ -46,19 +46,19 @@ enum MessageChannel {
 // P2pServer is a fully async TCP server
 // Each connection will block on a data to send or to receive
 // useful for low end hardware
-pub struct P2pServer {
+pub struct P2pServer<S: Storage> {
     peer_id: u64, // unique peer id
     tag: Option<String>, // node tag sent on handshake
     max_peers: usize, // max peers accepted by this server
     bind_address: SocketAddr, // ip:port address to receive connections
     peer_list: SharedPeerList, // all peers accepted
-    blockchain: Arc<Blockchain>, // reference to the chain to add blocks/txs
+    blockchain: Arc<Blockchain<S>>, // reference to the chain to add blocks/txs
     connections_sender: UnboundedSender<MessageChannel>, // this sender allows to create a queue system in one task only
     syncing: AtomicBool // used to check if we are already syncing with one peer or not
 }
 
-impl P2pServer {
-    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain>, maintains_seed_nodes: bool) -> Result<Arc<Self>, P2pError> {
+impl<S: Storage> P2pServer<S> {
+    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, maintains_seed_nodes: bool) -> Result<Arc<Self>, P2pError> {
         if let Some(tag) = &tag {
             assert!(tag.len() > 0 && tag.len() <= 16);
         }

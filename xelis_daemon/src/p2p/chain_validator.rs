@@ -1,7 +1,7 @@
 use std::{collections::{HashMap, HashSet}, sync::Arc};
 use async_trait::async_trait;
 use xelis_common::{crypto::hash::Hash, block::BlockHeader, config::TIPS_LIMIT};
-use crate::core::{error::BlockchainError, blockchain::Blockchain, storage::DifficultyProvider};
+use crate::core::{error::BlockchainError, blockchain::Blockchain, storage::{DifficultyProvider, Storage}};
 use log::{error, debug};
 
 struct Data {
@@ -24,7 +24,7 @@ impl ChainValidator {
     }
 
     // validate the basic chain structure
-    pub async fn insert_block(&mut self, blockchain: &Arc<Blockchain>, hash: Hash, header: BlockHeader) -> Result<(), BlockchainError> {
+    pub async fn insert_block<S: Storage>(&mut self, blockchain: &Arc<Blockchain<S>>, hash: Hash, header: BlockHeader) -> Result<(), BlockchainError> {
         if self.blocks.contains_key(&hash) {
             error!("Block {} is already in validator chain!", hash);
             return Err(BlockchainError::AlreadyInChain)
@@ -86,28 +86,28 @@ impl ChainValidator {
 
 #[async_trait]
 impl DifficultyProvider for ChainValidator {
-    async fn get_height_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         Ok(self.get_data(hash)?.header.get_height())
     }
 
-    async fn get_timestamp_for_block(&self, hash: &Hash) -> Result<u128, BlockchainError> {
+    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u128, BlockchainError> {
         Ok(self.get_data(hash)?.header.get_timestamp())
     }
 
-    async fn get_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         Ok(self.get_data(hash)?.difficulty)
     }
 
-    async fn get_cumulative_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         Ok(self.get_data(hash)?.cumulative_difficulty)
     }
 
-    async fn get_past_blocks_of<'a>(&'a self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
+    async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
         // really dirty
         Ok(Arc::new(self.get_data(hash)?.header.get_tips().clone()))
     }
 
-    async fn get_block_header<'a>(&'a self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
+    async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
         Ok(self.get_data(hash)?.header.clone())
     }
 }
