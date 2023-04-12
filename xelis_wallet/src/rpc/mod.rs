@@ -28,7 +28,7 @@ impl WalletRpcServer {
             let clone = Arc::clone(&server);
             let http_server = HttpServer::new(move || {
                 let server = Arc::clone(&clone);
-                App::new().app_data(Data::new(server))
+                App::new().app_data(Data::from(server))
                     .route("/json_rpc", web::post().to(json_rpc::<Arc<Wallet>, WalletRpcServer>))
                     .service(index)
             })

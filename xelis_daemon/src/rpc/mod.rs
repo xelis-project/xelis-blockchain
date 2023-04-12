@@ -73,7 +73,7 @@ impl<S: Storage> DaemonRpcServer<S> {
             let clone = Arc::clone(&server);
             let http_server = HttpServer::new(move || {
                 let server = Arc::clone(&clone);
-                App::new().app_data(web::Data::new(server))
+                App::new().app_data(web::Data::from(server))
                     .route("/json_rpc", web::post().to(json_rpc::<Arc<Blockchain<S>>, DaemonRpcServer<S>>))
                     .route("/ws", web::get().to(websocket::<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>, DaemonRpcServer<S>>))
                     .route("/getwork/{address}/{worker}", web::get().to(getwork_endpoint::<S>))
@@ -133,7 +133,7 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body(format!("Hello, world!\nRunning on: {}", config::VERSION))
 }
 
-async fn getwork_endpoint<S: Storage>(server: Data<SharedDaemonRpcServer<S>>, request: HttpRequest, stream: Payload, path: Path<(String, String)>) -> Result<HttpResponse, Error> {
+async fn getwork_endpoint<S: Storage>(server: Data<DaemonRpcServer<S>>, request: HttpRequest, stream: Payload, path: Path<(String, String)>) -> Result<HttpResponse, Error> {
     match &server.getwork {
         Some(getwork) => {
             let (addr, worker) = path.into_inner();
