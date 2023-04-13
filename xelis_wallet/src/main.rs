@@ -227,6 +227,13 @@ async fn history(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentM
     let wallet = manager.get_data()?;
     let storage = wallet.get_storage().read().await;
     let mut transactions = storage.get_transactions()?;
+
+    // if we don't have any txs, no need proceed further
+    if transactions.is_empty() {
+        manager.message("No transactions available");
+        return Ok(())
+    }
+
     // desc ordered
     transactions.sort_by(|a, b| b.get_topoheight().cmp(&a.get_topoheight()));
     let mut max_pages = transactions.len() / TXS_PER_PAGE;

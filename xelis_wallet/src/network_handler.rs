@@ -155,10 +155,12 @@ impl NetworkHandler {
                             }
                         }
 
-                        if is_owner {
+                        if is_owner { // check that we are owner of this TX
                             Some(EntryData::Outgoing(transfers))
-                        } else {
+                        } else if !transfers.is_empty() { // otherwise, check that we received one or few transfers from it
                             Some(EntryData::Incoming(owner, transfers))
+                        } else { // this TX has nothing to do with us, nothing to save
+                            None
                         }
                     },
                     _ => {
