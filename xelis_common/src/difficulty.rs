@@ -16,7 +16,6 @@ pub enum DifficultyError {
     ErrorOnConversionBigUint
 }
 
-
 pub fn check_difficulty(hash: &Hash, difficulty: u64) -> Result<bool, DifficultyError> {
     let big_diff = difficulty_to_big(difficulty)?;
     let big_hash = hash_to_big(hash);

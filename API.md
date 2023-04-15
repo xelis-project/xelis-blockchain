@@ -4,6 +4,32 @@
 
 ### JSON-RPC methods
 
+#### Get Version
+Retrieve current daemon version
+
+##### Method `get_version`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_version",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": "1.2.0"
+}
+```
+
 #### Get Info
 Retrieve current info from chain
 
@@ -147,6 +173,7 @@ Retrieve the block template for PoW work
 	"jsonrpc": "2.0",
 	"result": {
 		"difficulty": 1699032,
+		"height": 113,
 		"template": "00000000000000180000000000000000000001845c7a6e000000000000000000eed448813c9c2028d21e029ada21b5a82840b195e70fff8ce7be256afe35d2dc010000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d69200006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd02"
 	}
 }
@@ -198,7 +225,8 @@ Retrieve a block at a specific topo height
 		"topoheight": 23,
 		"total_fees": 0,
 		"total_size_in_bytes": 131,
-		"txs_hashes": []
+		"txs_hashes": [],
+		"version": 0
 	}
 }
 ```
@@ -250,7 +278,8 @@ Retrieve all blocks at a specific height
 			"topoheight": 23,
 			"total_fees": 0,
 			"total_size_in_bytes": 131,
-			"txs_hashes": []
+			"txs_hashes": [],
+			"version": 0
 		}
 	]
 }
@@ -302,7 +331,8 @@ Retrieve a block by its hash
 		"topoheight": 23,
 		"total_fees": 0,
 		"total_size_in_bytes": 131,
-		"txs_hashes": []
+		"txs_hashes": [],
+		"version": 0
 	}
 }
 ```
@@ -350,7 +380,8 @@ Retrieve the highest block based on the topological height
 		"topoheight": 23,
 		"total_fees": 0,
 		"total_size_in_bytes": 131,
-		"txs_hashes": []
+		"txs_hashes": [],
+		"version": 0
 	}
 }
 ```
@@ -436,10 +467,11 @@ NOTE: Balance is returned in atomic units
 ##### Method `get_balance_at_topoheight`
 
 ##### Parameters
-|   Name  |   Type  | Required |                Note               |
-|:-------:|:-------:|:--------:|:---------------------------------:|
-| address | Address | Required | Valid address registered on chain |
-|  asset  |   Hash  | Required |    Asset ID registered on chain   |
+|    Name    |   Type  | Required |                           Note                          |
+|:----------:|:-------:|:--------:|:-------------------------------------------------------:|
+|   address  | Address | Required |            Valid address registered on chain            |
+|    asset   |   Hash  | Required |               Asset ID registered on chain              |
+| topoheight | Integer | Required | Topoheight to retrieve a version (if exists) of balance |
 
 ##### Request
 ```json
@@ -683,10 +715,11 @@ NOTE: result returned in `data` field can changes based on the TransactionType (
 	"id": 0,
 	"jsonrpc": "2.0",
 	"result": {
+		"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
 		"blocks": [
 			"0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692"
 		],
-		"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
+		"executed_in_block": "0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692",
 		"data": {
 			"Transfer": [
 				{
@@ -730,6 +763,8 @@ No parameters
 	"result": [
 		{
 			"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
+			"blocks": null,
+			"executed_in_block": null,
 			"data": {
 				"Transfer": [
 					{
@@ -741,7 +776,6 @@ No parameters
 				]
 			},
 			"fee": 1000,
-			"hash": "d189cc7275e48fa84132579f80b6131aaf46d40ff97a08c2a7633d785b0664ab",
 			"nonce": 3,
 			"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
 			"signature": "9e9fcd6be9b2e968b7d44ae15909e406b827b87f3108e08646b1d5e45754ffe3e166c4eaf26a63b8ddc0ac0668a893c339ed313fb522b46a4e95b8706a2ba005"
@@ -749,7 +783,6 @@ No parameters
 	]
 }
 ```
-
 
 #### Get Transactions
 Fetch transactions by theirs hashes from daemon and keep the same order in response
@@ -783,10 +816,11 @@ Fetch transactions by theirs hashes from daemon and keep the same order in respo
 	"jsonrpc": "2.0",
 	"result": [
 		{
+			"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
 			"blocks": [
 				"0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692"
 			],
-			"hash": "136e9c19f8e9afd814e1e5f819914dca8fc0df01b68c5744bcfba0ab224dc0c2",
+			"executed_in_block": "0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692",
 			"data": {
 				"Transfer": [
 					{
@@ -807,5 +841,128 @@ Fetch transactions by theirs hashes from daemon and keep the same order in respo
 }
 ```
 
-TODO:
-- `submit_block`
+#### Submit Block
+Submit a block to the daemon
+
+##### Method `submit_block`
+
+##### Parameters
+|      Name      |  Type  | Required |         Note        |
+|:--------------:|:------:|:--------:|:-------------------:|
+| block_template | String | Required | Block in hex format |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 0,
+	"method": "submit_block",
+	"params": {
+		"block_template": "0000000000000be0000000000000000000000186c0d2dac5000000000003e33798b264214181b57720a6e6cdf87cd9bcd80391dde6780223f87176aff03b45080100000040453896c70b2be2d7088860f179a9e9fc3d03941170d6bf8c2dc6d3e60000d549622a55c88b5c14c263ec0db5f5ffae249c7288f68b0c1333cb105df89450"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 0,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+#### Get Blocks
+Retrieve a specific range of blocks (up to 20 maximum) based on topoheight
+
+##### Method `get_blocks`
+
+##### Parameters
+|       Name       |   Type  | Required |                   Note                   |
+|:----------------:|:-------:|:--------:|:----------------------------------------:|
+| start_topoheight | Integer | Optional | If not set, will retrieve last 20 blocks |
+|  end_topoheight  | Integer | Optional |      Must be under current topoheight    |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_blocks",
+	"params": {
+		"start_topoheight": 0,
+		"end_topoheight": 2
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": [
+		{
+			"block_type": "Sync",
+			"cumulative_difficulty": 1,
+			"difficulty": 1,
+			"extra_nonce": "0000000000000000000000000000000000000000000000000000000000000000",
+			"hash": "55a162b8e0e137bb6a8de9f4c4b214fb60bcd2df15ec32fdd8f06759b863f06e",
+			"height": 0,
+			"miner": "xel1qqqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680gtl9ky3",
+			"nonce": 0,
+			"reward": 877380,
+			"supply": 877380,
+			"timestamp": 1678215431432,
+			"tips": [],
+			"topoheight": 0,
+			"total_fees": 0,
+			"total_size_in_bytes": 99,
+			"txs_hashes": [],
+			"version": 0
+		},
+		{
+			"block_type": "Sync",
+			"cumulative_difficulty": 150001,
+			"difficulty": 150000,
+			"extra_nonce": "e9a96f6130943e4ce3cbd6d4999efa1ca28020be6119f3da77dbcc837731600e",
+			"hash": "000011152d66bfe7a2b1d2e18a09a94c1d1593ae8ddeafcfc8f1b8c2b03b7995",
+			"height": 1,
+			"miner": "xel1qqqd2jtz9f2u3z6uznpx8mqdkh6llt3yn3eg3a5tpsfn8jcsthufg5q08670u",
+			"nonce": 3837,
+			"reward": 877379,
+			"supply": 1754759,
+			"timestamp": 1678215668838,
+			"tips": [
+				"55a162b8e0e137bb6a8de9f4c4b214fb60bcd2df15ec32fdd8f06759b863f06e"
+			],
+			"topoheight": 1,
+			"total_fees": 0,
+			"total_size_in_bytes": 131,
+			"txs_hashes": [],
+			"version": 0
+		},
+		{
+			"block_type": "Sync",
+			"cumulative_difficulty": 300001,
+			"difficulty": 150000,
+			"extra_nonce": "f7c22d4f517c384493fa271304b885d1f092ab969a87e901fe9245ad0ca4490d",
+			"hash": "0000631d920e582069e47149adc53dfe8bb009163c94715d33e81e71b7a8dca3",
+			"height": 2,
+			"miner": "xel1qqqd2jtz9f2u3z6uznpx8mqdkh6llt3yn3eg3a5tpsfn8jcsthufg5q08670u",
+			"nonce": 1113,
+			"reward": 877379,
+			"supply": 2632138,
+			"timestamp": 1678215668843,
+			"tips": [
+				"000011152d66bfe7a2b1d2e18a09a94c1d1593ae8ddeafcfc8f1b8c2b03b7995"
+			],
+			"topoheight": 2,
+			"total_fees": 0,
+			"total_size_in_bytes": 131,
+			"txs_hashes": [],
+			"version": 0
+		}
+	]
+}
+```

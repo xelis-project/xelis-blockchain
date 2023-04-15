@@ -96,6 +96,19 @@ pub fn format_hashrate(mut hashrate: f64) -> String {
     return format!("{:.2} {}", hashrate, HASHRATE_FORMATS[count]);
 }
 
+const DIFFICULTY_FORMATS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
+
+pub fn format_difficulty(mut difficulty: u64) -> String {
+    let max = HASHRATE_FORMATS.len() - 1;
+    let mut count = 0;
+    while difficulty > 1000 && count < max {
+        count += 1;
+        difficulty = difficulty / 1000;
+    }
+
+    return format!("{}{}", difficulty, DIFFICULTY_FORMATS[count]);
+}
+
 // by default it start in mainnet mode
 static NETWORK: Mutex<Network> = Mutex::new(Network::Mainnet);
 pub fn get_network() -> Network {

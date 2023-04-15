@@ -3,7 +3,7 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::CompleteBlock, transaction::TransactionType, account::VersionedBalance};
+use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance};
 
 use crate::{api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
 
@@ -108,6 +108,7 @@ impl NetworkHandler {
 
     async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, min_topoheight: u64, mut current_topoheight: Option<u64>) -> Result<(), Error> {
         let mut res = self.get_versioned_balance_and_topoheight(address, asset, current_topoheight).await?;
+        let mut is_highest_nonce = true;
         while let Some((topoheight, balance)) = res.take() {
             // don't sync already synced blocks
             if min_topoheight > topoheight {
@@ -115,7 +116,7 @@ impl NetworkHandler {
             }
 
             let response = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
-            let block: CompleteBlock = response.data.data.into_owned();
+            let block: Block = response.data.data.into_owned();
 
             // create Coinbase entry
             if *block.get_miner() == *address.get_public_key() {
@@ -154,10 +155,12 @@ impl NetworkHandler {
                             }
                         }
 
-                        if is_owner {
+                        if is_owner { // check that we are owner of this TX
                             Some(EntryData::Outgoing(transfers))
-                        } else {
+                        } else if !transfers.is_empty() { // otherwise, check that we received one or few transfers from it
                             Some(EntryData::Incoming(owner, transfers))
+                        } else { // this TX has nothing to do with us, nothing to save
+                            None
                         }
                     },
                     _ => {
@@ -178,11 +181,14 @@ impl NetworkHandler {
             }
 
             // check that we have a outgoing tx (in case of same wallets used in differents places at same time)
-            if let (Some(last_nonce), None) = (latest_nonce_sent, current_topoheight.take()) {
-                // don't keep the lock in case of a request
-                debug!("Detected a nonce changes for balance at topoheight {}", topoheight);
-                let mut storage = self.wallet.get_storage().write().await;
-                storage.set_nonce(last_nonce + 1)?;
+            if is_highest_nonce {
+                if let (Some(last_nonce), None) = (latest_nonce_sent, current_topoheight.take()) {
+                    // don't keep the lock in case of a request
+                    debug!("Detected a nonce changes for balance at topoheight {} with last nonce {} current topoheight {:?}", topoheight, last_nonce, current_topoheight);
+                    let mut storage = self.wallet.get_storage().write().await;
+                    storage.set_nonce(last_nonce + 1)?;
+                    is_highest_nonce = false;
+                }
             }
 
             if let Some(previous_topo) = balance.get_previous_topoheight() {
@@ -274,6 +280,7 @@ impl NetworkHandler {
         }
 
         for asset in assets {
+            debug!("calling get balances and transactions {}", current_topoheight);
             if let Err(e) = self.get_balance_and_transactions(&address, &asset, current_topoheight, None).await {
                 error!("Error while syncing balance for asset {}: {}", asset, e);
             }

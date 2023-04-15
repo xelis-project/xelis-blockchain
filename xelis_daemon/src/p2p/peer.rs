@@ -1,5 +1,5 @@
 use lru::LruCache;
-use xelis_common::config::PEER_FAIL_TIME_RESET;
+use xelis_common::config::{PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT};
 use xelis_common::globals::get_current_time;
 use xelis_common::{
     crypto::hash::Hash,
@@ -47,6 +47,7 @@ pub struct Peer {
     last_ping: AtomicU64, // last time we got a ping packet from this peer
     cumulative_difficulty: AtomicU64, // cumulative difficulty of peer chain
     txs_cache: Mutex<LruCache<Hash, ()>>, // All transactions propagated to/from this peer
+    blocks_propagation: Mutex<LruCache<Hash, ()>> // last blocks propagated to/from this peer
 }
 
 impl Peer {
@@ -72,12 +73,17 @@ impl Peer {
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
             cumulative_difficulty: AtomicU64::new(cumulative_difficulty),
-            txs_cache: Mutex::new(LruCache::new(128))
+            txs_cache: Mutex::new(LruCache::new(128)),
+            blocks_propagation: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT))
         }
     }
 
     pub fn get_txs_cache(&self) -> &Mutex<LruCache<Hash, ()>> {
         &self.txs_cache
+    }
+
+    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Hash, ()>> {
+        &self.blocks_propagation
     }
 
     pub fn get_connection(&self) -> &Connection {

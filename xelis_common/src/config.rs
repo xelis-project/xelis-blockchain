@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
 
-use crate::{crypto::{hash::Hash, key::PublicKey, address::Address}};
+use crate::{crypto::{hash::{Hash, Hashable}, key::PublicKey, address::Address}, serializer::Serializer, block::BlockHeader};
 pub const NETWORK_ID_SIZE: usize = 16;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -19,7 +19,7 @@ pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024); // 1.25 MB
 pub const FEE_PER_KB: u64 = 1000; // 0.01000 XLS per KB
 pub const DEV_FEE_PERCENT: u64 = 5; // 5% per block going to dev address
 pub const TIPS_LIMIT: usize = 3; // maximum 3 previous blocks
-pub const STABLE_HEIGHT_LIMIT: u64 = 8;
+pub const STABLE_LIMIT: u64 = 8;
 pub const TIMESTAMP_IN_FUTURE_LIMIT: u128 = 2 * 1000; // 2 seconds maximum in future
 
 pub const PREFIX_ADDRESS: &str = "xel"; // mainnet prefix address
@@ -28,11 +28,9 @@ pub const COIN_VALUE: u64 = 100_000; // 5 decimals for a full coin
 pub const MAX_SUPPLY: u64 = 18_400_000 * COIN_VALUE; // 18.4M full coin
 pub const EMISSION_SPEED_FACTOR: u64 = 21;
 
-pub const GENESIS_BLOCK: &str = "000000000000000000000000000000000000018656cff68a000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd"; // Genesis block in hexadecimal format
-pub const GENESIS_BLOCK_HASH: &str = "007957a0f04d08ff6f75a99ae37a25e43c640be68bd223c6af86c7f572352d73";
+pub const GENESIS_BLOCK: &str = "0000000000000000000000000000000000000001872f3e0c02000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd"; // Genesis block in hexadecimal format
 pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"; // Dev address
 
-pub const MAX_BLOCK_REWIND: u64 = STABLE_HEIGHT_LIMIT - 1; // maximum X blocks can be rewinded
 pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = 3; // wait maximum between each chain sync request to peers
 pub const CHAIN_SYNC_DELAY: u64 = 5; // minimum X seconds between each chain sync request per peer
 pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to X blocks id (hash + height) sent for request
@@ -51,4 +49,5 @@ pub const DEFAULT_DAEMON_ADDRESS: &str = "http://127.0.0.1:8080";
 
 lazy_static! {
     pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
+    pub static ref GENESIS_BLOCK_HASH: Hash = BlockHeader::from_hex(GENESIS_BLOCK.to_owned()).unwrap().hash();
 }

@@ -1,12 +1,12 @@
 [package]
 name = "xelis_daemon"
-version = "1.2.0"
+version = "1.3.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-xelis_common = { path = "../xelis_common", features = ["prompt", "clap"] }
+xelis_common = { path = "../xelis_common", features = ["prompt", "clap", "rpc_server"] }
 clap = { version = "3.1.18", features = ["derive"] }
 bytes = "1"
 actix = "0.13.0"

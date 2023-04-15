@@ -1,5 +1,6 @@
-use std::{collections::HashMap, hash::Hash};
-
+use std::{collections::HashMap, hash::Hash, borrow::Cow};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use crate::serializer::{Serializer, Reader, ReaderError, Writer};
 
 pub mod wallet;
@@ -127,4 +128,16 @@ impl Serializer for DataValue {
             }
         };
     }
+}
+
+#[derive(Deserialize)]
+pub struct SubscribeParams<E> {
+    pub notify: E
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EventResult<'a, E: Clone> {
+    pub event: Cow<'a, E>,
+    #[serde(flatten)]
+    pub value: Value
 }

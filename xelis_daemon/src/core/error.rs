@@ -27,6 +27,8 @@ pub enum BlockchainError {
     TimestampIsInFuture(u128, u128), // left is expected, right is got
     #[error("Block height mismatch, expected {}, got {}.", _0, _1)]
     InvalidBlockHeight(u64, u64),
+    #[error("Block height is in stable height which is not allowed")]
+    InvalidBlockHeightStableHeight,
     #[error("Invalid difficulty")]
     InvalidDifficulty,
     #[error("Invalid hash, expected {}, got {}", _0, _1)]
@@ -146,7 +148,11 @@ pub enum BlockchainError {
     #[error("No balance changes for specific topoheight and asset")]
     NoBalanceChanges,
     #[error("Overflow detected")]
-    Overflow
+    Overflow,
+    #[error("Error, block include a dead tx {}", _0)]
+    DeadTx(Hash),
+    #[error("A non-zero value is required for burn")]
+    NoValueForBurn
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

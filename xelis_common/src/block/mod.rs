@@ -1,3 +1,7 @@
+mod miner;
+
+pub use miner::BlockMiner;
+
 use serde::Deserialize;
 
 use crate::crypto::hash::{Hash, Hashable, hash};
@@ -7,7 +11,10 @@ use crate::transaction::Transaction;
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
 
 pub const EXTRA_NONCE_SIZE: usize = 32;
-pub const BLOCK_WORK_SIZE: usize = 160;
+pub const HEADER_WORK_SIZE: usize = 73;
+pub const BLOCK_WORK_SIZE: usize = 120; // 32 + 16 + 8 + 32 + 32 = 120
+
+pub type Difficulty = u64;
 
 pub fn serialize_extra_nonce<S: serde::Serializer>(extra_nonce: &[u8; EXTRA_NONCE_SIZE], s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(&hex::encode(extra_nonce))
@@ -21,14 +28,20 @@ pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserializer: D
     Ok(extra_nonce)
 }
 
-// TODO fix deserializer
-pub fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(_: D) -> Result<u128, D::Error> {
-    Ok(0)
+// transform it as u64, its good enough until serde is able to de/serialize u128
+pub fn serialize_timestamp<S: serde::Serializer>(timestamp: &u128, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_u64(*timestamp as u64)
+}
+
+pub fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u128, D::Error> {
+    Ok(u64::deserialize(deserializer)? as u128)
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct Block {
+pub struct BlockHeader {
+    pub version: u8,
     pub tips: Vec<Hash>,
+    #[serde(serialize_with = "serialize_timestamp")]
     #[serde(deserialize_with = "deserialize_timestamp")]
     pub timestamp: u128,
     pub height: u64,
@@ -41,15 +54,16 @@ pub struct Block {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct CompleteBlock {
+pub struct Block {
     #[serde(flatten)]
-    block: Immutable<Block>,
+    header: Immutable<BlockHeader>,
     transactions: Vec<Immutable<Transaction>>
 }
 
-impl Block {
-    pub fn new(height: u64, timestamp: u128, tips: Vec<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: Vec<Hash>) -> Self {
-        Block {
+impl BlockHeader {
+    pub fn new(version: u8, height: u64, timestamp: u128, tips: Vec<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: Vec<Hash>) -> Self {
+        BlockHeader {
+            version,
             height,
             timestamp,
             tips,
@@ -58,6 +72,10 @@ impl Block {
             miner,
             txs_hashes
         }
+    }
+
+    pub fn get_version(&self) -> u8 {
+        self.version
     }
 
     pub fn set_miner(&mut self, key: PublicKey) {
@@ -120,22 +138,44 @@ impl Block {
         self.txs_hashes.len()
     }
 
-    fn get_block_work(&self) -> Vec<u8> {
-        let mut bytes: Vec<u8> = Vec::with_capacity(BLOCK_WORK_SIZE);
+    pub fn get_work(&self) -> Vec<u8> {
+        let mut bytes: Vec<u8> = Vec::with_capacity(HEADER_WORK_SIZE);
 
-        bytes.extend(&self.height.to_be_bytes()); // 8
-        bytes.extend(&self.timestamp.to_be_bytes()); // 8 + 16 = 24
-        bytes.extend(self.get_tips_hash().as_bytes()); // 24 + 32 = 56
-        bytes.extend(&self.nonce.to_be_bytes()); // 56 + 8 = 64
-        bytes.extend(self.miner.as_bytes()); // 64 + 32 = 96
-        bytes.extend(&self.extra_nonce); // 96 + 32 = 128
-        bytes.extend(self.get_txs_hash().as_bytes()); // 128 + 32 = 160
+        bytes.push(self.version); // 1
+        bytes.extend(&self.height.to_be_bytes()); // 1 + 8 = 9
+        bytes.extend(self.get_tips_hash().as_bytes()); // 9 + 32 = 41
+        bytes.extend(self.get_txs_hash().as_bytes()); // 41 + 32 = 73
+
+        if bytes.len() != HEADER_WORK_SIZE {
+            panic!("Error, invalid header work size, got {} but expected {}", bytes.len(), HEADER_WORK_SIZE)
+        }
+        bytes
+    }
+
+    // compute the header work hash (immutable part in mining process)
+    pub fn get_work_hash(&self) -> Hash {
+        hash(&self.get_work())
+    }
+
+    fn get_serialized_header(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(BLOCK_WORK_SIZE);
+        bytes.extend(self.get_work_hash().to_bytes());
+        bytes.extend(self.timestamp.to_be_bytes());
+        bytes.extend(self.nonce.to_be_bytes());
+        bytes.extend(self.extra_nonce);
+        bytes.extend(self.miner.as_bytes());
 
         if bytes.len() != BLOCK_WORK_SIZE {
-            panic!("Error, invalid block work size, got {} but expected {}", bytes.len(), BLOCK_WORK_SIZE)
+            panic!("Error, invalid block work size, got {} but expected {}", bytes.len(), BLOCK_WORK_SIZE);
         }
 
         bytes
+    }
+
+    // compute the block POW hash
+    pub fn get_pow_hash(&self) -> Hash {
+        // TODO replace with the real POW algorithm
+        hash(&self.get_serialized_header())
     }
 
     pub fn get_transactions(&self) -> &Vec<Hash> {
@@ -143,20 +183,20 @@ impl Block {
     }
 }
 
-impl CompleteBlock {
-    pub fn new(block: Immutable<Block>, transactions: Vec<Immutable<Transaction>>) -> Self {
-        CompleteBlock {
-            block,
+impl Block {
+    pub fn new(block: Immutable<BlockHeader>, transactions: Vec<Immutable<Transaction>>) -> Self {
+        Block {
+            header: block,
             transactions
         }
     }
 
-    pub fn to_header(self) -> Arc<Block> {
-        self.block.to_arc()
+    pub fn to_header(self) -> Arc<BlockHeader> {
+        self.header.to_arc()
     }
 
-    pub fn get_header(&self) -> &Block {
-        &self.block
+    pub fn get_header(&self) -> &BlockHeader {
+        &self.header
     }
 
     pub fn get_txs_count(&self) -> usize {
@@ -167,30 +207,32 @@ impl CompleteBlock {
         &self.transactions
     }
 
-    pub fn split(self) -> (Immutable<Block>, Vec<Immutable<Transaction>>) {
-        (self.block, self.transactions)
+    pub fn split(self) -> (Immutable<BlockHeader>, Vec<Immutable<Transaction>>) {
+        (self.header, self.transactions)
     }
 }
 
-impl Serializer for Block {
+impl Serializer for BlockHeader {
     fn write(&self, writer: &mut Writer) {
-        writer.write_u64(&self.height); // 8
-        writer.write_u128(&self.timestamp); // 8 + 16 = 24
-        writer.write_u64(&self.nonce); // 24 + 8 = 32
-        writer.write_bytes(&self.extra_nonce); // 32 + 32 = 64
-        writer.write_u8(self.tips.len() as u8); // 64 + 1 = 65
+        writer.write_u8(self.version); // 1
+        writer.write_u64(&self.height); // 1 + 8 = 9
+        writer.write_u128(&self.timestamp); // 9 + 16 = 25
+        writer.write_u64(&self.nonce); // 25 + 8 = 33
+        writer.write_bytes(&self.extra_nonce); // 33 + 32 = 65
+        writer.write_u8(self.tips.len() as u8); // 65 + 1 = 66
         for tip in &self.tips {
             writer.write_hash(tip); // 32
         }
 
-        writer.write_u16(self.txs_hashes.len() as u16); // 65 + 2 = 67
+        writer.write_u16(self.txs_hashes.len() as u16); // 66 + 2 = 68
         for tx in &self.txs_hashes {
             writer.write_hash(tx); // 32
         }
-        self.miner.write(writer);
+        self.miner.write(writer); // 68 + 32 = 100
     }
 
-    fn read(reader: &mut Reader) -> Result<Block, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<BlockHeader, ReaderError> {
+        let version = reader.read_u8()?;
         let height = reader.read_u64()?;
         let timestamp = reader.read_u128()?;
         let nonce = reader.read_u64()?;
@@ -210,7 +252,8 @@ impl Serializer for Block {
 
         let miner = PublicKey::read(reader)?;
         Ok(
-            Block {
+            BlockHeader {
+                version,
                 extra_nonce,
                 height,
                 timestamp,
@@ -223,40 +266,42 @@ impl Serializer for Block {
     }
 }
 
-impl Hashable for Block {
+impl Hashable for BlockHeader {
+    // this function has the same behavior as the get_pow_hash function
+    // but we use a fast algorithm here
     fn hash(&self) -> Hash {
-        hash(&self.get_block_work())
+        hash(&self.get_serialized_header())
     }
 }
 
-impl Serializer for CompleteBlock {
+impl Serializer for Block {
     fn write(&self, writer: &mut Writer) {
-        self.block.write(writer);
+        self.header.write(writer);
         for tx in &self.transactions {
             tx.write(writer);
         }
     }
 
-    fn read(reader: &mut Reader) -> Result<CompleteBlock, ReaderError> {
-        let block = Block::read(reader)?;
+    fn read(reader: &mut Reader) -> Result<Block, ReaderError> {
+        let block = BlockHeader::read(reader)?;
         let mut txs: Vec<Immutable<Transaction>> = Vec::new();
         for _ in 0..block.get_txs_count() {
             let tx = Transaction::read(reader)?;
             txs.push(Immutable::Owned(tx));     
         }
 
-        Ok(CompleteBlock::new(Immutable::Owned(block), txs))
+        Ok(Block::new(Immutable::Owned(block), txs))
     }
 }
 
-impl Hashable for CompleteBlock {
+impl Hashable for Block {
     fn hash(&self) -> Hash {
-        self.block.hash()
+        self.header.hash()
     }
 }
 
-impl Deref for CompleteBlock {
-    type Target = Block;
+impl Deref for Block {
+    type Target = BlockHeader;
 
     fn deref(&self) -> &Self::Target {
         &self.get_header()        
@@ -267,6 +312,16 @@ use std::fmt::{Error, Display, Formatter};
 use std::ops::Deref;
 use std::sync::Arc;
 
+impl Display for BlockHeader {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        let mut tips = Vec::with_capacity(self.tips.len());
+        for hash in &self.tips {
+            tips.push(format!("{}", hash));
+        }
+        write!(f, "BlockHeader[height: {}, tips: [{}], timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.height, tips.join(", "), self.timestamp, self.nonce, hex::encode(self.extra_nonce), self.txs_hashes.len())
+    }
+}
+
 impl Display for Block {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         let mut tips = Vec::with_capacity(self.tips.len());
@@ -274,11 +329,5 @@ impl Display for Block {
             tips.push(format!("{}", hash));
         }
         write!(f, "Block[height: {}, tips: [{}], timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.height, tips.join(", "), self.timestamp, self.nonce, hex::encode(self.extra_nonce), self.txs_hashes.len())
-    }
-}
-
-impl Display for CompleteBlock {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "{}", self.block.get_inner())
     }
 }

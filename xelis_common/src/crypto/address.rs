@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 
 use crate::api::DataType;
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
-use crate::config::PREFIX_ADDRESS;
+use crate::config::{PREFIX_ADDRESS, TESTNET_PREFIX_ADDRESS};
 use super::bech32::{Bech32Error, encode, convert_bits, decode};
 use super::key::PublicKey;
 use serde::de::Error as SerdeError;
@@ -63,19 +63,32 @@ impl<'a> Address<'a> {
 
     pub fn as_string(&self) -> Result<String, Bech32Error> {
         let bits = convert_bits(&self.to_bytes(), 8, 5, true)?;
-        let result = encode(PREFIX_ADDRESS.to_owned(), &bits)?;
+        let hrp = if self.is_mainnet() {
+            PREFIX_ADDRESS
+        } else {
+            TESTNET_PREFIX_ADDRESS
+        };
+
+        let result = encode(hrp.to_owned(), &bits)?;
         Ok(result)
     }
 
     pub fn from_string(address: &String) -> Result<Self, Error> {
         let (hrp, decoded) = decode(address)?;
-        if hrp != PREFIX_ADDRESS {
+        // check that hrp is valid one
+        if hrp != PREFIX_ADDRESS && hrp != TESTNET_PREFIX_ADDRESS {
             return Err(Bech32Error::InvalidPrefix(hrp).into())
         }
 
         let bits = convert_bits(&decoded, 5, 8, false)?;
         let mut reader = Reader::new(&bits);
         let addr = Address::read(&mut reader)?;
+
+        // now check that the hrp decoded is the one for the network state
+        if (addr.is_mainnet() && hrp != PREFIX_ADDRESS) || (!addr.is_mainnet() && hrp != TESTNET_PREFIX_ADDRESS) {
+            return Err(Bech32Error::InvalidPrefix(hrp).into())
+        }
+
         Ok(addr)
     }
 }

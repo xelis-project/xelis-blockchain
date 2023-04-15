@@ -1,10 +1,11 @@
+use async_trait::async_trait;
 use crate::core::error::{BlockchainError, DiskContext};
 use xelis_common::{
     serializer::{Reader, Serializer},
     crypto::{key::PublicKey, hash::{Hash, hash}},
     immutable::Immutable,
     transaction::Transaction,
-    block::{Block, CompleteBlock}, account::VersionedBalance, network::Network,
+    block::{BlockHeader, Block}, account::VersionedBalance, network::Network,
 };
 use std::{
     collections::HashSet,
@@ -16,15 +17,17 @@ use lru::LruCache;
 use sled::Tree;
 use log::{debug, trace, error, warn};
 
+use super::{Tips, Storage, DifficultyProvider};
+
 const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
 const TOP_HEIGHT: &[u8; 4] = b"TOPH";
 const NETWORK: &[u8] = b"NET";
 
-pub type Tips = HashSet<Hash>;
 
-pub struct Storage {
+pub struct SledStorage {
     transactions: Tree, // all txs stored on disk
+    txs_executed: Tree, // all txs executed in block
     blocks: Tree, // all blocks on disk
     blocks_at_height: Tree, // all blocks height at specific height
     extra: Tree, // all extra data saved on disk
@@ -40,7 +43,7 @@ pub struct Storage {
     db: sled::Db, // opened DB used for assets to create dynamic assets
     // cached in memory
     transactions_cache: Option<Mutex<LruCache<Hash, Arc<Transaction>>>>,
-    blocks_cache: Option<Mutex<LruCache<Hash, Arc<Block>>>>,
+    blocks_cache: Option<Mutex<LruCache<Hash, Arc<BlockHeader>>>>,
     past_blocks_cache: Option<Mutex<LruCache<Hash, Arc<Vec<Hash>>>>>, // previous blocks saved at each new block
     topo_by_hash_cache: Option<Mutex<LruCache<Hash, u64>>>,
     hash_at_topo_cache: Option<Mutex<LruCache<u64, Hash>>>,
@@ -61,11 +64,12 @@ macro_rules! init_cache {
     }};
 }
 
-impl Storage {
+impl SledStorage {
     pub fn new(dir_path: String, cache_size: Option<usize>, network: Network) -> Result<Self, BlockchainError> {
         let sled = sled::open(dir_path)?;
         let mut storage = Self {
             transactions: sled.open_tree("transactions")?,
+            txs_executed: sled.open_tree("txs_executed")?,
             blocks: sled.open_tree("blocks")?,
             blocks_at_height: sled.open_tree("blocks_at_height")?,
             extra: sled.open_tree("extra")?,
@@ -199,123 +203,6 @@ impl Storage {
         Ok(tree.contains_key(&key.to_bytes())?)
     }
 
-    fn get_network(&self) -> Result<Network, BlockchainError> {
-        trace!("get network");
-        self.load_from_disk(&self.extra, NETWORK)
-    }
-
-    fn set_network(&mut self, network: &Network) -> Result<(), BlockchainError> {
-        trace!("set network to {}", network);
-        self.extra.insert(NETWORK, network.to_bytes())?;
-        Ok(())
-    }
-
-    fn has_network(&self) -> Result<bool, BlockchainError> {
-        trace!("has network");
-        Ok(self.extra.contains_key(NETWORK)?)
-    }
-
-    pub async fn asset_exist(&self, asset: &Hash) -> Result<bool, BlockchainError> {
-        trace!("asset exist {}", asset);
-        self.contains_data(&self.assets, &self.assets_cache, asset).await
-    }
-
-    pub async fn add_asset(&mut self, asset: &Hash) -> Result<(), BlockchainError> {
-        trace!("add asset {}", asset);
-        self.assets.insert(asset.as_bytes(), &[0u8; 0])?;
-        if let Some(cache) = &self.assets_cache {
-            let mut cache = cache.lock().await;
-            cache.put(asset.clone(), ());
-        }
-        Ok(())
-    }
-
-    // we are forced to read from disk directly because cache may don't have all assets in memory
-    pub async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError> {
-        trace!("get assets");
-        let mut assets = Vec::new();
-        for e in self.assets.iter() {
-            let (key, _) = e?;
-            let mut reader = Reader::new(&key);
-            let hash = Hash::read(&mut reader)?;
-            assets.push(hash);
-        }
-
-        Ok(assets)
-    }
-
-    pub fn has_tx_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        trace!("has tx blocks {}", hash);
-        let contains = self.tx_blocks.contains_key(hash.as_bytes())?;
-        Ok(contains)
-    }
-
-    pub fn has_block_linked_to_tx(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
-        trace!("has block {} linked to tx {}", block, tx);
-        Ok(self.has_tx_blocks(tx)? && self.get_blocks_for_tx(tx)?.contains(block))
-    }
-
-    pub fn get_blocks_for_tx(&self, hash: &Hash) -> Result<Tips, BlockchainError> {
-        trace!("get blocks for tx {}", hash);
-        self.load_from_disk(&self.tx_blocks, hash.as_bytes())
-    }
-
-    pub fn add_block_for_tx(&mut self, tx: &Hash, block: Hash) -> Result<(), BlockchainError> {
-        trace!("add block {} for tx {}", block, tx);
-        let mut blocks = if self.has_tx_blocks(tx)? {
-            self.get_blocks_for_tx(tx)?
-        } else {
-            Tips::new()
-        };
-        blocks.insert(block);
-        self.set_blocks_for_tx(tx, &blocks)
-    }
-
-    fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &HashSet<Hash>) -> Result<(), BlockchainError> {
-        trace!("set blocks ({}) for tx {} ", blocks.len(), tx);
-        self.tx_blocks.insert(tx.as_bytes(), blocks.to_bytes())?;
-        Ok(())
-    }
-
-    pub async fn has_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<bool, BlockchainError> {
-        trace!("has balance {} for {}", asset, key);
-        if !self.asset_exist(asset).await? {
-            return Err(BlockchainError::AssetNotFound(asset.clone()))
-        }
-
-        let tree = self.db.open_tree(asset.as_bytes())?;
-        Ok(tree.contains_key(key.as_bytes())?)
-    }
-
-    // returns the highest topoheight where a balance changes happened
-    pub async fn get_last_topoheight_for_balance(&self, key: &PublicKey, asset: &Hash) -> Result<u64, BlockchainError> {
-        trace!("get last topoheight for balance {} for {}", asset, key);
-        if !self.has_balance_for(key, asset).await? {
-            return Ok(0)
-        }
-
-        let tree = self.db.open_tree(asset.as_bytes())?;
-        self.get_data(&tree, &None, key).await
-    }
-
-    // set in storage the new top topoheight (the most up-to-date versioned balance)
-    pub fn set_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("set last topoheight to {} for balance {} for {}", topoheight, asset, key);
-        let tree = self.db.open_tree(asset.as_bytes())?;
-        tree.insert(&key.as_bytes(), &topoheight.to_be_bytes())?;
-        Ok(())
-    }
-
-    // delete the last topoheight registered for this key
-    // it can happens when rewinding chain and we don't have any changes (no transaction in/out) for this key
-    // because all versioned balances got deleted
-    pub fn delete_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash) -> Result<(), BlockchainError> {
-        trace!("delete last topoheight balance {} for {}", asset, key);
-        let tree = self.db.open_tree(asset.as_bytes())?;
-        tree.remove(&key.as_bytes())?;
-        Ok(())
-    }
-
     // hash asset + topoheight to create a unique key
     fn generate_versioned_balance_key(&self, asset: &Hash, topoheight: u64) -> Result<Hash, BlockchainError> {
         trace!("generate versioned balance key for {} at {}", asset, topoheight);
@@ -346,10 +233,204 @@ impl Storage {
 
         Ok(tree)
     }
+}
+
+
+#[async_trait]
+impl DifficultyProvider for SledStorage {
+    // TODO optimize all these functions to read only what is necessary
+    async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        trace!("get height for block hash {}", hash);
+        let block = self.get_block_header_by_hash(hash).await?;
+        Ok(block.get_height())
+    }
+
+    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u128, BlockchainError> {
+        trace!("get timestamp for hash {}", hash);
+        let block = self.get_block_header_by_hash(hash).await?;
+        Ok(block.get_timestamp())
+    }
+
+    async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        trace!("get difficulty for hash {}", hash);
+        self.load_from_disk(&self.difficulty, hash.as_bytes())
+    }
+
+    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        trace!("get cumulative difficulty for hash {}", hash);
+        self.get_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash).await
+    }
+
+    async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
+        trace!("get past blocks of {}", hash);
+        let tips = if let Some(cache) = &self.past_blocks_cache {
+            let mut cache = cache.lock().await;
+            if let Some(tips) = cache.get(hash) {
+                return Ok(tips.clone())
+            }
+    
+            let block = self.get_block_header_by_hash(hash).await?;
+            let mut tips = Vec::with_capacity(block.get_tips().len());
+            for hash in block.get_tips() {
+                tips.push(hash.clone());
+            }
+    
+            let tips = Arc::new(tips);
+            cache.put(hash.clone(), tips.clone());
+            tips
+        } else {
+            let block = self.get_block_header_by_hash(hash).await?;
+            let mut tips = Vec::with_capacity(block.get_tips().len());
+            for hash in block.get_tips() {
+                tips.push(hash.clone());
+            }
+            Arc::new(tips)
+        };
+
+        Ok(tips)
+    }
+
+    async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
+        trace!("get block by hash: {}", hash);
+        self.get_arc_data(&self.blocks, &self.blocks_cache, hash).await
+    }
+}
+
+#[async_trait]
+impl Storage for SledStorage {
+    fn get_tx_executed_in_block(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
+        self.load_from_disk(&self.txs_executed, tx.as_bytes())
+    }
+
+    fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
+        self.txs_executed.insert(tx.as_bytes(), block.as_bytes())?;
+        Ok(())
+    }
+
+    fn remove_tx_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError> {
+        self.txs_executed.remove(tx.as_bytes())?;
+        Ok(())
+    }
+
+    fn has_tx_executed_in_block(&self, tx: &Hash) -> Result<bool, BlockchainError> {
+        Ok(self.txs_executed.contains_key(tx.as_bytes())?)
+    }
+
+    fn get_network(&self) -> Result<Network, BlockchainError> {
+        trace!("get network");
+        self.load_from_disk(&self.extra, NETWORK)
+    }
+
+    fn set_network(&mut self, network: &Network) -> Result<(), BlockchainError> {
+        trace!("set network to {}", network);
+        self.extra.insert(NETWORK, network.to_bytes())?;
+        Ok(())
+    }
+
+    fn has_network(&self) -> Result<bool, BlockchainError> {
+        trace!("has network");
+        Ok(self.extra.contains_key(NETWORK)?)
+    }
+
+    async fn asset_exist(&self, asset: &Hash) -> Result<bool, BlockchainError> {
+        trace!("asset exist {}", asset);
+        self.contains_data(&self.assets, &self.assets_cache, asset).await
+    }
+
+    async fn add_asset(&mut self, asset: &Hash) -> Result<(), BlockchainError> {
+        trace!("add asset {}", asset);
+        self.assets.insert(asset.as_bytes(), &[0u8; 0])?;
+        if let Some(cache) = &self.assets_cache {
+            let mut cache = cache.lock().await;
+            cache.put(asset.clone(), ());
+        }
+        Ok(())
+    }
+
+    // we are forced to read from disk directly because cache may don't have all assets in memory
+    async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError> {
+        trace!("get assets");
+        let mut assets = Vec::new();
+        for e in self.assets.iter() {
+            let (key, _) = e?;
+            let mut reader = Reader::new(&key);
+            let hash = Hash::read(&mut reader)?;
+            assets.push(hash);
+        }
+
+        Ok(assets)
+    }
+
+    fn has_tx_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+        trace!("has tx blocks {}", hash);
+        let contains = self.tx_blocks.contains_key(hash.as_bytes())?;
+        Ok(contains)
+    }
+
+    fn has_block_linked_to_tx(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
+        trace!("has block {} linked to tx {}", block, tx);
+        Ok(self.has_tx_blocks(tx)? && self.get_blocks_for_tx(tx)?.contains(block))
+    }
+
+    fn get_blocks_for_tx(&self, hash: &Hash) -> Result<Tips, BlockchainError> {
+        trace!("get blocks for tx {}", hash);
+        self.load_from_disk(&self.tx_blocks, hash.as_bytes())
+    }
+
+    fn add_block_for_tx(&mut self, tx: &Hash, block: Hash) -> Result<(), BlockchainError> {
+        trace!("add block {} for tx {}", block, tx);
+        let mut blocks = if self.has_tx_blocks(tx)? {
+            self.get_blocks_for_tx(tx)?
+        } else {
+            Tips::new()
+        };
+
+        if !blocks.contains(&block) {
+            blocks.insert(block);
+            self.set_blocks_for_tx(tx, &blocks)?;
+        }
+
+        Ok(())
+    }
+
+    fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &HashSet<Hash>) -> Result<(), BlockchainError> {
+        trace!("set blocks ({}) for tx {} ", blocks.len(), tx);
+        self.tx_blocks.insert(tx.as_bytes(), blocks.to_bytes())?;
+        Ok(())
+    }
+
+    async fn has_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<bool, BlockchainError> {
+        trace!("has balance {} for {}", asset, key);
+        if !self.asset_exist(asset).await? {
+            return Err(BlockchainError::AssetNotFound(asset.clone()))
+        }
+
+        let tree = self.db.open_tree(asset.as_bytes())?;
+        Ok(tree.contains_key(key.as_bytes())?)
+    }
+
+    // returns the highest topoheight where a balance changes happened
+    async fn get_last_topoheight_for_balance(&self, key: &PublicKey, asset: &Hash) -> Result<u64, BlockchainError> {
+        trace!("get last topoheight for balance {} for {}", asset, key);
+        if !self.has_balance_for(key, asset).await? {
+            return Ok(0)
+        }
+
+        let tree = self.db.open_tree(asset.as_bytes())?;
+        self.get_data(&tree, &None, key).await
+    }
+
+    // set in storage the new top topoheight (the most up-to-date versioned balance)
+    fn set_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("set last topoheight to {} for balance {} for {}", topoheight, asset, key);
+        let tree = self.db.open_tree(asset.as_bytes())?;
+        tree.insert(&key.as_bytes(), &topoheight.to_be_bytes())?;
+        Ok(())
+    }
 
     // get the balance at a specific topoheight
     // if there is no balance change at this topoheight just return an error
-    pub async fn has_balance_at_exact_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<bool, BlockchainError> {
+    async fn has_balance_at_exact_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<bool, BlockchainError> {
         trace!("has balance {} for {} at exact topoheight {}", asset, key, topoheight);
         // check first that this address has balance, if no returns
         if !self.has_balance_for(key, asset).await? {
@@ -362,7 +443,7 @@ impl Storage {
 
     // get the balance at a specific topoheight
     // if there is no balance change at this topoheight just return an error
-    pub async fn get_balance_at_exact_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
+    async fn get_balance_at_exact_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("get balance {} for {} at exact topoheight {}", asset, key, topoheight);
         // check first that this address has balance, if no returns
         if !self.has_balance_for(key, asset).await? {
@@ -373,10 +454,20 @@ impl Storage {
         self.get_data(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges)
     }
 
+    // delete the last topoheight registered for this key
+    // it can happens when rewinding chain and we don't have any changes (no transaction in/out) for this key
+    // because all versioned balances got deleted
+    fn delete_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash) -> Result<(), BlockchainError> {
+        trace!("delete last topoheight balance {} for {}", asset, key);
+        let tree = self.db.open_tree(asset.as_bytes())?;
+        tree.remove(&key.as_bytes())?;
+        Ok(())
+    }
+
     // get the latest balance at maximum specified topoheight
     // when a DAG re-ordering happens, we need to select the right balance and not the last one
     // returns None if the key has no balances for this asset
-    pub async fn get_balance_at_maximum_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<Option<(u64, VersionedBalance)>, BlockchainError> {
+    async fn get_balance_at_maximum_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<Option<(u64, VersionedBalance)>, BlockchainError> {
         trace!("get balance {} for {} at maximum topoheight {}", asset, key, topoheight);
         // check first that this address has balance for this asset, if no returns None
         if !self.has_balance_for(key, asset).await? {
@@ -384,10 +475,10 @@ impl Storage {
         }
 
         let (topo, mut version) = self.get_last_balance(key, asset).await?;
-        debug!("Last version balance {} for {} is at topoheight {}", asset, key, topo);
+        trace!("Last version balance {} for {} is at topoheight {}", asset, key, topo);
         // if it's the latest and its under the maximum topoheight
         if topo < topoheight {
-            debug!("Last version balance (valid) found at {} (maximum topoheight = {})", topo, topoheight);
+            trace!("Last version balance (valid) found at {} (maximum topoheight = {})", topo, topoheight);
             return Ok(Some((topo, version)))
         }
 
@@ -413,14 +504,14 @@ impl Storage {
     }
 
     // delete versioned balances for this topoheight
-    pub async fn delete_balance_at_topoheight(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
+    async fn delete_balance_at_topoheight(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("delete balance {} for {} at topoheight {}", asset, key, topoheight);
         let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
         self.delete_data_no_arc(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges)
     }
 
     // returns a new versioned balance with already-set previous topoheight
-    pub async fn get_new_versioned_balance(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
+    async fn get_new_versioned_balance(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("get new versioned balance {} for {} at {}", asset, key, topoheight);
         let version = match self.get_balance_at_maximum_topoheight(key, asset, topoheight).await? {
             Some((topo, mut version)) => {
@@ -439,7 +530,7 @@ impl Storage {
     }
 
     // save a new versioned balance in storage and update the pointer
-    pub async fn set_balance_to(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64, version: &VersionedBalance) -> Result<(), BlockchainError> {
+    async fn set_balance_to(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64, version: &VersionedBalance) -> Result<(), BlockchainError> {
         trace!("set balance {} for {} to topoheight {}", asset, key, topoheight);
         self.set_balance_at_topoheight(asset, topoheight, key, &version).await?;
         self.set_last_topoheight_for_balance(key, asset, topoheight)?;
@@ -447,7 +538,7 @@ impl Storage {
     }
 
     // get the last version of balance and returns topoheight
-    pub async fn get_last_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(u64, VersionedBalance), BlockchainError> {
+    async fn get_last_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(u64, VersionedBalance), BlockchainError> {
         trace!("get last balance {} for {}", asset, key);
         if !self.has_balance_for(key, asset).await? {
             return Err(BlockchainError::NoBalance)
@@ -460,19 +551,19 @@ impl Storage {
     }
 
     // save the asset balance at specific topoheight
-    pub async fn set_balance_at_topoheight(&mut self, asset: &Hash, topoheight: u64, key: &PublicKey, balance: &VersionedBalance) -> Result<(), BlockchainError> {
+    async fn set_balance_at_topoheight(&mut self, asset: &Hash, topoheight: u64, key: &PublicKey, balance: &VersionedBalance) -> Result<(), BlockchainError> {
         trace!("set balance {} at topoheight {} for {}", asset, topoheight, key);
         let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
         tree.insert(&key.to_bytes(), balance.to_bytes())?;
         Ok(())
     }
 
-    pub async fn has_nonce(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
+    async fn has_nonce(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
         trace!("has nonce {}", key);
         self.contains_data(&self.nonces, &self.nonces_cache, key).await
     }
 
-    pub async fn get_nonce(&self, key: &PublicKey) -> Result<u64, BlockchainError> {
+    async fn get_nonce(&self, key: &PublicKey) -> Result<u64, BlockchainError> {
         trace!("get nonce {}", key);
         if !self.has_nonce(key).await? {
             return Ok(0)
@@ -481,7 +572,7 @@ impl Storage {
         self.get_data(&self.nonces, &self.nonces_cache, key).await
     }
 
-    pub async fn set_nonce(&mut self, key: &PublicKey, nonce: u64) -> Result<(), BlockchainError> {
+    async fn set_nonce(&mut self, key: &PublicKey, nonce: u64) -> Result<(), BlockchainError> {
         trace!("set nonce to {} for {}", nonce, key);
         self.nonces.insert(&key.as_bytes(), &nonce.to_be_bytes())?;
         if let Some(cache) = &self.nonces_cache {
@@ -492,33 +583,39 @@ impl Storage {
         Ok(())
     }
 
-    pub fn get_block_reward(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    fn get_block_reward(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         trace!("get block reward for {}", hash);
         Ok(self.load_from_disk(&self.rewards, hash.as_bytes())?)
     }
 
-    pub fn set_block_reward(&mut self, hash: &Hash, reward: u64) -> Result<(), BlockchainError> {
+    fn set_block_reward(&mut self, hash: &Hash, reward: u64) -> Result<(), BlockchainError> {
         trace!("set block reward for {} to {}", hash, reward);
         self.rewards.insert(hash.as_bytes(), &reward.to_be_bytes())?;
         Ok(())
     }
 
-    pub async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
+    async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
         trace!("get transaction for hash {}", hash);
         self.get_arc_data(&self.transactions, &self.transactions_cache, hash).await
     }
 
-    pub fn count_transactions(&self) -> usize {
+    async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+        self.contains_data(&self.transactions, &self.transactions_cache, hash).await
+    }
+
+    fn count_transactions(&self) -> usize {
         trace!("count transactions");
         self.transactions.len()
     }
 
-    pub async fn add_new_block(&mut self, block: Arc<Block>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash) -> Result<(), BlockchainError> {
+    async fn add_new_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash) -> Result<(), BlockchainError> {
         debug!("Storing new {} with hash: {}, difficulty: {}", block, hash, difficulty);
 
         // Store transactions
         for (hash, tx) in block.get_transactions().iter().zip(txs) { // first save all txs, then save block
-            self.transactions.insert(hash.as_bytes(), tx.to_bytes())?;
+            if !self.has_transaction(hash).await? {
+                self.transactions.insert(hash.as_bytes(), tx.to_bytes())?;
+            }
         }
 
         // Store block header
@@ -537,7 +634,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>, HashSet<PublicKey>), BlockchainError> {
+    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>, HashSet<PublicKey>), BlockchainError> {
         trace!("pop blocks from height: {}, topoheight: {}, count: {}", height, topoheight, count);
         if height < count as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
@@ -619,6 +716,12 @@ impl Storage {
                         self.set_blocks_for_tx(tx_hash, &blocks)?;
                         trace!("Tx was included in {}, blocks left: {}", blocks_len, blocks.into_iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
                     }
+
+                    if self.has_tx_executed_in_block(tx_hash)? {
+                        trace!("Tx {} was executed, deleting", tx_hash);
+                        self.remove_tx_executed(&tx_hash)?;
+                    }
+
                     txs.push((tx_hash.clone(), tx));
                 }
 
@@ -659,7 +762,7 @@ impl Storage {
         }
         debug!("Blocks processed {}, new topoheight: {}, tips: {}", done, topoheight, tips.len());
         for hash in &tips {
-            trace!("hash {} at height {}", hash, self.get_height_for_block(&hash).await?);
+            trace!("hash {} at height {}", hash, self.get_height_for_block_hash(&hash).await?);
         }
         // store the new tips and topo topoheight
         self.store_tips(&tips)?;
@@ -669,145 +772,111 @@ impl Storage {
         Ok((height, topoheight, txs, miners))
     }
 
-    pub fn has_blocks(&self) -> bool {
+    fn has_blocks(&self) -> bool {
         trace!("has blocks");
         !self.blocks.is_empty()
     }
 
-    pub fn count_blocks(&self) -> usize {
+    fn count_blocks(&self) -> usize {
         trace!("count blocks");
         self.blocks.len()
     }
 
-    pub async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+    async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         trace!("has block {}", hash);
         self.contains_data(&self.blocks, &self.blocks_cache, hash).await
     }
 
-    pub async fn get_block_by_hash(&self, hash: &Hash) -> Result<Arc<Block>, BlockchainError> {
-        trace!("get block by hash: {}", hash);
-        self.get_arc_data(&self.blocks, &self.blocks_cache, hash).await
-    }
-
-    pub async fn get_block_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<Block>), BlockchainError> {
+    async fn get_block_header_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>), BlockchainError> {
         trace!("get block at topoheight: {}", topoheight);
         let hash = self.get_hash_at_topo_height(topoheight).await?;
-        let block = self.get_block_by_hash(&hash).await?;
+        let block = self.get_block_header_by_hash(&hash).await?;
         Ok((hash, block))
     }
 
-    pub async fn get_complete_block(&self, hash: &Hash) -> Result<CompleteBlock, BlockchainError> {
-        trace!("get complete block {}", hash);
-        let block = self.get_block_by_hash(hash).await?;
+    async fn get_block(&self, hash: &Hash) -> Result<Block, BlockchainError> {
+        trace!("get block {}", hash);
+        let block = self.get_block_header_by_hash(hash).await?;
         let mut transactions = Vec::new();
         for tx in block.get_transactions() {
             let transaction = self.get_transaction(tx).await?;
             transactions.push(Immutable::Arc(transaction));
         }
 
-        let complete_block = CompleteBlock::new(Immutable::Arc(block), transactions);
-        Ok(complete_block)
+        let block = Block::new(Immutable::Arc(block), transactions);
+        Ok(block)
     }
 
-    pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
+    async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
         trace!("get top block hash");
         self.get_hash_at_topo_height(self.get_top_topoheight()?).await
     }
 
-    pub fn get_top_topoheight(&self) -> Result<u64, BlockchainError> {
+    fn get_top_topoheight(&self) -> Result<u64, BlockchainError> {
         trace!("get top topoheight");
         self.load_from_disk(&self.extra, TOP_TOPO_HEIGHT)
     }
 
-    pub fn set_top_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+    fn set_top_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("set new top topoheight at {}", topoheight);
         self.extra.insert(TOP_TOPO_HEIGHT, &topoheight.to_be_bytes())?;
         Ok(())
     }
 
-    pub fn get_top_height(&self) -> Result<u64, BlockchainError> {
+    fn get_top_height(&self) -> Result<u64, BlockchainError> {
         trace!("get top height");
         self.load_from_disk(&self.extra, TOP_HEIGHT)
     }
 
-    pub fn set_top_height(&mut self, height: u64) -> Result<(), BlockchainError> {
+    fn set_top_height(&mut self, height: u64) -> Result<(), BlockchainError> {
         trace!("set new top height at {}", height);
         self.extra.insert(TOP_HEIGHT, &height.to_be_bytes())?;
         Ok(())
     }
 
-    pub async fn get_top_block(&self) -> Result<(Arc<Block>, Hash), BlockchainError> {
-        trace!("get top block");
+    async fn get_top_block_header(&self) -> Result<(Arc<BlockHeader>, Hash), BlockchainError> {
+        trace!("get top block header");
         let hash = self.get_top_block_hash().await?;
-        Ok((self.get_block_by_hash(&hash).await?, hash))
+        Ok((self.get_block_header_by_hash(&hash).await?, hash))
     }
 
-    pub async fn get_top_complete_block(&self) -> Result<CompleteBlock, BlockchainError> {
-        trace!("get top complete block");
-        let (block, _) = self.get_top_block().await?;
+    async fn get_top_block(&self) -> Result<Block, BlockchainError> {
+        trace!("get top block");
+        let (block, _) = self.get_top_block_header().await?;
         let mut transactions = Vec::new();
         for tx in block.get_transactions() {
             let transaction = self.get_transaction(tx).await?;
             transactions.push(Immutable::Arc(transaction));
         }
 
-        let complete_block = CompleteBlock::new(Immutable::Arc(block), transactions);
-        Ok(complete_block)
+        let block = Block::new(Immutable::Arc(block), transactions);
+        Ok(block)
     }
 
-    pub async fn get_tips(&self) -> Result<Tips, BlockchainError> {
+    async fn get_tips(&self) -> Result<Tips, BlockchainError> {
         trace!("get tips");
         Ok(self.tips_cache.clone())
     }
 
-    pub fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
+    fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
         trace!("Saving {} Tips", tips.len());
         self.extra.insert(TIPS, tips.to_bytes())?;
         self.tips_cache = tips.clone();
         Ok(())
     }
 
-    pub async fn get_past_blocks_of(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
-        trace!("get past blocks of {}", hash);
-        let tips = if let Some(cache) = &self.past_blocks_cache {
-            let mut cache = cache.lock().await;
-            if let Some(tips) = cache.get(hash) {
-                return Ok(tips.clone())
-            }
-    
-            let block = self.get_block_by_hash(hash).await?;
-            let mut tips = Vec::with_capacity(block.get_tips().len());
-            for hash in block.get_tips() {
-                tips.push(hash.clone());
-            }
-    
-            let tips = Arc::new(tips);
-            cache.put(hash.clone(), tips.clone());
-            tips
-        } else {
-            let block = self.get_block_by_hash(hash).await?;
-            let mut tips = Vec::with_capacity(block.get_tips().len());
-            for hash in block.get_tips() {
-                tips.push(hash.clone());
-            }
-            Arc::new(tips)
-        };
-
-        Ok(tips)
-    }
-
-    pub async fn has_blocks_at_height(&self, height: u64) -> Result<bool, BlockchainError> {
+    async fn has_blocks_at_height(&self, height: u64) -> Result<bool, BlockchainError> {
         trace!("get blocks at height {}", height);
         Ok(self.blocks_at_height.contains_key(&height.to_be_bytes())?)
     }
 
     // returns all blocks hash at specified height
-    pub async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError> {
+    async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError> {
         trace!("get blocks at height {}", height);
         self.load_from_disk(&self.blocks_at_height, &height.to_be_bytes())
     }
 
-    pub async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError> {
+    async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError> {
         trace!("add block {} at height {}", hash, height);
         let mut tips = if self.has_blocks_at_height(height).await? {
             let hashes = self.get_blocks_at_height(height).await?;
@@ -824,14 +893,7 @@ impl Storage {
         Ok(())
     }
 
-    // TODO optimize all these functions to read only what is necessary
-    pub async fn get_height_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        trace!("get height for hash {}", hash);
-        let block = self.get_block_by_hash(hash).await?;
-        Ok(block.get_height())
-    }
-
-    pub async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
+    async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("set topo height for {} at {}", hash, topoheight);
         self.topo_by_hash.insert(hash.as_bytes(), topoheight.to_bytes())?;
         self.hash_at_topo.insert(topoheight.to_be_bytes(), hash.as_bytes())?;
@@ -850,7 +912,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn is_block_topological_ordered(&self, hash: &Hash) -> bool {
+    async fn is_block_topological_ordered(&self, hash: &Hash) -> bool {
         trace!("is block topological ordered: {}", hash);
         let topoheight = match self.get_topo_height_for_hash(&hash).await {
             Ok(topoheight) => topoheight,
@@ -870,12 +932,12 @@ impl Storage {
         hash_at_topo == *hash
     }
 
-    pub async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         trace!("get topoheight for hash: {}", hash);
         self.get_data(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await
     }
 
-    pub async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
+    async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
         trace!("get hash at topoheight: {}", topoheight);
         let hash = if let Some(cache) = &self.hash_at_topo_cache {
             let mut hash_at_topo = cache.lock().await;
@@ -892,40 +954,24 @@ impl Storage {
         Ok(hash)
     }
 
-    pub fn get_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        trace!("get difficulty for hash {}", hash);
-        self.load_from_disk(&self.difficulty, hash.as_bytes())
-    }
-
-    pub async fn get_timestamp_for_block(&self, hash: &Hash) -> Result<u128, BlockchainError> {
-        trace!("get timestamp for hash {}", hash);
-        let block = self.get_block_by_hash(hash).await?;
-        Ok(block.get_timestamp())
-    }
-
-    pub async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {
+    async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {
         trace!("get supply at topo height {}", topoheight);
         let hash = self.get_hash_at_topo_height(topoheight).await?;
-        self.get_supply_for_hash(&hash)
+        self.get_supply_for_block_hash(&hash)
     }
     
-    pub fn get_supply_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    fn get_supply_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         trace!("get supply for hash {}", hash);
         self.load_from_disk(&self.supply, hash.as_bytes())
     }
 
-    pub fn set_supply_for_block(&mut self, hash: &Hash, supply: u64) -> Result<(), BlockchainError> {
+    fn set_supply_for_block_hash(&mut self, hash: &Hash, supply: u64) -> Result<(), BlockchainError> {
         trace!("set difficulty for hash {}", hash);
         self.supply.insert(hash.as_bytes(), &supply.to_be_bytes())?;
         Ok(())
     }
 
-    pub async fn get_cumulative_difficulty_for_block(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        trace!("get cumulative difficulty for hash {}", hash);
-        self.get_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash).await
-    }
-
-    pub async fn set_cumulative_difficulty_for_block(&mut self, hash: &Hash, cumulative_difficulty: u64) -> Result<(), BlockchainError> {
+    async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: u64) -> Result<(), BlockchainError> {
         trace!("set cumulative difficulty for hash {}", hash);
         self.cumulative_difficulty.insert(hash.as_bytes(), cumulative_difficulty.to_bytes())?;
         Ok(())

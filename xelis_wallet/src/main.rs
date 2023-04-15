@@ -87,6 +87,7 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>, network: Network) 
     command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", None, CommandHandler::Async(async_handler!(offline_mode))));
     command_manager.add_command(Command::new("rescan", "Rescan balance and transactions", Some(Arg::new("topoheight", ArgType::Number)), CommandHandler::Async(async_handler!(rescan))));
     command_manager.add_command(Command::new("seed", "Show seed of selected language", Some(Arg::new("language", ArgType::Number)), CommandHandler::Async(async_handler!(seed))));
+    command_manager.add_command(Command::new("nonce", "Show current nonce", None, CommandHandler::Async(async_handler!(nonce))));
 
     command_manager.set_data(Some(wallet.clone()));
 
@@ -226,6 +227,13 @@ async fn history(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentM
     let wallet = manager.get_data()?;
     let storage = wallet.get_storage().read().await;
     let mut transactions = storage.get_transactions()?;
+
+    // if we don't have any txs, no need proceed further
+    if transactions.is_empty() {
+        manager.message("No transactions available");
+        return Ok(())
+    }
+
     // desc ordered
     transactions.sort_by(|a, b| b.get_topoheight().cmp(&a.get_topoheight()));
     let mut max_pages = transactions.len() / TXS_PER_PAGE;
@@ -299,5 +307,12 @@ async fn seed(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentMana
 
     let seed = wallet.get_seed(language as usize)?;
     manager.message(format!("Seed: {}", seed));
+    Ok(())
+}
+
+async fn nonce(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let wallet = manager.get_data()?;
+    let nonce = wallet.get_nonce().await;
+    manager.message(format!("Nonce: {}", nonce));
     Ok(())
 }

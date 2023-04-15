@@ -15,6 +15,7 @@ use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
 use crate::mnemonics;
 use crate::network_handler::{NetworkHandler, SharedNetworkHandler};
+use crate::rpc::WalletRpcServer;
 use crate::storage::{EncryptedStorage, Storage};
 use crate::transaction_builder::TransactionBuilder;
 use chacha20poly1305::{aead::OsRng, Error as CryptoError};
@@ -73,7 +74,10 @@ pub struct Wallet {
     keypair: KeyPair,
     // network handler for online mode to keep wallet synced
     network_handler: Mutex<Option<SharedNetworkHandler>>,
-    network: Network
+    // network on which we are connected
+    network: Network,
+    // RPC Server
+    rpc_server: Option<Arc<WalletRpcServer>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -88,10 +92,12 @@ impl Wallet {
             storage: RwLock::new(storage),
             keypair,
             network_handler: Mutex::new(None),
-            network
+            network,
+            rpc_server: None
         };
 
-        Arc::new(zelf)
+        let zelf = Arc::new(zelf);
+        zelf
     }
 
     pub fn create(name: String, password: String, seed: Option<String>, network: Network) -> Result<Arc<Self>, Error> {
@@ -345,6 +351,8 @@ impl Wallet {
                 storage.delete_top_block_hash()?;
                 // balances will be re-fetched from daemon
                 storage.delete_balances()?;
+                storage.set_nonce(0)?;
+
                 if topoheight == 0 {
                     storage.delete_transactions()?;
                 } else {
@@ -388,6 +396,11 @@ impl Wallet {
     pub fn get_seed(&self, language_index: usize) -> Result<String, Error> {
         let words = mnemonics::key_to_words(self.keypair.get_private_key(), language_index)?;
         Ok(words.join(" "))
+    }
+
+    pub async fn get_nonce(&self) -> u64 {
+        let storage = self.storage.read().await;
+        storage.get_nonce().unwrap_or(0)
     }
 
     pub fn get_storage(&self) -> &RwLock<EncryptedStorage> {

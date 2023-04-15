@@ -1,4 +1,3 @@
-pub mod storage;
 pub mod rpc;
 pub mod p2p;
 pub mod core;
@@ -11,7 +10,10 @@ use xelis_common::{
     prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel},
     config::{VERSION, BLOCK_TIME}, globals::{format_hashrate, set_network_to}, async_handler, crypto::address::Address, network::Network
 };
-use crate::core::blockchain::{Config, Blockchain};
+use crate::core::{
+    blockchain::{Config, Blockchain},
+    storage::{Storage, SledStorage}
+};
 use std::sync::Arc;
 use std::time::Duration;
 use clap::Parser;
@@ -48,7 +50,24 @@ async fn main() -> Result<()> {
     let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
     info!("Xelis Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
-    let blockchain = Blockchain::new(config.nested, config.network).await?;
+    
+    let blockchain_config = config.nested;
+    let storage = {
+        let use_cache = if blockchain_config.cache_size > 0 {
+            Some(blockchain_config.cache_size)
+        } else {
+            None
+        };
+
+        let dir_path = if let Some(path) = blockchain_config.dir_path.as_ref() {
+            path.clone()
+        } else {
+            config.network.to_string().to_lowercase()
+        };
+        SledStorage::new(dir_path, use_cache, config.network)?
+    };
+
+    let blockchain = Blockchain::new(blockchain_config, config.network, storage).await?;
     if let Err(e) = run_prompt(&prompt, blockchain.clone(), config.network).await {
         error!("Error while running prompt: {}", e);
     }
@@ -57,8 +76,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>, network: Network) -> Result<(), PromptError> {
-    let mut command_manager: CommandManager<Arc<Blockchain>> = CommandManager::default();
+async fn run_prompt<S: Storage>(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain<S>>, network: Network) -> Result<(), PromptError> {
+    let mut command_manager: CommandManager<Arc<Blockchain<S>>> = CommandManager::default();
     command_manager.set_data(Some(blockchain.clone()));
     command_manager.add_command(Command::new("list_peers", "List all peers connected", None, CommandHandler::Async(async_handler!(list_peers))));
     command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", None, CommandHandler::Async(async_handler!(list_assets))));
@@ -66,12 +85,13 @@ async fn run_prompt(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain>, network: 
     command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], None, CommandHandler::Async(async_handler!(print_block))));
     command_manager.add_command(Command::new("top_block", "Print top block", None, CommandHandler::Async(async_handler!(top_block))));
     command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(pop_blocks))));
+    command_manager.add_command(Command::new("clear_mempool", "Clear all transactions in mempool", None, CommandHandler::Async(async_handler!(clear_mempool))));
 
-    let p2p: Option<Arc<P2pServer>> = match blockchain.get_p2p().lock().await.as_ref() {
+    let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
         None => None
     };
-    let getwork: Option<SharedGetWorkServer> = match blockchain.get_rpc().lock().await.as_ref() {
+    let getwork: Option<SharedGetWorkServer<S>> = match blockchain.get_rpc().lock().await.as_ref() {
         Some(rpc) => rpc.getwork_server().clone(),
         None => None
     };
@@ -148,7 +168,7 @@ fn build_prompt_message(topoheight: u64, best_topoheight: u64, network_hashrate:
     )
 }
 
-async fn list_peers(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn list_peers<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
     let blockchain = manager.get_data()?;
     match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => {
@@ -165,7 +185,7 @@ async fn list_peers(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManage
     Ok(())
 }
 
-async fn list_assets(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn list_assets<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
     let blockchain = manager.get_data()?;
     let storage = blockchain.get_storage().read().await;
     let assets = storage.get_assets().await.context("Error while retrieving assets")?;
@@ -176,7 +196,7 @@ async fn list_assets(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManag
     Ok(())
 }
 
-async fn show_balance(manager: &CommandManager<Arc<Blockchain>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+async fn show_balance<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let address = arguments.get_value("address")?.to_string_value()?;
     let asset = arguments.get_value("asset")?.to_hash()?;
     let mut history = if arguments.has_argument("history") {
@@ -214,7 +234,7 @@ async fn show_balance(manager: &CommandManager<Arc<Blockchain>>, mut arguments: 
     Ok(())
 }
 
-async fn print_block(manager: &CommandManager<Arc<Blockchain>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+async fn print_block<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let blockchain = manager.get_data()?;
     let storage = blockchain.get_storage().read().await;
     let hash = arguments.get_value("hash")?.to_hash()?;
@@ -224,7 +244,7 @@ async fn print_block(manager: &CommandManager<Arc<Blockchain>>, mut arguments: A
     Ok(())
 }
 
-async fn top_block(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn top_block<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
     let blockchain = manager.get_data()?;
     let storage = blockchain.get_storage().read().await;
     let hash = blockchain.get_top_block_hash().await.context("Error on top block hash")?;
@@ -235,7 +255,7 @@ async fn top_block(manager: &CommandManager<Arc<Blockchain>>, _: ArgumentManager
 }
 
 
-async fn pop_blocks(manager: &CommandManager<Arc<Blockchain>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+async fn pop_blocks<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let amount = arguments.get_value("amount")?.to_number()?;
     let blockchain = manager.get_data()?;
     if amount == 0 || amount >= blockchain.get_height() {
@@ -245,6 +265,16 @@ async fn pop_blocks(manager: &CommandManager<Arc<Blockchain>>, mut arguments: Ar
     info!("Trying to pop {} blocks from chain...", amount);
     let topoheight = blockchain.rewind_chain(amount as usize).await.context("Error while rewinding chain")?;
     info!("Chain as been rewinded until topoheight {}", topoheight);
+
+    Ok(())
+}
+
+async fn clear_mempool<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain = manager.get_data()?;
+    info!("Clearing mempool...");
+    let mut mempool = blockchain.get_mempool().write().await;
+    mempool.clear();
+    info!("Mempool cleared");
 
     Ok(())
 }

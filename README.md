@@ -47,11 +47,11 @@ Others objectives in mind are:
 ## BlockDAG
 
 XELIS try to implement & use a blockDAG which the rules are the following:
-- A block is considered `Sync Block` when the block height is less than `TOP_HEIGHT - STABLE_HEIGHT_LIMIT` and it's the unique block at a specific height ~~or if it's the heaviest block by cumulative difficulty at its height~~.
+- A block is considered `Sync Block` when the block height is less than `TOP_HEIGHT - STABLE_LIMIT` and it's the unique block at a specific height (or only ordered block at its height and don't have lower cumulative difficulty than previous blocks).
 - A block is considered `Side Block` when block height is less than or equal to height of past 8 topographical blocks.
 - A block is considered `Orphaned` when the block is not ordered in DAG (no topological height for it).
 - A height is not unique anymore.
-- Topo height is unique for each block, but can change when the DAG is re-ordered up to `TOP_HEIGHT - STABLE_HEIGHT_LIMIT`.
+- Topo height is unique for each block, but can change when the DAG is re-ordered up to `TOP_HEIGHT - STABLE_LIMIT`.
 - You can have up to 3 previous blocks in a block.
 - For mining, you have to mine on one of 3 of the most heavier tips.
 - Block should not have deviated too much from main chain / heavier tips.
@@ -60,6 +60,33 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 - Block rewards (with fees) are added to account only when block is in stable height.
 - Supply is re-calculated each time the block is re-ordered because its based on topo order.
 - Transactions and miner rewards are re-computed when a new block is added and the block there linked to is not yet in stable topo height. 
+
+## Mining
+
+Mining capabilities of XELIS are a bit differents from others chains because of standards being not implemented.
+Each job send to a miner is a `BlockMiner` instance in hex format.
+It includes the header work hash which represents the immutable data from daemon.
+
+Mining jobs are send only when a new block is found or when a new TX is added in mempool.
+Miners software are recommended to update themselves the block timestamp (or at least every 500ms) for best network difficulty calculation.
+
+Actually, the POW Hashing algorithm is `Keccak256` which is until we develop (or choose) our own algorithm.
+
+## Client Protocol
+
+XELIS integrate along with BlockDAG a way to accept multiple times the same TX and only execute it one time.
+Instead of excluding the whole block because we have a collision with another blockDAG branch for a TX, we just don't execute the TX and keep its hash.
+
+The same TX can be contained in multiple blocks only if:
+- TX is not executed in stable height
+- TX is not included in block Tips (previous blocks)
+
+Also, for more security, user account should only do TXs on the same chain/tip to prevent any orphaned TX.
+An orphaned TX can happens when two differents TXs (but same owner) with the same nonce are sent in two differents branchs. 
+
+During the generation of the DAG order (linking unique topoheight to a block hash), the first block being ordered will execute the TX first.
+
+This feature allows to accept others branch tips even if transactions are the same and prevent more orphans blocks when branches are merged.
 
 ## Transaction
 
@@ -79,6 +106,9 @@ At this moment, transactions are public and have the following data.
 | signature |    Signature    |          Valid signature to prove that the owner validated this TX         |
 
 Transactions support any registered asset natively.
+
+To prevent any replay attack or double spending, each TX should include a nonce that match the account balance.
+After each TX, the nonce is incremented by 1.
 
 ## P2p
 
@@ -124,8 +154,8 @@ Chain sync is requested with a minimum interval of `CHAIN_SYNC_DELAY` seconds.
 
 ### Block Propagation
 
-Block propagation packet contains the block header only. Its sent to all peers who have theirs height minus our height less than `STABLE_HEIGHT_LIMIT`.
-To build the complete block, we retrieve transactions from mempool.
+Block propagation packet contains the block header only. Its sent to all peers who have theirs height minus our height less than `STABLE_LIMIT`.
+To build the block, we retrieve transactions from mempool.
 If a transaction is not found in the mempool, we request it from the same peer in order to build it.
 
 ### Transaction Propagation

@@ -1,7 +1,6 @@
 use std::{borrow::Cow, collections::HashSet};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance, network::Network};
 
@@ -68,8 +67,9 @@ pub struct GetBlockTemplateParams<'a> {
 
 #[derive(Serialize, Deserialize, PartialEq)]
 pub struct GetBlockTemplateResult {
-    pub template: String,
-    pub difficulty: u64
+    pub template: String, // template is BlockMiner in hex format
+    pub height: u64, // block height
+    pub difficulty: u64 // difficulty required for valid block
 }
 
 #[derive(Serialize, Deserialize)]
@@ -156,7 +156,9 @@ pub struct GetTransactionsParams {
 #[derive(Serialize, Deserialize)]
 pub struct TransactionResponse<'a, T: Clone> {
     // in which blocks it was included
-    pub blocks: HashSet<Hash>,
+    pub blocks: Option<HashSet<Hash>>,
+    // in which blocks it was executed
+    pub executed_in_block: Option<Hash>,
     // TODO executed_block which give the hash of the block in which this tx got executed
     #[serde(flatten)]
     pub data: DataHash<'a, T>
@@ -179,16 +181,10 @@ pub enum NotifyEvent {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct EventResult<'a> {
-    pub event: Cow<'a, NotifyEvent>,
-    #[serde(flatten)]
-    pub value: Value
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct BlockOrderedEvent<'a> {
     // block hash in which this event was triggered
     pub block_hash: Cow<'a, Hash>,
+    pub block_type: BlockType,
     // the new topoheight of the block
     pub topoheight: u64,
 }
