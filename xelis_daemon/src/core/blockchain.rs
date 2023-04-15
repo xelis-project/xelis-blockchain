@@ -330,9 +330,14 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // now lets check all blocks until STABLE_LIMIT height before the block
+        let stable_point = if block_height >= STABLE_LIMIT {
+            block_height - STABLE_LIMIT
+        } else {
+            STABLE_LIMIT - block_height
+        };
         let mut i = block_height - 1;
         let mut pre_blocks = HashSet::new();
-        while i >= (block_height - STABLE_LIMIT) && i != 0 {
+        while i >= stable_point && i != 0 {
             let blocks = storage.get_blocks_at_height(i).await?;
             pre_blocks.extend(blocks);
             i -= 1;
