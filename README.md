@@ -1,4 +1,5 @@
 # XELIS Blockchain
+All rights reserved.
 
 XELIS is a blockchain made in Rust and powered by Tokio, using account model.
 It allows deploy custom assets working exactly like the native coin in transactions and wallet.
