@@ -17,7 +17,7 @@ use crate::mnemonics;
 use crate::network_handler::{NetworkHandler, SharedNetworkHandler};
 use crate::rpc::WalletRpcServer;
 use crate::storage::{EncryptedStorage, Storage};
-use crate::transaction_builder::TransactionBuilder;
+use crate::transaction_builder::{TransactionBuilder, FeeBuilder};
 use chacha20poly1305::{aead::OsRng, Error as CryptoError};
 use rand::RngCore;
 use thiserror::Error;
@@ -269,7 +269,7 @@ impl Wallet {
     // also check that we have enough funds for the transaction
     pub fn create_transaction(&self, storage: &EncryptedStorage, transaction_type: TransactionType) -> Result<Transaction, Error> {
         let nonce = storage.get_nonce().unwrap_or(0);
-        let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), transaction_type, nonce, 1f64);
+        let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), transaction_type, nonce, FeeBuilder::Multiplier(1f64));
         let assets_spent: HashMap<&Hash, u64> = builder.total_spent();
 
         // check that we have enough balance for every assets spent
