@@ -47,7 +47,7 @@ Others objectives in mind are:
 
 ## BlockDAG
 
-XELIS try to implement & use a blockDAG which the rules are the following:
+XELIS use a blockDAG with following rules:
 - A block is considered `Sync Block` when the block height is less than `TOP_HEIGHT - STABLE_LIMIT` and it's the unique block at a specific height (or only ordered block at its height and don't have lower cumulative difficulty than previous blocks).
 - A block is considered `Side Block` when block height is less than or equal to height of past 8 topographical blocks.
 - A block is considered `Orphaned` when the block is not ordered in DAG (no topological height for it).
@@ -61,6 +61,15 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 - Block rewards (with fees) are added to account only when block is in stable height.
 - Supply is re-calculated each time the block is re-ordered because its based on topo order.
 - Transactions and miner rewards are re-computed when a new block is added and the block there linked to is not yet in stable topo height. 
+
+Topoheight represents how many unique blocks there is in the blockchain, and its ordered by DAG.
+
+## Homomorphic Encryption
+
+Homomorphic Encryption (HE) will allow to add privacy on transactions and accounts by doing computation while staying in encrypted form.
+Each balances, transaction assets values are in encrypted form and nobody can determine the real value of it except involved parties.
+
+**NOTE**: This part is not yet deployed and is under heavy work.
 
 ## Mining
 
