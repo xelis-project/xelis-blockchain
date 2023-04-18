@@ -873,11 +873,13 @@ impl<S: Storage> P2pServer<S> {
                 trace!("Received a ping packet from {}", peer);
                 let last_ping = peer.get_last_ping();
                 let current_time = get_current_time();
-                peer.set_last_ping(current_time);
                 // verify the respect of the coutdown to prevent massive packet incoming
-                if last_ping != 0 && current_time - last_ping < P2P_PING_DELAY {
+                // if he send 2x faster than rules, throw error (because of connection latency / packets being queued)
+                if last_ping != 0 && current_time - last_ping < P2P_PING_DELAY / 2 {
                     return Err(P2pError::PeerInvalidPingCoutdown)
                 }
+                // update the last ping only if he respect the protocol rules
+                peer.set_last_ping(current_time);
 
                 // we verify the respect of the countdown of peer list updates to prevent any spam
                 if ping.get_peers().len() > 0 {
