@@ -884,7 +884,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         if tips_count > 1 {
-            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, block.get_tips()).await?;
+            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, block.get_tips()).await?;
             debug!("Best tip selected for this new block is {}", best_tip);
             for hash in block.get_tips() {
                 if best_tip != hash {
@@ -899,7 +899,7 @@ impl<S: Storage> Blockchain<S> {
         // verify PoW and get difficulty for this block based on tips
         let pow_hash = block.get_pow_hash();
         debug!("POW hash: {}", pow_hash);
-        let difficulty = self.verify_proof_of_work(&*storage, &pow_hash, block.get_tips()).await?;
+        let difficulty = self.verify_proof_of_work(storage, &pow_hash, block.get_tips()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
         let mut total_tx_size: usize = 0;
@@ -1215,7 +1215,7 @@ impl<S: Storage> Blockchain<S> {
 
         tips = HashSet::new();
         debug!("find best tip by cumulative difficulty");
-        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, &new_tips).await?.clone();
+        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &new_tips).await?.clone();
         for hash in new_tips {
             if best_tip != hash {
                 if !self.validate_tips(&storage, &best_tip, &hash).await? {
@@ -1264,7 +1264,7 @@ impl<S: Storage> Blockchain<S> {
             for hash in tips {
                 tips_vec.push(hash);
             }
-            let difficulty = self.get_difficulty_at_tips(&*storage, &tips_vec).await?;
+            let difficulty = self.get_difficulty_at_tips(storage, &tips_vec).await?;
             self.difficulty.store(difficulty, Ordering::SeqCst);
         }
 
