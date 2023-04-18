@@ -9,20 +9,25 @@ use xelis_common::{
 
 use crate::wallet::WalletError;
 
+pub enum FeeBuilder {
+    Multiplier(f64), // calculate tx fees based on its size and multiply by this value
+    Value(u64) // set a direct value of how much fees you want to pay
+}
+
 pub struct TransactionBuilder {
     owner: PublicKey,
     data: TransactionType,
     nonce: u64,
-    fee_multiplier: f64,
+    fee_builder: FeeBuilder,
 }
 
 impl TransactionBuilder {
-    pub fn new(owner: PublicKey, data: TransactionType, nonce: u64, fee_multiplier: f64) -> Self {
+    pub fn new(owner: PublicKey, data: TransactionType, nonce: u64, fee_builder: FeeBuilder) -> Self {
         Self {
             owner,
             data,
             nonce,
-            fee_multiplier
+            fee_builder
         }
     }
 
@@ -34,10 +39,14 @@ impl TransactionBuilder {
     }
 
     fn estimate_fees_internal(&self, writer: &Writer) -> u64 {
-        // 8 represent the field 'fee' in bytes size
-        let total_bytes = SIGNATURE_LENGTH + 8 + writer.total_write();
-        let fee = (calculate_tx_fee(total_bytes) as f64  * self.fee_multiplier) as u64;
-        fee
+        match &self.fee_builder {
+            FeeBuilder::Multiplier(multiplier) => {
+                // 8 represent the field 'fee' in bytes size
+                let total_bytes = SIGNATURE_LENGTH + 8 + writer.total_write();
+                (calculate_tx_fee(total_bytes) as f64  * multiplier) as u64
+            },
+            FeeBuilder::Value(value) => *value
+        }
     }
 
     pub fn total_spent(&self) -> HashMap<&Hash, u64> {
