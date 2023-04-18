@@ -97,9 +97,9 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>, network: Network) 
     };
     let closure = || async {
         let storage = wallet.get_storage().read().await;
-        let height_str = format!(
+        let topoheight_str = format!(
             "{}: {}",
-            Prompt::colorize_str(Color::Yellow, "Height"),
+            Prompt::colorize_str(Color::Yellow, "TopoHeight"),
             Prompt::colorize_string(Color::Green, &format!("{}", storage.get_daemon_topoheight().unwrap_or(0)))
         );
         let balance = format!(
@@ -123,7 +123,7 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>, network: Network) 
             "{} | {} | {} | {} | {} {}{} ",
             Prompt::colorize_str(Color::Blue, "XELIS Wallet"),
             addr_str,
-            height_str,
+            topoheight_str,
             balance,
             status,
             network_str,
