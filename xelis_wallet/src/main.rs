@@ -40,7 +40,10 @@ pub struct Config {
     seed: Option<String>,
     /// Network selected for chain
     #[clap(long, arg_enum, default_value_t = Network::Mainnet)]
-    network: Network
+    network: Network,
+    #[cfg(feature = "rpc_server")]
+    #[clap(long)]
+    rpc_bind_address: Option<String>
 }
 
 #[tokio::main]
@@ -66,6 +69,14 @@ async fn main() -> Result<()> {
             info!("You can activate online mode using 'online_mode [daemon_address]'");
         } else {
             info!("Online mode enabled");
+        }
+    }
+
+    #[cfg(feature = "rpc_server")]
+    if let Some(address) = config.rpc_bind_address {
+        info!("Enabling RPC Server on {}", address);
+        if let Err(e) = wallet.enable_rpc_server(address).await {
+            error!("Error while enabling RPC Server: {}", e);
         }
     }
 

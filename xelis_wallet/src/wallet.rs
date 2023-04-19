@@ -67,7 +67,9 @@ pub enum WalletError {
     #[error("Topoheight is too high to rescan")]
     RescanTopoheightTooHigh,
     #[error(transparent)]
-    Any(#[from] Error)
+    Any(#[from] Error),
+    #[error("RPC Server is not running")]
+    RPCServerNotRunning
 }
 
 pub struct Wallet {
@@ -81,7 +83,7 @@ pub struct Wallet {
     network: Network,
     // RPC Server
     #[cfg(feature = "rpc_server")]
-    rpc_server: Option<Arc<WalletRpcServer>>
+    rpc_server: Mutex<Option<Arc<WalletRpcServer>>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -98,11 +100,10 @@ impl Wallet {
             network_handler: Mutex::new(None),
             network,
             #[cfg(feature = "rpc_server")]
-            rpc_server: None
+            rpc_server: Mutex::new(None)
         };
 
-        let zelf = Arc::new(zelf);
-        zelf
+        Arc::new(zelf)
     }
 
     pub fn create(name: String, password: String, seed: Option<String>, network: Network) -> Result<Arc<Self>, Error> {
@@ -191,6 +192,21 @@ impl Wallet {
         let keypair =  storage.get_keypair()?;
 
         Ok(Self::new(storage, keypair, network))
+    }
+
+    #[cfg(feature = "rpc_server")]
+    pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String) -> Result<(), Error> {
+        let rpc_server = WalletRpcServer::new(bind_address, Arc::clone(self)).await?;
+        *self.rpc_server.lock().await = Some(rpc_server);
+        Ok(())
+    }
+
+    #[cfg(feature = "rpc_server")]
+    pub async fn stop_rpc_server(&self) -> Result<(), Error> {
+        let mut lock = self.rpc_server.lock().await;
+        let rpc_server = lock.take().ok_or(WalletError::RPCServerNotRunning)?;
+        rpc_server.stop().await;
+        Ok(())
     }
 
     pub async fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {

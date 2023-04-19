@@ -3,6 +3,7 @@ mod rpc;
 use std::sync::Arc;
 
 use anyhow::Result;
+use log::{info, warn};
 use tokio::sync::Mutex;
 use xelis_common::{config, rpc_server::{RPCHandler, RPCServerHandler, json_rpc}};
 use actix_web::{get, HttpResponse, Responder, HttpServer, web::{Data, self}, App, dev::ServerHandle};
@@ -46,6 +47,17 @@ impl WalletRpcServer {
         }
 
         Ok(server)
+    }
+
+    pub async fn stop(&self) {
+        info!("Stopping RPC Server...");
+        let mut handle = self.handle.lock().await;
+        if let Some(handle) = handle.take() {
+            handle.stop(false).await;
+            info!("RPC Server is now stopped!");
+        } else {
+            warn!("RPC Server is not running!");
+        }
     }
 }
 
