@@ -16,13 +16,15 @@ use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
 use crate::mnemonics;
 use crate::network_handler::{NetworkHandler, SharedNetworkHandler};
-use crate::rpc::WalletRpcServer;
 use crate::storage::{EncryptedStorage, Storage};
 use crate::transaction_builder::TransactionBuilder;
 use chacha20poly1305::{aead::OsRng, Error as CryptoError};
 use rand::RngCore;
 use thiserror::Error;
 use log::{error, debug};
+
+#[cfg(feature = "rpc_server")]
+use crate::rpc::WalletRpcServer;
 
 #[derive(Error, Debug)]
 pub enum WalletError {
@@ -78,6 +80,7 @@ pub struct Wallet {
     // network on which we are connected
     network: Network,
     // RPC Server
+    #[cfg(feature = "rpc_server")]
     rpc_server: Option<Arc<WalletRpcServer>>
 }
 
@@ -94,6 +97,7 @@ impl Wallet {
             keypair,
             network_handler: Mutex::new(None),
             network,
+            #[cfg(feature = "rpc_server")]
             rpc_server: None
         };
 
