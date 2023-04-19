@@ -24,7 +24,7 @@ use thiserror::Error;
 use log::{error, debug};
 
 #[cfg(feature = "rpc_server")]
-use crate::rpc::WalletRpcServer;
+use crate::rpc::{AuthConfig, WalletRpcServer};
 
 #[derive(Error, Debug)]
 pub enum WalletError {
@@ -69,7 +69,9 @@ pub enum WalletError {
     #[error(transparent)]
     Any(#[from] Error),
     #[error("RPC Server is not running")]
-    RPCServerNotRunning
+    RPCServerNotRunning,
+    #[error("RPC Server is already running")]
+    RPCServerAlreadyRunning
 }
 
 pub struct Wallet {
@@ -195,9 +197,13 @@ impl Wallet {
     }
 
     #[cfg(feature = "rpc_server")]
-    pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String) -> Result<(), Error> {
-        let rpc_server = WalletRpcServer::new(bind_address, Arc::clone(self)).await?;
-        *self.rpc_server.lock().await = Some(rpc_server);
+    pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String, config: Option<AuthConfig>) -> Result<(), Error> {
+        let mut lock = self.rpc_server.lock().await;
+        if lock.is_some() {
+            return Err(WalletError::RPCServerAlreadyRunning.into())
+        }
+        let rpc_server = WalletRpcServer::new(bind_address, Arc::clone(self), config).await?;
+        *lock = Some(rpc_server);
         Ok(())
     }
 

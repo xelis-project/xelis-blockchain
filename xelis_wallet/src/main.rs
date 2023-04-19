@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration, path::Path};
 
 use anyhow::{Result, Context};
-use xelis_wallet::config::DIR_PATH;
+use xelis_wallet::{config::DIR_PATH};
 use fern::colors::Color;
 use log::{error, info};
 use clap::Parser;
@@ -10,6 +10,23 @@ use xelis_common::{config::{
     VERSION, XELIS_ASSET
 }, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::{format_coin, set_network_to}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
 use xelis_wallet::wallet::Wallet;
+
+#[cfg(feature = "rpc_server")]
+use xelis_wallet::rpc::AuthConfig;
+
+#[cfg(feature = "rpc_server")]
+#[derive(Debug, clap::StructOpt)]
+pub struct RPCConfig {
+    /// RPC Server bind address
+    #[clap(long)]
+    rpc_bind_address: Option<String>,
+    /// username for RPC authentication
+    #[clap(long)]
+    rpc_username: Option<String>,
+    /// password for RPC authentication
+    #[clap(long)]
+    rpc_password: Option<String>
+}
 
 #[derive(Parser)]
 #[clap(version = VERSION, about = "XELIS Wallet")]
@@ -42,8 +59,8 @@ pub struct Config {
     #[clap(long, arg_enum, default_value_t = Network::Mainnet)]
     network: Network,
     #[cfg(feature = "rpc_server")]
-    #[clap(long)]
-    rpc_bind_address: Option<String>
+    #[structopt(flatten)]
+    rpc: RPCConfig
 }
 
 #[tokio::main]
@@ -73,10 +90,23 @@ async fn main() -> Result<()> {
     }
 
     #[cfg(feature = "rpc_server")]
-    if let Some(address) = config.rpc_bind_address {
-        info!("Enabling RPC Server on {}", address);
-        if let Err(e) = wallet.enable_rpc_server(address).await {
-            error!("Error while enabling RPC Server: {}", e);
+    if let Some(address) = config.rpc.rpc_bind_address {
+        if config.rpc.rpc_password.is_some() != config.rpc.rpc_username.is_some() {
+            error!("Invalid parameters configuration: usernamd AND password must be provided");
+        } else {
+            let auth_config = if let (Some(username), Some(password)) = (config.rpc.rpc_username, config.rpc.rpc_password) {
+                Some(AuthConfig {
+                    username,
+                    password
+                })
+            } else {
+                None
+            };
+
+            info!("Enabling RPC Server on {} {}", address, if auth_config.is_some() { "with authentication" } else { "without authentication" });
+            if let Err(e) = wallet.enable_rpc_server(address, auth_config).await {
+                error!("Error while enabling RPC Server: {}", e);
+            }
         }
     }
 
