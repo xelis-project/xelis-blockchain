@@ -4,12 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance, network::Network};
 
-#[derive(Serialize, Deserialize)]
-pub struct DataHash<'a, T: Clone> {
-    pub hash: Cow<'a, Hash>,
-    #[serde(flatten)]
-    pub data: Cow<'a, T>
-}
+use super::DataHash;
 
 #[derive(Serialize, Deserialize)]
 pub enum BlockType {

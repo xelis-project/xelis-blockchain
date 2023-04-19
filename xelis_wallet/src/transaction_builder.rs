@@ -4,15 +4,10 @@ use xelis_common::{
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     globals::calculate_tx_fee,
     serializer::{Writer, Serializer},
-    crypto::{key::{SIGNATURE_LENGTH, PublicKey, KeyPair}, hash::Hash}
+    crypto::{key::{SIGNATURE_LENGTH, PublicKey, KeyPair}, hash::Hash}, api::wallet::FeeBuilder
 };
 
 use crate::wallet::WalletError;
-
-pub enum FeeBuilder {
-    Multiplier(f64), // calculate tx fees based on its size and multiply by this value
-    Value(u64) // set a direct value of how much fees you want to pay
-}
 
 pub struct TransactionBuilder {
     owner: PublicKey,

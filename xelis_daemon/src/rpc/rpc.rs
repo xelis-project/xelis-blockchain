@@ -1,13 +1,11 @@
 use crate::core::{blockchain::Blockchain, storage::Storage, error::BlockchainError};
 use super::{InternalRpcError, ApiError};
 use anyhow::Context;
-use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use xelis_common::{
-    api::daemon::{
+    api::{daemon::{
         BlockType,
         BlockResponse,
-        DataHash,
         GetBlockAtTopoHeightParams,
         GetBlockByHashParams,
         GetBlockTemplateParams,
@@ -20,19 +18,15 @@ use xelis_common::{
         P2pStatusResult,
         GetBlocksAtHeightParams,
         GetRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse
-    },
+    }, DataHash},
     async_handler,
     serializer::Serializer,
     transaction::Transaction,
     crypto::hash::Hash,
-    block::{BlockHeader, Block}, config::{BLOCK_TIME_MILLIS, VERSION}, immutable::Immutable, rpc_server::RPCHandler,
+    block::{BlockHeader, Block}, config::{BLOCK_TIME_MILLIS, VERSION}, immutable::Immutable, rpc_server::{RPCHandler, parse_params},
 };
 use std::{sync::Arc, borrow::Cow};
 use log::{info, debug};
-
-fn parse_params<P: DeserializeOwned>(value: Value) -> Result<P, InternalRpcError> {
-    serde_json::from_value(value).map_err(|e| InternalRpcError::InvalidParams(e))
-}
 
 pub async fn get_block_type_for_block<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<BlockType, InternalRpcError> {
     Ok(if blockchain.is_block_orphaned_for_storage(storage, hash).await {

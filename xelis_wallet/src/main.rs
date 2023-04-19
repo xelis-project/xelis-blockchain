@@ -8,7 +8,7 @@ use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
     VERSION, XELIS_ASSET
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::{format_coin, set_network_to}, serializer::Serializer, network::Network};
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::{format_coin, set_network_to}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
 use xelis_wallet::wallet::Wallet;
 
 #[derive(Parser)]
@@ -169,8 +169,9 @@ async fn transfer(manager: &CommandManager<Arc<Wallet>>, mut arguments: Argument
     let tx = {
         let storage = wallet.get_storage().read().await;
         let transfer = wallet.create_transfer(&storage, asset, key, extra_data, amount)?;
-        wallet.create_transaction(&storage, TransactionType::Transfer(vec![transfer]))?
+        wallet.create_transaction(&storage, TransactionType::Transfer(vec![transfer]), FeeBuilder::Multiplier(1f64))?
     };
+
     let tx_hash = tx.hash();
     manager.message(format!("Transaction hash: {}", tx_hash));
 

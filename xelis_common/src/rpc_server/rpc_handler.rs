@@ -1,4 +1,5 @@
 use std::{collections::HashMap, pin::Pin, future::Future};
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use super::{InternalRpcError, RpcResponseError, RpcRequest, JSON_RPC_VERSION};
 use log::{error, trace};
@@ -59,4 +60,8 @@ where
     pub fn get_data(&self) -> &T {
         &self.data
     }
+}
+
+pub fn parse_params<P: DeserializeOwned>(value: Value) -> Result<P, InternalRpcError> {
+    serde_json::from_value(value).map_err(|e| InternalRpcError::InvalidParams(e))
 }

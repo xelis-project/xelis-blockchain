@@ -8,7 +8,7 @@ use xelis_common::{
     globals::get_current_timestamp,
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE},
     immutable::Immutable,
-    serializer::Serializer, account::VersionedBalance, api::daemon::{NotifyEvent, DataHash, BlockOrderedEvent, TransactionExecutedEvent, BlockType}, network::Network
+    serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType}, DataHash}, network::Network
 };
 use crate::{p2p::P2pServer, rpc::{rpc::{get_block_response_for_hash, get_block_type_for_block}, DaemonRpcServer, SharedDaemonRpcServer}};
 use super::storage::{Storage, DifficultyProvider};
