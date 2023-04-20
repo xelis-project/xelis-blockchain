@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::transaction::{TransactionType, Transaction};
+use crate::{transaction::{TransactionType, Transaction}, crypto::key::PublicKey};
 
 use super::DataHash;
 
@@ -16,6 +16,27 @@ pub struct BuildTransactionParams {
     pub tx_type: TransactionType,
     pub fee: Option<FeeBuilder>,
     pub broadcast: bool
+}
+
+// :(
+fn default_filter_value() -> bool {
+    true
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ListTransactionsParams {
+    pub min_topoheight: Option<u64>,
+    pub max_topoheight: Option<u64>,
+    /// Receiver address for outgoing txs, and owner/sender for incoming
+    pub address: Option<PublicKey>,
+    #[serde(default = "default_filter_value")]
+    pub accept_incoming: bool,
+    #[serde(default = "default_filter_value")]
+    pub accept_outgoing: bool,
+    #[serde(default = "default_filter_value")]
+    pub accept_coinbase: bool,
+    #[serde(default = "default_filter_value")]
+    pub accept_burn: bool,
 }
 
 #[derive(Serialize, Deserialize)]

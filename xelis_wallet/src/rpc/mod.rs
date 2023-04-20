@@ -92,7 +92,7 @@ impl RPCServerHandler<Arc<Wallet>> for WalletRpcServer {
 }
 
 async fn auth(request: ServiceRequest, credentials: BasicAuth) -> Result<ServiceRequest, (Error, ServiceRequest)> {
-    let data: Option<&Arc<WalletRpcServer>> = request.app_data();
+    let data: Option<&Data<WalletRpcServer>> = request.app_data();
     match data {
         Some(server) => match server.authenticate(credentials).await {
             Ok(_) => Ok(request),

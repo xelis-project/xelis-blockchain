@@ -1,7 +1,9 @@
 use std::fmt::{self, Display, Formatter};
 
+use serde::Serialize;
 use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, transaction::EXTRA_DATA_LIMIT_SIZE, globals::format_coin};
 
+#[derive(Serialize, Clone)]
 pub struct Transfer {
     key: PublicKey,
     asset: Hash,
@@ -76,13 +78,18 @@ impl Serializer for Transfer {
 }
 
 // TODO support SC call / SC Deploy
+#[derive(Serialize, Clone)]
 pub enum EntryData {
+    #[serde(rename = "coinbase")]
     Coinbase(u64), // Coinbase is only XELIS_ASSET
+    #[serde(rename = "burn")]
     Burn {
         asset: Hash,
         amount: u64
     },
+    #[serde(rename = "incoming")]
     Incoming(PublicKey, Vec<Transfer>),
+    #[serde(rename = "outgoing")]
     Outgoing(Vec<Transfer>)
 }
 
@@ -148,11 +155,13 @@ impl Serializer for EntryData {
     }
 }
 
+#[derive(Serialize, Clone)]
 pub struct TransactionEntry {
     hash: Hash,
     topoheight: u64,
     fee: Option<u64>,
     nonce: Option<u64>,
+    #[serde(flatten)]
     entry: EntryData
 }
 
