@@ -83,12 +83,14 @@ impl<'a> Deserialize<'a> for Hash {
 }
 
 pub trait Hashable: Serializer {
+    #[inline(always)]
     fn hash(&self) -> Hash {
         let bytes = self.to_bytes();
         hash(&bytes)
     }
 }
 
+#[inline(always)]
 pub fn hash(value: &[u8]) -> Hash {
     let mut hasher = get_hasher();
     hasher.update(value);
@@ -96,6 +98,7 @@ pub fn hash(value: &[u8]) -> Hash {
     Hash(result)
 }
 
+#[inline(always)]
 pub fn get_hasher() -> impl Digest {
     Keccak256::new()
 }

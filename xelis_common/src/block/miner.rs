@@ -25,6 +25,7 @@ impl<'a> BlockMiner<'a> {
         }
     }
 
+    #[inline(always)]
     pub fn get_pow_hash(&self) -> Hash {
         // TODO replace with real POW algorithm
         hash(&self.to_bytes())
