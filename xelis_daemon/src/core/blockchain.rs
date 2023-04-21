@@ -1,4 +1,5 @@
 use anyhow::Error;
+use lru::LruCache;
 use serde_json::{Value, json};
 use xelis_common::{
     config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME},
@@ -71,7 +72,10 @@ pub struct Blockchain<S: Storage> {
     // used to skip PoW verification
     simulator: bool,
     // current network type on which one we're using/connected to
-    network: Network
+    network: Network,
+    // this cache is used to avoid to recompute the common base for each block and is mandatory
+    // key is (tip hash, tip height) while value is (base hash, base height)
+    tip_base_cache: Mutex<LruCache<(Hash, u64), (Hash, u64)>>,
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -101,7 +105,8 @@ impl<S: Storage> Blockchain<S> {
             rpc: Mutex::new(None),
             difficulty: AtomicU64::new(GENESIS_BLOCK_DIFFICULTY),
             simulator: config.simulator,
-            network
+            network,
+            tip_base_cache: Mutex::new(LruCache::new(1024))
         };
 
         // include genesis block
@@ -355,12 +360,21 @@ impl<S: Storage> Blockchain<S> {
         Ok(true)
     }
 
-    // TODO: cache based on height/hash
     #[async_recursion]
     async fn find_tip_base(&self, storage: &S, hash: &Hash, height: u64) -> Result<(Hash, u64), BlockchainError> {
+        // first, check if we have it in cache
+        {
+            if let Some((base_hash, base_height)) = self.tip_base_cache.lock().await.get(&(hash.clone(), height)) {
+                debug!("Tip Base for {} at height {} found: {} for height {}", hash, height, hash, height);
+                return Ok((base_hash.clone(), *base_height))
+            }
+        }
+
         let tips = storage.get_past_blocks_for_block_hash(hash).await?;
         let tips_count = tips.len();
         if tips_count == 0 { // only genesis block can have 0 tips saved
+            // save in cache
+            self.tip_base_cache.lock().await.put((hash.clone(), height), (hash.clone(), 0));
             return Ok((hash.clone(), 0))
         }
 
@@ -368,6 +382,8 @@ impl<S: Storage> Blockchain<S> {
         for hash in tips.iter() {
             if self.is_block_sync_at_height(storage, hash, height).await? {
                 let block_height = storage.get_height_for_block_hash(hash).await?;
+                // save in cache
+                self.tip_base_cache.lock().await.put((hash.clone(), height), (hash.clone(), block_height));
                 return Ok((hash.clone(), block_height))
             }
             bases.push(self.find_tip_base(storage, hash, height).await?);
@@ -381,7 +397,11 @@ impl<S: Storage> Blockchain<S> {
         bases.sort_by(|(_, a), (_, b)| b.cmp(a));
         // assert!(bases[0].1 >= bases[bases.len() - 1].1);
 
-        Ok(bases.remove(bases.len() - 1))
+        let (base_hash, base_height) = bases.remove(bases.len() - 1);
+        // save in cache
+        self.tip_base_cache.lock().await.put((hash.clone(), height), (base_hash.clone(), base_height));
+
+        Ok((base_hash, base_height))
     }
 
     // find the common base (block hash and block height) of all tips
@@ -413,6 +433,8 @@ impl<S: Storage> Blockchain<S> {
         // assert!(bases[0].1 >= bases[bases.len() - 1].1);
 
         // retrieve the first block hash with its height
+        // we delete the last element because we sorted it descending
+        // and we want the lowest height
         Ok(bases.remove(bases.len() - 1))
     }
 
