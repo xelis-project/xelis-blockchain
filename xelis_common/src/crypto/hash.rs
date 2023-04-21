@@ -92,13 +92,6 @@ pub trait Hashable: Serializer {
 
 #[inline(always)]
 pub fn hash(value: &[u8]) -> Hash {
-    let mut hasher = get_hasher();
-    hasher.update(value);
-    let result: [u8; HASH_SIZE] = hasher.finalize()[..].try_into().unwrap();
+    let result: [u8; HASH_SIZE] = Keccak256::digest(value)[..].try_into().unwrap();
     Hash(result)
-}
-
-#[inline(always)]
-pub fn get_hasher() -> impl Digest {
-    Keccak256::new()
 }
