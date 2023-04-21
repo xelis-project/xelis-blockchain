@@ -78,6 +78,7 @@ pub struct Blockchain<S: Storage> {
     tip_base_cache: Mutex<LruCache<(Hash, u64), (Hash, u64)>>,
     // tip work score is used to determine the best tip based on a block, tip base ands a base height
     tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, u64)>>,
+    full_order_cache: Mutex<LruCache<(Hash, Hash, u64), Vec<Hash>>>,
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -109,7 +110,8 @@ impl<S: Storage> Blockchain<S> {
             simulator: config.simulator,
             network,
             tip_base_cache: Mutex::new(LruCache::new(1024)),
-            tip_work_score_cache: Mutex::new(LruCache::new(1024))
+            tip_work_score_cache: Mutex::new(LruCache::new(1024)),
+            full_order_cache: Mutex::new(LruCache::new(1024))
         };
 
         // include genesis block
@@ -610,15 +612,31 @@ impl<S: Storage> Blockchain<S> {
     // first hash in order is the base hash
     #[async_recursion]
     async fn generate_full_order(&self, storage: &S, hash: &Hash, base: &Hash, base_topo_height: u64) -> Result<Vec<Hash>, BlockchainError> {
-        let block_tips = storage.get_past_blocks_for_block_hash(hash).await?;
-        if block_tips.len() == 0 {
-            return Ok(vec![GENESIS_BLOCK_HASH.clone()])
-        }
+        let block_tips = {
+            let mut cache = self.full_order_cache.lock().await;
+            // check if its present in the cache first
+            if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_topo_height)) {
+                trace!("Found full order in cache: {}", value.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
+                return Ok(value.clone())
+            }
 
-        // if the block has been previously ordered, return it as base
-        if hash == base {
-            return Ok(vec![base.clone()])
-        }
+            let block_tips = storage.get_past_blocks_for_block_hash(hash).await?;
+            // only the genesis block can have 0 tips, returns its hash
+            if block_tips.len() == 0 {
+                let result = vec![GENESIS_BLOCK_HASH.clone()];
+                cache.put((hash.clone(), base.clone(), base_topo_height), result.clone());
+                return Ok(result)
+            }
+
+            // if the block has been previously ordered, return it as base
+            if hash == base {
+                let result = vec![base.clone()];
+                cache.put((hash.clone(), base.clone(), base_topo_height), result.clone());
+                return Ok(result)
+            }
+
+            block_tips
+        };
 
         let mut order: Vec<Hash> = Vec::new();
         let mut scores = Vec::new();
@@ -642,6 +660,10 @@ impl<S: Storage> Blockchain<S> {
         }
 
         order.push(hash.clone());
+
+        // save in cache final result
+        let mut cache = self.full_order_cache.lock().await;
+        cache.put((hash.clone(), base.clone(), base_topo_height), order.clone());
 
         Ok(order)
     }
