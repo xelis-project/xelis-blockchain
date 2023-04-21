@@ -76,6 +76,8 @@ pub struct Blockchain<S: Storage> {
     // this cache is used to avoid to recompute the common base for each block and is mandatory
     // key is (tip hash, tip height) while value is (base hash, base height)
     tip_base_cache: Mutex<LruCache<(Hash, u64), (Hash, u64)>>,
+    // tip work score is used to determine the best tip based on a block, tip base ands a base height
+    tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, u64)>>,
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -106,7 +108,8 @@ impl<S: Storage> Blockchain<S> {
             difficulty: AtomicU64::new(GENESIS_BLOCK_DIFFICULTY),
             simulator: config.simulator,
             network,
-            tip_base_cache: Mutex::new(LruCache::new(1024))
+            tip_base_cache: Mutex::new(LruCache::new(1024)),
+            tip_work_score_cache: Mutex::new(LruCache::new(1024))
         };
 
         // include genesis block
@@ -362,34 +365,42 @@ impl<S: Storage> Blockchain<S> {
 
     #[async_recursion]
     async fn find_tip_base(&self, storage: &S, hash: &Hash, height: u64) -> Result<(Hash, u64), BlockchainError> {
-        // first, check if we have it in cache
-        {
-            if let Some((base_hash, base_height)) = self.tip_base_cache.lock().await.get(&(hash.clone(), height)) {
-                debug!("Tip Base for {} at height {} found: {} for height {}", hash, height, hash, height);
+        let (tips, tips_count) = {
+            // first, check if we have it in cache
+            let mut cache = self.tip_base_cache.lock().await;
+            if let Some((base_hash, base_height)) = cache.get(&(hash.clone(), height)) {
+                trace!("Tip Base for {} at height {} found in cache: {} for height {}", hash, height, base_hash, base_height);
                 return Ok((base_hash.clone(), *base_height))
             }
-        }
 
-        let tips = storage.get_past_blocks_for_block_hash(hash).await?;
-        let tips_count = tips.len();
-        if tips_count == 0 { // only genesis block can have 0 tips saved
-            // save in cache
-            self.tip_base_cache.lock().await.put((hash.clone(), height), (hash.clone(), 0));
-            return Ok((hash.clone(), 0))
-        }
+            let tips = storage.get_past_blocks_for_block_hash(hash).await?;
+            let tips_count = tips.len();
+            if tips_count == 0 { // only genesis block can have 0 tips saved
+                // save in cache
+                cache.put((hash.clone(), height), (hash.clone(), 0));
+                return Ok((hash.clone(), 0))
+            }
+            (tips, tips_count)
+        };
 
         let mut bases = Vec::with_capacity(tips_count);
         for hash in tips.iter() {
+            // if block is sync, it is a tip base
             if self.is_block_sync_at_height(storage, hash, height).await? {
                 let block_height = storage.get_height_for_block_hash(hash).await?;
-                // save in cache
-                self.tip_base_cache.lock().await.put((hash.clone(), height), (hash.clone(), block_height));
+                // save in cache (lock each time to avoid deadlocks)
+                let mut cache = self.tip_base_cache.lock().await;
+                cache.put((hash.clone(), height), (hash.clone(), block_height));
+
                 return Ok((hash.clone(), block_height))
             }
+
+            // if block is not sync, we need to find its tip base too
             bases.push(self.find_tip_base(storage, hash, height).await?);
         }
 
         if bases.is_empty() {
+            error!("Tip base for {} at height {} not found", hash, height);
             return Err(BlockchainError::ExpectedTips)
         }
 
@@ -399,13 +410,16 @@ impl<S: Storage> Blockchain<S> {
 
         let (base_hash, base_height) = bases.remove(bases.len() - 1);
         // save in cache
-        self.tip_base_cache.lock().await.put((hash.clone(), height), (base_hash.clone(), base_height));
+        let mut cache = self.tip_base_cache.lock().await;
+        cache.put((hash.clone(), height), (base_hash.clone(), base_height));
+        trace!("Tip Base for {} at height {} found: {} for height {}", hash, height, base_hash, base_height);
 
         Ok((base_hash, base_height))
     }
 
     // find the common base (block hash and block height) of all tips
     async fn find_common_base<'a, I: IntoIterator<Item = &'a Hash> + Copy>(&self, storage: &S, tips: I) -> Result<(Hash, u64), BlockchainError> {
+        debug!("Searching for common base for tips {}", tips.into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
         let mut best_height = 0;
         // first, we check the best (highest) height of all tips
         for hash in tips.into_iter() {
@@ -435,7 +449,9 @@ impl<S: Storage> Blockchain<S> {
         // retrieve the first block hash with its height
         // we delete the last element because we sorted it descending
         // and we want the lowest height
-        Ok(bases.remove(bases.len() - 1))
+        let (base_hash, base_height) = bases.remove(bases.len() - 1);
+        debug!("Common base {} with height {} on {}", base_hash, base_height, bases.len() + 1);
+        Ok((base_hash, base_height))
     }
 
     #[async_recursion] // TODO no recursion
@@ -533,9 +549,14 @@ impl<S: Storage> Blockchain<S> {
         Ok(())
     }
 
-    // TODO cache
     // find the sum of work done
-    async fn find_tip_work_score(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashMap<Hash, u64>, u64), BlockchainError> {
+    async fn find_tip_work_score(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, u64), BlockchainError> {
+        let mut cache = self.tip_work_score_cache.lock().await;
+        if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
+            trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
+            return Ok(value.clone())
+        }
+
         let block = storage.get_block_header_by_hash(hash).await?;
         let mut map: HashMap<Hash, u64> = HashMap::new();
         let base_topoheight = storage.get_topo_height_for_hash(base).await?;
@@ -553,12 +574,17 @@ impl<S: Storage> Blockchain<S> {
         }
         map.insert(hash.clone(), storage.get_difficulty_for_block_hash(hash).await?);
 
+        let mut set = HashSet::with_capacity(map.len());
         let mut score = 0;
-        for value in map.values() {
+        for (hash, value) in map {
+            set.insert(hash);
             score += value;
         }
 
-        Ok((map, score))
+        // save this result in cache
+        cache.put((hash.clone(), base.clone(), base_height), (set.clone(), score));
+
+        Ok((set, score))
     }
 
     async fn find_best_tip<'a>(&self, storage: &S, tips: &'a HashSet<Hash>, base: &Hash, base_height: u64) -> Result<&'a Hash, BlockchainError> {
@@ -1057,12 +1083,12 @@ impl<S: Storage> Blockchain<S> {
 
         let (base_hash, base_height) = self.find_common_base(storage, &tips).await?;
         let best_tip = self.find_best_tip(storage, &tips, &base_hash, base_height).await?;
-        trace!("Best tip selected: {}", best_tip);
+        debug!("Best tip selected: {}", best_tip);
 
         let base_topo_height = storage.get_topo_height_for_hash(&base_hash).await?;
         // generate a full order until base_topo_height
         let mut full_order = self.generate_full_order(storage, &best_tip, &base_hash, base_topo_height).await?;
-        trace!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
+        debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
 
         // rpc server lock
         let rpc_server = self.rpc.lock().await;
@@ -1079,15 +1105,16 @@ impl<S: Storage> Blockchain<S> {
             let mut is_written = base_topo_height == 0;
             let mut skipped = 0;
             // detect which part of DAG reorg stay, for other part, undo all executed txs
+            debug!("Detecting stable point of DAG and cleaning txs above it");
             {
                 let mut topoheight = base_topo_height;
                 while topoheight <= current_topoheight {
                     let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await?;
-                    debug!("Cleaning txs at topoheight {} ({})", topoheight, hash_at_topo);
+                    trace!("Cleaning txs at topoheight {} ({})", topoheight, hash_at_topo);
                     if !is_written {
                         if let Some(order) = full_order.get(0) {
                             if storage.is_block_topological_ordered(order).await && *order == hash_at_topo {
-                                debug!("Hash {} at topo {} stay the same, skipping cleaning", hash_at_topo, topoheight);
+                                trace!("Hash {} at topo {} stay the same, skipping cleaning", hash_at_topo, topoheight);
                                 // remove the hash from the order because we don't need to recompute it
                                 full_order.remove(0);
                                 topoheight += 1;
@@ -1098,13 +1125,13 @@ impl<S: Storage> Blockchain<S> {
                         is_written = true;
                     }
 
-                    debug!("Cleaning transactions executions at topo height {} (block {})", topoheight, hash_at_topo);
+                    trace!("Cleaning transactions executions at topo height {} (block {})", topoheight, hash_at_topo);
 
                     let block = storage.get_block_header_by_hash(&hash_at_topo).await?;
 
                     // mark txs as unexecuted
                     for tx_hash in block.get_txs_hashes() {
-                        debug!("Removing execution of {}", tx_hash);
+                        trace!("Removing execution of {}", tx_hash);
                         storage.remove_tx_executed(&tx_hash)?;
                     }
 
@@ -1113,6 +1140,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             // time to order the DAG that is moving
+            debug!("Ordering blocks based on generated DAG order ({} blocks)", full_order.len());
             for (i, hash) in full_order.into_iter().enumerate() {
                 highest_topo = base_topo_height + skipped + i as u64;
 
@@ -1124,7 +1152,7 @@ impl<S: Storage> Blockchain<S> {
                 }
                 is_written = true;
 
-                debug!("Ordering block {} at topoheight {}", hash, highest_topo);
+                trace!("Ordering block {} at topoheight {}", hash, highest_topo);
 
                 storage.set_topo_height_for_block(&hash, highest_topo).await?;
                 let past_supply = if highest_topo == 0 {
@@ -1134,7 +1162,7 @@ impl<S: Storage> Blockchain<S> {
                 };
 
                 let block_reward = if self.is_side_block(storage, &hash).await? {
-                    debug!("Block {} at topoheight {} is a side block", hash, highest_topo);
+                    trace!("Block {} at topoheight {} is a side block", hash, highest_topo);
                     let reward = get_block_reward(past_supply);
                     reward * SIDE_BLOCK_REWARD_PERCENT / 100
                 } else {
@@ -1156,12 +1184,12 @@ impl<S: Storage> Blockchain<S> {
                     // TODO improve it (too much read/write that can be refactored)
                     if !storage.has_block_linked_to_tx(&tx_hash, &hash)? {
                         storage.add_block_for_tx(&tx_hash, hash.clone())?;
-                        debug!("Block {} is now linked to tx {}", hash, tx_hash);
+                        trace!("Block {} is now linked to tx {}", hash, tx_hash);
                     }
 
                     // check that the tx was not yet executed in another tip branch
                     if storage.has_tx_executed_in_block(tx_hash)? {
-                        debug!("Tx {} was already executed in a previous block, skipping...", tx_hash);
+                        trace!("Tx {} was already executed in a previous block, skipping...", tx_hash);
                     } else {
                         // tx was not executed, but lets check that it is not a potential double spending
                         // check that the nonce is not lower than the one already executed
@@ -1174,7 +1202,7 @@ impl<S: Storage> Blockchain<S> {
                             }
                         }
                         // mark tx as executed
-                        debug!("Executing tx {} in block {}", tx_hash, hash);
+                        trace!("Executing tx {} in block {}", tx_hash, hash);
                         storage.set_tx_executed_in_block(tx_hash, &hash)?;
 
                         self.execute_transaction(storage, &tx, &mut nonces, &mut balances, highest_topo).await?;    
@@ -1231,7 +1259,6 @@ impl<S: Storage> Blockchain<S> {
                 new_tips.push(hash);
             } else {
                 warn!("Rusty TIP declared stale {} with best height: {}, tip base distance: {}", hash, best_height, tip_base_distance);
-                // TODO rewind stale TIP
             }
         }
 
@@ -1242,7 +1269,6 @@ impl<S: Storage> Blockchain<S> {
             if best_tip != hash {
                 if !self.validate_tips(&storage, &best_tip, &hash).await? {
                     warn!("Rusty TIP {} declared stale", hash);
-                    // TODO rewind stale TIP
                 } else {
                     debug!("Tip {} is valid, adding to final Tips list", hash);
                     tips.insert(hash);
