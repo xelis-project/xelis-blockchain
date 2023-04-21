@@ -55,7 +55,7 @@ pub struct MinerConfig {
 
 #[derive(Clone)]
 enum ThreadNotification<'a> {
-    NewJob(BlockMiner<'a>, u64),
+    NewJob(BlockMiner<'a>, u64, u64), // block work, difficulty, height
     Exit
 }
 
@@ -240,11 +240,11 @@ async fn handle_websocket_message(message: Result<Message, tokio_tungstenite::tu
             debug!("new message from daemon: {}", text);
             match serde_json::from_slice::<SocketMessage>(text.as_bytes())? {
                 SocketMessage::NewJob(job) => {
-                    info!("New job received from daemon: difficulty = {}", job.difficulty);
+                    info!("New job received from daemon: difficulty = {} and height = {}", job.difficulty, job.height);
                     let block = BlockMiner::from_hex(job.template).context("Error while decoding new job received from daemon")?;
                     CURRENT_HEIGHT.store(job.height, Ordering::SeqCst);
 
-                    if let Err(e) = job_sender.send(ThreadNotification::NewJob(block, job.difficulty)) {
+                    if let Err(e) = job_sender.send(ThreadNotification::NewJob(block, job.difficulty, job.height)) {
                         error!("Error while sending new job to threads: {}", e);
                     }
                 },
@@ -290,7 +290,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                         info!("Exiting Mining Thread #{}...", id);
                         break 'main;
                     },
-                    ThreadNotification::NewJob(new_job, expected_difficulty) => {
+                    ThreadNotification::NewJob(new_job, expected_difficulty, height) => {
                         debug!("Mining Thread #{} received a new job", id);
                         job = new_job;
                         // set thread id in extra nonce for more work spread between threads
@@ -319,7 +319,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
 
                         // compute the reference hash for easier finding of the block
                         let block_hash = job.hash();
-                        info!("Mining Thread #{}: block {} found at height {} with difficulty {}", id, block_hash, CURRENT_HEIGHT.load(Ordering::SeqCst), format_difficulty(expected_difficulty));
+                        info!("Mining Thread #{}: block {} found at height {} with difficulty {}", id, block_hash, height, format_difficulty(expected_difficulty));
                         if let Err(_) = block_sender.blocking_send(job) {
                             error!("Mining Thread #{}: error while sending block found with hash {}", id, block_hash);
                             continue 'main;
