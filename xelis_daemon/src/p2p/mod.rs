@@ -60,7 +60,7 @@ pub struct P2pServer<S: Storage> {
 impl<S: Storage> P2pServer<S> {
     pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, maintains_seed_nodes: bool) -> Result<Arc<Self>, P2pError> {
         if let Some(tag) = &tag {
-            assert!(tag.len() > 0 && tag.len() <= 16);
+            debug_assert!(tag.len() > 0 && tag.len() <= 16);
         }
 
         // set channel to communicate with listener thread

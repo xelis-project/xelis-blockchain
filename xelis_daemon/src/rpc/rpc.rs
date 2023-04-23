@@ -31,7 +31,7 @@ use log::{info, debug};
 pub async fn get_block_type_for_block<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<BlockType, InternalRpcError> {
     Ok(if blockchain.is_block_orphaned_for_storage(storage, hash).await {
         BlockType::Orphaned
-    } else if blockchain.is_block_sync(storage, hash).await.context("Error while checking if block is sync")? {
+    } else if blockchain.is_sync_block(storage, hash).await.context("Error while checking if block is sync")? {
         BlockType::Sync
     } else if blockchain.is_side_block(storage, hash).await.context("Error while checking if block is side")? {
         BlockType::Side

@@ -306,12 +306,12 @@ impl<S: Storage> Blockchain<S> {
         storage.has_block(hash).await
     }
 
-    pub async fn is_block_sync(&self, storage: &S, hash: &Hash) -> Result<bool, BlockchainError> {
+    pub async fn is_sync_block(&self, storage: &S, hash: &Hash) -> Result<bool, BlockchainError> {
         let current_height = self.get_height();
-        self.is_block_sync_at_height(storage, hash, current_height).await
+        self.is_sync_block_at_height(storage, hash, current_height).await
     }
 
-    async fn is_block_sync_at_height(&self, storage: &S, hash: &Hash, height: u64) -> Result<bool, BlockchainError> {
+    async fn is_sync_block_at_height(&self, storage: &S, hash: &Hash, height: u64) -> Result<bool, BlockchainError> {
         let block_height = storage.get_height_for_block_hash(hash).await?;
         if block_height == 0 { // genesis block is a sync block
             return Ok(true)
@@ -388,7 +388,7 @@ impl<S: Storage> Blockchain<S> {
         let mut bases = Vec::with_capacity(tips_count);
         for hash in tips.iter() {
             // if block is sync, it is a tip base
-            if self.is_block_sync_at_height(storage, hash, height).await? {
+            if self.is_sync_block_at_height(storage, hash, height).await? {
                 let block_height = storage.get_height_for_block_hash(hash).await?;
                 // save in cache (lock each time to avoid deadlocks)
                 let mut cache = self.tip_base_cache.lock().await;
@@ -408,7 +408,7 @@ impl<S: Storage> Blockchain<S> {
 
         // now we sort descending by height and return the last element deleted
         bases.sort_by(|(_, a), (_, b)| b.cmp(a));
-        // assert!(bases[0].1 >= bases[bases.len() - 1].1);
+        debug_assert!(bases[0].1 >= bases[bases.len() - 1].1);
 
         let (base_hash, base_height) = bases.remove(bases.len() - 1);
         // save in cache
@@ -446,7 +446,7 @@ impl<S: Storage> Blockchain<S> {
         // sort it descending by height
         // a = 5, b = 6, b.cmp(a) -> Ordering::Greater
         bases.sort_by(|(_, a), (_, b)| b.cmp(a));
-        // assert!(bases[0].1 >= bases[bases.len() - 1].1);
+        debug_assert!(bases[0].1 >= bases[bases.len() - 1].1);
 
         // retrieve the first block hash with its height
         // we delete the last element because we sorted it descending

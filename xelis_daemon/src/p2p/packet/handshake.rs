@@ -36,12 +36,12 @@ impl Handshake {
     pub const MAX_LEN: usize = 16;
 
     pub fn new(version: String, network: Network, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, top_hash: Hash, genesis_hash: Hash, cumulative_difficulty: u64, peers: Vec<SocketAddr>) -> Self {
-        assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN); // version cannot be greater than 16 chars
+        debug_assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN); // version cannot be greater than 16 chars
         if let Some(node_tag) = &node_tag {
-            assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN); // node tag cannot be greater than 16 chars
+            debug_assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN); // node tag cannot be greater than 16 chars
         }
 
-        assert!(peers.len() <= Handshake::MAX_LEN); // maximum 16 peers allowed
+        debug_assert!(peers.len() <= Handshake::MAX_LEN); // maximum 16 peers allowed
 
         Self {
             version,
