@@ -612,12 +612,13 @@ impl<S: Storage> Blockchain<S> {
     // base represents the block hash of a block already ordered and in stable height
     // the full order is re generated each time a new block is added based on new TIPS
     // first hash in order is the base hash
+    // base_height is only used for the cache key
     #[async_recursion]
-    async fn generate_full_order(&self, storage: &S, hash: &Hash, base: &Hash, base_topo_height: u64) -> Result<Vec<Hash>, BlockchainError> {
+    async fn generate_full_order(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: u64) -> Result<Vec<Hash>, BlockchainError> {
         let block_tips = {
             let mut cache = self.full_order_cache.lock().await;
             // check if its present in the cache first
-            if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_topo_height)) {
+            if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
                 trace!("Found full order in cache: {}", value.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
                 return Ok(value.clone())
             }
@@ -626,34 +627,37 @@ impl<S: Storage> Blockchain<S> {
             // only the genesis block can have 0 tips, returns its hash
             if block_tips.len() == 0 {
                 let result = vec![GENESIS_BLOCK_HASH.clone()];
-                cache.put((hash.clone(), base.clone(), base_topo_height), result.clone());
+                cache.put((hash.clone(), base.clone(), base_height), result.clone());
                 return Ok(result)
             }
 
             // if the block has been previously ordered, return it as base
             if hash == base {
                 let result = vec![base.clone()];
-                cache.put((hash.clone(), base.clone(), base_topo_height), result.clone());
+                cache.put((hash.clone(), base.clone(), base_height), result.clone());
                 return Ok(result)
             }
 
             block_tips
         };
 
-        let mut order: Vec<Hash> = Vec::new();
         let mut scores = Vec::new();
         for hash in block_tips.iter() {
             let is_ordered = storage.is_block_topological_ordered(hash).await;
             if !is_ordered || (is_ordered && storage.get_topo_height_for_hash(hash).await? >= base_topo_height) {
                 let diff = storage.get_cumulative_difficulty_for_block_hash(hash).await?;
                 scores.push((hash, diff));
+            } else {
+                debug!("Block {} is skipped in generate_full_order, is ordered = {}, base topo height = {}", hash, is_ordered, base_topo_height);
             }
         }
 
         blockdag::sort_descending_by_cumulative_difficulty(&mut scores);
 
+        // let's build the right order now
+        let mut order: Vec<Hash> = Vec::new();
         for (hash, _) in scores {
-            let sub_order = self.generate_full_order(storage, hash, base, base_topo_height).await?;
+            let sub_order = self.generate_full_order(storage, hash, base, base_height, base_topo_height).await?;
             for order_hash in sub_order {
                 if !order.contains(&order_hash) {
                     order.push(order_hash);
@@ -665,7 +669,7 @@ impl<S: Storage> Blockchain<S> {
 
         // save in cache final result
         let mut cache = self.full_order_cache.lock().await;
-        cache.put((hash.clone(), base.clone(), base_topo_height), order.clone());
+        cache.put((hash.clone(), base.clone(), base_height), order.clone());
 
         Ok(order)
     }
@@ -1111,7 +1115,7 @@ impl<S: Storage> Blockchain<S> {
 
         let base_topo_height = storage.get_topo_height_for_hash(&base_hash).await?;
         // generate a full order until base_topo_height
-        let mut full_order = self.generate_full_order(storage, &best_tip, &base_hash, base_topo_height).await?;
+        let mut full_order = self.generate_full_order(storage, &best_tip, &base_hash, base_height, base_topo_height).await?;
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
 
         // rpc server lock
