@@ -47,7 +47,7 @@ pub struct SledStorage {
     past_blocks_cache: Option<Mutex<LruCache<Hash, Arc<Vec<Hash>>>>>, // previous blocks saved at each new block
     topo_by_hash_cache: Option<Mutex<LruCache<Hash, u64>>>,
     hash_at_topo_cache: Option<Mutex<LruCache<u64, Hash>>>,
-    cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, u64>>>,
+    cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, Difficulty>>>,
     assets_cache: Option<Mutex<LruCache<Hash, ()>>>,
     nonces_cache: Option<Mutex<LruCache<PublicKey, u64>>>,
     balances_trees_cache: Option<Mutex<LruCache<u64, Tree>>>, // versioned balances tree keep in cache to prevent hash recompute
@@ -251,12 +251,12 @@ impl DifficultyProvider for SledStorage {
         Ok(block.get_timestamp())
     }
 
-    async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
         trace!("get difficulty for hash {}", hash);
         self.load_from_disk(&self.difficulty, hash.as_bytes())
     }
 
-    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
         trace!("get cumulative difficulty for hash {}", hash);
         self.get_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash).await
     }
@@ -966,12 +966,12 @@ impl Storage for SledStorage {
     }
 
     fn set_supply_for_block_hash(&mut self, hash: &Hash, supply: u64) -> Result<(), BlockchainError> {
-        trace!("set difficulty for hash {}", hash);
+        trace!("set supply for hash {}", hash);
         self.supply.insert(hash.as_bytes(), &supply.to_be_bytes())?;
         Ok(())
     }
 
-    async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: u64) -> Result<(), BlockchainError> {
+    async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: Difficulty) -> Result<(), BlockchainError> {
         trace!("set cumulative difficulty for hash {}", hash);
         self.cumulative_difficulty.insert(hash.as_bytes(), cumulative_difficulty.to_bytes())?;
         Ok(())
