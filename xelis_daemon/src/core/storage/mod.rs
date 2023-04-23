@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use xelis_common::{
     crypto::{key::PublicKey, hash::Hash},
     transaction::Transaction,
-    block::{Block, BlockHeader}, account::VersionedBalance, immutable::Immutable, network::Network,
+    block::{Block, BlockHeader, Difficulty}, account::VersionedBalance, immutable::Immutable, network::Network,
 };
 
 use crate::core::error::BlockchainError;
@@ -18,8 +18,8 @@ pub type Tips = HashSet<Hash>;
 pub trait DifficultyProvider {
     async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
     async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u128, BlockchainError>;
-    async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
-    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
+    async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError>;
+    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError>;
     async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError>;
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError>;
 }
@@ -69,7 +69,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static { // TODO delete t
     fn count_transactions(&self) -> usize;
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
-    async fn add_new_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash) -> Result<(), BlockchainError>;
+    async fn add_new_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError>;
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>, HashSet<PublicKey>), BlockchainError>;
     fn has_blocks(&self) -> bool;
     fn count_blocks(&self) -> usize;

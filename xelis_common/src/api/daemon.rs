@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance, network::Network};
+use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance, network::Network, block::Difficulty};
 
 use super::DataHash;
 
@@ -18,10 +18,10 @@ pub enum BlockType {
 pub struct BlockResponse<'a, T: Clone> {
     pub topoheight: Option<u64>,
     pub block_type: BlockType,
-    pub difficulty: u64,
+    pub difficulty: Difficulty,
     pub supply: Option<u64>,
     pub reward: Option<u64>,
-    pub cumulative_difficulty: u64,
+    pub cumulative_difficulty: Difficulty,
     pub total_fees: u64,
     pub total_size_in_bytes: usize,
     #[serde(flatten)]
@@ -64,7 +64,7 @@ pub struct GetBlockTemplateParams<'a> {
 pub struct GetBlockTemplateResult {
     pub template: String, // template is BlockMiner in hex format
     pub height: u64, // block height
-    pub difficulty: u64 // difficulty required for valid block
+    pub difficulty: Difficulty // difficulty required for valid block
 }
 
 #[derive(Serialize, Deserialize)]
@@ -109,7 +109,7 @@ pub struct GetInfoResult {
     pub stableheight: u64,
     pub top_hash: Hash,
     pub native_supply: u64,
-    pub difficulty: u64,
+    pub difficulty: Difficulty,
     pub block_time_target: u64,
     // count how many transactions are present in mempool
     pub mempool_size: usize,

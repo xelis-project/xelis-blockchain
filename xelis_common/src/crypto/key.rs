@@ -33,12 +33,12 @@ impl PublicKey {
         self.0.as_bytes()
     }
 
-    pub fn to_address(&self) -> Address {
-        Address::new(get_network().is_mainnet(), AddressType::Normal, Cow::Borrowed(self))
+    pub fn to_address(&self, mainnet: bool) -> Address {
+        Address::new(mainnet, AddressType::Normal, Cow::Borrowed(self))
     }
 
-    pub fn to_address_with(&self, data: DataType) -> Address {
-        Address::new(get_network().is_mainnet(), AddressType::Data(data), Cow::Borrowed(self))
+    pub fn to_address_with(&self, mainnet: bool, data: DataType) -> Address {
+        Address::new(mainnet, AddressType::Data(data), Cow::Borrowed(self))
     }
 }
 
@@ -78,7 +78,7 @@ impl serde::Serialize for PublicKey {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_address().to_string())
+        serializer.serialize_str(&self.to_address(get_network().is_mainnet()).to_string())
     }
 }
 
@@ -92,7 +92,7 @@ impl<'de> serde::Deserialize<'de> for PublicKey {
 
 impl Display for PublicKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "{}", &self.to_address())
+        write!(f, "{}", &self.to_address(get_network().is_mainnet()))
     }
 }
 

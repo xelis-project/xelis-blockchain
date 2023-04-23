@@ -413,11 +413,11 @@ impl Wallet {
     }
 
     pub fn get_address(&self) -> Address<'_> {
-        self.keypair.get_public_key().to_address()
+        self.keypair.get_public_key().to_address(self.get_network().is_mainnet())
     }
 
     pub fn get_address_with(&self, data: DataType) -> Address<'_> {
-        self.keypair.get_public_key().to_address_with(data)
+        self.keypair.get_public_key().to_address_with(self.get_network().is_mainnet(), data)
     }
 
     pub fn get_seed(&self, language_index: usize) -> Result<String, Error> {

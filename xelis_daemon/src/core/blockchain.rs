@@ -7,7 +7,7 @@ use xelis_common::{
     difficulty::{check_difficulty, calculate_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     globals::get_current_timestamp,
-    block::{Block, BlockHeader, EXTRA_NONCE_SIZE},
+    block::{Block, BlockHeader, EXTRA_NONCE_SIZE, Difficulty},
     immutable::Immutable,
     serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType}, DataHash}, network::Network
 };
@@ -68,7 +68,9 @@ pub struct Blockchain<S: Storage> {
     storage: RwLock<S>, // storage to retrieve/add blocks
     p2p: Mutex<Option<Arc<P2pServer<S>>>>, // P2p module
     rpc: Mutex<Option<SharedDaemonRpcServer<S>>>, // Rpc module
-    difficulty: AtomicU64, // current difficulty
+    // current difficulty at tips
+    // its used as cache to display current network hashrate
+    difficulty: AtomicU64,
     // used to skip PoW verification
     simulator: bool,
     // current network type on which one we're using/connected to
@@ -676,7 +678,7 @@ impl<S: Storage> Blockchain<S> {
         Ok(best_difficulty * 91 / 100 < block_difficulty)
     }
 
-    pub async fn get_difficulty_at_tips<D: DifficultyProvider>(&self, provider: &D, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
+    pub async fn get_difficulty_at_tips<D: DifficultyProvider>(&self, provider: &D, tips: &Vec<Hash>) -> Result<Difficulty, BlockchainError> {
         if tips.len() == 0 { // Genesis difficulty
             return Ok(GENESIS_BLOCK_DIFFICULTY)
         }
@@ -698,7 +700,7 @@ impl<S: Storage> Blockchain<S> {
         Ok(difficulty)
     }
 
-    pub fn get_difficulty(&self) -> u64 {
+    pub fn get_difficulty(&self) -> Difficulty {
         self.difficulty.load(Ordering::SeqCst)
     }
 
@@ -1074,7 +1076,7 @@ impl<S: Storage> Blockchain<S> {
 
         // Compute cumulative difficulty for block
         let cumulative_difficulty = {
-            let cumulative_difficulty: u64 = if tips_count == 0 {
+            let cumulative_difficulty: Difficulty = if tips_count == 0 {
                 GENESIS_BLOCK_DIFFICULTY
             } else {
                 let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
@@ -1321,7 +1323,8 @@ impl<S: Storage> Blockchain<S> {
             let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
             debug!("Adding new '{}' {} at topoheight {}", block_hash, block, topoheight);
         } else {
-            debug!("Adding new '{}' {} with no topoheight (not ordered)!", block_hash, block);
+            // this means the block is considered as orphaned yet
+            warn!("Adding new '{}' {} with no topoheight (not ordered)!", block_hash, block);
         }
 
         // update stable height and difficulty in cache

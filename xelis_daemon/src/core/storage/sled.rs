@@ -5,7 +5,7 @@ use xelis_common::{
     crypto::{key::PublicKey, hash::{Hash, hash}},
     immutable::Immutable,
     transaction::Transaction,
-    block::{BlockHeader, Block}, account::VersionedBalance, network::Network,
+    block::{BlockHeader, Block, Difficulty}, account::VersionedBalance, network::Network,
 };
 use std::{
     collections::HashSet,
@@ -608,7 +608,7 @@ impl Storage for SledStorage {
         self.transactions.len()
     }
 
-    async fn add_new_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: u64, hash: Hash) -> Result<(), BlockchainError> {
+    async fn add_new_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError> {
         debug!("Storing new {} with hash: {}, difficulty: {}", block, hash, difficulty);
 
         // Store transactions
@@ -697,8 +697,8 @@ impl Storage for SledStorage {
 
                 miners.insert(block.get_miner().clone());
 
-                let _: u64 = self.delete_data_no_arc(&self.supply, &None, &hash).await?;
-                let _: u64 = self.delete_data_no_arc(&self.difficulty, &None, &hash).await?;
+                let _: Difficulty = self.delete_data_no_arc(&self.supply, &None, &hash).await?;
+                let _: Difficulty = self.delete_data_no_arc(&self.difficulty, &None, &hash).await?;
 
                 trace!("Deleting cumulative difficulty");
                 let cumulative_difficulty: u64 = self.delete_data_no_arc(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;

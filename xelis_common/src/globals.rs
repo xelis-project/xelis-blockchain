@@ -1,3 +1,4 @@
+use crate::block::Difficulty;
 use crate::network::Network;
 use crate::serializer::{Reader, ReaderError};
 use crate::config::{COIN_VALUE, FEE_PER_KB};
@@ -98,7 +99,7 @@ pub fn format_hashrate(mut hashrate: f64) -> String {
 
 const DIFFICULTY_FORMATS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
 
-pub fn format_difficulty(mut difficulty: u64) -> String {
+pub fn format_difficulty(mut difficulty: Difficulty) -> String {
     let max = HASHRATE_FORMATS.len() - 1;
     let mut count = 0;
     while difficulty > 1000 && count < max {
@@ -110,6 +111,7 @@ pub fn format_difficulty(mut difficulty: u64) -> String {
 }
 
 // by default it start in mainnet mode
+// it is mainly used by fmt::Display to display & Serde for the correct format of addresses / keys
 static NETWORK: Mutex<Network> = Mutex::new(Network::Mainnet);
 pub fn get_network() -> Network {
     let network = NETWORK.lock().unwrap();

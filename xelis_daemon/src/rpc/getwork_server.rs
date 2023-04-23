@@ -60,7 +60,7 @@ impl Miner {
 
 impl Display for Miner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Miner[address={}, name={}]", self.key.to_address(), self.name)        
+        write!(f, "Miner[address={}, name={}]", self.key, self.name)        
     }
 }
 
