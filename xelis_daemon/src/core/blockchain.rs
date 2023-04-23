@@ -13,7 +13,7 @@ use xelis_common::{
 };
 use crate::{p2p::P2pServer, rpc::{rpc::{get_block_response_for_hash, get_block_type_for_block}, DaemonRpcServer, SharedDaemonRpcServer}};
 use super::storage::{Storage, DifficultyProvider};
-use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::Duration, borrow::Cow};
+use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::{Duration, Instant}, borrow::Cow};
 use std::collections::{HashMap, HashSet};
 use async_recursion::async_recursion;
 use tokio::{time::interval, sync::{Mutex, RwLock}};
@@ -883,7 +883,9 @@ impl<S: Storage> Blockchain<S> {
     }
 
     pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, broadcast: bool) -> Result<(), BlockchainError> {
+        let start = Instant::now();
         let block_hash = block.hash();
+        debug!("Add new block {}", block_hash);
         if storage.has_block(&block_hash).await? {
             error!("Block is already in chain!");
             return Err(BlockchainError::AlreadyInChain)
@@ -1328,7 +1330,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("Adding new '{}' {} at topoheight {}", block_hash, block, topoheight);
         } else {
             // this means the block is considered as orphaned yet
-            warn!("Adding new '{}' {} with no topoheight (not ordered)!", block_hash, block);
+            debug!("Adding new '{}' {} with no topoheight (not ordered)!", block_hash, block);
         }
 
         // update stable height and difficulty in cache
@@ -1351,6 +1353,8 @@ impl<S: Storage> Blockchain<S> {
                 p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, &block_hash).await;
             }
         }
+
+        debug!("Processed block {} in {}ms", block_hash, start.elapsed().as_millis());
 
         // broadcast to websocket new block
         if let Some(rpc) = rpc_server.as_ref() {
