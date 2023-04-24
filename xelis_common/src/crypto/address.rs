@@ -77,7 +77,7 @@ impl<'a> Address<'a> {
         let (hrp, decoded) = decode(address)?;
         // check that hrp is valid one
         if hrp != PREFIX_ADDRESS && hrp != TESTNET_PREFIX_ADDRESS {
-            return Err(Bech32Error::InvalidPrefix(hrp).into())
+            return Err(Bech32Error::InvalidPrefix(hrp, format!("{} or {}", PREFIX_ADDRESS, TESTNET_PREFIX_ADDRESS)).into())
         }
 
         let bits = convert_bits(&decoded, 5, 8, false)?;
@@ -86,7 +86,12 @@ impl<'a> Address<'a> {
 
         // now check that the hrp decoded is the one for the network state
         if (addr.is_mainnet() && hrp != PREFIX_ADDRESS) || (!addr.is_mainnet() && hrp != TESTNET_PREFIX_ADDRESS) {
-            return Err(Bech32Error::InvalidPrefix(hrp).into())
+            let expected = if addr.is_mainnet() {
+                PREFIX_ADDRESS
+            } else {
+                TESTNET_PREFIX_ADDRESS
+            };
+            return Err(Bech32Error::InvalidPrefix(hrp, expected.to_owned()).into())
         }
 
         Ok(addr)
