@@ -8,7 +8,7 @@ use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
     VERSION, XELIS_ASSET
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::TransactionType, globals::{format_coin, set_network_to}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, globals::{format_coin, set_network_to}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
 use xelis_wallet::wallet::Wallet;
 
 #[cfg(feature = "rpc_server")]
@@ -120,7 +120,8 @@ async fn main() -> Result<()> {
 async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>, network: Network) -> Result<()> {
     let mut command_manager: CommandManager<Arc<Wallet>> = CommandManager::default();
     command_manager.add_command(Command::with_required_arguments("set_password", "Set a new password to open your wallet", vec![Arg::new("old_password", ArgType::String), Arg::new("password", ArgType::String)], None, CommandHandler::Async(async_handler!(set_password))));
-    command_manager.add_command(Command::with_required_arguments("transfer", "Send asset to a specified address", vec![Arg::new("address", ArgType::String), Arg::new("amount", ArgType::Number)], Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(transfer))));
+    command_manager.add_command(Command::with_required_arguments("transfer", "Send asset to a specified address", vec![Arg::new("address", ArgType::String), Arg::new("amount", ArgType::Number)], Some(Arg::new("asset", ArgType::Hash)), CommandHandler::Async(async_handler!(transfer))));
+    command_manager.add_command(Command::with_required_arguments("burn", "Burn amount of asset", vec![Arg::new("asset", ArgType::Hash), Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(burn))));
     command_manager.add_command(Command::new("display_address", "Show your wallet address", None, CommandHandler::Async(async_handler!(display_address))));
     command_manager.add_command(Command::new("balance", "Show your current balance", Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(balance))));
     command_manager.add_command(Command::new("history", "Show all your transactions", Some(Arg::new("page", ArgType::Number)), CommandHandler::Async(async_handler!(history))));
@@ -199,8 +200,11 @@ async fn transfer(manager: &CommandManager<Arc<Wallet>>, mut arguments: Argument
         XELIS_ASSET // default asset selected is XELIS
     };
 
+    manager.message(format!("Sending {} of {} to {}", format_coin(amount), asset, address.to_string()));
+
     let wallet = manager.get_data()?;
     manager.message("Building transaction...");
+
     let (key, address_type) = address.split();
     let extra_data = match address_type {
         AddressType::Normal => None,
@@ -213,20 +217,21 @@ async fn transfer(manager: &CommandManager<Arc<Wallet>>, mut arguments: Argument
         wallet.create_transaction(&storage, TransactionType::Transfer(vec![transfer]), FeeBuilder::Multiplier(1f64))?
     };
 
-    let tx_hash = tx.hash();
-    manager.message(format!("Transaction hash: {}", tx_hash));
+    broadcast_tx(wallet, manager, tx).await;
+    Ok(())
+}
 
-    if wallet.is_online().await {
-        if let Err(e) = wallet.submit_transaction(&tx).await {
-            manager.error(format!("Couldn't submit transaction: {}", e));
-        } else {
-            manager.message("Transaction submitted successfully!");
-        }
-    } else {
-        manager.warn("You are currently offline, transaction cannot be send automatically. Please send it manually to the network.");
-        manager.message(format!("Transaction Hex: {}", tx.to_hex()));
-    }
+async fn burn(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let amount = arguments.get_value("amount")?.to_number()?;
+    let asset = arguments.get_value("asset")?.to_hash()?;
+    let wallet = manager.get_data()?;
+    manager.message(format!("Burning {} of {}", format_coin(amount), asset));
 
+    let tx = {
+        let storage = wallet.get_storage().read().await;
+        wallet.create_transaction(&storage, TransactionType::Burn(asset, amount), FeeBuilder::Multiplier(1f64))?
+    };
+    broadcast_tx(wallet, manager, tx).await;
     Ok(())
 }
 
@@ -357,4 +362,22 @@ async fn nonce(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Res
     let nonce = wallet.get_nonce().await;
     manager.message(format!("Nonce: {}", nonce));
     Ok(())
+}
+
+// broadcast tx if possible
+async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager<Arc<Wallet>>, tx: Transaction) {
+    let tx_hash = tx.hash();
+    manager.message(format!("Transaction hash: {}", tx_hash));
+
+    if wallet.is_online().await {
+        if let Err(e) = wallet.submit_transaction(&tx).await {
+            manager.error(format!("Couldn't submit transaction: {}", e));
+            manager.error("You can try to rescan your balance with the command 'rescan'");
+        } else {
+            manager.message("Transaction submitted successfully!");
+        }
+    } else {
+        manager.warn("You are currently offline, transaction cannot be send automatically. Please send it manually to the network.");
+        manager.message(format!("Transaction in hex format: {}", tx.to_hex()));
+    }
 }
