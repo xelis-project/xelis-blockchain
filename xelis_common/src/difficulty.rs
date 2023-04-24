@@ -48,7 +48,7 @@ pub fn calculate_difficulty(parent_timestamp: u128, new_timestamp: u128, previou
     }
 
     let easypart = (E.powf((1f64 - solve_time as f64 / BLOCK_TIME_MILLIS as f64) / M) * 10000f64) as i64;
-    let diff = ((previous_difficulty as i64 * easypart) / 10000) as u64;
+    let diff = ((previous_difficulty as i64 * easypart) / 10000) as Difficulty;
     trace!("Difficulty calculated, easypart: {}, previous diff: {}, diff: {}", easypart, previous_difficulty, diff);
 
     if diff < MINIMUM_DIFFICULTY {

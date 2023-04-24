@@ -79,7 +79,7 @@ pub struct Blockchain<S: Storage> {
     // key is (tip hash, tip height) while value is (base hash, base height)
     tip_base_cache: Mutex<LruCache<(Hash, u64), (Hash, u64)>>,
     // tip work score is used to determine the best tip based on a block, tip base ands a base height
-    tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, u64)>>,
+    tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, Difficulty)>>,
     full_order_cache: Mutex<LruCache<(Hash, Hash, u64), Vec<Hash>>>,
 }
 
@@ -537,7 +537,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     #[async_recursion] // TODO no recursion
-    async fn find_tip_work_score_internal<'a>(&self, storage: &S, map: &mut HashMap<Hash, u64>, hash: &'a Hash, base_topoheight: u64, base_height: u64) -> Result<(), BlockchainError> {
+    async fn find_tip_work_score_internal<'a>(&self, storage: &S, map: &mut HashMap<Hash, Difficulty>, hash: &'a Hash, base_topoheight: u64, base_height: u64) -> Result<(), BlockchainError> {
         let tips = storage.get_past_blocks_for_block_hash(hash).await?;
         for hash in tips.iter() {
             if !map.contains_key(hash) {
@@ -554,7 +554,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // find the sum of work done
-    async fn find_tip_work_score(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, u64), BlockchainError> {
+    async fn find_tip_work_score(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, Difficulty), BlockchainError> {
         let mut cache = self.tip_work_score_cache.lock().await;
         if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
             trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
@@ -562,7 +562,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let block = storage.get_block_header_by_hash(hash).await?;
-        let mut map: HashMap<Hash, u64> = HashMap::new();
+        let mut map: HashMap<Hash, Difficulty> = HashMap::new();
         let base_topoheight = storage.get_topo_height_for_hash(base).await?;
         for hash in block.get_tips() {
             if !map.contains_key(hash) {
