@@ -47,7 +47,7 @@ impl TransactionBuilder {
     pub fn total_spent(&self) -> HashMap<&Hash, u64> {
         let mut total_spent = HashMap::new();
         match &self.data {
-            TransactionType::Burn(asset, amount) => {
+            TransactionType::Burn { asset, amount } => {
                 total_spent.insert(asset, *amount);
             },
             TransactionType::CallContract(call) => {

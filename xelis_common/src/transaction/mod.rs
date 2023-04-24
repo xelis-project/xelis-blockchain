@@ -26,9 +26,13 @@ pub struct SmartContractCall {
 // Smart Contract system is not yet available but types are already there
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum TransactionType {
+    #[serde(rename = "transfers")]
     Transfer(Vec<Transfer>),
-    Burn(Hash, u64),
+    #[serde(rename = "burn")]
+    Burn { asset: Hash, amount: u64 },
+    #[serde(rename = "call_contract")]
     CallContract(SmartContractCall),
+    #[serde(rename = "deploy_contract")]
     DeployContract(String), // represent the code to deploy
 }
 
@@ -44,7 +48,7 @@ pub struct Transaction {
 impl Serializer for TransactionType {
     fn write(&self, writer: &mut Writer) {
         match self {
-            TransactionType::Burn(asset, amount) => {
+            TransactionType::Burn { asset, amount } => {
                 writer.write_u8(0);
                 writer.write_hash(asset);
                 writer.write_u64(amount);
@@ -92,7 +96,7 @@ impl Serializer for TransactionType {
             0 => {
                 let asset = reader.read_hash()?;
                 let amount = reader.read_u64()?;
-                TransactionType::Burn(asset, amount)
+                TransactionType::Burn { asset, amount }
             },
             1 => { // Normal
                 let txs_count = reader.read_u8()?;

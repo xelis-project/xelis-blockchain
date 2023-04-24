@@ -229,7 +229,7 @@ async fn burn(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentMana
 
     let tx = {
         let storage = wallet.get_storage().read().await;
-        wallet.create_transaction(&storage, TransactionType::Burn(asset, amount), FeeBuilder::Multiplier(1f64))?
+        wallet.create_transaction(&storage, TransactionType::Burn { asset, amount }, FeeBuilder::Multiplier(1f64))?
     };
     broadcast_tx(wallet, manager, tx).await;
     Ok(())

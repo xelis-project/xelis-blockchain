@@ -1637,7 +1637,7 @@ impl<S: Storage> Blockchain<S> {
                     return Err(BlockchainError::InvalidTransactionExtraDataTooBig(EXTRA_DATA_LIMIT_SIZE, extra_data_size))   
                 }
             }
-            TransactionType::Burn(asset, amount) => {
+            TransactionType::Burn { asset, amount } => {
                 if *amount == 0 {
                     error!("Burn Tx {} has no value to burn", hash);
                     return Err(BlockchainError::NoValueForBurn)
@@ -1747,7 +1747,7 @@ impl<S: Storage> Blockchain<S> {
         total_deducted.insert(&XELIS_ASSET, transaction.get_fee());
 
         match transaction.get_data() {
-            TransactionType::Burn(asset, amount) => {
+            TransactionType::Burn { asset, amount } => {
                 *total_deducted.entry(asset).or_insert(0) += amount;
             }
             TransactionType::Transfer(txs) => {
@@ -1797,7 +1797,7 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
             },
-            TransactionType::Burn(asset, _) => {
+            TransactionType::Burn { asset, amount: _ } => {
                 if !assets.contains(asset) {
                     assets.insert(asset);
                 }

@@ -139,7 +139,7 @@ impl NetworkHandler {
                 let nonce = if is_owner { Some(tx.get_nonce()) } else { None };
                 let (owner, data) = tx.consume();
                 let entry: Option<EntryData> = match data {
-                    TransactionType::Burn(asset, amount) => {
+                    TransactionType::Burn { asset, amount } => {
                         if is_owner {
                             Some(EntryData::Burn { asset, amount })
                         } else {
