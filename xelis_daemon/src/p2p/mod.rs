@@ -924,13 +924,25 @@ impl<S: Storage> P2pServer<S> {
                         }
                     },
                     ObjectRequest::Transaction(hash) => {
-                        let mempool = self.blockchain.get_mempool().read().await;
-                        match mempool.view_tx(hash) {
-                            Ok(tx) => {
+                        let on_disk = {
+                            let mempool = self.blockchain.get_mempool().read().await;
+                            if let Ok(tx) = mempool.view_tx(hash) {
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(tx)))).await?;
-                            },
-                            Err(e) => {
-                                debug!("{} asked tx '{}' but got an error while retrieving it: {}", peer, hash, e);
+                                false
+                            } else {
+                                debug!("{} asked transaction '{}' but not present in our mempool", peer, hash);
+                                true
+                            }
+                        };
+
+                        if on_disk {
+                            debug!("Looking on disk for transaction {}", hash);
+                            let storage = self.blockchain.get_storage().read().await;
+                            if storage.has_transaction(hash).await? {
+                                let tx = storage.get_transaction(hash).await?;
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(&tx)))).await?;
+                            } else {
+                                debug!("{} asked transaction '{}' but not present in our chain", peer, hash);
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
                             }
                         }
