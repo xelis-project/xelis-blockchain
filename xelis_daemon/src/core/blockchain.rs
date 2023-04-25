@@ -742,8 +742,8 @@ impl<S: Storage> Blockchain<S> {
     }
 
     pub async fn add_tx_with_hash_to_mempool(&self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
-        let mut mempool = self.mempool.write().await;
         let storage = self.storage.read().await;
+        let mut mempool = self.mempool.write().await;
         self.add_tx_for_mempool(&storage, &mut mempool, tx, hash, broadcast).await
     }
 
@@ -784,7 +784,11 @@ impl<S: Storage> Blockchain<S> {
 
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
-                p2p.broadcast_tx_hash(&hash).await;
+                let p2p = Arc::clone(p2p);
+                let hash = hash.clone();
+                tokio::spawn(async move {
+                    p2p.broadcast_tx_hash(&hash).await;
+                });
             }
         }
 
@@ -848,7 +852,7 @@ impl<S: Storage> Blockchain<S> {
                 transactions.sort_by(|(_, a), (_, b)| a.get_tx().get_nonce().cmp(&b.get_tx().get_nonce()));
 
                 for (hash, sorted_tx) in transactions {
-                    if block.size() + total_txs_size + sorted_tx.get_size() > MAX_BLOCK_SIZE {
+                    if block.size() + total_txs_size + sorted_tx.get_size() >= MAX_BLOCK_SIZE {
                         break 'main;
                     }
 
@@ -862,9 +866,9 @@ impl<S: Storage> Blockchain<S> {
                     };
     
                     if account_nonce < transaction.get_nonce() {
-                        debug!("Skipping {} with {} fees because another TX should be selected first due to nonce", hash, format_coin(fee.0));
+                        trace!("Skipping {} with {} fees because another TX should be selected first due to nonce", hash, format_coin(fee.0));
                     } else if account_nonce == transaction.get_nonce() {
-                        debug!("Selected {} (nonce: {}, account nonce: {}, fees: {}) for mining", hash, transaction.get_nonce(), account_nonce, format_coin(fee.0));
+                        trace!("Selected {} (nonce: {}, account nonce: {}, fees: {}) for mining", hash, transaction.get_nonce(), account_nonce, format_coin(fee.0));
                         // TODO no clone
                         block.txs_hashes.push(hash.as_ref().clone());
                         total_txs_size += sorted_tx.get_size();
@@ -920,6 +924,12 @@ impl<S: Storage> Blockchain<S> {
         if tips_count == 0 && current_height != 0 {
             error!("Expected at least one previous block for this block {}", block_hash);
             return Err(BlockchainError::ExpectedTips)
+        }
+
+        // block contains header and full TXs
+        if block.size() > MAX_BLOCK_SIZE {
+            error!("Block size ({} bytes) is greater than the limit ({} bytes)", block.size(), MAX_BLOCK_SIZE);
+            return Err(BlockchainError::InvalidBlockSize(MAX_BLOCK_SIZE, block.size()));
         }
 
         {
@@ -993,7 +1003,6 @@ impl<S: Storage> Blockchain<S> {
         let difficulty = self.verify_proof_of_work(storage, &pow_hash, block.get_tips()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
-        let mut total_tx_size: usize = 0;
         { // Transaction verification
             let hashes_len = block.get_txs_hashes().len();
             let txs_len = block.get_transactions().len();
@@ -1052,7 +1061,6 @@ impl<S: Storage> Blockchain<S> {
                                 // DAG will choose which branch will execute the TX
                                 info!("TX {} was executed in another branch, skipping verification", tx_hash);
                                 // increase the total size
-                                total_tx_size += tx.size();
                                 // add tx hash in cache
                                 cache_tx.insert(tx_hash, true);
                                 // because TX was already validated & executed and is not in block tips
@@ -1069,15 +1077,8 @@ impl<S: Storage> Blockchain<S> {
 
                 self.verify_transaction_with_hash(storage, tx, &tx_hash, &mut balances, Some(&mut cache_account), false).await?;
 
-                // increase the total size
-                total_tx_size += tx.size();
                 // add tx hash in cache
                 cache_tx.insert(tx_hash, true);
-            }
-
-            if block.size() + total_tx_size > MAX_BLOCK_SIZE {
-                error!("Block size ({} bytes) is greater than the limit ({} bytes)", block.size() + total_tx_size, MAX_BLOCK_SIZE);
-                return Err(BlockchainError::InvalidBlockSize(MAX_BLOCK_SIZE, block.size() + total_tx_size));
             }
 
             if cache_tx.len() != txs_len || cache_tx.len() != hashes_len {

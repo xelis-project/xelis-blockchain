@@ -35,7 +35,7 @@ pub enum BlockchainError {
     InvalidHash(Hash, Hash),
     #[error("Invalid previous block hash, expected {}, got {}", _0, _1)]
     InvalidPreviousBlockHash(Hash, Hash),
-    #[error("Block size is more than limit: {}, got {}", _0, _1)]
+    #[error("Block size is more than limit, expected maximum: {}, got {}", _0, _1)]
     InvalidBlockSize(usize, usize),
     #[error("Block contains invalid txs count: expected {}, got {} txs.", _0, _1)]
     InvalidBlockTxs(usize, usize),
