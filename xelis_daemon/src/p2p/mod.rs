@@ -930,7 +930,7 @@ impl<S: Storage> P2pServer<S> {
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(tx)))).await?;
                             },
                             Err(e) => {
-                                debug!("{} asked tx '{}' but got on error while retrieving it: {}", peer, hash, e);
+                                debug!("{} asked tx '{}' but got an error while retrieving it: {}", peer, hash, e);
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
                             }
                         }

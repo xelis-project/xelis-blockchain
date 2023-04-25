@@ -2,6 +2,7 @@ use super::error::BlockchainError;
 use std::cmp::Reverse;
 use std::collections::{HashMap, BTreeMap, HashSet};
 use std::sync::Arc;
+use log::{trace, debug};
 use xelis_common::{
     crypto::{
         hash::Hash,
@@ -125,6 +126,7 @@ impl Mempool {
 
     // delete all old txs not compatible anymore with current state of account
     pub async fn clean_up(&mut self, nonces: HashMap<PublicKey, u64>) {
+        debug!("Cleaning up mempool ({} accounts)...", nonces.len());
         for (key, nonce) in nonces {
             let mut delete_cache = false;
             // check if we have a TX in cache for this owner
@@ -163,12 +165,14 @@ impl Mempool {
                             let fee_reverse = Reverse(sorted_tx.get_fee());
                             let mut is_empty = false;
                             if let Some(hashes) = self.sorted_txs.get_mut(&fee_reverse) {
+                                trace!("Removing tx hash {} for fee entry {}", hash, fee_reverse.0);
                                 hashes.remove(&hash);
                                 is_empty = hashes.is_empty();
                             }
 
                             // don't keep empty data
                             if is_empty {
+                                trace!("Removing empty fee ({}) entry", fee_reverse.0);
                                 self.sorted_txs.remove(&fee_reverse);
                             }
                         }
@@ -177,6 +181,7 @@ impl Mempool {
             }
 
             if delete_cache {
+                trace!("Removing empty nonce cache for owner {}", key);
                 self.nonces.remove(&key);
             }
         }

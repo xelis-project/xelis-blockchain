@@ -12,7 +12,7 @@ use xelis_common::{
     serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType}, DataHash}, network::Network
 };
 use crate::{p2p::P2pServer, rpc::{rpc::{get_block_response_for_hash, get_block_type_for_block}, DaemonRpcServer, SharedDaemonRpcServer}};
-use super::storage::{Storage, DifficultyProvider};
+use super::{storage::{Storage, DifficultyProvider}, mempool::SortedTx};
 use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::{Duration, Instant}, borrow::Cow};
 use std::collections::{HashMap, HashSet};
 use async_recursion::async_recursion;
@@ -834,31 +834,45 @@ impl<S: Storage> Blockchain<S> {
         let mut nonces: HashMap<&PublicKey, u64> = HashMap::new();
 
         // txs are sorted in descending order thanks to Reverse<u64>
-        'main: for (fee, hashes) in txs {
-            for hash in hashes {
-                let sorted_tx = mempool.get_sorted_tx(hash)?;
-                if block.size() + total_txs_size + sorted_tx.get_size() > MAX_BLOCK_SIZE {
-                    break 'main;
+        {
+            'main: for (fee, hashes) in txs {
+                let mut transactions: Vec<(&Arc<Hash>, &SortedTx)> = Vec::with_capacity(hashes.len());
+                // prepare TXs by sorting them by nonce
+                // only txs from same owner who have same fees or decreasing fees with increasing nonce will have
+                // all its txs in the same block
+                // maybe we can improve this to support all levels of fees
+                for hash in hashes {
+                    let tx = mempool.get_sorted_tx(hash)?;
+                    transactions.push((hash, tx));
                 }
+                transactions.sort_by(|(_, a), (_, b)| a.get_tx().get_nonce().cmp(&b.get_tx().get_nonce()));
 
-                let transaction = sorted_tx.get_tx();
-                let account_nonce = if let Some(nonce) = nonces.get(transaction.get_owner()) {
-                    *nonce
-                } else {
-                    let nonce = storage.get_nonce(transaction.get_owner()).await?;
-                    nonces.insert(transaction.get_owner(), nonce);
-                    nonce
-                };
+                for (hash, sorted_tx) in transactions {
+                    if block.size() + total_txs_size + sorted_tx.get_size() > MAX_BLOCK_SIZE {
+                        break 'main;
+                    }
 
-                if account_nonce < transaction.get_nonce() {
-                    debug!("Skipping {} with {} fees because another TX should be selected first due to nonce", hash, format_coin(fee.0));
-                } else {
-                    debug!("Selected {} for mining", hash);
-                    // TODO no clone
-                    block.txs_hashes.push(hash.as_ref().clone());
-                    total_txs_size += sorted_tx.get_size();
-                    // we use unwrap because above we insert it
-                    *nonces.get_mut(transaction.get_owner()).unwrap() += 1;
+                    let transaction = sorted_tx.get_tx();
+                    let account_nonce = if let Some(nonce) = nonces.get(transaction.get_owner()) {
+                        *nonce
+                    } else {
+                        let nonce = storage.get_nonce(transaction.get_owner()).await?;
+                        nonces.insert(transaction.get_owner(), nonce);
+                        nonce
+                    };
+    
+                    if account_nonce < transaction.get_nonce() {
+                        debug!("Skipping {} with {} fees because another TX should be selected first due to nonce", hash, format_coin(fee.0));
+                    } else if account_nonce == transaction.get_nonce() {
+                        debug!("Selected {} (nonce: {}, account nonce: {}, fees: {}) for mining", hash, transaction.get_nonce(), account_nonce, format_coin(fee.0));
+                        // TODO no clone
+                        block.txs_hashes.push(hash.as_ref().clone());
+                        total_txs_size += sorted_tx.get_size();
+                        // we use unwrap because above we insert it
+                        *nonces.get_mut(transaction.get_owner()).unwrap() += 1;
+                    } else {
+                        warn!("This TX in mempool {} is in advance (nonce: {}, account nonce: {}, fees: {}), it should be removed from mempool", hash, transaction.get_nonce(), account_nonce, format_coin(fee.0));
+                    }
                 }
             }
         }

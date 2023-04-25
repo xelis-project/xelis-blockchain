@@ -295,7 +295,7 @@ async fn count_transactions<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Va
 async fn submit_transaction<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
     let params: SubmitTransactionParams = parse_params(body)?;
     let transaction = Transaction::from_hex(params.data)?;
-    blockchain.add_tx_to_mempool(transaction, true).await.context("Error while adding tx to mempool")?;
+    blockchain.add_tx_to_mempool(transaction, true).await.map_err(|e| InternalRpcError::AnyError(e.into()))?;
     Ok(json!(true))
 }
 
