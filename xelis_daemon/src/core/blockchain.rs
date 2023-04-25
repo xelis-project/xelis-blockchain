@@ -6,7 +6,7 @@ use xelis_common::{
     crypto::{key::PublicKey, hash::{Hashable, Hash}},
     difficulty::{check_difficulty, calculate_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
-    globals::get_current_timestamp,
+    globals::{get_current_timestamp, format_coin},
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE, Difficulty},
     immutable::Immutable,
     serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType}, DataHash}, network::Network
@@ -755,39 +755,31 @@ impl<S: Storage> Blockchain<S> {
         {
             // get the highest nonce for this owner
             let owner = tx.get_owner();
-            let mut nonces = HashMap::new();
-            let mut balances = HashMap::new();
-            
-            // list of potential TXs from same owner
-            let mut owner_txs = Vec::new();
-            let mempool_txs = mempool.get_txs();
-            for (hash, tx) in mempool_txs {
-                if tx.get_owner() == owner {
-                    let nonce = nonces.entry(tx.get_owner()).or_insert(0);
-                    // if the tx is in mempool, then the nonce should be valid.
-                    if *nonce < tx.get_nonce() {
-                        *nonce = tx.get_nonce();
-                    }
-                    owner_txs.push((hash, tx));
+            // get the highest nonce available
+            // if presents, it means we have at least one tx from this owner in mempool
+            if let Some(nonce) = mempool.get_cached_nonce(owner) {      
+                // check that the nonce is in the range
+                if !(tx.get_nonce() <= nonce.get_max() + 1 && tx.get_nonce() >= nonce.get_min()) {
+                    return Err(BlockchainError::InvalidTxNonce)
                 }
-            }
 
-            // if the nonce of tx is N + 1, we increment it to let it pass
-            // so we have multiple TXs from same owner in the same block
-            if let Some(nonce) = nonces.get_mut(owner) {
-                if *nonce + 1 == tx.get_nonce() {
-                    *nonce += 1;
-                    // compute balances of previous pending TXs
-                    for (hash, tx) in owner_txs {
-                        if tx.get_owner() == owner {
-                            // we also need to pre-compute the balance of the owner
-                            self.verify_transaction_with_hash(storage, tx, &hash, &mut balances, None, true).await?;
-                        }
-                    }
+                // compute balances of previous pending TXs
+                let txs_hashes = nonce.get_txs();
+                let mut owner_txs = Vec::with_capacity(txs_hashes.len());
+                for hash in txs_hashes {
+                    let tx = mempool.get_tx(hash)?;
+                    owner_txs.push(tx);
                 }
-            }
 
-            self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, Some(&mut nonces), false).await?
+                // we need to do it in two times because of the constraint of lifetime on &tx
+                let mut balances = HashMap::new();
+                for tx in &owner_txs {
+                    self.verify_transaction_with_hash(storage, tx, &hash, &mut balances, None, true).await?;
+                }
+            } else {
+                let mut balances = HashMap::new();
+                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false).await?
+            }
         }
 
         if broadcast {
@@ -838,29 +830,36 @@ impl<S: Storage> Blockchain<S> {
 
         let mempool = self.mempool.read().await;
         let txs = mempool.get_sorted_txs();
-        let mut tx_size = 0;
+        let mut total_txs_size = 0;
         let mut nonces: HashMap<&PublicKey, u64> = HashMap::new();
-        for tx in txs {
-            if block.size() + tx_size + tx.get_size() > MAX_BLOCK_SIZE {
-                break;
-            }
 
-            let transaction = mempool.view_tx(tx.get_hash())?;
-            let account_nonce = if let Some(nonce) = nonces.get(transaction.get_owner()) {
-                *nonce
-            } else {
-                let nonce = storage.get_nonce(transaction.get_owner()).await?;
-                nonces.insert(transaction.get_owner(), nonce);
-                nonce
-            };
+        // txs are sorted in descending order thanks to Reverse<u64>
+        'main: for (fee, hashes) in txs {
+            for hash in hashes {
+                let sorted_tx = mempool.get_sorted_tx(hash)?;
+                if block.size() + total_txs_size + sorted_tx.get_size() > MAX_BLOCK_SIZE {
+                    break 'main;
+                }
 
-            if account_nonce < transaction.get_nonce() {
-                debug!("Skipping {} with {} fees because another TX should be selected first due to nonce", tx.get_hash(), tx.get_fee());
-            } else {
-                // TODO no clone
-                block.txs_hashes.push(tx.get_hash().clone());
-                tx_size += tx.get_size();
-                *nonces.get_mut(transaction.get_owner()).unwrap() += 1;
+                let transaction = sorted_tx.get_tx();
+                let account_nonce = if let Some(nonce) = nonces.get(transaction.get_owner()) {
+                    *nonce
+                } else {
+                    let nonce = storage.get_nonce(transaction.get_owner()).await?;
+                    nonces.insert(transaction.get_owner(), nonce);
+                    nonce
+                };
+
+                if account_nonce < transaction.get_nonce() {
+                    debug!("Skipping {} with {} fees because another TX should be selected first due to nonce", hash, format_coin(fee.0));
+                } else {
+                    debug!("Selected {} for mining", hash);
+                    // TODO no clone
+                    block.txs_hashes.push(hash.as_ref().clone());
+                    total_txs_size += sorted_tx.get_size();
+                    // we use unwrap because above we insert it
+                    *nonces.get_mut(transaction.get_owner()).unwrap() += 1;
+                }
             }
         }
         Ok(block)
@@ -1094,17 +1093,7 @@ impl<S: Storage> Blockchain<S> {
             cumulative_difficulty
         };
 
-        // Delete all txs from mempool
         let mut mempool = self.mempool.write().await;
-        for hash in block.get_txs_hashes() { // remove all txs present in mempool
-            match mempool.remove_tx(hash) {
-                Ok(_) => {
-                    debug!("Removing tx hash '{}' from mempool", hash);
-                },
-                Err(_) => {}
-            };
-        }
-
         let mut tips = storage.get_tips().await?;
         tips.insert(block_hash.clone());
         for hash in block.get_tips() {
@@ -1393,7 +1382,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // Clean all old txs
-        mempool.clean_up(storage, nonces).await;
+        mempool.clean_up(nonces).await;
 
         Ok(())
     }

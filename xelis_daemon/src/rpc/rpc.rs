@@ -341,9 +341,8 @@ async fn get_mempool<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) ->
     let mempool = blockchain.get_mempool().read().await;
     let storage = blockchain.get_storage().read().await;
     let mut transactions: Vec<Value> = Vec::new();
-    for tx in mempool.get_sorted_txs() {
-        let transaction = mempool.view_tx(tx.get_hash()).context("Error while retrieving TX from mempool")?;
-        transactions.push(get_transaction_response(&*storage, transaction, tx.get_hash()).await?);
+    for (hash, sorted_tx) in mempool.get_txs() {
+        transactions.push(get_transaction_response(&*storage, sorted_tx.get_tx(), hash).await?);
     }
 
     Ok(json!(transactions))
