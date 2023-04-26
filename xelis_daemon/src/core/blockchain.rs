@@ -1612,6 +1612,11 @@ impl<S: Storage> Blockchain<S> {
                     return Err(BlockchainError::TxEmpty(hash.clone()))
                 }
 
+                // invalid serde tx
+                if txs.len() > u8::MAX as usize {
+                    return Err(BlockchainError::TooManyOutputInTx(hash.clone()))
+                }
+
                 let mut extra_data_size = 0; 
                 for output in txs {
                     if output.to == *tx.get_owner() { // we can't transfer coins to ourself, why would you do that ?

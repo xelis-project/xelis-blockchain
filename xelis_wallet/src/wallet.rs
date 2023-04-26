@@ -32,6 +32,8 @@ pub enum WalletError {
     InvalidKeyPair,
     #[error("Expected a TX")]
     ExpectedOneTx,
+    #[error("Too many txs included max is {}", u8::MAX)]
+    TooManyTx,
     #[error("Transaction owner is the receiver")]
     TxOwnerIsReceiver,
     #[error("Error from crypto: {}", _0)]

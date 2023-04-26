@@ -49,6 +49,8 @@ pub enum BlockchainError {
     TxAlreadyInMempool(Hash),
     #[error("Normal Tx {} is empty", _0)]
     TxEmpty(Hash),
+    #[error("Tx {} has too many output", _0)]
+    TooManyOutputInTx(Hash),
     #[error("Tx {} is already in block", _0)]
     TxAlreadyInBlock(Hash),
     #[error("Duplicate registration tx for address '{}' found in same block", _0)]

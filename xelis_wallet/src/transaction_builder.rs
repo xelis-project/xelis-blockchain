@@ -94,6 +94,10 @@ impl TransactionBuilder {
                 return Err(WalletError::ExpectedOneTx)
             }
 
+            if txs.len() > u8::MAX as usize {
+                return Err(WalletError::TooManyTx)
+            }
+
             for tx in txs {
                 if tx.to == self.owner {
                     return Err(WalletError::TxOwnerIsReceiver)

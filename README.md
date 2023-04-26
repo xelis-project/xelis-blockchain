@@ -101,7 +101,7 @@ This feature allows to accept others branch tips even if transactions are the sa
 ## Transaction
 
 Transaction types supported:
-- Transfer: possibility to send many assets to many addresses in the same TX
+- Transfer: possibility to send many assets to many addresses in the same TX (up to 255 outputs inside)
 - Burn: publicly burn amount of a specific asset and use this TX as proof of burn (coins are completely deleted from circulation)
 - Call Contract: call a Smart Contract with specific parameters and list of assets to deposit (WIP) (NOTE: Multi Call Contract in the same TX ?)
 - Deploy Contract: deploy a new (valid) Smart Contract on chain (WIP)
