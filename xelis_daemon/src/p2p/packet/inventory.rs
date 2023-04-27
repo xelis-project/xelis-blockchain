@@ -14,8 +14,8 @@ impl<'a> NotifyInventory<'a> {
         Self { txs }
     }
 
-    pub fn get_txs(&self) -> &Cow<'a, HashSet<Cow<'a, Hash>>> {
-        &self.txs
+    pub fn get_txs(self) -> Cow<'a, HashSet<Cow<'a, Hash>>> {
+        self.txs
     }
 }
 

@@ -963,6 +963,7 @@ impl<S: Storage> P2pServer<S> {
             Packet::NotifyInventory(packet_wrapper) => {
                 trace!("Received a notify inventory from {}", peer);
                 let (inventory, ping) = packet_wrapper.consume();
+                let inventory = inventory.into_owned();
                 ping.into_owned().update_peer(peer).await;
 
                 if !peer.has_requested_inventory() {
@@ -975,22 +976,22 @@ impl<S: Storage> P2pServer<S> {
                 peer.set_last_inventory(get_current_time());
 
                 // check and add if we are missing a TX in our mempool or storage
-                let mut missing_txs: Vec<&Cow<Hash>> = Vec::new();
+                let mut missing_txs: Vec<Hash> = Vec::new();
                 {
                     let mempool = self.blockchain.get_mempool().read().await;
                     let storage = self.blockchain.get_storage().read().await;
-                    for hash in inventory.get_txs().iter() {
-                        if !mempool.contains_tx(hash) && !storage.has_transaction(&hash).await? {
-                            missing_txs.push(hash);
+                    for hash in inventory.get_txs().into_owned() {
+                        if !mempool.contains_tx(&hash) && !storage.has_transaction(&hash).await? {
+                            missing_txs.push(hash.into_owned());
                         }
                     }
                 }
 
-                // retrieve all txs we don't have concurrently
+                // second part is to retrieve all txs we don't have concurrently
+                // we don't want to block the peer and others locks for too long so we do it in a separate task
                 for hash in missing_txs {
                     let peer = Arc::clone(&peer);
                     let blockchain = Arc::clone(&self.blockchain);
-                    let hash = hash.as_ref().clone();
                     tokio::spawn(async move {
                         let response = match peer.request_blocking_object(ObjectRequest::Transaction(hash)).await {
                             Ok(response) => response,
