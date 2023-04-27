@@ -1032,8 +1032,8 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 // check that the TX included is not executed in stable height or in block TIPS
-                if storage.has_tx_executed_in_block(hash)? {
-                    let block_executed = storage.get_tx_executed_in_block(hash)?;
+                if storage.is_tx_executed_in_a_block(hash)? {
+                    let block_executed = storage.get_block_executer_for_tx(hash)?;
                     debug!("Tx {} was executed in {}", hash, block);
                     let block_height = storage.get_height_for_block_hash(&block_executed).await?;
                     // if the tx was executed below stable height, reject whole block!
@@ -1222,7 +1222,7 @@ impl<S: Storage> Blockchain<S> {
                     }
 
                     // check that the tx was not yet executed in another tip branch
-                    if storage.has_tx_executed_in_block(tx_hash)? {
+                    if storage.is_tx_executed_in_a_block(tx_hash)? {
                         trace!("Tx {} was already executed in a previous block, skipping...", tx_hash);
                     } else {
                         // tx was not executed, but lets check that it is not a potential double spending

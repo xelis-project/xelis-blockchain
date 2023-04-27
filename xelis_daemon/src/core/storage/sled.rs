@@ -298,7 +298,7 @@ impl DifficultyProvider for SledStorage {
 
 #[async_trait]
 impl Storage for SledStorage {
-    fn get_tx_executed_in_block(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
+    fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
         self.load_from_disk(&self.txs_executed, tx.as_bytes())
     }
 
@@ -312,8 +312,17 @@ impl Storage for SledStorage {
         Ok(())
     }
 
-    fn has_tx_executed_in_block(&self, tx: &Hash) -> Result<bool, BlockchainError> {
+    fn is_tx_executed_in_a_block(&self, tx: &Hash) -> Result<bool, BlockchainError> {
         Ok(self.txs_executed.contains_key(tx.as_bytes())?)
+    }
+
+    fn is_tx_executed_in_block(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
+        if let Ok(hash) = self.get_block_executer_for_tx(tx) {
+            if hash == *block {
+                return Ok(true)
+            }
+        }
+        Ok(false)
     }
 
     fn get_network(&self) -> Result<Network, BlockchainError> {
@@ -717,7 +726,7 @@ impl Storage for SledStorage {
                         trace!("Tx was included in {}, blocks left: {}", blocks_len, blocks.into_iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
                     }
 
-                    if self.has_tx_executed_in_block(tx_hash)? {
+                    if self.is_tx_executed_in_a_block(tx_hash)? {
                         trace!("Tx {} was executed, deleting", tx_hash);
                         self.remove_tx_executed(&tx_hash)?;
                     }

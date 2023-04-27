@@ -26,10 +26,11 @@ pub trait DifficultyProvider {
 
 #[async_trait]
 pub trait Storage: DifficultyProvider + Sync + Send + 'static { // TODO delete these traits
-    fn get_tx_executed_in_block(&self, tx: &Hash) -> Result<Hash, BlockchainError>;
+    fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError>;
     fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError>;
     fn remove_tx_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError>;
-    fn has_tx_executed_in_block(&self, tx: &Hash) -> Result<bool, BlockchainError>;
+    fn is_tx_executed_in_a_block(&self, tx: &Hash) -> Result<bool, BlockchainError>;
+    fn is_tx_executed_in_block(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError>;
     fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &HashSet<Hash>) -> Result<(), BlockchainError>;
 
     fn get_network(&self) -> Result<Network, BlockchainError>;

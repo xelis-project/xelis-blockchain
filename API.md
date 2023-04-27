@@ -223,13 +223,15 @@ Retrieve a block at a specific topo height
 			"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 		],
 		"topoheight": 23,
-		"total_fees": 0,
+		"total_fees": null,
 		"total_size_in_bytes": 131,
 		"txs_hashes": [],
 		"version": 0
 	}
 }
 ```
+
+NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
 
 #### Get Blocks At Height
 Retrieve all blocks at a specific height
@@ -276,13 +278,16 @@ Retrieve all blocks at a specific height
 				"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 			],
 			"topoheight": 23,
-			"total_fees": 0,
+			"total_fees": null,
 			"total_size_in_bytes": 131,
 			"txs_hashes": [],
 			"version": 0
 		}
 	]
 }
+
+NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
+
 ```
 
 #### Get Block By Hash
@@ -329,13 +334,15 @@ Retrieve a block by its hash
 			"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 		],
 		"topoheight": 23,
-		"total_fees": 0,
+		"total_fees": null,
 		"total_size_in_bytes": 131,
 		"txs_hashes": [],
 		"version": 0
 	}
 }
 ```
+
+NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
 
 #### Get Top Block
 Retrieve the highest block based on the topological height
@@ -378,13 +385,15 @@ Retrieve the highest block based on the topological height
 			"000001aa69c15167a192de809eeed112f50ec91e513cfbf7b1674523583acbf9"
 		],
 		"topoheight": 23,
-		"total_fees": 0,
+		"total_fees": null,
 		"total_size_in_bytes": 131,
 		"txs_hashes": [],
 		"version": 0
 	}
 }
 ```
+
+NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
 
 #### Get Nonce
 Retrieve the nonce for address in request params.
@@ -916,7 +925,7 @@ Retrieve a specific range of blocks (up to 20 maximum) based on topoheight
 			"timestamp": 1678215431432,
 			"tips": [],
 			"topoheight": 0,
-			"total_fees": 0,
+			"total_fees": null,
 			"total_size_in_bytes": 99,
 			"txs_hashes": [],
 			"version": 0
@@ -937,7 +946,7 @@ Retrieve a specific range of blocks (up to 20 maximum) based on topoheight
 				"55a162b8e0e137bb6a8de9f4c4b214fb60bcd2df15ec32fdd8f06759b863f06e"
 			],
 			"topoheight": 1,
-			"total_fees": 0,
+			"total_fees": null,
 			"total_size_in_bytes": 131,
 			"txs_hashes": [],
 			"version": 0
@@ -958,7 +967,7 @@ Retrieve a specific range of blocks (up to 20 maximum) based on topoheight
 				"000011152d66bfe7a2b1d2e18a09a94c1d1593ae8ddeafcfc8f1b8c2b03b7995"
 			],
 			"topoheight": 2,
-			"total_fees": 0,
+			"total_fees": null,
 			"total_size_in_bytes": 131,
 			"txs_hashes": [],
 			"version": 0

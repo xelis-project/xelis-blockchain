@@ -63,8 +63,12 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
 
         let total_size_in_bytes = block.size();
         let mut total_fees = 0;
-        for tx in block.get_transactions() {
-            total_fees += tx.get_fee();
+        for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
+            // check that the TX was correctly executed in this block
+            // retrieve all fees for valid txs
+            if storage.is_tx_executed_in_block(tx_hash, &hash).context("Error while checking if tx was executed")? {
+                    total_fees += tx.get_fee();
+            }
         }
 
         let data: DataHash<'_, Block> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block) };
@@ -88,7 +92,7 @@ pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transact
     };
 
     let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(tx) };
-    let executed_in_block = storage.get_tx_executed_in_block(hash).ok();
+    let executed_in_block = storage.get_block_executer_for_tx(hash).ok();
     Ok(json!(TransactionResponse { blocks, executed_in_block, data }))
 }
 
