@@ -44,7 +44,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
     let (topoheight, supply, reward) = if  storage.is_block_topological_ordered(&hash).await {
         (
             Some(storage.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?),
-            Some( storage.get_supply_for_block_hash(&hash).context("Error while retrieving supply")?),
+            Some(storage.get_supply_for_block_hash(&hash).context("Error while retrieving supply")?),
             Some(storage.get_block_reward(&hash).context("Error while retrieving block reward")?),
         )
     } else {
@@ -58,19 +58,23 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
     let block_type = get_block_type_for_block(&blockchain, &storage, &hash).await?;
     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await.context("Error while retrieving cumulative difficulty")?;
     let difficulty = storage.get_difficulty_for_block_hash(&hash).await.context("Error while retrieving difficulty")?;
-    let block = storage.get_block(&hash).await.context("Error while retrieving block")?;
-    let total_size_in_bytes = block.size();
-    let mut total_fees = 0;
-    for tx in block.get_transactions() {
-        total_fees += tx.get_fee();
-    }
-
     let value: Value = if include_txs {
+        let block = storage.get_block(&hash).await.context("Error while retrieving full block")?;
+
+        let total_size_in_bytes = block.size();
+        let mut total_fees = 0;
+        for tx in block.get_transactions() {
+            total_fees += tx.get_fee();
+        }
+
         let data: DataHash<'_, Block> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block) };
-        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees, total_size_in_bytes, data })
+        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees: Some(total_fees), total_size_in_bytes, data })
     } else {
-        let data: DataHash<'_, Arc<BlockHeader>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block.to_header()) };
-        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees, total_size_in_bytes, data })
+        let block = storage.get_block_header_by_hash(&hash).await.context("Error while retrieving full block")?;
+
+        let total_size_in_bytes = block.size();
+        let data: DataHash<'_, Arc<BlockHeader>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(&block) };
+        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees: None, total_size_in_bytes, data })
     };
 
     Ok(value)

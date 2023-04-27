@@ -22,7 +22,7 @@ pub struct BlockResponse<'a, T: Clone> {
     pub supply: Option<u64>,
     pub reward: Option<u64>,
     pub cumulative_difficulty: Difficulty,
-    pub total_fees: u64,
+    pub total_fees: Option<u64>,
     pub total_size_in_bytes: usize,
     #[serde(flatten)]
     pub data: DataHash<'a, T>
