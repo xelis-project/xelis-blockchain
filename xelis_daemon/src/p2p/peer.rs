@@ -47,7 +47,9 @@ pub struct Peer {
     last_ping: AtomicU64, // last time we got a ping packet from this peer
     cumulative_difficulty: AtomicU64, // cumulative difficulty of peer chain
     txs_cache: Mutex<LruCache<Hash, ()>>, // All transactions propagated to/from this peer
-    blocks_propagation: Mutex<LruCache<Hash, ()>> // last blocks propagated to/from this peer
+    blocks_propagation: Mutex<LruCache<Hash, ()>>, // last blocks propagated to/from this peer
+    last_inventory: AtomicU64, // last time we got an inventory packet from this peer
+    requested_inventory: AtomicBool // if we requested this peer to send us an inventory notification
 }
 
 impl Peer {
@@ -74,7 +76,9 @@ impl Peer {
             last_ping: AtomicU64::new(0),
             cumulative_difficulty: AtomicU64::new(cumulative_difficulty),
             txs_cache: Mutex::new(LruCache::new(128)),
-            blocks_propagation: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT))
+            blocks_propagation: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
+            last_inventory: AtomicU64::new(0),
+            requested_inventory: AtomicBool::new(false)
         }
     }
 
@@ -255,6 +259,22 @@ impl Peer {
 
     pub fn set_last_ping(&self, value: u64) {
         self.last_ping.store(value, Ordering::Release)
+    }
+
+    pub fn get_last_inventory(&self) -> u64 {
+        self.last_inventory.load(Ordering::Acquire)
+    }
+
+    pub fn set_last_inventory(&self, value: u64) {
+        self.last_inventory.store(value, Ordering::Release)
+    }
+
+    pub fn has_requested_inventory(&self) -> bool {
+        self.requested_inventory.load(Ordering::Acquire)
+    }
+
+    pub fn set_requested_inventory(&self, value: bool) {
+        self.requested_inventory.store(value, Ordering::Release)
     }
 
     pub async fn close(&self) -> Result<(), P2pError> {

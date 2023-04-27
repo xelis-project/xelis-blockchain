@@ -2,7 +2,9 @@ pub mod handshake;
 pub mod chain;
 pub mod ping;
 pub mod object;
+pub mod inventory;
 
+use self::inventory::NotifyInventory;
 use self::object::{ObjectRequest, ObjectResponse};
 use self::chain::{ChainRequest, ChainResponse};
 use self::handshake::Handshake;
@@ -24,6 +26,7 @@ const CHAIN_RESPONSE_ID: u8 = 4;
 const PING_ID: u8 = 5;
 const OBJECT_REQUEST_ID: u8 = 6;
 const OBJECT_RESPONSE_ID: u8 = 7;
+const NOTIFY_INV_ID: u8 = 8; 
 
 // PacketWrapper allows us to link any Packet to a Ping
 #[derive(Debug)]
@@ -73,7 +76,8 @@ pub enum Packet<'a> {
     ChainResponse(ChainResponse),
     Ping(Cow<'a, Ping<'a>>),
     ObjectRequest(Cow<'a, ObjectRequest>),
-    ObjectResponse(ObjectResponse<'a>)
+    ObjectResponse(ObjectResponse<'a>),
+    NotifyInventory(PacketWrapper<'a, NotifyInventory<'a>>)
 }
 
 impl<'a> Serializer for Packet<'a> {
@@ -105,7 +109,8 @@ impl<'a> Serializer for Packet<'a> {
             Packet::ChainResponse(response) => (CHAIN_RESPONSE_ID, response),
             Packet::Ping(ping) => (PING_ID, ping.as_ref()),
             Packet::ObjectRequest(request) => (OBJECT_REQUEST_ID, request.as_ref()),
-            Packet::ObjectResponse(response) => (OBJECT_RESPONSE_ID, response)
+            Packet::ObjectResponse(response) => (OBJECT_RESPONSE_ID, response),
+            Packet::NotifyInventory(inventory) => (NOTIFY_INV_ID, inventory)
         };
 
         let packet = serializer.to_bytes();

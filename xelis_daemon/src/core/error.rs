@@ -154,7 +154,9 @@ pub enum BlockchainError {
     #[error("Error, block include a dead tx {}", _0)]
     DeadTx(Hash),
     #[error("A non-zero value is required for burn")]
-    NoValueForBurn
+    NoValueForBurn,
+    #[error("TX {} is already in blockchain", _0)]
+    TxAlreadyInBlockchain(Hash)
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

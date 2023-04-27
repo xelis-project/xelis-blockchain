@@ -959,7 +959,68 @@ impl<S: Storage> P2pServer<S> {
                 if sender.send(response.to_owned()?).is_err() {
                     error!("Error while sending object response to sender!");
                 }
-            }
+            },
+            Packet::NotifyInventory(packet_wrapper) => {
+                trace!("Received a notify inventory from {}", peer);
+                let (inventory, ping) = packet_wrapper.consume();
+                ping.into_owned().update_peer(peer).await;
+
+                if !peer.has_requested_inventory() {
+                    debug!("Received a notify inventory from {} but we didn't request it", peer);
+                    return Err(P2pError::InvalidPacket)
+                }
+
+                // we received the inventory
+                peer.set_requested_inventory(false);
+                peer.set_last_inventory(get_current_time());
+
+                // check and add if we are missing a TX in our mempool or storage
+                let mut missing_txs: Vec<&Cow<Hash>> = Vec::new();
+                {
+                    let mempool = self.blockchain.get_mempool().read().await;
+                    let storage = self.blockchain.get_storage().read().await;
+                    for hash in inventory.get_txs().iter() {
+                        if !mempool.contains_tx(hash) && !storage.has_transaction(&hash).await? {
+                            missing_txs.push(hash);
+                        }
+                    }
+                }
+
+                // retrieve all txs we don't have concurrently
+                for hash in missing_txs {
+                    let peer = Arc::clone(&peer);
+                    let blockchain = Arc::clone(&self.blockchain);
+                    let hash = hash.as_ref().clone();
+                    tokio::spawn(async move {
+                        let response = match peer.request_blocking_object(ObjectRequest::Transaction(hash)).await {
+                            Ok(response) => response,
+                            Err(e) => {
+                                error!("Error while retrieving tx from {} inventory: {}", peer, e);
+                                peer.increment_fail_count();
+                                return;
+                            }
+                        };
+
+                        if let OwnedObjectResponse::Transaction(tx, hash) = response {
+                            if let Err(e) = blockchain.add_tx_with_hash_to_mempool(tx, hash, false).await {
+                                match e {
+                                    BlockchainError::TxAlreadyInMempool(hash) | BlockchainError::TxAlreadyInBlockchain(hash) => {
+                                        // ignore because maybe another peer send us this same tx
+                                        trace!("Received a tx we already have in mempool: {}", hash);
+                                    },
+                                    _ => {
+                                        error!("Error while adding tx to mempool from {} inventory: {}", peer, e);
+                                        peer.increment_fail_count();
+                                    }
+                                }
+                            }
+                        } else {
+                            error!("Error while retrieving tx from {} inventory, got an invalid type, we should ban this peer", peer);
+                            peer.increment_fail_count();
+                        }
+                    });
+                }
+            },
         };
         Ok(())
     }

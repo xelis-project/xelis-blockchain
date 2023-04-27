@@ -752,6 +752,10 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::TxAlreadyInMempool(hash))
         }
 
+        if storage.has_transaction(&hash).await? {
+            return Err(BlockchainError::TxAlreadyInBlockchain(hash))
+        }
+
         {
             // get the highest nonce for this owner
             let owner = tx.get_owner();
