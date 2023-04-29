@@ -324,10 +324,6 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                             error!("Mining Thread #{}: error while sending block found with hash {}", id, block_hash);
                             continue 'main;
                         }
-
-                        if !WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
-                            continue 'main;
-                        }
                     }
                 };
             } else {
