@@ -17,7 +17,7 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse
+        GetTopoHeightRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse, GetHeightRangeParams
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -125,9 +125,9 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_mempool", async_handler!(get_mempool));
     handler.register_method("get_tips", async_handler!(get_tips));
     handler.register_method("get_dag_order", async_handler!(get_dag_order));
-    handler.register_method("get_blocks", async_handler!(get_blocks));
+    handler.register_method("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight));
+    handler.register_method("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height));
     handler.register_method("get_transactions", async_handler!(get_transactions));
-
 }
 
 async fn version<S: Storage>(_: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
@@ -380,7 +380,7 @@ const MAX_DAG_ORDER: u64 = 64;
 // get dag order based on params
 // if no params found, get order of last 64 blocks
 async fn get_dag_order<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetRangeParams = parse_params(body)?;
+    let params: GetTopoHeightRangeParams = parse_params(body)?;
 
     let current_topoheight = blockchain.get_topo_height();
     let start_topoheight = params.start_topoheight.unwrap_or_else(|| {
@@ -414,38 +414,66 @@ async fn get_dag_order<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) 
 }
 
 const MAX_BLOCKS: u64 = 20;
-// get blocks between range of topoheight
-// if no params found, get last 20 blocks header
-async fn get_blocks<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetRangeParams = parse_params(body)?;
 
-    let current_topoheight = blockchain.get_topo_height();
-    let start_topoheight = params.start_topoheight.unwrap_or_else(|| {
-        if params.end_topoheight.is_none() && current_topoheight > MAX_BLOCKS {
-            current_topoheight - MAX_BLOCKS
+fn get_range(start: Option<u64>, end: Option<u64>, current: u64) -> Result<(u64, u64), InternalRpcError> {
+    let range_start = start.unwrap_or_else(|| {
+        if end.is_none() && current > MAX_BLOCKS {
+            current - MAX_BLOCKS
         } else {
             0
         }
     });
 
-    let end_topoheight = params.end_topoheight.unwrap_or(current_topoheight);
-    if end_topoheight < start_topoheight || end_topoheight > current_topoheight {
-        debug!("get blocks range: start = {}, end = {}, max = {}", start_topoheight, end_topoheight, current_topoheight);
+    let range_end = end.unwrap_or(current);
+    if range_end < range_start || range_end > current {
+        debug!("get blocks range by topo height: start = {}, end = {}, max = {}", range_start, range_end, current);
         return Err(InternalRpcError::InvalidRequest)
     }
 
-    let count = end_topoheight - start_topoheight;
+    let count = range_end - range_start;
     if count > MAX_BLOCKS { // only retrieve max 20 blocks hash per request
         debug!("get blocks requested count: {}", count);
         return Err(InternalRpcError::InvalidRequest) 
     }
 
+    Ok((range_start, range_end))
+}
+
+// get blocks between range of topoheight
+// if no params found, get last 20 blocks header
+async fn get_blocks_range_by_topoheight<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetTopoHeightRangeParams = parse_params(body)?;
+
+    let current_topoheight = blockchain.get_topo_height();
+    let (start_topoheight, end_topoheight) = get_range(params.start_topoheight, params.end_topoheight, current_topoheight)?;
+
     let storage = blockchain.get_storage().read().await;
-    let mut blocks = Vec::with_capacity(count as usize);
+    let mut blocks = Vec::with_capacity((end_topoheight - start_topoheight) as usize);
     for i in start_topoheight..=end_topoheight {
         let hash = storage.get_hash_at_topo_height(i).await.context("Error while retrieving hash at topo height")?;
         let response = get_block_response_for_hash(&blockchain, &storage, hash, false).await?;
         blocks.push(response);
+    }
+
+    Ok(json!(blocks))
+}
+
+// get blocks between range of height
+// if no params found, get last 20 blocks header
+// you can only request 
+async fn get_blocks_range_by_height<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetHeightRangeParams = parse_params(body)?;
+    let current_height = blockchain.get_height();
+    let (start_height, end_height) = get_range(params.start_height, params.end_height, current_height)?;
+
+    let storage = blockchain.get_storage().read().await;
+    let mut blocks = Vec::with_capacity((end_height - start_height) as usize);
+    for i in start_height..=end_height {
+        let blocks_at_height = storage.get_blocks_at_height(i).await.context("Error while retrieving blocks at height")?;
+        for hash in blocks_at_height {
+            let response = get_block_response_for_hash(&blockchain, &storage, hash, false).await?;
+            blocks.push(response);
+        }
     }
 
     Ok(json!(blocks))

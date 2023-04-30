@@ -138,9 +138,15 @@ pub struct P2pStatusResult<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetRangeParams {
+pub struct GetTopoHeightRangeParams {
     pub start_topoheight: Option<u64>,
     pub end_topoheight: Option<u64>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetHeightRangeParams {
+    pub start_height: Option<u64>,
+    pub end_height: Option<u64>
 }
 
 #[derive(Serialize, Deserialize)]
