@@ -126,6 +126,11 @@ impl Mempool {
 
     // delete all old txs not compatible anymore with current state of account
     pub async fn clean_up(&mut self, nonces: HashMap<PublicKey, u64>) {
+        if self.nonces.is_empty() || nonces.is_empty() {
+            debug!("No mempool cleanup needed");
+            return;
+        }
+
         debug!("Cleaning up mempool ({} accounts)...", nonces.len());
         for (key, nonce) in nonces {
             let mut delete_cache = false;
@@ -155,9 +160,8 @@ impl Mempool {
                         !delete
                     });
 
-                    if cache.txs.is_empty() {
-                        delete_cache = true;
-                    }
+                    // delete the nonce cache if no txs are left
+                    delete_cache = cache.txs.is_empty();
 
                     // now delete all necessary txs
                     for hash in hashes {
