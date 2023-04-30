@@ -154,7 +154,6 @@ pub struct TransactionResponse<'a, T: Clone> {
     pub blocks: Option<HashSet<Hash>>,
     // in which blocks it was executed
     pub executed_in_block: Option<Hash>,
-    // TODO executed_block which give the hash of the block in which this tx got executed
     #[serde(flatten)]
     pub data: DataHash<'a, T>
 }
