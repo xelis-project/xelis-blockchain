@@ -139,16 +139,18 @@ pub enum BlockchainError {
     BlockDeviation,
     #[error("Invalid genesis block hash")]
     InvalidGenesisHash,
-    #[error("Invalid tx nonce for account")]
-    InvalidTxNonce,
+    #[error("Invalid tx nonce (got {} expected {}) for {}", _0, _1, _2)]
+    InvalidTxNonce(u64, u64, PublicKey),
+    #[error("Invalid tx nonce for mempool cache")]
+    InvalidTxNonceMempoolCache,
     #[error("Invalid asset ID: {}", _0)]
     AssetNotFound(Hash),
     #[error(transparent)]
     DifficultyError(#[from] DifficultyError),
-    #[error("No balance found on disk")]
-    NoBalance,
-    #[error("No balance changes for specific topoheight and asset")]
-    NoBalanceChanges,
+    #[error("No balance found on disk for {}", _0)]
+    NoBalance(PublicKey),
+    #[error("No balance changes for {} at specific topoheight and asset", _0)]
+    NoBalanceChanges(PublicKey),
     #[error("Overflow detected")]
     Overflow,
     #[error("Error, block include a dead tx {}", _0)]

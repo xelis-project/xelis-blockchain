@@ -761,10 +761,10 @@ impl<S: Storage> Blockchain<S> {
             let owner = tx.get_owner();
             // get the highest nonce available
             // if presents, it means we have at least one tx from this owner in mempool
-            if let Some(nonce) = mempool.get_cached_nonce(owner) {      
+            if let Some(nonce) = mempool.get_cached_nonce(owner) {
                 // check that the nonce is in the range
                 if !(tx.get_nonce() <= nonce.get_max() + 1 && tx.get_nonce() >= nonce.get_min()) {
-                    return Err(BlockchainError::InvalidTxNonce)
+                    return Err(BlockchainError::InvalidTxNonceMempoolCache)
                 }
 
                 // compute balances of previous pending TXs
@@ -1506,11 +1506,13 @@ impl<S: Storage> Blockchain<S> {
             let mut keys = HashSet::new();
             // merge miners keys
             for key in &miners {
+                debug!("Adding miner key {}", key);
                 keys.insert(key);
             }
 
             // Add dev address in rewinding in case we receive dev fees
             if DEV_FEE_PERCENT != 0 {
+                debug!("Adding dev key {}", *DEV_PUBLIC_KEY);
                 keys.insert(&DEV_PUBLIC_KEY);
             }
 
@@ -1694,14 +1696,14 @@ impl<S: Storage> Blockchain<S> {
     
                 if *nonce != tx.get_nonce() {
                     debug!("Tx {} has nonce {} but expected {}", hash, tx.get_nonce(), nonce);
-                    return Err(BlockchainError::InvalidTxNonce)
+                    return Err(BlockchainError::InvalidTxNonce(tx.get_nonce(), *nonce, tx.get_owner().clone()))
                 }
                 // we increment it in case any new tx for same owner is following
                 *nonce += 1;
             } else {
                 let nonce = storage.get_nonce(tx.get_owner()).await?;
                 if nonce != tx.get_nonce() {
-                    return Err(BlockchainError::InvalidTxNonce)
+                    return Err(BlockchainError::InvalidTxNonce(tx.get_nonce(), nonce, tx.get_owner().clone()))
                 }
             }
         }
@@ -1805,15 +1807,11 @@ impl<S: Storage> Blockchain<S> {
             TransactionType::Transfer(txs) => {
                 for output in txs {
                     keys.insert(&output.to);
-                    if !assets.contains(&output.asset) {
-                        assets.insert(&output.asset);
-                    }
+                    assets.insert(&output.asset);
                 }
             },
             TransactionType::Burn { asset, amount: _ } => {
-                if !assets.contains(asset) {
-                    assets.insert(asset);
-                }
+                assets.insert(asset);
             },
             _ => {
                 return Err(BlockchainError::SmartContractTodo)
@@ -1822,7 +1820,7 @@ impl<S: Storage> Blockchain<S> {
 
         // keep the lowest nonce available
         let nonce = nonces.entry(transaction.get_owner()).or_insert(transaction.get_nonce());
-        if *nonce < transaction.get_nonce() {
+        if *nonce > transaction.get_nonce() {
             *nonce = transaction.get_nonce();
         }
         Ok(())

@@ -443,7 +443,7 @@ impl Storage for SledStorage {
         trace!("has balance {} for {} at exact topoheight {}", asset, key, topoheight);
         // check first that this address has balance, if no returns
         if !self.has_balance_for(key, asset).await? {
-            return Err(BlockchainError::NoBalanceChanges)
+            return Err(BlockchainError::NoBalanceChanges(key.clone()))
         }
 
         let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
@@ -456,11 +456,11 @@ impl Storage for SledStorage {
         trace!("get balance {} for {} at exact topoheight {}", asset, key, topoheight);
         // check first that this address has balance, if no returns
         if !self.has_balance_for(key, asset).await? {
-            return Err(BlockchainError::NoBalanceChanges)
+            return Err(BlockchainError::NoBalanceChanges(key.clone()))
         }
 
         let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
-        self.get_data(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges)
+        self.get_data(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone()))
     }
 
     // delete the last topoheight registered for this key
@@ -516,7 +516,7 @@ impl Storage for SledStorage {
     async fn delete_balance_at_topoheight(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("delete balance {} for {} at topoheight {}", asset, key, topoheight);
         let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
-        self.delete_data_no_arc(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges)
+        self.delete_data_no_arc(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone()))
     }
 
     // returns a new versioned balance with already-set previous topoheight
@@ -550,7 +550,7 @@ impl Storage for SledStorage {
     async fn get_last_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(u64, VersionedBalance), BlockchainError> {
         trace!("get last balance {} for {}", asset, key);
         if !self.has_balance_for(key, asset).await? {
-            return Err(BlockchainError::NoBalance)
+            return Err(BlockchainError::NoBalance(key.clone()))
         }
 
         let tree = self.db.open_tree(asset.as_bytes())?;
