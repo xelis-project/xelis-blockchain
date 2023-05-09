@@ -55,7 +55,7 @@ where
     async fn unsubscribe_session_from_event(&self, session: &WebSocketSessionShared<Self>, event: E, id: Option<usize>) -> Result<(), RpcResponseError> {
         let mut sessions = self.sessions.lock().await;
         let events = sessions.entry(session.clone()).or_insert_with(HashMap::new);
-        if events.contains_key(&event) {
+        if !events.contains_key(&event) {
             return Err(RpcResponseError::new(id, InternalRpcError::EventNotSubscribed));
         }
 
