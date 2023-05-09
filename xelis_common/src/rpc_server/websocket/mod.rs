@@ -116,16 +116,21 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     }
 
     pub async fn handle_connection(self: &Arc<Self>, request: &HttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
+        debug!("Handling new WebSocket connection");
         let (response, session, stream) = actix_ws::handle(request, body)?;
+        let id = self.next_id();
+        debug!("Created new WebSocketSession with id {}", id);
         let session = Arc::new(WebSocketSession {
-            id: self.next_id(),
+            id,
             server: Arc::clone(&self),
             inner: Mutex::new(Some(session)),
         });
 
         {
+            debug!("Inserting session #{} into sessions", id);
             let mut sessions = self.sessions.lock().await;
-            sessions.insert(Arc::clone(&session));
+            let res = sessions.insert(Arc::clone(&session));
+            debug!("Session #{} has been inserted into sessions: {}", id, res);
         }
 
         actix_rt::spawn(Arc::clone(self).handle_ws_internal(session.clone(), stream));
@@ -175,24 +180,31 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                         break Some(CloseReason::from(CloseCode::Error));
                     }
                 },
-                None => break None,
+                None => {
+                    debug!("Stream closed for session #{}", session.id);
+                    break None
+                },
             };
     
             // handle message
             match msg {
                 Message::Text(text) => {
+                    debug!("Received text message for session #{}: {}", session.id, text);
                     if let Err(e) = self.handler.on_message(&session, text.as_bytes()).await {
                         debug!("Error while calling on_message: {}", e);
                         break Some(CloseReason::from(CloseCode::Error));
                     }
                 },
-                Message::Close(reason) => break reason,
+                Message::Close(reason) => {
+                    debug!("Received close message for session #{}: {:?}", session.id, reason);
+                    break reason;
+                },
                 msg => {
                     debug!("Received websocket message not supported: {:?}", msg);
                 }
             }
         };
-    
+
         // attempt to close connection gracefully
         self.delete_session(&session, reason).await;
     }
