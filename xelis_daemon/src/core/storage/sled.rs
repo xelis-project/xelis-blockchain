@@ -23,7 +23,7 @@ const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
 const TOP_HEIGHT: &[u8; 4] = b"TOPH";
 const NETWORK: &[u8] = b"NET";
-
+const PRUNED_HEIGHT: &[u8; 4] = b"PRUN";
 
 pub struct SledStorage {
     transactions: Tree, // all txs stored on disk
@@ -51,7 +51,8 @@ pub struct SledStorage {
     assets_cache: Option<Mutex<LruCache<Hash, ()>>>,
     nonces_cache: Option<Mutex<LruCache<PublicKey, u64>>>,
     balances_trees_cache: Option<Mutex<LruCache<u64, Tree>>>, // versioned balances tree keep in cache to prevent hash recompute
-    tips_cache: Tips
+    tips_cache: Tips,
+    pruned_height: Option<u64>
 }
 
 macro_rules! init_cache {
@@ -92,7 +93,8 @@ impl SledStorage {
             assets_cache: init_cache!(cache_size),
             nonces_cache: init_cache!(cache_size),
             balances_trees_cache: init_cache!(cache_size),
-            tips_cache: HashSet::new()
+            tips_cache: HashSet::new(),
+            pruned_height: None
         };
 
         if storage.has_network()? {
@@ -107,6 +109,11 @@ impl SledStorage {
         if let Ok(tips) = storage.load_from_disk::<Tips>(&storage.extra, TIPS) {
             debug!("Found tips: {}", tips.len());
             storage.tips_cache = tips;
+        }
+
+        if let Ok(pruned_height) = storage.load_from_disk::<u64>(&storage.extra, PRUNED_HEIGHT) {
+            debug!("Found pruned height: {}", pruned_height);
+            storage.pruned_height = Some(pruned_height);
         }
 
         Ok(storage)
@@ -298,6 +305,16 @@ impl DifficultyProvider for SledStorage {
 
 #[async_trait]
 impl Storage for SledStorage {
+    fn get_pruned_height(&self) -> Result<Option<u64>, BlockchainError> {
+        Ok(self.pruned_height)
+    }
+
+    fn set_pruned_height(&mut self, pruned_height: u64) -> Result<(), BlockchainError> {
+        self.pruned_height = Some(pruned_height);
+        self.extra.insert(PRUNED_HEIGHT, &pruned_height.to_be_bytes())?;
+        Ok(())
+    }
+
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
         self.load_from_disk(&self.txs_executed, tx.as_bytes())
     }

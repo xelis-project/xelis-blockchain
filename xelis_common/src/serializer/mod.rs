@@ -71,6 +71,17 @@ impl Writer {
         };
     }
 
+    pub fn write_optional_u64(&mut self, opt: &Option<u64>) {
+        match opt {
+            Some(v) => {
+                self.write_u64(v);
+            },
+            None => {
+                self.bytes.push(0);
+            }
+        };
+    }
+
     pub fn total_write(&self) -> usize {
         self.bytes.len()
     }
@@ -104,7 +115,12 @@ impl<'a> Reader<'a> {
     }
 
     pub fn read_bool(&mut self) -> Result<bool, ReaderError> {
-        Ok(self.read_u8()? == 1)
+        let byte = self.read_u8()?;
+        match byte {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(ReaderError::InvalidValue)
+        }
     }
 
     pub fn read_bytes<T>(&mut self, n: usize) -> Result<T, ReaderError>
@@ -189,6 +205,18 @@ impl<'a> Reader<'a> {
             0 => Ok(None),
             n => Ok(Some(self.read_string_with_size(n as usize)?)),
         }
+    }
+
+    pub fn read_optional_u64(&mut self) -> Result<Option<u64>, ReaderError> {
+        let byte = self.read_u8()?;
+        if byte == 0 {
+            return Ok(None)
+        }
+
+        let mut array = [0; 8];
+        array[0] = byte;
+        array[1..].copy_from_slice(&self.read_bytes::<[u8; 7]>(7)?);
+        Ok(Some(u64::from_be_bytes(array)))
     }
 
     pub fn read_big_uint(&mut self) -> Result<BigUint, ReaderError> {

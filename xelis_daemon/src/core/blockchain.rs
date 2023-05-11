@@ -1358,7 +1358,7 @@ impl<S: Storage> Blockchain<S> {
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
-                p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, &block_hash).await;
+                p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, storage.get_pruned_height()?, &block_hash).await;
             }
         }
 

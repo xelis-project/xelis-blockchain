@@ -107,6 +107,7 @@ pub struct GetInfoResult {
     pub height: u64,
     pub topoheight: u64,
     pub stableheight: u64,
+    pub pruned_height: Option<u64>,
     pub top_hash: Hash,
     pub native_supply: u64,
     pub difficulty: Difficulty,

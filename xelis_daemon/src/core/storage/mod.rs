@@ -25,7 +25,10 @@ pub trait DifficultyProvider {
 }
 
 #[async_trait]
-pub trait Storage: DifficultyProvider + Sync + Send + 'static { // TODO delete these traits
+pub trait Storage: DifficultyProvider + Sync + Send + 'static {
+    fn get_pruned_height(&self) -> Result<Option<u64>, BlockchainError>;
+    fn set_pruned_height(&mut self, pruned_height: u64) -> Result<(), BlockchainError>;
+
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError>;
     fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError>;
     fn remove_tx_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError>;
