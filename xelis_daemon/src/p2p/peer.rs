@@ -344,7 +344,7 @@ impl Display for Peer {
             "No".to_string()
         };
 
-        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, top hash: {}, height: {}, pruned: {:?}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}]",
+        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, top hash: {}, height: {}, pruned: {}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}]",
             self.get_connection(),
             self.get_id(),
             self.get_topoheight(),
