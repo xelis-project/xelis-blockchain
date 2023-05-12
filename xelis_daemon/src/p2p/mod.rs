@@ -292,7 +292,7 @@ impl<S: Storage> P2pServer<S> {
     // Verify handshake send by a new connection
     // based on data size, network ID, peers address validity
     // block height and block top hash of this peer (to know if we are on the same chain)
-    async fn verify_handshake(&self, mut connection: Connection, handshake: Handshake, out: bool, priority: bool) -> Result<(Peer, Vec<SocketAddr>), P2pError> {
+    async fn verify_handshake(&self, mut connection: Connection, handshake: Handshake, out: bool, priority: bool) -> Result<Peer, P2pError> {
         if handshake.get_network() != self.blockchain.get_network() {
             trace!("{} has an invalid network: {}", connection, handshake.get_network());
             return Err(P2pError::InvalidNetwork)
@@ -316,35 +316,17 @@ impl<S: Storage> P2pServer<S> {
         }
 
         connection.set_state(State::Success);
-        let (peer, peers) = handshake.create_peer(connection, out, priority, Arc::clone(&self.peer_list));
-        Ok((peer, peers))
+        let peer = handshake.create_peer(connection, out, priority, Arc::clone(&self.peer_list));
+        Ok(peer)
     }
 
     async fn build_handshake(&self) -> Result<Handshake, P2pError> {
-        let mut peers: Vec<SocketAddr> = Vec::new();
-        {
-            let peer_list = self.peer_list.read().await;
-            let mut iter = peer_list.get_peers().iter();
-            while peers.len() < Handshake::MAX_LEN {
-                match iter.next() {
-                    Some((_, v)) => {
-                        let mut addr: SocketAddr = v.get_connection().get_address().clone();
-                        if !v.is_out() {
-                            addr.set_port(v.get_local_port());
-                        }
-                        peers.push(addr);
-                    },
-                    None => break
-                };
-            }
-        }
-
         let storage = self.blockchain.get_storage().read().await;
         let (block, top_hash) = storage.get_top_block_header().await?;
         let topoheight = self.blockchain.get_topo_height();
         let pruned_topoheight = storage.get_pruned_topoheight()?;
         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_hash).await.unwrap_or(0);
-        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, block.get_height(), pruned_topoheight, top_hash, GENESIS_BLOCK_HASH.clone(), cumulative_difficulty, peers))
+        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, block.get_height(), pruned_topoheight, top_hash, GENESIS_BLOCK_HASH.clone(), cumulative_difficulty))
     }
 
     // this function handle all new connections
@@ -358,7 +340,7 @@ impl<S: Storage> P2pServer<S> {
         };
         trace!("received handshake packet!");
         connection.set_state(State::Handshake);
-        let (peer, peers) = self.verify_handshake(connection, handshake, out, priority).await?;
+        let peer = self.verify_handshake(connection, handshake, out, priority).await?;
         trace!("Handshake has been verified");
         // if it's a outgoing connection, don't send the handshake back
         // because we have already sent it
@@ -385,18 +367,6 @@ impl<S: Storage> P2pServer<S> {
             let mut peer_list = self.peer_list.write().await;
             peer_list.add_peer(peer_id, peer)
         };
-
-        // try to extend our peer list
-        for peer_addr in peers { // should we limit to X peers only ?
-            if !self.accept_new_connections().await {
-                break
-            }
-
-            if !self.is_connected_to_addr(&peer_addr).await? {
-                debug!("Trying to extend peer list with {} from {}", peer_addr, peer);
-                self.try_to_connect_to_peer(peer_addr, false);
-            }
-        }
 
         self.handle_connection(peer.clone()).await
     }
