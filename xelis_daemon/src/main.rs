@@ -87,6 +87,7 @@ async fn run_prompt<S: Storage>(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain
     command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(pop_blocks))));
     command_manager.add_command(Command::new("clear_mempool", "Clear all transactions in mempool", None, CommandHandler::Async(async_handler!(clear_mempool))));
     command_manager.add_command(Command::with_required_arguments("add_tx", "Add a TX in hex format in mempool", vec![Arg::new("hex", ArgType::String)], Some(Arg::new("broadcast", ArgType::Bool)), CommandHandler::Async(async_handler!(add_tx))));
+    command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified block height", vec![Arg::new("height", ArgType::Number)], None, CommandHandler::Async(async_handler!(prune_chain))));
 
     let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
@@ -295,5 +296,14 @@ async fn add_tx<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut ar
     let blockchain = manager.get_data()?;
     blockchain.add_tx_with_hash_to_mempool(tx, hash, broadcast).await.context("Error while adding TX to mempool")?;
     manager.message("TX has been added to mempool");
+    Ok(())
+}
+
+async fn prune_chain<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let height = arguments.get_value("height")?.to_number()?;
+    let blockchain = manager.get_data()?;
+    manager.message(format!("Pruning chain until maximum height {}", height));
+    let pruned_topoheight = blockchain.prune_until_height(height).await.context("Error while pruning chain")?;
+    manager.message(format!("Chain has been pruned until topoheight {}", pruned_topoheight));
     Ok(())
 }
