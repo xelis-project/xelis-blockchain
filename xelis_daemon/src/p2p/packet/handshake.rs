@@ -154,10 +154,6 @@ impl Serializer for Handshake {
         let top_hash = reader.read_hash()?;
         let genesis_hash = reader.read_hash()?;
         let cumulative_difficulty = reader.read_u64()?;
-        let peers_len = reader.read_u8()? as usize;
-        if peers_len > Handshake::MAX_LEN {
-            return Err(ReaderError::InvalidSize)
-        }
 
         Ok(Handshake::new(version, network, node_tag, network_id, peer_id, local_port, utc_time, topoheight, height, pruned_topoheight, top_hash, genesis_hash, cumulative_difficulty))
     }
