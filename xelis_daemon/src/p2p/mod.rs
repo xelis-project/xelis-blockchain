@@ -342,9 +342,9 @@ impl<S: Storage> P2pServer<S> {
         let storage = self.blockchain.get_storage().read().await;
         let (block, top_hash) = storage.get_top_block_header().await?;
         let topoheight = self.blockchain.get_topo_height();
-        let pruned_height = storage.get_pruned_height()?;
+        let pruned_topoheight = storage.get_pruned_topoheight()?;
         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_hash).await.unwrap_or(0);
-        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, block.get_height(), pruned_height, top_hash, GENESIS_BLOCK_HASH.clone(), cumulative_difficulty, peers))
+        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, block.get_height(), pruned_topoheight, top_hash, GENESIS_BLOCK_HASH.clone(), cumulative_difficulty, peers))
     }
 
     // this function handle all new connections
@@ -428,12 +428,12 @@ impl<S: Storage> P2pServer<S> {
     // build a ping packet with the current state of the blockchain
     // if a peer is given, we will check and update the peers list
     async fn build_generic_ping_packet(&self) -> Ping<'_> {
-        let (cumulative_difficulty, block_top_hash, pruned_height) = {
+        let (cumulative_difficulty, block_top_hash, pruned_topoheight) = {
             let storage = self.blockchain.get_storage().read().await;
-            let pruned_height = match storage.get_pruned_height() {
-                Ok(pruned_height) => pruned_height,
+            let pruned_topoheight = match storage.get_pruned_topoheight() {
+                Ok(pruned_topoheight) => pruned_topoheight,
                 Err(e) => {
-                    error!("Couldn't get the pruned height from storage for generic ping packet: {}", e);
+                    error!("Couldn't get the pruned topoheight from storage for generic ping packet: {}", e);
                     None
                 }
             };
@@ -441,15 +441,15 @@ impl<S: Storage> P2pServer<S> {
             match storage.get_top_block_hash().await {
                 Err(e) => {
                     error!("Couldn't get the top block hash from storage for generic ping packet: {}", e);
-                    (0, Hash::zero(), pruned_height)
+                    (0, Hash::zero(), pruned_topoheight)
                 },
-                Ok(hash) => (storage.get_cumulative_difficulty_for_block_hash(&hash).await.unwrap_or(0), hash, pruned_height)
+                Ok(hash) => (storage.get_cumulative_difficulty_for_block_hash(&hash).await.unwrap_or(0), hash, pruned_topoheight)
             }
         };
         let highest_topo_height = self.blockchain.get_topo_height();
         let highest_height = self.blockchain.get_height();
         let new_peers = Vec::new();
-        Ping::new(Cow::Owned(block_top_hash), highest_topo_height, highest_height, pruned_height, cumulative_difficulty, new_peers)
+        Ping::new(Cow::Owned(block_top_hash), highest_topo_height, highest_height, pruned_topoheight, cumulative_difficulty, new_peers)
     }
 
     // select a random peer which is greater than us to sync chain
@@ -462,7 +462,7 @@ impl<S: Storage> P2pServer<S> {
         // search for peers which are greater than us
         // and that are pruned but before our height so we can sync correctly
         let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p|
-            p.get_pruned_height().unwrap_or(0) < our_height
+            p.get_pruned_topoheight().unwrap_or(0) < our_height
             && (p.get_height() > our_height || p.get_topoheight() > our_topoheight)
         ).collect();
         let count = peers.len();
@@ -1320,11 +1320,11 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: u64, highest_topoheight: u64, highest_height: u64, pruned_height: Option<u64>, hash: &Hash) {
+    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: u64, highest_topoheight: u64, highest_height: u64, pruned_topoheight: Option<u64>, hash: &Hash) {
         trace!("Broadcast block: {}", hash);
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock
-        let ping = Ping::new(Cow::Borrowed(hash), highest_topoheight, highest_height, pruned_height, cumulative_difficulty, Vec::new());
+        let ping = Ping::new(Cow::Borrowed(hash), highest_topoheight, highest_height, pruned_topoheight, cumulative_difficulty, Vec::new());
         let block_packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Borrowed(&ping)));
         let bytes = Bytes::from(block_packet.to_bytes());
 
@@ -1369,10 +1369,11 @@ impl<S: Storage> P2pServer<S> {
         {
             let storage = self.blockchain.get_storage().read().await;
             let topoheight = self.blockchain.get_topo_height();
+            let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
             let mut i = 0;
 
             // we add 1 for the genesis block added below
-            while i < topoheight && request.size() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
+            while i < topoheight && topoheight - i >= pruned_topoheight && request.size() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
                 trace!("Requesting hash at topo {}", topoheight - i);
                 let hash = storage.get_hash_at_topo_height(topoheight - i).await?;
                 request.add_block_id(hash, topoheight - i);

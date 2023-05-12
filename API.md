@@ -56,7 +56,7 @@ No parameters
 		"block_time_target": 15000,
 		"difficulty": 310532,
 		"height": 9,
-		"pruned_height": null,
+		"pruned_topoheight": null,
 		"mempool_size": 0,
 		"native_supply": 8773780,
 		"stableheight": 1,

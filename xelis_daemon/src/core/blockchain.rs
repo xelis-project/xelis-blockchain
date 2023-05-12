@@ -113,7 +113,7 @@ impl<S: Storage> Blockchain<S> {
             network,
             tip_base_cache: Mutex::new(LruCache::new(1024)),
             tip_work_score_cache: Mutex::new(LruCache::new(1024)),
-            full_order_cache: Mutex::new(LruCache::new(1024))
+            full_order_cache: Mutex::new(LruCache::new(1024)),
         };
 
         // include genesis block
@@ -270,6 +270,61 @@ impl<S: Storage> Blockchain<S> {
         zelf.add_new_block(block, true).await?;
         info!("Mined a new block {} at height {}", hash, block_height);
         Ok(())
+    }
+
+    // delete all blocks / versioned balances / txs until height in param
+    // for this, we have to locate the nearest Sync block for DAG under the limit height
+    // and then delete all blocks before it
+    pub async fn prune_until_height(&self, height: u64) -> Result<(), BlockchainError> {
+        let current_height = self.get_height();
+        if height >= current_height || current_height - height < STABLE_LIMIT * 2 {
+            return Err(BlockchainError::PruneHeightTooHigh)
+        }
+
+        let mut storage = self.storage.write().await;
+        let last_pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
+        // find both stable point through sync block
+        let located_sync_topoheight = self.locate_nearest_sync_block_for_height(&storage, height, current_height).await?;
+        // delete all blocks until the new topoheight
+        let assets = storage.get_assets().await?;
+        for topoheight in last_pruned_topoheight..located_sync_topoheight {
+            // delete block
+            let block_header = storage.delete_block_at_topoheight(topoheight).await?;
+
+            // delete balances for all assets
+            for asset in &assets {
+                storage.delete_versioned_balances_for_asset_at_topoheight(asset, topoheight).await?;
+            }
+
+            // delete transactions for this block
+            for tx_hash in block_header.get_txs_hashes() {
+                if storage.has_transaction(tx_hash).await? {
+                    storage.delete_tx(tx_hash).await?;
+                }
+            }
+        }
+
+        storage.set_pruned_topoheight(located_sync_topoheight)?;
+
+        Ok(())
+    }
+
+    // determine the topoheight of the nearest sync block until block height
+    pub async fn locate_nearest_sync_block_for_height(&self, storage: &S, mut height: u64, current_height: u64) -> Result<u64, BlockchainError> {
+        while height > 0 {
+            let blocks = storage.get_blocks_at_height(height).await?;
+            for hash in blocks {
+                if self.is_sync_block_at_height(storage, &hash, current_height).await? {
+                    let topoheight = storage.get_topo_height_for_hash(&hash).await?;
+                    return Ok(topoheight)
+                }
+            }
+
+            height -= 1;
+        }
+
+        // genesis block is always a sync block
+        Ok(0)
     }
 
     // returns the highest (unstable) height on the chain
@@ -1358,7 +1413,7 @@ impl<S: Storage> Blockchain<S> {
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
-                p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, storage.get_pruned_height()?, &block_hash).await;
+                p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, storage.get_pruned_topoheight()?, &block_hash).await;
             }
         }
 

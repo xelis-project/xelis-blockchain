@@ -158,7 +158,9 @@ pub enum BlockchainError {
     #[error("A non-zero value is required for burn")]
     NoValueForBurn,
     #[error("TX {} is already in blockchain", _0)]
-    TxAlreadyInBlockchain(Hash)
+    TxAlreadyInBlockchain(Hash),
+    #[error("Cannot prune, not enough blocks")]  
+    PruneHeightTooHigh
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

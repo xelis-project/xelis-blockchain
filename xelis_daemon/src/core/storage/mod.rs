@@ -26,8 +26,12 @@ pub trait DifficultyProvider {
 
 #[async_trait]
 pub trait Storage: DifficultyProvider + Sync + Send + 'static {
-    fn get_pruned_height(&self) -> Result<Option<u64>, BlockchainError>;
-    fn set_pruned_height(&mut self, pruned_height: u64) -> Result<(), BlockchainError>;
+    fn get_pruned_topoheight(&self) -> Result<Option<u64>, BlockchainError>;
+    fn set_pruned_topoheight(&mut self, pruned_topoheight: u64) -> Result<(), BlockchainError>;
+
+    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<Arc<BlockHeader>, BlockchainError>;
+    async fn delete_tx(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
+    async fn delete_versioned_balances_for_asset_at_topoheight(&mut self, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
 
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError>;
     fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError>;

@@ -50,12 +50,12 @@ pub struct Peer {
     blocks_propagation: Mutex<LruCache<Hash, ()>>, // last blocks propagated to/from this peer
     last_inventory: AtomicU64, // last time we got an inventory packet from this peer
     requested_inventory: AtomicBool, // if we requested this peer to send us an inventory notification
-    pruned_height: AtomicU64,
+    pruned_topoheight: AtomicU64,
     is_pruned: AtomicBool
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_height: Option<u64>, out: bool, priority: bool, cumulative_difficulty: u64, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: u64, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
         Self {
             connection,
             id,
@@ -81,8 +81,8 @@ impl Peer {
             blocks_propagation: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
             last_inventory: AtomicU64::new(0),
             requested_inventory: AtomicBool::new(false),
-            pruned_height: AtomicU64::new(pruned_height.unwrap_or(0)),
-            is_pruned: AtomicBool::new(pruned_height.is_some())
+            pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
+            is_pruned: AtomicBool::new(pruned_topoheight.is_some())
         }
     }
 
@@ -134,18 +134,18 @@ impl Peer {
         self.is_pruned.load(Ordering::Acquire)
     }
 
-    pub fn get_pruned_height(&self) -> Option<u64> {
+    pub fn get_pruned_topoheight(&self) -> Option<u64> {
         if self.is_pruned() {
-            Some(self.pruned_height.load(Ordering::Acquire))
+            Some(self.pruned_topoheight.load(Ordering::Acquire))
         } else {
             None
         }
     }
 
-    pub fn set_pruned_height(&self, pruned_height: Option<u64>) {
-        if let Some(pruned_height) = pruned_height {
+    pub fn set_pruned_topoheight(&self, pruned_topoheight: Option<u64>) {
+        if let Some(pruned_topoheight) = pruned_topoheight {
             self.is_pruned.store(true, Ordering::Release);
-            self.height.store(pruned_height, Ordering::Release);
+            self.height.store(pruned_topoheight, Ordering::Release);
         } else {
             self.is_pruned.store(false, Ordering::Release);
         }
@@ -338,7 +338,7 @@ impl Display for Peer {
             "Couldn't retrieve data".to_string()
         };
 
-        let pruned_state = if let Some(value) = self.get_pruned_height() {
+        let pruned_state = if let Some(value) = self.get_pruned_topoheight() {
             format!("Yes ({})", value)
         } else {
             "No".to_string()

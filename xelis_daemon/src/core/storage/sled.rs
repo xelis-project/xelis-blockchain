@@ -23,7 +23,7 @@ const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
 const TOP_HEIGHT: &[u8; 4] = b"TOPH";
 const NETWORK: &[u8] = b"NET";
-const PRUNED_HEIGHT: &[u8; 4] = b"PRUN";
+const PRUNED_TOPOHEIGHT: &[u8; 4] = b"PRUN";
 
 pub struct SledStorage {
     transactions: Tree, // all txs stored on disk
@@ -52,7 +52,7 @@ pub struct SledStorage {
     nonces_cache: Option<Mutex<LruCache<PublicKey, u64>>>,
     balances_trees_cache: Option<Mutex<LruCache<u64, Tree>>>, // versioned balances tree keep in cache to prevent hash recompute
     tips_cache: Tips,
-    pruned_height: Option<u64>
+    pruned_topoheight: Option<u64>
 }
 
 macro_rules! init_cache {
@@ -94,7 +94,7 @@ impl SledStorage {
             nonces_cache: init_cache!(cache_size),
             balances_trees_cache: init_cache!(cache_size),
             tips_cache: HashSet::new(),
-            pruned_height: None
+            pruned_topoheight: None
         };
 
         if storage.has_network()? {
@@ -111,9 +111,9 @@ impl SledStorage {
             storage.tips_cache = tips;
         }
 
-        if let Ok(pruned_height) = storage.load_from_disk::<u64>(&storage.extra, PRUNED_HEIGHT) {
-            debug!("Found pruned height: {}", pruned_height);
-            storage.pruned_height = Some(pruned_height);
+        if let Ok(pruned_topoheight) = storage.load_from_disk::<u64>(&storage.extra, PRUNED_TOPOHEIGHT) {
+            debug!("Found pruned topoheight: {}", pruned_topoheight);
+            storage.pruned_topoheight = Some(pruned_topoheight);
         }
 
         Ok(storage)
@@ -305,13 +305,59 @@ impl DifficultyProvider for SledStorage {
 
 #[async_trait]
 impl Storage for SledStorage {
-    fn get_pruned_height(&self) -> Result<Option<u64>, BlockchainError> {
-        Ok(self.pruned_height)
+    fn get_pruned_topoheight(&self) -> Result<Option<u64>, BlockchainError> {
+        Ok(self.pruned_topoheight)
     }
 
-    fn set_pruned_height(&mut self, pruned_height: u64) -> Result<(), BlockchainError> {
-        self.pruned_height = Some(pruned_height);
-        self.extra.insert(PRUNED_HEIGHT, &pruned_height.to_be_bytes())?;
+    fn set_pruned_topoheight(&mut self, pruned_topoheight: u64) -> Result<(), BlockchainError> {
+        self.pruned_topoheight = Some(pruned_topoheight);
+        self.extra.insert(PRUNED_TOPOHEIGHT, &pruned_topoheight.to_be_bytes())?;
+        Ok(())
+    }
+
+    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<Arc<BlockHeader>, BlockchainError> {
+        // delete topoheight<->hash pointers
+        let hash = self.delete_data_no_arc(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await?;
+        self.delete_data_no_arc::<Hash, u64>(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
+
+        let topoheight_bytes = topoheight.to_be_bytes();
+        // delete block reward
+        self.rewards.remove(topoheight_bytes)?;
+        // delete supply
+        self.supply.remove(topoheight_bytes)?;
+        // delete difficulty
+        self.difficulty.remove(topoheight_bytes)?;
+        // delete cummulative difficulty
+        self.cumulative_difficulty.remove(topoheight_bytes)?;
+
+        // delete block header
+        let block_header = self.delete_data(&self.blocks, &self.blocks_cache, &hash).await?;
+        // remove the block hash from the set, and delete the set if empty
+        let mut blocks = self.get_blocks_at_height(block_header.get_height()).await?;
+        blocks.remove(&hash);
+        let height_bytes = block_header.get_height().to_be_bytes();
+        if blocks.is_empty() {
+            self.blocks_at_height.remove(height_bytes)?;
+        } else {
+            self.blocks_at_height.insert(height_bytes, blocks.to_bytes())?;
+        }
+
+        if let Some(cache) = &self.past_blocks_cache {
+            let mut cache = cache.lock().await;
+            cache.pop(&hash);
+        }
+
+        Ok(block_header)
+    }
+
+    async fn delete_tx(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
+        self.delete_data_no_arc::<Hash, HashSet<Hash>>(&self.tx_blocks, &None, hash).await?;
+        self.delete_data(&self.transactions, &self.transactions_cache, hash).await
+    }
+
+    async fn delete_versioned_balances_for_asset_at_topoheight(&mut self, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
+        let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
+        self.db.drop_tree(tree.name())?;
         Ok(())
     }
 
@@ -326,6 +372,8 @@ impl Storage for SledStorage {
 
     fn remove_tx_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError> {
         self.txs_executed.remove(tx.as_bytes())?;
+        self.remove_tx_executed(tx)?;
+
         Ok(())
     }
 
