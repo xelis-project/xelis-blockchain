@@ -116,7 +116,7 @@ impl Serializer for Handshake {
         writer.write_u64(&self.utc_time); // UTC Time
         writer.write_u64(&self.topoheight); // Topo height
         writer.write_u64(&self.height); // Block Height
-        writer.write_optional_u64(&self.pruned_topoheight); // Pruned Topo Height
+        writer.write_optional_non_zero_u64(&self.pruned_topoheight); // Pruned Topo Height
         writer.write_hash(&self.top_hash); // Block Top Hash (32 bytes)
         writer.write_hash(&self.genesis_hash); // Genesis Hash
         writer.write_u64(&self.cumulative_difficulty);
@@ -150,7 +150,7 @@ impl Serializer for Handshake {
         let utc_time = reader.read_u64()?;
         let topoheight = reader.read_u64()?;
         let height = reader.read_u64()?;
-        let pruned_topoheight = reader.read_optional_u64()?;
+        let pruned_topoheight = reader.read_optional_non_zero_u64()?;
         let top_hash = reader.read_hash()?;
         let genesis_hash = reader.read_hash()?;
         let cumulative_difficulty = reader.read_u64()?;

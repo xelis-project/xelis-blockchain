@@ -94,7 +94,7 @@ impl Serializer for Ping<'_> {
         writer.write_hash(&self.top_hash);
         writer.write_u64(&self.topoheight);
         writer.write_u64(&self.height);
-        writer.write_optional_u64(&self.pruned_topoheight);
+        writer.write_optional_non_zero_u64(&self.pruned_topoheight);
         writer.write_u64(&self.cumulative_difficulty);
         writer.write_u8(self.peer_list.len() as u8);
         for peer in &self.peer_list {
@@ -106,7 +106,7 @@ impl Serializer for Ping<'_> {
         let top_hash = Cow::Owned(reader.read_hash()?);
         let topoheight = reader.read_u64()?;
         let height = reader.read_u64()?;
-        let pruned_topoheight = reader.read_optional_u64()?;
+        let pruned_topoheight = reader.read_optional_non_zero_u64()?;
         let cumulative_difficulty = reader.read_u64()?;
         let peers_len = reader.read_u8()? as usize;
         if peers_len > P2P_PING_PEER_LIST_LIMIT {
