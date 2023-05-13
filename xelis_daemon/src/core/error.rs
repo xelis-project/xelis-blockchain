@@ -160,7 +160,11 @@ pub enum BlockchainError {
     #[error("TX {} is already in blockchain", _0)]
     TxAlreadyInBlockchain(Hash),
     #[error("Cannot prune, not enough blocks")]  
-    PruneHeightTooHigh
+    PruneHeightTooHigh,
+    #[error("Cannot prune until topoheight 0, provide a positive number")]
+    PruneZero,
+    #[error("Prune topoheight is lower or equal than previous pruned topoheight")]
+    PruneLowerThanLastPruned
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

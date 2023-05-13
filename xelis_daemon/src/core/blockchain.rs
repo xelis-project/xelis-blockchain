@@ -275,8 +275,12 @@ impl<S: Storage> Blockchain<S> {
     // delete all blocks / versioned balances / txs until topoheight in param
     // for this, we have to locate the nearest Sync block for DAG under the limit topoheight
     // and then delete all blocks before it
-    // keep a marge of STABLE_LIMIT * 10
+    // keep a marge of PRUNE_SAFETY_LIMIT
     pub async fn prune_until_topoheight(&self, topoheight: u64) -> Result<u64, BlockchainError> {
+        if topoheight == 0 {
+            return Err(BlockchainError::PruneZero)
+        }
+
         let current_topoheight = self.get_topo_height();
         if topoheight >= current_topoheight || current_topoheight - topoheight < PRUNE_SAFETY_LIMIT {
             return Err(BlockchainError::PruneHeightTooHigh)
@@ -284,7 +288,11 @@ impl<S: Storage> Blockchain<S> {
 
         let mut storage = self.storage.write().await;
         let last_pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
-        // find both stable point through sync block
+        if last_pruned_topoheight <= topoheight {
+            return Err(BlockchainError::PruneLowerThanLastPruned)
+        }
+
+        // find new stable point based on a sync block under the limit topoheight
         let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight(&storage, topoheight, self.get_height()).await?;
         debug!("Located sync topoheight found: {}", located_sync_topoheight);
 
