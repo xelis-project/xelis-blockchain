@@ -49,14 +49,14 @@ impl<'a> Ping<'a> {
         peer.set_block_top_hash(self.top_hash.into_owned()).await;
         peer.set_topoheight(self.topoheight);
         peer.set_height(self.height);
-        
+
         if peer.is_pruned() != self.pruned_topoheight.is_some() {
             error!("Invalid protocol rules: impossible to change the pruned state, from {} in ping packet", peer);
             return Err(P2pError::InvalidProtocolRules)
         }
 
         if let Some(pruned_topoheight) = self.pruned_topoheight {
-            if pruned_topoheight > self.height {
+            if pruned_topoheight > self.topoheight {
                 error!("Invalid protocol rules: pruned topoheight {} is greater than height {} in ping packet", pruned_topoheight, self.height);
                 return Err(P2pError::InvalidProtocolRules)
             }            

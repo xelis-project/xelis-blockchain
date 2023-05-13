@@ -89,12 +89,20 @@ impl Handshake {
         self.height
     }
 
+    pub fn get_topoheight(&self) -> u64 {
+        self.topoheight
+    }
+
     pub fn get_block_top_hash(&self) -> &Hash {
         &self.top_hash
     }
 
     pub fn get_block_genesis_hash(&self) -> &Hash {
         &self.genesis_hash
+    }
+
+    pub fn get_pruned_topoheight(&self) -> &Option<u64> {
+        &self.pruned_topoheight
     }
 }
 

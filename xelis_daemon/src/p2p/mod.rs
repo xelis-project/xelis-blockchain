@@ -315,6 +315,14 @@ impl<S: Storage> P2pServer<S> {
             return Err(P2pError::InvalidHandshake)
         }
 
+        if let Some(pruned_topoheight) = handshake.get_pruned_topoheight() {
+            let topoheight = handshake.get_topoheight();
+            if *pruned_topoheight > topoheight {
+                debug!("Peer {} has a pruned topoheight {} higher than its topoheight {}", connection, pruned_topoheight, topoheight);
+                return Err(P2pError::InvalidHandshake)
+            }
+        }
+
         connection.set_state(State::Success);
         let peer = handshake.create_peer(connection, out, priority, Arc::clone(&self.peer_list));
         Ok(peer)
