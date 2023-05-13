@@ -2,7 +2,7 @@ use anyhow::Error;
 use lru::LruCache;
 use serde_json::{Value, json};
 use xelis_common::{
-    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME},
+    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME, PRUNE_SAFETY_LIMIT},
     crypto::{key::PublicKey, hash::{Hashable, Hash}},
     difficulty::{check_difficulty, calculate_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
@@ -272,19 +272,20 @@ impl<S: Storage> Blockchain<S> {
         Ok(())
     }
 
-    // delete all blocks / versioned balances / txs until height in param
-    // for this, we have to locate the nearest Sync block for DAG under the limit height
+    // delete all blocks / versioned balances / txs until topoheight in param
+    // for this, we have to locate the nearest Sync block for DAG under the limit topoheight
     // and then delete all blocks before it
-    pub async fn prune_until_height(&self, height: u64) -> Result<u64, BlockchainError> {
-        let current_height = self.get_height();
-        if height >= current_height || current_height - height < STABLE_LIMIT * 2 {
+    // keep a marge of STABLE_LIMIT * 10
+    pub async fn prune_until_topoheight(&self, topoheight: u64) -> Result<u64, BlockchainError> {
+        let current_topoheight = self.get_topo_height();
+        if topoheight >= current_topoheight || current_topoheight - topoheight < PRUNE_SAFETY_LIMIT {
             return Err(BlockchainError::PruneHeightTooHigh)
         }
 
         let mut storage = self.storage.write().await;
         let last_pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
         // find both stable point through sync block
-        let located_sync_topoheight = self.locate_nearest_sync_block_for_height(&storage, height, current_height).await?;
+        let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight(&storage, topoheight, self.get_height()).await?;
         debug!("Located sync topoheight found: {}", located_sync_topoheight);
 
         // delete all blocks until the new topoheight
@@ -311,18 +312,16 @@ impl<S: Storage> Blockchain<S> {
         Ok(located_sync_topoheight)
     }
 
-    // determine the topoheight of the nearest sync block until block height
-    pub async fn locate_nearest_sync_block_for_height(&self, storage: &S, mut height: u64, current_height: u64) -> Result<u64, BlockchainError> {
-        while height > 0 {
-            let blocks = storage.get_blocks_at_height(height).await?;
-            for hash in blocks {
-                if self.is_sync_block_at_height(storage, &hash, current_height).await? {
-                    let topoheight = storage.get_topo_height_for_hash(&hash).await?;
-                    return Ok(topoheight)
-                }
+    // determine the topoheight of the nearest sync block until limit topoheight
+    pub async fn locate_nearest_sync_block_for_topoheight(&self, storage: &S, mut topoheight: u64, current_height: u64) -> Result<u64, BlockchainError> {
+        while topoheight > 0 {
+            let block_hash = storage.get_hash_at_topo_height(topoheight).await?;
+            if self.is_sync_block_at_height(storage, &block_hash, current_height).await? {
+                let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
+                return Ok(topoheight)
             }
 
-            height -= 1;
+            topoheight -= 1;
         }
 
         // genesis block is always a sync block

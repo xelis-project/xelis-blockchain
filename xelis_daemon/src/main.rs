@@ -87,7 +87,8 @@ async fn run_prompt<S: Storage>(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain
     command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(pop_blocks))));
     command_manager.add_command(Command::new("clear_mempool", "Clear all transactions in mempool", None, CommandHandler::Async(async_handler!(clear_mempool))));
     command_manager.add_command(Command::with_required_arguments("add_tx", "Add a TX in hex format in mempool", vec![Arg::new("hex", ArgType::String)], Some(Arg::new("broadcast", ArgType::Bool)), CommandHandler::Async(async_handler!(add_tx))));
-    command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified block height", vec![Arg::new("height", ArgType::Number)], None, CommandHandler::Async(async_handler!(prune_chain))));
+    command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified block height", vec![Arg::new("topoheight", ArgType::Number)], None, CommandHandler::Async(async_handler!(prune_chain))));
+    command_manager.add_command(Command::new("status", "Current daemon status", None, CommandHandler::Async(async_handler!(status))));
 
     let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
@@ -300,10 +301,42 @@ async fn add_tx<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut ar
 }
 
 async fn prune_chain<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let height = arguments.get_value("height")?.to_number()?;
+    let topoheight = arguments.get_value("topoheight")?.to_number()?;
     let blockchain = manager.get_data()?;
-    manager.message(format!("Pruning chain until maximum height {}", height));
-    let pruned_topoheight = blockchain.prune_until_height(height).await.context("Error while pruning chain")?;
+    manager.message(format!("Pruning chain until maximum topoheight {}", topoheight));
+    let pruned_topoheight = blockchain.prune_until_topoheight(topoheight).await.context("Error while pruning chain")?;
     manager.message(format!("Chain has been pruned until topoheight {}", pruned_topoheight));
+    Ok(())
+}
+
+async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain = manager.get_data()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let height = blockchain.get_height();
+    let topoheight = blockchain.get_topo_height();
+    let stableheight = blockchain.get_stable_height();
+    let difficulty = blockchain.get_difficulty();
+    let tips = storage.get_tips().await.context("Error while retrieving tips")?;
+    let top_block_hash = blockchain.get_top_block_hash().await.context("Error while retrieving top block hash")?;
+
+    manager.message(format!("Height: {}", height));
+    manager.message(format!("Stable Height: {}", stableheight));
+    manager.message(format!("Topo Height: {}", topoheight));
+    manager.message(format!("Difficulty: {}", difficulty));
+    manager.message(format!("Top block hash: {}", top_block_hash));
+
+    manager.message(format!("Tips ({}):", tips.len()));
+    for hash in tips {
+        manager.message(format!("- {}", hash));
+    }
+
+    if let Some(pruned_topoheight) = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")? {
+        manager.message(format!("Chain is pruned until topoheight {}", pruned_topoheight));
+    } else {
+        manager.message("Chain is in full mode");
+    }
+
+    //manager.message(format!("Running since: {}", manager.running_since().elapsed().format("%Y-%m-%d %H:%M:%S")));
     Ok(())
 }

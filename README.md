@@ -82,6 +82,16 @@ Miners software are recommended to update themselves the block timestamp (or at 
 
 Actually, the POW Hashing algorithm is `Keccak256` which is until we develop (or choose) our own algorithm.
 
+## Pruning Mode
+
+This allows anyone who want to run a light node to reduce the blockchain size by deleting blocks, transactions and versioned balances.
+The pruned topoheight can only be at a `Sync Block` and behind at least `PRUNE_SAFETY_LIMIT` blocks of the top topoheight.
+
+For wallets connected to a pruned node, you can't retrieve transactions history and miner rewards which happened before the pruned topoheight.
+But your balances are still up-to-date with the chain and if your wallets already synced them, they stay in your wallet database.
+
+The security of the chain is not reduced as all your blocks were already verified by your own node locally.
+
 ## Client Protocol
 
 XELIS integrate along with BlockDAG a way to accept multiple times the same TX and only execute it one time.
