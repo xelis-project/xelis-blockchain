@@ -9,6 +9,7 @@ use xelis_common::config::XELIS_ASSET;
 use xelis_common::crypto::address::Address;
 use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey};
+use xelis_common::globals::format_coin;
 use xelis_common::network::Network;
 use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
@@ -52,9 +53,9 @@ pub enum WalletError {
     InvalidSaltSize,
     #[error("Error while fetching password salt from DB")]
     NoSaltFound,
-    #[error("Your wallet contains only {} instead of {} for asset {}", _0, _1, _2)]
+    #[error("Your wallet contains only {} instead of {} for asset {}", format_coin(*_0), format_coin(*_1), _2)]
     NotEnoughFunds(u64, u64, Hash),
-    #[error("Your wallet don't have enough funds to pay fees: expected {} but have only {}", _0, _1)]
+    #[error("Your wallet don't have enough funds to pay fees: expected {} but have only {}", format_coin(*_0), format_coin(*_1))]
     NotEnoughFundsForFee(u64, u64),
     #[error("Invalid address params")]
     InvalidAddressParams,
@@ -73,7 +74,9 @@ pub enum WalletError {
     #[error("RPC Server is not running")]
     RPCServerNotRunning,
     #[error("RPC Server is already running")]
-    RPCServerAlreadyRunning
+    RPCServerAlreadyRunning,
+    #[error("Invalid fees provided, minimum fees calculated: {}, provided: {}", format_coin(*_0), format_coin(*_1))]
+    InvalidFeeProvided(u64, u64)
 }
 
 pub struct Wallet {
