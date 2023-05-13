@@ -305,7 +305,13 @@ async fn prune_chain<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, m
     let topoheight = arguments.get_value("topoheight")?.to_number()?;
     let blockchain = manager.get_data()?;
     manager.message(format!("Pruning chain until maximum topoheight {}", topoheight));
-    let pruned_topoheight = blockchain.prune_until_topoheight(topoheight).await.context("Error while pruning chain")?;
+    let pruned_topoheight = match blockchain.prune_until_topoheight(topoheight).await {
+        Ok(topoheight) => topoheight,
+        Err(e) => {
+            manager.error(format!("Error while pruning chain: {}", e));
+            return Ok(());
+        }
+    };
     manager.message(format!("Chain has been pruned until topoheight {}", pruned_topoheight));
     Ok(())
 }

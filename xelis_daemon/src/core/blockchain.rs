@@ -288,7 +288,7 @@ impl<S: Storage> Blockchain<S> {
 
         let mut storage = self.storage.write().await;
         let last_pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
-        if last_pruned_topoheight <= topoheight {
+        if topoheight <= last_pruned_topoheight {
             return Err(BlockchainError::PruneLowerThanLastPruned)
         }
 
