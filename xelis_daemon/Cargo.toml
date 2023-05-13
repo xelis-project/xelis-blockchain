@@ -17,6 +17,7 @@ sled = "0.34.7"
 lru = "0.7.8"
 async-recursion = "1"
 async-trait = "0.1.64"
+humantime = "2.1.0"
 
 # Common dependencies
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "time", "macros", "sync", "net"] }

@@ -3,6 +3,7 @@ pub mod p2p;
 pub mod core;
 
 use fern::colors::Color;
+use humantime::format_duration;
 use log::{info, error, warn};
 use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
@@ -337,6 +338,8 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
         manager.message("Chain is in full mode");
     }
 
-    //manager.message(format!("Running since: {}", manager.running_since().elapsed().format("%Y-%m-%d %H:%M:%S")));
+    let elapsed_seconds = manager.running_since().as_secs();
+    let elapsed = format_duration(Duration::from_secs(elapsed_seconds)).to_string();
+    manager.message(format!("Uptime: {}", elapsed));
     Ok(())
 }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display, time::Instant};
+use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display, time::{Instant, Duration}};
 
 use crate::config::VERSION;
 
@@ -183,8 +183,8 @@ impl<T> CommandManager<T> {
         error!("{}", message);
     }
 
-    pub fn running_since(&self) -> Instant {
-        self.running_since
+    pub fn running_since(&self) -> Duration {
+        self.running_since.elapsed()
     }
 }
 
