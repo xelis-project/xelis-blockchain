@@ -295,25 +295,29 @@ impl<S: Storage> Blockchain<S> {
         // find new stable point based on a sync block under the limit topoheight
         let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight(&storage, topoheight, self.get_height()).await?;
         debug!("Located sync topoheight found: {}", located_sync_topoheight);
+        
+        if located_sync_topoheight > last_pruned_topoheight {
+            // delete all blocks until the new topoheight
+            let assets = storage.get_assets().await?;
+            for topoheight in last_pruned_topoheight..located_sync_topoheight {
+                trace!("Pruning block at topoheight {}", topoheight);
+                // delete block
+                let block_header = storage.delete_block_at_topoheight(topoheight).await?;
 
-        // delete all blocks until the new topoheight
-        let assets = storage.get_assets().await?;
-        for topoheight in last_pruned_topoheight..located_sync_topoheight {
-            trace!("Pruning block at topoheight {}", topoheight);
-            // delete block
-            let block_header = storage.delete_block_at_topoheight(topoheight).await?;
+                // delete balances for all assets
+                for asset in &assets {
+                    storage.delete_versioned_balances_for_asset_at_topoheight(asset, topoheight).await?;
+                }
 
-            // delete balances for all assets
-            for asset in &assets {
-                storage.delete_versioned_balances_for_asset_at_topoheight(asset, topoheight).await?;
-            }
-
-            // delete transactions for this block
-            for tx_hash in block_header.get_txs_hashes() {
-                if storage.has_transaction(tx_hash).await? {
-                    storage.delete_tx(tx_hash).await?;
+                // delete transactions for this block
+                for tx_hash in block_header.get_txs_hashes() {
+                    if storage.has_transaction(tx_hash).await? {
+                        storage.delete_tx(tx_hash).await?;
+                    }
                 }
             }
+        } else {
+            debug!("located_sync_topoheight <= topoheight, no pruning needed");
         }
 
         storage.set_pruned_topoheight(located_sync_topoheight)?;

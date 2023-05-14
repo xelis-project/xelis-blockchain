@@ -60,6 +60,13 @@ impl<'a> Ping<'a> {
                 error!("Invalid protocol rules: pruned topoheight {} is greater than height {} in ping packet", pruned_topoheight, self.height);
                 return Err(P2pError::InvalidProtocolRules)
             }
+
+            if let Some(old_pruned_topoheight) = peer.get_pruned_topoheight() {
+                if pruned_topoheight < old_pruned_topoheight {
+                    error!("Invalid protocol rules: pruned topoheight {} is less than old pruned topoheight {} in ping packet", pruned_topoheight, old_pruned_topoheight);
+                    return Err(P2pError::InvalidProtocolRules)
+                }
+            }
         }
 
         peer.set_pruned_topoheight(self.pruned_topoheight);

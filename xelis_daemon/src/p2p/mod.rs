@@ -439,9 +439,14 @@ impl<S: Storage> P2pServer<S> {
         let our_topoheight = self.blockchain.get_topo_height();
         // search for peers which are greater than us
         // and that are pruned but before our height so we can sync correctly
-        let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p|
-            p.get_pruned_topoheight().unwrap_or(0) < our_height
-            && (p.get_height() > our_height || p.get_topoheight() > our_topoheight)
+        let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p| {
+            if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
+                if pruned_topoheight > our_topoheight {
+                    return false
+                }
+            }
+            p.get_height() > our_height || p.get_topoheight() > our_topoheight
+        }
         ).collect();
         let count = peers.len();
         trace!("peers available for random selection: {}", count);
