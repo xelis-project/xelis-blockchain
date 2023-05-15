@@ -297,8 +297,11 @@ impl<S: Storage> Blockchain<S> {
         debug!("Located sync topoheight found: {}", located_sync_topoheight);
         
         if located_sync_topoheight > last_pruned_topoheight {
-            // delete all blocks until the new topoheight
             let assets = storage.get_assets().await?;
+            // create snapshots of balances to located_sync_topoheight
+            storage.create_snapshot_balances_at_topoheight(&assets, located_sync_topoheight).await?;
+
+            // delete all blocks until the new topoheight
             for topoheight in last_pruned_topoheight..located_sync_topoheight {
                 trace!("Pruning block at topoheight {}", topoheight);
                 // delete block

@@ -361,6 +361,51 @@ impl Storage for SledStorage {
         Ok(())
     }
 
+    async fn create_snapshot_balances_at_topoheight(&mut self, assets: &Vec<Hash>, topoheight: u64) -> Result<(), BlockchainError> {
+        for asset in assets {
+            // tree where VersionedBalance are stored
+            let versioned_tree = self.get_versioned_balance_tree(asset, topoheight).await?;
+            // asset tree where PublicKey are stored with the highest balance topoheight in it
+            let tree = self.db.open_tree(asset.as_bytes())?;
+            for el in tree.iter() {
+                let (key_bytes, value) = el?;
+                let key = PublicKey::from_bytes(&key_bytes)?;
+                let highest_balance_topoheight = u64::from_bytes(&value)?;
+
+                // retrieve the highest versioned balance
+                let mut versioned_balance = self.get_balance_at_exact_topoheight(&key, asset, highest_balance_topoheight).await?;
+
+                // if the highest topoheight for this account is less than the snapshot topoheight
+                // update it to the topoheight
+                // otherwise, delete the previous topoheight in VersionedBalance which is under topoheight
+                if highest_balance_topoheight < topoheight {
+                    // save the new highest topoheight
+                    tree.insert(&key_bytes, &topoheight.to_be_bytes())?;
+                    // remove the previous topoheight
+                    versioned_balance.set_previous_topoheight(None);
+
+                    // save it
+                    versioned_tree.insert(key_bytes, versioned_balance.to_bytes())?;
+                } else {
+                    // find the first VersionedBalance which is under topoheight
+                    while let Some(previous_topoheight) = versioned_balance.get_previous_topoheight() {
+                        if previous_topoheight < topoheight {
+                            versioned_balance.set_previous_topoheight(None);
+                            // save it
+                            versioned_tree.insert(key_bytes, versioned_balance.to_bytes())?;
+                            break;
+                        }
+
+                        // keep searching
+                        versioned_balance = self.get_balance_at_exact_topoheight(&key, asset, previous_topoheight).await?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
         self.load_from_disk(&self.txs_executed, tx.as_bytes())
     }

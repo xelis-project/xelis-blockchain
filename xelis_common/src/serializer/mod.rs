@@ -287,9 +287,15 @@ pub trait Serializer {
         match hex::decode(&hex) {
             Ok(bytes) => {
                 let mut reader = Reader::new(&bytes);
-                Serializer::read(&mut reader)
+                Self::read(&mut reader)
             },
             Err(_) => Err(ReaderError::InvalidHex)
         }
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, ReaderError>
+    where Self: Sized {
+        let mut reader = Reader::new(bytes);
+        Self::read(&mut reader)
     }
 }
