@@ -164,7 +164,9 @@ pub enum BlockchainError {
     #[error("Cannot prune until topoheight 0, provide a positive number")]
     PruneZero,
     #[error("Prune topoheight is lower or equal than previous pruned topoheight")]
-    PruneLowerThanLastPruned
+    PruneLowerThanLastPruned,
+    #[error("Auto prune mode is misconfigured")]
+    AutoPruneMode
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

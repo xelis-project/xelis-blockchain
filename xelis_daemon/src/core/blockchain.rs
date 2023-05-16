@@ -57,7 +57,12 @@ pub struct Config {
     pub simulator: bool,
     /// Disable the p2p connections
     #[clap(long)]
-    pub disable_p2p_server: bool
+    pub disable_p2p_server: bool,
+    /// Enable the auto prune mode and prune the chain
+    /// at each new block by keeping at least N blocks
+    /// before the top.
+    #[clap(long)]
+    pub auto_prune_keep_n_blocks: Option<u64>
 }
 
 pub struct Blockchain<S: Storage> {
@@ -81,6 +86,7 @@ pub struct Blockchain<S: Storage> {
     // tip work score is used to determine the best tip based on a block, tip base ands a base height
     tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, Difficulty)>>,
     full_order_cache: Mutex<LruCache<(Hash, Hash, u64), Vec<Hash>>>,
+    auto_prune_keep_n_blocks: Option<u64>
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -88,6 +94,13 @@ impl<S: Storage> Blockchain<S> {
         if config.simulator && network != Network::Dev {
             error!("Impossible to enable simulator mode except in dev network!");
             return Err(BlockchainError::InvalidNetwork.into())
+        }
+
+        if let Some(keep_only) = config.auto_prune_keep_n_blocks {
+            if keep_only < PRUNE_SAFETY_LIMIT {
+                error!("Auto prune mode should keep at least 80 blocks");
+                return Err(BlockchainError::AutoPruneMode.into())
+            }
         }
 
         let on_disk = storage.has_blocks();
@@ -114,6 +127,7 @@ impl<S: Storage> Blockchain<S> {
             tip_base_cache: Mutex::new(LruCache::new(1024)),
             tip_work_score_cache: Mutex::new(LruCache::new(1024)),
             full_order_cache: Mutex::new(LruCache::new(1024)),
+            auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks
         };
 
         // include genesis block
@@ -272,11 +286,16 @@ impl<S: Storage> Blockchain<S> {
         Ok(())
     }
 
+    pub async fn prune_until_topoheight(&self, topoheight: u64) -> Result<u64, BlockchainError> {
+        let mut storage = self.storage.write().await;
+        self.prune_until_topoheight_for_storage(topoheight, &mut storage).await
+    }
+
     // delete all blocks / versioned balances / txs until topoheight in param
     // for this, we have to locate the nearest Sync block for DAG under the limit topoheight
     // and then delete all blocks before it
     // keep a marge of PRUNE_SAFETY_LIMIT
-    pub async fn prune_until_topoheight(&self, topoheight: u64) -> Result<u64, BlockchainError> {
+    pub async fn prune_until_topoheight_for_storage(&self, topoheight: u64, storage: &mut S) -> Result<u64, BlockchainError> {
         if topoheight == 0 {
             return Err(BlockchainError::PruneZero)
         }
@@ -286,7 +305,6 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::PruneHeightTooHigh)
         }
 
-        let mut storage = self.storage.write().await;
         let last_pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
         if topoheight <= last_pruned_topoheight {
             return Err(BlockchainError::PruneLowerThanLastPruned)
@@ -319,12 +337,12 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
             }
+            storage.set_pruned_topoheight(located_sync_topoheight)?;
+            Ok(located_sync_topoheight)
         } else {
             debug!("located_sync_topoheight <= topoheight, no pruning needed");
+            Ok(last_pruned_topoheight)
         }
-
-        storage.set_pruned_topoheight(located_sync_topoheight)?;
-        Ok(located_sync_topoheight)
     }
 
     // determine the topoheight of the nearest sync block until limit topoheight
@@ -1388,12 +1406,28 @@ impl<S: Storage> Blockchain<S> {
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
-        if current_height == 0 || highest_topo > current_topoheight {
+        let extended = highest_topo > current_topoheight;
+        if current_height == 0 || extended {
             debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
             storage.set_top_topoheight(highest_topo)?;
             self.topoheight.store(highest_topo, Ordering::Release);
             current_topoheight = highest_topo;
         }
+
+        // auto prune mode
+        if extended {
+            if let Some(keep_only) = self.auto_prune_keep_n_blocks {
+                // check that the topoheight is greater than the safety limit
+                // and that we can prune the chain using the config while respecting the safety limit
+                if current_topoheight % keep_only == 0 {
+                    info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
+                    if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, storage).await {
+                        warn!("Error while trying to auto prune chain: {}", e);
+                    }
+                }
+            }
+        }
+
         storage.store_tips(&tips)?;
 
         let mut current_height = current_height;
@@ -1403,7 +1437,6 @@ impl<S: Storage> Blockchain<S> {
             self.height.store(block.get_height(), Ordering::Release);
             current_height = block.get_height();
         }
-
         if storage.is_block_topological_ordered(&block_hash).await {
             let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
             debug!("Adding new '{}' {} at topoheight {}", block_hash, block, topoheight);
