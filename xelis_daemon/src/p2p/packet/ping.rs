@@ -87,6 +87,10 @@ impl<'a> Ping<'a> {
         self.height
     }
 
+    pub fn get_topoheight(&self) -> u64 {
+        self.topoheight
+    }
+
     pub fn set_peers(&mut self, peers: Vec<SocketAddr>) {
         self.peer_list = peers;
     }

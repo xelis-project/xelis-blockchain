@@ -44,6 +44,7 @@ pub const P2P_DEFAULT_MAX_PEERS: usize = 32; // default number of maximum peers
 pub const PEER_FAIL_TIME_RESET: u64 = 60 * 5; // number of seconds to reset the counter
 pub const PEER_FAIL_LIMIT: u8 = 20; // number of fail to disconnect the peer
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 3000; // millis until we timeout
+pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 10000; // millis until we timeout
 
 // Wallet config
 pub const DEFAULT_DAEMON_ADDRESS: &str = "http://127.0.0.1:8080";

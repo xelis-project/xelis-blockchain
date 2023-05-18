@@ -1,7 +1,7 @@
 mod sled;
 pub use self::sled::SledStorage;
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::{HashSet, BTreeSet}, sync::Arc};
 use async_trait::async_trait;
 use xelis_common::{
     crypto::{key::PublicKey, hash::Hash},
@@ -34,6 +34,12 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn delete_versioned_balances_for_asset_at_topoheight(&mut self, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
     async fn create_snapshot_balances_at_topoheight(&mut self, assets: &Vec<Hash>, topoheight: u64) -> Result<(), BlockchainError>;
 
+    fn get_partial_assets(&self, maximum: usize, skip: usize) -> Result<BTreeSet<Hash>, BlockchainError>;
+    fn get_partial_keys(&self, maximum: usize, skip: usize) -> Result<BTreeSet<PublicKey>, BlockchainError>;
+
+    async fn get_balances<T: AsRef<PublicKey> + Send + Sync, I: Iterator<Item = T> + Send>(&self, asset: &Hash, keys: I) -> Result<Vec<Option<u64>>, BlockchainError>;
+
+
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError>;
     fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError>;
     fn remove_tx_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError>;
@@ -52,7 +58,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     fn has_tx_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError>;
     fn has_block_linked_to_tx(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError>;
     fn get_blocks_for_tx(&self, hash: &Hash) -> Result<Tips, BlockchainError>;
-    fn add_block_for_tx(&mut self, tx: &Hash, block: Hash) -> Result<(), BlockchainError>;
+    fn add_block_for_tx(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError>;
 
     fn set_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
     fn delete_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash) -> Result<(), BlockchainError>;

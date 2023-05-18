@@ -4,6 +4,7 @@ use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 use super::address::{Address, AddressType};
 use super::hash::Hash;
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::fmt::{Display, Error, Formatter};
 use rand::{rngs::OsRng, RngCore};
 use std::hash::Hasher;
@@ -64,6 +65,18 @@ impl Serializer for PublicKey {
 impl PartialEq for PublicKey {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
+    }
+}
+
+impl PartialOrd for PublicKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.as_bytes().cmp(other.as_bytes()))
+    }
+}
+
+impl Ord for PublicKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_bytes().cmp(other.as_bytes())
     }
 }
 

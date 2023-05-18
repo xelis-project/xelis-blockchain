@@ -86,6 +86,17 @@ impl Writer {
         };
     }
 
+    pub fn write_optional_non_zero_u8(&mut self, opt: Option<u8>) {
+        match opt {
+            Some(v) => {
+                self.write_u8(v);
+            },
+            None => {
+                self.bytes.push(0);
+            }
+        };
+    }
+
     pub fn total_write(&self) -> usize {
         self.bytes.len()
     }
@@ -226,6 +237,15 @@ impl<'a> Reader<'a> {
         }
 
         Ok(Some(self.read_u64_le()?))
+    }
+
+    pub fn read_optional_non_zero_u8(&mut self) -> Result<Option<u8>, ReaderError> {
+        let byte = self.read_u8()?;
+        if byte == 0 {
+            return Ok(None)
+        }
+
+        Ok(Some(byte))
     }
 
     pub fn read_big_uint(&mut self) -> Result<BigUint, ReaderError> {

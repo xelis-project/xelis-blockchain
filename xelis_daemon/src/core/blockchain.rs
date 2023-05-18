@@ -62,7 +62,12 @@ pub struct Config {
     /// at each new block by keeping at least N blocks
     /// before the top.
     #[clap(long)]
-    pub auto_prune_keep_n_blocks: Option<u64>
+    pub auto_prune_keep_n_blocks: Option<u64>,
+    /// Sync a bootstrapped chain if your local copy is outdated.
+    /// It will not store any blocks / TXs and will not verify the history locally.
+    /// Use it with extreme cautions and trusted nodes to have a valid bootstrapped chain
+    #[clap(long)]
+    pub allow_fast_sync: bool
 }
 
 pub struct Blockchain<S: Storage> {
@@ -86,7 +91,11 @@ pub struct Blockchain<S: Storage> {
     // tip work score is used to determine the best tip based on a block, tip base ands a base height
     tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, Difficulty)>>,
     full_order_cache: Mutex<LruCache<(Hash, Hash, u64), Vec<Hash>>>,
-    auto_prune_keep_n_blocks: Option<u64>
+    // auto prune mode if enabled, will delete all blocks every N and keep only N top blocks (topoheight based)
+    auto_prune_keep_n_blocks: Option<u64>,
+    // allow fast syncing (only balances / assets / Smart Contracts changes)
+    // without syncing the history
+    allow_fast_sync_mode: bool
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -127,13 +136,15 @@ impl<S: Storage> Blockchain<S> {
             tip_base_cache: Mutex::new(LruCache::new(1024)),
             tip_work_score_cache: Mutex::new(LruCache::new(1024)),
             full_order_cache: Mutex::new(LruCache::new(1024)),
-            auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks
+            auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
+            allow_fast_sync_mode: config.allow_fast_sync
         };
 
         // include genesis block
         if !on_disk {
             blockchain.create_genesis_block().await?;
         } else {
+            debug!("Retrieving tips for computing current difficulty");
             let storage = blockchain.get_storage().read().await;
             let tips_set = storage.get_tips().await?;
             let mut tips = Vec::with_capacity(tips_set.len());
@@ -147,6 +158,7 @@ impl<S: Storage> Blockchain<S> {
 
         // now compute the stable height
         {
+            debug!("Retrieving tips for computing current stable height");
             let storage = blockchain.get_storage().read().await;
             let tips = storage.get_tips().await?;
             let (_, stable_height) = blockchain.find_common_base(&storage, &tips).await?;
@@ -284,6 +296,14 @@ impl<S: Storage> Blockchain<S> {
         zelf.add_new_block(block, true).await?;
         info!("Mined a new block {} at height {}", hash, block_height);
         Ok(())
+    }
+
+    // verify if we can do fast sync with this peer
+    // for this, we check that user allowed the fast sync mode
+    // we also check that the peer topoheight is greater than 2x times the prune safety limit
+    // and we should be sure to not perform fast sync on a already-synced chain.
+    pub fn allow_fast_sync(&self, peer_topoheight: u64) -> bool {
+        self.allow_fast_sync_mode && peer_topoheight > PRUNE_SAFETY_LIMIT * 2 && self.get_topo_height() == 0
     }
 
     pub async fn prune_until_topoheight(&self, topoheight: u64) -> Result<u64, BlockchainError> {
@@ -1310,7 +1330,7 @@ impl<S: Storage> Blockchain<S> {
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     // TODO improve it (too much read/write that can be refactored)
                     if !storage.has_block_linked_to_tx(&tx_hash, &hash)? {
-                        storage.add_block_for_tx(&tx_hash, hash.clone())?;
+                        storage.add_block_for_tx(&tx_hash, &hash)?;
                         trace!("Block {} is now linked to tx {}", hash, tx_hash);
                     }
 

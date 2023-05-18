@@ -20,6 +20,10 @@ impl VersionedBalance {
         self.balance
     }
 
+    pub fn set_balance(&mut self, value: u64) {
+        self.balance = value;
+    }
+
     pub fn add_balance(&mut self, amount: u64) {
         self.balance += amount;
     }

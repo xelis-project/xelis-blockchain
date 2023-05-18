@@ -8,7 +8,7 @@ use xelis_common::{
     block::{BlockHeader, Block, Difficulty}, account::VersionedBalance, network::Network,
 };
 use std::{
-    collections::HashSet,
+    collections::{HashSet, BTreeSet},
     hash::Hash as StdHash,
     sync::Arc
 };
@@ -406,6 +406,37 @@ impl Storage for SledStorage {
         Ok(())
     }
 
+    fn get_partial_assets(&self, maximum: usize, skip: usize) -> Result<BTreeSet<Hash>, BlockchainError> {
+        let mut assets: BTreeSet<Hash> = BTreeSet::new();
+        for el in self.assets.iter().keys().skip(skip).take(maximum) {
+            let key = el?;
+            assets.insert(Hash::from_bytes(&key)?);
+        }
+        Ok(assets)
+    }
+
+    fn get_partial_keys(&self, maximum: usize, skip: usize) -> Result<BTreeSet<PublicKey>, BlockchainError> {
+        let mut assets: BTreeSet<PublicKey> = BTreeSet::new();
+        for el in self.nonces.iter().keys().skip(skip).take(maximum) {
+            let key = el?;
+            assets.insert(PublicKey::from_bytes(&key)?);
+        }
+        Ok(assets)
+    }
+
+    async fn get_balances<T: AsRef<PublicKey> + Send + Sync, I: Iterator<Item = T> + Send>(&self, asset: &Hash, keys: I) -> Result<Vec<Option<u64>>, BlockchainError> {
+        let mut balances = Vec::new();
+        for key in keys {
+            if self.has_balance_for(key.as_ref(), asset).await? {
+                let (_, versioned_balance) = self.get_last_balance(key.as_ref(), asset).await?;
+                balances.push(Some(versioned_balance.get_balance()));
+            } else {
+                balances.push(None);
+            }
+        }
+        Ok(balances)
+    }
+
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
         self.load_from_disk(&self.txs_executed, tx.as_bytes())
     }
@@ -496,7 +527,7 @@ impl Storage for SledStorage {
         self.load_from_disk(&self.tx_blocks, hash.as_bytes())
     }
 
-    fn add_block_for_tx(&mut self, tx: &Hash, block: Hash) -> Result<(), BlockchainError> {
+    fn add_block_for_tx(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
         trace!("add block {} for tx {}", block, tx);
         let mut blocks = if self.has_tx_blocks(tx)? {
             self.get_blocks_for_tx(tx)?
@@ -505,7 +536,7 @@ impl Storage for SledStorage {
         };
 
         if !blocks.contains(&block) {
-            blocks.insert(block);
+            blocks.insert(block.clone());
             self.set_blocks_for_tx(tx, &blocks)?;
         }
 

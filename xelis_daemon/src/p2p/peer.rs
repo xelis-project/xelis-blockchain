@@ -1,11 +1,12 @@
 use lru::LruCache;
-use xelis_common::config::{PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT};
+use xelis_common::config::{PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP};
 use xelis_common::globals::get_current_time;
 use xelis_common::{
     crypto::hash::Hash,
     config::PEER_TIMEOUT_REQUEST_OBJECT,
     serializer::Serializer
 };
+use super::packet::bootstrap_chain::{StepRequest, BootstrapChainRequest, StepResponse};
 use super::packet::object::{ObjectRequest, OwnedObjectResponse};
 use super::peer_list::SharedPeerList;
 use super::connection::{Connection, ConnectionMessage};
@@ -21,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 use std::borrow::Cow;
 use bytes::Bytes;
-use log::{warn, trace};
+use log::{warn, trace, debug};
 
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
@@ -50,8 +51,9 @@ pub struct Peer {
     blocks_propagation: Mutex<LruCache<Hash, ()>>, // last blocks propagated to/from this peer
     last_inventory: AtomicU64, // last time we got an inventory packet from this peer
     requested_inventory: AtomicBool, // if we requested this peer to send us an inventory notification
-    pruned_topoheight: AtomicU64,
-    is_pruned: AtomicBool
+    pruned_topoheight: AtomicU64, // pruned topoheight if its a pruned node
+    is_pruned: AtomicBool, // cannot be set to false if its already to true (protocol rules)
+    bootstrap_chain: Mutex<Option<Sender<StepResponse>>>
 }
 
 impl Peer {
@@ -82,7 +84,8 @@ impl Peer {
             last_inventory: AtomicU64::new(0),
             requested_inventory: AtomicBool::new(false),
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
-            is_pruned: AtomicBool::new(pruned_topoheight.is_some())
+            is_pruned: AtomicBool::new(pruned_topoheight.is_some()),
+            bootstrap_chain: Mutex::new(None)
         }
     }
 
@@ -264,6 +267,40 @@ impl Peer {
         }
 
         Ok(object)
+    }
+
+    pub async fn request_boostrap_chain(&self, step: StepRequest<'_>) -> Result<StepResponse, P2pError> {
+        debug!("Requesting bootstrap chain step: {:?}", step);
+        let step_kind = step.kind();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        {
+            let mut sender_lock = self.bootstrap_chain.lock().await;
+            *sender_lock = Some(sender);
+        }
+
+        // send the packet
+        self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(step))).await?;
+
+        // wait on the response
+        let response: StepResponse = match timeout(Duration::from_millis(PEER_TIMEOUT_BOOTSTRAP_STEP), receiver).await {
+            Ok(res) => res?,
+            Err(e) => {
+                trace!("Requested bootstrap chain step {:?} has timed out", step_kind);
+                return Err(P2pError::AsyncTimeOut(e));
+            }
+        };
+
+        // check that the response is what we asked for
+        let response_kind = response.kind();
+        if response_kind != step_kind {
+            return Err(P2pError::InvalidBootstrapStep(step_kind, response_kind))
+        }
+
+        Ok(response)
+    }
+
+    pub fn get_bootstrap_chain_channel(&self) -> &Mutex<Option<Sender<StepResponse>>> {
+        &self.bootstrap_chain
     }
 
     pub fn get_peers(&self) -> &Mutex<HashSet<SocketAddr>> {
