@@ -151,6 +151,10 @@ pub enum BlockchainError {
     NoBalance(PublicKey),
     #[error("No balance changes for {} at specific topoheight and asset", _0)]
     NoBalanceChanges(PublicKey),
+    #[error("No nonce found on disk for {}", _0)]
+    NoNonce(PublicKey),
+    #[error("No nonce changes for {} at specific topoheight", _0)]
+    NoNonceChanges(PublicKey),
     #[error("Overflow detected")]
     Overflow,
     #[error("Error, block include a dead tx {}", _0)]

@@ -76,9 +76,10 @@ impl DaemonAPI {
         Ok(())
     }
 
-    pub async fn get_nonce(&self, address: &Address<'_>) -> Result<u64> {
+    pub async fn get_last_nonce(&self, address: &Address<'_>) -> Result<u64> {
         let nonce = self.client.call_with("get_nonce", &GetNonceParams {
-            address: Cow::Borrowed(address)
+            address: Cow::Borrowed(address),
+            topoheight: None
         }).await.context(format!("Error while fetching nonce from address {}", address))?;
         Ok(nonce)
     }

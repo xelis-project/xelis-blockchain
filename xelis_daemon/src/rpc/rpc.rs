@@ -17,7 +17,7 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetTopoHeightRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse, GetHeightRangeParams
+        GetTopoHeightRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse, GetHeightRangeParams, GetNonceResult
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -278,8 +278,8 @@ async fn get_nonce<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> R
     }
 
     let storage = blockchain.get_storage().read().await;
-    let nonce = storage.get_nonce(params.address.get_public_key()).await.context("Error while retrieving nonce for account")?;
-    Ok(json!(nonce))
+    let (topoheight, version) = storage.get_last_nonce(params.address.get_public_key()).await.context("Error while retrieving nonce for account")?;
+    Ok(json!(GetNonceResult { topoheight, version }))
 }
 
 // TODO Rate limiter

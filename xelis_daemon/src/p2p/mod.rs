@@ -11,7 +11,7 @@ use xelis_common::{
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::{BlockHeader, Block},
-    globals::get_current_time, immutable::Immutable
+    globals::get_current_time, immutable::Immutable, account::VersionedNonce
 };
 use crate::{core::{blockchain::Blockchain, storage::Storage}, p2p::{chain_validator::ChainValidator, packet::{bootstrap_chain::{StepRequest, StepResponse, BootstrapChainResponse, MAX_ITEMS_PER_PAGE, BlockMetadata}, inventory::{NOTIFY_MAX_LEN, NotifyInventoryRequest, NotifyInventoryResponse}}}};
 use crate::core::error::BlockchainError;
@@ -432,7 +432,9 @@ impl<S: Storage> P2pServer<S> {
 
     // select a random peer which is greater than us to sync chain
     // candidate peer should have a greater topoheight or a higher block height than us
-    async fn select_random_best_peer(&self) -> Option<Arc<Peer>> {
+    // if we are not in fast sync mode, we must verify its pruned topoheight to be sure
+    // he have the blocks we need
+    async fn select_random_best_peer(&self, fast_sync: bool) -> Option<Arc<Peer>> {
         trace!("select random best peer");
         let peer_list = self.peer_list.read().await;
         let our_height = self.blockchain.get_height();
@@ -440,12 +442,23 @@ impl<S: Storage> P2pServer<S> {
         // search for peers which are greater than us
         // and that are pruned but before our height so we can sync correctly
         let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p| {
-            if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
-                if pruned_topoheight > our_topoheight {
+            let peer_topoheight = p.get_topoheight();
+            // In fast sync mode, we don't check the pruned topoheight as we don't sync from genesis block
+            if !fast_sync {
+                if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
+                    if pruned_topoheight > our_topoheight {
+                        return false
+                    }
+                }
+            } else {
+                // if we want to fast sync, but this peer is not compatible, we skip it
+                // for this we check that the peer topoheight is greater or equal to the prune safety limit
+                if peer_topoheight < PRUNE_SAFETY_LIMIT {
                     return false
                 }
             }
-            p.get_height() > our_height || p.get_topoheight() > our_topoheight
+
+            p.get_height() > our_height || peer_topoheight > our_topoheight
         }
         ).collect();
         let count = peers.len();
@@ -455,7 +468,7 @@ impl<S: Storage> P2pServer<S> {
         }
         let selected = rand::thread_rng().gen_range(0..count);
         let peer = peers.get(selected)?;
-        trace!("selected peer: ({}) {}", selected, peer);
+        trace!("selected peer for sync chain: ({}) {}", selected, peer);
         // clone the Arc to prevent the lock until the end of the sync request
         Some(Arc::clone(peer))
     }
@@ -468,12 +481,12 @@ impl<S: Storage> P2pServer<S> {
                 trace!("We are already syncing, skipping...");
                 continue;
             }
-            if let Some(peer) = self.select_random_best_peer().await {
+            let fast_sync = self.blockchain.is_fast_sync_mode_enabled();
+            if let Some(peer) = self.select_random_best_peer(fast_sync).await {
                 trace!("Selected for chain sync is {}", peer);
                 // check if we can maybe fast sync first
                 // otherwise, fallback on the normal chain sync
-                let peer_topoheight = peer.get_topoheight();
-                if self.blockchain.allow_fast_sync(peer_topoheight) {
+                if fast_sync {
                     if let Err(e) = self.bootstrap_chain(&peer).await {
                         warn!("Error occured while fast syncing with {}: {}", peer, e);
                     }
@@ -482,6 +495,8 @@ impl<S: Storage> P2pServer<S> {
                         debug!("Error occured on chain sync with {}: {}", peer, e);
                     }
                 }
+            } else {
+                trace!("No peer found for chain sync");
             }
         }
     }
@@ -1193,7 +1208,7 @@ impl<S: Storage> P2pServer<S> {
 
         // if node asks us to pop blocks, check that the difference with peer's height is above STABLE_LIMIT
         // then, verify if it's a priority node, otherwise, check if we are connected to a priority node so only him can rewind us
-        if pop_count > 0 && peer.get_height() - self.blockchain.get_height() > STABLE_LIMIT && (peer.is_priority() || !self.is_connected_to_a_synced_priority_node().await) {
+        if pop_count > 0 && peer.get_topoheight() > our_previous_topoheight && peer.get_height() - self.blockchain.get_height() > STABLE_LIMIT && (peer.is_priority() || !self.is_connected_to_a_synced_priority_node().await) {
             // check that if we can trust him
             if peer.is_priority() {
                 warn!("Rewinding chain without checking because {} is a priority node (pop count: {})", peer, pop_count);
@@ -1430,12 +1445,19 @@ impl<S: Storage> P2pServer<S> {
     }
 
     async fn handle_bootstrap_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, request: StepRequest<'_>) -> Result<(), BlockchainError> {
-        debug!("Handle bootstrap chain request from {}", peer);
+        let request_kind = request.kind();
+        debug!("Handle bootstrap chain request {:?} from {}", request_kind, peer);
         let storage = self.blockchain.get_storage().read().await;
         match request {
-            StepRequest::Assets(page) => {
+            StepRequest::ChainInfo => {
+                let tips = storage.get_tips().await?;
+                let (hash, height) = self.blockchain.find_common_base(&storage, &tips).await?;
+                let stable_topo = storage.get_topo_height_for_hash(&hash).await?;
+                peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::ChainInfo(stable_topo, height, hash)))).await?;
+            },
+            StepRequest::Assets(topoheight, page) => {
                 let page = page.unwrap_or(0);
-                let assets = storage.get_partial_assets(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE)?;
+                let assets = storage.get_partial_assets(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, topoheight).await?;
                 let page = if assets.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
                 } else {
@@ -1444,21 +1466,22 @@ impl<S: Storage> P2pServer<S> {
 
                 peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::Assets(assets, page)))).await?;
             },
-            StepRequest::Balances(asset, keys) => {
-                let balances = storage.get_balances(&asset, keys.iter()).await?;
+            StepRequest::Balances(topoheight, asset, keys) => {
+                let balances = storage.get_balances(&asset, keys.iter(), topoheight).await?;
                 peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::Balances(balances)))).await?;
             },
-            StepRequest::Nonces(keys) => {
+            StepRequest::Nonces(topoheight, keys) => {
                 let mut nonces = Vec::with_capacity(keys.len());
                 for key in keys.iter() {
-                    let nonce = storage.get_nonce(key).await?;
-                    nonces.push(nonce);
+                    let (_, version) = storage.get_nonce_at_maximum_topoheight(key, topoheight).await?.unwrap_or_else(|| (0, VersionedNonce::new(0, None)));
+                    nonces.push(version.get_nonce());
                 }
+
                 peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::Nonces(nonces)))).await?;
             },
-            StepRequest::Keys(page) => {
+            StepRequest::Keys(topoheight, page) => {
                 let page = page.unwrap_or(0);
-                let keys = storage.get_partial_keys(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE)?;
+                let keys = storage.get_partial_keys(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, topoheight).await?;
                 let page = if keys.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
                 } else {
@@ -1467,16 +1490,17 @@ impl<S: Storage> P2pServer<S> {
 
                 peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::Keys(keys, page)))).await?;
             },
-            StepRequest::BlocksMetadata(begin_topoheight) => {
+            StepRequest::BlocksMetadata(topoheight) => {
                 let our_topoheight = self.blockchain.get_topo_height();
                 let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
-                if pruned_topoheight > begin_topoheight || our_topoheight < STABLE_LIMIT || begin_topoheight > our_topoheight - STABLE_LIMIT {
-                    debug!("Invalid begin topoheight received from {}", peer);
+                if topoheight < PRUNE_SAFETY_LIMIT || pruned_topoheight + PRUNE_SAFETY_LIMIT > topoheight || our_topoheight < PRUNE_SAFETY_LIMIT {
+                    debug!("Invalid begin topoheight (received {}, our is {}) received from {}", topoheight, our_topoheight, peer);
                     return Err(P2pError::InvalidPacket.into())
                 }
 
-                let mut blocks = Vec::with_capacity(STABLE_LIMIT as usize);
-                for topoheight in begin_topoheight..begin_topoheight + STABLE_LIMIT {
+                let mut blocks = Vec::with_capacity(PRUNE_SAFETY_LIMIT as usize);
+                // go until the requested stable topoheight
+                for topoheight in (topoheight-PRUNE_SAFETY_LIMIT..=topoheight).rev() {
                     let hash = storage.get_hash_at_topo_height(topoheight).await?;
                     let supply = storage.get_supply_for_block_hash(&hash)?;
                     let reward = storage.get_block_reward(&hash)?;
@@ -1488,10 +1512,6 @@ impl<S: Storage> P2pServer<S> {
 
                 peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::BlocksMetadata(blocks)))).await?;
             },
-            StepRequest::Tips => {
-                let tips = storage.get_tips().await?;
-                peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::Tips(tips)))).await?;
-            }
         }
         Ok(())
     }
@@ -1502,11 +1522,9 @@ impl<S: Storage> P2pServer<S> {
     async fn bootstrap_chain(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         debug!("Starting fast sync with {}", peer);
 
-        let stable_topoheight = peer.get_topoheight() - STABLE_LIMIT;
-
+        let mut stable_topoheight = 0;
         let mut storage = self.blockchain.get_storage().write().await;
-        let mut step: Option<StepRequest> = Some(StepRequest::Assets(None));
-        let mut top_height = 0;
+        let mut step: Option<StepRequest> = Some(StepRequest::ChainInfo);
         loop {
             let response = if let Some(step) = step.take() {
                 peer.request_boostrap_chain(step).await?
@@ -1515,24 +1533,31 @@ impl<S: Storage> P2pServer<S> {
             };
 
             step = match response {
+                StepResponse::ChainInfo(topoheight, height, hash) => {
+                    storage.set_top_topoheight(topoheight)?;
+                    storage.set_top_height(height)?;
+                    storage.store_tips(&HashSet::from([hash]))?;
+
+                    stable_topoheight = topoheight;
+                    Some(StepRequest::Assets(topoheight, None))
+                },
                 // fetch all assets from peer
                 StepResponse::Assets(assets, next_page) => {
                     for asset in assets {
-                        debug!("Saving asset {}", asset);
-                        storage.add_asset(&asset).await?;
+                        debug!("Saving asset {} at topoheight {}", asset, stable_topoheight);
+                        storage.add_asset(&asset, stable_topoheight).await?;
                     }
 
                     if next_page.is_some() {
-                        Some(StepRequest::Assets(next_page))
+                        Some(StepRequest::Assets(stable_topoheight, next_page))
                     } else {
                         // Go to next step
-                        Some(StepRequest::Keys(None))
+                        Some(StepRequest::Keys(stable_topoheight, None))
                     }
                 },
                 // fetch all accounts
                 StepResponse::Keys(keys, next_page) => {
-                    let borrowed_keys = keys.iter().map(|v: &xelis_common::crypto::key::PublicKey| Cow::Borrowed(v)).collect();
-                    let StepResponse::Nonces(nonces) = peer.request_boostrap_chain(StepRequest::Nonces(Cow::Borrowed(&borrowed_keys))).await? else {
+                    let StepResponse::Nonces(nonces) = peer.request_boostrap_chain(StepRequest::Nonces(stable_topoheight, Cow::Borrowed(&keys))).await? else {
                         // shouldn't happen
                         error!("Received an invalid StepResponse (how ?) while fetching nonces");
                         return Err(P2pError::InvalidPacket.into())
@@ -1542,7 +1567,7 @@ impl<S: Storage> P2pServer<S> {
                     // otherwise in really long time, it may consume lot of memory
                     for asset in storage.get_assets().await? {
                         debug!("Request balances for asset {}", asset);
-                        let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(Cow::Borrowed(&asset), Cow::Borrowed(&borrowed_keys))).await? else {
+                        let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(stable_topoheight, Cow::Borrowed(&asset), Cow::Borrowed(&keys))).await? else {
                             // shouldn't happen
                             error!("Received an invalid StepResponse (how ?) while fetching balances");
                             return Err(P2pError::InvalidPacket.into())
@@ -1552,7 +1577,7 @@ impl<S: Storage> P2pServer<S> {
                         for (key, balance) in keys.iter().zip(balances) {
                             // check that the account have balance for this asset
                             if let Some(balance) = balance {
-                                debug!("Saving balance {} for key {}", balance, key);
+                                debug!("Saving balance {} for key {} at topoheight {}", balance, key, stable_topoheight);
                                 let mut versioned_balance = storage.get_new_versioned_balance(key, &asset, stable_topoheight).await?;
                                 versioned_balance.set_balance(balance);
                                 storage.set_balance_to(key, &asset, stable_topoheight, &versioned_balance).await?;
@@ -1564,44 +1589,52 @@ impl<S: Storage> P2pServer<S> {
                     // save all nonces
                     for (key, nonce) in keys.into_iter().zip(nonces) {
                         debug!("Saving nonce {} for {}", nonce, key);
-                        storage.set_nonce(&key, nonce).await?;
+                        storage.set_nonce_at_topoheight(&key, nonce, stable_topoheight).await?;
                     }
 
                     if next_page.is_some() {
-                        Some(StepRequest::Keys(next_page))
+                        Some(StepRequest::Keys(stable_topoheight, next_page))
                     } else {
                         // Go to next step
                         Some(StepRequest::BlocksMetadata(stable_topoheight))
                     }
                 },
                 StepResponse::BlocksMetadata(blocks) => {
-                    let mut topoheight = stable_topoheight;
-                    for metadata in blocks {
+                    let mut lowest_topoheight = stable_topoheight;
+                    for (i, metadata) in blocks.into_iter().enumerate() {
+                        lowest_topoheight = stable_topoheight - i as u64;
                         debug!("Saving block metadata {}", metadata.hash);
                         let OwnedObjectResponse::BlockHeader(header, hash) = peer.request_blocking_object(ObjectRequest::BlockHeader(metadata.hash)).await? else {
                             error!("Received an invalid requested object while fetching blocks metadata");
                             return Err(P2pError::InvalidPacket.into())
                         };
 
+                        let mut txs = Vec::with_capacity(header.get_txs_hashes().len());
+                        for tx_hash in header.get_txs_hashes() {
+                            let OwnedObjectResponse::Transaction(tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await? else {
+                                error!("Received an invalid requested object while fetching block transaction {}", tx_hash);
+                                return Err(P2pError::InvalidPacket.into())
+                            };
+                            txs.push(Immutable::Owned(tx));
+                        }
+
+                        // link its TX to the block
                         for tx_hash in header.get_txs_hashes() {
                             storage.add_block_for_tx(tx_hash, &hash)?;
                         }
 
+                        // save metadata of this block
                         storage.set_supply_for_block_hash(&hash, metadata.supply)?;
                         storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
                         storage.set_block_reward(&hash, metadata.reward)?;
 
-                        storage.set_topo_height_for_block(&hash, topoheight).await?;
+                        storage.set_topo_height_for_block(&hash, lowest_topoheight).await?;
 
-                        top_height = header.get_height();
-                        storage.add_new_block(Arc::new(header), &Vec::new(), metadata.difficulty, hash).await?;
-                        topoheight += 1;
+                        // save the block with its transactions, difficulty
+                        storage.add_new_block(Arc::new(header), &txs, metadata.difficulty, hash).await?;
                     }
+                    storage.set_pruned_topoheight(lowest_topoheight)?;
 
-                    Some(StepRequest::Tips)
-                },
-                StepResponse::Tips(tips) => {
-                    storage.store_tips(&tips)?;
                     None
                 },
                 response => { // shouldn't happens
@@ -1610,9 +1643,7 @@ impl<S: Storage> P2pServer<S> {
                 }
             };
         }
-
-        storage.set_top_topoheight(stable_topoheight + STABLE_LIMIT)?;
-        storage.set_top_height(top_height)?;
+        self.blockchain.reload_from_disk(&storage).await?;
 
         Ok(())
     }

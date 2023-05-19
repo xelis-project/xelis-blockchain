@@ -53,6 +53,7 @@ pub struct Peer {
     requested_inventory: AtomicBool, // if we requested this peer to send us an inventory notification
     pruned_topoheight: AtomicU64, // pruned topoheight if its a pruned node
     is_pruned: AtomicBool, // cannot be set to false if its already to true (protocol rules)
+    // used for await on bootstrap chain packets
     bootstrap_chain: Mutex<Option<Sender<StepResponse>>>
 }
 

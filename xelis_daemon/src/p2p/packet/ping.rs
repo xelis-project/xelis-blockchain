@@ -50,8 +50,8 @@ impl<'a> Ping<'a> {
         peer.set_topoheight(self.topoheight);
         peer.set_height(self.height);
 
-        if peer.is_pruned() != self.pruned_topoheight.is_some() {
-            error!("Invalid protocol rules: impossible to change the pruned state, from {} in ping packet", peer);
+        if peer.is_pruned() && self.pruned_topoheight.is_none() {
+            error!("Invalid protocol rules: impossible to change the pruned state (), from {} in ping packet", peer);
             return Err(P2pError::InvalidProtocolRules)
         }
 

@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance, network::Network, block::Difficulty};
+use crate::{crypto::{hash::Hash, address::Address}, account::{VersionedBalance, VersionedNonce}, network::Network, block::Difficulty};
 
 use super::DataHash;
 
@@ -94,6 +94,15 @@ pub struct GetBalanceAtTopoHeightParams<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct GetNonceParams<'a> {
     pub address: Cow<'a, Address<'a>>,
+    #[serde(default)]
+    pub topoheight: Option<u64>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetNonceResult {
+    pub topoheight: u64,
+    #[serde(flatten)]
+    pub version: VersionedNonce
 }
 
 #[derive(Serialize, Deserialize)]

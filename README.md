@@ -92,6 +92,14 @@ But your balances are still up-to-date with the chain and if your wallets alread
 
 The security of the chain is not reduced as all your blocks were already verified by your own node locally.
 
+## Fast Sync
+
+Fast sync mode allow you to sync really fast the necessary data only to run a correct and valid version of the chain. For this we request a peer
+to send us its chain state at a stable point, which include all accounts nonces, assets, balances, top blocks.
+So in future, when the chain will be really heavy, anyone can still join it by using fast sync system, which is compatible with the pruning mode.
+
+**WARNING**: You should use fast sync mode only with a trusted peer, because they can send you a potential fake chain.
+
 ## Client Protocol
 
 XELIS integrate along with BlockDAG a way to accept multiple times the same TX and only execute it one time.
@@ -187,23 +195,30 @@ Its also backed by a cache per peer to knows if the transaction was already rece
 
 All theses data are saved in plaintext.
 
-|          Tree         |  Key Type  |     Value Type    |                          Comment                          |
-|:---------------------:|:----------:|:-----------------:|:---------------------------------------------------------:|
-|      transactions     |    Hash    |    Transaction    |        Save the whole transaction based on its hash       |
-|         blocks        |    Hash    |    Block Header   |        Save the block header only based on its hash       |
-|    blocks_at_height   |   Integer  |   Array of Hash   |         Save all blocks hash at a specific height         |
-|         extra         |    Bytes   |  No specific type |   Actually used to save the highest topo height and TIPS  |
-|      topo_by_hash     |    Hash    |      Integer      |        Save a block hash at a specific topo height        |
-|      hash_by_topo     |   Integer  |        Hash       |        Save a topo height for a specific block hash       |
-| cumulative_difficulty |    Hash    |      Integer      |     Save the cumulative difficulty for each block hash    |
-|         assets        |    Hash    |      No Value     | Used to verify if an assets is well registered and usable |
-|         nonces        | Public Key |      Integer      |        Nonce used to prevent replay attacks on TXs        |
-|        rewards        |    Hash    |      Integer      |                   Save the block reward                   |
-|         supply        |    Hash    |      Integer      |   Calculated supply (past + block reward) at each block   |
-|       difficulty      |    Hash    |      Integer      |                 Difficulty for each block                 |
-|       tx_blocks       |    Hash    |   Array of Hash   |        All blocks in which this TX hash is included       |
-|      assets_hash      | Public Key |      Integer      |    Asset hash with last topoheight of versioned balance   |
-|    assets_balances    | Public Key | Versioned Balance |          Tree name is hash of asset + topoheight          |
+|          Tree         |  Key Type  |     Value Type    |                         Comment                        |
+|:---------------------:|:----------:|:-----------------:|:------------------------------------------------------:|
+|      transactions     |    Hash    |    Transaction    |      Save the whole transaction based on its hash      |
+|         blocks        |    Hash    |    Block Header   |      Save the block header only based on its hash      |
+|    blocks_at_height   |   Integer  |   Array of Hash   |        Save all blocks hash at a specific height       |
+|         extra         |    Bytes   |  No specific type | Actually used to save the highest topo height and TIPS |
+|      topo_by_hash     |    Hash    |      Integer      |       Save a block hash at a specific topo height      |
+|      hash_by_topo     |   Integer  |        Hash       |      Save a topo height for a specific block hash      |
+| cumulative_difficulty |    Hash    |      Integer      |   Save the cumulative difficulty for each block hash   |
+|         assets        |    Hash    |      Integer      |  Verify if an assets exist and its registration height |
+|         nonces        | Public Key |      Integer      |     Store the highest topoheight of versioned nonce    |
+|   nonces_topoheight   | Public Key |  Versioned Nonce  |      Tree name is composed of prefix + topoheight      |
+|        rewards        |    Hash    |      Integer      |                  Save the block reward                 |
+|         supply        |    Hash    |      Integer      |  Calculated supply (past + block reward) at each block |
+|       difficulty      |    Hash    |      Integer      |                Difficulty for each block               |
+|       tx_blocks       |    Hash    |   Array of Hash   |      All blocks in which this TX hash is included      |
+|      assets_hash      | Public Key |      Integer      |  Asset hash with last topoheight of versioned balance  |
+|    assets_balances    | Public Key | Versioned Balance |         Tree name is hash of asset + topoheight        |
+
+**NOTE**:
+- Balances and nonces are versioned, which means they are stored each time a change happened on disk.
+- Assets registered have in value their topoheight at which it was registered.
+
+The database engine used is sled. It may changes in future.
 
 ## Wallet
 
