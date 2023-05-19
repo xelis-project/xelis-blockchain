@@ -1516,9 +1516,12 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
-    // first, fetch all assets from peer
-    // then, fetch all keys with its nonces and its balances
-    // and for the last step, retrieve last TOP_TOPOHEIGHT - STABLE_LIMIT block headers
+    // first, retrieve chain info of selected peer
+    // We retrieve all assets through pagination,
+    // then we fetch all keys with its nonces and its balances (also through pagination)
+    // and for the last step, retrieve last STABLE TOPOHEIGHT - PRUNE_SAFETY_LIMIT blocks
+    // reload blockchain cache from disk, and we're ready to sync the rest of the chain
+    // NOTE: it could be even faster without retrieving each TXs, but we do it in case user don't enable pruning
     async fn bootstrap_chain(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         debug!("Starting fast sync with {}", peer);
 
