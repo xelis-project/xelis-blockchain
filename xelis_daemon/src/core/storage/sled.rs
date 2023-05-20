@@ -50,8 +50,7 @@ pub struct SledStorage {
     hash_at_topo_cache: Option<Mutex<LruCache<u64, Hash>>>,
     cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, Difficulty>>>,
     assets_cache: Option<Mutex<LruCache<Hash, ()>>>,
-    // FIXME !!!!!
-    balances_trees_cache: Option<Mutex<LruCache<u64, Tree>>>, // versioned balances tree keep in cache to prevent hash recompute
+    balances_trees_cache: Option<Mutex<LruCache<(Hash, u64), Tree>>>, // versioned balances tree keep in cache to prevent hash recompute
     nonces_trees_cache: Option<Mutex<LruCache<u64, Tree>>>, // versioned nonces tree keep in cache to prevent hash recompute
     tips_cache: Tips,
     pruned_topoheight: Option<u64>
@@ -227,12 +226,13 @@ impl SledStorage {
         trace!("get versioned balance tree for {} at {}", asset, topoheight);
         let tree = if let Some(cache) = &self.balances_trees_cache {
             let mut balances = cache.lock().await;
-            if let Some(tree) = balances.get(&topoheight) {
+            let cache_key = (asset.clone(), topoheight);
+            if let Some(tree) = balances.get(&cache_key) {
                 tree.clone()
             } else { // not found in cache, compute it and insert it
                 let key = self.generate_versioned_balance_key(asset, topoheight)?;
                 let tree = self.db.open_tree(key.as_bytes())?;
-                balances.put(topoheight, tree.clone());
+                balances.put(cache_key, tree.clone());
                 tree
             }
         } else { // no cache found, we have to compute it ourself
