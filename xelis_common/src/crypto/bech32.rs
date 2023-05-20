@@ -28,8 +28,8 @@ pub enum Bech32Error {
     Separator1InvalidPosition(usize), // position
     #[error(transparent)]
     InvalidUTF8Sequence(#[from] FromUtf8Error), // error returned by 'String::from_utf8'
-    #[error("Invalid prefix, got: {}", _0)]
-    InvalidPrefix(String),
+    #[error("Invalid prefix, got: {}, expected: {}", _0, _1)]
+    InvalidPrefix(String, String),
     #[error("Invalid checksum")]
     InvalidChecksum,
     #[error("Invalid index '{}': not found", _0)]

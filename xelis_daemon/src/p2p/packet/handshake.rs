@@ -1,7 +1,6 @@
 use xelis_common::{
     serializer::{Serializer, Writer, ReaderError, Reader},
-    globals::{ip_from_bytes, ip_to_bytes},
-    crypto::hash::Hash, network::Network
+    crypto::hash::Hash, network::Network, block::Difficulty
 };
 
 use crate::p2p::peer_list::SharedPeerList;
@@ -9,7 +8,6 @@ use crate::p2p::connection::Connection;
 use crate::p2p::peer::Peer;
 use std::collections::HashSet;
 use std::fmt::{Display, Error, Formatter};
-use std::net::SocketAddr;
 
 // this Handshake is the first data sent when connecting to the server
 // If handshake is valid, server reply with his own handshake
@@ -26,22 +24,20 @@ pub struct Handshake {
     utc_time: u64, // current time in seconds
     topoheight: u64, // current topo height
     height: u64, // current block height
+    pruned_topoheight: Option<u64>, // until when the node is pruned (if it is)
     top_hash: Hash, // current block top hash
     genesis_hash: Hash, // genesis hash
-    cumulative_difficulty: u64,
-    peers: Vec<SocketAddr> // all peers that we are already connected to
+    cumulative_difficulty: Difficulty,
 } // Server reply with his own list of peers, but we remove all already known by requester for the response.
 
 impl Handshake {
     pub const MAX_LEN: usize = 16;
 
-    pub fn new(version: String, network: Network, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, top_hash: Hash, genesis_hash: Hash, cumulative_difficulty: u64, peers: Vec<SocketAddr>) -> Self {
-        assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN); // version cannot be greater than 16 chars
+    pub fn new(version: String, network: Network, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, top_hash: Hash, genesis_hash: Hash, cumulative_difficulty: u64) -> Self {
+        debug_assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN); // version cannot be greater than 16 chars
         if let Some(node_tag) = &node_tag {
-            assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN); // node tag cannot be greater than 16 chars
+            debug_assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN); // node tag cannot be greater than 16 chars
         }
-
-        assert!(peers.len() <= Handshake::MAX_LEN); // maximum 16 peers allowed
 
         Self {
             version,
@@ -53,19 +49,16 @@ impl Handshake {
             utc_time,
             topoheight,
             height,
+            pruned_topoheight,
             top_hash,
             genesis_hash,
-            cumulative_difficulty,
-            peers
+            cumulative_difficulty
         }
     }
 
-    pub fn create_peer(self, connection: Connection, out: bool, priority: bool, peer_list: SharedPeerList) -> (Peer, Vec<SocketAddr>) {
-        let mut peers = HashSet::new();
-        for peer in &self.peers {
-            peers.insert(peer.clone());
-        }
-        (Peer::new(connection, self.get_peer_id(), self.node_tag, self.local_port, self.version, self.top_hash, self.topoheight, self.height, out, priority, self.cumulative_difficulty, peer_list, peers), self.peers)
+    pub fn create_peer(self, connection: Connection, out: bool, priority: bool, peer_list: SharedPeerList) -> Peer {
+        let peers = HashSet::new();
+        Peer::new(connection, self.get_peer_id(), self.node_tag, self.local_port, self.version, self.top_hash, self.topoheight, self.height, self.pruned_topoheight, out, priority, self.cumulative_difficulty, peer_list, peers)
     }
 
     pub fn get_version(&self) -> &String {
@@ -96,6 +89,10 @@ impl Handshake {
         self.height
     }
 
+    pub fn get_topoheight(&self) -> u64 {
+        self.topoheight
+    }
+
     pub fn get_block_top_hash(&self) -> &Hash {
         &self.top_hash
     }
@@ -104,8 +101,8 @@ impl Handshake {
         &self.genesis_hash
     }
 
-    pub fn get_peers(&self) -> &Vec<SocketAddr> {
-        &self.peers
+    pub fn get_pruned_topoheight(&self) -> &Option<u64> {
+        &self.pruned_topoheight
     }
 }
 
@@ -127,14 +124,10 @@ impl Serializer for Handshake {
         writer.write_u64(&self.utc_time); // UTC Time
         writer.write_u64(&self.topoheight); // Topo height
         writer.write_u64(&self.height); // Block Height
+        writer.write_optional_non_zero_u64(&self.pruned_topoheight); // Pruned Topo Height
         writer.write_hash(&self.top_hash); // Block Top Hash (32 bytes)
         writer.write_hash(&self.genesis_hash); // Genesis Hash
         writer.write_u64(&self.cumulative_difficulty);
-
-        writer.write_u8(self.peers.len() as u8);
-        for peer in &self.peers {
-            writer.write_bytes(&ip_to_bytes(peer));
-        }
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -165,20 +158,12 @@ impl Serializer for Handshake {
         let utc_time = reader.read_u64()?;
         let topoheight = reader.read_u64()?;
         let height = reader.read_u64()?;
+        let pruned_topoheight = reader.read_optional_non_zero_u64()?;
         let top_hash = reader.read_hash()?;
         let genesis_hash = reader.read_hash()?;
         let cumulative_difficulty = reader.read_u64()?;
-        let peers_len = reader.read_u8()? as usize;
-        if peers_len > Handshake::MAX_LEN {
-            return Err(ReaderError::InvalidSize)
-        }
 
-        let mut peers = Vec::with_capacity(peers_len);
-        for _ in 0..peers_len {
-            let peer = ip_from_bytes(reader)?;
-            peers.push(peer);
-        }
-        Ok(Handshake::new(version, network, node_tag, network_id, peer_id, local_port, utc_time, topoheight, height, top_hash, genesis_hash, cumulative_difficulty, peers))
+        Ok(Handshake::new(version, network, node_tag, network_id, peer_id, local_port, utc_time, topoheight, height, pruned_topoheight, top_hash, genesis_hash, cumulative_difficulty))
     }
 }
 
@@ -191,6 +176,6 @@ impl Display for Handshake {
         } else {
             &NO_NODE_TAG
         };
-        write!(f, "Handshake[version: {}, node tag: {}, network_id: {}, peer_id: {}, utc_time: {}, block_height: {}, block_top_hash: {}, peers: ({})]", self.get_version(), node_tag, hex::encode(self.get_network_id()), self.get_peer_id(), self.get_utc_time(), self.get_block_height(), self.get_block_top_hash(), self.get_peers().len())
+        write!(f, "Handshake[version: {}, node tag: {}, network_id: {}, peer_id: {}, utc_time: {}, block_height: {}, block_top_hash: {}]", self.get_version(), node_tag, hex::encode(self.get_network_id()), self.get_peer_id(), self.get_utc_time(), self.get_block_height(), self.get_block_top_hash())
     }
 }

@@ -1,13 +1,13 @@
 use std::{collections::{HashMap, HashSet}, sync::Arc};
 use async_trait::async_trait;
-use xelis_common::{crypto::hash::Hash, block::BlockHeader, config::TIPS_LIMIT};
+use xelis_common::{crypto::hash::Hash, block::{BlockHeader, Difficulty}, config::TIPS_LIMIT};
 use crate::core::{error::BlockchainError, blockchain::Blockchain, storage::{DifficultyProvider, Storage}};
 use log::{error, debug};
 
 struct Data {
     header: Arc<BlockHeader>,
-    difficulty: u64,
-    cumulative_difficulty: u64
+    difficulty: Difficulty,
+    cumulative_difficulty: Difficulty
 }
 
 pub struct ChainValidator {
@@ -94,11 +94,11 @@ impl DifficultyProvider for ChainValidator {
         Ok(self.get_data(hash)?.header.get_timestamp())
     }
 
-    async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
         Ok(self.get_data(hash)?.difficulty)
     }
 
-    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
         Ok(self.get_data(hash)?.cumulative_difficulty)
     }
 

@@ -47,7 +47,7 @@ Others objectives in mind are:
 
 ## BlockDAG
 
-XELIS try to implement & use a blockDAG which the rules are the following:
+XELIS use a blockDAG with following rules:
 - A block is considered `Sync Block` when the block height is less than `TOP_HEIGHT - STABLE_LIMIT` and it's the unique block at a specific height (or only ordered block at its height and don't have lower cumulative difficulty than previous blocks).
 - A block is considered `Side Block` when block height is less than or equal to height of past 8 topographical blocks.
 - A block is considered `Orphaned` when the block is not ordered in DAG (no topological height for it).
@@ -62,6 +62,15 @@ XELIS try to implement & use a blockDAG which the rules are the following:
 - Supply is re-calculated each time the block is re-ordered because its based on topo order.
 - Transactions and miner rewards are re-computed when a new block is added and the block there linked to is not yet in stable topo height. 
 
+Topoheight represents how many unique blocks there is in the blockchain, and its ordered by DAG.
+
+## Homomorphic Encryption
+
+Homomorphic Encryption (HE) will allow to add privacy on transactions and accounts by doing computation while staying in encrypted form.
+Each balances, transaction assets values are in encrypted form and nobody can determine the real value of it except involved parties.
+
+**NOTE**: This part is not yet deployed and is under heavy work.
+
 ## Mining
 
 Mining capabilities of XELIS are a bit differents from others chains because of standards being not implemented.
@@ -72,6 +81,24 @@ Mining jobs are send only when a new block is found or when a new TX is added in
 Miners software are recommended to update themselves the block timestamp (or at least every 500ms) for best network difficulty calculation.
 
 Actually, the POW Hashing algorithm is `Keccak256` which is until we develop (or choose) our own algorithm.
+
+## Pruning Mode
+
+This allows anyone who want to run a light node to reduce the blockchain size by deleting blocks, transactions and versioned balances.
+The pruned topoheight can only be at a `Sync Block` and behind at least `PRUNE_SAFETY_LIMIT` blocks of the top topoheight.
+
+For wallets connected to a pruned node, you can't retrieve transactions history and miner rewards which happened before the pruned topoheight.
+But your balances are still up-to-date with the chain and if your wallets already synced them, they stay in your wallet database.
+
+The security of the chain is not reduced as all your blocks were already verified by your own node locally.
+
+## Fast Sync
+
+Fast sync mode allow you to sync really fast the necessary data only to run a correct and valid version of the chain. For this we request a peer
+to send us its chain state at a stable point, which include all accounts nonces, assets, balances, top blocks.
+So in future, when the chain will be really heavy, anyone can still join it by using fast sync system, which is compatible with the pruning mode.
+
+**WARNING**: You should use fast sync mode only with a trusted peer, because they can send you a potential fake chain.
 
 ## Client Protocol
 
@@ -92,7 +119,7 @@ This feature allows to accept others branch tips even if transactions are the sa
 ## Transaction
 
 Transaction types supported:
-- Transfer: possibility to send many assets to many addresses in the same TX
+- Transfer: possibility to send many assets to many addresses in the same TX (up to 255 outputs inside)
 - Burn: publicly burn amount of a specific asset and use this TX as proof of burn (coins are completely deleted from circulation)
 - Call Contract: call a Smart Contract with specific parameters and list of assets to deposit (WIP) (NOTE: Multi Call Contract in the same TX ?)
 - Deploy Contract: deploy a new (valid) Smart Contract on chain (WIP)
@@ -168,23 +195,30 @@ Its also backed by a cache per peer to knows if the transaction was already rece
 
 All theses data are saved in plaintext.
 
-|          Tree         |  Key Type  |     Value Type    |                          Comment                          |
-|:---------------------:|:----------:|:-----------------:|:---------------------------------------------------------:|
-|      transactions     |    Hash    |    Transaction    |        Save the whole transaction based on its hash       |
-|         blocks        |    Hash    |    Block Header   |        Save the block header only based on its hash       |
-|    blocks_at_height   |   Integer  |   Array of Hash   |         Save all blocks hash at a specific height         |
-|         extra         |    Bytes   |  No specific type |   Actually used to save the highest topo height and TIPS  |
-|      topo_by_hash     |    Hash    |      Integer      |        Save a block hash at a specific topo height        |
-|      hash_by_topo     |   Integer  |        Hash       |        Save a topo height for a specific block hash       |
-| cumulative_difficulty |    Hash    |      Integer      |     Save the cumulative difficulty for each block hash    |
-|         assets        |    Hash    |      No Value     | Used to verify if an assets is well registered and usable |
-|         nonces        | Public Key |      Integer      |        Nonce used to prevent replay attacks on TXs        |
-|        rewards        |    Hash    |      Integer      |                   Save the block reward                   |
-|         supply        |    Hash    |      Integer      |   Calculated supply (past + block reward) at each block   |
-|       difficulty      |    Hash    |      Integer      |                 Difficulty for each block                 |
-|       tx_blocks       |    Hash    |   Array of Hash   |        All blocks in which this TX hash is included       |
-|      assets_hash      | Public Key |      Integer      |    Asset hash with last topoheight of versioned balance   |
-|    assets_balances    | Public Key | Versioned Balance |          Tree name is hash of asset + topoheight          |
+|          Tree         |  Key Type  |     Value Type    |                         Comment                        |
+|:---------------------:|:----------:|:-----------------:|:------------------------------------------------------:|
+|      transactions     |    Hash    |    Transaction    |      Save the whole transaction based on its hash      |
+|         blocks        |    Hash    |    Block Header   |      Save the block header only based on its hash      |
+|    blocks_at_height   |   Integer  |   Array of Hash   |        Save all blocks hash at a specific height       |
+|         extra         |    Bytes   |  No specific type | Actually used to save the highest topo height and TIPS |
+|      topo_by_hash     |    Hash    |      Integer      |       Save a block hash at a specific topo height      |
+|      hash_by_topo     |   Integer  |        Hash       |      Save a topo height for a specific block hash      |
+| cumulative_difficulty |    Hash    |      Integer      |   Save the cumulative difficulty for each block hash   |
+|         assets        |    Hash    |      Integer      |  Verify if an assets exist and its registration height |
+|         nonces        | Public Key |      Integer      |     Store the highest topoheight of versioned nonce    |
+|   nonces_topoheight   | Public Key |  Versioned Nonce  |      Tree name is composed of prefix + topoheight      |
+|        rewards        |    Hash    |      Integer      |                  Save the block reward                 |
+|         supply        |    Hash    |      Integer      |  Calculated supply (past + block reward) at each block |
+|       difficulty      |    Hash    |      Integer      |                Difficulty for each block               |
+|       tx_blocks       |    Hash    |   Array of Hash   |      All blocks in which this TX hash is included      |
+|      assets_hash      | Public Key |      Integer      |  Asset hash with last topoheight of versioned balance  |
+|    assets_balances    | Public Key | Versioned Balance |         Tree name is hash of asset + topoheight        |
+
+**NOTE**:
+- Balances and nonces are versioned, which means they are stored each time a change happened on disk.
+- Assets registered have in value their topoheight at which it was registered.
+
+The database engine used is sled. It may changes in future.
 
 ## Wallet
 

@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
 
-use crate::{crypto::{hash::{Hash, Hashable}, key::PublicKey, address::Address}, serializer::Serializer, block::BlockHeader};
+use crate::{crypto::{hash::{Hash, Hashable}, key::PublicKey, address::Address}, serializer::Serializer, block::{BlockHeader, Difficulty}};
 pub const NETWORK_ID_SIZE: usize = 16;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -13,13 +13,14 @@ pub const XELIS_ASSET: Hash = Hash::zero();
 pub const SIDE_BLOCK_REWARD_PERCENT: u64 = 30; // only 30% of reward for side block
 pub const BLOCK_TIME: u64 = 15; // Block Time in seconds
 pub const BLOCK_TIME_MILLIS: u64 = BLOCK_TIME * 1000; // Block Time in milliseconds
-pub const MINIMUM_DIFFICULTY: u64 = BLOCK_TIME_MILLIS * 10;
-pub const GENESIS_BLOCK_DIFFICULTY: u64 = 1;
+pub const MINIMUM_DIFFICULTY: Difficulty = BLOCK_TIME_MILLIS as Difficulty * 10;
+pub const GENESIS_BLOCK_DIFFICULTY: Difficulty = 1;
 pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024); // 1.25 MB
 pub const FEE_PER_KB: u64 = 1000; // 0.01000 XLS per KB
 pub const DEV_FEE_PERCENT: u64 = 5; // 5% per block going to dev address
 pub const TIPS_LIMIT: usize = 3; // maximum 3 previous blocks
-pub const STABLE_LIMIT: u64 = 8;
+pub const STABLE_LIMIT: u64 = 8; // in how many height we consider the block stable
+pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10; // keep at least last N blocks until top topoheight
 pub const TIMESTAMP_IN_FUTURE_LIMIT: u128 = 2 * 1000; // 2 seconds maximum in future
 
 pub const PREFIX_ADDRESS: &str = "xel"; // mainnet prefix address
@@ -43,6 +44,7 @@ pub const P2P_DEFAULT_MAX_PEERS: usize = 32; // default number of maximum peers
 pub const PEER_FAIL_TIME_RESET: u64 = 60 * 5; // number of seconds to reset the counter
 pub const PEER_FAIL_LIMIT: u8 = 20; // number of fail to disconnect the peer
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 3000; // millis until we timeout
+pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 10000; // millis until we timeout
 
 // Wallet config
 pub const DEFAULT_DAEMON_ADDRESS: &str = "http://127.0.0.1:8080";

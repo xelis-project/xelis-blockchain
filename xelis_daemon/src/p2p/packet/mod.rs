@@ -2,7 +2,11 @@ pub mod handshake;
 pub mod chain;
 pub mod ping;
 pub mod object;
+pub mod inventory;
+pub mod bootstrap_chain;
 
+use self::bootstrap_chain::{BootstrapChainRequest, BootstrapChainResponse};
+use self::inventory::{NotifyInventoryResponse, NotifyInventoryRequest};
 use self::object::{ObjectRequest, ObjectResponse};
 use self::chain::{ChainRequest, ChainResponse};
 use self::handshake::Handshake;
@@ -24,6 +28,10 @@ const CHAIN_RESPONSE_ID: u8 = 4;
 const PING_ID: u8 = 5;
 const OBJECT_REQUEST_ID: u8 = 6;
 const OBJECT_RESPONSE_ID: u8 = 7;
+const NOTIFY_INV_REQUEST_ID: u8 = 8; 
+const NOTIFY_INV_RESPONSE_ID: u8 = 9;
+const BOOTSTRAP_CHAIN_REQUEST_ID: u8 = 10;
+const BOOTSTRAP_CHAIN_RESPONSE_ID: u8 = 11;
 
 // PacketWrapper allows us to link any Packet to a Ping
 #[derive(Debug)]
@@ -73,7 +81,11 @@ pub enum Packet<'a> {
     ChainResponse(ChainResponse),
     Ping(Cow<'a, Ping<'a>>),
     ObjectRequest(Cow<'a, ObjectRequest>),
-    ObjectResponse(ObjectResponse<'a>)
+    ObjectResponse(ObjectResponse<'a>),
+    NotifyInventoryRequest(PacketWrapper<'a, NotifyInventoryRequest>),
+    NotifyInventoryResponse(NotifyInventoryResponse<'a>),
+    BootstrapChainRequest(BootstrapChainRequest<'a>),
+    BootstrapChainResponse(BootstrapChainResponse)
 }
 
 impl<'a> Serializer for Packet<'a> {
@@ -89,6 +101,10 @@ impl<'a> Serializer for Packet<'a> {
             PING_ID => Packet::Ping(Cow::Owned(Ping::read(reader)?)),
             OBJECT_REQUEST_ID => Packet::ObjectRequest(Cow::Owned(ObjectRequest::read(reader)?)),
             OBJECT_RESPONSE_ID => Packet::ObjectResponse(ObjectResponse::read(reader)?),
+            NOTIFY_INV_REQUEST_ID => Packet::NotifyInventoryRequest(PacketWrapper::read(reader)?), 
+            NOTIFY_INV_RESPONSE_ID => Packet::NotifyInventoryResponse(NotifyInventoryResponse::read(reader)?),
+            BOOTSTRAP_CHAIN_REQUEST_ID => Packet::BootstrapChainRequest(BootstrapChainRequest::read(reader)?),
+            BOOTSTRAP_CHAIN_RESPONSE_ID => Packet::BootstrapChainResponse(BootstrapChainResponse::read(reader)?),
             id => {
                 error!("invalid packet id received: {}", id);
                 return Err(ReaderError::InvalidValue)
@@ -105,7 +121,11 @@ impl<'a> Serializer for Packet<'a> {
             Packet::ChainResponse(response) => (CHAIN_RESPONSE_ID, response),
             Packet::Ping(ping) => (PING_ID, ping.as_ref()),
             Packet::ObjectRequest(request) => (OBJECT_REQUEST_ID, request.as_ref()),
-            Packet::ObjectResponse(response) => (OBJECT_RESPONSE_ID, response)
+            Packet::ObjectResponse(response) => (OBJECT_RESPONSE_ID, response),
+            Packet::NotifyInventoryRequest(request) => (NOTIFY_INV_REQUEST_ID, request),
+            Packet::NotifyInventoryResponse(inventory) => (NOTIFY_INV_RESPONSE_ID, inventory),
+            Packet::BootstrapChainRequest(request) => (BOOTSTRAP_CHAIN_REQUEST_ID, request),
+            Packet::BootstrapChainResponse(response) => (BOOTSTRAP_CHAIN_RESPONSE_ID, response)
         };
 
         let packet = serializer.to_bytes();

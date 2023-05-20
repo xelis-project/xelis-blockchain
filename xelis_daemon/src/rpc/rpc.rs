@@ -1,13 +1,11 @@
 use crate::core::{blockchain::Blockchain, storage::Storage, error::BlockchainError};
 use super::{InternalRpcError, ApiError};
 use anyhow::Context;
-use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use xelis_common::{
-    api::daemon::{
+    api::{daemon::{
         BlockType,
         BlockResponse,
-        DataHash,
         GetBlockAtTopoHeightParams,
         GetBlockByHashParams,
         GetBlockTemplateParams,
@@ -19,25 +17,21 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse
-    },
+        GetTopoHeightRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse, GetHeightRangeParams, GetNonceResult
+    }, DataHash},
     async_handler,
     serializer::Serializer,
     transaction::Transaction,
     crypto::hash::Hash,
-    block::{BlockHeader, Block}, config::{BLOCK_TIME_MILLIS, VERSION}, immutable::Immutable, rpc_server::RPCHandler,
+    block::{BlockHeader, Block}, config::{BLOCK_TIME_MILLIS, VERSION}, immutable::Immutable, rpc_server::{RPCHandler, parse_params},
 };
 use std::{sync::Arc, borrow::Cow};
 use log::{info, debug};
 
-fn parse_params<P: DeserializeOwned>(value: Value) -> Result<P, InternalRpcError> {
-    serde_json::from_value(value).map_err(|e| InternalRpcError::InvalidParams(e))
-}
-
 pub async fn get_block_type_for_block<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<BlockType, InternalRpcError> {
     Ok(if blockchain.is_block_orphaned_for_storage(storage, hash).await {
         BlockType::Orphaned
-    } else if blockchain.is_block_sync(storage, hash).await.context("Error while checking if block is sync")? {
+    } else if blockchain.is_sync_block(storage, hash).await.context("Error while checking if block is sync")? {
         BlockType::Sync
     } else if blockchain.is_side_block(storage, hash).await.context("Error while checking if block is side")? {
         BlockType::Side
@@ -50,7 +44,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
     let (topoheight, supply, reward) = if  storage.is_block_topological_ordered(&hash).await {
         (
             Some(storage.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?),
-            Some( storage.get_supply_for_block_hash(&hash).context("Error while retrieving supply")?),
+            Some(storage.get_supply_for_block_hash(&hash).context("Error while retrieving supply")?),
             Some(storage.get_block_reward(&hash).context("Error while retrieving block reward")?),
         )
     } else {
@@ -64,19 +58,27 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
     let block_type = get_block_type_for_block(&blockchain, &storage, &hash).await?;
     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await.context("Error while retrieving cumulative difficulty")?;
     let difficulty = storage.get_difficulty_for_block_hash(&hash).await.context("Error while retrieving difficulty")?;
-    let block = storage.get_block(&hash).await.context("Error while retrieving block")?;
-    let total_size_in_bytes = block.size();
-    let mut total_fees = 0;
-    for tx in block.get_transactions() {
-        total_fees += tx.get_fee();
-    }
-
     let value: Value = if include_txs {
+        let block = storage.get_block(&hash).await.context("Error while retrieving full block")?;
+
+        let total_size_in_bytes = block.size();
+        let mut total_fees = 0;
+        for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
+            // check that the TX was correctly executed in this block
+            // retrieve all fees for valid txs
+            if storage.is_tx_executed_in_block(tx_hash, &hash).context("Error while checking if tx was executed")? {
+                    total_fees += tx.get_fee();
+            }
+        }
+
         let data: DataHash<'_, Block> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block) };
-        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees, total_size_in_bytes, data })
+        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees: Some(total_fees), total_size_in_bytes, data })
     } else {
-        let data: DataHash<'_, Arc<BlockHeader>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block.to_header()) };
-        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees, total_size_in_bytes, data })
+        let block = storage.get_block_header_by_hash(&hash).await.context("Error while retrieving full block")?;
+
+        let total_size_in_bytes = block.size();
+        let data: DataHash<'_, Arc<BlockHeader>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(&block) };
+        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees: None, total_size_in_bytes, data })
     };
 
     Ok(value)
@@ -90,7 +92,7 @@ pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transact
     };
 
     let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(tx) };
-    let executed_in_block = storage.get_tx_executed_in_block(hash).ok();
+    let executed_in_block = storage.get_block_executer_for_tx(hash).ok();
     Ok(json!(TransactionResponse { blocks, executed_in_block, data }))
 }
 
@@ -123,9 +125,9 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_mempool", async_handler!(get_mempool));
     handler.register_method("get_tips", async_handler!(get_tips));
     handler.register_method("get_dag_order", async_handler!(get_dag_order));
-    handler.register_method("get_blocks", async_handler!(get_blocks));
+    handler.register_method("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight));
+    handler.register_method("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height));
     handler.register_method("get_transactions", async_handler!(get_transactions));
-
 }
 
 async fn version<S: Storage>(_: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
@@ -225,11 +227,12 @@ async fn get_info<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Re
     let height = blockchain.get_height();
     let topoheight = blockchain.get_topo_height();
     let stableheight = blockchain.get_stable_height();
-    let (top_hash, native_supply) = {
+    let (top_hash, native_supply, pruned_topoheight) = {
         let storage = blockchain.get_storage().read().await;
         let top_hash = storage.get_hash_at_topo_height(topoheight).await.context("Error while retrieving hash at topo height")?;
         let supply = storage.get_supply_for_block_hash(&top_hash).context("Error while supply for hash")?;
-        (top_hash, supply)
+        let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?;
+        (top_hash, supply, pruned_topoheight)
     };
     let difficulty = blockchain.get_difficulty();
     let block_time_target = BLOCK_TIME_MILLIS;
@@ -241,6 +244,7 @@ async fn get_info<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Re
         height,
         topoheight,
         stableheight,
+        pruned_topoheight,
         top_hash,
         native_supply,
         difficulty,
@@ -274,8 +278,8 @@ async fn get_nonce<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> R
     }
 
     let storage = blockchain.get_storage().read().await;
-    let nonce = storage.get_nonce(params.address.get_public_key()).await.context("Error while retrieving nonce for account")?;
-    Ok(json!(nonce))
+    let (topoheight, version) = storage.get_last_nonce(params.address.get_public_key()).await.context("Error while retrieving nonce for account")?;
+    Ok(json!(GetNonceResult { topoheight, version }))
 }
 
 // TODO Rate limiter
@@ -301,7 +305,7 @@ async fn count_transactions<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Va
 async fn submit_transaction<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
     let params: SubmitTransactionParams = parse_params(body)?;
     let transaction = Transaction::from_hex(params.data)?;
-    blockchain.add_tx_to_mempool(transaction, true).await.context("Error while adding tx to mempool")?;
+    blockchain.add_tx_to_mempool(transaction, true).await.map_err(|e| InternalRpcError::AnyError(e.into()))?;
     Ok(json!(true))
 }
 
@@ -347,9 +351,8 @@ async fn get_mempool<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) ->
     let mempool = blockchain.get_mempool().read().await;
     let storage = blockchain.get_storage().read().await;
     let mut transactions: Vec<Value> = Vec::new();
-    for tx in mempool.get_sorted_txs() {
-        let transaction = mempool.view_tx(tx.get_hash()).context("Error while retrieving TX from mempool")?;
-        transactions.push(get_transaction_response(&*storage, transaction, tx.get_hash()).await?);
+    for (hash, sorted_tx) in mempool.get_txs() {
+        transactions.push(get_transaction_response(&*storage, sorted_tx.get_tx(), hash).await?);
     }
 
     Ok(json!(transactions))
@@ -379,7 +382,7 @@ const MAX_DAG_ORDER: u64 = 64;
 // get dag order based on params
 // if no params found, get order of last 64 blocks
 async fn get_dag_order<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetRangeParams = parse_params(body)?;
+    let params: GetTopoHeightRangeParams = parse_params(body)?;
 
     let current_topoheight = blockchain.get_topo_height();
     let start_topoheight = params.start_topoheight.unwrap_or_else(|| {
@@ -413,38 +416,66 @@ async fn get_dag_order<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) 
 }
 
 const MAX_BLOCKS: u64 = 20;
-// get blocks between range of topoheight
-// if no params found, get last 20 blocks header
-async fn get_blocks<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetRangeParams = parse_params(body)?;
 
-    let current_topoheight = blockchain.get_topo_height();
-    let start_topoheight = params.start_topoheight.unwrap_or_else(|| {
-        if params.end_topoheight.is_none() && current_topoheight > MAX_BLOCKS {
-            current_topoheight - MAX_BLOCKS
+fn get_range(start: Option<u64>, end: Option<u64>, current: u64) -> Result<(u64, u64), InternalRpcError> {
+    let range_start = start.unwrap_or_else(|| {
+        if end.is_none() && current > MAX_BLOCKS {
+            current - MAX_BLOCKS
         } else {
             0
         }
     });
 
-    let end_topoheight = params.end_topoheight.unwrap_or(current_topoheight);
-    if end_topoheight < start_topoheight || end_topoheight > current_topoheight {
-        debug!("get blocks range: start = {}, end = {}, max = {}", start_topoheight, end_topoheight, current_topoheight);
+    let range_end = end.unwrap_or(current);
+    if range_end < range_start || range_end > current {
+        debug!("get blocks range by topo height: start = {}, end = {}, max = {}", range_start, range_end, current);
         return Err(InternalRpcError::InvalidRequest)
     }
 
-    let count = end_topoheight - start_topoheight;
+    let count = range_end - range_start;
     if count > MAX_BLOCKS { // only retrieve max 20 blocks hash per request
         debug!("get blocks requested count: {}", count);
         return Err(InternalRpcError::InvalidRequest) 
     }
 
+    Ok((range_start, range_end))
+}
+
+// get blocks between range of topoheight
+// if no params found, get last 20 blocks header
+async fn get_blocks_range_by_topoheight<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetTopoHeightRangeParams = parse_params(body)?;
+
+    let current_topoheight = blockchain.get_topo_height();
+    let (start_topoheight, end_topoheight) = get_range(params.start_topoheight, params.end_topoheight, current_topoheight)?;
+
     let storage = blockchain.get_storage().read().await;
-    let mut blocks = Vec::with_capacity(count as usize);
+    let mut blocks = Vec::with_capacity((end_topoheight - start_topoheight) as usize);
     for i in start_topoheight..=end_topoheight {
         let hash = storage.get_hash_at_topo_height(i).await.context("Error while retrieving hash at topo height")?;
         let response = get_block_response_for_hash(&blockchain, &storage, hash, false).await?;
         blocks.push(response);
+    }
+
+    Ok(json!(blocks))
+}
+
+// get blocks between range of height
+// if no params found, get last 20 blocks header
+// you can only request 
+async fn get_blocks_range_by_height<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetHeightRangeParams = parse_params(body)?;
+    let current_height = blockchain.get_height();
+    let (start_height, end_height) = get_range(params.start_height, params.end_height, current_height)?;
+
+    let storage = blockchain.get_storage().read().await;
+    let mut blocks = Vec::with_capacity((end_height - start_height) as usize);
+    for i in start_height..=end_height {
+        let blocks_at_height = storage.get_blocks_at_height(i).await.context("Error while retrieving blocks at height")?;
+        for hash in blocks_at_height {
+            let response = get_block_response_for_hash(&blockchain, &storage, hash, false).await?;
+            blocks.push(response);
+        }
     }
 
     Ok(json!(blocks))

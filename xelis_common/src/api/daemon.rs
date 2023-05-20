@@ -2,14 +2,9 @@ use std::{borrow::Cow, collections::HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::{hash::Hash, address::Address}, account::VersionedBalance, network::Network};
+use crate::{crypto::{hash::Hash, address::Address}, account::{VersionedBalance, VersionedNonce}, network::Network, block::Difficulty};
 
-#[derive(Serialize, Deserialize)]
-pub struct DataHash<'a, T: Clone> {
-    pub hash: Cow<'a, Hash>,
-    #[serde(flatten)]
-    pub data: Cow<'a, T>
-}
+use super::DataHash;
 
 #[derive(Serialize, Deserialize)]
 pub enum BlockType {
@@ -23,11 +18,11 @@ pub enum BlockType {
 pub struct BlockResponse<'a, T: Clone> {
     pub topoheight: Option<u64>,
     pub block_type: BlockType,
-    pub difficulty: u64,
+    pub difficulty: Difficulty,
     pub supply: Option<u64>,
     pub reward: Option<u64>,
-    pub cumulative_difficulty: u64,
-    pub total_fees: u64,
+    pub cumulative_difficulty: Difficulty,
+    pub total_fees: Option<u64>,
     pub total_size_in_bytes: usize,
     #[serde(flatten)]
     pub data: DataHash<'a, T>
@@ -69,7 +64,7 @@ pub struct GetBlockTemplateParams<'a> {
 pub struct GetBlockTemplateResult {
     pub template: String, // template is BlockMiner in hex format
     pub height: u64, // block height
-    pub difficulty: u64 // difficulty required for valid block
+    pub difficulty: Difficulty // difficulty required for valid block
 }
 
 #[derive(Serialize, Deserialize)]
@@ -99,6 +94,15 @@ pub struct GetBalanceAtTopoHeightParams<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct GetNonceParams<'a> {
     pub address: Cow<'a, Address<'a>>,
+    #[serde(default)]
+    pub topoheight: Option<u64>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetNonceResult {
+    pub topoheight: u64,
+    #[serde(flatten)]
+    pub version: VersionedNonce
 }
 
 #[derive(Serialize, Deserialize)]
@@ -112,9 +116,10 @@ pub struct GetInfoResult {
     pub height: u64,
     pub topoheight: u64,
     pub stableheight: u64,
+    pub pruned_topoheight: Option<u64>,
     pub top_hash: Hash,
     pub native_supply: u64,
-    pub difficulty: u64,
+    pub difficulty: Difficulty,
     pub block_time_target: u64,
     // count how many transactions are present in mempool
     pub mempool_size: usize,
@@ -143,9 +148,15 @@ pub struct P2pStatusResult<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetRangeParams {
+pub struct GetTopoHeightRangeParams {
     pub start_topoheight: Option<u64>,
     pub end_topoheight: Option<u64>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetHeightRangeParams {
+    pub start_height: Option<u64>,
+    pub end_height: Option<u64>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -159,7 +170,6 @@ pub struct TransactionResponse<'a, T: Clone> {
     pub blocks: Option<HashSet<Hash>>,
     // in which blocks it was executed
     pub executed_in_block: Option<Hash>,
-    // TODO executed_block which give the hash of the block in which this tx got executed
     #[serde(flatten)]
     pub data: DataHash<'a, T>
 }

@@ -54,7 +54,8 @@ impl Serializer for ObjectRequest {
         let id = reader.read_u8()?;
         Ok(match id {
             0 => ObjectRequest::Block(reader.read_hash()?),
-            1 => ObjectRequest::Transaction(reader.read_hash()?),
+            1 => ObjectRequest::BlockHeader(reader.read_hash()?),
+            2 => ObjectRequest::Transaction(reader.read_hash()?),
             _ => return Err(ReaderError::InvalidValue)
         })
     }

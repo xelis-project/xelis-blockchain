@@ -71,6 +71,32 @@ impl Writer {
         };
     }
 
+    fn write_u64_le(&mut self, value: &u64) {
+        self.bytes.extend(value.to_le_bytes());
+    }
+
+    pub fn write_optional_non_zero_u64(&mut self, opt: &Option<u64>) {
+        match opt {
+            Some(v) => {
+                self.write_u64_le(v);
+            },
+            None => {
+                self.bytes.push(0);
+            }
+        };
+    }
+
+    pub fn write_optional_non_zero_u8(&mut self, opt: Option<u8>) {
+        match opt {
+            Some(v) => {
+                self.write_u8(v);
+            },
+            None => {
+                self.bytes.push(0);
+            }
+        };
+    }
+
     pub fn total_write(&self) -> usize {
         self.bytes.len()
     }
@@ -103,8 +129,17 @@ impl<'a> Reader<'a> {
         }
     }
 
+    fn view_byte(&self) -> Result<u8, ReaderError> {
+        self.bytes.get(self.total).ok_or(ReaderError::InvalidSize).map(|v| *v)
+    }
+
     pub fn read_bool(&mut self) -> Result<bool, ReaderError> {
-        Ok(self.read_u8()? == 1)
+        let byte = self.read_u8()?;
+        match byte {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(ReaderError::InvalidValue)
+        }
     }
 
     pub fn read_bytes<T>(&mut self, n: usize) -> Result<T, ReaderError>
@@ -191,6 +226,28 @@ impl<'a> Reader<'a> {
         }
     }
 
+    fn read_u64_le(&mut self) -> Result<u64, ReaderError> {
+        Ok(u64::from_le_bytes(self.read_bytes(8)?))
+    }
+
+    pub fn read_optional_non_zero_u64(&mut self) -> Result<Option<u64>, ReaderError> {
+        if self.view_byte()? == 0 {
+            self.read_u8()?; // consume the byte
+            return Ok(None)
+        }
+
+        Ok(Some(self.read_u64_le()?))
+    }
+
+    pub fn read_optional_non_zero_u8(&mut self) -> Result<Option<u8>, ReaderError> {
+        let byte = self.read_u8()?;
+        if byte == 0 {
+            return Ok(None)
+        }
+
+        Ok(Some(byte))
+    }
+
     pub fn read_big_uint(&mut self) -> Result<BigUint, ReaderError> {
         let size = self.read_u8()?;
         let bytes = self.read_bytes_ref(size as usize)?;
@@ -250,9 +307,15 @@ pub trait Serializer {
         match hex::decode(&hex) {
             Ok(bytes) => {
                 let mut reader = Reader::new(&bytes);
-                Serializer::read(&mut reader)
+                Self::read(&mut reader)
             },
             Err(_) => Err(ReaderError::InvalidHex)
         }
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, ReaderError>
+    where Self: Sized {
+        let mut reader = Reader::new(bytes);
+        Self::read(&mut reader)
     }
 }

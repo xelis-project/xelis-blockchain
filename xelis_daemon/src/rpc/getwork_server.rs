@@ -60,7 +60,7 @@ impl Miner {
 
 impl Display for Miner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Miner[address={}, name={}]", self.key.to_address(), self.name)        
+        write!(f, "Miner[address={}, name={}]", self.key, self.name)        
     }
 }
 
@@ -84,7 +84,7 @@ impl<S: Storage> StreamHandler<Result<Message, ProtocolError>> for GetWorkWebSoc
     fn handle(&mut self, msg: Result<Message, ProtocolError>, ctx: &mut Self::Context) {
         match msg {
             Ok(Message::Text(text)) => {
-                debug!("New message incoming from miner");
+                debug!("New message incoming from miner: {}", text);
                 let address = ctx.address();
                 let template: SubmitBlockParams = match serde_json::from_slice(text.as_bytes()) {
                     Ok(template) => template,
@@ -162,8 +162,8 @@ impl<S: Storage> GetWorkServer<S> {
     // then, send it
     async fn send_new_job(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, key: PublicKey) -> Result<(), InternalRpcError> {
         let (mut job, height, difficulty) = {
-            let mut mining_jobs = self.mining_jobs.lock().await;
             let mut hash = self.last_header_hash.lock().await;
+            let mut mining_jobs = self.mining_jobs.lock().await;
             let (job, height, difficulty);
             if let Some(hash) = hash.as_ref() {
                 let (header, diff) = mining_jobs.peek(hash).ok_or_else(|| {
@@ -261,7 +261,13 @@ impl<S: Storage> GetWorkServer<S> {
     // if its block is rejected, resend him the job
     pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, template: SubmitBlockParams) -> Result<(), InternalRpcError> {
         let job = BlockMiner::from_hex(template.block_template)?;
-        let response = self.accept_miner_job(job).await?;
+        let response = match self.accept_miner_job(job).await {
+            Ok(response) => response,
+            Err(e) => {
+                debug!("Error while accepting miner job: {}", e);
+                Response::BlockRejected
+            }
+        };
 
         tokio::spawn(async move {
             let resend_job = response == Response::BlockRejected;

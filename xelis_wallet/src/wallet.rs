@@ -4,10 +4,12 @@ use std::sync::Arc;
 use anyhow::{Error, Context};
 use tokio::sync::{Mutex, RwLock};
 use xelis_common::api::DataType;
+use xelis_common::api::wallet::FeeBuilder;
 use xelis_common::config::XELIS_ASSET;
 use xelis_common::crypto::address::Address;
 use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey};
+use xelis_common::globals::format_coin;
 use xelis_common::network::Network;
 use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
@@ -15,7 +17,6 @@ use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
 use crate::mnemonics;
 use crate::network_handler::{NetworkHandler, SharedNetworkHandler};
-use crate::rpc::WalletRpcServer;
 use crate::storage::{EncryptedStorage, Storage};
 use crate::transaction_builder::TransactionBuilder;
 use chacha20poly1305::{aead::OsRng, Error as CryptoError};
@@ -23,12 +24,17 @@ use rand::RngCore;
 use thiserror::Error;
 use log::{error, debug};
 
+#[cfg(feature = "rpc_server")]
+use crate::rpc::{AuthConfig, WalletRpcServer};
+
 #[derive(Error, Debug)]
 pub enum WalletError {
     #[error("Invalid key pair")]
     InvalidKeyPair,
     #[error("Expected a TX")]
     ExpectedOneTx,
+    #[error("Too many txs included max is {}", u8::MAX)]
+    TooManyTx,
     #[error("Transaction owner is the receiver")]
     TxOwnerIsReceiver,
     #[error("Error from crypto: {}", _0)]
@@ -47,9 +53,9 @@ pub enum WalletError {
     InvalidSaltSize,
     #[error("Error while fetching password salt from DB")]
     NoSaltFound,
-    #[error("Your wallet contains only {} instead of {} for asset {}", _0, _1, _2)]
+    #[error("Your wallet contains only {} instead of {} for asset {}", format_coin(*_0), format_coin(*_1), _2)]
     NotEnoughFunds(u64, u64, Hash),
-    #[error("Your wallet don't have enough funds to pay fees: expected {} but have only {}", _0, _1)]
+    #[error("Your wallet don't have enough funds to pay fees: expected {} but have only {}", format_coin(*_0), format_coin(*_1))]
     NotEnoughFundsForFee(u64, u64),
     #[error("Invalid address params")]
     InvalidAddressParams,
@@ -64,7 +70,13 @@ pub enum WalletError {
     #[error("Topoheight is too high to rescan")]
     RescanTopoheightTooHigh,
     #[error(transparent)]
-    Any(#[from] Error)
+    Any(#[from] Error),
+    #[error("RPC Server is not running")]
+    RPCServerNotRunning,
+    #[error("RPC Server is already running")]
+    RPCServerAlreadyRunning,
+    #[error("Invalid fees provided, minimum fees calculated: {}, provided: {}", format_coin(*_0), format_coin(*_1))]
+    InvalidFeeProvided(u64, u64)
 }
 
 pub struct Wallet {
@@ -77,7 +89,8 @@ pub struct Wallet {
     // network on which we are connected
     network: Network,
     // RPC Server
-    rpc_server: Option<Arc<WalletRpcServer>>
+    #[cfg(feature = "rpc_server")]
+    rpc_server: Mutex<Option<Arc<WalletRpcServer>>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -93,11 +106,11 @@ impl Wallet {
             keypair,
             network_handler: Mutex::new(None),
             network,
-            rpc_server: None
+            #[cfg(feature = "rpc_server")]
+            rpc_server: Mutex::new(None)
         };
 
-        let zelf = Arc::new(zelf);
-        zelf
+        Arc::new(zelf)
     }
 
     pub fn create(name: String, password: String, seed: Option<String>, network: Network) -> Result<Arc<Self>, Error> {
@@ -188,6 +201,25 @@ impl Wallet {
         Ok(Self::new(storage, keypair, network))
     }
 
+    #[cfg(feature = "rpc_server")]
+    pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String, config: Option<AuthConfig>) -> Result<(), Error> {
+        let mut lock = self.rpc_server.lock().await;
+        if lock.is_some() {
+            return Err(WalletError::RPCServerAlreadyRunning.into())
+        }
+        let rpc_server = WalletRpcServer::new(bind_address, Arc::clone(self), config).await?;
+        *lock = Some(rpc_server);
+        Ok(())
+    }
+
+    #[cfg(feature = "rpc_server")]
+    pub async fn stop_rpc_server(&self) -> Result<(), Error> {
+        let mut lock = self.rpc_server.lock().await;
+        let rpc_server = lock.take().ok_or(WalletError::RPCServerNotRunning)?;
+        rpc_server.stop().await;
+        Ok(())
+    }
+
     pub async fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {
         let mut encrypted_storage = self.storage.write().await;
         let storage = encrypted_storage.get_mutable_public_storage();
@@ -267,9 +299,9 @@ impl Wallet {
 
     // create the final transaction with calculated fees and signature
     // also check that we have enough funds for the transaction
-    pub fn create_transaction(&self, storage: &EncryptedStorage, transaction_type: TransactionType) -> Result<Transaction, Error> {
+    pub fn create_transaction(&self, storage: &EncryptedStorage, transaction_type: TransactionType, fee: FeeBuilder) -> Result<Transaction, Error> {
         let nonce = storage.get_nonce().unwrap_or(0);
-        let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), transaction_type, nonce, 1f64);
+        let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), transaction_type, nonce, fee);
         let assets_spent: HashMap<&Hash, u64> = builder.total_spent();
 
         // check that we have enough balance for every assets spent
@@ -386,11 +418,11 @@ impl Wallet {
     }
 
     pub fn get_address(&self) -> Address<'_> {
-        self.keypair.get_public_key().to_address()
+        self.keypair.get_public_key().to_address(self.get_network().is_mainnet())
     }
 
     pub fn get_address_with(&self, data: DataType) -> Address<'_> {
-        self.keypair.get_public_key().to_address_with(data)
+        self.keypair.get_public_key().to_address_with(self.get_network().is_mainnet(), data)
     }
 
     pub fn get_seed(&self, language_index: usize) -> Result<String, Error> {

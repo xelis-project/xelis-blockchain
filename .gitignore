@@ -7,3 +7,8 @@ dev/
 wallets/
 peerlist-*.json
 build/
+
+# ignore all profiling files
+flamegraph.svg
+perf.data
+perf.data.old

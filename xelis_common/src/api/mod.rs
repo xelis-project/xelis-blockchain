@@ -1,7 +1,7 @@
-use std::{collections::HashMap, hash::Hash, borrow::Cow};
+use std::{collections::HashMap, borrow::Cow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::serializer::{Serializer, Reader, ReaderError, Writer};
+use crate::{serializer::{Serializer, Reader, ReaderError, Writer}, crypto::hash::Hash};
 
 pub mod wallet;
 pub mod daemon;
@@ -140,4 +140,11 @@ pub struct EventResult<'a, E: Clone> {
     pub event: Cow<'a, E>,
     #[serde(flatten)]
     pub value: Value
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DataHash<'a, T: Clone> {
+    pub hash: Cow<'a, Hash>,
+    #[serde(flatten)]
+    pub data: Cow<'a, T>
 }

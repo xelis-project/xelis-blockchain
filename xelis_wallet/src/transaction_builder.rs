@@ -4,7 +4,7 @@ use xelis_common::{
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     globals::calculate_tx_fee,
     serializer::{Writer, Serializer},
-    crypto::{key::{SIGNATURE_LENGTH, PublicKey, KeyPair}, hash::Hash}
+    crypto::{key::{SIGNATURE_LENGTH, PublicKey, KeyPair}, hash::Hash}, api::wallet::FeeBuilder
 };
 
 use crate::wallet::WalletError;
@@ -13,16 +13,16 @@ pub struct TransactionBuilder {
     owner: PublicKey,
     data: TransactionType,
     nonce: u64,
-    fee_multiplier: f64,
+    fee_builder: FeeBuilder,
 }
 
 impl TransactionBuilder {
-    pub fn new(owner: PublicKey, data: TransactionType, nonce: u64, fee_multiplier: f64) -> Self {
+    pub fn new(owner: PublicKey, data: TransactionType, nonce: u64, fee_builder: FeeBuilder) -> Self {
         Self {
             owner,
             data,
             nonce,
-            fee_multiplier
+            fee_builder
         }
     }
 
@@ -33,17 +33,23 @@ impl TransactionBuilder {
         writer
     }
 
-    fn estimate_fees_internal(&self, writer: &Writer) -> u64 {
-        // 8 represent the field 'fee' in bytes size
-        let total_bytes = SIGNATURE_LENGTH + 8 + writer.total_write();
-        let fee = (calculate_tx_fee(total_bytes) as f64  * self.fee_multiplier) as u64;
-        fee
+    fn verify_fees_internal(&self, calculated_fees: u64) -> Result<u64, WalletError> {
+        let provided_fees = match &self.fee_builder {
+            FeeBuilder::Multiplier(multiplier) => (calculated_fees as f64  * multiplier) as u64,
+            FeeBuilder::Value(value) => *value
+        };
+
+        if provided_fees < calculated_fees {
+            return Err(WalletError::InvalidFeeProvided(calculated_fees, provided_fees))
+        }
+
+        Ok(provided_fees)
     }
 
     pub fn total_spent(&self) -> HashMap<&Hash, u64> {
         let mut total_spent = HashMap::new();
         match &self.data {
-            TransactionType::Burn(asset, amount) => {
+            TransactionType::Burn { asset, amount } => {
                 total_spent.insert(asset, *amount);
             },
             TransactionType::CallContract(call) => {
@@ -75,6 +81,13 @@ impl TransactionBuilder {
         total_size
     }
 
+    fn estimate_fees_internal(&self, writer: &Writer) -> u64 {
+        // 8 represent the field 'fee' in bytes size
+        let total_bytes = SIGNATURE_LENGTH + 8 + writer.total_write();
+        let calculated_fees = calculate_tx_fee(total_bytes);
+        calculated_fees
+    }
+
     pub fn estimate_fees(&self) -> u64 {
         let writer = self.serialize();
         self.estimate_fees_internal(&writer)
@@ -90,6 +103,10 @@ impl TransactionBuilder {
                 return Err(WalletError::ExpectedOneTx)
             }
 
+            if txs.len() > u8::MAX as usize {
+                return Err(WalletError::TooManyTx)
+            }
+
             for tx in txs {
                 if tx.to == self.owner {
                     return Err(WalletError::TxOwnerIsReceiver)
@@ -103,7 +120,7 @@ impl TransactionBuilder {
         }
 
         let mut writer = self.serialize();
-        let fee = self.estimate_fees_internal(&writer);
+        let fee = self.verify_fees_internal(self.estimate_fees_internal(&writer))?;
         writer.write_u64(&fee);
 
         let signature = keypair.sign(&writer.bytes());

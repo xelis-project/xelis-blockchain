@@ -7,4 +7,5 @@ pub mod api;
 pub mod network_handler;
 pub mod entry;
 pub mod mnemonics;
+#[cfg(feature = "rpc_server")]
 pub mod rpc;

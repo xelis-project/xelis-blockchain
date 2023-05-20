@@ -11,6 +11,7 @@ use std::io::Error as IOError;
 use std::sync::PoisonError;
 use thiserror::Error;
 
+use super::packet::bootstrap_chain::StepKind;
 use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
@@ -74,7 +75,9 @@ pub enum P2pError {
     #[error(transparent)]
     BlockchainError(#[from] Box<BlockchainError>),
     #[error("Invalid content in peerlist file")]
-    InvalidPeerlist
+    InvalidPeerlist,
+    #[error("Invalid bootstrap chain step, expected {:?}, got {:?}", _0, _1)]
+    InvalidBootstrapStep(StepKind, StepKind)
 }
 
 impl From<BlockchainError> for P2pError {

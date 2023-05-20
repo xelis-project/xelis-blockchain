@@ -4,6 +4,7 @@ use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 use super::address::{Address, AddressType};
 use super::hash::Hash;
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::fmt::{Display, Error, Formatter};
 use rand::{rngs::OsRng, RngCore};
 use std::hash::Hasher;
@@ -33,12 +34,12 @@ impl PublicKey {
         self.0.as_bytes()
     }
 
-    pub fn to_address(&self) -> Address {
-        Address::new(get_network().is_mainnet(), AddressType::Normal, Cow::Borrowed(self))
+    pub fn to_address(&self, mainnet: bool) -> Address {
+        Address::new(mainnet, AddressType::Normal, Cow::Borrowed(self))
     }
 
-    pub fn to_address_with(&self, data: DataType) -> Address {
-        Address::new(get_network().is_mainnet(), AddressType::Data(data), Cow::Borrowed(self))
+    pub fn to_address_with(&self, mainnet: bool, data: DataType) -> Address {
+        Address::new(mainnet, AddressType::Data(data), Cow::Borrowed(self))
     }
 }
 
@@ -67,6 +68,18 @@ impl PartialEq for PublicKey {
     }
 }
 
+impl PartialOrd for PublicKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.as_bytes().cmp(other.as_bytes()))
+    }
+}
+
+impl Ord for PublicKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_bytes().cmp(other.as_bytes())
+    }
+}
+
 impl std::hash::Hash for PublicKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.as_bytes().hash(state);
@@ -78,7 +91,7 @@ impl serde::Serialize for PublicKey {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_address().to_string())
+        serializer.serialize_str(&self.to_address(get_network().is_mainnet()).to_string())
     }
 }
 
@@ -92,7 +105,7 @@ impl<'de> serde::Deserialize<'de> for PublicKey {
 
 impl Display for PublicKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "{}", &self.to_address())
+        write!(f, "{}", &self.to_address(get_network().is_mainnet()))
     }
 }
 

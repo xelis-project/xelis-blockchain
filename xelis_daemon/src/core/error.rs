@@ -35,7 +35,7 @@ pub enum BlockchainError {
     InvalidHash(Hash, Hash),
     #[error("Invalid previous block hash, expected {}, got {}", _0, _1)]
     InvalidPreviousBlockHash(Hash, Hash),
-    #[error("Block size is more than limit: {}, got {}", _0, _1)]
+    #[error("Block size is more than limit, expected maximum: {}, got {}", _0, _1)]
     InvalidBlockSize(usize, usize),
     #[error("Block contains invalid txs count: expected {}, got {} txs.", _0, _1)]
     InvalidBlockTxs(usize, usize),
@@ -49,6 +49,8 @@ pub enum BlockchainError {
     TxAlreadyInMempool(Hash),
     #[error("Normal Tx {} is empty", _0)]
     TxEmpty(Hash),
+    #[error("Tx {} has too many output", _0)]
+    TooManyOutputInTx(Hash),
     #[error("Tx {} is already in block", _0)]
     TxAlreadyInBlock(Hash),
     #[error("Duplicate registration tx for address '{}' found in same block", _0)]
@@ -137,22 +139,38 @@ pub enum BlockchainError {
     BlockDeviation,
     #[error("Invalid genesis block hash")]
     InvalidGenesisHash,
-    #[error("Invalid tx nonce for account")]
-    InvalidTxNonce,
+    #[error("Invalid tx nonce (got {} expected {}) for {}", _0, _1, _2)]
+    InvalidTxNonce(u64, u64, PublicKey),
+    #[error("Invalid tx nonce for mempool cache")]
+    InvalidTxNonceMempoolCache,
     #[error("Invalid asset ID: {}", _0)]
     AssetNotFound(Hash),
     #[error(transparent)]
     DifficultyError(#[from] DifficultyError),
-    #[error("No balance found on disk")]
-    NoBalance,
-    #[error("No balance changes for specific topoheight and asset")]
-    NoBalanceChanges,
+    #[error("No balance found on disk for {}", _0)]
+    NoBalance(PublicKey),
+    #[error("No balance changes for {} at specific topoheight and asset", _0)]
+    NoBalanceChanges(PublicKey),
+    #[error("No nonce found on disk for {}", _0)]
+    NoNonce(PublicKey),
+    #[error("No nonce changes for {} at specific topoheight", _0)]
+    NoNonceChanges(PublicKey),
     #[error("Overflow detected")]
     Overflow,
     #[error("Error, block include a dead tx {}", _0)]
     DeadTx(Hash),
     #[error("A non-zero value is required for burn")]
-    NoValueForBurn
+    NoValueForBurn,
+    #[error("TX {} is already in blockchain", _0)]
+    TxAlreadyInBlockchain(Hash),
+    #[error("Cannot prune, not enough blocks")]  
+    PruneHeightTooHigh,
+    #[error("Cannot prune until topoheight 0, provide a positive number")]
+    PruneZero,
+    #[error("Prune topoheight is lower or equal than previous pruned topoheight")]
+    PruneLowerThanLastPruned,
+    #[error("Auto prune mode is misconfigured")]
+    AutoPruneMode
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

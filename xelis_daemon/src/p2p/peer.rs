@@ -1,11 +1,12 @@
 use lru::LruCache;
-use xelis_common::config::{PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT};
+use xelis_common::config::{PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP};
 use xelis_common::globals::get_current_time;
 use xelis_common::{
     crypto::hash::Hash,
     config::PEER_TIMEOUT_REQUEST_OBJECT,
     serializer::Serializer
 };
+use super::packet::bootstrap_chain::{StepRequest, BootstrapChainRequest, StepResponse};
 use super::packet::object::{ObjectRequest, OwnedObjectResponse};
 use super::peer_list::SharedPeerList;
 use super::connection::{Connection, ConnectionMessage};
@@ -21,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 use std::borrow::Cow;
 use bytes::Bytes;
-use log::{warn, trace};
+use log::{warn, trace, debug};
 
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
@@ -47,11 +48,17 @@ pub struct Peer {
     last_ping: AtomicU64, // last time we got a ping packet from this peer
     cumulative_difficulty: AtomicU64, // cumulative difficulty of peer chain
     txs_cache: Mutex<LruCache<Hash, ()>>, // All transactions propagated to/from this peer
-    blocks_propagation: Mutex<LruCache<Hash, ()>> // last blocks propagated to/from this peer
+    blocks_propagation: Mutex<LruCache<Hash, ()>>, // last blocks propagated to/from this peer
+    last_inventory: AtomicU64, // last time we got an inventory packet from this peer
+    requested_inventory: AtomicBool, // if we requested this peer to send us an inventory notification
+    pruned_topoheight: AtomicU64, // pruned topoheight if its a pruned node
+    is_pruned: AtomicBool, // cannot be set to false if its already to true (protocol rules)
+    // used for await on bootstrap chain packets
+    bootstrap_chain: Mutex<Option<Sender<StepResponse>>>
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, out: bool, priority: bool, cumulative_difficulty: u64, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: u64, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
         Self {
             connection,
             id,
@@ -74,7 +81,12 @@ impl Peer {
             last_ping: AtomicU64::new(0),
             cumulative_difficulty: AtomicU64::new(cumulative_difficulty),
             txs_cache: Mutex::new(LruCache::new(128)),
-            blocks_propagation: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT))
+            blocks_propagation: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
+            last_inventory: AtomicU64::new(0),
+            requested_inventory: AtomicBool::new(false),
+            pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
+            is_pruned: AtomicBool::new(pruned_topoheight.is_some()),
+            bootstrap_chain: Mutex::new(None)
         }
     }
 
@@ -120,6 +132,27 @@ impl Peer {
 
     pub fn set_height(&self, height: u64) {
         self.height.store(height, Ordering::Release);
+    }
+
+    pub fn is_pruned(&self) -> bool {
+        self.is_pruned.load(Ordering::Acquire)
+    }
+
+    pub fn get_pruned_topoheight(&self) -> Option<u64> {
+        if self.is_pruned() {
+            Some(self.pruned_topoheight.load(Ordering::Acquire))
+        } else {
+            None
+        }
+    }
+
+    pub fn set_pruned_topoheight(&self, pruned_topoheight: Option<u64>) {
+        if let Some(pruned_topoheight) = pruned_topoheight {
+            self.is_pruned.store(true, Ordering::Release);
+            self.pruned_topoheight.store(pruned_topoheight, Ordering::Release);
+        } else {
+            self.is_pruned.store(false, Ordering::Release);
+        }
     }
 
     pub async fn set_block_top_hash(&self, hash: Hash) {
@@ -237,6 +270,40 @@ impl Peer {
         Ok(object)
     }
 
+    pub async fn request_boostrap_chain(&self, step: StepRequest<'_>) -> Result<StepResponse, P2pError> {
+        debug!("Requesting bootstrap chain step: {:?}", step);
+        let step_kind = step.kind();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        {
+            let mut sender_lock = self.bootstrap_chain.lock().await;
+            *sender_lock = Some(sender);
+        }
+
+        // send the packet
+        self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(step))).await?;
+
+        // wait on the response
+        let response: StepResponse = match timeout(Duration::from_millis(PEER_TIMEOUT_BOOTSTRAP_STEP), receiver).await {
+            Ok(res) => res?,
+            Err(e) => {
+                trace!("Requested bootstrap chain step {:?} has timed out", step_kind);
+                return Err(P2pError::AsyncTimeOut(e));
+            }
+        };
+
+        // check that the response is what we asked for
+        let response_kind = response.kind();
+        if response_kind != step_kind {
+            return Err(P2pError::InvalidBootstrapStep(step_kind, response_kind))
+        }
+
+        Ok(response)
+    }
+
+    pub fn get_bootstrap_chain_channel(&self) -> &Mutex<Option<Sender<StepResponse>>> {
+        &self.bootstrap_chain
+    }
+
     pub fn get_peers(&self) -> &Mutex<HashSet<SocketAddr>> {
         &self.peers
     }
@@ -255,6 +322,22 @@ impl Peer {
 
     pub fn set_last_ping(&self, value: u64) {
         self.last_ping.store(value, Ordering::Release)
+    }
+
+    pub fn get_last_inventory(&self) -> u64 {
+        self.last_inventory.load(Ordering::Acquire)
+    }
+
+    pub fn set_last_inventory(&self, value: u64) {
+        self.last_inventory.store(value, Ordering::Release)
+    }
+
+    pub fn has_requested_inventory(&self) -> bool {
+        self.requested_inventory.load(Ordering::Acquire)
+    }
+
+    pub fn set_requested_inventory(&self, value: bool) {
+        self.requested_inventory.store(value, Ordering::Release)
     }
 
     pub async fn close(&self) -> Result<(), P2pError> {
@@ -293,12 +376,19 @@ impl Display for Peer {
             "Couldn't retrieve data".to_string()
         };
 
-        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, top hash: {}, height: {}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}]",
+        let pruned_state = if let Some(value) = self.get_pruned_topoheight() {
+            format!("Yes ({})", value)
+        } else {
+            "No".to_string()
+        };
+
+        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, top hash: {}, height: {}, pruned: {}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}]",
             self.get_connection(),
             self.get_id(),
             self.get_topoheight(),
             top_hash,
             self.get_height(),
+            pruned_state,
             self.is_priority(),
             self.get_node_tag().as_ref().unwrap_or(&"None".to_owned()),
             self.get_version(),

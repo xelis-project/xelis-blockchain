@@ -1,9 +1,10 @@
+use xelis_common::block::Difficulty;
 use xelis_common::crypto::hash::Hash;
 use super::storage::Storage;
 use super::{error::BlockchainError, storage::DifficultyProvider};
 
 // sort the scores by cumulative difficulty and, if equals, by hash value
-pub fn sort_descending_by_cumulative_difficulty(scores: &mut Vec<(&Hash, u64)>) {
+pub fn sort_descending_by_cumulative_difficulty(scores: &mut Vec<(&Hash, Difficulty)>) {
     scores.sort_by(|(a_hash, a), (b_hash, b)| {
         if a != b {
             b.cmp(a)

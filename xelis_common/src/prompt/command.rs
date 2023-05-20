@@ -1,4 +1,4 @@
-use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display};
+use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display, time::{Instant, Duration}};
 
 use crate::config::VERSION;
 
@@ -105,14 +105,16 @@ impl<T> Command<T> {
 
 pub struct CommandManager<T> {
     commands: Vec<Command<T>>,
-    data: Option<T>
+    data: Option<T>,
+    running_since: Instant
 }
 
 impl<T> CommandManager<T> {
     pub fn new(data: Option<T>) -> Self {
         Self {
             commands: Vec::new(),
-            data
+            data,
+            running_since: Instant::now()
         }
     }
 
@@ -179,6 +181,10 @@ impl<T> CommandManager<T> {
 
     pub fn error<D: Display>(&self, message: D) {
         error!("{}", message);
+    }
+
+    pub fn running_since(&self) -> Duration {
+        self.running_since.elapsed()
     }
 }
 

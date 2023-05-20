@@ -3,12 +3,13 @@ pub mod p2p;
 pub mod core;
 
 use fern::colors::Color;
+use humantime::format_duration;
 use log::{info, error, warn};
 use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
     prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel},
-    config::{VERSION, BLOCK_TIME}, globals::{format_hashrate, set_network_to}, async_handler, crypto::address::Address, network::Network
+    config::{VERSION, BLOCK_TIME}, globals::{format_hashrate, set_network_to}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer
 };
 use crate::core::{
     blockchain::{Config, Blockchain},
@@ -86,6 +87,9 @@ async fn run_prompt<S: Storage>(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain
     command_manager.add_command(Command::new("top_block", "Print top block", None, CommandHandler::Async(async_handler!(top_block))));
     command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(pop_blocks))));
     command_manager.add_command(Command::new("clear_mempool", "Clear all transactions in mempool", None, CommandHandler::Async(async_handler!(clear_mempool))));
+    command_manager.add_command(Command::with_required_arguments("add_tx", "Add a TX in hex format in mempool", vec![Arg::new("hex", ArgType::String)], Some(Arg::new("broadcast", ArgType::Bool)), CommandHandler::Async(async_handler!(add_tx))));
+    command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified block height", vec![Arg::new("topoheight", ArgType::Number)], None, CommandHandler::Async(async_handler!(prune_chain))));
+    command_manager.add_command(Command::new("status", "Current daemon status", None, CommandHandler::Async(async_handler!(status))));
 
     let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
@@ -254,7 +258,6 @@ async fn top_block<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: 
     Ok(())
 }
 
-
 async fn pop_blocks<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let amount = arguments.get_value("amount")?.to_number()?;
     let blockchain = manager.get_data()?;
@@ -276,5 +279,73 @@ async fn clear_mempool<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>,
     mempool.clear();
     info!("Mempool cleared");
 
+    Ok(())
+}
+
+// add manually a TX in mempool
+async fn add_tx<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let hex = arguments.get_value("hex")?.to_string_value()?;
+    let broadcast = if arguments.has_argument("broadcast") {
+        arguments.get_value("broadcast")?.to_bool()?
+    } else {
+        true
+    };
+
+    let tx = Transaction::from_hex(hex).context("Error while decoding tx in hexadecimal format")?;
+    let hash = tx.hash();
+    manager.message(format!("Adding TX {} to mempool...", hash));
+
+    let blockchain = manager.get_data()?;
+    blockchain.add_tx_with_hash_to_mempool(tx, hash, broadcast).await.context("Error while adding TX to mempool")?;
+    manager.message("TX has been added to mempool");
+    Ok(())
+}
+
+async fn prune_chain<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let topoheight = arguments.get_value("topoheight")?.to_number()?;
+    let blockchain = manager.get_data()?;
+    manager.message(format!("Pruning chain until maximum topoheight {}", topoheight));
+    let pruned_topoheight = match blockchain.prune_until_topoheight(topoheight).await {
+        Ok(topoheight) => topoheight,
+        Err(e) => {
+            manager.error(format!("Error while pruning chain: {}", e));
+            return Ok(());
+        }
+    };
+    manager.message(format!("Chain has been pruned until topoheight {}", pruned_topoheight));
+    Ok(())
+}
+
+async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain = manager.get_data()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let height = blockchain.get_height();
+    let topoheight = blockchain.get_topo_height();
+    let stableheight = blockchain.get_stable_height();
+    let difficulty = blockchain.get_difficulty();
+    let tips = storage.get_tips().await.context("Error while retrieving tips")?;
+    let top_block_hash = blockchain.get_top_block_hash().await.context("Error while retrieving top block hash")?;
+
+    manager.message(format!("Height: {}", height));
+    manager.message(format!("Stable Height: {}", stableheight));
+    manager.message(format!("Topo Height: {}", topoheight));
+    manager.message(format!("Difficulty: {}", difficulty));
+    manager.message(format!("Top block hash: {}", top_block_hash));
+
+    manager.message(format!("Tips ({}):", tips.len()));
+    for hash in tips {
+        manager.message(format!("- {}", hash));
+    }
+
+    if let Some(pruned_topoheight) = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")? {
+        manager.message(format!("Chain is pruned until topoheight {}", pruned_topoheight));
+    } else {
+        manager.message("Chain is in full mode");
+    }
+
+    let elapsed_seconds = manager.running_since().as_secs();
+    let elapsed = format_duration(Duration::from_secs(elapsed_seconds)).to_string();
+    manager.message(format!("Uptime: {}", elapsed));
     Ok(())
 }

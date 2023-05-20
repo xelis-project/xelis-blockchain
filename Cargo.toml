@@ -6,3 +6,15 @@ members = [
     "xelis_miner",
     "xelis_daemon"
 ]
+
+# cargo run --release
+[profile.release]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+lto = true
+
+# cargo run --profile release-no-lto
+[profile.release-no-lto]
+inherits = "release"
+lto = false

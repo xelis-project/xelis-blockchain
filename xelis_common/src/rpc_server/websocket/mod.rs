@@ -1,17 +1,20 @@
 mod handler;
 
-use std::{sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashSet, hash::{Hash, Hasher}};
+use std::{sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashSet, hash::{Hash, Hasher}, time::{Duration, Instant}};
 use actix_web::{HttpRequest, web::Payload, HttpResponse};
 use actix_ws::{Session, MessageStream, Message, CloseReason, CloseCode};
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use log::debug;
-use tokio::sync::Mutex;
+use log::{debug, trace};
+use tokio::{sync::Mutex, select};
 
 pub use self::handler::EventWebSocketHandler;
 
 pub type WebSocketServerShared<H> = Arc<WebSocketServer<H>>;
 pub type WebSocketSessionShared<H> = Arc<WebSocketSession<H>>;
+
+const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
+const KEEP_ALIVE_TIME_OUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebSocketError {
@@ -37,6 +40,20 @@ where
             self.server.delete_session(self, None).await;
         }
         res
+    }
+
+    pub async fn ping(&self) -> Result<(), WebSocketError> {
+        let mut inner = self.inner.lock().await;
+        let session = inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?;
+        session.ping(b"").await?;
+        Ok(())
+    }
+
+    pub async fn pong(&self) -> Result<(), WebSocketError> {
+        let mut inner = self.inner.lock().await;
+        let session = inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?;
+        session.pong(b"").await?;
+        Ok(())
     }
 
     async fn send_text_internal<S: Into<String>>(&self, value: S) -> Result<(), WebSocketError> {
@@ -116,16 +133,21 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     }
 
     pub async fn handle_connection(self: &Arc<Self>, request: &HttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
+        debug!("Handling new WebSocket connection");
         let (response, session, stream) = actix_ws::handle(request, body)?;
+        let id = self.next_id();
+        debug!("Created new WebSocketSession with id {}", id);
         let session = Arc::new(WebSocketSession {
-            id: self.next_id(),
+            id,
             server: Arc::clone(&self),
             inner: Mutex::new(Some(session)),
         });
 
         {
+            debug!("Inserting session #{} into sessions", id);
             let mut sessions = self.sessions.lock().await;
-            sessions.insert(Arc::clone(&session));
+            let res = sessions.insert(Arc::clone(&session));
+            debug!("Session #{} has been inserted into sessions: {}", id, res);
         }
 
         actix_rt::spawn(Arc::clone(self).handle_ws_internal(session.clone(), stream));
@@ -164,35 +186,74 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             return;
         }
 
-        // TODO implement heartbeat
+        let mut interval = actix_rt::time::interval(KEEP_ALIVE_INTERVAL);
+        let mut last_pong_received = Instant::now();
         let reason = loop {
-            // wait for next message
-            let msg = match stream.next().await {
-                Some(msg) => match msg {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        debug!("Error while receiving message: {}", e);
-                        break Some(CloseReason::from(CloseCode::Error));
+            select! {
+                // heartbeat
+                _ = interval.tick() => {
+                    trace!("Sending ping to session #{}", session.id);
+                    if let Err(e) = session.ping().await {
+                        debug!("Error while sending ping to session #{}: {}", session.id, e);
+                        break None;
+                    }
+
+                    if last_pong_received.elapsed() > KEEP_ALIVE_TIME_OUT {
+                        debug!("session #{} didn't respond in time from our ping", session.id);
+                        break None;
                     }
                 },
-                None => break None,
-            };
-    
-            // handle message
-            match msg {
-                Message::Text(text) => {
-                    if let Err(e) = self.handler.on_message(&session, text.as_bytes()).await {
-                        debug!("Error while calling on_message: {}", e);
-                        break Some(CloseReason::from(CloseCode::Error));
+                // wait for next message
+                res = stream.next() => {
+                    let msg = match res {
+                        Some(msg) => match msg {
+                            Ok(msg) => msg,
+                            Err(e) => {
+                                debug!("Error while receiving message: {}", e);
+                                break Some(CloseReason::from(CloseCode::Error));
+                            }
+                        },
+                        None => {
+                            debug!("Stream closed for session #{}", session.id);
+                            break None
+                        },
+                    };
+
+                    // handle message
+                    match msg {
+                        Message::Text(text) => {
+                            debug!("Received text message for session #{}: {}", session.id, text);
+                            if let Err(e) = self.handler.on_message(&session, text.as_bytes()).await {
+                                debug!("Error while calling on_message: {}", e);
+                                break Some(CloseReason::from(CloseCode::Error));
+                            }
+                        },
+                        Message::Close(reason) => {
+                            debug!("Received close message for session #{}: {:?}", session.id, reason);
+                            break reason;
+                        },
+                        Message::Ping(data) => {
+                            debug!("Received ping message with size {} bytes from session #{}", data.len(), session.id);
+                            if let Err(e) = session.pong().await {
+                                debug!("Error received while sending pong response to session #{}: {}", session.id, e);
+                                break None;
+                            }
+                        },
+                        Message::Pong(data) => {
+                            if !data.is_empty() {
+                                debug!("Data in pong message is not empty for session #{}", session.id);
+                                break None;
+                            }
+                            last_pong_received = Instant::now();
+                        },
+                        msg => {
+                            debug!("Received websocket message not supported: {:?}", msg);
+                        }
                     }
-                },
-                Message::Close(reason) => break reason,
-                msg => {
-                    debug!("Received websocket message not supported: {:?}", msg);
                 }
-            }
+            };
         };
-    
+
         // attempt to close connection gracefully
         self.delete_session(&session, reason).await;
     }
