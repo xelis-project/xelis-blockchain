@@ -7,7 +7,7 @@ pub mod chain_validator;
 
 use serde_json::Value;
 use xelis_common::{
-    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT},
+    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT, CHAIN_SYNC_TIMEOUT_SECS},
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::{BlockHeader, Block},
@@ -30,7 +30,7 @@ use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, UnboundedSender, U
 use log::{info, warn, error, debug, trace};
 use tokio::io::AsyncWriteExt;
 use tokio::time::{interval, timeout, sleep};
-use std::{borrow::Cow, fs, path::Path, sync::atomic::{AtomicBool, Ordering}, collections::HashSet};
+use std::{borrow::Cow, fs, path::Path, sync::atomic::{AtomicBool, Ordering, AtomicU64}, collections::HashSet};
 use std::convert::TryInto;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -54,7 +54,8 @@ pub struct P2pServer<S: Storage> {
     peer_list: SharedPeerList, // all peers accepted
     blockchain: Arc<Blockchain<S>>, // reference to the chain to add blocks/txs
     connections_sender: UnboundedSender<MessageChannel>, // this sender allows to create a queue system in one task only
-    syncing: AtomicBool // used to check if we are already syncing with one peer or not
+    syncing: AtomicBool, // used to check if we are already syncing with one peer or not
+    last_sync_update: AtomicU64 // used in case of timed out
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -77,7 +78,8 @@ impl<S: Storage> P2pServer<S> {
             peer_list: PeerList::new(max_peers),
             blockchain,
             connections_sender,
-            syncing: AtomicBool::new(false)
+            syncing: AtomicBool::new(false),
+            last_sync_update: AtomicU64::new(0),
         };
 
         let arc = Arc::new(server);
@@ -477,26 +479,34 @@ impl<S: Storage> P2pServer<S> {
         let duration = Duration::from_secs(CHAIN_SYNC_DELAY);
         loop {
             sleep(duration).await;
-            if self.is_syncing() {
-                trace!("We are already syncing, skipping...");
-                continue;
-            }
-            let fast_sync = self.blockchain.is_fast_sync_mode_enabled();
-            if let Some(peer) = self.select_random_best_peer(fast_sync).await {
-                trace!("Selected for chain sync is {}", peer);
-                // check if we can maybe fast sync first
-                // otherwise, fallback on the normal chain sync
-                if fast_sync {
-                    if let Err(e) = self.bootstrap_chain(&peer).await {
-                        warn!("Error occured while fast syncing with {}: {}", peer, e);
+            let time = get_current_time();
+            if !self.is_syncing() {
+                self.last_sync_update.store(time, Ordering::SeqCst);
+                let fast_sync = self.blockchain.is_fast_sync_mode_enabled();
+                if let Some(peer) = self.select_random_best_peer(fast_sync).await {
+                    self.set_syncing(true);
+                    trace!("Selected for chain sync is {}", peer);
+                    // check if we can maybe fast sync first
+                    // otherwise, fallback on the normal chain sync
+                    if fast_sync {
+                        if let Err(e) = self.bootstrap_chain(&peer).await {
+                            warn!("Error occured while fast syncing with {}: {}", peer, e);
+                        }
+                    } else {
+                        if let Err(e) = self.request_sync_chain_for(&peer).await {
+                            debug!("Error occured on chain sync with {}: {}", peer, e);
+                        }
                     }
+                    self.set_syncing(false);
                 } else {
-                    if let Err(e) = self.request_sync_chain_for(&peer).await {
-                        debug!("Error occured on chain sync with {}: {}", peer, e);
-                    }
+                    trace!("No peer found for chain sync");
                 }
             } else {
-                trace!("No peer found for chain sync");
+                // its still syncing, verify the timeout
+                if time - self.last_sync_update.load(Ordering::Acquire) >= CHAIN_SYNC_TIMEOUT_SECS * 5 {
+                    debug!("Chain sync timeout, resetting");
+                    self.set_syncing(false);
+                }
             }
         }
     }
@@ -813,12 +823,12 @@ impl<S: Storage> P2pServer<S> {
                 let request = request.into_owned();
                 let last_request = peer.get_last_chain_sync();
                 let time = get_current_time();
-                peer.set_last_chain_sync(time);
                 // Node is trying to ask too fast our chain
                 if  last_request + CHAIN_SYNC_DELAY > time {
                     debug!("Peer requested sync chain too fast!");
                     return Err(P2pError::RequestSyncChainTooFast)
                 }
+                peer.set_last_chain_sync(time);
 
                 // at least one block necessary (genesis block)
                 if request.size() == 0 || request.size() > CHAIN_SYNC_REQUEST_MAX_BLOCKS { // allows maximum 64 blocks id (2560 bytes max)
@@ -875,6 +885,8 @@ impl<S: Storage> P2pServer<S> {
 
                     // start a new task to wait on all requested blocks
                     tokio::spawn(async move {
+                        let time = get_current_time();
+                        zelf.last_sync_update.store(time, Ordering::SeqCst);
                         zelf.set_syncing(true);
                         if let Err(e) = zelf.handle_chain_response(&peer, response, pop_count).await {
                             error!("Error while handling chain response from {}: {}", peer, e);
@@ -1218,6 +1230,10 @@ impl<S: Storage> P2pServer<S> {
                 let mut chain_validator = ChainValidator::new();
                 for hash in blocks {
                     trace!("Request block header for chain validator: {}", hash);
+                    {
+                        let time = get_current_time();
+                        self.last_sync_update.store(time, Ordering::SeqCst);
+                    }
                     let response = peer.request_blocking_object(ObjectRequest::BlockHeader(hash)).await?;
                     if let OwnedObjectResponse::BlockHeader(header, hash) = response {
                         trace!("Received {} with hash {}", header, hash);
@@ -1238,6 +1254,10 @@ impl<S: Storage> P2pServer<S> {
                     if !self.blockchain.has_block(&hash).await? {
                         let mut transactions = Vec::new(); // don't pre allocate
                         for tx_hash in header.get_txs_hashes() {
+                            {
+                                let time = get_current_time();
+                                self.last_sync_update.store(time, Ordering::SeqCst);
+                            }
                             let response = peer.request_blocking_object(ObjectRequest::Transaction(Hash::max())).await?;
                             if let OwnedObjectResponse::Transaction(tx, _) = response {
                                 trace!("Received transaction {} at block {} from {}", tx_hash, hash, peer);
@@ -1253,8 +1273,6 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
             }
-
-
         } else {
             // no rewind are needed, process normally
             // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
@@ -1618,11 +1636,13 @@ impl<S: Storage> P2pServer<S> {
 
                         let mut txs = Vec::with_capacity(header.get_txs_hashes().len());
                         for tx_hash in header.get_txs_hashes() {
-                            let OwnedObjectResponse::Transaction(tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await? else {
-                                error!("Received an invalid requested object while fetching block transaction {}", tx_hash);
-                                return Err(P2pError::InvalidPacket.into())
-                            };
-                            txs.push(Immutable::Owned(tx));
+                            if !storage.has_transaction(tx_hash).await? {
+                                let OwnedObjectResponse::Transaction(tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await? else {
+                                    error!("Received an invalid requested object while fetching block transaction {}", tx_hash);
+                                    return Err(P2pError::InvalidPacket.into())
+                                };
+                                txs.push(Immutable::Owned(tx));
+                            }
                         }
 
                         // link its TX to the block

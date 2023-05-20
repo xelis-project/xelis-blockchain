@@ -946,7 +946,6 @@ impl Storage for SledStorage {
 
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
 
-
         if let Some(cache) = &self.blocks_cache {
             cache.lock().await.put(hash, block);
         }

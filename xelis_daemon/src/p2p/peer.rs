@@ -149,7 +149,7 @@ impl Peer {
     pub fn set_pruned_topoheight(&self, pruned_topoheight: Option<u64>) {
         if let Some(pruned_topoheight) = pruned_topoheight {
             self.is_pruned.store(true, Ordering::Release);
-            self.height.store(pruned_topoheight, Ordering::Release);
+            self.pruned_topoheight.store(pruned_topoheight, Ordering::Release);
         } else {
             self.is_pruned.store(false, Ordering::Release);
         }

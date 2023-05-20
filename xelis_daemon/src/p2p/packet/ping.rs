@@ -136,6 +136,6 @@ impl Serializer for Ping<'_> {
 
 impl Display for Ping<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Ping[top_hash: {}, topoheight: {}, height: {}, peers length: {}]", self.top_hash, self.topoheight, self.height, self.peer_list.len())
+        write!(f, "Ping[top_hash: {}, topoheight: {}, height: {}, pruned topoheight: {:?}, peers length: {}]", self.top_hash, self.topoheight, self.height, self.pruned_topoheight, self.peer_list.len())
     }
 }
