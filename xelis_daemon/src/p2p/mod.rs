@@ -1447,7 +1447,18 @@ impl<S: Storage> P2pServer<S> {
     async fn handle_bootstrap_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, request: StepRequest<'_>) -> Result<(), BlockchainError> {
         let request_kind = request.kind();
         debug!("Handle bootstrap chain request {:?} from {}", request_kind, peer);
+
         let storage = self.blockchain.get_storage().read().await;
+        if let Some(topoheight) = request.get_requested_topoheight() {
+            let our_topoheight = self.blockchain.get_topo_height();
+            let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
+            // verify that the topoheight asked is above the PRUNE_SAFETY_LIMIT
+            if topoheight < PRUNE_SAFETY_LIMIT || pruned_topoheight + PRUNE_SAFETY_LIMIT > topoheight || our_topoheight < PRUNE_SAFETY_LIMIT {
+                debug!("Invalid begin topoheight (received {}, our is {}) received from {}", topoheight, our_topoheight, peer);
+                return Err(P2pError::InvalidPacket.into())
+            }
+        }
+
         match request {
             StepRequest::ChainInfo => {
                 let tips = storage.get_tips().await?;
@@ -1491,13 +1502,6 @@ impl<S: Storage> P2pServer<S> {
                 peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::Keys(keys, page)))).await?;
             },
             StepRequest::BlocksMetadata(topoheight) => {
-                let our_topoheight = self.blockchain.get_topo_height();
-                let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
-                if topoheight < PRUNE_SAFETY_LIMIT || pruned_topoheight + PRUNE_SAFETY_LIMIT > topoheight || our_topoheight < PRUNE_SAFETY_LIMIT {
-                    debug!("Invalid begin topoheight (received {}, our is {}) received from {}", topoheight, our_topoheight, peer);
-                    return Err(P2pError::InvalidPacket.into())
-                }
-
                 let mut blocks = Vec::with_capacity(PRUNE_SAFETY_LIMIT as usize);
                 // go until the requested stable topoheight
                 for topoheight in (topoheight-PRUNE_SAFETY_LIMIT..=topoheight).rev() {

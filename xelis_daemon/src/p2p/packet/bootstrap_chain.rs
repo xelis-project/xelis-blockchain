@@ -98,6 +98,17 @@ impl<'a> StepRequest<'a> {
             Self::BlocksMetadata(_) => StepKind::BlocksMetadata
         }
     }
+
+    pub fn get_requested_topoheight(&self) -> Option<u64> {
+        Some(*match self {
+            Self::ChainInfo => return None,
+            Self::Assets(topo, _) => topo,
+            Self::Keys(topo, _) => topo,
+            Self::Balances(topo, _, _) => topo,
+            Self::Nonces(topo, _) => topo,
+            Self::BlocksMetadata(topo) => topo
+        })
+    }
 }
 
 impl Serializer for StepRequest<'_> {
