@@ -481,9 +481,9 @@ impl<S: Storage> P2pServer<S> {
             sleep(duration).await;
             let time = get_current_time();
             if !self.is_syncing() {
-                self.last_sync_update.store(time, Ordering::SeqCst);
                 let fast_sync = self.blockchain.is_fast_sync_mode_enabled();
                 if let Some(peer) = self.select_random_best_peer(fast_sync).await {
+                    self.last_sync_update.store(time, Ordering::SeqCst);
                     self.set_syncing(true);
                     trace!("Selected for chain sync is {}", peer);
                     // check if we can maybe fast sync first
@@ -825,7 +825,7 @@ impl<S: Storage> P2pServer<S> {
                 let time = get_current_time();
                 // Node is trying to ask too fast our chain
                 if  last_request + CHAIN_SYNC_DELAY > time {
-                    debug!("Peer requested sync chain too fast!");
+                    debug!("{} requested sync chain too fast!", peer);
                     return Err(P2pError::RequestSyncChainTooFast)
                 }
                 peer.set_last_chain_sync(time);
