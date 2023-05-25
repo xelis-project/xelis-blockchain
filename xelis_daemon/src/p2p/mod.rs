@@ -1293,7 +1293,7 @@ impl<S: Storage> P2pServer<S> {
                     let object_request = ObjectRequest::Block(hash.clone());
                     let response = peer.request_blocking_object(object_request).await?;
                     if let OwnedObjectResponse::Block(block, hash) = response {
-                        info!("Received block {} at height {} from {}", hash, block.get_height(), peer);
+                        trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
                         self.blockchain.add_new_block(block, false).await?;
                     } else {
                         error!("{} sent us an invalid block response", peer);
