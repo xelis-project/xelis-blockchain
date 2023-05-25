@@ -30,6 +30,11 @@ impl ChainValidator {
             return Err(BlockchainError::AlreadyInChain)
         }
 
+        if blockchain.has_block(&hash).await? {
+            error!("Block {} is already in blockchain!", hash);
+            return Err(BlockchainError::AlreadyInChain)
+        }
+
         let tips = header.get_tips();
         let tips_count = tips.len();
         
@@ -43,7 +48,7 @@ impl ChainValidator {
         {
             let mut unique_tips = HashSet::with_capacity(tips_count);
             for tip in tips {
-                if !self.blocks.contains_key(tip) {
+                if !self.blocks.contains_key(tip) && !blockchain.has_block(tip).await? {
                     error!("Block {} contains tip {} which is not present in chain validator", hash, tip);
                     return Err(BlockchainError::InvalidTips)
                 }
