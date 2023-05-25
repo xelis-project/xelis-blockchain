@@ -55,6 +55,7 @@ pub struct P2pServer<S: Storage> {
     blockchain: Arc<Blockchain<S>>, // reference to the chain to add blocks/txs
     connections_sender: UnboundedSender<MessageChannel>, // this sender allows to create a queue system in one task only
     syncing: AtomicBool, // used to check if we are already syncing with one peer or not
+    verify_syncing_time_out: AtomicBool, // chain sync timeout check
     last_sync_request_sent: AtomicU64, // used to check if we are already syncing with one peer or not
 }
 
@@ -79,6 +80,7 @@ impl<S: Storage> P2pServer<S> {
             blockchain,
             connections_sender,
             syncing: AtomicBool::new(false),
+            verify_syncing_time_out: AtomicBool::new(false),
             last_sync_request_sent: AtomicU64::new(0),
         };
 
@@ -497,12 +499,13 @@ impl<S: Storage> P2pServer<S> {
                             self.set_syncing(false);
                         } else {
                             self.last_sync_request_sent.store(get_current_time(), Ordering::SeqCst);
+                            self.verify_syncing_time_out.store(true, Ordering::SeqCst);
                         }
                     }
                 } else {
                     trace!("No peer found for chain sync");
                 }
-            } else {
+            } else if self.verify_syncing_time_out() {
                 let last_time = self.last_sync_request_sent.load(Ordering::SeqCst);
                 if last_time > 0 && get_current_time() > last_time + CHAIN_SYNC_TIMEOUT_SECS {
                     debug!("Chain sync timed out");
@@ -857,6 +860,8 @@ impl<S: Storage> P2pServer<S> {
                 }
                 peer.set_chain_sync_requested(false);
 
+                self.last_sync_request_sent.store(get_current_time(), Ordering::SeqCst);
+
                 if response.size() > CHAIN_SYNC_RESPONSE_MAX_BLOCKS { // peer is trying to spam us
                     warn!("{} is maybe trying to spam us", peer);
                     return Err(P2pError::InvalidProtocolRules)
@@ -886,6 +891,7 @@ impl<S: Storage> P2pServer<S> {
 
                     // start a new task to wait on all requested blocks
                     tokio::spawn(async move {
+                        zelf.verify_syncing_time_out.store(false, Ordering::SeqCst);
                         zelf.set_syncing(true);
                         if let Err(e) = zelf.handle_chain_response(&peer, response, pop_count).await {
                             error!("Error while handling chain response from {}: {}", peer, e);
@@ -1373,6 +1379,10 @@ impl<S: Storage> P2pServer<S> {
 
     pub fn is_syncing(&self) -> bool {
         self.syncing.load(Ordering::SeqCst)
+    }
+
+    fn verify_syncing_time_out(&self) -> bool {
+        self.verify_syncing_time_out.load(Ordering::SeqCst)
     }
 
     pub async fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError> {
