@@ -1249,13 +1249,29 @@ impl<S: Storage> P2pServer<S> {
                     if !self.blockchain.has_block(&hash).await? {
                         let mut transactions = Vec::new(); // don't pre allocate
                         for tx_hash in header.get_txs_hashes() {
-                            let response = peer.request_blocking_object(ObjectRequest::Transaction(Hash::max())).await?;
-                            if let OwnedObjectResponse::Transaction(tx, _) = response {
-                                trace!("Received transaction {} at block {} from {}", tx_hash, hash, peer);
-                                transactions.push(Immutable::Owned(tx));
-                            } else {
-                                error!("{} sent us an invalid block response", peer);
-                                return Err(P2pError::ExpectedTransaction.into())
+                            // check first on disk in case it was already fetch by a previous block
+                            // it can happens as TXs can be integrated in multiple blocks and executed only one time
+                            let potential_tx_on_disk = {
+                                let storage = self.blockchain.get_storage().read().await;
+                                if storage.has_transaction(tx_hash).await? {
+                                    Some(storage.get_transaction(tx_hash).await?)
+                                } else {
+                                    None
+                                }
+                            };
+                            // check if we find it
+                            if let Some(tx) = potential_tx_on_disk {
+                                trace!("Found the transaction {} on disk", tx_hash);
+                                transactions.push(Immutable::Arc(tx));
+                            } else { // otherwise, ask it from peer
+                                let response = peer.request_blocking_object(ObjectRequest::Transaction(Hash::max())).await?;
+                                if let OwnedObjectResponse::Transaction(tx, _) = response {
+                                    trace!("Received transaction {} at block {} from {}", tx_hash, hash, peer);
+                                    transactions.push(Immutable::Owned(tx));
+                                } else {
+                                    error!("{} sent us an invalid block response", peer);
+                                    return Err(P2pError::ExpectedTransaction.into())
+                                }
                             }
                         }
     
