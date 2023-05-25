@@ -1166,9 +1166,6 @@ impl<S: Storage> P2pServer<S> {
                     // check to see if we should search for alt tips (and above unstable height)
                     let should_search_alt_tips = top_topoheight - topoheight < CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u64;
 
-                    // peer already have this topoheight because of common point, so we skip it and send the next one
-                    topoheight += 1;
-
                     // complete ChainResponse blocks until we are full or that we reach the top topheight
                     while response_blocks.len() < CHAIN_SYNC_RESPONSE_MAX_BLOCKS && topoheight <= top_topoheight {
                         trace!("looking for hash at topoheight {}", topoheight);
@@ -1296,7 +1293,7 @@ impl<S: Storage> P2pServer<S> {
                     let object_request = ObjectRequest::Block(hash.clone());
                     let response = peer.request_blocking_object(object_request).await?;
                     if let OwnedObjectResponse::Block(block, hash) = response {
-                        trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
+                        info!("Received block {} at height {} from {}", hash, block.get_height(), peer);
                         self.blockchain.add_new_block(block, false).await?;
                     } else {
                         error!("{} sent us an invalid block response", peer);
