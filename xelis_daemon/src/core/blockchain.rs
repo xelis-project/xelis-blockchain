@@ -1783,8 +1783,14 @@ impl<S: Storage> Blockchain<S> {
                 // we increment it in case any new tx for same owner is following
                 *nonce += 1;
             } else {
-                let (_, version) = storage.get_last_nonce(tx.get_owner()).await?;
-                let nonce = version.get_nonce();
+                // it is possible that a miner has balance but no nonces, so we need to check it
+                let nonce = if storage.has_nonce(tx.get_owner()).await? {
+                    let (_, version) = storage.get_last_nonce(tx.get_owner()).await?;
+                    version.get_nonce()
+                } else {
+                    0 // no nonce, so we start at 0
+                };
+
                 if nonce != tx.get_nonce() {
                     return Err(BlockchainError::InvalidTxNonce(tx.get_nonce(), nonce, tx.get_owner().clone()))
                 }
