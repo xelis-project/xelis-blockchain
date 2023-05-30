@@ -347,5 +347,6 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
     let elapsed_seconds = manager.running_since().as_secs();
     let elapsed = format_duration(Duration::from_secs(elapsed_seconds)).to_string();
     manager.message(format!("Uptime: {}", elapsed));
+    manager.message(format!("Running on version {}", VERSION));
     Ok(())
 }
