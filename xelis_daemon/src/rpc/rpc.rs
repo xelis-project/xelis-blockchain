@@ -1,4 +1,4 @@
-use crate::core::{blockchain::Blockchain, storage::Storage, error::BlockchainError};
+use crate::core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError};
 use super::{InternalRpcError, ApiError};
 use anyhow::Context;
 use serde_json::{json, Value};
@@ -236,6 +236,7 @@ async fn get_info<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Re
     };
     let difficulty = blockchain.get_difficulty();
     let block_time_target = BLOCK_TIME_MILLIS;
+    let block_reward = get_block_reward(native_supply);
     let mempool_size = blockchain.get_mempool_size().await;
     let version = VERSION.into();
     let network = *blockchain.get_network();
@@ -249,6 +250,7 @@ async fn get_info<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Re
         native_supply,
         difficulty,
         block_time_target,
+        block_reward,
         mempool_size,
         version,
         network
