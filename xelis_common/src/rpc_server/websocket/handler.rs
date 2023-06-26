@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, sync::Arc, borrow::Cow};
+use std::{collections::{HashMap, HashSet}, hash::Hash, sync::Arc, borrow::Cow};
 use async_trait::async_trait;
 use log::debug;
 use serde_json::{Value, json};
@@ -23,6 +23,19 @@ where
             sessions: Mutex::new(HashMap::new()),
             handler
         }
+    }
+
+    pub async fn get_tracked_events(&self) -> HashSet<E> {
+        let sessions = self.sessions.lock().await;
+        HashSet::from_iter(sessions.values().map(|e| e.keys().cloned()).flatten())
+    }
+
+    pub async fn is_tracking_event(&self, event: &E) -> bool {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .values()
+            .find(|e| e.keys().into_iter().find(|x| *x == event).is_some())
+            .is_some()
     }
 
     pub async fn notify(&self, event: &E, value: Value) {

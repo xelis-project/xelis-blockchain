@@ -19,6 +19,7 @@ use xelis_common::config;
 use xelis_common::crypto::address::Address;
 use xelis_common::rpc_server::websocket::{EventWebSocketHandler, WebSocketServerShared, WebSocketServer};
 use xelis_common::rpc_server::{InternalRpcError, RPCHandler, RPCServerHandler, json_rpc, websocket, WebSocketServerHandler};
+use std::collections::HashSet;
 use std::sync::Arc;
 use log::{trace, info, error, debug, warn};
 use self::getwork_server::{GetWorkWebSocketHandler, SharedGetWorkServer};
@@ -92,6 +93,14 @@ impl<S: Storage> DaemonRpcServer<S> {
             tokio::spawn(http_server);
         }
         Ok(server)
+    }
+
+    pub async fn get_tracked_events(&self) -> HashSet<NotifyEvent> {
+        self.get_websocket().get_handler().get_tracked_events().await
+    }
+
+    pub async fn is_tracking_event(&self, event: &NotifyEvent) -> bool {
+        self.get_websocket().get_handler().is_tracking_event(event).await
     }
 
     pub async fn notify_clients(&self, event: &NotifyEvent, value: Value) -> Result<(), anyhow::Error> {

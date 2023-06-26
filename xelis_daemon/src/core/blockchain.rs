@@ -927,13 +927,15 @@ impl<S: Storage> Blockchain<S> {
 
         // broadcast to websocket this tx
         if let Some(rpc) = self.rpc.lock().await.as_ref() {
-            let rpc = rpc.clone();
-            tokio::spawn(async move {
-                let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) };
-                if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
-                    debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
-                }
-            });
+            if rpc.is_tracking_event(&NotifyEvent::TransactionAddedInMempool).await {
+                let rpc = rpc.clone();
+                tokio::spawn(async move {
+                    let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) };
+                    if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
+                        debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
+                    }
+                });
+            }
         }
 
         Ok(())
@@ -1256,7 +1258,12 @@ impl<S: Storage> Blockchain<S> {
 
         // rpc server lock
         let rpc_server = self.rpc.lock().await;
-
+        let should_track_events = if let Some(rpc) = rpc_server.as_ref() {
+            rpc.get_tracked_events().await
+        } else {
+            HashSet::new()
+        };
+        
         // track all changes in nonces to clean mempool from invalid txs stuck
         let mut nonces: HashMap<PublicKey, u64> = HashMap::new();
         // track all events to notify websocket
@@ -1372,7 +1379,7 @@ impl<S: Storage> Blockchain<S> {
 
                         self.execute_transaction(storage, &tx, &mut local_nonces, &mut balances, highest_topo).await?;    
                         // if the rpc_server is enable, track events
-                        if rpc_server.is_some() {
+                        if should_track_events.contains(&NotifyEvent::TransactionExecuted) {
                             let value = json!(TransactionExecutedEvent {
                                 tx_hash: Cow::Borrowed(&tx_hash),
                                 block_hash: Cow::Borrowed(&hash),
@@ -1404,7 +1411,7 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                if rpc_server.is_some() {
+                if should_track_events.contains(&NotifyEvent::BlockOrdered) {
                     let value = json!(BlockOrderedEvent {
                         block_hash: Cow::Borrowed(&hash),
                         block_type: get_block_type_for_block(self, &storage, &hash).await.unwrap_or(BlockType::Normal),
@@ -1488,7 +1495,7 @@ impl<S: Storage> Blockchain<S> {
         // update stable height and difficulty in cache
         {
             let (_, height) = self.find_common_base(&storage, &tips).await?;
-            if rpc_server.is_some() { // detect the change in stable height
+            if should_track_events.contains(&NotifyEvent::StableHeightChanged) { // detect the change in stable height
                 let previous_stable_height = self.get_stable_height();
                 if height != previous_stable_height {
                     let value = json!(StableHeightChangedEvent {
@@ -1532,14 +1539,16 @@ impl<S: Storage> Blockchain<S> {
 
             // notify websocket clients
             trace!("Notifying websocket clients");
-            match get_block_response_for_hash(self, storage, block_hash, false).await {
-                Ok(response) => {
-                    events.entry(NotifyEvent::NewBlock).or_insert_with(Vec::new).push(response);
-                },
-                Err(e) => {
-                    debug!("Error while getting block response for websocket: {}", e);
-                }
-            };
+            if should_track_events.contains(&NotifyEvent::NewBlock) {
+                match get_block_response_for_hash(self, storage, block_hash, false).await {
+                    Ok(response) => {
+                        events.entry(NotifyEvent::NewBlock).or_insert_with(Vec::new).push(response);
+                    },
+                    Err(e) => {
+                        debug!("Error while getting block response for websocket: {}", e);
+                    }
+                };
+            }
 
             let rpc = rpc.clone();
             // don't block mutex/lock more than necessary, we move it in another task
@@ -1678,17 +1687,19 @@ impl<S: Storage> Blockchain<S> {
             if let Some(rpc) = self.rpc.lock().await.as_ref() {
                 let previous_stable_height = self.get_stable_height();
                 if height != previous_stable_height {
-                    let rpc = rpc.clone();
-                    tokio::spawn(async move {
-                        let event = json!(StableHeightChangedEvent {
-                            previous_stable_height,
-                            new_stable_height: height
+                    if rpc.is_tracking_event(&NotifyEvent::StableHeightChanged).await {
+                        let rpc = rpc.clone();
+                        tokio::spawn(async move {
+                            let event = json!(StableHeightChangedEvent {
+                                previous_stable_height,
+                                new_stable_height: height
+                            });
+    
+                            if let Err(e) = rpc.notify_clients(&NotifyEvent::StableHeightChanged, event).await {
+                                debug!("Error while broadcasting event StableHeightChanged to websocket: {}", e);
+                            }
                         });
-
-                        if let Err(e) = rpc.notify_clients(&NotifyEvent::StableHeightChanged, event).await {
-                            debug!("Error while broadcasting event StableHeightChanged to websocket: {}", e);
-                        }
-                    });
+                    }
                 }
             }
             self.stable_height.store(height, Ordering::Release);
