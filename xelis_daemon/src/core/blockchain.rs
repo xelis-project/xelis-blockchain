@@ -9,7 +9,7 @@ use xelis_common::{
     globals::{get_current_timestamp, format_coin},
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE, Difficulty},
     immutable::Immutable,
-    serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType}, DataHash}, network::Network
+    serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType, StableHeightChangedEvent}, DataHash}, network::Network
 };
 use crate::{p2p::P2pServer, rpc::{rpc::{get_block_response_for_hash, get_block_type_for_block}, DaemonRpcServer, SharedDaemonRpcServer}};
 use super::{storage::{Storage, DifficultyProvider}, mempool::SortedTx};
@@ -1405,13 +1405,12 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 if rpc_server.is_some() {
-                    let event = NotifyEvent::BlockOrdered;
                     let value = json!(BlockOrderedEvent {
                         block_hash: Cow::Borrowed(&hash),
                         block_type: get_block_type_for_block(self, &storage, &hash).await.unwrap_or(BlockType::Normal),
                         topoheight: highest_topo,
                     });
-                    events.entry(event).or_insert_with(Vec::new).push(value);
+                    events.entry(NotifyEvent::BlockOrdered).or_insert_with(Vec::new).push(value);
                 }
             }
 
@@ -1489,6 +1488,16 @@ impl<S: Storage> Blockchain<S> {
         // update stable height and difficulty in cache
         {
             let (_, height) = self.find_common_base(&storage, &tips).await?;
+            if rpc_server.is_some() { // detect the change in stable height
+                let previous_stable_height = self.get_stable_height();
+                if height != previous_stable_height {
+                    let value = json!(StableHeightChangedEvent {
+                        previous_stable_height,
+                        new_stable_height: height
+                    });
+                    events.entry(NotifyEvent::StableHeightChanged).or_insert_with(Vec::new).push(value);
+                }
+            }
             self.stable_height.store(height, Ordering::SeqCst);
 
             trace!("update difficulty in cache");
@@ -1664,6 +1673,24 @@ impl<S: Storage> Blockchain<S> {
         {
             let tips = storage.get_tips().await?;
             let (_, height) = self.find_common_base(&storage, &tips).await?;
+
+            // if we have a RPC server, propagate the StableHeightChanged if necessary
+            if let Some(rpc) = self.rpc.lock().await.as_ref() {
+                let previous_stable_height = self.get_stable_height();
+                if height != previous_stable_height {
+                    let rpc = rpc.clone();
+                    tokio::spawn(async move {
+                        let event = json!(StableHeightChangedEvent {
+                            previous_stable_height,
+                            new_stable_height: height
+                        });
+
+                        if let Err(e) = rpc.notify_clients(&NotifyEvent::StableHeightChanged, event).await {
+                            debug!("Error while broadcasting event StableHeightChanged to websocket: {}", e);
+                        }
+                    });
+                }
+            }
             self.stable_height.store(height, Ordering::Release);
         }
 
