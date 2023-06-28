@@ -193,7 +193,17 @@ async fn communication_task(mut daemon_address: String, job_sender: broadcast::S
                 client
             },
             Err(e) => {
-                error!("Error while connecting to {}: {}", daemon_address, e);
+                if let tokio_tungstenite::tungstenite::Error::Http(e) = e {
+                    let body: String = e.into_body()
+                        .map_or(
+                            "Unknown error".to_owned(),
+                            |v| String::from_utf8_lossy(&v).to_string()
+                        );
+                    error!("Error while connecting to {}, got an unexpected response: {}", daemon_address, body);
+                } else {
+                    error!("Error while connecting to {}: {}", daemon_address, e);
+                }
+
                 warn!("Trying to connect to WebSocket again in 10 seconds...");
                 tokio::time::sleep(Duration::from_secs(10)).await;
                 continue 'main;

@@ -147,22 +147,23 @@ async fn getwork_endpoint<S: Storage>(server: Data<DaemonRpcServer<S>>, request:
         Some(getwork) => {
             let (addr, worker) = path.into_inner();
             if worker.len() > 32 {
-                return Ok(HttpResponse::BadRequest().reason("Worker name must be less or equal to 32 chars").finish())
+                return Ok(HttpResponse::BadRequest().body("Worker name must be less or equal to 32 chars"))
             }
 
             let address: Address<'_> = match Address::from_string(&addr) {
                 Ok(address) => address,
                 Err(e) => {
                     debug!("Invalid miner address for getwork server: {}", e);
-                    return Ok(HttpResponse::BadRequest().reason("Invalid miner address for getwork server").finish())
+                    return Ok(HttpResponse::BadRequest().body("Invalid miner address for getwork server"))
                 }
             };
             if !address.is_normal() {
-                return Ok(HttpResponse::BadRequest().reason("Address should be in normal format").finish())
+                return Ok(HttpResponse::BadRequest().body("Address should be in normal format"))
             }
 
-            if address.is_mainnet() != server.get_rpc_handler().get_data().get_network().is_mainnet() {
-                return Ok(HttpResponse::BadRequest().reason("Address is not in same network state").finish())
+            let network = server.get_rpc_handler().get_data().get_network();
+            if address.is_mainnet() != network.is_mainnet() {
+                return Ok(HttpResponse::BadRequest().body(format!("Address is not in same network state, should be in {} mode", network.to_string().to_lowercase())))
             }
 
             let key = address.to_public_key();
