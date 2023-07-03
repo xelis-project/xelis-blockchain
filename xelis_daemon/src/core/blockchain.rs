@@ -2,7 +2,7 @@ use anyhow::Error;
 use lru::LruCache;
 use serde_json::{Value, json};
 use xelis_common::{
-    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME, PRUNE_SAFETY_LIMIT},
+    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS},
     crypto::{key::PublicKey, hash::{Hashable, Hash}},
     difficulty::{check_difficulty, calculate_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
@@ -1922,6 +1922,38 @@ impl<S: Storage> Blockchain<S> {
         }
 
         Ok(())
+    }
+
+    pub async fn get_average_block_time_for_storage(&self, storage: &S) -> Result<u64, BlockchainError> {
+        // current topoheight
+        let topoheight = self.get_topo_height();
+
+        // we need to get the block hash at topoheight - 50 to compare
+        // if topoheight is 0, returns the target as we don't have any block
+        // otherwise returns topoheight
+        let mut count = if topoheight > 50 {
+            50
+        } else if topoheight == 0 {
+            return Ok(BLOCK_TIME_MILLIS);
+        } else {
+            topoheight
+        };
+
+        // check that we are not under the pruned topoheight
+        if let Some(pruned_topoheight) = storage.get_pruned_topoheight()? {
+            if topoheight - count < pruned_topoheight {
+                count = pruned_topoheight
+            }
+        }
+
+        let now_hash = storage.get_hash_at_topo_height(topoheight).await?;
+        let now_timestamp = storage.get_timestamp_for_block_hash(&now_hash).await?;
+
+        let count_hash = storage.get_hash_at_topo_height(topoheight - count).await?;
+        let count_timestamp = storage.get_timestamp_for_block_hash(&count_hash).await?;
+
+        let diff = (now_timestamp - count_timestamp) as u64;
+        Ok(diff / count)
     }
 }
 

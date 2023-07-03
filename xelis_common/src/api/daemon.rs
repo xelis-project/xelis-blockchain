@@ -121,6 +121,7 @@ pub struct GetInfoResult {
     pub native_supply: u64,
     pub difficulty: Difficulty,
     pub block_time_target: u64,
+    pub average_block_time: u64,
     pub block_reward: u64,
     // count how many transactions are present in mempool
     pub mempool_size: usize,

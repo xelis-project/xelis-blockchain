@@ -326,12 +326,15 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
     let difficulty = blockchain.get_difficulty();
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
     let top_block_hash = blockchain.get_top_block_hash().await.context("Error while retrieving top block hash")?;
+    let avg_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
 
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
     manager.message(format!("Topo Height: {}", topoheight));
     manager.message(format!("Difficulty: {}", difficulty));
     manager.message(format!("Top block hash: {}", top_block_hash));
+    manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / 1000f64));
+    manager.message(format!("Target Block Time: {}s", BLOCK_TIME));
 
     manager.message(format!("Tips ({}):", tips.len()));
     for hash in tips {

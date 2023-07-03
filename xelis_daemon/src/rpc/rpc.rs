@@ -227,12 +227,13 @@ async fn get_info<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Re
     let height = blockchain.get_height();
     let topoheight = blockchain.get_topo_height();
     let stableheight = blockchain.get_stable_height();
-    let (top_hash, native_supply, pruned_topoheight) = {
+    let (top_hash, native_supply, pruned_topoheight, average_block_time) = {
         let storage = blockchain.get_storage().read().await;
         let top_hash = storage.get_hash_at_topo_height(topoheight).await.context("Error while retrieving hash at topo height")?;
         let supply = storage.get_supply_for_block_hash(&top_hash).context("Error while supply for hash")?;
         let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?;
-        (top_hash, supply, pruned_topoheight)
+        let average_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
+        (top_hash, supply, pruned_topoheight, average_block_time)
     };
     let difficulty = blockchain.get_difficulty();
     let block_time_target = BLOCK_TIME_MILLIS;
@@ -250,6 +251,7 @@ async fn get_info<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Re
         native_supply,
         difficulty,
         block_time_target,
+        average_block_time,
         block_reward,
         mempool_size,
         version,
