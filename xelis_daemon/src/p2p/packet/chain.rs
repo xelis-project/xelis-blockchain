@@ -150,8 +150,8 @@ impl ChainResponse {
         }
     }
 
-    pub fn get_common_point(&self) -> &Option<CommonPoint> {
-        &self.common_point
+    pub fn get_common_point(&mut self) -> Option<CommonPoint> {
+        self.common_point.take()
     }
 
     pub fn size(&self) -> usize {

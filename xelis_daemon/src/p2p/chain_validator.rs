@@ -2,7 +2,7 @@ use std::{collections::{HashMap, HashSet}, sync::Arc};
 use async_trait::async_trait;
 use xelis_common::{crypto::hash::Hash, block::{BlockHeader, Difficulty}, config::TIPS_LIMIT};
 use crate::core::{error::BlockchainError, blockchain::Blockchain, storage::{DifficultyProvider, Storage}};
-use log::{error, debug};
+use log::{error, trace};
 
 struct Data {
     header: Arc<BlockHeader>,
@@ -10,27 +10,29 @@ struct Data {
     cumulative_difficulty: Difficulty
 }
 
-pub struct ChainValidator {
+pub struct ChainValidator<S: Storage> {
     blocks: HashMap<Arc<Hash>, Data>, // include all blocks
-    order: Vec<Arc<Hash>> // keep the order of incoming blocks
+    order: Vec<Arc<Hash>>, // keep the order of incoming blocks
+    blockchain: Arc<Blockchain<S>>
 }
 
-impl ChainValidator {
-    pub fn new() -> Self {
+impl<S: Storage> ChainValidator<S> {
+    pub fn new(blockchain: Arc<Blockchain<S>>) -> Self {
         Self {
             blocks: HashMap::new(),
-            order: Vec::new()
+            order: Vec::new(),
+            blockchain
         }
     }
 
     // validate the basic chain structure
-    pub async fn insert_block<S: Storage>(&mut self, blockchain: &Arc<Blockchain<S>>, hash: Hash, header: BlockHeader) -> Result<(), BlockchainError> {
+    pub async fn insert_block(&mut self, hash: Hash, header: BlockHeader) -> Result<(), BlockchainError> {
         if self.blocks.contains_key(&hash) {
             error!("Block {} is already in validator chain!", hash);
             return Err(BlockchainError::AlreadyInChain)
         }
 
-        if blockchain.has_block(&hash).await? {
+        if self.blockchain.has_block(&hash).await? {
             error!("Block {} is already in blockchain!", hash);
             return Err(BlockchainError::AlreadyInChain)
         }
@@ -48,7 +50,8 @@ impl ChainValidator {
         {
             let mut unique_tips = HashSet::with_capacity(tips_count);
             for tip in tips {
-                if !self.blocks.contains_key(tip) && !blockchain.has_block(tip).await? {
+                trace!("Checking tip {} for block {}", tip, hash);
+                if !self.blocks.contains_key(tip) && !self.blockchain.has_block(tip).await? {
                     error!("Block {} contains tip {} which is not present in chain validator", hash, tip);
                     return Err(BlockchainError::InvalidTips)
                 }
@@ -63,8 +66,8 @@ impl ChainValidator {
         }
 
         let pow_hash = header.get_pow_hash();
-        debug!("POW hash: {}", pow_hash);
-        let difficulty = blockchain.verify_proof_of_work(self, &pow_hash, &tips).await?;
+        trace!("POW hash: {}", pow_hash);
+        let difficulty = self.blockchain.verify_proof_of_work(self, &pow_hash, &tips).await?;
         let cumulative_difficulty = 0;
 
         let hash = Arc::new(hash);
@@ -74,15 +77,13 @@ impl ChainValidator {
         Ok(())
     }
 
-    fn get_data(&self, hash: &Hash) -> Result<&Data, BlockchainError> {
-        self.blocks.get(hash).ok_or_else(|| BlockchainError::BlockNotFound(hash.clone()))
-    }
-
+    // retrieve the whole chain order maintained internally
     pub fn get_order(&mut self) -> Vec<Arc<Hash>> {
         let order = std::mem::replace(&mut self.order, Vec::new());
         order
     }
 
+    // used in P2P to retrieve the BlockHeader instead of doing a Copy of it
     pub fn consume_block_header(&mut self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
         let data = self.blocks.remove(hash).ok_or_else(|| BlockchainError::BlockNotFound(hash.clone()))?;
         Ok(data.header)
@@ -90,29 +91,59 @@ impl ChainValidator {
 }
 
 #[async_trait]
-impl DifficultyProvider for ChainValidator {
+impl<S: Storage> DifficultyProvider for ChainValidator<S> {
     async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        Ok(self.get_data(hash)?.header.get_height())
+        if let Some(data) = self.blocks.get(hash) {
+            return Ok(data.header.get_height())
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        Ok(storage.get_height_for_block_hash(hash).await?)
     }
 
     async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u128, BlockchainError> {
-        Ok(self.get_data(hash)?.header.get_timestamp())
+        if let Some(data) = self.blocks.get(hash) {
+            return Ok(data.header.get_timestamp())
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        Ok(storage.get_timestamp_for_block_hash(hash).await?)
     }
 
     async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
-        Ok(self.get_data(hash)?.difficulty)
+        if let Some(data) = self.blocks.get(hash) {
+            return Ok(data.difficulty)
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        Ok(storage.get_difficulty_for_block_hash(hash).await?)
     }
 
     async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
-        Ok(self.get_data(hash)?.cumulative_difficulty)
+        if let Some(data) = self.blocks.get(hash) {
+            return Ok(data.cumulative_difficulty)
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        Ok(storage.get_cumulative_difficulty_for_block_hash(hash).await?)
     }
 
     async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
-        // really dirty
-        Ok(Arc::new(self.get_data(hash)?.header.get_tips().clone()))
+        if let Some(data) = self.blocks.get(hash) {
+            // Dirty pls help me
+            return Ok(Arc::new(data.header.get_tips().clone()))
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        Ok(storage.get_past_blocks_for_block_hash(hash).await?)
     }
 
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
-        Ok(self.get_data(hash)?.header.clone())
+        if let Some(data) = self.blocks.get(hash) {
+            return Ok(data.header.clone())
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        Ok(storage.get_block_header_by_hash(hash).await?)
     }
 }

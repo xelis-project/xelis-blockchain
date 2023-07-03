@@ -852,7 +852,7 @@ impl<S: Storage> P2pServer<S> {
                     zelf.set_syncing(false);
                 });
             },
-            Packet::ChainResponse(response) => {
+            Packet::ChainResponse(mut response) => {
                 trace!("Received a chain response from {}", peer);
                 if !peer.chain_sync_requested() {
                     warn!("{} sent us a chain response but we haven't requested any.", peer);
@@ -893,7 +893,7 @@ impl<S: Storage> P2pServer<S> {
                     tokio::spawn(async move {
                         zelf.verify_syncing_time_out.store(false, Ordering::SeqCst);
                         zelf.set_syncing(true);
-                        if let Err(e) = zelf.handle_chain_response(&peer, response, pop_count).await {
+                        if let Err(e) = zelf.handle_chain_response(&peer, common_point, response, pop_count).await {
                             error!("Error while handling chain response from {}: {}", peer, e);
                             peer.increment_fail_count();
                         }
@@ -902,7 +902,7 @@ impl<S: Storage> P2pServer<S> {
                 } else {
                     warn!("No common block was found with {}", peer);
                     if response.size() > 0 {
-                        debug!("Peer have no common block but send us {} blocks!", response.size());
+                        warn!("Peer have no common block but send us {} blocks!", response.size());
                         return Err(P2pError::InvalidPacket)
                     }
                 }
@@ -1033,7 +1033,7 @@ impl<S: Storage> P2pServer<S> {
             Packet::NotifyInventoryResponse(inventory) => {
                 trace!("Received a notify inventory from {}", peer);
                 if !peer.has_requested_inventory() {
-                    debug!("Received a notify inventory from {} but we didn't request it", peer);
+                    warn!("Received a notify inventory from {} but we didn't request it", peer);
                     return Err(P2pError::InvalidPacket)
                 }
 
@@ -1209,33 +1209,47 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
-    async fn handle_chain_response(self: &Arc<Self>, peer: &Arc<Peer>, response: ChainResponse, pop_count: u64) -> Result<(), BlockchainError> {
+    async fn handle_chain_response(self: &Arc<Self>, peer: &Arc<Peer>, common_point: CommonPoint, response: ChainResponse, pop_count: u64) -> Result<(), BlockchainError> {
         let (mut blocks, top_blocks) = response.consume();
         debug!("handling chain response from {}, {} blocks, {} top blocks, pop count {}", peer, blocks.len(), top_blocks.len(), pop_count);
 
         let our_previous_topoheight = self.blockchain.get_topo_height();
+        let our_previous_height = self.blockchain.get_height();
         let top_len = top_blocks.len();
         let blocks_len = blocks.len();
 
         // merge both list together
         blocks.extend(top_blocks);
 
-        // if node asks us to pop blocks, check that the difference with peer's height is above STABLE_LIMIT
-        // then, verify if it's a priority node, otherwise, check if we are connected to a priority node so only him can rewind us
-        if pop_count > 0 && peer.get_topoheight() > our_previous_topoheight && peer.get_height() - self.blockchain.get_height() > STABLE_LIMIT && (peer.is_priority() || !self.is_connected_to_a_synced_priority_node().await) {
+        // if node asks us to pop blocks, check that the peer's height/topoheight is in advance on us
+        if pop_count > 0
+            && peer.get_topoheight() > our_previous_topoheight
+            && peer.get_height() >= our_previous_height
+            // if the difference is above the STABLE LIMIT, we have to rewind as the common point is in stable height and no block can be added
+            && common_point.get_topoheight() <= our_previous_topoheight && our_previous_topoheight - common_point.get_topoheight() > STABLE_LIMIT
+            // then, verify if it's a priority node, otherwise, check if we are connected to a priority node so only him can rewind us
+            && (peer.is_priority() || !self.is_connected_to_a_synced_priority_node().await)
+        {
             // check that if we can trust him
             if peer.is_priority() {
                 warn!("Rewinding chain without checking because {} is a priority node (pop count: {})", peer, pop_count);
                 self.blockchain.rewind_chain(pop_count as usize).await?;
             } else {
                 // request all blocks header and verify basic chain structure
-                let mut chain_validator = ChainValidator::new();
+                let mut chain_validator = ChainValidator::new(self.blockchain.clone());
                 for hash in blocks {
                     trace!("Request block header for chain validator: {}", hash);
+
+                    // check if we already have the block to not request it
+                    if self.blockchain.has_block(&hash).await? {
+                        trace!("We already have block {}, skipping", hash);
+                        continue;
+                    }
+
                     let response = peer.request_blocking_object(ObjectRequest::BlockHeader(hash)).await?;
                     if let OwnedObjectResponse::BlockHeader(header, hash) = response {
                         trace!("Received {} with hash {}", header, hash);
-                        chain_validator.insert_block(&self.blockchain, hash, header).await?;
+                        chain_validator.insert_block(hash, header).await?;
                     } else {
                         error!("{} sent us an invalid object response", peer);
                         return Err(P2pError::ExpectedBlock.into())
@@ -1486,7 +1500,7 @@ impl<S: Storage> P2pServer<S> {
             let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
             // verify that the topoheight asked is above the PRUNE_SAFETY_LIMIT
             if topoheight < PRUNE_SAFETY_LIMIT || pruned_topoheight + PRUNE_SAFETY_LIMIT > topoheight || our_topoheight < PRUNE_SAFETY_LIMIT {
-                debug!("Invalid begin topoheight (received {}, our is {}) received from {}", topoheight, our_topoheight, peer);
+                warn!("Invalid begin topoheight (received {}, our is {}) received from {}", topoheight, our_topoheight, peer);
                 return Err(P2pError::InvalidPacket.into())
             }
         }
