@@ -1103,10 +1103,11 @@ impl<S: Storage> P2pServer<S> {
 
                 // request the next page
                 if next_page.is_some() {
+                    trace!("Requesting next page of inventory from {}", peer);
                     let packet = Cow::Owned(NotifyInventoryRequest::new(next_page));
                     let ping = Cow::Owned(self.build_generic_ping_packet().await);
-                    peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping))).await?;
                     peer.set_requested_inventory(true);
+                    peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping))).await?;
                 }
 
             },
@@ -1707,6 +1708,7 @@ impl<S: Storage> P2pServer<S> {
         debug!("Requesting inventory of {}", peer);
         let packet = Cow::Owned(NotifyInventoryRequest::new(None));
         let ping = Cow::Owned(self.build_generic_ping_packet().await);
+        peer.set_requested_inventory(true);
         peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping))).await?;
         Ok(())
     }
