@@ -890,6 +890,7 @@ impl<S: Storage> Blockchain<S> {
             if let Some(nonce) = mempool.get_cached_nonce(owner) {
                 // check that the nonce is in the range
                 if !(tx.get_nonce() <= nonce.get_max() + 1 && tx.get_nonce() >= nonce.get_min()) {
+                    debug!("TX {} nonce is not in the range of the pending TXs for this owner, received: {}, expected between {} and {}", hash, tx.get_nonce(), nonce.get_min(), nonce.get_max());
                     return Err(BlockchainError::InvalidTxNonceMempoolCache)
                 }
 

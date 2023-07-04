@@ -491,6 +491,10 @@ impl<S: Storage> P2pServer<S> {
                     if fast_sync {
                         if let Err(e) = self.bootstrap_chain(&peer).await {
                             warn!("Error occured while fast syncing with {}: {}", peer, e);
+                        } else {
+                            if let Err(e) = self.request_inventory_of(&peer).await {
+                                debug!("Error occured while asking inventory of {} after fast sync: {}", peer, e);
+                            }
                         }
                         self.set_syncing(false);
                     } else {
@@ -1328,7 +1332,7 @@ impl<S: Storage> P2pServer<S> {
         if peer_topoheight > our_previous_topoheight && peer_topoheight - our_previous_topoheight < CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u64 {
             let our_topoheight = self.blockchain.get_topo_height();
             // verify that we synced it partially well
-            if peer_topoheight > our_topoheight && peer_topoheight - our_topoheight < PRUNE_SAFETY_LIMIT {
+            if peer_topoheight >= our_topoheight && peer_topoheight - our_topoheight < PRUNE_SAFETY_LIMIT {
                 if let Err(e) = self.request_inventory_of(&peer).await {
                     error!("Error while asking inventory to {}: {}", peer, e);
                 };
