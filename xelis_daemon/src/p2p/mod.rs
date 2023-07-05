@@ -1073,35 +1073,37 @@ impl<S: Storage> P2pServer<S> {
 
                 // second part is to retrieve all txs we don't have concurrently
                 // we don't want to block the peer and others locks for too long so we do it in a separate task
-                for hash in missing_txs {
+                {
                     let peer = Arc::clone(&peer);
                     let blockchain = Arc::clone(&self.blockchain);
                     tokio::spawn(async move {
-                        let response = match peer.request_blocking_object(ObjectRequest::Transaction(hash)).await {
-                            Ok(response) => response,
-                            Err(e) => {
-                                error!("Error while retrieving tx from {} inventory: {}", peer, e);
-                                peer.increment_fail_count();
-                                return;
-                            }
-                        };
-
-                        if let OwnedObjectResponse::Transaction(tx, hash) = response {
-                            if let Err(e) = blockchain.add_tx_with_hash_to_mempool(tx, hash, false).await {
-                                match e {
-                                    BlockchainError::TxAlreadyInMempool(hash) | BlockchainError::TxAlreadyInBlockchain(hash) => {
-                                        // ignore because maybe another peer send us this same tx
-                                        trace!("Received a tx we already have in mempool: {}", hash);
-                                    },
-                                    _ => {
-                                        error!("Error while adding tx to mempool from {} inventory: {}", peer, e);
-                                        peer.increment_fail_count();
+                        for hash in missing_txs {
+                            let response = match peer.request_blocking_object(ObjectRequest::Transaction(hash)).await {
+                                Ok(response) => response,
+                                Err(e) => {
+                                    error!("Error while retrieving tx from {} inventory: {}", peer, e);
+                                    peer.increment_fail_count();
+                                    return;
+                                }
+                            };
+    
+                            if let OwnedObjectResponse::Transaction(tx, hash) = response {
+                                if let Err(e) = blockchain.add_tx_with_hash_to_mempool(tx, hash, false).await {
+                                    match e {
+                                        BlockchainError::TxAlreadyInMempool(hash) | BlockchainError::TxAlreadyInBlockchain(hash) => {
+                                            // ignore because maybe another peer send us this same tx
+                                            trace!("Received a tx we already have in mempool: {}", hash);
+                                        },
+                                        _ => {
+                                            error!("Error while adding tx to mempool from {} inventory: {}", peer, e);
+                                            peer.increment_fail_count();
+                                        }
                                     }
                                 }
+                            } else {
+                                error!("Error while retrieving tx from {} inventory, got an invalid type, we should ban this peer", peer);
+                                peer.increment_fail_count();
                             }
-                        } else {
-                            error!("Error while retrieving tx from {} inventory, got an invalid type, we should ban this peer", peer);
-                            peer.increment_fail_count();
                         }
                     });
                 }
