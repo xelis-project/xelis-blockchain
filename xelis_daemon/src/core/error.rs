@@ -57,6 +57,8 @@ pub enum BlockchainError {
     DuplicateRegistration(PublicKey), // address
     #[error("Invalid Tx fee, expected at least {}, got {}", _0, _1)]
     InvalidTxFee(u64, u64),
+    #[error("Fees are lower for this TX than the overrided TX, expected at least {}, got {}", _0, _1)]
+    FeesToLowToOverride(u64, u64),
     #[error("Address {} is not registered", _0)]
     AddressNotRegistered(PublicKey),
     #[error("Address {} is already registered", _0)]

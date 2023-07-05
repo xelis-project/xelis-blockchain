@@ -887,15 +887,25 @@ impl<S: Storage> Blockchain<S> {
             let owner = tx.get_owner();
             // get the highest nonce available
             // if presents, it means we have at least one tx from this owner in mempool
-            if let Some(nonce) = mempool.get_cached_nonce(owner) {
+            if let Some(cache) = mempool.get_cached_nonce(owner) {
+                // we accept to delete a tx from mempool if the new one has a higher fee
+                if let Some(hash) = cache.has_tx_with_same_nonce(tx.get_nonce()) {
+                    // TX is in range, we have to delete an existing TX
+                    // check that fees are higher than the future deleted one
+                    let other_tx = mempool.view_tx(hash)?;
+                    if other_tx.get_fee() >= tx.get_fee() {
+                        return Err(BlockchainError::InvalidTxFee(other_tx.get_fee() + 1, tx.get_fee()));
+                    }
+                }
+
                 // check that the nonce is in the range
-                if !(tx.get_nonce() <= nonce.get_max() + 1 && tx.get_nonce() >= nonce.get_min()) {
-                    debug!("TX {} nonce is not in the range of the pending TXs for this owner, received: {}, expected between {} and {}", hash, tx.get_nonce(), nonce.get_min(), nonce.get_max());
+                if !(tx.get_nonce() <= cache.get_max() + 1 && tx.get_nonce() >= cache.get_min()) {
+                    debug!("TX {} nonce is not in the range of the pending TXs for this owner, received: {}, expected between {} and {}", hash, tx.get_nonce(), cache.get_min(), cache.get_max());
                     return Err(BlockchainError::InvalidTxNonceMempoolCache)
                 }
 
                 // compute balances of previous pending TXs
-                let txs_hashes = nonce.get_txs();
+                let txs_hashes = cache.get_txs().values();
                 let mut owner_txs = Vec::with_capacity(txs_hashes.len());
                 for hash in txs_hashes {
                     let tx = mempool.get_tx(hash)?;
@@ -904,16 +914,22 @@ impl<S: Storage> Blockchain<S> {
 
                 // we need to do it in two times because of the constraint of lifetime on &tx
                 let mut balances = HashMap::new();
+                let mut nonces = HashMap::new();
                 for tx in &owner_txs {
-                    self.verify_transaction_with_hash(storage, tx, &hash, &mut balances, None, true).await?;
+                    self.verify_transaction_with_hash(storage, tx, &hash, &mut balances, Some(&mut nonces), false).await?;
                 }
             } else {
                 let mut balances = HashMap::new();
-                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false).await?
+                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false).await?;
             }
         }
 
+        let tx = Arc::new(tx);
+        mempool.add_tx(hash.clone(), tx.clone())?;
+
+        //
         if broadcast {
+            // P2p broadcast to others peers
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 let p2p = Arc::clone(p2p);
                 let hash = hash.clone();
@@ -921,24 +937,21 @@ impl<S: Storage> Blockchain<S> {
                     p2p.broadcast_tx_hash(&hash).await;
                 });
             }
-        }
 
-        let tx = Arc::new(tx);
-        mempool.add_tx(hash.clone(), tx.clone())?;
-
-        // broadcast to websocket this tx
-        if let Some(rpc) = self.rpc.lock().await.as_ref() {
-            if rpc.is_tracking_event(&NotifyEvent::TransactionAddedInMempool).await {
-                let rpc = rpc.clone();
-                tokio::spawn(async move {
-                    let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) };
-                    if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
-                        debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
-                    }
-                });
+            // broadcast to websocket this tx
+            if let Some(rpc) = self.rpc.lock().await.as_ref() {
+                if rpc.is_tracking_event(&NotifyEvent::TransactionAddedInMempool).await {
+                    let rpc = rpc.clone();
+                    tokio::spawn(async move {
+                        let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) };
+                        if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
+                            debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
+                        }
+                    });
+                }
             }
         }
-
+        
         Ok(())
     }
 

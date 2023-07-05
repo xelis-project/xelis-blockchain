@@ -1011,16 +1011,18 @@ impl<S: Storage> P2pServer<S> {
                 let mut hashes = HashSet::new();
 
                 let mempool = self.blockchain.get_mempool().read().await;
-                let txs = mempool.get_txs();
+                let nonces_cache = mempool.get_nonces_cache();
+                let all_txs = nonces_cache.values().flat_map(|v| v.get_txs().values()).collect::<Vec<_>>();
                 let next_page = {
                     let page_id = request.page().unwrap_or(0);
-                    let skip = page_id as usize * 1024;
+                    let skip = page_id as usize * NOTIFY_MAX_LEN;
 
-                    if skip < txs.len() {
-                        for tx_hash in txs.keys().skip(skip).take(NOTIFY_MAX_LEN) {
+                    let all_txs_size = all_txs.len(); 
+                    if skip < all_txs_size {
+                        for tx_hash in all_txs.into_iter().skip(skip).take(NOTIFY_MAX_LEN) {
                             hashes.insert(Cow::Borrowed(tx_hash.as_ref()));
                         }
-                        let left = txs.len() - (hashes.len() + skip);
+                        let left = all_txs_size - (hashes.len() + skip);
                         if left > 0 {
                             Some(page_id + 1)
                         } else {
