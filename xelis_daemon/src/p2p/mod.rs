@@ -706,8 +706,7 @@ impl<S: Storage> P2pServer<S> {
                 txs_cache.put(hash.clone(), ());
 
                 ping.into_owned().update_peer(peer).await?;
-                let mempool = self.blockchain.get_mempool().read().await;
-                if !mempool.contains_tx(&hash) {
+                if !self.blockchain.has_tx(&hash).await? {
                     let zelf = Arc::clone(self);
                     let peer = Arc::clone(peer);
                     tokio::spawn(async move {

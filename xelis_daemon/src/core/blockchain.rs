@@ -965,6 +965,22 @@ impl<S: Storage> Blockchain<S> {
         self.get_block_template_for_storage(&storage, address).await
     }
 
+    // check that the TX Hash is present in mempool or in chain disk
+    pub async fn has_tx(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+        // check in mempool first
+        // if its present, returns it
+        {
+            let mempool = self.mempool.read().await;
+            if mempool.contains_tx(hash) {
+                return Ok(true)
+            }
+        }
+
+        // check in storage now
+        let storage = self.storage.read().await;
+        storage.has_transaction(hash).await
+    }
+
     pub async fn get_block_template_for_storage(&self, storage: &S, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
         let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>(); // generate random bytes
         let tips_set = storage.get_tips().await?;
