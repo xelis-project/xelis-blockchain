@@ -56,8 +56,14 @@ pub enum P2pError {
     RequestSyncChainTooFast,
     #[error(transparent)]
     AsyncTimeOut(#[from] Elapsed),
+    #[error("No response received from peer")]
+    NoResponse,
+    #[error("Invalid object hash, expected: {}, got: {}", _0, _1)]
+    InvalidObjectHash(Hash, Hash),
     #[error("Object requested {} not found", _0)]
     ObjectNotFound(ObjectRequest),
+    #[error("Object not requested {}", _0)]
+    ObjectNotRequested(ObjectRequest),
     #[error("Object requested {} already requested", _0)]
     ObjectAlreadyRequested(ObjectRequest),
     #[error("Invalid object response for request, received hash: {}", _0)]

@@ -4,6 +4,7 @@ pub mod error;
 pub mod packet;
 pub mod peer_list;
 pub mod chain_validator;
+mod tracker;
 
 use indexmap::IndexSet;
 use serde_json::Value;
@@ -18,7 +19,7 @@ use crate::{core::{blockchain::Blockchain, storage::Storage}, p2p::{chain_valida
 use crate::core::error::BlockchainError;
 use crate::p2p::connection::ConnectionMessage;
 use crate::p2p::packet::chain::CommonPoint;
-use self::packet::chain::{BlockId, ChainRequest, ChainResponse};
+use self::{packet::chain::{BlockId, ChainRequest, ChainResponse}, tracker::ObjectTracker};
 use self::packet::object::{ObjectRequest, ObjectResponse, OwnedObjectResponse};
 use self::peer_list::{SharedPeerList, PeerList};
 use self::connection::{State, Connection};
@@ -58,6 +59,7 @@ pub struct P2pServer<S: Storage> {
     syncing: AtomicBool, // used to check if we are already syncing with one peer or not
     verify_syncing_time_out: AtomicBool, // chain sync timeout check
     last_sync_request_sent: AtomicU64, // used to check if we are already syncing with one peer or not
+    object_tracker: ObjectTracker
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -83,6 +85,7 @@ impl<S: Storage> P2pServer<S> {
             syncing: AtomicBool::new(false),
             verify_syncing_time_out: AtomicBool::new(false),
             last_sync_request_sent: AtomicU64::new(0),
+            object_tracker: ObjectTracker::new()
         };
 
         let arc = Arc::new(server);
@@ -706,11 +709,11 @@ impl<S: Storage> P2pServer<S> {
                 txs_cache.put(hash.clone(), ());
 
                 ping.into_owned().update_peer(peer).await?;
-                if !self.blockchain.has_tx(&hash).await? {
+                if !self.blockchain.has_tx(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
                     let zelf = Arc::clone(self);
                     let peer = Arc::clone(peer);
                     tokio::spawn(async move {
-                        let response = match peer.request_blocking_object(ObjectRequest::Transaction(hash)).await {
+                        let response = match zelf.object_tracker.request_object_from_peer(&peer, ObjectRequest::Transaction(hash)).await {
                             Ok(response) => response,
                             Err(err) => {
                                 error!("Error while requesting transaction: {}", err);
@@ -718,6 +721,7 @@ impl<S: Storage> P2pServer<S> {
                                 return;
                             }
                         };
+
                         if let OwnedObjectResponse::Transaction(tx, hash) = response {
                             if let Err(e) = zelf.blockchain.add_tx_with_hash_to_mempool(tx, hash, true).await {
                                 match e {
@@ -993,14 +997,20 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::ObjectResponse(response) => {
                 trace!("Received a object response from {}", peer);
-                let request = response.get_request();
-
-                // check if we have requested this object & get the sender from it
-                let sender = peer.remove_object_request(request.into_owned()).await?;
-                // handle the response
-                if sender.send(response.to_owned()?).is_err() {
-                    error!("Error while sending object response to sender!");
+                let response = response.to_owned()?;
+                // check if the Object Tracker has requested this object
+                if self.object_tracker.has_requested_object(response.get_hash()).await {
+                    self.object_tracker.handle_object_response(response).await?;
+                } else { // otherwise check if its specific to the peer
+                    // check if we have requested this object & get the sender from it
+                    let request = response.get_request();
+                    let sender = peer.remove_object_request(request).await?;
+                    // handle the response
+                    if sender.send(response).is_err() {
+                        error!("Error while sending object response to sender!");
+                    }
                 }
+
             },
             Packet::NotifyInventoryRequest(packet_wrapper) => {
                 trace!("Received a inventory request from {}", peer);
