@@ -62,12 +62,14 @@ impl ObjectTracker {
                 return Err(P2pError::ObjectAlreadyRequested(request));
             }
         }
-
+        
+        // wait for the lock
+        let mut receiver = self.receiver.lock().await;
+        
         // send the packet to the Peer
         peer.send_packet(Packet::ObjectRequest(Cow::Owned(request))).await?;
 
         // wait for the response
-        let mut receiver = self.receiver.lock().await;
         timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver.recv()).await
             .map_err(|e| P2pError::AsyncTimeOut(e))?
             .ok_or(P2pError::NoResponse)

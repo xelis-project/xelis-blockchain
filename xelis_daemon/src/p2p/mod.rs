@@ -1443,6 +1443,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     pub async fn broadcast_tx_hash(&self, tx: &Hash) {
+        debug!("Broadcasting tx hash {}", tx);
         let ping = self.build_generic_ping_packet().await;
         let current_topoheight = ping.get_topoheight();
         let packet = Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(tx), Cow::Owned(ping)));
