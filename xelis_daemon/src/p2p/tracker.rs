@@ -55,6 +55,7 @@ impl ObjectTracker {
     }
 
     pub async fn request_object_from_peer(&self, peer: &Peer, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
+        debug!("Requesting {} from peer {}", request, peer);
         {
             let mut queue = self.queue.write().await;
             if queue.insert(request.get_hash().clone(), request.clone()).is_some() {
