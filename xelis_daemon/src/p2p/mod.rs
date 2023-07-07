@@ -701,6 +701,7 @@ impl<S: Storage> P2pServer<S> {
                 let hash = hash.into_owned();
 
                 // peer should not send us twice the same transaction
+                debug!("Received a transaction propagation ({}) from {}", hash, peer);
                 let mut txs_cache = peer.get_txs_cache().lock().await;
                 if txs_cache.contains(&hash) {
                     warn!("{} send us a transaction ({}) already tracked by him", peer, hash);
