@@ -14,11 +14,11 @@ use xelis_common::{
     block::{BlockHeader, Block},
     globals::get_current_time, immutable::Immutable, account::VersionedNonce
 };
-use crate::{core::{blockchain::Blockchain, storage::Storage}, p2p::{chain_validator::ChainValidator, packet::{bootstrap_chain::{StepRequest, StepResponse, BootstrapChainResponse, MAX_ITEMS_PER_PAGE, BlockMetadata}, inventory::{NOTIFY_MAX_LEN, NotifyInventoryRequest, NotifyInventoryResponse}}}};
+use crate::{core::{blockchain::Blockchain, storage::Storage}, p2p::{chain_validator::ChainValidator, packet::{bootstrap_chain::{StepRequest, StepResponse, BootstrapChainResponse, MAX_ITEMS_PER_PAGE, BlockMetadata}, inventory::{NOTIFY_MAX_LEN, NotifyInventoryRequest, NotifyInventoryResponse}}, tracker::WaiterResponse}};
 use crate::core::error::BlockchainError;
 use crate::p2p::connection::ConnectionMessage;
 use crate::p2p::packet::chain::CommonPoint;
-use self::{packet::chain::{BlockId, ChainRequest, ChainResponse}, tracker::ObjectTracker};
+use self::{packet::chain::{BlockId, ChainRequest, ChainResponse}, tracker::{ObjectTracker, SharedObjectTracker}};
 use self::packet::object::{ObjectRequest, ObjectResponse, OwnedObjectResponse};
 use self::peer_list::{SharedPeerList, PeerList};
 use self::connection::{State, Connection};
@@ -58,7 +58,7 @@ pub struct P2pServer<S: Storage> {
     syncing: AtomicBool, // used to check if we are already syncing with one peer or not
     verify_syncing_time_out: AtomicBool, // chain sync timeout check
     last_sync_request_sent: AtomicU64, // used to check if we are already syncing with one peer or not
-    object_tracker: ObjectTracker,
+    object_tracker: SharedObjectTracker, // used to requests objects to peers and avoid requesting the same object to multiple peers
     broadcast_semaphore: Semaphore, // used to limit the number of broadcast messages
     is_running: AtomicBool // used to check if the server is running or not in tasks
 }
@@ -104,6 +104,8 @@ impl<S: Storage> P2pServer<S> {
     pub async fn stop(&self) {
         info!("Stopping P2p Server...");
         self.is_running.store(false, Ordering::Release);
+
+        self.object_tracker.stop();
         if let Err(e) = self.connections_sender.send(MessageChannel::Exit) {
             error!("Error while sending Exit message to stop accepting new connections: {}", e);
         }
@@ -656,6 +658,15 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
+    async fn handle_transaction_propagation_response(self: Arc<Self>, waiter: WaiterResponse) -> Result<(), P2pError> {
+        let response = waiter.await??;
+        if let OwnedObjectResponse::Transaction(tx, hash) = response {
+            self.blockchain.add_tx_with_hash_to_mempool(tx, hash, true).await?;
+        }
+
+        Ok(())
+    }
+
     async fn handle_incoming_packet(self: &Arc<Self>, peer: &Arc<Peer>, packet: Packet<'_>) -> Result<(), P2pError> {
         match packet {
             Packet::Handshake(_) => {
@@ -669,7 +680,7 @@ impl<S: Storage> P2pServer<S> {
                 let hash = hash.into_owned();
 
                 // peer should not send us twice the same transaction
-                debug!("Received a transaction propagation ({}) from {}", hash, peer);
+                debug!("Received tx hash {} from {}", hash, peer);
                 let mut txs_cache = peer.get_txs_cache().lock().await;
                 if txs_cache.contains(&hash) {
                     warn!("{} send us a transaction ({}) already tracked by him", peer, hash);
@@ -679,33 +690,14 @@ impl<S: Storage> P2pServer<S> {
 
                 ping.into_owned().update_peer(peer).await?;
                 if !self.blockchain.has_tx(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
-                    let zelf = Arc::clone(self);
+                    let waiter: WaiterResponse = self.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash))?;
                     let peer = Arc::clone(peer);
+                    let zelf = Arc::clone(&self);
                     tokio::spawn(async move {
-                        let response = match zelf.object_tracker.request_object_from_peer(&peer, ObjectRequest::Transaction(hash)).await {
-                            Ok(response) => response,
-                            Err(err) => {
-                                error!("Error while requesting transaction: {}", err);
-                                peer.increment_fail_count();
-                                return;
-                            }
-                        };
-
-                        if let OwnedObjectResponse::Transaction(tx, hash) = response {
-                            if let Err(e) = zelf.blockchain.add_tx_with_hash_to_mempool(tx, hash, true).await {
-                                match e {
-                                    // another peer was faster than us
-                                    BlockchainError::TxAlreadyInMempool(_) => {}, // TODO: synced request list
-                                    e => {
-                                        error!("Error while adding TX to mempool: {}", e);
-                                        peer.increment_fail_count();
-                                    }
-                                };
-                            }
-                        } else {
+                        if let Err(e) = zelf.handle_transaction_propagation_response(waiter).await {
                             peer.increment_fail_count();
-                            error!("Expected to receive a Transaction object from peer: {}", peer);
-                        }
+                            error!("Error while handling transaction propagation response: {}", e);
+                        };
                     });
                 }
             },
@@ -1428,7 +1420,7 @@ impl<S: Storage> P2pServer<S> {
                 let mut txs_cache = peer.get_txs_cache().lock().await;
                 // check that we didn't already send this tx to this peer or that he don't already have it
                 if !txs_cache.contains(tx) {
-                    warn!("Broadcasting tx hash {} to {}", tx, peer);
+                    trace!("Broadcasting tx hash {} to {}", tx, peer);
                     if let Err(e) = peer.send_bytes(bytes.clone()).await {
                         error!("Error while broadcasting tx hash {} to {}: {}", tx, peer, e);
                     }
