@@ -7,9 +7,8 @@ pub mod chain_validator;
 mod tracker;
 
 use indexmap::IndexSet;
-use serde_json::Value;
 use xelis_common::{
-    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT, CHAIN_SYNC_TIMEOUT_SECS},
+    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT, CHAIN_SYNC_TIMEOUT_SECS, P2P_PEERLIST_DELAY},
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::{BlockHeader, Block},
@@ -28,11 +27,11 @@ use self::packet::ping::Ping;
 use self::error::P2pError;
 use self::packet::{Packet, PacketWrapper};
 use self::peer::Peer;
-use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, UnboundedSender, UnboundedReceiver}, select, task::JoinHandle};
+use tokio::{net::{TcpListener, TcpStream}, sync::{mpsc::{self, UnboundedSender, UnboundedReceiver}, Semaphore}, select, task::JoinHandle};
 use log::{info, warn, error, debug, trace};
 use tokio::io::AsyncWriteExt;
 use tokio::time::{interval, timeout, sleep};
-use std::{borrow::Cow, fs, path::Path, sync::atomic::{AtomicBool, Ordering, AtomicU64}, collections::HashSet};
+use std::{borrow::Cow, sync::atomic::{AtomicBool, Ordering, AtomicU64}, collections::HashSet};
 use std::convert::TryInto;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -59,11 +58,13 @@ pub struct P2pServer<S: Storage> {
     syncing: AtomicBool, // used to check if we are already syncing with one peer or not
     verify_syncing_time_out: AtomicBool, // chain sync timeout check
     last_sync_request_sent: AtomicU64, // used to check if we are already syncing with one peer or not
-    object_tracker: ObjectTracker
+    object_tracker: ObjectTracker,
+    broadcast_semaphore: Semaphore, // used to limit the number of broadcast messages
+    is_running: AtomicBool // used to check if the server is running or not in tasks
 }
 
 impl<S: Storage> P2pServer<S> {
-    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, maintains_seed_nodes: bool) -> Result<Arc<Self>, P2pError> {
+    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>) -> Result<Arc<Self>, P2pError> {
         if let Some(tag) = &tag {
             debug_assert!(tag.len() > 0 && tag.len() <= 16);
         }
@@ -79,19 +80,21 @@ impl<S: Storage> P2pServer<S> {
             tag,
             max_peers,
             bind_address: addr,
-            peer_list: PeerList::new(max_peers),
+            peer_list: PeerList::new(max_peers, format!("peerlist-{}.json", blockchain.get_network().to_string().to_lowercase())),
             blockchain,
             connections_sender,
             syncing: AtomicBool::new(false),
             verify_syncing_time_out: AtomicBool::new(false),
             last_sync_request_sent: AtomicU64::new(0),
-            object_tracker: ObjectTracker::new()
+            object_tracker: ObjectTracker::new(),
+            broadcast_semaphore: Semaphore::new(1),
+            is_running: AtomicBool::new(true)
         };
 
         let arc = Arc::new(server);
         let zelf = Arc::clone(&arc);
         tokio::spawn(async move {
-            if let Err(e) = zelf.start(receiver, maintains_seed_nodes).await {
+            if let Err(e) = zelf.start(receiver, use_peerlist, exclusive_nodes).await {
                 error!("Unexpected error on P2p module: {}", e);
             }
         });
@@ -100,156 +103,80 @@ impl<S: Storage> P2pServer<S> {
 
     pub async fn stop(&self) {
         info!("Stopping P2p Server...");
+        self.is_running.store(false, Ordering::Release);
         if let Err(e) = self.connections_sender.send(MessageChannel::Exit) {
             error!("Error while sending Exit message to stop accepting new connections: {}", e);
         }
 
         let mut peers = self.peer_list.write().await;
-        match self.get_peers_from_file().await {
-            Ok(mut peers_from_file) => {
-                for (_, peer) in peers.get_peers() {
-                    let addr = peer.get_connection().get_address();
-                    if !peers_from_file.contains(&addr) {
-                        peers_from_file.push(addr.clone());
-                    }
-                }
-                if let Err(e) = self.save_peers_to_file(&peers_from_file).await {
-                    error!("Couldn't save peers to file: {}", e);
-                };
-            },
-            Err(e) => {
-                error!("Couldn't retrieve peers from file: {}", e);
-            }
-        }
         peers.close_all().await;
         info!("P2p Server is now stopped!");
     }
 
-    // Connect to all seed nodes from constant
-    // buffer parameter is to prevent the re-allocation
-    async fn connect_to_seed_nodes(self: &Arc<Self>) -> Result<(), P2pError> {
-        for peer in SEED_NODES {
-            let addr: SocketAddr = match peer.parse() {
-                Ok(addr) => addr,
-                Err(e) => return Err(P2pError::InvalidPeerAddress(format!("seed node {}: {}", peer, e)))
-            };
-            if !self.is_connected_to_addr(&addr).await? {
-                self.try_to_connect_to_peer(addr, true);
+    pub fn is_running(&self) -> bool {
+        self.is_running.load(Ordering::Acquire)
+    }
+
+    // Connect to nodes which aren't already connected in parameters
+    async fn connect_to_nodes(self: &Arc<Self>, nodes: &Vec<SocketAddr>) -> Result<(), P2pError> {
+        for addr in nodes {
+            if self.accept_new_connections().await {
+                if !self.is_connected_to_addr(addr).await? {
+                    self.try_to_connect_to_peer(addr.clone(), true).await;
+                }
             }
         }
         Ok(())
     }
 
-    // every 10 seconds, verify
-    async fn maintains_seed_nodes(self: &Arc<Self>) -> Result<(), P2pError> {
+    // every 10 seconds, verify and connect if necessary
+    async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: Vec<SocketAddr>) -> Result<(), P2pError> {
+        debug!("Starting maintains seed nodes task...");
         let mut interval = interval(Duration::from_secs(10));
         loop {
             interval.tick().await;
-            if let Err(e) = self.connect_to_seed_nodes().await {
-                debug!("Error while connecting to seed nodes: {}", e);
-            };
-        }
-    }
-
-    fn get_peerlist_file(&self) -> String {
-        format!("peerlist-{}.json", self.blockchain.get_network().to_string().to_lowercase())
-    }
-
-    // we save it in peerlist-{network}.json file in case we want to do custom peerlist files
-    async fn get_peers_from_file(&self) -> Result<Vec<SocketAddr>, P2pError> {
-        let mut peers = Vec::new();
-        let str_path = self.get_peerlist_file();
-        let path = Path::new(&str_path);
-        if !path.exists() {
-            info!("Peerlist at {} not found, creating file...", str_path);
-            self.save_peers_to_file(&peers).await?;
-            return Ok(peers);
-        }
-
-        let string = fs::read_to_string(path)?;
-        let json: Value = serde_json::from_str(&string).map_err(|_| P2pError::InvalidPeerlist)?;
-
-        if let Some(values) = json.as_array() {
-            for value in values {
-                if let Some(addr) = value.as_str() {
-                    let addr: SocketAddr = match addr.parse() {
-                        Ok(addr) => addr,
-                        Err(e) => return Err(P2pError::InvalidPeerAddress(format!("peerlist {}: {}", addr, e)))
-                    };
-                    peers.push(addr);
-                } else {
-                    debug!("Content in peerlist is not a string");
-                    return Err(P2pError::InvalidPeerlist);
-                }
+            if !self.is_running() {
+                debug!("Maintains seed nodes task is stopped!");
+                break;
             }
-        } else {
-            debug!("Content in peerlist is not an array");
-            return Err(P2pError::InvalidPeerlist);
-        }
 
-        Ok(peers)
-    }
-
-    // save a new peer to peerlist.json file
-    // for this we have to fetch all, add it to Vec and save it
-    async fn save_peer_to_file(&self, addr: SocketAddr) -> Result<(), P2pError> {
-        debug!("Saving peer {} to peerlist file...", addr);
-        let mut peers = self.get_peers_from_file().await?;
-        if peers.contains(&addr) {
-            debug!("Peerlist file already contains {}", addr);
-            return Ok(())
-        }
-
-        peers.push(addr);
-        self.save_peers_to_file(&peers).await
-    }
-
-    async fn save_peers_to_file(&self, peers: &Vec<SocketAddr>) -> Result<(), P2pError> {
-        let content = match serde_json::to_string_pretty(peers) {
-            Ok(content) => content,
-            Err(e) => {
-                error!("Error while serializing peerlist: {}", e);
-                return Err(P2pError::InvalidPeerlist)
+            if self.accept_new_connections().await {
+                if let Err(e) = self.connect_to_nodes(&nodes).await {
+                    debug!("Error while connecting to seed nodes: {}", e);
+                };
             }
-        };
-
-        let str_path = self.get_peerlist_file();
-        fs::write(str_path, content)?;
+        }
 
         Ok(())
     }
 
     // connect to seed nodes, start p2p server
     // and wait on all new connections
-    async fn start(self: &Arc<Self>, mut receiver: UnboundedReceiver<MessageChannel>, maintains_seed_nodes: bool) -> Result<(), P2pError> {
-        // create tokio task to maintains connection to seed nodes
-        if maintains_seed_nodes {
-            let zelf = Arc::clone(self);
-            tokio::spawn(async move {
-                info!("Connecting to seed nodes...");
-                if let Err(e) = zelf.maintains_seed_nodes().await {
-                    error!("Error while maintening connection with seed nodes: {}", e);
-                };
-            });
+    async fn start(self: &Arc<Self>, mut receiver: UnboundedReceiver<MessageChannel>, use_peerlist: bool, mut exclusive_nodes: Vec<SocketAddr>) -> Result<(), P2pError> {
+        if exclusive_nodes.is_empty() {
+            debug!("No exclusive nodes available, using seed nodes...");
+            exclusive_nodes = SEED_NODES.iter().map(|s| s.parse().unwrap()).collect();
         }
 
-        // retrieve all peers from peerlist.json
-        let peers = self.get_peers_from_file().await?;
-        for peer in peers {
-            if !self.accept_new_connections().await {
-                debug!("Daemon has reached limit of connections");
-                break;
-            }
-
-            info!("Adding peer address {} from peerlist to queue", peer);
-            self.try_to_connect_to_peer(peer, false);
-        }
+        // create tokio task to maintains connection to exclusive nodes or seed nodes
+        let zelf = Arc::clone(self);
+        tokio::spawn(async move {
+            info!("Connecting to seed nodes...");
+            if let Err(e) = zelf.maintains_connection_to_nodes(exclusive_nodes).await {
+                error!("Error while maintening connection with seed nodes: {}", e);
+            };
+        });
 
         // start a new task for chain sync
         tokio::spawn(Arc::clone(&self).chain_sync_loop());
 
         // start another task for ping loop
         tokio::spawn(Arc::clone(&self).ping_loop());
+
+        // start another task for peerlist loop
+        if use_peerlist {
+            tokio::spawn(Arc::clone(&self).peerlist_loop());
+        }
 
         let listener = TcpListener::bind(self.get_bind_address()).await?;
         info!("P2p Server will listen on: {}", self.get_bind_address());
@@ -266,6 +193,16 @@ impl<S: Storage> P2pServer<S> {
                             debug!("Error while closing & ignoring incoming connection {}: {}", addr, e);
                         }
                         continue;
+                    } else {
+                        // check that this incoming peer isn't blacklisted
+                        let peer_list = self.peer_list.write().await;
+                        if peer_list.is_blacklisted(&addr) {
+                            debug!("{} is blacklisted, rejecting connection", addr);
+                            if let Err(e) = stream.shutdown().await {
+                                debug!("Error while closing & ignoring incoming connection {}: {}", addr, e);
+                            }
+                            continue;
+                        }
                     }
                     (Connection::new(stream, addr), false, false)
                 },
@@ -372,10 +309,6 @@ impl<S: Storage> P2pServer<S> {
             if !peer.is_out() {
                 addr.set_port(peer.get_local_port());
             }
-            debug!("Saving address to peerlist: {}", addr);
-            if let Err(e) = self.save_peer_to_file(addr).await {
-                error!("Error while saving peer on disk: {}", e);
-            };
         }
 
         let peer_id = peer.get_id(); // keep in memory the peer_id outside connection (because of moved value)
@@ -389,7 +322,15 @@ impl<S: Storage> P2pServer<S> {
 
     // Connect to a specific peer address
     // Buffer is passed in parameter to prevent the re-allocation each time
-    pub fn try_to_connect_to_peer(&self, addr: SocketAddr, priority: bool) {
+    pub async fn try_to_connect_to_peer(&self, addr: SocketAddr, priority: bool) {
+        {
+            let peer_list = self.peer_list.read().await;
+            if peer_list.is_blacklisted(&addr) {
+                debug!("{} is banned, we can't connect to it", addr);
+                return;
+            }
+        }
+
         if let Err(e) = self.connections_sender.send(MessageChannel::Connect((addr, priority))) {
             error!("Error while trying to connect to address {} (priority = {}): {}", addr, priority, e);
         }
@@ -526,6 +467,8 @@ impl<S: Storage> P2pServer<S> {
     // broadcast generic ping packet every 10s
     // if we have to send our peerlist to all peers, we calculate the ping for each peer
     async fn ping_loop(self: Arc<Self>) {
+        debug!("Starting ping loop...");
+
         let mut last_peerlist_update = get_current_time();
         let duration = Duration::from_secs(P2P_PING_DELAY);
         loop {
@@ -592,6 +535,31 @@ impl<S: Storage> P2pServer<S> {
         }
     }
 
+    async fn peerlist_loop(self: Arc<Self>) {
+        debug!("Starting peerlist task...");
+        loop {
+            sleep(Duration::from_secs(P2P_PEERLIST_DELAY)).await;
+            if !self.is_running() {
+                debug!("Peerlist loop task is stopped!");
+                break;
+            }
+
+            if self.accept_new_connections().await {
+                let peer = {
+                    let mut  peer_list = self.peer_list.write().await;
+                    peer_list.find_peer_to_connect()
+                };
+
+                if let Some(addr) = peer {
+                    debug!("Found peer {}", addr);
+                    self.try_to_connect_to_peer(addr, false).await;
+                } else {
+                    trace!("No peer found to connect to");
+                }
+            }
+        }
+    }
+
     // this function handle the logic to send all packets to the peer
     async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut UnboundedReceiver<ConnectionMessage>) -> Result<(), P2pError> {
         loop {
@@ -627,7 +595,7 @@ impl<S: Storage> P2pServer<S> {
             select! {
                 biased;
                 _ = &mut write_task => {
-                    debug!("write task has finished, stopping...");
+                    debug!("write task for {} has finished, stopping...", peer);
                     break;
                 },
                 res = self.listen_connection(&mut buf, &peer) => {
@@ -941,7 +909,7 @@ impl<S: Storage> P2pServer<S> {
                 for peer in ping.get_peers() {
                     if !self.is_connected_to_addr(&peer).await? {
                         let peer = peer.clone();
-                        self.try_to_connect_to_peer(peer, false);
+                        self.try_to_connect_to_peer(peer, false).await;
                     }
                 }
                 ping.into_owned().update_peer(peer).await?;
@@ -1426,13 +1394,9 @@ impl<S: Storage> P2pServer<S> {
             debug!("Trying to connect to ourself, ignoring.");
             return Ok(true)
         }
+
         let peer_list = self.peer_list.read().await;
-        for peer in peer_list.get_peers().values() {
-            if *peer.get_connection().get_address() == *peer_addr {
-                return Ok(true)
-            }
-        }
-        Ok(false)
+        Ok(peer_list.is_connected_to_addr(peer_addr))
     }
 
     pub fn get_bind_address(&self) -> &SocketAddr {
@@ -1444,6 +1408,11 @@ impl<S: Storage> P2pServer<S> {
     }
 
     pub async fn broadcast_tx_hash(&self, tx: &Hash) {
+        if let Err(e) = self.broadcast_semaphore.acquire().await {
+            error!("Error while acquiring semaphore: {}", e);
+            return;
+        }
+
         debug!("Broadcasting tx hash {}", tx);
         let ping = self.build_generic_ping_packet().await;
         let current_topoheight = ping.get_topoheight();
@@ -1459,10 +1428,10 @@ impl<S: Storage> P2pServer<S> {
                 let mut txs_cache = peer.get_txs_cache().lock().await;
                 // check that we didn't already send this tx to this peer or that he don't already have it
                 if !txs_cache.contains(tx) {
-                    trace!("Broadcasting tx hash {} to {}", tx, peer);
+                    warn!("Broadcasting tx hash {} to {}", tx, peer);
                     if let Err(e) = peer.send_bytes(bytes.clone()).await {
                         error!("Error while broadcasting tx hash {} to {}: {}", tx, peer, e);
-                    };
+                    }
                     txs_cache.put(tx.clone(), ());
                 } else {
                     trace!("{} have tx hash {} in cache, skipping", peer, tx);

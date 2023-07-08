@@ -15,7 +15,7 @@ use crate::core::{
     blockchain::{Config, Blockchain},
     storage::{Storage, SledStorage}
 };
-use std::sync::Arc;
+use std::{sync::Arc, net::SocketAddr};
 use std::time::Duration;
 use clap::Parser;
 use anyhow::{Result, Context};
@@ -90,6 +90,8 @@ async fn run_prompt<S: Storage>(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain
     command_manager.add_command(Command::with_required_arguments("add_tx", "Add a TX in hex format in mempool", vec![Arg::new("hex", ArgType::String)], Some(Arg::new("broadcast", ArgType::Bool)), CommandHandler::Async(async_handler!(add_tx))));
     command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified block height", vec![Arg::new("topoheight", ArgType::Number)], None, CommandHandler::Async(async_handler!(prune_chain))));
     command_manager.add_command(Command::new("status", "Current daemon status", None, CommandHandler::Async(async_handler!(status))));
+    command_manager.add_command(Command::with_required_arguments("blacklist", "Add a peer address in Blacklist", vec![Arg::new("address", ArgType::String)], None, CommandHandler::Async(async_handler!(blacklist))));
+    command_manager.add_command(Command::with_required_arguments("whitelist", "Add a peer address in Whitelist", vec![Arg::new("address", ArgType::String)], None, CommandHandler::Async(async_handler!(whitelist))));
 
     let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
@@ -351,5 +353,39 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
     let elapsed = format_duration(Duration::from_secs(elapsed_seconds)).to_string();
     manager.message(format!("Uptime: {}", elapsed));
     manager.message(format!("Running on version {}", VERSION));
+    Ok(())
+}
+
+async fn blacklist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain: &Arc<Blockchain<S>> = manager.get_data()?;
+    let address: SocketAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+    match blockchain.get_p2p().lock().await.as_ref() {
+        Some(p2p) => {
+            let peer_list = p2p.get_peer_list();
+            peer_list.write().await.blacklist_address(&address).await;
+            manager.message(format!("Peer {} has been blacklisted", address));
+        },
+        None => {
+            manager.error("P2P is not enabled");
+        }
+    };
+
+    Ok(())
+}
+
+async fn whitelist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain: &Arc<Blockchain<S>> = manager.get_data()?;
+    let address: SocketAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+    match blockchain.get_p2p().lock().await.as_ref() {
+        Some(p2p) => {
+            let peer_list = p2p.get_peer_list();
+            peer_list.write().await.whitelist_address(&address);
+            manager.message(format!("Peer {} has been whitelisted", address));
+        },
+        None => {
+            manager.error("P2P is not enabled");
+        }
+    };
+
     Ok(())
 }

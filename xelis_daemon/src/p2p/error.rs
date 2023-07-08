@@ -83,7 +83,9 @@ pub enum P2pError {
     #[error("Invalid content in peerlist file")]
     InvalidPeerlist,
     #[error("Invalid bootstrap chain step, expected {:?}, got {:?}", _0, _1)]
-    InvalidBootstrapStep(StepKind, StepKind)
+    InvalidBootstrapStep(StepKind, StepKind),
+    #[error("Error while serde JSON: {}", _0)]
+    JsonError(#[from] serde_json::Error),
 }
 
 impl From<BlockchainError> for P2pError {

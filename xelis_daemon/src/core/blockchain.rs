@@ -41,8 +41,13 @@ pub struct Config {
     #[clap(short, long, default_value_t = String::from(DEFAULT_RPC_BIND_ADDRESS))]
     pub rpc_bind_address: String,
     /// Add a priority node to connect when P2p is started
+    /// A priority node is connected only one time
     #[clap(short = 'o', long)]
     pub priority_nodes: Vec<String>,
+    /// An exclusive node is connected and its connection is maintained in case of disconnect
+    /// it also replaces seed nodes
+    #[clap(short, long)]
+    pub exclusive_nodes: Vec<String>,
     /// Set dir path for blockchain storage
     #[clap(short = 's', long)]
     pub dir_path: Option<String>,
@@ -169,18 +174,31 @@ impl<S: Storage> Blockchain<S> {
         // create P2P Server
         if !config.disable_p2p_server && arc.network != Network::Dev  {
             info!("Starting P2p server...");
-            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), config.priority_nodes.is_empty()) {
+            // setup exclusive nodes
+            let mut exclusive_nodes: Vec<SocketAddr> = Vec::with_capacity(config.exclusive_nodes.len());
+            for peer in config.exclusive_nodes {
+                let addr: SocketAddr = match peer.parse() {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        error!("Error while parsing priority node address: {}", e);
+                        continue;
+                    }
+                };
+                exclusive_nodes.push(addr);
+            }
+            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes) {
                 Ok(p2p) => {
+                    // connect to priority nodes
                     for addr in config.priority_nodes {
                         let addr: SocketAddr = match addr.parse() {
                             Ok(addr) => addr,
                             Err(e) => {
-                                error!("Error while parsing priority node: {}", e);
+                                error!("Error while parsing priority node address: {}", e);
                                 continue;
                             }
                         };
                         info!("Trying to connect to priority node: {}", addr);
-                        p2p.try_to_connect_to_peer(addr, true);
+                        p2p.try_to_connect_to_peer(addr, true).await;
                     }
                     *arc.p2p.lock().await = Some(p2p);
                 },
