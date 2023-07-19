@@ -38,6 +38,7 @@ pub enum TransactionType {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Transaction {
+    version: u8,
     owner: PublicKey, // creator of this transaction
     data: TransactionType,
     fee: u64, // fees in XELIS for this tx
@@ -161,12 +162,17 @@ impl Serializer for TransactionType {
 impl Transaction {
     pub fn new(owner: PublicKey, data: TransactionType, fee: u64, nonce: u64, signature: Signature) -> Self {
         Transaction {
+            version: 0,
             owner,
             data,
             fee,
             nonce,
             signature
         }
+    }
+
+    pub fn get_version(&self) -> u8 {
+        self.version
     }
 
     pub fn get_owner(&self) -> &PublicKey {
@@ -199,6 +205,7 @@ impl Transaction {
 
 impl Serializer for Transaction {
     fn write(&self, writer: &mut Writer) {
+        writer.write_u8(self.version);
         self.owner.write(writer);
         self.data.write(writer);
         writer.write_u64(&self.fee);
@@ -207,6 +214,7 @@ impl Serializer for Transaction {
     }
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
+        let version = reader.read_u8()?;
         let owner = PublicKey::read(reader)?;
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;
@@ -214,6 +222,7 @@ impl Serializer for Transaction {
         let signature = Signature::read(reader)?;
 
         Ok(Transaction {
+            version,
             owner,
             data,
             fee,
