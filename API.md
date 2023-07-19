@@ -513,30 +513,37 @@ NOTE: Balance is returned in atomic units
 ```
 
 #### Get Assets
-Get all assets available on network
+Get all assets available on network with its registered topoheight. 
 
 ##### Method `get_assets`
 
 ##### Parameters
-No parameters
+|   Name  |   Type  | Required |                   Note                   |
+|:-------:|:-------:|:--------:|:----------------------------------------:|
+|   skip  | Integer | Optional |          How many assets to skip         |
+| maximum | Integer | Optional | Maximum assets to fetch (limited to 100) |
 
 ##### Request
 ```json
 {
 	"jsonrpc": "2.0",
 	"id": 1,
-	"method": "get_assets"
+	"method": "get_assets",
+	"params": {}
 }
 ```
 
 ##### Response
 ```json
 {
-	"id": 1,
-	"jsonrpc": "2.0",
-	"result": [
-		"0000000000000000000000000000000000000000000000000000000000000000"
-	]
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "identifier": "0000000000000000000000000000000000000000000000000000000000000000",
+            "topoheight": 0
+        }
+    ]
 }
 ```
 

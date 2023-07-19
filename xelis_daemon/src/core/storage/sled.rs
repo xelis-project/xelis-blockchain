@@ -5,7 +5,7 @@ use xelis_common::{
     crypto::{key::PublicKey, hash::{Hash, hash}},
     immutable::Immutable,
     transaction::Transaction,
-    block::{BlockHeader, Block, Difficulty}, account::{VersionedBalance, VersionedNonce}, network::Network,
+    block::{BlockHeader, Block, Difficulty}, account::{VersionedBalance, VersionedNonce}, network::Network, asset::AssetInfo,
 };
 use std::{
     collections::{HashSet, BTreeSet},
@@ -506,6 +506,18 @@ impl Storage for SledStorage {
                 }
             }
         }
+        Ok(assets)
+    }
+
+    async fn get_assets_with_topoheight(&self, maximum: usize, skip: usize) -> Result<Vec<AssetInfo>, BlockchainError> {
+        let mut assets = Vec::with_capacity(maximum);
+        for el in self.assets.iter().skip(skip).take(maximum) {
+            let (key, value) = el?;
+            let identifier = Hash::from_bytes(&key)?;
+            let registered_at_topo = u64::from_bytes(&value)?;
+            assets.push(AssetInfo::new(identifier, registered_at_topo));
+        }
+
         Ok(assets)
     }
 

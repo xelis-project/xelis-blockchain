@@ -17,7 +17,7 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetTopoHeightRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse, GetHeightRangeParams, GetNonceResult
+        GetTopoHeightRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse, GetHeightRangeParams, GetNonceResult, GetAssetsParams
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -286,14 +286,23 @@ async fn get_nonce<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> R
     Ok(json!(GetNonceResult { topoheight, version }))
 }
 
-// TODO Rate limiter
+const MAX_ASSETS: usize = 100;
+
 async fn get_assets<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
-    if body != Value::Null {
-        return Err(InternalRpcError::UnexpectedParams)
-    }
+    let params: GetAssetsParams = parse_params(body)?;
+    let maximum = if let Some(maximum) = params.maximum {
+        if maximum > MAX_ASSETS {
+            return Err(InternalRpcError::InvalidRequest).context("Maximum assets requested cannot be greater than 100")?
+        }
+        maximum
+    } else {
+        MAX_ASSETS
+    };
+    let skip = params.skip.unwrap_or(0);
 
     let storage = blockchain.get_storage().read().await;
-    let assets = storage.get_assets().await.context("Error while retrieving registered assets")?;
+    let assets = storage.get_assets_with_topoheight(maximum, skip).await.context("Error while retrieving registered assets")?;
+
     Ok(json!(assets))
 }
 
@@ -302,6 +311,7 @@ async fn count_transactions<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Va
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
+
     let storage = blockchain.get_storage().read().await;
     Ok(json!(storage.count_transactions()))
 }

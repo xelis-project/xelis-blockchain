@@ -176,6 +176,12 @@ pub struct TransactionResponse<'a, T: Clone> {
     pub data: DataHash<'a, T>
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct GetAssetsParams {
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {
     // When a new block is accepted by chain
