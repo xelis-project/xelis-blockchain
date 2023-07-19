@@ -743,6 +743,7 @@ NOTE: result returned in `data` field can changes based on the TransactionType (
 				}
 			]
 		},
+		"version": 0,
 		"fee": 1000,
 		"nonce": 2,
 		"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
@@ -788,6 +789,7 @@ No parameters
 					}
 				]
 			},
+			"version": 0,
 			"fee": 1000,
 			"nonce": 3,
 			"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
@@ -844,6 +846,7 @@ Fetch transactions by theirs hashes from daemon and keep the same order in respo
 					}
 				]
 			},
+			"version": 0,
 			"fee": 1000,
 			"nonce": 2,
 			"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
