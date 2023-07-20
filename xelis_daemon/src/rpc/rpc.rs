@@ -292,7 +292,7 @@ async fn get_assets<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> 
     let params: GetAssetsParams = parse_params(body)?;
     let maximum = if let Some(maximum) = params.maximum {
         if maximum > MAX_ASSETS {
-            return Err(InternalRpcError::InvalidRequest).context("Maximum assets requested cannot be greater than 100")?
+            return Err(InternalRpcError::InvalidRequest).context(format!("Maximum assets requested cannot be greater than {}", MAX_ASSETS))?
         }
         maximum
     } else {
@@ -398,26 +398,9 @@ const MAX_DAG_ORDER: u64 = 64;
 async fn get_dag_order<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetTopoHeightRangeParams = parse_params(body)?;
 
-    let current_topoheight = blockchain.get_topo_height();
-    let start_topoheight = params.start_topoheight.unwrap_or_else(|| {
-        if params.end_topoheight.is_none() && current_topoheight > MAX_DAG_ORDER {
-            current_topoheight - MAX_DAG_ORDER
-        } else {
-            0
-        }
-    });
-
-    let end_topoheight = params.end_topoheight.unwrap_or(current_topoheight);
-    if end_topoheight < start_topoheight || end_topoheight > current_topoheight {
-        debug!("get dag order range: start = {}, end = {}, max = {}", start_topoheight, end_topoheight, current_topoheight);
-        return Err(InternalRpcError::InvalidRequest)
-    }
-
+    let current = blockchain.get_topo_height();
+    let (start_topoheight, end_topoheight) = get_range(params.start_topoheight, params.end_topoheight, MAX_DAG_ORDER, current)?;
     let count = end_topoheight - start_topoheight;
-    if count > MAX_DAG_ORDER { // only retrieve max 64 blocks hash per request
-        debug!("get dag order requested count: {}", count);
-        return Err(InternalRpcError::InvalidRequest) 
-    }
 
     let storage = blockchain.get_storage().read().await;
     let mut order = Vec::with_capacity(count as usize);
@@ -431,10 +414,10 @@ async fn get_dag_order<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) 
 
 const MAX_BLOCKS: u64 = 20;
 
-fn get_range(start: Option<u64>, end: Option<u64>, current: u64) -> Result<(u64, u64), InternalRpcError> {
+fn get_range(start: Option<u64>, end: Option<u64>, maximum: u64, current: u64) -> Result<(u64, u64), InternalRpcError> {
     let range_start = start.unwrap_or_else(|| {
-        if end.is_none() && current > MAX_BLOCKS {
-            current - MAX_BLOCKS
+        if end.is_none() && current > maximum {
+            current - maximum
         } else {
             0
         }
@@ -442,14 +425,14 @@ fn get_range(start: Option<u64>, end: Option<u64>, current: u64) -> Result<(u64,
 
     let range_end = end.unwrap_or(current);
     if range_end < range_start || range_end > current {
-        debug!("get blocks range by topo height: start = {}, end = {}, max = {}", range_start, range_end, current);
-        return Err(InternalRpcError::InvalidRequest)
+        debug!("get range: start = {}, end = {}, max = {}", range_start, range_end, current);
+        return Err(InternalRpcError::InvalidRequest).context(format!("Invalid range requested, start: {}, end: {}", range_start, range_end))?
     }
 
     let count = range_end - range_start;
-    if count > MAX_BLOCKS { // only retrieve max 20 blocks hash per request
-        debug!("get blocks requested count: {}", count);
-        return Err(InternalRpcError::InvalidRequest) 
+    if count > maximum { // only retrieve max 20 blocks hash per request
+        debug!("get range requested count: {}", count);
+        return Err(InternalRpcError::InvalidRequest).context(format!("Invalid range count requested, received {} but maximum is {}", count, maximum))?
     }
 
     Ok((range_start, range_end))
@@ -461,7 +444,7 @@ async fn get_blocks_range_by_topoheight<S: Storage>(blockchain: Arc<Blockchain<S
     let params: GetTopoHeightRangeParams = parse_params(body)?;
 
     let current_topoheight = blockchain.get_topo_height();
-    let (start_topoheight, end_topoheight) = get_range(params.start_topoheight, params.end_topoheight, current_topoheight)?;
+    let (start_topoheight, end_topoheight) = get_range(params.start_topoheight, params.end_topoheight, MAX_BLOCKS, current_topoheight)?;
 
     let storage = blockchain.get_storage().read().await;
     let mut blocks = Vec::with_capacity((end_topoheight - start_topoheight) as usize);
@@ -480,7 +463,7 @@ async fn get_blocks_range_by_topoheight<S: Storage>(blockchain: Arc<Blockchain<S
 async fn get_blocks_range_by_height<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetHeightRangeParams = parse_params(body)?;
     let current_height = blockchain.get_height();
-    let (start_height, end_height) = get_range(params.start_height, params.end_height, current_height)?;
+    let (start_height, end_height) = get_range(params.start_height, params.end_height, MAX_BLOCKS, current_height)?;
 
     let storage = blockchain.get_storage().read().await;
     let mut blocks = Vec::with_capacity((end_height - start_height) as usize);
@@ -503,7 +486,7 @@ async fn get_transactions<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Valu
 
     let hashes = params.tx_hashes;
     if  hashes.len() > MAX_TXS {
-        return Err(InternalRpcError::InvalidRequest) 
+        return Err(InternalRpcError::InvalidRequest).context(format!("Too many requested txs: {}, maximum is {}", hashes.len(), MAX_TXS))?
     }
 
     let storage = blockchain.get_storage().read().await;
