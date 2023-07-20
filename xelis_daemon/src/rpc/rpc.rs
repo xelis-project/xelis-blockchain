@@ -128,6 +128,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight));
     handler.register_method("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height));
     handler.register_method("get_transactions", async_handler!(get_transactions));
+    handler.register_method("get_transaction_in_mempool", async_handler!(get_transaction_in_mempool));
 }
 
 async fn version<S: Storage>(_: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
@@ -503,4 +504,12 @@ async fn get_transactions<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Valu
     }
 
     Ok(json!(transactions))
+}
+
+async fn get_transaction_in_mempool<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetTransactionParams = parse_params(body)?;
+    let mempool = blockchain.get_mempool().read().await;
+    let transaction = mempool.view_tx(&params.hash).context("Error while retrieving transaction from mempool")?;
+    let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&params.hash), data: Cow::Borrowed(transaction) };
+    Ok(json!(TransactionResponse { blocks: None, executed_in_block: None, data }))
 }
