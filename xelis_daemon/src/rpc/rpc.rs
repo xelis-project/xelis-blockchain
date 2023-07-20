@@ -1,4 +1,4 @@
-use crate::core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError};
+use crate::core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError, mempool::Mempool};
 use super::{InternalRpcError, ApiError};
 use anyhow::Context;
 use serde_json::{json, Value};
@@ -84,7 +84,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
     Ok(value)
 }
 
-pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transaction>, hash: &Hash) -> Result<Value, InternalRpcError> {
+pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transaction>, hash: &Hash, in_mempool: bool) -> Result<Value, InternalRpcError> {
     let blocks = if storage.has_tx_blocks(hash).context("Error while checking if tx in included in blocks")? {
         Some(storage.get_blocks_for_tx(hash).context("Error while retrieving in which blocks its included")?)
     } else {
@@ -93,12 +93,20 @@ pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transact
 
     let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(tx) };
     let executed_in_block = storage.get_block_executer_for_tx(hash).ok();
-    Ok(json!(TransactionResponse { blocks, executed_in_block, data }))
+    Ok(json!(TransactionResponse { blocks, executed_in_block, data, in_mempool }))
 }
 
-pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, hash: &Hash) -> Result<Value, InternalRpcError> {
-    let tx = storage.get_transaction(hash).await.context("Error while retrieving transaction")?;
-    get_transaction_response(storage, &tx, hash).await
+// first check on disk, then check in mempool
+pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, mempool: &Mempool, hash: &Hash) -> Result<Value, InternalRpcError> {
+    let (transaction, in_mempool) = match storage.get_transaction(hash).await {
+        Ok(tx) => (tx, false),
+        Err(_) => {
+            let tx = mempool.get_tx(hash).context("Error while retrieving transaction from disk and mempool")?;
+            (tx, true)
+        }
+    };
+
+    get_transaction_response(storage, &transaction, hash, in_mempool).await
 }
 
 pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>) {
@@ -128,7 +136,6 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight));
     handler.register_method("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height));
     handler.register_method("get_transactions", async_handler!(get_transactions));
-    handler.register_method("get_transaction_in_mempool", async_handler!(get_transaction_in_mempool));
 }
 
 async fn version<S: Storage>(_: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
@@ -326,8 +333,10 @@ async fn submit_transaction<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Va
 
 async fn get_transaction<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetTransactionParams = parse_params(body)?;
+    let mempool = blockchain.get_mempool().read().await;
     let storage = blockchain.get_storage().read().await;
-    get_transaction_response_for_hash(&*storage, &params.hash).await
+
+    get_transaction_response_for_hash(&*storage, &mempool, &params.hash).await
 }
 
 async fn p2p_status<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
@@ -367,7 +376,7 @@ async fn get_mempool<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) ->
     let storage = blockchain.get_storage().read().await;
     let mut transactions: Vec<Value> = Vec::new();
     for (hash, sorted_tx) in mempool.get_txs() {
-        transactions.push(get_transaction_response(&*storage, sorted_tx.get_tx(), hash).await?);
+        transactions.push(get_transaction_response(&*storage, sorted_tx.get_tx(), hash, true).await?);
     }
 
     Ok(json!(transactions))
@@ -490,10 +499,11 @@ async fn get_transactions<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Valu
         return Err(InternalRpcError::InvalidRequest).context(format!("Too many requested txs: {}, maximum is {}", hashes.len(), MAX_TXS))?
     }
 
+    let mempool = blockchain.get_mempool().read().await;
     let storage = blockchain.get_storage().read().await;
     let mut transactions: Vec<Option<Value>> = Vec::with_capacity(hashes.len());
     for hash in hashes {
-        let tx = match get_transaction_response_for_hash(&*storage, &hash).await {
+        let tx = match get_transaction_response_for_hash(&*storage, &mempool, &hash).await {
             Ok(data) => Some(data),
             Err(e) => {
                 debug!("Error while retrieving tx {} from storage: {}", hash, e);
@@ -504,12 +514,4 @@ async fn get_transactions<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Valu
     }
 
     Ok(json!(transactions))
-}
-
-async fn get_transaction_in_mempool<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetTransactionParams = parse_params(body)?;
-    let mempool = blockchain.get_mempool().read().await;
-    let transaction = mempool.view_tx(&params.hash).context("Error while retrieving transaction from mempool")?;
-    let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&params.hash), data: Cow::Borrowed(transaction) };
-    Ok(json!(TransactionResponse { blocks: None, executed_in_block: None, data }))
 }

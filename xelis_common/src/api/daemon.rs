@@ -172,6 +172,8 @@ pub struct TransactionResponse<'a, T: Clone> {
     pub blocks: Option<HashSet<Hash>>,
     // in which blocks it was executed
     pub executed_in_block: Option<Hash>,
+    // if it is in mempool
+    pub in_mempool: bool,
     #[serde(flatten)]
     pub data: DataHash<'a, T>
 }

@@ -706,7 +706,7 @@ Submit a transaction in hex format to daemon mempool.
 ```
 
 #### Get Transaction
-Fetch a transaction by its hash from daemon
+Fetch a transaction on disk and in mempool by its hash from daemon.
 
 NOTE: result returned in `data` field can changes based on the TransactionType (transfer, burn, Smart Contract call, Deploy Code..)
 
@@ -752,6 +752,7 @@ NOTE: result returned in `data` field can changes based on the TransactionType (
 		},
 		"version": 0,
 		"fee": 1000,
+		"in_mempool": false,
 		"nonce": 2,
 		"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
 		"signature": "d297ef720d388ff2aaedf6755a1f93b4ac1b55c987da5dc53c19350d8a779d970c7f4cfcc25d2f4ce3f4ef3a77d0f31d15635d221d5a72ef6651dbb7f1810301"
@@ -798,6 +799,7 @@ No parameters
 			},
 			"version": 0,
 			"fee": 1000,
+			"in_mempool": true,
 			"nonce": 3,
 			"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
 			"signature": "9e9fcd6be9b2e968b7d44ae15909e406b827b87f3108e08646b1d5e45754ffe3e166c4eaf26a63b8ddc0ac0668a893c339ed313fb522b46a4e95b8706a2ba005"
@@ -807,7 +809,7 @@ No parameters
 ```
 
 #### Get Transactions
-Fetch transactions by theirs hashes from daemon and keep the same order in response
+Fetch transactions by theirs hashes from database and mempool of daemon and keep the same order in response
 
 ##### Method `get_transactions`
 
@@ -855,6 +857,7 @@ Fetch transactions by theirs hashes from daemon and keep the same order in respo
 			},
 			"version": 0,
 			"fee": 1000,
+			"in_mempool": false,
 			"nonce": 2,
 			"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
 			"signature": "d297ef720d388ff2aaedf6755a1f93b4ac1b55c987da5dc53c19350d8a779d970c7f4cfcc25d2f4ce3f4ef3a77d0f31d15635d221d5a72ef6651dbb7f1810301"
