@@ -114,13 +114,17 @@ impl PeerList {
     }
 
     fn update_peer(&mut self, peer: &Peer) {
-        let addr = peer.get_connection().get_address();
-        if let Some(stored_peer) = self.stored_peers.get_mut(addr) {
+        let mut addr = peer.get_connection().get_address().clone();
+        if !peer.is_out() {
+            addr.set_port(peer.get_local_port());
+        }
+
+        if let Some(stored_peer) = self.stored_peers.get_mut(&addr) {
             debug!("Updating {} in stored peerlist", peer);
             stored_peer.set_last_seen(get_current_time());
         } else {
             debug!("Saving {} in stored peerlist", peer);
-            self.stored_peers.insert(addr.clone(), StoredPeer::new(get_current_time(), StoredPeerState::Graylist));
+            self.stored_peers.insert(addr, StoredPeer::new(get_current_time(), StoredPeerState::Graylist));
         }
     }
 
