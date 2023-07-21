@@ -394,29 +394,31 @@ impl<S: Storage> P2pServer<S> {
         // and that are pruned but before our height so we can sync correctly
         let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p| {
             let peer_topoheight = p.get_topoheight();
-            // In fast sync mode, we don't check the pruned topoheight as we don't sync from genesis block
-            if !fast_sync {
+            if fast_sync {
+                // if we want to fast sync, but this peer is not compatible, we skip it
+                // for this we check that the peer topoheight is not less than the prune safety limit
+                if peer_topoheight < PRUNE_SAFETY_LIMIT || our_topoheight + PRUNE_SAFETY_LIMIT > peer_topoheight {
+                    return false
+                }
+            } else {
+                // check that the pruned topoheight is less than our topoheight to sync
+                // so we can sync chain from pruned chains
                 if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
                     if pruned_topoheight > our_topoheight {
                         return false
                     }
                 }
-            } else {
-                // if we want to fast sync, but this peer is not compatible, we skip it
-                // for this we check that the peer topoheight is greater or equal to the prune safety limit
-                if peer_topoheight < PRUNE_SAFETY_LIMIT {
-                    return false
-                }
             }
 
             p.get_height() > our_height || peer_topoheight > our_topoheight
-        }
-        ).collect();
+        }).collect();
+
         let count = peers.len();
         trace!("peers available for random selection: {}", count);
         if count == 0 {
             return None
         }
+
         let selected = rand::thread_rng().gen_range(0..count);
         let peer = peers.get(selected)?;
         trace!("selected peer for sync chain: ({}) {}", selected, peer);
@@ -429,7 +431,20 @@ impl<S: Storage> P2pServer<S> {
         loop {
             sleep(duration).await;
             if !self.is_syncing() {
-                let fast_sync = self.blockchain.is_fast_sync_mode_enabled();
+                // first we have to check if we allow fast sync mode
+                // and then we check if we have a potential peer above us to fast sync
+                // otherwise we sync normally 
+                let fast_sync = if self.blockchain.is_fast_sync_mode_allowed() {
+                    let peerlist = self.peer_list.read().await;
+                    let our_topoheight = self.blockchain.get_topo_height();
+                    peerlist.get_peers().values().find(|p| {
+                        let peer_topoheight = p.get_topoheight();
+                        peer_topoheight > our_topoheight && peer_topoheight - our_topoheight > PRUNE_SAFETY_LIMIT
+                    }).is_some()
+                } else {
+                    false
+                };
+
                 if let Some(peer) = self.select_random_best_peer(fast_sync).await {
                     self.set_syncing(true);
                     trace!("Selected for chain sync is {}", peer);
@@ -1637,6 +1652,11 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::BlocksMetadata(blocks) => {
                     let mut lowest_topoheight = stable_topoheight;
                     for (i, metadata) in blocks.into_iter().enumerate() {
+                        // check that we don't already have this block in storage
+                        if storage.has_block(&metadata.hash).await? {
+                            continue;
+                        }
+
                         lowest_topoheight = stable_topoheight - i as u64;
                         debug!("Saving block metadata {}", metadata.hash);
                         let OwnedObjectResponse::BlockHeader(header, hash) = peer.request_blocking_object(ObjectRequest::BlockHeader(metadata.hash)).await? else {

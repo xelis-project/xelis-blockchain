@@ -331,9 +331,9 @@ impl<S: Storage> Blockchain<S> {
         Ok(())
     }
 
-    // fast sync can only happens when we are at topoheight 0 (no blocks included)
-    pub fn is_fast_sync_mode_enabled(&self) -> bool {
-        self.allow_fast_sync_mode && self.get_topo_height() == 0
+    // check if user has accepted to do fast sync mode
+    pub fn is_fast_sync_mode_allowed(&self) -> bool {
+        self.allow_fast_sync_mode
     }
 
     pub async fn prune_until_topoheight(&self, topoheight: u64) -> Result<u64, BlockchainError> {
