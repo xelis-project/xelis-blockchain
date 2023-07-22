@@ -1448,11 +1448,11 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: u64, highest_topoheight: u64, highest_height: u64, pruned_topoheight: Option<u64>, hash: &Hash) {
+    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: u64, our_topoheight: u64, our_height: u64, pruned_topoheight: Option<u64>, hash: &Hash) {
         trace!("Broadcast block: {}", hash);
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock
-        let ping = Ping::new(Cow::Borrowed(hash), highest_topoheight, highest_height, pruned_topoheight, cumulative_difficulty, Vec::new());
+        let ping = Ping::new(Cow::Borrowed(hash), our_topoheight, our_height, pruned_topoheight, cumulative_difficulty, Vec::new());
         let block_packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Borrowed(&ping)));
         let bytes = Bytes::from(block_packet.to_bytes());
 
@@ -1464,9 +1464,9 @@ impl<S: Storage> P2pServer<S> {
 
             // if the peer is not too far from us, send the block
             // check that peer height is greater or equal to block height but still under or equal to STABLE_LIMIT
-            // or, check that peer height is less or equal to block height but still under 2
+            // or, check that peer height is less or equal to block height but still under or equal to STABLE_LIMIT
             // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
-            if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height < 2) {
+            if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= STABLE_LIMIT) {
                 let blocks_propagation = peer.get_blocks_propagation().lock().await;
                 // check that we don't send the block to the peer that sent it to us
                 if !blocks_propagation.contains(hash) {

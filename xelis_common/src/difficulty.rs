@@ -1,3 +1,5 @@
+use std::f64::consts::E;
+
 use crate::block::Difficulty;
 use crate::config::{MINIMUM_DIFFICULTY, BLOCK_TIME_MILLIS};
 use crate::crypto::hash::Hash;
@@ -6,7 +8,6 @@ use thiserror::Error;
 use num_traits::One;
 use log::trace;
 
-const E: f64 = 2.71828182845905;
 const M: f64 = 8f64;
 
 #[derive(Error, Debug)]
@@ -42,9 +43,9 @@ pub fn hash_to_big(hash: &Hash) -> BigUint {
 }
 
 pub fn calculate_difficulty(parent_timestamp: u128, new_timestamp: u128, previous_difficulty: Difficulty) -> Difficulty {
-    let mut solve_time: u128 = new_timestamp - parent_timestamp;
-    if solve_time > (BLOCK_TIME_MILLIS as u128 * 2) {
-        solve_time = BLOCK_TIME_MILLIS as u128 * 2;
+    let mut solve_time = (new_timestamp - parent_timestamp) as u64;
+    if solve_time > (BLOCK_TIME_MILLIS * 2) {
+        solve_time = BLOCK_TIME_MILLIS * 2;
     }
 
     let easypart = (E.powf((1f64 - solve_time as f64 / BLOCK_TIME_MILLIS as f64) / M) * 10000f64) as i64;
