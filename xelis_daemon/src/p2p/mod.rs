@@ -731,6 +731,7 @@ impl<S: Storage> P2pServer<S> {
                 let header = header.into_owned();
                 let block_hash = header.hash();
 
+                // verify that this block wasn't already sent by him
                 {
                     let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                     if blocks_propagation.contains(&block_hash) {
@@ -741,6 +742,7 @@ impl<S: Storage> P2pServer<S> {
                     blocks_propagation.put(block_hash.clone(), ());
                 }
 
+                // check that we don't have this block in our chain
                 {
                     let storage = self.blockchain.get_storage().read().await;
                     if storage.has_block(&block_hash).await? {
@@ -748,6 +750,21 @@ impl<S: Storage> P2pServer<S> {
                         return Ok(())
                     }
                 }
+
+                // Avoid sending the same block to a common peer
+                // because we track peerlist of each peers, we can try to determinate it
+                {
+                    let peer_list = self.peer_list.read().await;
+                    let peer_peers = peer.get_peers().lock().await;
+                    for peer_peer in peer_peers.iter() {
+                        if let Some(peer) = peer_list.get_peer_by_addr(peer_peer) {
+                            debug!("{} is a common peer with {}, adding block {} to its propagation cache", peer_peer, peer, block_hash);
+                            let mut peer_propagation = peer.get_blocks_propagation().lock().await;
+                            peer_propagation.put(block_hash.clone(), ());
+                        }
+                    }
+                }
+
                 let block_height = header.get_height();
                 debug!("Received block at height {} from {}", block_height, peer);
                 let zelf = Arc::clone(self);

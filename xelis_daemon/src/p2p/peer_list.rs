@@ -98,8 +98,20 @@ impl PeerList {
         )
     }
 
-    pub fn remove_peer(&mut self, peer: &Peer) {
+    pub async fn remove_peer(&mut self, peer: &Peer) {
         self.peers.remove(&peer.get_id());
+
+        // now remove this peer from all peers that tracked it
+        let mut addr = peer.get_connection().get_address().clone();
+        if !peer.is_out() {
+            addr.set_port(peer.get_local_port());
+        }
+
+        for peer in self.peers.values() {
+            let mut peer_peers = peer.get_peers().lock().await;
+            peer_peers.remove(&addr);
+        }
+
         info!("Peer disconnected: {}", peer);
     }
 
@@ -188,18 +200,26 @@ impl PeerList {
         best_height
     }
 
-    fn internal_is_connected_to_addr(peers: &HashMap<u64, Arc<Peer>>, peer_addr: &SocketAddr) -> bool {
-        for peer in peers.values() {
-            if *peer.get_connection().get_address() == *peer_addr {
-                return true
-            }
-        }
 
-        false
+    // get a peer by its address
+    fn internal_get_peer_by_addr<'a>(peers: &'a HashMap<u64, Arc<Peer>>, addr: &SocketAddr) -> Option<&'a Arc<Peer>> {
+        peers.values().find(|peer| {
+            // if this peer is incoming, we need to check if the peer_addr is the same as the one we're connected to
+            // if its a outgoing one, just check its address
+            if peer.is_out() {
+                peer.get_connection().get_address() == addr
+            } else {
+                peer.get_local_port() == addr.port() && peer.get_connection().get_address().ip() == addr.ip()
+            }
+        })
+    }
+
+    pub fn get_peer_by_addr<'a>(&'a self, addr: &SocketAddr) -> Option<&'a Arc<Peer>> {
+        Self::internal_get_peer_by_addr(&self.peers, addr)
     }
 
     pub fn is_connected_to_addr(&self, peer_addr: &SocketAddr) -> bool {
-        Self::internal_is_connected_to_addr(&self.peers, peer_addr)
+        Self::internal_get_peer_by_addr(&self.peers, peer_addr).is_some()
     }
 
     pub fn is_blacklisted(&self, addr: &SocketAddr) -> bool {
@@ -257,7 +277,7 @@ impl PeerList {
     // we check that we're not already connected to this peer and that we didn't tried to connect to it recently
     fn find_peer_to_connect_to_with_state(&mut self, current_time: u64, state: StoredPeerState) -> Option<SocketAddr> {
         for (addr, stored_peer) in &mut self.stored_peers {
-            if *stored_peer.get_state() == state && stored_peer.get_last_connection_try() + P2P_PEERLIST_DELAY <= current_time && !Self::internal_is_connected_to_addr(&self.peers, addr) {
+            if *stored_peer.get_state() == state && stored_peer.get_last_connection_try() + P2P_PEERLIST_DELAY <= current_time && !Self::internal_get_peer_by_addr(&self.peers, addr).is_some() {
                 stored_peer.set_last_connection_try(current_time);
                 return Some(addr.clone());
             }

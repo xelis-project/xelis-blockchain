@@ -72,14 +72,17 @@ impl<'a> Ping<'a> {
         peer.set_pruned_topoheight(self.pruned_topoheight);
         peer.set_cumulative_difficulty(self.cumulative_difficulty);
 
-        let mut peers = peer.get_peers().lock().await;
-        for addr in self.peer_list {
-            if peers.contains(&addr) {
-                error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", peer, addr);
-                return Err(P2pError::InvalidProtocolRules)
+        if !self.peer_list.is_empty() {
+            let mut peers = peer.get_peers().lock().await;
+            for addr in self.peer_list {
+                if peers.contains(&addr) {
+                    error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", peer, addr);
+                    return Err(P2pError::InvalidProtocolRules)
+                }
+                peers.insert(addr);
             }
-            peers.insert(addr);
         }
+
         Ok(())
     }
 
