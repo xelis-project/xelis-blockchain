@@ -8,7 +8,7 @@ mod tracker;
 
 use indexmap::IndexSet;
 use xelis_common::{
-    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT, CHAIN_SYNC_TIMEOUT_SECS, P2P_PEERLIST_DELAY},
+    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT, CHAIN_SYNC_TIMEOUT_SECS, P2P_EXTEND_PEERLIST_DELAY},
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::{BlockHeader, Block},
@@ -552,10 +552,11 @@ impl<S: Storage> P2pServer<S> {
         }
     }
 
+    // try to extend our peerlist each time its possible by searching in known peerlist from disk
     async fn peerlist_loop(self: Arc<Self>) {
         debug!("Starting peerlist task...");
         loop {
-            sleep(Duration::from_secs(P2P_PEERLIST_DELAY)).await;
+            sleep(Duration::from_secs(P2P_EXTEND_PEERLIST_DELAY)).await;
             if !self.is_running() {
                 debug!("Peerlist loop task is stopped!");
                 break;

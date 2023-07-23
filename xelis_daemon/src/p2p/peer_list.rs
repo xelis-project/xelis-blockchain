@@ -2,7 +2,7 @@ use super::{peer::Peer, packet::Packet, error::P2pError};
 use std::{collections::HashMap, net::SocketAddr, fs};
 use serde::{Serialize, Deserialize};
 use tokio::sync::RwLock;
-use xelis_common::{serializer::Serializer, globals::get_current_time, config::P2P_PEERLIST_DELAY};
+use xelis_common::{serializer::Serializer, globals::get_current_time, config::P2P_EXTEND_PEERLIST_DELAY};
 use std::sync::Arc;
 use bytes::Bytes;
 use log::{info, debug, trace, error, warn};
@@ -277,7 +277,7 @@ impl PeerList {
     // we check that we're not already connected to this peer and that we didn't tried to connect to it recently
     fn find_peer_to_connect_to_with_state(&mut self, current_time: u64, state: StoredPeerState) -> Option<SocketAddr> {
         for (addr, stored_peer) in &mut self.stored_peers {
-            if *stored_peer.get_state() == state && stored_peer.get_last_connection_try() + P2P_PEERLIST_DELAY <= current_time && !Self::internal_get_peer_by_addr(&self.peers, addr).is_some() {
+            if *stored_peer.get_state() == state && stored_peer.get_last_connection_try() + P2P_EXTEND_PEERLIST_DELAY <= current_time && !Self::internal_get_peer_by_addr(&self.peers, addr).is_some() {
                 stored_peer.set_last_connection_try(current_time);
                 return Some(addr.clone());
             }
