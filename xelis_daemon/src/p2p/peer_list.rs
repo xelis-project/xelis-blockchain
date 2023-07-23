@@ -1,3 +1,5 @@
+use crate::p2p::packet::peer_disconnected::PacketPeerDisconnected;
+
 use super::{peer::Peer, packet::Packet, error::P2pError};
 use std::{collections::HashMap, net::SocketAddr, fs};
 use serde::{Serialize, Deserialize};
@@ -107,9 +109,16 @@ impl PeerList {
             addr.set_port(peer.get_local_port());
         }
 
+        let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(addr)).to_bytes());
         for peer in self.peers.values() {
             let mut peer_peers = peer.get_peers().lock().await;
-            peer_peers.remove(&addr);
+            // remove and check if it was in common
+            if peer_peers.remove(&addr) {
+                // we send the packet to notify the peer that we don't have it in common anymore
+                if let Err(e) = peer.send_bytes(packet.clone()).await {
+                    error!("Error while trying to send RemovePeer packet to peer {}: {}", peer.get_connection().get_address(), e);
+                }
+            }
         }
 
         info!("Peer disconnected: {}", peer);

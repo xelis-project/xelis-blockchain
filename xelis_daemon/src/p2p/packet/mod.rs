@@ -4,12 +4,14 @@ pub mod ping;
 pub mod object;
 pub mod inventory;
 pub mod bootstrap_chain;
+pub mod peer_disconnected;
 
 use self::bootstrap_chain::{BootstrapChainRequest, BootstrapChainResponse};
 use self::inventory::{NotifyInventoryResponse, NotifyInventoryRequest};
 use self::object::{ObjectRequest, ObjectResponse};
 use self::chain::{ChainRequest, ChainResponse};
 use self::handshake::Handshake;
+use self::peer_disconnected::PacketPeerDisconnected;
 use self::ping::Ping;
 use std::borrow::Cow;
 use log::{trace, error};
@@ -32,6 +34,7 @@ const NOTIFY_INV_REQUEST_ID: u8 = 8;
 const NOTIFY_INV_RESPONSE_ID: u8 = 9;
 const BOOTSTRAP_CHAIN_REQUEST_ID: u8 = 10;
 const BOOTSTRAP_CHAIN_RESPONSE_ID: u8 = 11;
+const PEER_DISCONNECTED_ID: u8 = 12;
 
 // PacketWrapper allows us to link any Packet to a Ping
 #[derive(Debug)]
@@ -85,7 +88,8 @@ pub enum Packet<'a> {
     NotifyInventoryRequest(PacketWrapper<'a, NotifyInventoryRequest>),
     NotifyInventoryResponse(NotifyInventoryResponse<'a>),
     BootstrapChainRequest(BootstrapChainRequest<'a>),
-    BootstrapChainResponse(BootstrapChainResponse)
+    BootstrapChainResponse(BootstrapChainResponse),
+    PeerDisconnected(PacketPeerDisconnected)
 }
 
 impl<'a> Serializer for Packet<'a> {
@@ -105,6 +109,7 @@ impl<'a> Serializer for Packet<'a> {
             NOTIFY_INV_RESPONSE_ID => Packet::NotifyInventoryResponse(NotifyInventoryResponse::read(reader)?),
             BOOTSTRAP_CHAIN_REQUEST_ID => Packet::BootstrapChainRequest(BootstrapChainRequest::read(reader)?),
             BOOTSTRAP_CHAIN_RESPONSE_ID => Packet::BootstrapChainResponse(BootstrapChainResponse::read(reader)?),
+            PEER_DISCONNECTED_ID => Packet::PeerDisconnected(PacketPeerDisconnected::read(reader)?),
             id => {
                 error!("invalid packet id received: {}", id);
                 return Err(ReaderError::InvalidValue)
@@ -125,7 +130,8 @@ impl<'a> Serializer for Packet<'a> {
             Packet::NotifyInventoryRequest(request) => (NOTIFY_INV_REQUEST_ID, request),
             Packet::NotifyInventoryResponse(inventory) => (NOTIFY_INV_RESPONSE_ID, inventory),
             Packet::BootstrapChainRequest(request) => (BOOTSTRAP_CHAIN_REQUEST_ID, request),
-            Packet::BootstrapChainResponse(response) => (BOOTSTRAP_CHAIN_RESPONSE_ID, response)
+            Packet::BootstrapChainResponse(response) => (BOOTSTRAP_CHAIN_RESPONSE_ID, response),
+            Packet::PeerDisconnected(disconnected) => (PEER_DISCONNECTED_ID, disconnected)
         };
 
         let packet = serializer.to_bytes();

@@ -1136,6 +1136,15 @@ impl<S: Storage> P2pServer<S> {
                     error!("{} send us a bootstrap chain response but we didn't asked it", peer);
                     return Err(P2pError::InvalidProtocolRules)
                 }
+            },
+            Packet::PeerDisconnected(packet) => {
+                let addr = packet.get_addr();
+                debug!("{} disconnected from {}", addr, peer);
+                let mut peer_peers = peer.get_peers().lock().await;
+                if !peer_peers.remove(&addr) {
+                    warn!("{} disconnected from {} but we didn't have it in our peer list", addr, peer);
+                    return Err(P2pError::InvalidProtocolRules)
+                }
             }
         };
         Ok(())
