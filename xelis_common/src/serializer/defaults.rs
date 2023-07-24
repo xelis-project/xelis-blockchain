@@ -95,7 +95,7 @@ impl<T: Serializer> Serializer for Option<T> {
     }
 
     fn write(&self, writer: &mut Writer) {
-        writer.write_bool(&self.is_some());
+        writer.write_bool(self.is_some());
         if let Some(value) = self {
             value.write(writer);
         }

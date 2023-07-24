@@ -26,8 +26,8 @@ impl Writer {
         self.bytes.extend(hash.as_bytes())
     }
 
-    pub fn write_bool(&mut self, value: &bool) {
-        self.bytes.push(if *value { 1 } else { 0 });
+    pub fn write_bool(&mut self, value: bool) {
+        self.bytes.push(if value { 1 } else { 0 });
     }
     pub fn write_u8(&mut self, value: u8) {
         self.bytes.push(value);
@@ -71,24 +71,10 @@ impl Writer {
         };
     }
 
-    fn write_u64_le(&mut self, value: &u64) {
-        self.bytes.extend(value.to_le_bytes());
-    }
-
-    pub fn write_optional_non_zero_u64(&mut self, opt: &Option<u64>) {
-        match opt {
-            Some(v) => {
-                self.write_u64_le(v);
-            },
-            None => {
-                self.bytes.push(0);
-            }
-        };
-    }
-
     pub fn write_optional_non_zero_u8(&mut self, opt: Option<u8>) {
         match opt {
             Some(v) => {
+                self.bytes.push(1);
                 self.write_u8(v);
             },
             None => {
@@ -127,10 +113,6 @@ impl<'a> Reader<'a> {
             bytes,
             total: 0
         }
-    }
-
-    fn view_byte(&self) -> Result<u8, ReaderError> {
-        self.bytes.get(self.total).ok_or(ReaderError::InvalidSize).map(|v| *v)
     }
 
     pub fn read_bool(&mut self) -> Result<bool, ReaderError> {
@@ -224,19 +206,6 @@ impl<'a> Reader<'a> {
             0 => Ok(None),
             n => Ok(Some(self.read_string_with_size(n as usize)?)),
         }
-    }
-
-    fn read_u64_le(&mut self) -> Result<u64, ReaderError> {
-        Ok(u64::from_le_bytes(self.read_bytes(8)?))
-    }
-
-    pub fn read_optional_non_zero_u64(&mut self) -> Result<Option<u64>, ReaderError> {
-        if self.view_byte()? == 0 {
-            self.read_u8()?; // consume the byte
-            return Ok(None)
-        }
-
-        Ok(Some(self.read_u64_le()?))
     }
 
     pub fn read_optional_non_zero_u8(&mut self) -> Result<Option<u8>, ReaderError> {

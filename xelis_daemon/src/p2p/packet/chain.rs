@@ -167,10 +167,10 @@ impl Serializer for ChainResponse {
     fn write(&self, writer: &mut Writer) {
         match &self.common_point {
             None => {
-                writer.write_bool(&false);
+                writer.write_bool(false);
             },
             Some(point) => {
-                writer.write_bool(&true);
+                writer.write_bool(true);
                 point.write(writer);
             }
         };

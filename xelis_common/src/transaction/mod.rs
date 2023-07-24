@@ -63,7 +63,7 @@ impl Serializer for TransactionType {
                     writer.write_u64(&tx.amount);
                     tx.to.write(writer);
 
-                    writer.write_bool(&tx.extra_data.is_some());
+                    writer.write_bool(tx.extra_data.is_some());
                     if let Some(extra_data) = &tx.extra_data {
                         writer.write_u16(extra_data.len() as u16);
                         writer.write_bytes(extra_data);

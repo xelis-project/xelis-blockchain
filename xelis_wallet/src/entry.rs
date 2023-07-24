@@ -69,7 +69,7 @@ impl Serializer for Transfer {
         writer.write_hash(&self.asset);
         writer.write_u64(&self.amount);
 
-        writer.write_bool(&self.extra_data.is_some());
+        writer.write_bool(self.extra_data.is_some());
         if let Some(extra_data) = &self.extra_data {
             writer.write_u16(extra_data.len() as u16);
             writer.write_bytes(extra_data);
@@ -230,12 +230,12 @@ impl Serializer for TransactionEntry {
         writer.write_u64(&self.topoheight);
         self.entry.write(writer);
 
-        writer.write_bool(&self.fee.is_some());
+        writer.write_bool(self.fee.is_some());
         if let Some(fee) = self.fee {
             writer.write_u64(&fee);
         }
 
-        writer.write_bool(&self.nonce.is_some());
+        writer.write_bool(self.nonce.is_some());
         if let Some(nonce) = self.nonce {
             writer.write_u64(&nonce);
         }

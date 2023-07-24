@@ -123,7 +123,7 @@ impl Serializer for AddressType {
 
 impl<'a> Serializer for Address<'a> {
     fn write(&self, writer: &mut Writer) {
-        writer.write_bool(&self.mainnet);
+        writer.write_bool(self.mainnet);
         self.addr_type.write(writer);
         self.pub_key.write(writer);
     }

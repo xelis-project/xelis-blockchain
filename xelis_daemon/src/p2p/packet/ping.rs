@@ -19,7 +19,7 @@ use std::{
     net::SocketAddr,
     sync::Arc
 };
-use log::{error, trace};
+use log::{error, trace, debug};
 
 
 #[derive(Clone, Debug)]
@@ -108,7 +108,7 @@ impl Serializer for Ping<'_> {
         writer.write_hash(&self.top_hash);
         writer.write_u64(&self.topoheight);
         writer.write_u64(&self.height);
-        writer.write_optional_non_zero_u64(&self.pruned_topoheight);
+        self.pruned_topoheight.write(writer);
         writer.write_u64(&self.cumulative_difficulty);
         writer.write_u8(self.peer_list.len() as u8);
         for peer in &self.peer_list {
@@ -120,10 +120,17 @@ impl Serializer for Ping<'_> {
         let top_hash = Cow::Owned(reader.read_hash()?);
         let topoheight = reader.read_u64()?;
         let height = reader.read_u64()?;
-        let pruned_topoheight = reader.read_optional_non_zero_u64()?;
+        let pruned_topoheight = Option::read(reader)?;
+        if let Some(pruned_topoheight) = &pruned_topoheight {
+            if *pruned_topoheight == 0 {
+                debug!("Invalid pruned topoheight (0) in ping packet");
+                return Err(ReaderError::InvalidValue)
+            }
+        }
         let cumulative_difficulty = reader.read_u64()?;
         let peers_len = reader.read_u8()? as usize;
         if peers_len > P2P_PING_PEER_LIST_LIMIT {
+            debug!("Too much peers sent in this ping packet: received {} while max is {}", peers_len, P2P_PING_PEER_LIST_LIMIT);
             return Err(ReaderError::InvalidValue)
         }
 

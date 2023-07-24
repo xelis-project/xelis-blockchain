@@ -100,7 +100,7 @@ impl Serializer for DataValue {
             },
             Self::Bool(bool) => {
                 writer.write_u8(1);
-                writer.write_bool(bool);
+                writer.write_bool(*bool);
             },
             Self::String(string) => {
                 writer.write_u8(2);

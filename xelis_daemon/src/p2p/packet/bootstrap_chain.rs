@@ -119,12 +119,24 @@ impl Serializer for StepRequest<'_> {
             }
             1 => {
                 let topoheight = reader.read_u64()?;
-                let page = reader.read_optional_non_zero_u64()?;
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Request");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
                 Self::Assets(topoheight, page)
             },
             2 => {
                 let topoheight = reader.read_u64()?;
-                let page = reader.read_optional_non_zero_u64()?;
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Request");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
                 Self::Keys(topoheight, page)
             },
             3 => {
@@ -156,12 +168,12 @@ impl Serializer for StepRequest<'_> {
             Self::Assets(topoheight, page) => {
                 writer.write_u8(1);
                 writer.write_u64(topoheight);
-                writer.write_optional_non_zero_u64(page);
+                page.write(writer);
             },
             Self::Keys(topoheight, page) => {
                 writer.write_u8(2);
                 writer.write_u64(topoheight);
-                writer.write_optional_non_zero_u64(page);
+                page.write(writer);
             },
             Self::Balances(topoheight, asset, accounts) => {
                 writer.write_u8(3);
@@ -217,12 +229,24 @@ impl Serializer for StepResponse {
             },
             1 => {
                 let assets = BTreeSet::<Hash>::read(reader)?;
-                let page = reader.read_optional_non_zero_u64()?;
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
                 Self::Assets(assets, page)
             },
             2 => {
                 let keys = BTreeSet::<PublicKey>::read(reader)?;
-                let page = reader.read_optional_non_zero_u64()?;
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
                 Self::Keys(keys, page)
             },
             3 => {
@@ -252,12 +276,12 @@ impl Serializer for StepResponse {
             Self::Assets(assets, page) => {
                 writer.write_u8(1);
                 assets.write(writer);
-                writer.write_optional_non_zero_u64(page);
+                page.write(writer);
             },
             Self::Keys(keys, page) => {
                 writer.write_u8(2);
                 keys.write(writer);
-                writer.write_optional_non_zero_u64(page);
+                page.write(writer);
             },
             Self::Balances(balances) => {
                 writer.write_u8(3);
