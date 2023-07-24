@@ -220,6 +220,9 @@ impl<S: Storage> P2pServer<S> {
                             Ok(connection) => (connection, true, priority),
                             Err(e) => {
                                 trace!("Error while trying to connect to new outgoing peer: {}", e);
+                                // if its a outgoing connection, increase its fail count
+                                let mut peer_list = self.peer_list.write().await;
+                                peer_list.increase_fail_count_for_saved_peer(&addr);
                                 continue;
                             }
                         }
@@ -1497,12 +1500,12 @@ impl<S: Storage> P2pServer<S> {
                 let blocks_propagation = peer.get_blocks_propagation().lock().await;
                 // check that we don't send the block to the peer that sent it to us
                 if !blocks_propagation.contains(hash) {
-                    trace!("Broadcast to {}", peer);
+                    debug!("Broadcast to {}", peer);
                     if let Err(e) = peer.send_bytes(bytes.clone()).await {
                         debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
                     }
                 } else {
-                    trace!("{} contains {}, don't broadcast block to him", peer, hash);
+                    debug!("{} contains {}, don't broadcast block to him", peer, hash);
                 }
             }
         }

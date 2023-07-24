@@ -4,7 +4,7 @@ use super::{peer::Peer, packet::Packet, error::P2pError};
 use std::{collections::HashMap, net::SocketAddr, fs};
 use serde::{Serialize, Deserialize};
 use tokio::sync::RwLock;
-use xelis_common::{serializer::Serializer, globals::get_current_time, config::P2P_EXTEND_PEERLIST_DELAY};
+use xelis_common::{serializer::Serializer, globals::get_current_time, config::{P2P_EXTEND_PEERLIST_DELAY, PEER_FAIL_LIMIT}};
 use std::sync::Arc;
 use bytes::Bytes;
 use log::{info, debug, trace, error, warn};
@@ -31,6 +31,7 @@ enum StoredPeerState {
 struct StoredPeer {
     last_seen: u64,
     last_connection_try: u64,
+    fail_count: u8,
     state: StoredPeerState
 }
 
@@ -143,6 +144,8 @@ impl PeerList {
 
         if let Some(stored_peer) = self.stored_peers.get_mut(&addr) {
             debug!("Updating {} in stored peerlist", peer);
+            // reset the fail count and update the last seen time
+            stored_peer.set_fail_count(0);
             stored_peer.set_last_seen(get_current_time());
         } else {
             debug!("Saving {} in stored peerlist", peer);
@@ -251,6 +254,7 @@ impl PeerList {
     // blacklist a peer address
     // if this peer is already known, change its state to blacklist
     // otherwise create a new StoredPeer with state blacklist
+    // disconnect the peer if present in peerlist
     pub async fn blacklist_address(&mut self, addr: &SocketAddr) {
         self.set_state_to_address(addr, StoredPeerState::Blacklist);
 
@@ -269,6 +273,9 @@ impl PeerList {
     }
 
     pub fn find_peer_to_connect(&mut self) -> Option<SocketAddr> {
+        // remove all peers that have a high fail count
+        self.stored_peers.retain(|_, stored_peer| stored_peer.get_fail_count() < PEER_FAIL_LIMIT);
+
         let current_time = get_current_time();
         // first lets check in whitelist
         if let Some(addr) = self.find_peer_to_connect_to_with_state(current_time, StoredPeerState::Whitelist) {
@@ -287,13 +294,20 @@ impl PeerList {
     // we check that we're not already connected to this peer and that we didn't tried to connect to it recently
     fn find_peer_to_connect_to_with_state(&mut self, current_time: u64, state: StoredPeerState) -> Option<SocketAddr> {
         for (addr, stored_peer) in &mut self.stored_peers {
-            if *stored_peer.get_state() == state && stored_peer.get_last_connection_try() + P2P_EXTEND_PEERLIST_DELAY <= current_time && !Self::internal_get_peer_by_addr(&self.peers, addr).is_some() {
+            if *stored_peer.get_state() == state && stored_peer.get_last_connection_try() + P2P_EXTEND_PEERLIST_DELAY <= current_time && Self::internal_get_peer_by_addr(&self.peers, addr).is_none() {
                 stored_peer.set_last_connection_try(current_time);
                 return Some(addr.clone());
             }
         }
 
         None
+    }
+
+    // increase the fail count of a peer
+    pub fn increase_fail_count_for_saved_peer(&mut self, addr: &SocketAddr) {
+        if let Some(stored_peer) = self.stored_peers.get_mut(addr) {
+            stored_peer.set_fail_count(stored_peer.get_fail_count() + 1);
+        }
     }
 
     // serialize the stored peers to a file
@@ -310,6 +324,7 @@ impl StoredPeer {
         Self {
             last_seen,
             last_connection_try: 0,
+            fail_count: 0,
             state
         }
     }
@@ -336,5 +351,13 @@ impl StoredPeer {
 
     fn set_state(&mut self, state: StoredPeerState) {
         self.state = state;
+    }
+
+    fn get_fail_count(&self) -> u8 {
+        self.fail_count
+    }
+
+    fn set_fail_count(&mut self, fail_count: u8) {
+        self.fail_count = fail_count;
     }
 }
