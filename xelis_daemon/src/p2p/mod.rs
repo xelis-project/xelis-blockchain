@@ -754,16 +754,8 @@ impl<S: Storage> P2pServer<S> {
                     for peer_peer in peer_peers.iter() {
                         // if our peer have a common peer with us
                         if let Some(peer) = peer_list.get_peer_by_addr(peer_peer) {
-                            let peers_sent = peer.get_peers(true).lock().await;
-                            let peers = peer.get_peers(false).lock().await;
-                            
-                            // verify that we already know that he his connected to it and that we inform him we are too to prevent any desync
-                            let predicate = |addr: &&SocketAddr| *addr == peer.get_outgoing_address();
-                            if peers.iter().find(predicate).is_some() && peers_sent.iter().find(predicate).is_some() {
-                                debug!("{} is a common peer with {}, adding block {} to its propagation cache", peer_peer, peer, block_hash);
-                                let mut peer_propagation = peer.get_blocks_propagation().lock().await;
-                                peer_propagation.put(block_hash.clone(), ());
-                            }
+                            let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
+                            blocks_propagation.put(block_hash.clone(), ());
                         }
                     }
                 }
