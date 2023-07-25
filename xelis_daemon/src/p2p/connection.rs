@@ -2,6 +2,8 @@ use super::error::P2pError;
 use super::packet::Packet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::net::SocketAddr;
+use std::time::Duration;
+use humantime::format_duration;
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedWriteHalf, OwnedReadHalf};
 use xelis_common::{
@@ -169,6 +171,11 @@ impl Connection {
         self.connected_on
     }
 
+    pub fn get_human_uptime(&self) -> String {
+        let elapsed_seconds = get_current_time() - self.connected_on();
+        format_duration(Duration::from_secs(elapsed_seconds)).to_string()
+    }
+
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
@@ -176,6 +183,6 @@ impl Connection {
 
 impl Display for Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
-        write!(f, "Connection[peer: {}, read: {} kB, sent: {} kB, connected on: {}, closed: {}]", self.get_address(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.connected_on(), self.is_closed())
+        write!(f, "Connection[peer: {}, read: {} kB, sent: {} kB, connected since: {}, closed: {}]", self.get_address(), self.bytes_in() / 1024, self.bytes_out() / 1024, self.get_human_uptime(), self.is_closed())
     }
 }
