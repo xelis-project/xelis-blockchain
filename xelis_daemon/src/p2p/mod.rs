@@ -309,13 +309,6 @@ impl<S: Storage> P2pServer<S> {
 
         // if we reach here, handshake is all good, we can start listening this new peer
         // we can save the peer in our peerlist
-        {
-            let mut addr = peer.get_connection().get_address().clone();
-            if !peer.is_out() {
-                addr.set_port(peer.get_local_port());
-            }
-        }
-
         let peer_id = peer.get_id(); // keep in memory the peer_id outside connection (because of moved value)
         let peer = {
             let mut peer_list = self.peer_list.write().await;
@@ -517,15 +510,13 @@ impl<S: Storage> P2pServer<S> {
                             continue;
                         }
 
-                        let mut addr = p.get_connection().get_address().clone();
-                        if !p.is_out() { // if we are connected to it (outgoing connection), set the local port instead
-                            addr.set_port(p.get_local_port());
-                        }
-
                         // if we haven't send him this peer addr, insert it
-                        if !peer_peers.contains(&addr) {
-                            peer_peers.insert(addr.clone());
-                            new_peers.push(addr.clone());
+                        let addr = p.get_outgoing_address();
+                        if !peer_peers.contains(addr) {
+                            // add it in our side to not re send it again
+                            peer_peers.insert(*addr);
+                            // add it to new list to send it
+                            new_peers.push(*addr);
                             if new_peers.len() >= P2P_PING_PEER_LIST_LIMIT {
                                 break;
                             }
@@ -761,10 +752,15 @@ impl<S: Storage> P2pServer<S> {
                     let peer_list = self.peer_list.read().await;
                     let peer_peers = peer.get_peers().lock().await;
                     for peer_peer in peer_peers.iter() {
+                        // if our peer have a common peer with us
                         if let Some(peer) = peer_list.get_peer_by_addr(peer_peer) {
-                            debug!("{} is a common peer with {}, adding block {} to its propagation cache", peer_peer, peer, block_hash);
-                            let mut peer_propagation = peer.get_blocks_propagation().lock().await;
-                            peer_propagation.put(block_hash.clone(), ());
+                            // verify that we already know that he his connected to it to prevent any desync
+                            let peers = peer.get_peers().lock().await;
+                            if peers.iter().find(|addr| *addr == peer.get_outgoing_address()).is_some() {
+                                debug!("{} is a common peer with {}, adding block {} to its propagation cache", peer_peer, peer, block_hash);
+                                let mut peer_propagation = peer.get_blocks_propagation().lock().await;
+                                peer_propagation.put(block_hash.clone(), ());
+                            }
                         }
                     }
                 }

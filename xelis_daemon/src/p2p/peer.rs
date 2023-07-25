@@ -54,11 +54,16 @@ pub struct Peer {
     pruned_topoheight: AtomicU64, // pruned topoheight if its a pruned node
     is_pruned: AtomicBool, // cannot be set to false if its already to true (protocol rules)
     // used for await on bootstrap chain packets
-    bootstrap_chain: Mutex<Option<Sender<StepResponse>>>
+    bootstrap_chain: Mutex<Option<Sender<StepResponse>>>,
+    // IP address with local port
+    outgoing_address: SocketAddr
 }
 
 impl Peer {
     pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: u64, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
+        let mut outgoing_address = *connection.get_address();
+        outgoing_address.set_port(local_port);
+
         Self {
             connection,
             id,
@@ -86,7 +91,8 @@ impl Peer {
             requested_inventory: AtomicBool::new(false),
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
             is_pruned: AtomicBool::new(pruned_topoheight.is_some()),
-            bootstrap_chain: Mutex::new(None)
+            bootstrap_chain: Mutex::new(None),
+            outgoing_address
         }
     }
 
@@ -338,6 +344,10 @@ impl Peer {
 
     pub fn set_requested_inventory(&self, value: bool) {
         self.requested_inventory.store(value, Ordering::Release)
+    }
+
+    pub fn get_outgoing_address(&self) -> &SocketAddr {
+        &self.outgoing_address
     }
 
     pub async fn close(&self) -> Result<(), P2pError> {

@@ -105,16 +105,12 @@ impl PeerList {
         self.peers.remove(&peer.get_id());
 
         // now remove this peer from all peers that tracked it
-        let mut addr = peer.get_connection().get_address().clone();
-        if !peer.is_out() {
-            addr.set_port(peer.get_local_port());
-        }
-
-        let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(addr)).to_bytes());
+        let addr = peer.get_outgoing_address();
+        let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
         for peer in self.peers.values() {
             let peer_peers = peer.get_peers().lock().await;
             // check if it was in common
-            if peer_peers.contains(&addr) {
+            if peer_peers.contains(addr) {
                 debug!("Sending PeerDisconnected packet to peer {} for {}", peer, addr);
                 // we send the packet to notify the peer that we don't have it in common anymore
                 if let Err(e) = peer.send_bytes(packet.clone()).await {
@@ -137,19 +133,15 @@ impl PeerList {
     }
 
     fn update_peer(&mut self, peer: &Peer) {
-        let mut addr = peer.get_connection().get_address().clone();
-        if !peer.is_out() {
-            addr.set_port(peer.get_local_port());
-        }
-
-        if let Some(stored_peer) = self.stored_peers.get_mut(&addr) {
+        let addr = peer.get_outgoing_address();
+        if let Some(stored_peer) = self.stored_peers.get_mut(addr) {
             debug!("Updating {} in stored peerlist", peer);
             // reset the fail count and update the last seen time
             stored_peer.set_fail_count(0);
             stored_peer.set_last_seen(get_current_time());
         } else {
             debug!("Saving {} in stored peerlist", peer);
-            self.stored_peers.insert(addr, StoredPeer::new(get_current_time(), StoredPeerState::Graylist));
+            self.stored_peers.insert(*addr, StoredPeer::new(get_current_time(), StoredPeerState::Graylist));
         }
     }
 
@@ -217,13 +209,8 @@ impl PeerList {
     // get a peer by its address
     fn internal_get_peer_by_addr<'a>(peers: &'a HashMap<u64, Arc<Peer>>, addr: &SocketAddr) -> Option<&'a Arc<Peer>> {
         peers.values().find(|peer| {
-            // if this peer is incoming, we need to check if the peer_addr is the same as the one we're connected to
-            // if its a outgoing one, just check its address
-            if peer.is_out() {
-                peer.get_connection().get_address() == addr
-            } else {
-                peer.get_local_port() == addr.port() && peer.get_connection().get_address().ip() == addr.ip()
-            }
+            // check both SocketAddr (the outgoing and the incoming)
+            peer.get_connection().get_address() == addr || peer.get_outgoing_address() == addr
         })
     }
 
