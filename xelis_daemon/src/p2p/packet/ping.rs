@@ -73,8 +73,15 @@ impl<'a> Ping<'a> {
         peer.set_cumulative_difficulty(self.cumulative_difficulty);
 
         if !self.peer_list.is_empty() {
-            let mut peers = peer.get_peers().lock().await;
+            let mut peers = peer.get_peers(false).lock().await;
+            let peer_addr = peer.get_connection().get_address();
+            let peer_outgoing_addr = peer.get_outgoing_address();
             for addr in self.peer_list {
+                if *peer_addr == addr || *peer_outgoing_addr == addr {
+                    error!("Invalid protocol rules: peer {} sent us its own socket address in ping packet", peer);
+                    return Err(P2pError::InvalidProtocolRules)
+                }
+
                 if peers.contains(&addr) {
                     error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", peer, addr);
                     return Err(P2pError::InvalidProtocolRules)

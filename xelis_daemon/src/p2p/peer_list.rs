@@ -108,9 +108,10 @@ impl PeerList {
         let addr = peer.get_outgoing_address();
         let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
         for peer in self.peers.values() {
-            let peer_peers = peer.get_peers().lock().await;
-            // check if it was in common
-            if peer_peers.contains(addr) {
+            let peer_peers_sent = peer.get_peers(true).lock().await;
+            let peer_peers = peer.get_peers(false).lock().await;
+            // check if it was in common (we sent it and we received it)
+            if peer_peers_sent.contains(addr) && peer_peers.contains(addr) {
                 debug!("Sending PeerDisconnected packet to peer {} for {}", peer, addr);
                 // we send the packet to notify the peer that we don't have it in common anymore
                 if let Err(e) = peer.send_bytes(packet.clone()).await {

@@ -43,7 +43,8 @@ pub struct Peer {
     peer_list: SharedPeerList,
     chain_requested: AtomicBool,
     objects_requested: Mutex<RequestedObjects>,
-    peers: Mutex<HashSet<SocketAddr>>, // all peers from this peer
+    peers_received: Mutex<HashSet<SocketAddr>>, // all peers from this peer
+    peers_sent: Mutex<HashSet<SocketAddr>>, // all peers sent to this peer
     last_peer_list: AtomicU64, // last time we received a peerlist from this peer
     last_ping: AtomicU64, // last time we got a ping packet from this peer
     cumulative_difficulty: AtomicU64, // cumulative difficulty of peer chain
@@ -81,7 +82,8 @@ impl Peer {
             peer_list,
             chain_requested: AtomicBool::new(false),
             objects_requested: Mutex::new(HashMap::new()),
-            peers: Mutex::new(peers),
+            peers_received: Mutex::new(peers),
+            peers_sent: Mutex::new(HashSet::new()),
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
             cumulative_difficulty: AtomicU64::new(cumulative_difficulty),
@@ -310,8 +312,12 @@ impl Peer {
         &self.bootstrap_chain
     }
 
-    pub fn get_peers(&self) -> &Mutex<HashSet<SocketAddr>> {
-        &self.peers
+    pub fn get_peers(&self, sent: bool) -> &Mutex<HashSet<SocketAddr>> {
+        if sent {
+            &self.peers_sent
+        } else {
+            &self.peers_received
+        }
     }
 
     pub fn get_last_peer_list(&self) -> u64 {
@@ -374,7 +380,7 @@ impl Display for Peer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
         // update fail counter to have up-to-date data to display
         self.update_fail_count_default();
-        let peers_count = if let Ok(peers) = self.get_peers().try_lock() {
+        let peers_count = if let Ok(peers) = self.get_peers(false).try_lock() {
             format!("{}", peers.len())
         } else {
             "Couldn't retrieve data".to_string()
