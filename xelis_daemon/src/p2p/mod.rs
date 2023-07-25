@@ -1490,12 +1490,13 @@ impl<S: Storage> P2pServer<S> {
             // or, check that peer height is less or equal to block height but still under or equal to STABLE_LIMIT
             // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
             if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= STABLE_LIMIT) {
-                let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
+                let blocks_propagation = peer.get_blocks_propagation().lock().await;
                 // check that we don't send the block to the peer that sent it to us
                 if !blocks_propagation.contains(hash) {
                     // we broadcasted to him, add it to the cache
                     // he should not send it back to us
-                    blocks_propagation.put(hash.clone(), ());
+                    // TODO add in cache only if we are the original sender
+                    //blocks_propagation.put(hash.clone(), ());
                     debug!("Broadcast {} to {}", hash, peer);
                     if let Err(e) = peer.send_bytes(bytes.clone()).await {
                         debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
