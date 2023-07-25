@@ -209,7 +209,7 @@ async fn submit_block<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -
     let header = BlockHeader::from_hex(params.block_template)?;
     // TODO add block hashing blob on block template
     let block = blockchain.build_block_from_header(Immutable::Owned(header)).await.context("Error while building block from header")?;
-    blockchain.add_new_block(block, true).await.context("Error while adding new block to chain")?;
+    blockchain.add_new_block(block, true, true).await.context("Error while adding new block to chain")?;
     Ok(json!(true))
 }
 

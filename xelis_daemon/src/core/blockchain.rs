@@ -298,7 +298,7 @@ impl<S: Storage> Blockchain<S> {
         storage.set_topo_height_for_block(&genesis_block.hash(), 0).await?;
         storage.set_top_height(0)?;
 
-        self.add_new_block_for_storage(&mut storage, genesis_block, false).await?;
+        self.add_new_block_for_storage(&mut storage, genesis_block, false, false).await?;
 
         Ok(())
     }
@@ -326,7 +326,7 @@ impl<S: Storage> Blockchain<S> {
         let block = self.build_block_from_header(Immutable::Owned(header)).await?;
         let zelf = Arc::clone(self);
         let block_height = block.get_height();
-        zelf.add_new_block(block, true).await?;
+        zelf.add_new_block(block, true, true).await?;
         info!("Mined a new block {} at height {}", hash, block_height);
         Ok(())
     }
@@ -1074,12 +1074,12 @@ impl<S: Storage> Blockchain<S> {
         Ok(block)
     }
 
-    pub async fn add_new_block(&self, block: Block, broadcast: bool) -> Result<(), BlockchainError> {
+    pub async fn add_new_block(&self, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         let mut storage = self.storage.write().await;
-        self.add_new_block_for_storage(&mut storage, block, broadcast).await
+        self.add_new_block_for_storage(&mut storage, block, broadcast, mining).await
     }
 
-    pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, broadcast: bool) -> Result<(), BlockchainError> {
+    pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         let start = Instant::now();
         let block_hash = block.hash();
         debug!("Add new block {}", block_hash);
@@ -1567,7 +1567,7 @@ impl<S: Storage> Blockchain<S> {
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 debug!("broadcast block to peers");
-                p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, storage.get_pruned_topoheight()?, &block_hash).await;
+                p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, storage.get_pruned_topoheight()?, &block_hash, mining).await;
             }
         }
 

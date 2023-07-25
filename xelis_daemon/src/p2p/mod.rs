@@ -810,7 +810,7 @@ impl<S: Storage> P2pServer<S> {
                     };
 
                     debug!("Adding received block {} to chain", block_hash);
-                    if let Err(e) = zelf.blockchain.add_new_block(block, true).await {
+                    if let Err(e) = zelf.blockchain.add_new_block(block, true, false).await {
                         error!("Error while adding new block: {}", e);
                         peer.increment_fail_count();
                     }
@@ -1311,7 +1311,7 @@ impl<S: Storage> P2pServer<S> {
                         }
     
                         let block = Block::new(Immutable::Arc(header), transactions);
-                        self.blockchain.add_new_block(block, false).await?; // don't broadcast block because it's syncing
+                        self.blockchain.add_new_block(block, false, false).await?; // don't broadcast block because it's syncing
                     }
                 }
             }
@@ -1326,7 +1326,7 @@ impl<S: Storage> P2pServer<S> {
                     let response = peer.request_blocking_object(object_request).await?;
                     if let OwnedObjectResponse::Block(block, hash) = response {
                         trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
-                        self.blockchain.add_new_block(block, false).await?;
+                        self.blockchain.add_new_block(block, false, false).await?;
                     } else {
                         error!("{} sent us an invalid block response", peer);
                         return Err(P2pError::ExpectedBlock.into())
@@ -1471,7 +1471,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: u64, our_topoheight: u64, our_height: u64, pruned_topoheight: Option<u64>, hash: &Hash) {
+    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: u64, our_topoheight: u64, our_height: u64, pruned_topoheight: Option<u64>, hash: &Hash, lock: bool) {
         trace!("Broadcast block: {}", hash);
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock
@@ -1490,13 +1490,15 @@ impl<S: Storage> P2pServer<S> {
             // or, check that peer height is less or equal to block height but still under or equal to STABLE_LIMIT
             // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
             if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= STABLE_LIMIT) {
-                let blocks_propagation = peer.get_blocks_propagation().lock().await;
+                let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                 // check that we don't send the block to the peer that sent it to us
                 if !blocks_propagation.contains(hash) {
                     // we broadcasted to him, add it to the cache
                     // he should not send it back to us
-                    // TODO add in cache only if we are the original sender
-                    //blocks_propagation.put(hash.clone(), ());
+                    if lock {
+                        blocks_propagation.put(hash.clone(), ());
+                    }
+
                     debug!("Broadcast {} to {}", hash, peer);
                     if let Err(e) = peer.send_bytes(bytes.clone()).await {
                         debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
