@@ -312,16 +312,6 @@ Events currently available to subscribe are:
 - `NewAsset`: when a new asset has been registered
 - `BlockOrdered` when a block is ordered for the first time or reordered to a new topoheight
 
-## XELIS Message
-
-Provide a almost free way to communicate through opened channels on chain between two parties.
-The specified receiver can reply for free to any message sent to him as long as the channel paid by the sender is still open.
-It can only reply by one message to one message not yet consumed.
-
-This feature would introduce a better way to communicate privately and in a fully decentralized environment with almost no fees.
-
-The channel price is determined by the maximum message size set, and the time it should stay alive (in blocks count).
-
 ## How to build
 
 Building this project requires a working [Rust](https://rustup.rs) (stable) toolchain.
