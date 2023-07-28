@@ -294,55 +294,55 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
 
         info!("Mining Thread #{}: started", id);
         'main: loop {
-            if let Ok(message) = job_receiver.try_recv() { // TODO blocking
-                match message {
-                    ThreadNotification::Exit => {
-                        info!("Exiting Mining Thread #{}...", id);
-                        break 'main;
-                    },
-                    ThreadNotification::NewJob(new_job, expected_difficulty, height) => {
-                        debug!("Mining Thread #{} received a new job", id);
-                        job = new_job;
-                        // set thread id in extra nonce for more work spread between threads
-                        job.extra_nonce[EXTRA_NONCE_SIZE - 1] = id;
+            let message = match job_receiver.blocking_recv() {
+                Ok(message) => message,
+                Err(e) => {
+                    error!("Error on thread #{} while waiting on new job: {}", id, e);
+                    break;
+                }
+            };
 
-                        // Solve block
-                        hash = job.get_pow_hash();
-                        HASHRATE_COUNTER.fetch_add(1, Ordering::SeqCst);
-                        while !match check_difficulty(&hash, expected_difficulty) {
-                            Ok(value) => value,
-                            Err(e) => {
-                                error!("Mining Thread #{}: error on difficulty check: {}", id, e);
-                                continue 'main;
-                            }
-                        } {
-                            // check if we have a new job pending or that we're not connected to the daemon anymore
-                            if !job_receiver.is_empty() || !WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
-                                continue 'main;
-                            }
+            match message {
+                ThreadNotification::Exit => {
+                    info!("Exiting Mining Thread #{}...", id);
+                    break 'main;
+                },
+                ThreadNotification::NewJob(new_job, expected_difficulty, height) => {
+                    debug!("Mining Thread #{} received a new job", id);
+                    job = new_job;
+                    // set thread id in extra nonce for more work spread between threads
+                    job.extra_nonce[EXTRA_NONCE_SIZE - 1] = id;
 
-                            job.nonce += 1;
-                            job.timestamp = get_current_timestamp();
-                            hash = job.get_pow_hash();
-                            HASHRATE_COUNTER.fetch_add(1, Ordering::SeqCst);
-                        }
-
-                        // compute the reference hash for easier finding of the block
-                        let block_hash = job.hash();
-                        info!("Mining Thread #{}: block {} found at height {} with difficulty {}", id, block_hash, height, format_difficulty(expected_difficulty));
-                        if let Err(_) = block_sender.blocking_send(job) {
-                            error!("Mining Thread #{}: error while sending block found with hash {}", id, block_hash);
+                    // Solve block
+                    hash = job.get_pow_hash();
+                    HASHRATE_COUNTER.fetch_add(1, Ordering::SeqCst);
+                    while !match check_difficulty(&hash, expected_difficulty) {
+                        Ok(value) => value,
+                        Err(e) => {
+                            error!("Mining Thread #{}: error on difficulty check: {}", id, e);
                             continue 'main;
                         }
+                    } {
+                        // check if we have a new job pending or that we're not connected to the daemon anymore
+                        if !job_receiver.is_empty() || !WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
+                            continue 'main;
+                        }
+
+                        job.nonce += 1;
+                        job.timestamp = get_current_timestamp();
+                        hash = job.get_pow_hash();
+                        HASHRATE_COUNTER.fetch_add(1, Ordering::SeqCst);
                     }
-                };
-            } else {
-                if WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
-                    continue 'main;
-                } else {
-                    std::thread::sleep(Duration::from_millis(100));
+
+                    // compute the reference hash for easier finding of the block
+                    let block_hash = job.hash();
+                    info!("Mining Thread #{}: block {} found at height {} with difficulty {}", id, block_hash, height, format_difficulty(expected_difficulty));
+                    if let Err(_) = block_sender.blocking_send(job) {
+                        error!("Mining Thread #{}: error while sending block found with hash {}", id, block_hash);
+                        continue 'main;
+                    }
                 }
-            }
+            };
         }
         info!("Mining Thread #{}: stopped", id);
     })?;
