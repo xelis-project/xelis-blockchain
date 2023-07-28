@@ -9,6 +9,7 @@ use crate::{wallet::{Wallet, WalletError}, entry::{EntryData, TransactionEntry}}
 pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     info!("Registering RPC methods...");
     handler.register_method("version", async_handler!(version));
+    handler.register_method("get_network", async_handler!(get_network));
     handler.register_method("get_nonce", async_handler!(get_nonce));
     handler.register_method("get_topoheight", async_handler!(get_topoheight));
     handler.register_method("get_address", async_handler!(get_address));
@@ -24,6 +25,15 @@ async fn version(_: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError>
         return Err(InternalRpcError::UnexpectedParams)
     }
     Ok(json!(VERSION))
+}
+
+async fn get_network(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    let network = wallet.get_network();
+    Ok(json!(network))
 }
 
 async fn get_nonce(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
