@@ -2,13 +2,19 @@ use std::{sync::Arc, borrow::Cow};
 
 use anyhow::Context;
 use log::info;
-use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params}, config::VERSION, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams}, DataHash}, crypto::hash::Hashable};
+use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams}, DataHash}, crypto::hash::Hashable};
 use serde_json::{Value, json};
 use crate::{wallet::{Wallet, WalletError}, entry::{EntryData, TransactionEntry}};
 
 pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     info!("Registering RPC methods...");
     handler.register_method("version", async_handler!(version));
+    handler.register_method("get_nonce", async_handler!(get_nonce));
+    handler.register_method("get_topoheight", async_handler!(get_topoheight));
+    handler.register_method("get_address", async_handler!(get_address));
+    handler.register_method("get_balance", async_handler!(get_balance));
+    handler.register_method("get_tracked_assets", async_handler!(get_tracked_assets));
+    handler.register_method("get_transaction", async_handler!(get_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("list_transactions", async_handler!(list_transactions));
 }
@@ -18,6 +24,68 @@ async fn version(_: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError>
         return Err(InternalRpcError::UnexpectedParams)
     }
     Ok(json!(VERSION))
+}
+
+async fn get_nonce(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    let storage = wallet.get_storage().read().await;
+    let nonce = storage.get_nonce()?;
+    Ok(json!(nonce))
+}
+
+async fn get_topoheight(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    let storage = wallet.get_storage().read().await;
+    let topoheight = storage.get_daemon_topoheight()?;
+    Ok(json!(topoheight))
+}
+
+async fn get_address(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetAddressParams = parse_params(body)?;
+
+    let address = if let Some(data) = params.data {
+        wallet.get_address_with(data)
+    } else {
+        wallet.get_address()
+    };
+
+    Ok(json!(address))
+}
+
+async fn get_balance(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetBalanceParams = parse_params(body)?;
+    let asset = params.asset.unwrap_or(XELIS_ASSET);
+    let storage = wallet.get_storage().read().await;
+
+    let balance = storage.get_balance_for(&asset)?;
+    Ok(json!(balance))
+}
+
+async fn get_tracked_assets(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    let storage = wallet.get_storage().read().await;
+    let tracked_assets = storage.get_assets()?;
+
+    Ok(json!(tracked_assets))
+}
+
+async fn get_transaction(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetTransactionParams = parse_params(body)?;
+
+    let storage = wallet.get_storage().read().await;
+    let transaction = storage.get_transaction(&params.hash)?;
+
+    let data: DataHash<'_, TransactionEntry> = DataHash { hash: Cow::Owned(params.hash), data: Cow::Owned(transaction) };
+    Ok(json!(data))
 }
 
 async fn build_transaction(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
@@ -38,7 +106,7 @@ async fn build_transaction(wallet: Arc<Wallet>, body: Value) -> Result<Value, In
 
     // returns the created TX and its hash
     Ok(json!(TransactionResponse {
-        tx: DataHash {
+        inner: DataHash {
             hash: Cow::Owned(tx.hash()),
             data: Cow::Owned(tx)
         }

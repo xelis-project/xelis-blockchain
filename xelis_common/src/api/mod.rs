@@ -6,7 +6,7 @@ use crate::{serializer::{Serializer, Reader, ReaderError, Writer}, crypto::hash:
 pub mod wallet;
 pub mod daemon;
 
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum DataType {
     Value(DataValue),
     // For two next variants, we support up to 255 (u8::MAX) elements maximum
@@ -65,7 +65,7 @@ impl Serializer for DataType {
     }
 }
 
-#[derive(Eq, PartialEq, Hash, Clone)]
+#[derive(Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
 pub enum DataValue {
     // represent a null value
     None,
