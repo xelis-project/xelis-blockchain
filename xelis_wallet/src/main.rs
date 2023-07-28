@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration, path::Path};
 
 use anyhow::{Result, Context};
-use xelis_wallet::{config::DIR_PATH};
+use xelis_wallet::config::DIR_PATH;
 use fern::colors::Color;
 use log::{error, info};
 use clap::Parser;

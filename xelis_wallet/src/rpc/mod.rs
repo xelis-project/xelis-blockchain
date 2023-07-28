@@ -8,7 +8,7 @@ use log::{info, warn};
 use tokio::sync::Mutex;
 use xelis_common::{config, rpc_server::{RPCHandler, RPCServerHandler, json_rpc}};
 use actix_web::{get, HttpResponse, Responder, HttpServer, web::{Data, self}, App, dev::{ServerHandle, ServiceRequest}, Error, error::{ErrorUnauthorized, ErrorBadGateway, ErrorBadRequest}};
-use crate::wallet::{Wallet};
+use crate::wallet::Wallet;
 
 pub struct AuthConfig {
     pub username: String,
