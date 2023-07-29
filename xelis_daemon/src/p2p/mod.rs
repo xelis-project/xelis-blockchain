@@ -1357,7 +1357,7 @@ impl<S: Storage> P2pServer<S> {
             if peer_topoheight >= our_topoheight && peer_topoheight - our_topoheight < PRUNE_SAFETY_LIMIT {
                 if let Err(e) = self.request_inventory_of(&peer).await {
                     error!("Error while asking inventory to {}: {}", peer, e);
-                };
+                }
             }
         }
 

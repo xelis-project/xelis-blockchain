@@ -1563,15 +1563,19 @@ impl<S: Storage> Blockchain<S> {
             let difficulty = self.get_difficulty_at_tips(storage, &tips_vec).await?;
             self.difficulty.store(difficulty, Ordering::SeqCst);
         }
+        debug!("Processed block {} in {}ms", block_hash, start.elapsed().as_millis());
 
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
-                debug!("broadcast block to peers");
-                p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, storage.get_pruned_topoheight()?, &block_hash, mining).await;
+                let p2p = p2p.clone();
+                let pruned_topoheight = storage.get_pruned_topoheight()?;
+                let block_hash = block_hash.clone();
+                tokio::spawn(async move {
+                    debug!("broadcast block to peers");
+                    p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, pruned_topoheight, &block_hash, mining).await;
+                });
             }
         }
-
-        debug!("Processed block {} in {}ms", block_hash, start.elapsed().as_millis());
 
         // broadcast to websocket new block
         if let Some(rpc) = rpc_server.as_ref() {
