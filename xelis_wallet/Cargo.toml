@@ -29,5 +29,5 @@ serde_json = "1"
 actix-web-httpauth = "0.8.0"
 
 [features]
-default = ["rpc_server"]
-rpc_server = ["xelis_common/rpc_server"]
+default = ["api_server"]
+api_server = ["xelis_common/rpc_server"]

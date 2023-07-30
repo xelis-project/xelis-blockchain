@@ -5,7 +5,7 @@ use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
 use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance};
 
-use crate::{api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
+use crate::{daemon_api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
 
 // NetworkHandler must be behind a Arc to be accessed from Wallet (to stop it) or from tokio task
 pub type SharedNetworkHandler = Arc<NetworkHandler>;

@@ -24,8 +24,8 @@ use rand::RngCore;
 use thiserror::Error;
 use log::{error, debug};
 
-#[cfg(feature = "rpc_server")]
-use crate::rpc::{AuthConfig, WalletRpcServer};
+#[cfg(feature = "api_server")]
+use crate::api::{AuthConfig, APIServer};
 
 #[derive(Error, Debug)]
 pub enum WalletError {
@@ -89,8 +89,8 @@ pub struct Wallet {
     // network on which we are connected
     network: Network,
     // RPC Server
-    #[cfg(feature = "rpc_server")]
-    rpc_server: Mutex<Option<Arc<WalletRpcServer>>>
+    #[cfg(feature = "api_server")]
+    api_server: Mutex<Option<APIServer>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -106,8 +106,8 @@ impl Wallet {
             keypair,
             network_handler: Mutex::new(None),
             network,
-            #[cfg(feature = "rpc_server")]
-            rpc_server: Mutex::new(None)
+            #[cfg(feature = "api_server")]
+            api_server: Mutex::new(None)
         };
 
         Arc::new(zelf)
@@ -201,20 +201,32 @@ impl Wallet {
         Ok(Self::new(storage, keypair, network))
     }
 
-    #[cfg(feature = "rpc_server")]
+    #[cfg(feature = "api_server")]
     pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String, config: Option<AuthConfig>) -> Result<(), Error> {
-        let mut lock = self.rpc_server.lock().await;
+        use crate::api::WalletRpcServer;
+        let mut lock = self.api_server.lock().await;
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
         }
         let rpc_server = WalletRpcServer::new(bind_address, Arc::clone(self), config).await?;
-        *lock = Some(rpc_server);
+        *lock = Some(APIServer::RPCServer(rpc_server));
         Ok(())
     }
 
-    #[cfg(feature = "rpc_server")]
-    pub async fn stop_rpc_server(&self) -> Result<(), Error> {
-        let mut lock = self.rpc_server.lock().await;
+    #[cfg(feature = "api_server")]
+    pub async fn enable_xswd(self: &Arc<Self>) -> Result<(), Error> {
+        let mut lock = self.api_server.lock().await;
+        if lock.is_some() {
+            return Err(WalletError::RPCServerAlreadyRunning.into())
+        }
+        *lock = Some(APIServer::XSWD(todo!("XSWD not implemented yet")));
+        Ok(())
+    }
+
+
+    #[cfg(feature = "api_server")]
+    pub async fn stop_api_server(&self) -> Result<(), Error> {
+        let mut lock = self.api_server.lock().await;
         let rpc_server = lock.take().ok_or(WalletError::RPCServerNotRunning)?;
         rpc_server.stop().await;
         Ok(())

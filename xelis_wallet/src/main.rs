@@ -11,10 +11,13 @@ use xelis_common::{config::{
 }, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, globals::{format_coin, set_network_to}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
 use xelis_wallet::wallet::Wallet;
 
-#[cfg(feature = "rpc_server")]
-use xelis_wallet::rpc::AuthConfig;
+#[cfg(feature = "api_server")]
+use xelis_wallet::api::AuthConfig;
 
-#[cfg(feature = "rpc_server")]
+// This struct is used to configure the RPC Server
+// In case we want to enable it instead of starting
+// the XSWD Server
+#[cfg(feature = "api_server")]
 #[derive(Debug, clap::StructOpt)]
 pub struct RPCConfig {
     /// RPC Server bind address
@@ -58,14 +61,40 @@ pub struct Config {
     /// Network selected for chain
     #[clap(long, arg_enum, default_value_t = Network::Mainnet)]
     network: Network,
-    #[cfg(feature = "rpc_server")]
+    /// RPC Server configuration
+    #[cfg(feature = "api_server")]
     #[structopt(flatten)]
-    rpc: RPCConfig
+    rpc: RPCConfig,
+    /// XSWD Server configuration
+    #[cfg(feature = "api_server")]
+    #[clap(long)]
+    enable_xswd: bool
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
+    #[cfg(feature = "api_server")]
+    { // Sanity check
+        // check that we don't have both server enabled
+        if config.enable_xswd && config.rpc.rpc_bind_address.is_some() {
+            error!("Invalid parameters configuration: RPC Server and XSWD cannot be enabled at the same time");
+            return Ok(()); // exit
+        }
+
+        // check that username/password is not in param if bind address is not set
+        if config.rpc.rpc_bind_address.is_none() && (config.rpc.rpc_password.is_some() || config.rpc.rpc_username.is_some()) {
+            error!("Invalid parameters configuration for rpc password and username: RPC Server is not enabled");
+            return Ok(())
+        }
+
+        // check that username/password is set together if bind address is set
+        if config.rpc.rpc_bind_address.is_some() && config.rpc.rpc_password.is_some() != config.rpc.rpc_username.is_some() {
+            error!("Invalid parameters configuration: usernamd AND password must be provided");
+            return Ok(())
+        }
+    }
+
     set_network_to(config.network);
 
     let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
@@ -89,11 +118,14 @@ async fn main() -> Result<()> {
         }
     }
 
-    #[cfg(feature = "rpc_server")]
-    if let Some(address) = config.rpc.rpc_bind_address {
-        if config.rpc.rpc_password.is_some() != config.rpc.rpc_username.is_some() {
-            error!("Invalid parameters configuration: usernamd AND password must be provided");
-        } else {
+    #[cfg(feature = "api_server")]
+    {
+        if config.enable_xswd && config.rpc.rpc_bind_address.is_some() {
+            error!("Invalid parameters configuration: RPC Server and XSWD cannot be enabled at the same time");
+            return Ok(()); // exit
+        }
+
+        if let Some(address) = config.rpc.rpc_bind_address {
             let auth_config = if let (Some(username), Some(password)) = (config.rpc.rpc_username, config.rpc.rpc_password) {
                 Some(AuthConfig {
                     username,
@@ -130,6 +162,21 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>, network: Network) 
     command_manager.add_command(Command::new("rescan", "Rescan balance and transactions", Some(Arg::new("topoheight", ArgType::Number)), CommandHandler::Async(async_handler!(rescan))));
     command_manager.add_command(Command::new("seed", "Show seed of selected language", Some(Arg::new("language", ArgType::Number)), CommandHandler::Async(async_handler!(seed))));
     command_manager.add_command(Command::new("nonce", "Show current nonce", None, CommandHandler::Async(async_handler!(nonce))));
+
+    #[cfg(feature = "api_server")]
+    {
+        // Unauthenticated RPC Server can only be created by launch arguments option
+        command_manager.add_command(Command::with_required_arguments("start_rpc_server", "Start the RPC Server", vec![
+            Arg::new("bind_address", ArgType::String),
+            Arg::new("username", ArgType::String),
+            Arg::new("password", ArgType::String)
+        ], None, CommandHandler::Async(async_handler!(start_rpc_server))));
+
+        command_manager.add_command(Command::new("start_xswd", "Start the XSWD Server",  None, CommandHandler::Async(async_handler!(start_xswd))));
+
+        // Stop API Server (RPC or XSWD)
+        command_manager.add_command(Command::new("stop_api_server", "Stop the API Server", None, CommandHandler::Async(async_handler!(stop_api_server))));
+    }
 
     command_manager.set_data(Some(wallet.clone()));
 
@@ -361,6 +408,40 @@ async fn nonce(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Res
     let wallet = manager.get_data()?;
     let nonce = wallet.get_nonce().await;
     manager.message(format!("Nonce: {}", nonce));
+    Ok(())
+}
+
+#[cfg(feature = "api_server")]
+async fn stop_api_server(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let wallet = manager.get_data()?;
+    wallet.stop_api_server().await.context("Error while stopping API Server")?;
+    manager.message("API Server has been stopped");
+    Ok(())
+}
+
+#[cfg(feature = "api_server")]
+async fn start_rpc_server(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let wallet = manager.get_data()?;
+    let bind_address = arguments.get_value("bind_address")?.to_string_value()?;
+    let username = arguments.get_value("username")?.to_string_value()?;
+    let password = arguments.get_value("password")?.to_string_value()?;
+
+    let auth_config = Some(AuthConfig {
+        username,
+        password
+    });
+
+    wallet.enable_rpc_server(bind_address, auth_config).await.context("Error while enabling RPC Server")?;
+    manager.message("RPC Server has been enabled");
+    Ok(())
+}
+
+#[cfg(feature = "api_server")]
+async fn start_xswd(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let wallet = manager.get_data()?;
+    wallet.enable_xswd().await.context("Error while enabling XSWD Server")?;
+    manager.message("XSWD Server has been enabled");
+
     Ok(())
 }
 

@@ -3,9 +3,10 @@ pub mod storage;
 pub mod wallet;
 pub mod config;
 pub mod cipher;
-pub mod api;
+pub mod daemon_api;
 pub mod network_handler;
 pub mod entry;
 pub mod mnemonics;
-#[cfg(feature = "rpc_server")]
-pub mod rpc;
+
+#[cfg(feature = "api_server")]
+pub mod api;
