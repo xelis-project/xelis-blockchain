@@ -1,10 +1,10 @@
 use std::{sync::Arc, collections::HashMap};
 use async_trait::async_trait;
-use actix_web::{get, web::{Data, Payload}, HttpRequest, Responder, HttpServer, App, dev::ServerHandle};
+use actix_web::{get, web::{Data, Payload}, HttpRequest, Responder, HttpServer, App, dev::ServerHandle, HttpResponse};
 use log::info;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use xelis_common::{rpc_server::{RPCHandler, websocket::{WebSocketServerShared, WebSocketHandler, WebSocketSessionShared, WebSocketServer}, RpcRequest, RpcResponseError, InternalRpcError}, crypto::key::Signature};
+use xelis_common::{rpc_server::{RPCHandler, websocket::{WebSocketHandler, WebSocketSessionShared, WebSocketServer}, RpcRequest, RpcResponseError, InternalRpcError}, crypto::key::Signature};
 use serde::{Deserialize, Serialize};
 use crate::{wallet::Wallet, config::XSWD_BIND_ADDRESS};
 
@@ -57,15 +57,19 @@ impl XSWD {
             App::new()
                 .app_data(Data::from(server))
                 .service(endpoint)
+                .service(index)
         })
         .disable_signals()
         .bind(&XSWD_BIND_ADDRESS)?
         .run();
 
-        info!("XSWD is listening on {}", XSWD_BIND_ADDRESS);
+        let handle = http_server.handle();
+        tokio::spawn(http_server);
+
+        info!("XSWD is listening on ws://{}", XSWD_BIND_ADDRESS);
 
         Ok(Self {
-            handle: http_server.handle()
+            handle
         })
     }
 
@@ -210,8 +214,13 @@ impl WebSocketHandler for XSWDWebSocketHandler {
     }
 }
 
+#[get("/")]
+async fn index() -> Result<impl Responder, actix_web::Error> {
+    Ok(HttpResponse::Ok().body("XSWD is running !"))
+}
+
 #[get("/xswd")]
-async fn endpoint(server: Data<WebSocketServerShared<XSWDWebSocketHandler>>, request: HttpRequest, body: Payload) -> Result<impl Responder, actix_web::Error> {
+async fn endpoint(server: Data<WebSocketServer<XSWDWebSocketHandler>>, request: HttpRequest, body: Payload) -> Result<impl Responder, actix_web::Error> {
     let response = server.handle_connection(&request, body).await?;
     Ok(response)
 }
