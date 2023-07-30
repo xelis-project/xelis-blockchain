@@ -4,7 +4,11 @@ mod xswd;
 
 pub use self::{
     rpc_server::{WalletRpcServer, WalletRpcServerShared, AuthConfig},
-    xswd::XSWD
+    xswd::{
+        XSWD,
+        ApplicationData,
+        PermissionResult
+    }
 };
 
 pub enum APIServer {

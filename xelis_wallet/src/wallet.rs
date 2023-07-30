@@ -11,6 +11,7 @@ use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey};
 use xelis_common::globals::format_coin;
 use xelis_common::network::Network;
+use xelis_common::rpc_server::RpcRequest;
 use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
 use crate::cipher::Cipher;
@@ -25,7 +26,14 @@ use thiserror::Error;
 use log::{error, debug};
 
 #[cfg(feature = "api_server")]
-use crate::api::{AuthConfig, APIServer};
+use crate::api::{
+    XSWD,
+    WalletRpcServer,
+    AuthConfig,
+    APIServer,
+    ApplicationData,
+    PermissionResult
+};
 
 #[derive(Error, Debug)]
 pub enum WalletError {
@@ -203,7 +211,6 @@ impl Wallet {
 
     #[cfg(feature = "api_server")]
     pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String, config: Option<AuthConfig>) -> Result<(), Error> {
-        use crate::api::WalletRpcServer;
         let mut lock = self.api_server.lock().await;
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
@@ -219,10 +226,15 @@ impl Wallet {
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
         }
-        *lock = Some(APIServer::XSWD(todo!("XSWD not implemented yet")));
+        *lock = Some(APIServer::XSWD(XSWD::new(self.clone())?));
         Ok(())
     }
 
+    #[cfg(feature = "api_server")]
+    pub async fn request_permission(&self, _: &ApplicationData, _: &RpcRequest) -> Result<PermissionResult, Error> {
+        // TODO
+        Ok(PermissionResult::Accept)
+    }
 
     #[cfg(feature = "api_server")]
     pub async fn stop_api_server(&self) -> Result<(), Error> {

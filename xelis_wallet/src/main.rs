@@ -139,6 +139,10 @@ async fn main() -> Result<()> {
             if let Err(e) = wallet.enable_rpc_server(address, auth_config).await {
                 error!("Error while enabling RPC Server: {}", e);
             }
+        } else if config.enable_xswd {
+            if let Err(e) = wallet.enable_xswd().await {
+                error!("Error while enabling XSWD Server: {}", e);
+            }
         }
     }
 
@@ -439,8 +443,11 @@ async fn start_rpc_server(manager: &CommandManager<Arc<Wallet>>, mut arguments: 
 #[cfg(feature = "api_server")]
 async fn start_xswd(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
     let wallet = manager.get_data()?;
-    wallet.enable_xswd().await.context("Error while enabling XSWD Server")?;
-    manager.message("XSWD Server has been enabled");
+    if let Err(e) = wallet.enable_xswd().await {
+        manager.error(format!("Error while enabling XSWD Server: {}", e));
+    } else {
+        manager.message("XSWD Server has been enabled");
+    }
 
     Ok(())
 }
