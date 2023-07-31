@@ -35,6 +35,10 @@ where
         Ok(request)
     }
 
+    pub fn has_method(&self, method_name: &String) -> bool {
+        self.methods.contains_key(method_name)
+    }
+
     pub async fn execute_method(&self, mut request: RpcRequest) -> Result<Value, RpcResponseError> {
         let handler = match self.methods.get(&request.method) {
             Some(handler) => handler,

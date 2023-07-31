@@ -67,6 +67,6 @@ where
     H: WebSocketHandler + 'static,
     S: WebSocketServerHandler<H>
 {
-    let response = server.get_websocket().handle_connection(&request, body).await?;
+    let response = server.get_websocket().handle_connection(request, body).await?;
     Ok(response)
 }

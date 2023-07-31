@@ -7,7 +7,8 @@ pub use self::{
     xswd::{
         XSWD,
         ApplicationData,
-        PermissionResult
+        PermissionResult,
+        PermissionRequest
     }
 };
 

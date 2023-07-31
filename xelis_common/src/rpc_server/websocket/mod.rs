@@ -26,6 +26,7 @@ pub enum WebSocketError {
 
 pub struct WebSocketSession<H: WebSocketHandler + 'static> {
     id: u64,
+    request: HttpRequest,
     server: WebSocketServerShared<H>,
     inner: Mutex<Option<Session>>
 }
@@ -48,24 +49,32 @@ where
         session.ping(b"").await?;
         Ok(())
     }
-
+    
     pub async fn pong(&self) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         let session = inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?;
         session.pong(b"").await?;
         Ok(())
     }
-
+    
     async fn send_text_internal<S: Into<String>>(&self, value: S) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?.text(value.into()).await?;
         Ok(())
     }
-
+    
     async fn close(&self, reason: Option<CloseReason>) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         inner.take().ok_or(WebSocketError::SessionAlreadyClosed)?.close(reason).await?;
         Ok(())
+    }
+    
+    pub async fn is_closed(&self) -> bool {
+        self.inner.lock().await.is_none()
+    }
+
+    pub fn get_request(&self) -> &HttpRequest {
+        &self.request
     }
 
     pub fn get_server(&self) -> &WebSocketServerShared<H> {
@@ -132,13 +141,14 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         &self.sessions
     }
 
-    pub async fn handle_connection(self: &Arc<Self>, request: &HttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
+    pub async fn handle_connection(self: &Arc<Self>, request: HttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
         debug!("Handling new WebSocket connection");
-        let (response, session, stream) = actix_ws::handle(request, body)?;
+        let (response, session, stream) = actix_ws::handle(&request, body)?;
         let id = self.next_id();
         debug!("Created new WebSocketSession with id {}", id);
         let session = Arc::new(WebSocketSession {
             id,
+            request,
             server: Arc::clone(&self),
             inner: Mutex::new(Some(session)),
         });
@@ -158,7 +168,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         self.id_counter.fetch_add(1, Ordering::SeqCst)
     }
 
-    async fn delete_session(&self, session: &WebSocketSessionShared<H>, reason: Option<CloseReason>) {
+    pub async fn delete_session(&self, session: &WebSocketSessionShared<H>, reason: Option<CloseReason>) {
         debug!("deleting session");
         // close session
         if let Err(e) = session.close(reason).await {
@@ -192,6 +202,11 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             select! {
                 // heartbeat
                 _ = interval.tick() => {
+                    if session.is_closed().await {
+                        debug!("Session is closed, stopping heartbeat");
+                        break None;
+                    }
+
                     trace!("Sending ping to session #{}", session.id);
                     if let Err(e) = session.ping().await {
                         debug!("Error while sending ping to session #{}: {}", session.id, e);

@@ -1,10 +1,10 @@
 use std::{sync::Arc, collections::HashMap};
 use async_trait::async_trait;
 use actix_web::{get, web::{Data, Payload}, HttpRequest, Responder, HttpServer, App, dev::ServerHandle, HttpResponse};
-use log::info;
+use log::{info, error};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use xelis_common::{rpc_server::{RPCHandler, websocket::{WebSocketHandler, WebSocketSessionShared, WebSocketServer}, RpcRequest, RpcResponseError, InternalRpcError}, crypto::key::Signature};
+use xelis_common::{rpc_server::{RPCHandler, websocket::{WebSocketHandler, WebSocketSessionShared, WebSocketServer}, RpcRequest, RpcResponseError, InternalRpcError}, crypto::{key::{Signature, SIGNATURE_LENGTH}, hash::hash}, serializer::{Serializer, ReaderError, Reader, Writer}};
 use serde::{Deserialize, Serialize};
 use crate::{wallet::Wallet, config::XSWD_BIND_ADDRESS};
 
@@ -43,6 +43,43 @@ pub struct ApplicationData {
     pub permissions: HashMap<String, Permission>,
     // signature of all data
     pub signature: Option<Signature>
+}
+
+// This serializer is only used to sign/verify a signature!
+impl Serializer for ApplicationData {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let id = reader.read_bytes_32()?;
+        let name = reader.read_string()?;
+        let description = reader.read_string()?;
+        let url = reader.read_optional_string()?;
+        let permissions_count = reader.read_u8()?;
+        let mut permissions = HashMap::with_capacity(permissions_count as usize);
+        for _ in 0..permissions_count {
+            permissions.insert(reader.read_string()?, Permission::from_id(reader.read_u8()?).ok_or(ReaderError::InvalidValue)?);
+        }
+
+        Ok(Self {
+            id,
+            name,
+            description,
+            url,
+            permissions,
+            signature: None
+        })
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bytes(&self.id);
+        writer.write_string(&self.name);
+        writer.write_string(&self.description);
+        writer.write_optional_string(&self.url);
+        writer.write_u8(self.permissions.len() as u8);
+
+        for (method, permission) in &self.permissions {
+            writer.write_string(method);
+            writer.write_u8(permission.get_id());
+        }
+    }
 }
 
 impl XSWD {
@@ -87,12 +124,45 @@ pub enum Permission {
     DenyAlways
 }
 
-#[derive(PartialEq, Eq)]
+impl Permission {
+    pub fn get_id(&self) -> u8 {
+        match self {
+            Self::Ask => 0,
+            Self::AcceptAlways => 1,
+            Self::DenyAlways => 2
+        }
+    }
+
+    pub fn from_id(id: u8) -> Option<Self> {
+        Some(match id {
+            0 => Self::Ask,
+            1 => Self::AcceptAlways,
+            2 => Self::DenyAlways,
+            _ => return None
+        })
+    }
+}
+
+pub enum PermissionRequest<'a> {
+    // bool tell if it was already signed or not
+    Application(bool),
+    Request(&'a RpcRequest)
+}
+
 pub enum PermissionResult {
     Accept,
     Deny,
     AcceptAlways,
     DenyAlways
+}
+
+impl PermissionResult {
+    pub fn is_positive(&self) -> bool {
+        match self {
+            Self::Accept | Self::AcceptAlways => true,
+            _ => false
+        }
+    }
 }
 
 struct XSWDWebSocketHandler {
@@ -109,12 +179,16 @@ impl XSWDWebSocketHandler {
     }
 
     async fn verify_permission_for_request(&self, app: &mut ApplicationData, request: &RpcRequest) -> Result<(), RpcResponseError> {
+        if !self.handler.has_method(&request.method) {
+            return Err(RpcResponseError::new(request.id.clone(), InternalRpcError::Custom(format!("Method {} was not found", request.method))))
+        }
+
         let permission = app.permissions.get(&request.method).map(|v| *v).unwrap_or(Permission::Ask);
         match permission {
             // Request permission from user
             Permission::Ask => {
                 let result = self.handler.get_data()
-                .request_permission(app, request).await
+                .request_permission(app, PermissionRequest::Request(request)).await
                 .map_err(|msg| RpcResponseError::new(request.id.clone(), InternalRpcError::Custom(msg.to_string())))?;
 
                 match result {
@@ -137,18 +211,14 @@ impl XSWDWebSocketHandler {
         }
     }
 
-    async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Value, RpcResponseError> {
+    async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
         let mut applications = self.applications.lock().await;
 
-        // Application is already registered, call the method
+        // Application is already registered, verify permissiond and call the method
         if let Some(app) = applications.get_mut(session) {
             let request: RpcRequest = self.handler.parse_request(message)?;
             self.verify_permission_for_request(app, &request).await?;
-
-            Ok(match self.handler.execute_method(request).await {
-                Ok(result) => result,
-                Err(e) => e.to_json(),
-            })
+            self.handler.execute_method(request).await.map(|v| Some(v))
         } else {
             // Application is not registered, register it
             let app_data: ApplicationData = serde_json::from_slice::<ApplicationData>(&message).map_err(|_| RpcResponseError::new(None, InternalRpcError::Custom("Invalid JSON format for application data".into())))?;
@@ -158,12 +228,12 @@ impl XSWDWebSocketHandler {
                     return Err(RpcResponseError::new(None, InternalRpcError::Custom("Application name is too long".into())))
                 }
         
-                if app_data.description.len() > 256 {
+                if app_data.description.len() > 255 {
                     return Err(RpcResponseError::new(None, InternalRpcError::Custom("Application description is too long".into())))
                 }
         
                 if let Some(url) = &app_data.url {
-                    if url.len() > 256 {
+                    if url.len() > 255 {
                         return Err(RpcResponseError::new(None, InternalRpcError::Custom("Application URL is too long".into())))
                     }
                 }
@@ -172,19 +242,42 @@ impl XSWDWebSocketHandler {
                     return Err(RpcResponseError::new(None, InternalRpcError::Custom("Application permissions are not signed".into())))
                 }
 
-                if app_data.permissions.len() > 256 {
+                if app_data.permissions.len() > 255 {
                     return Err(RpcResponseError::new(None, InternalRpcError::Custom("Too many permissions".into())))
                 }
             }
 
-            // TODO verify signature of application data
+            let wallet = self.handler.get_data();
+            // verify signature of application data
+            if let Some(signature) = &app_data.signature {
+                let bytes = app_data.to_bytes();
+                let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
+                let key = wallet.get_public_key();
+
+                if !key.verify_signature(&hash(&bytes), signature) {
+                    return Err(RpcResponseError::new(None, InternalRpcError::Custom("Invalid signature for application data".into())));
+                }
+            }
+
+            let permission = match wallet.request_permission(&app_data, PermissionRequest::Application(app_data.signature.is_some())).await {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Error while requesting permission: {}", e);
+                    PermissionResult::Deny
+                }
+            };
+
+            if !permission.is_positive() {
+                session.get_server().delete_session(session, None).await;
+                return Ok(None)
+            }
 
             applications.insert(session.clone(), app_data);
-            Ok(json!({
+            Ok(Some(json!({
                 "jsonrpc": "2.0",
                 "id": Value::Null,
                 "result": true
-            }))
+            })))
         }
     }
 }
@@ -206,9 +299,13 @@ impl WebSocketHandler for XSWDWebSocketHandler {
 
     async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<(), anyhow::Error> {
         let response: Value = match self.on_message_internal(session, message).await {
-            Ok(result) => result,
+            Ok(result) => match result {
+                Some(v) => v,
+                None => return Ok(()),
+            },
             Err(e) => e.to_json(),
         };
+
         session.send_text(response.to_string()).await?;
         Ok(())
     }
@@ -221,6 +318,6 @@ async fn index() -> Result<impl Responder, actix_web::Error> {
 
 #[get("/xswd")]
 async fn endpoint(server: Data<WebSocketServer<XSWDWebSocketHandler>>, request: HttpRequest, body: Payload) -> Result<impl Responder, actix_web::Error> {
-    let response = server.handle_connection(&request, body).await?;
+    let response = server.handle_connection(request, body).await?;
     Ok(response)
 }

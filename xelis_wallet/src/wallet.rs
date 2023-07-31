@@ -11,7 +11,6 @@ use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey};
 use xelis_common::globals::format_coin;
 use xelis_common::network::Network;
-use xelis_common::rpc_server::RpcRequest;
 use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
 use crate::cipher::Cipher;
@@ -32,7 +31,8 @@ use crate::api::{
     AuthConfig,
     APIServer,
     ApplicationData,
-    PermissionResult
+    PermissionResult,
+    PermissionRequest
 };
 
 #[derive(Error, Debug)]
@@ -231,7 +231,7 @@ impl Wallet {
     }
 
     #[cfg(feature = "api_server")]
-    pub async fn request_permission(&self, _: &ApplicationData, _: &RpcRequest) -> Result<PermissionResult, Error> {
+    pub async fn request_permission(&self, _: &ApplicationData, _: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
         // TODO
         Ok(PermissionResult::Accept)
     }
@@ -440,6 +440,10 @@ impl Wallet {
     // but want to pause / resume the syncing task through start/stop functions from it
     pub async fn get_network_handler(&self) -> &Mutex<Option<Arc<NetworkHandler>>> {
         &self.network_handler
+    }
+
+    pub fn get_public_key(&self) -> &PublicKey {
+        self.keypair.get_public_key()
     }
 
     pub fn get_address(&self) -> Address<'_> {
