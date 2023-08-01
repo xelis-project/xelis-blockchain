@@ -1,4 +1,4 @@
-use std::{sync::Arc, collections::HashMap, pin::Pin};
+use std::{sync::Arc, collections::HashMap};
 use async_trait::async_trait;
 use actix_web::{get, web::{Data, Payload}, HttpRequest, Responder, HttpServer, App, dev::ServerHandle, HttpResponse};
 use log::{info, error};
@@ -291,12 +291,6 @@ impl WebSocketHandler for XSWDWebSocketHandler {
         }
 
         Ok(())
-    }
-
-    fn on_connection<'a>(&self, _: HttpRequest, _: &WebSocketSessionShared<Self>) -> Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send + 'a>> {
-        Box::pin(async move {
-            Ok(())
-        })
     }
 
     async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<(), anyhow::Error> {

@@ -1,14 +1,18 @@
 mod handler;
+mod http_request;
 
-use std::{sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashSet, hash::{Hash, Hasher}, time::{Duration, Instant}, pin::Pin};
-use actix_web::{HttpRequest, web::Payload, HttpResponse};
+use std::{sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashSet, hash::{Hash, Hasher}, time::{Duration, Instant}};
+use actix_web::{HttpRequest as ActixHttpRequest, web::Payload, HttpResponse};
 use actix_ws::{Session, MessageStream, Message, CloseReason, CloseCode};
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use log::{debug, trace};
 use tokio::{sync::Mutex, select};
 
-pub use self::handler::EventWebSocketHandler;
+pub use self::{
+    handler::EventWebSocketHandler,
+    http_request::HttpRequest
+};
 
 pub type WebSocketServerShared<H> = Arc<WebSocketServer<H>>;
 pub type WebSocketSessionShared<H> = Arc<WebSocketSession<H>>;
@@ -26,6 +30,7 @@ pub enum WebSocketError {
 
 pub struct WebSocketSession<H: WebSocketHandler + 'static> {
     id: u64,
+    request: HttpRequest,
     server: WebSocketServerShared<H>,
     inner: Mutex<Option<Session>>
 }
@@ -67,9 +72,13 @@ where
         inner.take().ok_or(WebSocketError::SessionAlreadyClosed)?.close(reason).await?;
         Ok(())
     }
-    
+
     pub async fn is_closed(&self) -> bool {
         self.inner.lock().await.is_none()
+    }
+
+    pub fn get_request(&self) -> &HttpRequest {
+        &self.request
     }
 
     pub fn get_server(&self) -> &WebSocketServerShared<H> {
@@ -104,11 +113,8 @@ where
 pub trait WebSocketHandler: Sized + Sync {
     // called when a new Session is added in websocket server
     // if an error is returned, maintaining the session is aborted
-    // TODO Clean this with native async fn in traits
-    fn on_connection<'a>(&self, _: HttpRequest, _: &WebSocketSessionShared<Self>) -> Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send + 'a>> {
-        Box::pin(async move {
-            Ok(())
-        })
+    async fn on_connection(&self, _: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
+        Ok(())
     }
 
     // called when a new message is received
@@ -145,13 +151,14 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         &self.sessions
     }
 
-    pub async fn handle_connection(self: &Arc<Self>, request: HttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
+    pub async fn handle_connection(self: &Arc<Self>, request: ActixHttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
         debug!("Handling new WebSocket connection");
         let (response, session, stream) = actix_ws::handle(&request, body)?;
         let id = self.next_id();
         debug!("Created new WebSocketSession with id {}", id);
         let session = Arc::new(WebSocketSession {
             id,
+            request: request.into(),
             server: Arc::clone(&self),
             inner: Mutex::new(Some(session)),
         });
@@ -163,7 +170,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             debug!("Session #{} has been inserted into sessions: {}", id, res);
         }
 
-        actix_rt::spawn(Arc::clone(self).handle_ws_internal(request, session.clone(), stream));
+        actix_rt::spawn(Arc::clone(self).handle_ws_internal(session, stream));
         Ok(response)
     }
 
@@ -191,9 +198,9 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         debug!("sessions unlocked");
     }
     
-    async fn handle_ws_internal(self: Arc<Self>, request: HttpRequest, session: WebSocketSessionShared<H>, mut stream: MessageStream) {
+    async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: MessageStream) {
         // call on_connection
-        if let Err(e) = self.handler.on_connection(request, &session).await {
+        if let Err(e) = self.handler.on_connection(&session).await {
             debug!("Error while calling on_connection: {}", e);
             self.delete_session(&session, Some(CloseReason::from(CloseCode::Error))).await;
             return;
