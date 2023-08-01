@@ -117,11 +117,6 @@ where
         Ok(())
     }
 
-    async fn on_connection(&self, _: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
-        debug!("New connection detected on websocket");
-        Ok(())
-    }
-
     async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<(), anyhow::Error> {
         debug!("new message received on websocket");
         let response: Value = match self.on_message_internal(session, message).await {

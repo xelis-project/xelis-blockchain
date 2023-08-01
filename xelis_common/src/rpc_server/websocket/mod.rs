@@ -1,6 +1,6 @@
 mod handler;
 
-use std::{sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashSet, hash::{Hash, Hasher}, time::{Duration, Instant}};
+use std::{sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashSet, hash::{Hash, Hasher}, time::{Duration, Instant}, pin::Pin};
 use actix_web::{HttpRequest, web::Payload, HttpResponse};
 use actix_ws::{Session, MessageStream, Message, CloseReason, CloseCode};
 use async_trait::async_trait;
@@ -26,7 +26,6 @@ pub enum WebSocketError {
 
 pub struct WebSocketSession<H: WebSocketHandler + 'static> {
     id: u64,
-    request: HttpRequest,
     server: WebSocketServerShared<H>,
     inner: Mutex<Option<Session>>
 }
@@ -49,20 +48,20 @@ where
         session.ping(b"").await?;
         Ok(())
     }
-    
+
     pub async fn pong(&self) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         let session = inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?;
         session.pong(b"").await?;
         Ok(())
     }
-    
+
     async fn send_text_internal<S: Into<String>>(&self, value: S) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?.text(value.into()).await?;
         Ok(())
     }
-    
+
     async fn close(&self, reason: Option<CloseReason>) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         inner.take().ok_or(WebSocketError::SessionAlreadyClosed)?.close(reason).await?;
@@ -71,10 +70,6 @@ where
     
     pub async fn is_closed(&self) -> bool {
         self.inner.lock().await.is_none()
-    }
-
-    pub fn get_request(&self) -> &HttpRequest {
-        &self.request
     }
 
     pub fn get_server(&self) -> &WebSocketServerShared<H> {
@@ -106,16 +101,25 @@ where
 }
 
 #[async_trait]
-pub trait WebSocketHandler: Sized {
+pub trait WebSocketHandler: Sized + Sync {
     // called when a new Session is added in websocket server
     // if an error is returned, maintaining the session is aborted
-    async fn on_connection(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error>;
+    // TODO Clean this with native async fn in traits
+    fn on_connection<'a>(&self, _: HttpRequest, _: &WebSocketSessionShared<Self>) -> Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(())
+        })
+    }
 
     // called when a new message is received
-    async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<(), anyhow::Error>;
+    async fn on_message(&self, _: &WebSocketSessionShared<Self>, _: &[u8]) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
 
     // called when a Session is closed
-    async fn on_close(&self,session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error>;
+    async fn on_close(&self, _: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
 }
 
 pub struct WebSocketServer<H: WebSocketHandler + 'static> {
@@ -148,7 +152,6 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         debug!("Created new WebSocketSession with id {}", id);
         let session = Arc::new(WebSocketSession {
             id,
-            request,
             server: Arc::clone(&self),
             inner: Mutex::new(Some(session)),
         });
@@ -160,7 +163,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             debug!("Session #{} has been inserted into sessions: {}", id, res);
         }
 
-        actix_rt::spawn(Arc::clone(self).handle_ws_internal(session.clone(), stream));
+        actix_rt::spawn(Arc::clone(self).handle_ws_internal(request, session.clone(), stream));
         Ok(response)
     }
 
@@ -188,9 +191,9 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         debug!("sessions unlocked");
     }
     
-    async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: MessageStream) {
+    async fn handle_ws_internal(self: Arc<Self>, request: HttpRequest, session: WebSocketSessionShared<H>, mut stream: MessageStream) {
         // call on_connection
-        if let Err(e) = self.handler.on_connection(&session).await {
+        if let Err(e) = self.handler.on_connection(request, &session).await {
             debug!("Error while calling on_connection: {}", e);
             self.delete_session(&session, Some(CloseReason::from(CloseCode::Error))).await;
             return;
