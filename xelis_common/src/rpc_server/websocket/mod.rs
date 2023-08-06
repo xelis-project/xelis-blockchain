@@ -110,7 +110,7 @@ where
 }
 
 #[async_trait]
-pub trait WebSocketHandler: Sized + Sync {
+pub trait WebSocketHandler: Sized + Sync + Send {
     // called when a new Session is added in websocket server
     // if an error is returned, maintaining the session is aborted
     async fn on_connection(&self, _: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
@@ -178,7 +178,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         self.id_counter.fetch_add(1, Ordering::SeqCst)
     }
 
-    pub async fn delete_session(&self, session: &WebSocketSessionShared<H>, reason: Option<CloseReason>) {
+    pub async fn delete_session(self: &Arc<Self>, session: &WebSocketSessionShared<H>, reason: Option<CloseReason>) {
         debug!("deleting session");
         // close session
         if let Err(e) = session.close(reason).await {
@@ -191,9 +191,13 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         if sessions.remove(session) {
             debug!("deleted session");
             // call on_close
-            if let Err(e) = self.handler.on_close(session).await {
-                debug!("Error while calling on_close: {}", e);
-            }
+            let zelf = Arc::clone(self);
+            let session = session.clone();
+            tokio::spawn(async move {
+                if let Err(e) = zelf.handler.on_close(&session).await {
+                    debug!("Error while calling on_close: {}", e);
+                }
+            });
         }
         debug!("sessions unlocked");
     }

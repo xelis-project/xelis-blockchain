@@ -312,6 +312,54 @@ Events currently available to subscribe are:
 - `NewAsset`: when a new asset has been registered
 - `BlockOrdered` when a block is ordered for the first time or reordered to a new topoheight
 
+### XSWD
+
+XSWD (XELIS Secure WebSocket DApp) Protocol is a WebSocket started on unique port `44325` and path `/xswd` for easy findings from dApps.
+Its job is to provide an easy to access and secure way to communicate from a desktop/CLI wallet to any dApp (software or in-browser/websites directly).
+
+It's based on the JSON-RPC API and have exact same methods for easy compabitility, the only exception is how verification is done.
+On a traditional RPC-Server, if authentication is enabled, you must provide a username/password.
+
+XSWD stay open but request a manual action from user to accept the connection of the dApp on the XSWD Server.
+When accepted, the dApp can requests JSON-RPC methods easily and the user can set/configure a permission for each method.
+If no permission is found for a request method, it will be prompted/asked to the user for manual verification.
+
+DApp can also request to sign the `ApplicationData` to persist the configured permissions on its side and then provide it when user would reconnect later.
+
+First JSON message from the dApp must be in following format to identify the application:
+```json
+{
+    "id": "0000006b2aec4651b82111816ed599d1b72176c425128c66b2ab945552437dc9",
+    "name": "XELIS Example",
+    "description": "Description example of up to 255 characters",
+    "url": "https://xelis.io",
+    "permissions": {}
+}
+```
+
+You can also add `signature` field and provide signed permissions if your dApp requested a signature from wallet in previous connection.
+
+If dApp is accepted by user through XSWD, you will receive the following response:
+```json
+{
+    "id": null,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
+
+Otherwise, an error like this will be sent and the connection will be closed by the server:
+```json
+{
+    "error": {
+        "code": -32603,
+        "message": "Invalid JSON format for application data"
+    },
+    "id": null,
+    "jsonrpc": "2.0"
+}
+```
+
 ## How to build
 
 Building this project requires a working [Rust](https://rustup.rs) (stable) toolchain.

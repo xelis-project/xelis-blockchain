@@ -32,7 +32,9 @@ pub enum InternalRpcError {
     #[error("Event is already subscribed")]
     EventAlreadySubscribed,
     #[error("{}", _0)]
-    Custom(String)
+    Custom(String),
+    #[error("{}", _0)]
+    CustomStr(&'static str)
 }
 
 impl InternalRpcError {

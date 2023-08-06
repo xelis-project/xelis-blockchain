@@ -26,13 +26,14 @@ use super::rpc;
 // the wallet will request the authorization of the user
 // but will keep already-configured permissions.
 pub struct XSWD {
+    websocket: Arc<WebSocketServer<XSWDWebSocketHandler>>,
     handle: ServerHandle
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ApplicationData {
-    // Application ID
-    pub id: [u8; 32],
+    // Application ID in hexadecimal format
+    pub id: String,
     // Name of the app
     pub name: String,
     // Small description of the app
@@ -48,7 +49,7 @@ pub struct ApplicationData {
 // This serializer is only used to sign/verify a signature!
 impl Serializer for ApplicationData {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let id = reader.read_bytes_32()?;
+        let id = reader.read_string()?;
         let name = reader.read_string()?;
         let description = reader.read_string()?;
         let url = reader.read_optional_string()?;
@@ -69,7 +70,7 @@ impl Serializer for ApplicationData {
     }
 
     fn write(&self, writer: &mut Writer) {
-        writer.write_bytes(&self.id);
+        writer.write_string(&self.id);
         writer.write_string(&self.name);
         writer.write_string(&self.description);
         writer.write_optional_string(&self.url);
@@ -82,6 +83,8 @@ impl Serializer for ApplicationData {
     }
 }
 
+const PERMISSION_DENIED_ERROR: InternalRpcError = InternalRpcError::CustomStr("Permission denied");
+
 impl XSWD {
     pub fn new(wallet: Arc<Wallet>) -> Result<Self, anyhow::Error> {
         info!("Starting XSWD Server...");
@@ -89,8 +92,9 @@ impl XSWD {
         rpc::register_methods(&mut rpc_handler);
 
         let websocket = WebSocketServer::new(XSWDWebSocketHandler::new(rpc_handler));
+        let cloned_websocket = websocket.clone();
         let http_server = HttpServer::new(move || {
-            let server = Arc::clone(&websocket);
+            let server = Arc::clone(&cloned_websocket);
             App::new()
                 .app_data(Data::from(server))
                 .service(endpoint)
@@ -106,8 +110,13 @@ impl XSWD {
         info!("XSWD is listening on ws://{}", XSWD_BIND_ADDRESS);
 
         Ok(Self {
+            websocket,
             handle
         })
+    }
+
+    pub fn get_applications(&self) -> &XSWDWebSocketHandler {
+        self.websocket.get_handler()
     }
 
     pub async fn stop(&self) {
@@ -165,7 +174,7 @@ impl PermissionResult {
     }
 }
 
-struct XSWDWebSocketHandler {
+pub struct XSWDWebSocketHandler {
     handler: RPCHandler<Arc<Wallet>>,
     applications: Mutex<HashMap<WebSocketSessionShared<Self>, ApplicationData>>
 }
@@ -176,6 +185,12 @@ impl XSWDWebSocketHandler {
             handler,
             applications: Mutex::new(HashMap::new())
         }
+    }
+
+    // This method is used to get the applications HashMap
+    // be careful by using it, and if you delete a session, please disconnect it
+    pub fn get_applications(&self) -> &Mutex<HashMap<WebSocketSessionShared<Self>, ApplicationData>> {
+        &self.applications
     }
 
     async fn verify_permission_for_request(&self, app: &mut ApplicationData, request: &RpcRequest) -> Result<(), RpcResponseError> {
@@ -193,91 +208,116 @@ impl XSWDWebSocketHandler {
 
                 match result {
                     PermissionResult::Accept => Ok(()),
-                    PermissionResult::Deny => Err(RpcResponseError::new(request.id.clone(), InternalRpcError::Custom("Permission denied".into()))),
+                    PermissionResult::Deny => Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR)),
                     PermissionResult::AcceptAlways => {
                         app.permissions.insert(request.method.clone(), Permission::AcceptAlways);
                         Ok(())
                     },
                     PermissionResult::DenyAlways => {
                         app.permissions.insert(request.method.clone(), Permission::AcceptAlways);
-                        Err(RpcResponseError::new(request.id.clone(), InternalRpcError::Custom("Permission denied".into())))
+                        Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR))
                     }   
                 }
             }
             // User has already accepted this method
             Permission::AcceptAlways => Ok(()),
             // User has denied access to this method
-            Permission::DenyAlways => Err(RpcResponseError::new(request.id.clone(), InternalRpcError::Custom("Permission denied".into())))
+            Permission::DenyAlways => Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR))
         }
+    }
+
+    async fn add_application(&self, applications: &mut HashMap<WebSocketSessionShared<Self>, ApplicationData>, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Value, RpcResponseError> {
+        // Application is not registered, register it
+        let app_data: ApplicationData = serde_json::from_slice::<ApplicationData>(&message)
+            .map_err(|_| RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid JSON format for application data")))?;
+        // Sanity check
+        {
+            if app_data.id.len() != 64 {
+                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid application ID")))
+            }
+
+            hex::decode(&app_data.id)
+                .map_err(|_| RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid hexadecimal for application ID")))?;
+
+            if app_data.name.len() > 32 {
+                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application name is too long")))
+            }
+
+            if app_data.description.len() > 255 {
+                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application description is too long")))
+            }
+
+            if let Some(url) = &app_data.url {
+                if url.len() > 255 {
+                    return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application URL is too long")))
+                }
+            }
+
+            if app_data.permissions.len() != 0 && app_data.signature.is_none() {
+                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application permissions are not signed")))
+            }
+
+            if app_data.permissions.len() > 255 {
+                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Too many permissions")))
+            }
+        }
+
+        let wallet = self.handler.get_data();
+        // verify signature of application data
+        if let Some(signature) = &app_data.signature {
+            let bytes = app_data.to_bytes();
+            let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
+            let key = wallet.get_public_key();
+
+            if !key.verify_signature(&hash(&bytes), signature) {
+                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid signature for application data")));
+            }
+        }
+
+        let permission = match wallet.request_permission(&app_data, PermissionRequest::Application(app_data.signature.is_some())).await {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Error while requesting permission: {}", e);
+                PermissionResult::Deny
+            }
+        };
+
+        if !permission.is_positive() {
+            session.get_server().delete_session(session, None).await;
+            return Err(RpcResponseError::new(None, PERMISSION_DENIED_ERROR))
+        }
+
+        applications.insert(session.clone(), app_data);
+        Ok(json!({
+            "jsonrpc": "2.0",
+            "id": Value::Null,
+            "result": true
+        }))
     }
 
     async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
         let mut applications = self.applications.lock().await;
 
-        // Application is already registered, verify permissiond and call the method
+        // Application is already registered, verify permission and call the method
         if let Some(app) = applications.get_mut(session) {
             let request: RpcRequest = self.handler.parse_request(message)?;
             self.verify_permission_for_request(app, &request).await?;
+
             self.handler.execute_method(request).await.map(|v| Some(v))
         } else {
             // Application is not registered, register it
-            let app_data: ApplicationData = serde_json::from_slice::<ApplicationData>(&message).map_err(|_| RpcResponseError::new(None, InternalRpcError::Custom("Invalid JSON format for application data".into())))?;
-            // Sanity check
-            {
-                if app_data.name.len() > 32 {
-                    return Err(RpcResponseError::new(None, InternalRpcError::Custom("Application name is too long".into())))
-                }
-        
-                if app_data.description.len() > 255 {
-                    return Err(RpcResponseError::new(None, InternalRpcError::Custom("Application description is too long".into())))
-                }
-        
-                if let Some(url) = &app_data.url {
-                    if url.len() > 255 {
-                        return Err(RpcResponseError::new(None, InternalRpcError::Custom("Application URL is too long".into())))
-                    }
-                }
-
-                if app_data.permissions.len() != 0 && app_data.signature.is_none() {
-                    return Err(RpcResponseError::new(None, InternalRpcError::Custom("Application permissions are not signed".into())))
-                }
-
-                if app_data.permissions.len() > 255 {
-                    return Err(RpcResponseError::new(None, InternalRpcError::Custom("Too many permissions".into())))
-                }
-            }
-
-            let wallet = self.handler.get_data();
-            // verify signature of application data
-            if let Some(signature) = &app_data.signature {
-                let bytes = app_data.to_bytes();
-                let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
-                let key = wallet.get_public_key();
-
-                if !key.verify_signature(&hash(&bytes), signature) {
-                    return Err(RpcResponseError::new(None, InternalRpcError::Custom("Invalid signature for application data".into())));
-                }
-            }
-
-            let permission = match wallet.request_permission(&app_data, PermissionRequest::Application(app_data.signature.is_some())).await {
-                Ok(v) => v,
+            match self.add_application(&mut applications, session, message).await.map(|v| Some(v)) {
+                Ok(v) => Ok(v),
                 Err(e) => {
-                    error!("Error while requesting permission: {}", e);
-                    PermissionResult::Deny
+                    // Send error message and then close the session
+                    if let Err(e) = session.send_text(&e.to_json().to_string()).await {
+                        error!("Error while sending error message to session: {}", e);
+                    }
+                    session.get_server().delete_session(&session, None).await;
+
+                    Ok(None)
                 }
-            };
-
-            if !permission.is_positive() {
-                session.get_server().delete_session(session, None).await;
-                return Ok(None)
             }
-
-            applications.insert(session.clone(), app_data);
-            Ok(Some(json!({
-                "jsonrpc": "2.0",
-                "id": Value::Null,
-                "result": true
-            })))
         }
     }
 }

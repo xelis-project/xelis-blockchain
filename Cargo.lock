@@ -2663,6 +2663,7 @@ dependencies = [
  "clap",
  "crc32fast",
  "fern",
+ "hex",
  "lazy_static",
  "log",
  "rand 0.8.5",
