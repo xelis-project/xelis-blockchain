@@ -5,8 +5,10 @@ use self::command::{CommandManager, CommandError};
 use std::fmt::{Display, Formatter, self};
 use std::io::{Write, stdout, Error as IOError};
 use std::str::FromStr;
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::terminal;
 use fern::colors::{ColoredLevelConfig, Color};
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, UnboundedSender};
 use std::sync::{PoisonError, Arc, Mutex};
 use log::{info, error, Level, debug, LevelFilter};
 use tokio::time::interval;
@@ -88,50 +90,100 @@ impl<T> From<PoisonError<T>> for PromptError {
 
 pub struct Prompt {
     prompt: Mutex<Option<String>>,
+    user_input: Mutex<String>
 }
 
 impl Prompt {
     pub fn new(level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<Arc<Self>, PromptError>  {
         let v = Self {
-            prompt: Mutex::new(None)
+            prompt: Mutex::new(None),
+            user_input: Mutex::new(String::new())
         };
         let prompt = Arc::new(v);
         Arc::clone(&prompt).setup_logger(level, filename_log, disable_file_logging)?;
         Ok(prompt)
     }
 
+    fn ioloop(self: &Arc<Self>, sender: UnboundedSender<String>) -> Result<(), PromptError> {
+        debug!("ioloop started");
+        loop {
+            match event::read() {
+                Ok(event) => {
+                    match event {
+                        Event::Paste(s) => {
+                            let mut buffer = self.user_input.lock()?;
+                            buffer.push_str(&s);
+                        }
+                        Event::Key(key) => {
+                            match key.code {
+                                KeyCode::Char(c) => {
+                                    // handle CTRL+C
+                                    if key.modifiers == KeyModifiers::CONTROL && c == 'c' {
+                                        break;
+                                    }
+
+                                    let mut buffer = self.user_input.lock()?;
+                                    buffer.push(c);
+                                    self.show_input(&buffer)?;
+                                },
+                                KeyCode::Backspace => {
+                                    let mut buffer = self.user_input.lock()?;
+                                    buffer.pop();
+
+                                    self.show_input(&buffer)?;
+                                },
+                                KeyCode::Enter => {
+                                    let mut buffer = self.user_input.lock()?;
+
+                                    // user just pressed enter, don't send it and just refresh prompt
+                                    if buffer.len() == 0 {
+                                        self.show_input(&buffer)?;
+                                    } else {
+                                        let cloned_buffer = buffer.clone();
+                                        buffer.clear();
+                                        self.show_input(&buffer)?;
+
+                                        // Send the message
+                                        if let Err(e) = sender.send(cloned_buffer) {
+                                            error!("Error while sending input to command handler: {}", e);
+                                            break;
+                                        }
+                                    }
+                                },
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                },
+                Err(e) => {
+                    error!("Error while reading input: {}", e);
+                    break;
+                }
+            };
+        }
+
+        info!("Command Manager is now stopped");
+        Ok(())
+    }
+
     pub async fn start<Fut, T: Send>(self: &Arc<Self>, update_every: Duration, fn_message: &dyn Fn() -> Fut, command_manager: CommandManager<T>) -> Result<(), PromptError>
     where Fut: Future<Output = String> {
+        if let Err(e) = terminal::enable_raw_mode() {
+            error!("Error while enabling raw mode: {}", e);
+        }
+
         let mut interval = interval(update_every);
-        let zelf = Arc::clone(self);
         // spawn a thread to prevent IO blocking - https://github.com/tokio-rs/tokio/issues/2466
         let (input_sender, mut input_receiver) = mpsc::unbounded_channel::<String>();
-        std::thread::spawn(move || {
-            let stdin = std::io::stdin();
-            loop {
-                let mut line = String::new();
-                match stdin.read_line(&mut line) {
-                    Ok(0) => {
-                        break;
-                    },
-                    Ok(1) => {
-                        if let Err(e) = zelf.show() {
-                            error!("Error while showing prompt: {}", e);
-                        }
-                    },
-                    Ok(_) => {
-                        if let Err(e) = input_sender.send(line) {
-                            error!("Error while sending input to command handler: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        error!("Error while reading from stdin: {}", e);
-                        break;
-                    }
-                }
-            }
-            info!("Command Manager is now stopped");
-        });
+        {
+            let zelf = Arc::clone(self);
+            std::thread::spawn(move || {
+                if let Err(e) = zelf.ioloop(input_sender) {
+                    error!("Error in ioloop: {}", e);
+                };
+            });
+        }
 
         loop {
             tokio::select! {
@@ -165,6 +217,8 @@ impl Prompt {
             }
         }
 
+        terminal::disable_raw_mode()?;
+
         Ok(())
     }
 
@@ -178,12 +232,22 @@ impl Prompt {
         Ok(())
     }
 
-    pub fn show(&self) -> Result<(), PromptError> {
-        if let Some(msg) = self.prompt.lock()?.as_ref() {
-            print!("\r{}", msg);
-            stdout().flush()?;
-        }
+    fn show_with_prompt_and_input(&self, prompt: &String, input: &String) -> Result<(), PromptError> {
+        print!("\r\x1B[K{}{}", prompt, input);
+        stdout().flush()?;
         Ok(())
+    }
+
+    pub fn show_input(&self, input: &String) -> Result<(), PromptError> {
+        let default_value = String::new();
+        let lock = self.prompt.lock()?;
+        let prompt = lock.as_ref().unwrap_or(&default_value);
+        self.show_with_prompt_and_input(prompt, input)
+    }
+
+    pub fn show(&self) -> Result<(), PromptError> {
+        let input = self.user_input.lock()?;
+        self.show_input(&input)
     }
 
     // configure fern and print prompt message after each new output
