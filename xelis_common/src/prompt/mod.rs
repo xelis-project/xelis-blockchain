@@ -2,6 +2,7 @@ pub mod command;
 pub mod argument;
 
 use self::command::{CommandManager, CommandError};
+use std::collections::VecDeque;
 use std::fmt::{Display, Formatter, self};
 use std::io::{Write, stdout, Error as IOError};
 use std::str::FromStr;
@@ -106,17 +107,63 @@ impl Prompt {
 
     fn ioloop(self: &Arc<Self>, sender: UnboundedSender<String>) -> Result<(), PromptError> {
         debug!("ioloop started");
+        // all the history of commands
+        let mut history: VecDeque<String> = VecDeque::new();
+        // current index in history in case we use arrows to move in history
+        let mut history_index = 0;
+        let mut is_in_history = false;
         loop {
+            if !is_in_history {
+                history_index = 0;
+            }
+
             match event::read() {
                 Ok(event) => {
                     match event {
+                        Event::Resize(_, _) => {
+                            self.show()?;
+                        }
                         Event::Paste(s) => {
+                            is_in_history = false;
                             let mut buffer = self.user_input.lock()?;
                             buffer.push_str(&s);
                         }
                         Event::Key(key) => {
                             match key.code {
+                                KeyCode::Up => {
+                                    let mut buffer = self.user_input.lock()?;
+                                    if buffer.is_empty() {
+                                        is_in_history = true;
+                                    }
+
+                                    if is_in_history {
+                                        if history_index < history.len() {
+                                            buffer.clear();
+                                            buffer.push_str(&history[history_index]);
+                                            self.show_input(&buffer)?;
+                                            if history_index + 1 < history.len() {
+                                                history_index += 1;
+                                            }
+                                        }
+                                    }
+                                },
+                                KeyCode::Down => {
+                                    if is_in_history {
+                                        let mut buffer = self.user_input.lock()?;
+                                        buffer.clear();
+                                        if history_index > 0 {
+                                            history_index -= 1;
+                                            if history_index < history.len() {
+                                                buffer.push_str(&history[history_index]);
+                                            }
+                                        } else {
+                                            is_in_history = false;
+                                        }
+                                        self.show_input(&buffer)?;
+                                    }
+                                },
                                 KeyCode::Char(c) => {
+                                    is_in_history = false;
                                     // handle CTRL+C
                                     if key.modifiers == KeyModifiers::CONTROL && c == 'c' {
                                         break;
@@ -127,12 +174,14 @@ impl Prompt {
                                     self.show_input(&buffer)?;
                                 },
                                 KeyCode::Backspace => {
+                                    is_in_history = false;
                                     let mut buffer = self.user_input.lock()?;
                                     buffer.pop();
 
                                     self.show_input(&buffer)?;
                                 },
                                 KeyCode::Enter => {
+                                    is_in_history = false;
                                     let mut buffer = self.user_input.lock()?;
 
                                     // user just pressed enter, don't send it and just refresh prompt
@@ -143,7 +192,8 @@ impl Prompt {
                                         buffer.clear();
                                         self.show_input(&buffer)?;
 
-                                        // Send the message
+                                        // Save in history & Send the message
+                                        history.push_front(cloned_buffer.clone());
                                         if let Err(e) = sender.send(cloned_buffer) {
                                             error!("Error while sending input to command handler: {}", e);
                                             break;
