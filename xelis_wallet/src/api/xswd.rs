@@ -283,7 +283,6 @@ impl XSWDWebSocketHandler {
         };
 
         if !permission.is_positive() {
-            session.get_server().delete_session(session, None).await;
             return Err(RpcResponseError::new(None, PERMISSION_DENIED_ERROR))
         }
 
