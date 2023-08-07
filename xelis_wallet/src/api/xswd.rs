@@ -290,7 +290,10 @@ impl XSWDWebSocketHandler {
         Ok(json!({
             "jsonrpc": "2.0",
             "id": Value::Null,
-            "result": true
+            "result": {
+                "message": "Application has been registered",
+                "success": true
+            }
         }))
     }
 
