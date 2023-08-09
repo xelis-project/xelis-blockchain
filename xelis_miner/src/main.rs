@@ -8,7 +8,7 @@ use serde::{Serialize, Deserialize};
 use tokio::{sync::{broadcast, mpsc, Mutex}, select, time::Instant};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use xelis_common::{
-    block::{EXTRA_NONCE_SIZE, BlockMiner, BLOCK_WORK_SIZE},
+    block::{BlockMiner, BLOCK_WORK_SIZE},
     serializer::Serializer,
     difficulty::check_difficulty,
     config::{VERSION, DEV_ADDRESS},
@@ -37,7 +37,7 @@ pub struct MinerConfig {
     #[clap(short, long)]
     benchmark: bool,
     /// Iterations to run the benchmark
-    #[clap(short, long, default_value_t = 100_000)]
+    #[clap(short, long, default_value_t = 1_000_000)]
     iterations: usize,
     /// Disable the log file
     #[clap(short = 'f', long)]
@@ -56,7 +56,8 @@ pub struct MinerConfig {
 #[derive(Clone)]
 enum ThreadNotification<'a> {
     NewJob(BlockMiner<'a>, u64, u64), // block work, difficulty, height
-    Exit
+    WebSocketClosed, // WebSocket connection has been closed
+    Exit // all threads must stop
 }
 
 #[derive(Serialize, Deserialize)]
@@ -147,13 +148,15 @@ async fn main() -> Result<()> {
 
 fn benchmark(threads: usize, iterations: usize) {
     println!("{0: <10} | {1: <10} | {2: <16} | {3: <13} | {4: <13}", "Threads", "Total Time", "Total Iterations", "Time/PoW (ms)", "Hashrate");
+
     for bench in 1..=threads {
         let start = Instant::now();
         let mut handles = vec![];
         for _ in 0..bench {
             let handle = thread::spawn(move || {
+                let mut random_bytes: [u8; BLOCK_WORK_SIZE] = [0; BLOCK_WORK_SIZE];
                 for _ in 0..iterations {
-                    let random_bytes: Vec<u8> = (0..BLOCK_WORK_SIZE).map(|_| { rand::random::<u8>() }).collect();
+                    random_bytes.iter_mut().for_each(|v| *v = rand::random::<u8>());
                     let _ = hash(&random_bytes);
                 }
             });
@@ -239,6 +242,10 @@ async fn communication_task(mut daemon_address: String, job_sender: broadcast::S
         }
 
         WEBSOCKET_CONNECTED.store(false, Ordering::SeqCst);
+        if job_sender.send(ThreadNotification::WebSocketClosed).is_err() {
+            error!("Error while sending WebSocketClosed message to threads");
+        }
+
         warn!("Trying to connect to WebSocket again in 10 seconds...");
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
@@ -303,6 +310,12 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
             };
 
             match message {
+                ThreadNotification::WebSocketClosed => {
+                    // wait until we receive a new job, check every 100ms
+                    while !job_receiver.is_empty() {
+                        thread::sleep(Duration::from_millis(100));
+                    }
+                }
                 ThreadNotification::Exit => {
                     info!("Exiting Mining Thread #{}...", id);
                     break 'main;
@@ -311,7 +324,8 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                     debug!("Mining Thread #{} received a new job", id);
                     job = new_job;
                     // set thread id in extra nonce for more work spread between threads
-                    job.extra_nonce[EXTRA_NONCE_SIZE - 1] = id;
+                    // because it's a u8, it support up to 255 threads
+                    job.extra_nonce[job.extra_nonce.len() - 1] = id;
 
                     // Solve block
                     hash = job.get_pow_hash();
@@ -323,8 +337,8 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                             continue 'main;
                         }
                     } {
-                        // check if we have a new job pending or that we're not connected to the daemon anymore
-                        if !job_receiver.is_empty() || !WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
+                        // check if we have a new job pending
+                        if !job_receiver.is_empty() {
                             continue 'main;
                         }
 
