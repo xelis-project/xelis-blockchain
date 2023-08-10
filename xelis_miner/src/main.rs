@@ -71,7 +71,7 @@ static WEBSOCKET_CONNECTED: AtomicBool = AtomicBool::new(false);
 static CURRENT_HEIGHT: AtomicU64 = AtomicU64::new(0);
 static BLOCKS_FOUND: AtomicUsize = AtomicUsize::new(0);
 static BLOCKS_REJECTED: AtomicUsize = AtomicUsize::new(0);
-static HASHRATE_COUNTER: AtomicU64 = AtomicU64::new(0);
+static HASHRATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 lazy_static! {
     static ref HASHRATE_LAST_TIME: Mutex<Instant> = Mutex::new(Instant::now());
@@ -340,9 +340,8 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                         }
                     } {
                         // check if we have a new job pending
-                        // Only update every 10 000 iterations to avoid too much CPU usage
-                        if job.nonce != 0 && job.nonce % UPDATE_EVERY_NONCE == 0 {
-                            job.timestamp = get_current_timestamp();
+                        // Only update every 1 000 iterations to avoid too much CPU usage
+                        if job.nonce % UPDATE_EVERY_NONCE == 0 {
                             if !job_receiver.is_empty() {
                                 continue 'main;
                             }
@@ -350,6 +349,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                         
                         job.nonce += 1;
                         hash = job.get_pow_hash();
+                        job.timestamp = get_current_timestamp();
                         HASHRATE_COUNTER.fetch_add(1, Ordering::Relaxed);
                     }
 
