@@ -441,7 +441,10 @@ impl<S: Storage> Blockchain<S> {
         let storage = self.storage.read().await;
         self.get_top_block_hash_for_storage(&storage).await
     }
-    
+
+    // because we are in chain, we already now the highest topoheight
+    // we call the get_hash_at_topo_height instead of get_top_block_hash to avoid reading value
+    // that we already know
     pub async fn get_top_block_hash_for_storage(&self, storage: &S) -> Result<Hash, BlockchainError> {
         storage.get_hash_at_topo_height(self.get_topo_height()).await
     }

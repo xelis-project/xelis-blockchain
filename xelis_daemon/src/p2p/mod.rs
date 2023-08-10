@@ -366,7 +366,7 @@ impl<S: Storage> P2pServer<S> {
             match storage.get_top_block_hash().await {
                 Err(e) => {
                     error!("Couldn't get the top block hash from storage for generic ping packet: {}", e);
-                    (0, Hash::zero(), pruned_topoheight)
+                    (0, GENESIS_BLOCK_HASH.clone(), pruned_topoheight)
                 },
                 Ok(hash) => (storage.get_cumulative_difficulty_for_block_hash(&hash).await.unwrap_or(0), hash, pruned_topoheight)
             }
@@ -1613,6 +1613,13 @@ impl<S: Storage> P2pServer<S> {
         let mut stable_topoheight = 0;
         let mut storage = self.blockchain.get_storage().write().await;
         let mut step: Option<StepRequest> = Some(StepRequest::ChainInfo);
+
+        // keep them in memory, we add them when we're syncing
+        // it's done to prevent any sync failure
+        let mut top_topoheight: u64 = 0;
+        let mut top_height: u64 = 0;
+        let mut top_block_hash: Option<Hash> = None;
+
         loop {
             let response = if let Some(step) = step.take() {
                 peer.request_boostrap_chain(step).await?
@@ -1622,9 +1629,9 @@ impl<S: Storage> P2pServer<S> {
 
             step = match response {
                 StepResponse::ChainInfo(topoheight, height, hash) => {
-                    storage.set_top_topoheight(topoheight)?;
-                    storage.set_top_height(height)?;
-                    storage.store_tips(&HashSet::from([hash]))?;
+                    top_topoheight = topoheight;
+                    top_height = height;
+                    top_block_hash = Some(hash);
 
                     stable_topoheight = topoheight;
                     Some(StepRequest::Assets(topoheight, None))
@@ -1729,7 +1736,9 @@ impl<S: Storage> P2pServer<S> {
                         storage.add_new_block(Arc::new(header), &txs, metadata.difficulty, hash).await?;
                     }
                     storage.set_pruned_topoheight(lowest_topoheight)?;
-
+                    storage.set_top_topoheight(top_topoheight)?;
+                    storage.set_top_height(top_height)?;
+                    storage.store_tips(&HashSet::from([top_block_hash.take().expect("Expected top block hash for fast sync")]))?;
                     None
                 },
                 response => { // shouldn't happens

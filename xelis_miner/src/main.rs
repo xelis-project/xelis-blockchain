@@ -346,7 +346,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                                 continue 'main;
                             }
                         }
-                        
+
                         job.nonce += 1;
                         hash = job.get_pow_hash();
                         job.timestamp = get_current_timestamp();
