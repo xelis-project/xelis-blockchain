@@ -1,8 +1,8 @@
-use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display, time::{Instant, Duration}};
+use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display, time::{Instant, Duration}, sync::Arc};
 
 use crate::config::VERSION;
 
-use super::argument::*;
+use super::{argument::*, Prompt};
 use anyhow::Error;
 use thiserror::Error;
 use log::{info, warn, error};
@@ -25,6 +25,8 @@ pub enum CommandError {
     Exit,
     #[error("No data was set in command manager")]
     NoData,
+    #[error("No prompt was set in command manager")]
+    NoPrompt,
     #[error(transparent)]
     Any(#[from] Error)
 }
@@ -106,6 +108,7 @@ impl<T> Command<T> {
 pub struct CommandManager<T> {
     commands: Vec<Command<T>>,
     data: Option<T>,
+    prompt: Option<Arc<Prompt>>,
     running_since: Instant
 }
 
@@ -114,6 +117,7 @@ impl<T> CommandManager<T> {
         Self {
             commands: Vec::new(),
             data,
+            prompt: None,
             running_since: Instant::now()
         }
     }
@@ -132,6 +136,14 @@ impl<T> CommandManager<T> {
 
     pub fn get_data<'a>(&'a self) -> Result<&'a T, CommandError> {
         self.data.as_ref().ok_or(CommandError::NoData)
+    }
+
+    pub fn set_prompt(&mut self, prompt: Option<Arc<Prompt>>) {
+        self.prompt = prompt;
+    }
+
+    pub fn get_prompt<'a>(&'a self) -> Result<&'a Arc<Prompt>, CommandError> {
+        self.prompt.as_ref().ok_or(CommandError::NoPrompt)
     }
 
     pub fn add_command(&mut self, command: Command<T>) {

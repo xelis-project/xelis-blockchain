@@ -6,10 +6,12 @@ use std::collections::VecDeque;
 use std::fmt::{Display, Formatter, self};
 use std::io::{Write, stdout, Error as IOError};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal;
 use fern::colors::{ColoredLevelConfig, Color};
 use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::oneshot;
 use std::sync::{PoisonError, Arc, Mutex};
 use log::{info, error, Level, debug, LevelFilter};
 use tokio::time::interval;
@@ -81,6 +83,8 @@ pub enum PromptError {
     IOError(#[from] IOError),
     #[error("Poison Error: {}", _0)]
     PoisonError(String),
+    #[error("Error while starting, already running")]
+    AlreadyRunning
 }
 
 impl<T> From<PoisonError<T>> for PromptError {
@@ -91,17 +95,29 @@ impl<T> From<PoisonError<T>> for PromptError {
 
 pub struct Prompt {
     prompt: Mutex<Option<String>>,
-    user_input: Mutex<String>
+    user_input: Mutex<String>,
+    mask_input: AtomicBool,
+    exit_channel: Mutex<Option<oneshot::Sender<()>>>,
+    readers: Mutex<Vec<oneshot::Sender<String>>>,
 }
 
 impl Prompt {
     pub fn new(level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<Arc<Self>, PromptError>  {
         let v = Self {
             prompt: Mutex::new(None),
-            user_input: Mutex::new(String::new())
+            user_input: Mutex::new(String::new()),
+            mask_input: AtomicBool::new(false),
+            exit_channel: Mutex::new(None),
+            readers: Mutex::new(Vec::new()),
         };
         let prompt = Arc::new(v);
-        Arc::clone(&prompt).setup_logger(level, filename_log, disable_file_logging)?;
+
+        // setup the logger config
+        {
+            let clone = Arc::clone(&prompt);
+            clone.setup_logger(level, filename_log, disable_file_logging)?;
+        }
+
         Ok(prompt)
     }
 
@@ -194,9 +210,18 @@ impl Prompt {
 
                                         // Save in history & Send the message
                                         history.push_front(cloned_buffer.clone());
-                                        if let Err(e) = sender.send(cloned_buffer) {
-                                            error!("Error while sending input to command handler: {}", e);
-                                            break;
+                                        let mut readers = self.readers.lock()?;
+                                        if readers.is_empty() {
+                                            if let Err(e) = sender.send(cloned_buffer) {
+                                                error!("Error while sending input to command handler: {}", e);
+                                                break;
+                                            }
+                                        } else {
+                                            let reader = readers.remove(0);
+                                            if let Err(e) = reader.send(cloned_buffer) {
+                                                error!("Error while sending input to reader: {}", e);
+                                                break;
+                                            }
                                         }
                                     }
                                 },
@@ -218,13 +243,25 @@ impl Prompt {
     }
 
     pub async fn start<Fut, T: Send>(self: &Arc<Self>, update_every: Duration, fn_message: &dyn Fn() -> Fut, command_manager: CommandManager<T>) -> Result<(), PromptError>
-    where Fut: Future<Output = String> {
+        where Fut: Future<Output = String>
+    {
+        // setup the exit channel
+        let mut exit_receiver = {
+            let mut exit = self.exit_channel.lock()?;
+            if exit.is_some() {
+                return Err(PromptError::AlreadyRunning)
+            }
+            let (sender, receiver) = oneshot::channel();
+            *exit = Some(sender);
+            receiver
+        };
+
         if let Err(e) = terminal::enable_raw_mode() {
             error!("Error while enabling raw mode: {}", e);
         }
 
         let mut interval = interval(update_every);
-        // spawn a thread to prevent IO blocking - https://github.com/tokio-rs/tokio/issues/2466
+        // spawn a thread to prevent IO blocking - http*s://github.com/tokio-rs/tokio/issues/2466
         let (input_sender, mut input_receiver) = mpsc::unbounded_channel::<String>();
         {
             let zelf = Arc::clone(self);
@@ -237,6 +274,10 @@ impl Prompt {
 
         loop {
             tokio::select! {
+                _ = &mut exit_receiver => {
+                    info!("Received exit signal, exiting...");
+                    break;
+                },
                 res = tokio::signal::ctrl_c() => {
                     if let Err(e) = res {
                         error!("Error received on CTRL+C: {}", e);
@@ -267,7 +308,9 @@ impl Prompt {
             }
         }
 
-        terminal::disable_raw_mode()?;
+        if let Err(e) = terminal::disable_raw_mode() {
+            error!("Error while disabling raw mode: {}", e);
+        };
 
         Ok(())
     }
@@ -282,14 +325,85 @@ impl Prompt {
         Ok(())
     }
 
+    fn set_prompt(&self, prompt: Option<String>) -> Result<(), PromptError> {
+        {
+            let mut lock = self.prompt.lock()?;
+            *lock = prompt;
+        }
+        self.show()?;
+        Ok(())
+    }
+
+    // get the current prompt displayed
+    pub fn get_prompt(&self) -> Result<Option<String>, PromptError> {
+        let prompt = self.prompt.lock()?;
+        Ok(prompt.clone())
+    }
+
+    // read a message from the user and apply the input mask if necessary
+    pub async fn read_input(&self, prompt: String, apply_mask: bool) -> Result<String, PromptError> {
+        // register our reader
+        let receiver = {
+            let mut readers = self.readers.lock()?;
+            let (sender, receiver) = oneshot::channel();
+            readers.push(sender);
+            receiver
+        };
+
+        // keep in memory the previous prompt
+        let old_prompt = self.get_prompt()?;
+        let old_user_input = {
+            let mut user_input = self.user_input.lock()?;
+            let cloned = user_input.clone();
+            user_input.clear();
+            cloned
+        };
+
+        if apply_mask {
+            self.set_mask_input(true);
+        }
+
+        // update the prompt to the requested one and keep blocking on the receiver
+        self.update_prompt(prompt)?;
+        let input = receiver.await.map_err(|_| PromptError::EndOfStream)?;
+
+        if apply_mask {
+            self.set_mask_input(false);
+        }
+        
+        // set the old user input
+        {
+            let mut user_input = self.user_input.lock()?;
+            *user_input = old_user_input;
+        }
+        self.set_prompt(old_prompt)?;
+
+        Ok(input)
+    }
+
+    // should we replace user input by * ?
+    pub fn should_mask_input(&self) -> bool {
+        self.mask_input.load(Ordering::SeqCst)
+    }
+
+    // set the value to replace user input by * chars or not
+    pub fn set_mask_input(&self, value: bool) {
+        self.mask_input.store(value, Ordering::SeqCst);
+    }
+
     fn show_with_prompt_and_input(&self, prompt: &String, input: &String) -> Result<(), PromptError> {
-        print!("\r\x1B[K{}{}", prompt, input);
+        if self.should_mask_input() {
+            print!("\r\x1B[K{}{}", prompt, "*".repeat(input.len()));
+        } else {
+            print!("\r\x1B[K{}{}", prompt, input);
+        }
+
         stdout().flush()?;
         Ok(())
     }
 
     pub fn show_input(&self, input: &String) -> Result<(), PromptError> {
-        let default_value = String::new();
+        let default_value = String::with_capacity(0);
         let lock = self.prompt.lock()?;
         let prompt = lock.as_ref().unwrap_or(&default_value);
         self.show_with_prompt_and_input(prompt, input)

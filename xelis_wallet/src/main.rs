@@ -155,7 +155,7 @@ async fn main() -> Result<()> {
 
 async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>, network: Network) -> Result<()> {
     let mut command_manager: CommandManager<Arc<Wallet>> = CommandManager::default();
-    command_manager.add_command(Command::with_required_arguments("set_password", "Set a new password to open your wallet", vec![Arg::new("old_password", ArgType::String), Arg::new("password", ArgType::String)], None, CommandHandler::Async(async_handler!(set_password))));
+    command_manager.add_command(Command::new("change_password", "Set a new password to open your wallet", None, CommandHandler::Async(async_handler!(change_password))));
     command_manager.add_command(Command::with_required_arguments("transfer", "Send asset to a specified address", vec![Arg::new("address", ArgType::String), Arg::new("amount", ArgType::Number)], Some(Arg::new("asset", ArgType::Hash)), CommandHandler::Async(async_handler!(transfer))));
     command_manager.add_command(Command::with_required_arguments("burn", "Burn amount of asset", vec![Arg::new("asset", ArgType::Hash), Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(burn))));
     command_manager.add_command(Command::new("display_address", "Show your wallet address", None, CommandHandler::Async(async_handler!(display_address))));
@@ -183,6 +183,7 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>, network: Network) 
     }
 
     command_manager.set_data(Some(wallet.clone()));
+    command_manager.set_prompt(Some(prompt.clone()));
 
     let addr_str = {
         let addr = &wallet.get_address().to_string()[..8];
@@ -228,13 +229,20 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>, network: Network) 
 }
 
 // Change wallet password
-async fn set_password(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+async fn change_password(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
     let wallet = manager.get_data()?;
-    let old_password = arguments.get_value("old_password")?.to_string_value()?;
-    let password = arguments.get_value("password")?.to_string_value()?;
+    let prompt = manager.get_prompt()?;
+
+    let old_password = prompt.read_input(Prompt::colorize_str(Color::BrightRed, "Current Password: "), true)
+        .await
+        .context("Error while asking old password")?;
+
+    let new_password = prompt.read_input(Prompt::colorize_str(Color::BrightRed, "New Password: "), true)
+        .await
+        .context("Error while asking new password")?;
 
     manager.message("Changing password...");
-    wallet.set_password(old_password, password).await?;
+    wallet.set_password(old_password, new_password).await?;
     manager.message("Your password has been changed!");
     Ok(())
 }
