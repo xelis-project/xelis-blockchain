@@ -42,16 +42,17 @@ pub struct NodeConfig {
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut config: NodeConfig = NodeConfig::parse();
+
+    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
+    info!("Xelis Blockchain running version: {}", VERSION);
+    info!("----------------------------------------------");
+
     if config.nested.simulator && config.network != Network::Dev {
         config.network = Network::Dev;
         warn!("Switching automatically to network {} because of simulator enabled", config.network);
     }
     set_network_to(config.network);
 
-    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
-    info!("Xelis Blockchain running version: {}", VERSION);
-    info!("----------------------------------------------");
-    
     let blockchain_config = config.nested;
     let storage = {
         let use_cache = if blockchain_config.cache_size > 0 {

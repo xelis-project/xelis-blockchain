@@ -74,6 +74,10 @@ pub struct Config {
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
+    set_network_to(config.network);
+
+    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
+
     #[cfg(feature = "api_server")]
     { // Sanity check
         // check that we don't have both server enabled
@@ -95,9 +99,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    set_network_to(config.network);
-
-    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
     let dir = format!("{}{}", DIR_PATH, config.name);
 
     let wallet = if Path::new(&dir).is_dir() {
