@@ -261,7 +261,7 @@ impl Prompt {
         }
 
         let mut interval = interval(update_every);
-        // spawn a thread to prevent IO blocking - http*s://github.com/tokio-rs/tokio/issues/2466
+        // spawn a thread to prevent IO blocking - https://github.com/tokio-rs/tokio/issues/2466
         let (input_sender, mut input_receiver) = mpsc::unbounded_channel::<String>();
         {
             let zelf = Arc::clone(self);
