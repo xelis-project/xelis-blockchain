@@ -84,7 +84,9 @@ pub enum PromptError {
     #[error("Poison Error: {}", _0)]
     PoisonError(String),
     #[error("Error while starting, already running")]
-    AlreadyRunning
+    AlreadyRunning,
+    #[error("Error while starting, not running")]
+    NotRunning
 }
 
 impl<T> From<PoisonError<T>> for PromptError {
@@ -310,7 +312,20 @@ impl Prompt {
 
         if let Err(e) = terminal::disable_raw_mode() {
             error!("Error while disabling raw mode: {}", e);
-        };
+        }
+
+        Ok(())
+    }
+
+    // Stop the prompt running
+    // can only be called when it was already started
+    pub fn stop(&self) -> Result<(), PromptError> {
+        let mut exit = self.exit_channel.lock()?;
+        let sender = exit.take().ok_or(PromptError::NotRunning)?;
+
+        if sender.send(()).is_err() {
+            error!("Error while sending exit signal");
+        }
 
         Ok(())
     }
