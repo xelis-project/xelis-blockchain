@@ -209,9 +209,9 @@ impl Prompt {
                                         self.show_input(&buffer)?;
 
                                         // Save in history & Send the message
-                                        history.push_front(cloned_buffer.clone());
                                         let mut readers = self.readers.lock()?;
                                         if readers.is_empty() {
+                                            history.push_front(cloned_buffer.clone());
                                             if let Err(e) = sender.send(cloned_buffer) {
                                                 error!("Error while sending input to command handler: {}", e);
                                                 break;
