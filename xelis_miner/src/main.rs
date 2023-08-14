@@ -1,6 +1,6 @@
 pub mod config;
 
-use std::{time::Duration, sync::{Arc, atomic::{AtomicU64, Ordering, AtomicUsize, AtomicBool}}, thread};
+use std::{time::Duration, sync::atomic::{AtomicU64, Ordering, AtomicUsize, AtomicBool}, thread};
 use crate::config::DEFAULT_DAEMON_ADDRESS;
 use fern::colors::Color;
 use futures_util::{StreamExt, SinkExt};
@@ -14,7 +14,7 @@ use xelis_common::{
     config::{VERSION, DEV_ADDRESS},
     globals::{get_current_timestamp, format_hashrate, format_difficulty},
     crypto::{hash::{Hashable, Hash, hash}, address::Address},
-    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel},
+    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel, ShareablePrompt, self},
 };
 use clap::Parser;
 use log::{error, info, debug, warn};
@@ -368,28 +368,28 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
     Ok(())
 }
 
-async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
+async fn run_prompt(prompt: ShareablePrompt<()>) -> Result<()> {
     let command_manager: CommandManager<()> = CommandManager::default();
-    let closure = || async {
+    let closure = |_| async {
         let height_str = format!(
             "{}: {}",
-            Prompt::colorize_str(Color::Yellow, "Height"),
-            Prompt::colorize_string(Color::Green, &format!("{}", CURRENT_HEIGHT.load(Ordering::SeqCst))),
+            prompt::colorize_str(Color::Yellow, "Height"),
+            prompt::colorize_string(Color::Green, &format!("{}", CURRENT_HEIGHT.load(Ordering::SeqCst))),
         );
         let blocks_found = format!(
             "{}: {}",
-            Prompt::colorize_str(Color::Yellow, "Accepted"),
-            Prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_FOUND.load(Ordering::SeqCst))),
+            prompt::colorize_str(Color::Yellow, "Accepted"),
+            prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_FOUND.load(Ordering::SeqCst))),
         );
         let blocks_rejected = format!(
             "{}: {}",
-            Prompt::colorize_str(Color::Yellow, "Rejected"),
-            Prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_REJECTED.load(Ordering::SeqCst))),
+            prompt::colorize_str(Color::Yellow, "Rejected"),
+            prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_REJECTED.load(Ordering::SeqCst))),
         );
         let status = if WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
-            Prompt::colorize_str(Color::Green, "Online")
+            prompt::colorize_str(Color::Green, "Online")
         } else {
-            Prompt::colorize_str(Color::Red, "Offline")
+            prompt::colorize_str(Color::Red, "Offline")
         };
         let hashrate = {
             let mut last_time = HASHRATE_LAST_TIME.lock().await;
@@ -398,20 +398,25 @@ async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
             let hashrate = 1000f64 / (last_time.elapsed().as_millis() as f64 / counter as f64);
             *last_time = Instant::now();
 
-            Prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(hashrate)))
+            prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(hashrate)))
         };
 
-        format!(
-            "{} | {} | {} | {} | {} | {} {} ",
-            Prompt::colorize_str(Color::Blue, "XELIS Miner"),
-            height_str,
-            blocks_found,
-            blocks_rejected,
-            hashrate,
-            status,
-            Prompt::colorize_str(Color::BrightBlack, ">>")
+        Ok(
+            format!(
+                "{} | {} | {} | {} | {} | {} {} ",
+                prompt::colorize_str(Color::Blue, "XELIS Miner"),
+                height_str,
+                blocks_found,
+                blocks_rejected,
+                hashrate,
+                status,
+                prompt::colorize_str(Color::BrightBlack, ">>")
+            )
         )
     };
-    prompt.start(Duration::from_millis(100), &closure, command_manager).await?;
+
+    prompt.set_command_manager(Some(command_manager))?;
+
+    prompt.start(Duration::from_millis(100), &closure).await?;
     Ok(())
 }

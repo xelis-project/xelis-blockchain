@@ -8,7 +8,7 @@ use log::{info, error, warn};
 use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
-    prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel},
+    prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel, self, ShareablePrompt},
     config::{VERSION, BLOCK_TIME}, globals::{format_hashrate, set_network_to}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer
 };
 use crate::core::{
@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
     };
 
     let blockchain = Blockchain::new(blockchain_config, config.network, storage).await?;
-    if let Err(e) = run_prompt(&prompt, blockchain.clone(), config.network).await {
+    if let Err(e) = run_prompt(prompt, blockchain.clone(), config.network).await {
         error!("Error while running prompt: {}", e);
     }
 
@@ -78,9 +78,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_prompt<S: Storage>(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain<S>>, network: Network) -> Result<(), PromptError> {
+async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blockchain: Arc<Blockchain<S>>, network: Network) -> Result<(), PromptError> {
     let mut command_manager: CommandManager<Arc<Blockchain<S>>> = CommandManager::default();
+    // Set the data to use
     command_manager.set_data(Some(blockchain.clone()));
+
+    // Register all our commands
     command_manager.add_command(Command::new("list_peers", "List all peers connected", None, CommandHandler::Async(async_handler!(list_peers))));
     command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", None, CommandHandler::Async(async_handler!(list_assets))));
     command_manager.add_command(Command::with_required_arguments("show_balance", "Show balance of an address", vec![Arg::new("address", ArgType::String), Arg::new("asset", ArgType::Hash)], Some(Arg::new("history", ArgType::Number)), CommandHandler::Async(async_handler!(show_balance))));
@@ -94,6 +97,12 @@ async fn run_prompt<S: Storage>(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain
     command_manager.add_command(Command::with_required_arguments("blacklist", "Add a peer address in Blacklist", vec![Arg::new("address", ArgType::String)], None, CommandHandler::Async(async_handler!(blacklist))));
     command_manager.add_command(Command::with_required_arguments("whitelist", "Add a peer address in Whitelist", vec![Arg::new("address", ArgType::String)], None, CommandHandler::Async(async_handler!(whitelist))));
 
+    // Register the prompt in CommandManager in case we need it
+    command_manager.set_prompt(Some(prompt.clone()));
+
+    // set the CommandManager to use
+    prompt.set_command_manager(Some(command_manager))?;
+
     let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
         None => None
@@ -103,7 +112,7 @@ async fn run_prompt<S: Storage>(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain
         None => None
     };
 
-    let closure = || async {
+    let closure = |_| async {
         let (peers, best) = match &p2p {
             Some(p2p) => (p2p.get_peer_count().await, p2p.get_best_topoheight().await),
             None => (0, blockchain.get_topo_height())
@@ -120,58 +129,69 @@ async fn run_prompt<S: Storage>(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain
         };
 
         let network_hashrate = (blockchain.get_difficulty() / BLOCK_TIME) as f64;
-        build_prompt_message(blockchain.get_topo_height(), best, network_hashrate, peers, miners, mempool, network)
+
+        Ok(
+            build_prompt_message(
+                blockchain.get_topo_height(),
+                best,
+                network_hashrate,
+                peers,
+                miners,
+                mempool,
+                network
+            )
+        )
     };
 
-    prompt.start(Duration::from_millis(100), &closure, command_manager).await
+    prompt.start(Duration::from_millis(100), &closure).await
 }
 
 fn build_prompt_message(topoheight: u64, best_topoheight: u64, network_hashrate: f64, peers_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
     let topoheight_str = format!(
         "{}: {}/{}",
-        Prompt::colorize_str(Color::Yellow, "TopoHeight"),
-        Prompt::colorize_string(Color::Green, &format!("{}", topoheight)),
-        Prompt::colorize_string(Color::Green, &format!("{}", best_topoheight))
+        prompt::colorize_str(Color::Yellow, "TopoHeight"),
+        prompt::colorize_string(Color::Green, &format!("{}", topoheight)),
+        prompt::colorize_string(Color::Green, &format!("{}", best_topoheight))
     );
     let network_hashrate_str = format!(
         "{}: {}",
-        Prompt::colorize_str(Color::Yellow, "Network"),
-        Prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(network_hashrate))),
+        prompt::colorize_str(Color::Yellow, "Network"),
+        prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(network_hashrate))),
     );
     let mempool_str = format!(
         "{}: {}",
-        Prompt::colorize_str(Color::Yellow, "Mempool"),
-        Prompt::colorize_string(Color::Green, &format!("{}", mempool))
+        prompt::colorize_str(Color::Yellow, "Mempool"),
+        prompt::colorize_string(Color::Green, &format!("{}", mempool))
     );
     let peers_str = format!(
         "{}: {}",
-        Prompt::colorize_str(Color::Yellow, "Peers"),
-        Prompt::colorize_string(Color::Green, &format!("{}", peers_count))
+        prompt::colorize_str(Color::Yellow, "Peers"),
+        prompt::colorize_string(Color::Green, &format!("{}", peers_count))
     );
     let miners_str = format!(
         "{}: {}",
-        Prompt::colorize_str(Color::Yellow, "Miners"),
-        Prompt::colorize_string(Color::Green, &format!("{}", miners_count))
+        prompt::colorize_str(Color::Yellow, "Miners"),
+        prompt::colorize_string(Color::Green, &format!("{}", miners_count))
     );
 
 
     let network_str = if !network.is_mainnet() {
         format!(
             "{} ",
-            Prompt::colorize_string(Color::Red, &network.to_string())
+            prompt::colorize_string(Color::Red, &network.to_string())
         )
     } else { "".into() };
 
     format!(
         "{} | {} | {} | {} | {} | {} {}{} ",
-        Prompt::colorize_str(Color::Blue, "XELIS"),
+        prompt::colorize_str(Color::Blue, "XELIS"),
         topoheight_str,
         network_hashrate_str,
         mempool_str,
         peers_str,
         miners_str,
         network_str,
-        Prompt::colorize_str(Color::BrightBlack, ">>")
+        prompt::colorize_str(Color::BrightBlack, ">>")
     )
 }
 

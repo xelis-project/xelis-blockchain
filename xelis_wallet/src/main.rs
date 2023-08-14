@@ -8,7 +8,7 @@ use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
     VERSION, XELIS_ASSET
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, globals::{format_coin, set_network_to}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel, self, ShareablePrompt, PromptError}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, globals::{format_coin, set_network_to, get_network}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
 use xelis_wallet::wallet::Wallet;
 
 #[cfg(feature = "api_server")]
@@ -49,12 +49,12 @@ pub struct Config {
     /// Log filename
     #[clap(short = 'l', long, default_value_t = String::from("xelis-wallet.log"))]
     filename_log: String,
-    /// Set name path for wallet storage
-    #[clap(short, long, default_value_t = String::from("default"))]
-    name: String,
+    /// Use name path for wallet storage
+    #[clap(short, long)]
+    name: Option<String>,
     /// Password used to open wallet
     #[clap(short, long)]
-    password: String,
+    password: Option<String>,
     /// Restore wallet using seed
     #[clap(short, long)]
     seed: Option<String>,
@@ -79,7 +79,8 @@ async fn main() -> Result<()> {
     let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
 
     #[cfg(feature = "api_server")]
-    { // Sanity check
+    {
+        // Sanity check
         // check that we don't have both server enabled
         if config.enable_xswd && config.rpc.rpc_bind_address.is_some() {
             error!("Invalid parameters configuration: RPC Server and XSWD cannot be enabled at the same time");
@@ -99,15 +100,46 @@ async fn main() -> Result<()> {
         }
     }
 
-    let dir = format!("{}{}", DIR_PATH, config.name);
+    if let Some(name) = config.name {
+        let dir = format!("{}{}", DIR_PATH, name);
 
-    let wallet = if Path::new(&dir).is_dir() {
-        info!("Opening wallet {}", dir);
-        Wallet::open(dir, config.password, config.network)?
+        // read password from option or ask him
+        let password = if let Some(password) = config.password {
+            password
+        } else {
+            prompt.read_input(format!("Enter Password for '{}': ", name), true).await?
+        };
+
+        let wallet = if Path::new(&dir).is_dir() {
+            info!("Opening wallet {}", dir);
+            Wallet::open(dir, password, config.network)?
+        } else {
+            info!("Creating a new wallet at {}", dir);
+            Wallet::create(dir, password, config.seed, config.network)?
+        };
+
+        apply_config(&wallet).await;
+        setup_wallet_command_manager(wallet, prompt.clone());
     } else {
-        info!("Creating a new wallet at {}", dir);
-        Wallet::create(dir, config.password, config.seed, config.network)?
+        let mut command_manager = CommandManager::default();
+        command_manager.add_command(Command::new("open", "Open a wallet", None, CommandHandler::Async(async_handler!(open_wallet))));
+        command_manager.add_command(Command::new("create", "Create a new wallet", None, CommandHandler::Async(async_handler!(create_wallet))));
+
+        command_manager.set_prompt(Some(prompt.clone()));
+        prompt.set_command_manager(Some(command_manager))?;
+        prompt.display_commands()?;
     };
+
+    if let Err(e) = prompt.start(Duration::from_millis(100), &prompt_message_builder).await {
+        error!("Error while running prompt: {}", e);
+    }
+
+    Ok(())
+}
+
+// Apply the config passed in params
+async fn apply_config(wallet: &Arc<Wallet>) {
+    let config: Config = Config::parse();
 
     if !config.offline_mode {
         info!("Trying to connect to daemon at '{}'", config.daemon_address);
@@ -123,7 +155,7 @@ async fn main() -> Result<()> {
     {
         if config.enable_xswd && config.rpc.rpc_bind_address.is_some() {
             error!("Invalid parameters configuration: RPC Server and XSWD cannot be enabled at the same time");
-            return Ok(()); // exit
+            return;
         }
 
         if let Some(address) = config.rpc.rpc_bind_address {
@@ -146,16 +178,12 @@ async fn main() -> Result<()> {
             }
         }
     }
-
-    if let Err(e) = run_prompt(prompt, wallet, config.network).await {
-        error!("Error while running prompt: {}", e);
-    }
-
-    Ok(())
 }
 
-async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>, network: Network) -> Result<()> {
+// Function to build the CommandManager when a wallet is open
+fn setup_wallet_command_manager(wallet: Arc<Wallet>, prompt: ShareablePrompt<Arc<Wallet>>) {
     let mut command_manager: CommandManager<Arc<Wallet>> = CommandManager::default();
+
     command_manager.add_command(Command::new("change_password", "Set a new password to open your wallet", None, CommandHandler::Async(async_handler!(change_password))));
     command_manager.add_command(Command::with_required_arguments("transfer", "Send asset to a specified address", vec![Arg::new("address", ArgType::String), Arg::new("amount", ArgType::Number)], Some(Arg::new("asset", ArgType::Hash)), CommandHandler::Async(async_handler!(transfer))));
     command_manager.add_command(Command::with_required_arguments("burn", "Burn amount of asset", vec![Arg::new("asset", ArgType::Hash), Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(burn))));
@@ -182,50 +210,142 @@ async fn run_prompt(prompt: Arc<Prompt>, wallet: Arc<Wallet>, network: Network) 
         // Stop API Server (RPC or XSWD)
         command_manager.add_command(Command::new("stop_api_server", "Stop the API Server", None, CommandHandler::Async(async_handler!(stop_api_server))));
     }
-
-    command_manager.set_data(Some(wallet.clone()));
+    command_manager.set_data(Some(wallet));
     command_manager.set_prompt(Some(prompt.clone()));
 
-    let addr_str = {
-        let addr = &wallet.get_address().to_string()[..8];
-        Prompt::colorize_str(Color::Yellow, addr)
-    };
-    let closure = || async {
-        let storage = wallet.get_storage().read().await;
-        let topoheight_str = format!(
-            "{}: {}",
-            Prompt::colorize_str(Color::Yellow, "TopoHeight"),
-            Prompt::colorize_string(Color::Green, &format!("{}", storage.get_daemon_topoheight().unwrap_or(0)))
-        );
-        let balance = format!(
-            "{}: {}",
-            Prompt::colorize_str(Color::Yellow, "Balance"),
-            Prompt::colorize_string(Color::Green, &format_coin(storage.get_balance_for(&XELIS_ASSET).unwrap_or(0))),
-        );
-        let status = if wallet.is_online().await {
-            Prompt::colorize_str(Color::Green, "Online")
-        } else {
-            Prompt::colorize_str(Color::Red, "Offline")
-        };
-        let network_str = if !network.is_mainnet() {
-            format!(
-                "{} ",
-                Prompt::colorize_string(Color::Red, &network.to_string())
-            )
-        } else { "".into() };
+    if let Err(e) = prompt.set_command_manager(Some(command_manager)) {
+        error!("Error while setting new CommandManager: {}", e);
+        return;
+    }
 
+    if let Err(e) = prompt.display_commands() {
+        error!("Error while displaying commands: {}", e);
+    }
+}
+
+// Function passed as param to prompt to build the prompt message shown
+async fn prompt_message_builder(prompt: &Prompt<Arc<Wallet>>) -> Result<String, PromptError> {
+    let command_manager = prompt.get_command_manager().lock()?;
+    if let Some(manager) = command_manager.as_ref() {
+        if let Some(wallet) = manager.get_optional_data() {
+            let network = wallet.get_network();
+
+            let addr_str = {
+                let addr = &wallet.get_address().to_string()[..8];
+                prompt::colorize_str(Color::Yellow, addr)
+            };
+    
+            let storage = wallet.get_storage().read().await;
+            let topoheight_str = format!(
+                "{}: {}",
+                prompt::colorize_str(Color::Yellow, "TopoHeight"),
+                prompt::colorize_string(Color::Green, &format!("{}", storage.get_daemon_topoheight().unwrap_or(0)))
+            );
+            let balance = format!(
+                "{}: {}",
+                prompt::colorize_str(Color::Yellow, "Balance"),
+                prompt::colorize_string(Color::Green, &format_coin(storage.get_balance_for(&XELIS_ASSET).unwrap_or(0))),
+            );
+            let status = if wallet.is_online().await {
+                prompt::colorize_str(Color::Green, "Online")
+            } else {
+                prompt::colorize_str(Color::Red, "Offline")
+            };
+            let network_str = if !network.is_mainnet() {
+                format!(
+                    "{} ",
+                    prompt::colorize_string(Color::Red, &network.to_string())
+                )
+            } else { "".into() };
+    
+            return Ok(
+                format!(
+                    "{} | {} | {} | {} | {} {}{} ",
+                    prompt::colorize_str(Color::Blue, "XELIS Wallet"),
+                    addr_str,
+                    topoheight_str,
+                    balance,
+                    status,
+                    network_str,
+                    prompt::colorize_str(Color::BrightBlack, ">>")
+                )
+            )
+        }
+    }
+
+    Ok(
         format!(
-            "{} | {} | {} | {} | {} {}{} ",
-            Prompt::colorize_str(Color::Blue, "XELIS Wallet"),
-            addr_str,
-            topoheight_str,
-            balance,
-            status,
-            network_str,
-            Prompt::colorize_str(Color::BrightBlack, ">>")
+            "{} {} ",
+            prompt::colorize_str(Color::Blue, "XELIS Wallet"),
+            prompt::colorize_str(Color::BrightBlack, ">>")
         )
-    };
-    prompt.start(Duration::from_millis(100), &closure, command_manager).await?;
+    )
+}
+
+// Open a wallet based on the wallet name and its password
+async fn open_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt()?;
+    let name = prompt.read_input("Wallet name: ".into(), false)
+        .await.context("Error while reading wallet name")?;
+    let dir = format!("{}{}", DIR_PATH, name);
+    if !Path::new(&dir).is_dir() {
+        manager.message("No wallet found with this name");
+        return Ok(())
+    }
+
+    let password = prompt.read_input("Password: ".into(), true)
+        .await.context("Error while reading wallet password")?;
+
+    let wallet = Wallet::open(dir, password, get_network())?;
+    manager.message("Wallet sucessfully opened");
+    apply_config(&wallet).await;
+
+    let prompt = prompt.clone();
+    tokio::spawn(async move {
+        setup_wallet_command_manager(wallet, prompt.clone());
+    });
+
+    Ok(())
+}
+
+// Create a wallet by requesting name, password
+async fn create_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt()?;
+
+    let name = prompt.read_input("Wallet name: ".into(), false)
+        .await.context("Error while reading wallet name")?;
+
+    let dir = format!("{}{}", DIR_PATH, name);
+    // check if it doesn't exists yet
+    if Path::new(&dir).is_dir() {
+        manager.message("Wallet already exist with this name!");
+        return Ok(())
+    }
+
+    // ask and verify password
+    let password = prompt.read_input("Password: ".into(), true)
+        .await.context("Error while reading password")?;
+    let confirm_password = prompt.read_input("Confirm Password: ".into(), true)
+        .await.context("Error while reading password")?;
+
+    if password != confirm_password {
+        manager.message("Confirm password doesn't match password");        
+        return Ok(())
+    }
+
+    let wallet = Wallet::create(name, password, None, get_network())?;
+    // Display the seed in prompt
+    {
+        let seed = wallet.get_seed(0)?; // TODO language index
+        prompt.read_input(format!("Seed: {}\nPress enter to continue", seed), false)
+            .await.context("Error while displaying seed")?;
+    }
+
+    let prompt = prompt.clone();
+    tokio::spawn(async move {
+        setup_wallet_command_manager(wallet, prompt);
+    });
+
     Ok(())
 }
 
@@ -234,11 +354,11 @@ async fn change_password(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManag
     let wallet = manager.get_data()?;
     let prompt = manager.get_prompt()?;
 
-    let old_password = prompt.read_input(Prompt::colorize_str(Color::BrightRed, "Current Password: "), true)
+    let old_password = prompt.read_input(prompt::colorize_str(Color::BrightRed, "Current Password: "), true)
         .await
         .context("Error while asking old password")?;
 
-    let new_password = prompt.read_input(Prompt::colorize_str(Color::BrightRed, "New Password: "), true)
+    let new_password = prompt.read_input(prompt::colorize_str(Color::BrightRed, "New Password: "), true)
         .await
         .context("Error while asking new password")?;
 

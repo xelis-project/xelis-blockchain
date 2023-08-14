@@ -1,8 +1,8 @@
-use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display, time::{Instant, Duration}, sync::Arc};
+use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display, time::{Instant, Duration}};
 
 use crate::config::VERSION;
 
-use super::{argument::*, Prompt};
+use super::{argument::*, ShareablePrompt};
 use anyhow::Error;
 use thiserror::Error;
 use log::{info, warn, error};
@@ -108,7 +108,7 @@ impl<T> Command<T> {
 pub struct CommandManager<T> {
     commands: Vec<Command<T>>,
     data: Option<T>,
-    prompt: Option<Arc<Prompt>>,
+    prompt: Option<ShareablePrompt<T>>,
     running_since: Instant
 }
 
@@ -138,11 +138,15 @@ impl<T> CommandManager<T> {
         self.data.as_ref().ok_or(CommandError::NoData)
     }
 
-    pub fn set_prompt(&mut self, prompt: Option<Arc<Prompt>>) {
+    pub fn get_optional_data(&self) -> &Option<T> {
+        &self.data
+    }
+
+    pub fn set_prompt(&mut self, prompt: Option<ShareablePrompt<T>>) {
         self.prompt = prompt;
     }
 
-    pub fn get_prompt<'a>(&'a self) -> Result<&'a Arc<Prompt>, CommandError> {
+    pub fn get_prompt<'a>(&'a self) -> Result<&'a ShareablePrompt<T>, CommandError> {
         self.prompt.as_ref().ok_or(CommandError::NoPrompt)
     }
 
