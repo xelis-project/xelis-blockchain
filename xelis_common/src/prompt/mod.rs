@@ -200,28 +200,26 @@ impl State {
                                     is_in_history = false;
                                     let mut buffer = self.user_input.lock()?;
 
-                                    // user just pressed enter, don't send it and just refresh prompt
-                                    if buffer.len() == 0 {
-                                        self.show_input(&buffer)?;
-                                    } else {
-                                        let cloned_buffer = buffer.clone();
-                                        buffer.clear();
-                                        self.show_input(&buffer)?;
+                                    // clone the buffer to send it to the command handler
+                                    let cloned_buffer = buffer.clone();
+                                    buffer.clear();
+                                    self.show_input(&buffer)?;
 
-                                        // Save in history & Send the message
-                                        let mut readers = self.readers.lock()?;
-                                        if readers.is_empty() {
+                                    // Save in history & Send the message
+                                    let mut readers = self.readers.lock()?;
+                                    if readers.is_empty() {
+                                        if !cloned_buffer.is_empty() {
                                             history.push_front(cloned_buffer.clone());
                                             if let Err(e) = sender.send(cloned_buffer) {
                                                 error!("Error while sending input to command handler: {}", e);
                                                 break;
                                             }
-                                        } else {
-                                            let reader = readers.remove(0);
-                                            if let Err(e) = reader.send(cloned_buffer) {
-                                                error!("Error while sending input to reader: {}", e);
-                                                break;
-                                            }
+                                        }
+                                    } else {
+                                        let reader = readers.remove(0);
+                                        if let Err(e) = reader.send(cloned_buffer) {
+                                            error!("Error while sending input to reader: {}", e);
+                                            break;
                                         }
                                     }
                                 },

@@ -124,6 +124,7 @@ async fn main() -> Result<()> {
         let mut command_manager = CommandManager::default();
         command_manager.add_command(Command::new("open", "Open a wallet", None, CommandHandler::Async(async_handler!(open_wallet))));
         command_manager.add_command(Command::new("create", "Create a new wallet", None, CommandHandler::Async(async_handler!(create_wallet))));
+        command_manager.add_command(Command::new("recover", "Recover a wallet using a seed", None, CommandHandler::Async(async_handler!(recover_wallet))));
 
         command_manager.set_prompt(Some(prompt.clone()));
         prompt.set_command_manager(Some(command_manager))?;
@@ -287,6 +288,12 @@ async fn open_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) 
     let prompt = manager.get_prompt()?;
     let name = prompt.read_input("Wallet name: ".into(), false)
         .await.context("Error while reading wallet name")?;
+
+    if name.is_empty() {
+        manager.error("Wallet name cannot be empty");
+        return Ok(())
+    }
+
     let dir = format!("{}{}", DIR_PATH, name);
     if !Path::new(&dir).is_dir() {
         manager.message("No wallet found with this name");
@@ -315,6 +322,11 @@ async fn create_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager
     let name = prompt.read_input("Wallet name: ".into(), false)
         .await.context("Error while reading wallet name")?;
 
+    if name.is_empty() {
+        manager.error("Wallet name cannot be empty");
+        return Ok(())
+    }
+
     let dir = format!("{}{}", DIR_PATH, name);
     // check if it doesn't exists yet
     if Path::new(&dir).is_dir() {
@@ -333,13 +345,62 @@ async fn create_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager
         return Ok(())
     }
 
-    let wallet = Wallet::create(name, password, None, get_network())?;
+    let wallet = Wallet::create(dir, password, None, get_network())?;
+    manager.message("Wallet sucessfully created");
+    apply_config(&wallet).await;
+
     // Display the seed in prompt
     {
         let seed = wallet.get_seed(0)?; // TODO language index
-        prompt.read_input(format!("Seed: {}\nPress enter to continue", seed), false)
+        prompt.read_input(format!("Seed: {}\r\nPress ENTER to continue", seed), false)
             .await.context("Error while displaying seed")?;
     }
+
+
+    let prompt = prompt.clone();
+    tokio::spawn(async move {
+        setup_wallet_command_manager(wallet, prompt);
+    });
+
+    Ok(())
+}
+
+// Recover a wallet by requesting its seed, name and password
+async fn recover_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt()?;
+
+    let seed = prompt.read_input("Seed: ".into(), false)
+        .await.context("Error while reading seed")?;
+
+    let name = prompt.read_input("Wallet name: ".into(), false)
+        .await.context("Error while reading wallet name")?;
+
+    if name.is_empty() {
+        manager.error("Wallet name cannot be empty");
+        return Ok(())
+    }
+
+    let dir = format!("{}{}", DIR_PATH, name);
+    // check if it doesn't exists yet
+    if Path::new(&dir).is_dir() {
+        manager.message("Wallet already exist with this name!");
+        return Ok(())
+    }
+
+    // ask and verify password
+    let password = prompt.read_input("Password: ".into(), true)
+        .await.context("Error while reading password")?;
+    let confirm_password = prompt.read_input("Confirm Password: ".into(), true)
+        .await.context("Error while reading password")?;
+
+    if password != confirm_password {
+        manager.message("Confirm password doesn't match password");        
+        return Ok(())
+    }
+
+    let wallet = Wallet::create(dir, password, Some(seed), get_network())?;
+    manager.message("Wallet sucessfully recovered");
+    apply_config(&wallet).await;
 
     let prompt = prompt.clone();
     tokio::spawn(async move {
@@ -526,6 +587,12 @@ async fn rescan(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentMa
 
 async fn seed(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let wallet = manager.get_data()?;
+
+    let password = manager.get_prompt()?.read_input("Password: ".into(), true)
+        .await.context("Error while reading password")?;
+    // check if password is valid
+    wallet.is_valid_password(password).await?;
+
     let language = if arguments.has_argument("language") {
         arguments.get_value("language")?.to_number()?
     } else {

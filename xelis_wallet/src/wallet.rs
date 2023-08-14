@@ -84,7 +84,9 @@ pub enum WalletError {
     #[error("RPC Server is already running")]
     RPCServerAlreadyRunning,
     #[error("Invalid fees provided, minimum fees calculated: {}, provided: {}", format_coin(*_0), format_coin(*_1))]
-    InvalidFeeProvided(u64, u64)
+    InvalidFeeProvided(u64, u64),
+    #[error("Wallet name cannot be empty")]
+    EmptyName,
 }
 
 pub struct Wallet {
@@ -122,6 +124,21 @@ impl Wallet {
     }
 
     pub fn create(name: String, password: String, seed: Option<String>, network: Network) -> Result<Arc<Self>, Error> {
+        if name.is_empty() {
+            return Err(WalletError::EmptyName.into())
+        }
+
+        // generate random keypair or recover it from seed
+        let keypair = if let Some(seed) = seed {
+        debug!("Retrieving keypair from seed...");
+        let words: Vec<String> = seed.split_whitespace().map(str::to_string).collect();
+        let key = mnemonics::words_to_key(words)?;
+            KeyPair::from_private_key(key)
+        } else {
+            debug!("Generating a new keypair...");
+            KeyPair::new()
+        };
+
         // generate random salt for hashed password
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
         OsRng.fill_bytes(&mut salt);
@@ -156,23 +173,16 @@ impl Wallet {
         debug!("Creating encrypted storage");
         let mut storage = EncryptedStorage::new(inner, &master_key, storage_salt, network)?;
 
-        // generate random keypair and save it to encrypted storage
-        let keypair = if let Some(seed) = seed {
-            debug!("Retrieving keypair from seed...");
-            let words: Vec<String> = seed.split_whitespace().map(str::to_string).collect();
-            let key = mnemonics::words_to_key(words)?;
-            KeyPair::from_private_key(key)
-        } else {
-            debug!("Generating a new keypair...");
-            KeyPair::new()
-        };
-
         storage.set_keypair(&keypair)?;
 
         Ok(Self::new(storage, keypair, network))
     }
 
     pub fn open(name: String, password: String, network: Network) -> Result<Arc<Self>, Error> {
+        if name.is_empty() {
+            return Err(WalletError::EmptyName.into())
+        }
+
         debug!("Creating storage for {}", name);
         let storage = Storage::new(name)?;
         
@@ -244,6 +254,19 @@ impl Wallet {
         Ok(())
     }
 
+    // Verify if a password is valid or not
+    pub async fn is_valid_password(&self, password: String) -> Result<(), Error> {
+        let mut encrypted_storage = self.storage.write().await;
+        let storage = encrypted_storage.get_mutable_public_storage();
+        let salt = storage.get_password_salt()?;
+        let hashed_password = hash_password(password, &salt)?;
+        let cipher = Cipher::new(&hashed_password, None)?;
+        let encrypted_master_key = storage.get_encrypted_master_key()?;
+        let _ = cipher.decrypt_value(&encrypted_master_key).context("Invalid password provided")?;
+        Ok(())
+    }
+
+    // change the current password wallet to a new one
     pub async fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {
         let mut encrypted_storage = self.storage.write().await;
         let storage = encrypted_storage.get_mutable_public_storage();
