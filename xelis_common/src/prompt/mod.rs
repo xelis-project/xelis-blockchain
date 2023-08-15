@@ -13,7 +13,7 @@ use fern::colors::{ColoredLevelConfig, Color};
 use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 use tokio::sync::oneshot;
 use std::sync::{PoisonError, Arc, Mutex};
-use log::{info, error, Level, debug, LevelFilter, warn};
+use log::{info, error, Level, debug, LevelFilter};
 use tokio::time::interval;
 use std::future::Future;
 use std::time::Duration;
