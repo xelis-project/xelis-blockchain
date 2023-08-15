@@ -271,7 +271,8 @@ impl NetworkHandler {
 
         if assets.is_empty() {
             debug!("No assets registered on disk, fetching from chain...");
-            assets = self.api.get_assets().await?;
+            // TODO be sure to retrieve all assets
+            assets = self.api.get_assets(None, None).await?;
             debug!("Found {} assets", assets.len());
             let mut storage = self.wallet.get_storage().write().await;
             for asset in &assets {
