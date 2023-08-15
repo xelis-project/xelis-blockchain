@@ -599,7 +599,6 @@ impl Storage for SledStorage {
         // it start to be more and more heavy...
         // lets check on balances now...
 
-        // TODO get all balances from current key
         // check that we have a VersionedBalance between range given
         for asset in self.get_assets_for(key).await? {
             let (topo, mut version) = self.get_last_balance(key, &asset).await?;
