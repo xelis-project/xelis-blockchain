@@ -126,6 +126,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_info", async_handler!(get_info));
     handler.register_method("get_nonce", async_handler!(get_nonce));
     handler.register_method("get_assets", async_handler!(get_assets));
+    handler.register_method("count_assets", async_handler!(count_assets));
     handler.register_method("count_transactions", async_handler!(count_transactions));
     handler.register_method("submit_transaction", async_handler!(submit_transaction));
     handler.register_method("get_transaction", async_handler!(get_transaction));
@@ -312,6 +313,16 @@ async fn get_assets<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> 
     let assets = storage.get_assets_with_topoheight(maximum, skip).await.context("Error while retrieving registered assets")?;
 
     Ok(json!(assets))
+}
+
+// TODO Rate limiter
+async fn count_assets<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    let storage = blockchain.get_storage().read().await;
+    Ok(json!(storage.count_assets()))
 }
 
 // TODO Rate limiter

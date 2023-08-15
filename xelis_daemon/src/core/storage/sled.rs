@@ -635,6 +635,11 @@ impl Storage for SledStorage {
         Ok(assets)
     }
 
+    // count assets in storage
+    fn count_assets(&self) -> usize {
+        self.assets.len()
+    }
+
     fn get_asset_registration_topoheight(&self, asset: &Hash) -> Result<u64, BlockchainError> {
         trace!("get asset registration topoheight {}", asset);
         self.load_from_disk(&self.assets, asset.as_bytes())

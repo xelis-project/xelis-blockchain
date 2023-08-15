@@ -19,6 +19,10 @@ impl AssetInfo {
         &self.identifier
     }
 
+    pub fn to_indentifer(self) -> Hash {
+        self.identifier
+    }
+
     pub fn get_topoheight(&self) -> u64 {
         self.topoheight
     }

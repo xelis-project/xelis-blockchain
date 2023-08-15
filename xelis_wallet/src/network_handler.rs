@@ -3,7 +3,7 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance};
+use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, asset::AssetInfo};
 
 use crate::{daemon_api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
 
@@ -269,11 +269,28 @@ impl NetworkHandler {
             storage.get_assets()?
         };
 
+        // TODO detect changes in assets too
         if assets.is_empty() {
-            debug!("No assets registered on disk, fetching from chain...");
-            // TODO be sure to retrieve all assets
-            assets = self.api.get_assets(None, None).await?;
-            debug!("Found {} assets", assets.len());
+            info!("No assets registered on disk, fetching from chain...");
+            // First count how many assets we have in chain
+            let count_assets = self.api.count_assets().await?;
+            const MAX_ASSETS: usize = 64;
+            let mut i = 0;
+            // Loop until we got all assets
+            while i * MAX_ASSETS < count_assets {
+                let skip = if i > 0 {
+                    Some(i * MAX_ASSETS)
+                } else {
+                    None
+                };
+
+                let response = self.api.get_assets(skip, Some(MAX_ASSETS)).await?;
+                // map all result to Hash only and extend our HashSet
+                assets.extend(response.into_iter().map(AssetInfo::to_indentifer).collect::<Vec<_>>());
+                i += 1;
+            }
+
+            info!("Found {}/{} assets", assets.len(), count_assets);
             let mut storage = self.wallet.get_storage().write().await;
             for asset in &assets {
                 storage.add_asset(asset)?;

@@ -1,7 +1,7 @@
-use std::{borrow::Cow, collections::HashSet};
+use std::borrow::Cow;
 
 use anyhow::{Context, Result};
-use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams, GetNonceResult, GetAssetsParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::{BlockHeader, Block}};
+use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams, GetNonceResult, GetAssetsParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::{BlockHeader, Block}, asset::AssetInfo};
 
 pub struct DaemonAPI {
     client: JsonRPCClient,
@@ -24,12 +24,17 @@ impl DaemonAPI {
         Ok(info)
     }
 
-    pub async fn get_assets(&self, skip: Option<usize>, maximum: Option<usize>) -> Result<HashSet<Hash>> {
-        let info = self.client.call_with("get_assets", &GetAssetsParams {
+    pub async fn count_assets(&self) -> Result<usize> {
+        let count = self.client.call("count_assets").await?;
+        Ok(count)
+    }
+
+    pub async fn get_assets(&self, skip: Option<usize>, maximum: Option<usize>) -> Result<Vec<AssetInfo>> {
+        let assets = self.client.call_with("get_assets", &GetAssetsParams {
             maximum,
             skip
-        }).await.context("Error while retrieving assets registered")?;
-        Ok(info)
+        }).await?;
+        Ok(assets)
     }
 
     pub async fn get_last_balance(&self, address: &Address<'_>, asset: &Hash) -> Result<GetLastBalanceResult> {

@@ -62,6 +62,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn asset_exist(&self, asset: &Hash) -> Result<bool, BlockchainError>;
     async fn add_asset(&mut self, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
     async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError>;
+    fn count_assets(&self) -> usize;
     async fn get_assets_with_topoheight(&self, maximum: usize, skip: usize) -> Result<Vec<AssetInfo>, BlockchainError>;
 
     fn get_asset_registration_topoheight(&self, asset: &Hash) -> Result<u64, BlockchainError>;
