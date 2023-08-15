@@ -1,6 +1,7 @@
 use crate::crypto::hash::Hash;
 use super::{Serializer, Writer, Reader, ReaderError};
 use std::{collections::{HashSet, BTreeSet}, borrow::Cow};
+use indexmap::IndexSet;
 use log::{error, warn};
 
 // Used for Tips storage
@@ -61,6 +62,33 @@ impl<T: Serializer + std::hash::Hash + Ord> Serializer for BTreeSet<T> {
             let value = T::read(reader)?;
             if !set.insert(value) {
                 error!("Value is duplicated in BTreeSet");
+                return Err(ReaderError::InvalidSize)
+            }
+        }
+        Ok(set)
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u16(self.len() as u16);
+        for el in self {
+            el.write(writer);
+        }
+    }
+}
+
+impl<T: Serializer + std::hash::Hash + Eq> Serializer for IndexSet<T> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let count = reader.read_u16()?;
+        if count > MAX_ITEMS as u16 {
+            warn!("Received {} while maximum is set to {}", count, MAX_ITEMS);
+            return Err(ReaderError::InvalidSize)
+        }
+
+        let mut set = IndexSet::new();
+        for _ in 0..count {
+            let value = T::read(reader)?;
+            if !set.insert(value) {
+                error!("Value is duplicated in IndexSet");
                 return Err(ReaderError::InvalidSize)
             }
         }

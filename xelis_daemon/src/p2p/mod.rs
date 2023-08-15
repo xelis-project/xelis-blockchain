@@ -1547,9 +1547,9 @@ impl<S: Storage> P2pServer<S> {
                 let stable_topo = storage.get_topo_height_for_hash(&hash).await?;
                 peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::ChainInfo(stable_topo, height, hash)))).await?;
             },
-            StepRequest::Assets(topoheight, page) => {
+            StepRequest::Assets(min, max, page) => {
                 let page = page.unwrap_or(0);
-                let assets = storage.get_partial_assets(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, topoheight).await?;
+                let assets = storage.get_partial_assets(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
                 let page = if assets.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
                 } else {
@@ -1571,9 +1571,9 @@ impl<S: Storage> P2pServer<S> {
 
                 peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::Nonces(nonces)))).await?;
             },
-            StepRequest::Keys(topoheight, page) => {
+            StepRequest::Keys(min, max, page) => {
                 let page = page.unwrap_or(0);
-                let keys = storage.get_partial_keys(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, topoheight).await?;
+                let keys = storage.get_partial_keys(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
                 let page = if keys.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
                 } else {
@@ -1610,6 +1610,8 @@ impl<S: Storage> P2pServer<S> {
     async fn bootstrap_chain(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         debug!("Starting fast sync with {}", peer);
 
+        let our_topoheight = self.blockchain.get_topo_height();
+
         let mut stable_topoheight = 0;
         let mut storage = self.blockchain.get_storage().write().await;
         let mut step: Option<StepRequest> = Some(StepRequest::ChainInfo);
@@ -1634,7 +1636,7 @@ impl<S: Storage> P2pServer<S> {
                     top_block_hash = Some(hash);
 
                     stable_topoheight = topoheight;
-                    Some(StepRequest::Assets(topoheight, None))
+                    Some(StepRequest::Assets(our_topoheight, topoheight, None))
                 },
                 // fetch all assets from peer
                 StepResponse::Assets(assets, next_page) => {
@@ -1644,13 +1646,13 @@ impl<S: Storage> P2pServer<S> {
                     }
 
                     if next_page.is_some() {
-                        Some(StepRequest::Assets(stable_topoheight, next_page))
+                        Some(StepRequest::Assets(our_topoheight, stable_topoheight, next_page))
                     } else {
                         // Go to next step
-                        Some(StepRequest::Keys(stable_topoheight, None))
+                        Some(StepRequest::Keys(our_topoheight, stable_topoheight, None))
                     }
                 },
-                // fetch all accounts
+                // fetch all new accounts
                 StepResponse::Keys(keys, next_page) => {
                     let StepResponse::Nonces(nonces) = peer.request_boostrap_chain(StepRequest::Nonces(stable_topoheight, Cow::Borrowed(&keys))).await? else {
                         // shouldn't happen
@@ -1688,7 +1690,7 @@ impl<S: Storage> P2pServer<S> {
                     }
 
                     if next_page.is_some() {
-                        Some(StepRequest::Keys(stable_topoheight, next_page))
+                        Some(StepRequest::Keys(our_topoheight, stable_topoheight, next_page))
                     } else {
                         // Go to next step
                         Some(StepRequest::BlocksMetadata(stable_topoheight))

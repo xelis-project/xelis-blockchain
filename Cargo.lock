@@ -2635,6 +2635,7 @@ dependencies = [
  "fern",
  "futures-util",
  "hex",
+ "indexmap 2.0.0",
  "lazy_static",
  "log",
  "num-bigint",
