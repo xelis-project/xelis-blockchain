@@ -547,7 +547,6 @@ impl Storage for SledStorage {
         Ok(keys)
     }
 
-
     async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<bool, BlockchainError> {
         trace!("has key {} updated in range min topoheight {} and max topoheight {}", key, minimum_topoheight, maximum_topoheight);
         // check first that this address has nonce, if no returns None
@@ -586,6 +585,7 @@ impl Storage for SledStorage {
                 return Ok(true)
             }
 
+            // security in case of DB corruption
             if let Some(value) = previous_version.get_previous_topoheight() {
                 if value > previous {
                     error!("FATAL ERROR: Previous topoheight ({}) should not be higher than current version ({})!", value, previous);
@@ -601,6 +601,33 @@ impl Storage for SledStorage {
 
         // TODO get all balances from current key
         // check that we have a VersionedBalance between range given
+        for asset in self.get_assets_for(key).await? {
+            let (topo, mut version) = self.get_last_balance(key, &asset).await?;
+            if topo >= minimum_topoheight && topo <= maximum_topoheight {
+                return Ok(true)
+            }
+
+            while let Some(previous) = version.get_previous_topoheight() {
+                // we are under the minimum topoheight, we can stop
+                if previous < minimum_topoheight {
+                    break;
+                }
+
+                let previous_version = self.get_balance_at_exact_topoheight(key, &asset, previous).await?;
+                if previous <= maximum_topoheight {
+                    return Ok(true)
+                }
+
+                // security in case of DB corruption
+                if let Some(value) = previous_version.get_previous_topoheight() {
+                    if value > previous {
+                        error!("FATAL ERROR: Previous topoheight for balance ({}) should not be higher than current version of balance ({})!", value, previous);
+                        return Err(BlockchainError::Unknown)
+                    }
+                }
+                version = previous_version;
+            }
+        }
 
         Ok(false)
     }
@@ -751,6 +778,20 @@ impl Storage for SledStorage {
 
         let tree = self.db.open_tree(asset.as_bytes())?;
         Ok(tree.contains_key(key.as_bytes())?)
+    }
+
+    // Returns all balances that the key has
+    async fn get_assets_for(&self, key: &PublicKey) -> Result<Vec<Hash>, BlockchainError> {
+        let mut assets = Vec::new();
+        for el in self.assets.iter().keys() {
+            let bytes = el?;
+            let tree = self.db.open_tree(&bytes)?;
+            if tree.contains_key(key.as_bytes())? {
+                let hash = Hash::from_bytes(&bytes)?;
+                assets.push(hash);
+            }
+        }
+        Ok(assets)
     }
 
     // returns the highest topoheight where a balance changes happened
