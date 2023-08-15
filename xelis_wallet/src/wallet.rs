@@ -35,6 +35,9 @@ use crate::api::{
     PermissionRequest
 };
 
+#[cfg(feature = "api_server")]
+use xelis_common::prompt::ShareablePrompt;
+
 #[derive(Error, Debug)]
 pub enum WalletError {
     #[error("Invalid key pair")]
@@ -87,6 +90,9 @@ pub enum WalletError {
     InvalidFeeProvided(u64, u64),
     #[error("Wallet name cannot be empty")]
     EmptyName,
+    #[cfg(feature = "api_server")]
+    #[error("No handler available for this request")]
+    NoHandlerAvailable
 }
 
 pub struct Wallet {
@@ -100,7 +106,11 @@ pub struct Wallet {
     network: Network,
     // RPC Server
     #[cfg(feature = "api_server")]
-    api_server: Mutex<Option<APIServer>>
+    api_server: Mutex<Option<APIServer>>,
+    // Prompt for CLI
+    // Only used for requesting permissions through it
+    #[cfg(feature = "api_server")]
+    prompt: Mutex<Option<ShareablePrompt<Arc<Wallet>>>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -117,7 +127,8 @@ impl Wallet {
             network_handler: Mutex::new(None),
             network,
             #[cfg(feature = "api_server")]
-            api_server: Mutex::new(None)
+            api_server: Mutex::new(None),
+            prompt: Mutex::new(None)
         };
 
         Arc::new(zelf)
@@ -220,6 +231,14 @@ impl Wallet {
     }
 
     #[cfg(feature = "api_server")]
+    pub async fn set_prompt(&self, prompt: ShareablePrompt<Arc<Wallet>>) {
+        {
+            let mut lock = self.prompt.lock().await;
+            *lock = Some(prompt);
+        }
+    }
+
+    #[cfg(feature = "api_server")]
     pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String, config: Option<AuthConfig>) -> Result<(), Error> {
         let mut lock = self.api_server.lock().await;
         if lock.is_some() {
@@ -241,9 +260,49 @@ impl Wallet {
     }
 
     #[cfg(feature = "api_server")]
-    pub async fn request_permission(&self, _: &ApplicationData, _: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
-        // TODO
-        Ok(PermissionResult::Accept)
+    pub async fn request_permission(&self, app_data: &ApplicationData, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
+        if let Some(prompt) = self.prompt.lock().await.as_ref() {
+            match request {
+                PermissionRequest::Application(signed) => {
+                    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_data.get_name(), app_data.get_id());
+                    if signed {
+                        message = "NOTE: Application authorizaion was already approved previously.\r\n".to_string() + &message;
+                    }
+                    let accepted = prompt.read_valid_str_value(message, vec!["y", "n"]).await? == "y";
+                    if accepted {
+                        Ok(PermissionResult::Allow)
+                    } else {
+                        Ok(PermissionResult::Deny)
+                    }
+                },
+                PermissionRequest::Request(request) => {
+                    let params = if let Some(params) = &request.params {
+                        params.to_string()
+                    } else {
+                        "".to_string()
+                    };
+
+                    let message = format!(
+                        "XSWD: Request from {}: {}\r\nParams: {}\r\nDo you want to allow this request ?\r\n([A]llow / [D]eny / [AA] Always Allow / [AD] Always Deny): ",
+                        app_data.get_name(),
+                        request.method,
+                        params
+                    );
+
+                    let answer = prompt.read_valid_str_value(message, vec!["a", "d", "aa", "ad"]).await?;
+                    Ok(match answer.as_str() {
+                        "a" => PermissionResult::Allow,
+                        "d" => PermissionResult::Deny,
+                        "aa" => PermissionResult::AlwaysAllow,
+                        "ad" => PermissionResult::AlwaysDeny,
+                        _ => unreachable!()
+                    })
+                }
+            }
+        } else {
+            Err(WalletError::NoHandlerAvailable.into())
+        }
+
     }
 
     #[cfg(feature = "api_server")]

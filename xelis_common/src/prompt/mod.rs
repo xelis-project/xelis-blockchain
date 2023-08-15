@@ -6,14 +6,14 @@ use std::collections::VecDeque;
 use std::fmt::{Display, Formatter, self};
 use std::io::{Write, stdout, Error as IOError};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal;
 use fern::colors::{ColoredLevelConfig, Color};
 use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 use tokio::sync::oneshot;
 use std::sync::{PoisonError, Arc, Mutex};
-use log::{info, error, Level, debug, LevelFilter};
+use log::{info, error, Level, debug, LevelFilter, warn};
 use tokio::time::interval;
 use std::future::Future;
 use std::time::Duration;
@@ -100,6 +100,7 @@ impl<T> From<PoisonError<T>> for PromptError {
 // State used to be shared between stdin thread and Prompt instance
 struct State {
     prompt: Mutex<Option<String>>,
+    previous_prompt_line: AtomicUsize,
     user_input: Mutex<String>,
     mask_input: AtomicBool,
     readers: Mutex<Vec<oneshot::Sender<String>>>,
@@ -109,6 +110,7 @@ impl State {
     fn new() -> Self {
         Self {
             prompt: Mutex::new(None),
+            previous_prompt_line: AtomicUsize::new(0),
             user_input: Mutex::new(String::new()),
             mask_input: AtomicBool::new(false),
             readers: Mutex::new(Vec::new()),
@@ -249,10 +251,18 @@ impl State {
     }
 
     fn show_with_prompt_and_input(&self, prompt: &String, input: &String) -> Result<(), PromptError> {
-        if self.should_mask_input() {
-            print!("\r\x1B[K{}{}", prompt, "*".repeat(input.len()));
+        let lines_count = prompt.lines().count();
+        let previous_lines_count = self.previous_prompt_line.swap(lines_count, Ordering::SeqCst);
+        let lines_eraser = if previous_lines_count > 1 {
+            format!("{}", "\x1B[A".repeat(previous_lines_count - 1))
         } else {
-            print!("\r\x1B[K{}{}", prompt, input);
+            String::new()
+        };
+
+        if self.should_mask_input() {
+            print!("\r\x1B[2K{}{}{}", lines_eraser, prompt, "*".repeat(input.len()));
+        } else {
+            print!("\r\x1B[2K{}{}{}", lines_eraser, prompt, input);
         }
 
         stdout().flush()?;
@@ -270,7 +280,6 @@ impl State {
         let input = self.user_input.lock()?;
         self.show_input(&input)
     }
-
 }
 
 pub struct Prompt<T> {
@@ -396,6 +405,14 @@ impl<T> Prompt<T> {
                     }
                 }
                 _ = interval.tick() => {
+                    {
+                        // verify that we don't have any readers
+                        // as they may have changed the prompt
+                        let readers = self.state.readers.lock()?;
+                        if !readers.is_empty() {
+                            continue;
+                        }
+                    }
                     let prompt = (fn_message)(self).await?;
                     self.update_prompt(prompt)?;
                 }
@@ -447,6 +464,18 @@ impl<T> Prompt<T> {
     // Rewrite the prompt in the terminal with the user input
     pub fn refresh_prompt(&self) -> Result<(), PromptError> {
         self.state.show()
+    }
+
+    // Read value from the user and check if it is a valid value (in lower case only)
+    pub async fn read_valid_str_value(&self, prompt: String, valid_values: Vec<&str>) -> Result<String, PromptError> {
+        loop {
+            let input = self.read_input(prompt.clone(), false).await?.to_lowercase();
+            if valid_values.contains(&input.as_str()) {
+                return Ok(input);
+            } else {
+                warn!("Invalid value, please choose one of: {}", valid_values.join(", "));
+            }
+        }
     }
 
     // read a message from the user and apply the input mask if necessary

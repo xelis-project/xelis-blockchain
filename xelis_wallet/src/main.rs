@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
         };
 
         apply_config(&wallet).await;
-        setup_wallet_command_manager(wallet, prompt.clone());
+        setup_wallet_command_manager(wallet, prompt.clone()).await;
     } else {
         let mut command_manager = CommandManager::default();
         command_manager.add_command(Command::new("open", "Open a wallet", None, CommandHandler::Async(async_handler!(open_wallet))));
@@ -182,7 +182,7 @@ async fn apply_config(wallet: &Arc<Wallet>) {
 }
 
 // Function to build the CommandManager when a wallet is open
-fn setup_wallet_command_manager(wallet: Arc<Wallet>, prompt: ShareablePrompt<Arc<Wallet>>) {
+async fn setup_wallet_command_manager(wallet: Arc<Wallet>, prompt: ShareablePrompt<Arc<Wallet>>) {
     let mut command_manager: CommandManager<Arc<Wallet>> = CommandManager::default();
 
     command_manager.add_command(Command::new("change_password", "Set a new password to open your wallet", None, CommandHandler::Async(async_handler!(change_password))));
@@ -210,6 +210,9 @@ fn setup_wallet_command_manager(wallet: Arc<Wallet>, prompt: ShareablePrompt<Arc
 
         // Stop API Server (RPC or XSWD)
         command_manager.add_command(Command::new("stop_api_server", "Stop the API Server", None, CommandHandler::Async(async_handler!(stop_api_server))));
+
+        // Save prompt in wallet
+        wallet.set_prompt(prompt.clone()).await;
     }
     command_manager.set_data(Some(wallet));
     command_manager.set_prompt(Some(prompt.clone()));
@@ -308,9 +311,7 @@ async fn open_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) 
     apply_config(&wallet).await;
 
     let prompt = prompt.clone();
-    tokio::spawn(async move {
-        setup_wallet_command_manager(wallet, prompt.clone());
-    });
+    tokio::spawn(setup_wallet_command_manager(wallet, prompt.clone()));
 
     Ok(())
 }
@@ -358,9 +359,7 @@ async fn create_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager
 
 
     let prompt = prompt.clone();
-    tokio::spawn(async move {
-        setup_wallet_command_manager(wallet, prompt);
-    });
+    tokio::spawn( setup_wallet_command_manager(wallet, prompt));
 
     Ok(())
 }
@@ -403,9 +402,7 @@ async fn recover_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManage
     apply_config(&wallet).await;
 
     let prompt = prompt.clone();
-    tokio::spawn(async move {
-        setup_wallet_command_manager(wallet, prompt);
-    });
+    tokio::spawn(setup_wallet_command_manager(wallet, prompt));
 
     Ok(())
 }

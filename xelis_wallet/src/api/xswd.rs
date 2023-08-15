@@ -33,17 +33,43 @@ pub struct XSWD {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ApplicationData {
     // Application ID in hexadecimal format
-    pub id: String,
+    id: String,
     // Name of the app
-    pub name: String,
+    name: String,
     // Small description of the app
-    pub description: String,
+    description: String,
     // URL of the app if exists
-    pub url: Option<String>,
+    url: Option<String>,
     // All permissions for each method
-    pub permissions: HashMap<String, Permission>,
+    permissions: HashMap<String, Permission>,
     // signature of all data
-    pub signature: Option<Signature>
+    signature: Option<Signature>
+}
+
+impl ApplicationData {
+    pub fn get_id(&self) -> &String {
+        &self.id
+    }
+
+    pub fn get_name(&self) -> &String {
+        &self.name
+    }
+
+    pub fn get_description(&self) -> &String {
+        &self.description
+    }
+
+    pub fn get_url(&self) -> &Option<String> {
+        &self.url
+    }
+
+    pub fn get_permissions(&self) -> &HashMap<String, Permission> {
+        &self.permissions
+    }
+
+    pub fn get_signature(&self) -> &Option<Signature> {
+        &self.signature
+    }
 }
 
 // This serializer is only used to sign/verify a signature!
@@ -159,16 +185,16 @@ pub enum PermissionRequest<'a> {
 }
 
 pub enum PermissionResult {
-    Accept,
+    Allow,
     Deny,
-    AcceptAlways,
-    DenyAlways
+    AlwaysAllow,
+    AlwaysDeny
 }
 
 impl PermissionResult {
     pub fn is_positive(&self) -> bool {
         match self {
-            Self::Accept | Self::AcceptAlways => true,
+            Self::Allow | Self::AlwaysAllow => true,
             _ => false
         }
     }
@@ -207,13 +233,13 @@ impl XSWDWebSocketHandler {
                 .map_err(|msg| RpcResponseError::new(request.id.clone(), InternalRpcError::Custom(msg.to_string())))?;
 
                 match result {
-                    PermissionResult::Accept => Ok(()),
+                    PermissionResult::Allow => Ok(()),
                     PermissionResult::Deny => Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR)),
-                    PermissionResult::AcceptAlways => {
+                    PermissionResult::AlwaysAllow => {
                         app.permissions.insert(request.method.clone(), Permission::AcceptAlways);
                         Ok(())
                     },
-                    PermissionResult::DenyAlways => {
+                    PermissionResult::AlwaysDeny => {
                         app.permissions.insert(request.method.clone(), Permission::AcceptAlways);
                         Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR))
                     }   
