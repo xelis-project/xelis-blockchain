@@ -467,14 +467,14 @@ impl<T> Prompt<T> {
     }
 
     // Read value from the user and check if it is a valid value (in lower case only)
-    pub async fn read_valid_str_value(&self, prompt: String, valid_values: Vec<&str>) -> Result<String, PromptError> {
+    pub async fn read_valid_str_value(&self, mut prompt: String, valid_values: Vec<&str>) -> Result<String, PromptError> {
+        let original_prompt = prompt.clone();
         loop {
-            let input = self.read_input(prompt.clone(), false).await?.to_lowercase();
+            let input = self.read_input(prompt, false).await?.to_lowercase();
             if valid_values.contains(&input.as_str()) {
                 return Ok(input);
-            } else {
-                warn!("Invalid value, please choose one of: {}", valid_values.join(", "));
             }
+            prompt = colorize_string(Color::Red, &original_prompt);
         }
     }
 
