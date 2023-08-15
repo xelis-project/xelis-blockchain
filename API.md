@@ -547,6 +547,32 @@ Get all assets available on network with its registered topoheight.
 }
 ```
 
+#### Count Assets
+Counts the number of assets saved on disk
+
+##### Method `count_assets`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "count_assets"
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 1
+}
+```
+
 #### Count Transactions
 Counts the number of transactions saved on disk
 
