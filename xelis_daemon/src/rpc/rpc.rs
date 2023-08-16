@@ -310,7 +310,9 @@ async fn get_assets<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> 
     let skip = params.skip.unwrap_or(0);
 
     let storage = blockchain.get_storage().read().await;
-    let assets = storage.get_assets_with_topoheight(maximum, skip).await.context("Error while retrieving registered assets")?;
+    let min = params.minimum_topoheight.unwrap_or(0);
+    let max =  params.maximum_topoheight.unwrap_or_else(|| blockchain.get_topo_height());
+    let assets = storage.get_partial_assets(maximum, skip, min, max).await.context("Error while retrieving registered assets")?;
 
     Ok(json!(assets))
 }

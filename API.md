@@ -539,10 +539,7 @@ Get all assets available on network with its registered topoheight.
     "id": 1,
     "jsonrpc": "2.0",
     "result": [
-        {
-            "identifier": "0000000000000000000000000000000000000000000000000000000000000000",
-            "topoheight": 0
-        }
+        "0000000000000000000000000000000000000000000000000000000000000000"
     ]
 }
 ```

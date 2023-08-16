@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use anyhow::{Context, Result};
-use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams, GetNonceResult, GetAssetsParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::{BlockHeader, Block}, asset::AssetInfo};
+use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams, GetNonceResult, GetAssetsParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::{BlockHeader, Block}};
 
 pub struct DaemonAPI {
     client: JsonRPCClient,
@@ -29,10 +29,12 @@ impl DaemonAPI {
         Ok(count)
     }
 
-    pub async fn get_assets(&self, skip: Option<usize>, maximum: Option<usize>) -> Result<Vec<AssetInfo>> {
+    pub async fn get_assets(&self, skip: Option<usize>, maximum: Option<usize>, minimum_topoheight: Option<u64>, maximum_topoheight: Option<u64>) -> Result<Vec<Hash>> {
         let assets = self.client.call_with("get_assets", &GetAssetsParams {
             maximum,
-            skip
+            skip,
+            minimum_topoheight,
+            maximum_topoheight
         }).await?;
         Ok(assets)
     }

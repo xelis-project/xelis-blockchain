@@ -3,7 +3,6 @@ pub mod serializer;
 pub mod transaction;
 pub mod block;
 pub mod account;
-pub mod asset;
 pub mod api;
 
 pub mod globals;

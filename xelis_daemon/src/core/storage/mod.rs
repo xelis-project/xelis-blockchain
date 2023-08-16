@@ -7,7 +7,9 @@ use indexmap::IndexSet;
 use xelis_common::{
     crypto::{key::PublicKey, hash::Hash},
     transaction::Transaction,
-    block::{Block, BlockHeader, Difficulty}, account::{VersionedBalance, VersionedNonce}, immutable::Immutable, network::Network, asset::AssetInfo,
+    block::{Block, BlockHeader, Difficulty}, account::{VersionedBalance, VersionedNonce},
+    immutable::Immutable,
+    network::Network,
 };
 
 use crate::core::error::BlockchainError;
@@ -65,7 +67,6 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn add_asset(&mut self, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
     async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError>;
     fn count_assets(&self) -> usize;
-    async fn get_assets_with_topoheight(&self, maximum: usize, skip: usize) -> Result<Vec<AssetInfo>, BlockchainError>;
 
     fn get_asset_registration_topoheight(&self, asset: &Hash) -> Result<u64, BlockchainError>;
 

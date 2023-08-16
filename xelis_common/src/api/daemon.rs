@@ -181,7 +181,9 @@ pub struct TransactionResponse<'a, T: Clone> {
 #[derive(Serialize, Deserialize)]
 pub struct GetAssetsParams {
     pub skip: Option<usize>,
-    pub maximum: Option<usize>
+    pub maximum: Option<usize>,
+    pub minimum_topoheight: Option<u64>,
+    pub maximum_topoheight: Option<u64>
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
