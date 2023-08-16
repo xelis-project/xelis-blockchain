@@ -1540,12 +1540,12 @@ impl<S: Storage> P2pServer<S> {
             }
         }
 
-        match request {
+        let response = match request {
             StepRequest::ChainInfo => {
                 let tips = storage.get_tips().await?;
                 let (hash, height) = self.blockchain.find_common_base(&storage, &tips).await?;
                 let stable_topo = storage.get_topo_height_for_hash(&hash).await?;
-                peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::ChainInfo(stable_topo, height, hash)))).await?;
+                StepResponse::ChainInfo(stable_topo, height, hash)
             },
             StepRequest::Assets(min, max, page) => {
                 let page = page.unwrap_or(0);
@@ -1555,12 +1555,11 @@ impl<S: Storage> P2pServer<S> {
                 } else {
                     None
                 };
-
-                peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::Assets(assets, page)))).await?;
+                StepResponse::Assets(assets, page)
             },
             StepRequest::Balances(topoheight, asset, keys) => {
                 let balances = storage.get_balances(&asset, keys.iter(), topoheight).await?;
-                peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::Balances(balances)))).await?;
+                StepResponse::Balances(balances)
             },
             StepRequest::Nonces(topoheight, keys) => {
                 let mut nonces = Vec::with_capacity(keys.len());
@@ -1568,8 +1567,7 @@ impl<S: Storage> P2pServer<S> {
                     let (_, version) = storage.get_nonce_at_maximum_topoheight(key, topoheight).await?.unwrap_or_else(|| (0, VersionedNonce::new(0, None)));
                     nonces.push(version.get_nonce());
                 }
-
-                peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::Nonces(nonces)))).await?;
+                StepResponse::Nonces(nonces)
             },
             StepRequest::Keys(min, max, page) => {
                 let page = page.unwrap_or(0);
@@ -1579,8 +1577,7 @@ impl<S: Storage> P2pServer<S> {
                 } else {
                     None
                 };
-
-                peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::Keys(keys, page)))).await?;
+                StepResponse::Keys(keys, page)
             },
             StepRequest::BlocksMetadata(topoheight) => {
                 let mut blocks = Vec::with_capacity(PRUNE_SAFETY_LIMIT as usize);
@@ -1594,10 +1591,10 @@ impl<S: Storage> P2pServer<S> {
 
                     blocks.push(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty });
                 }
-
-                peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(StepResponse::BlocksMetadata(blocks)))).await?;
+                StepResponse::BlocksMetadata(blocks)
             },
-        }
+        };
+        peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(response))).await?;
         Ok(())
     }
 
