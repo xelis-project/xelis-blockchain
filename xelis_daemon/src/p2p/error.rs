@@ -1,4 +1,5 @@
 use crate::core::error::BlockchainError;
+use tokio::sync::AcquireError;
 use tokio::sync::mpsc::error::SendError as TSendError;
 use tokio::sync::oneshot::error::RecvError;
 use xelis_common::crypto::hash::Hash;
@@ -86,6 +87,8 @@ pub enum P2pError {
     InvalidBootstrapStep(StepKind, StepKind),
     #[error("Error while serde JSON: {}", _0)]
     JsonError(#[from] serde_json::Error),
+    #[error(transparent)]
+    SemaphoreAcquireError(#[from] AcquireError)
 }
 
 impl From<BlockchainError> for P2pError {

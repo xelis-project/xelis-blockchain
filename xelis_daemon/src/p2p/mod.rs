@@ -60,6 +60,7 @@ pub struct P2pServer<S: Storage> {
     last_sync_request_sent: AtomicU64, // used to check if we are already syncing with one peer or not
     object_tracker: SharedObjectTracker, // used to requests objects to peers and avoid requesting the same object to multiple peers
     broadcast_semaphore: Semaphore, // used to limit the number of broadcast messages
+    propagation_semaphore: Semaphore, // used to limit the number of block propagations common peers check
     is_running: AtomicBool // used to check if the server is running or not in tasks
 }
 
@@ -88,6 +89,7 @@ impl<S: Storage> P2pServer<S> {
             last_sync_request_sent: AtomicU64::new(0),
             object_tracker: ObjectTracker::new(),
             broadcast_semaphore: Semaphore::new(1),
+            propagation_semaphore: Semaphore::new(1),
             is_running: AtomicBool::new(true)
         };
 
@@ -749,6 +751,8 @@ impl<S: Storage> P2pServer<S> {
                 // Avoid sending the same block to a common peer
                 // because we track peerlist of each peers, we can try to determinate it
                 {
+                    // semaphore allows to prevent any deadlock because of loop lock
+                    let _permit = self.propagation_semaphore.acquire().await?;
                     let peer_list = self.peer_list.read().await;
                     let peer_peers = peer.get_peers(false).lock().await;
                     // iterate over all peers of this peer broadcaster
@@ -757,7 +761,6 @@ impl<S: Storage> P2pServer<S> {
                         if let Some(peer_peer) = peer_list.get_peer_by_addr(peer_peer) {
                             let peers_sent = peer_peer.get_peers(true).lock().await;
                             let peers = peer_peer.get_peers(false).lock().await;
-
                             // verify that we already know that he his connected to it and that we informed him we are connected too to prevent any desync
                             let predicate = |addr: &&SocketAddr| *addr == peer.get_outgoing_address();
                             if peers.iter().find(predicate).is_some() && peers_sent.iter().find(predicate).is_some() {
