@@ -197,7 +197,7 @@ impl<S: Storage> P2pServer<S> {
                         continue;
                     } else {
                         // check that this incoming peer isn't blacklisted
-                        let peer_list = self.peer_list.write().await;
+                        let peer_list = self.peer_list.read().await;
                         if peer_list.is_blacklisted(&addr) {
                             debug!("{} is blacklisted, rejecting connection", addr);
                             if let Err(e) = stream.shutdown().await {
