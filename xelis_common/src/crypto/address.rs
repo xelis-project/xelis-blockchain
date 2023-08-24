@@ -2,7 +2,7 @@ use core::fmt;
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 
-use crate::api::DataType;
+use crate::api::{DataElement, DataType, DataValue};
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
 use crate::config::{PREFIX_ADDRESS, TESTNET_PREFIX_ADDRESS};
 use crate::transaction::EXTRA_DATA_LIMIT_SIZE;
@@ -17,7 +17,7 @@ pub enum AddressType {
     Normal,
     // Data variant allow to integrate data in address for easier communication / data transfered
     // those data are directly integrated in the data part and can be transfered in the transaction directly
-    Data(DataType)
+    Data(DataElement)
 }
 
 #[derive(Clone)]
@@ -61,6 +61,13 @@ impl<'a> Address<'a> {
 
     pub fn is_mainnet(&self) -> bool {
         self.mainnet
+    }
+
+    pub fn get_data(&self, name: String, data_type: DataType) -> Option<&DataValue> {
+        match &self.addr_type {
+            AddressType::Normal => None,
+            AddressType::Data(data) => data.get_value(name, data_type)
+        }
     }
 
     pub fn as_string(&self) -> Result<String, Bech32Error> {
@@ -130,7 +137,7 @@ impl Serializer for AddressType {
             0 => AddressType::Normal,
             1 => {
                 let read = reader.total_read();
-                let addr_type = AddressType::Data(DataType::read(reader)?);
+                let addr_type = AddressType::Data(DataElement::read(reader)?);
                 if reader.total_read() - read > EXTRA_DATA_LIMIT_SIZE {
                     debug!("Invalid data in integrated address, maximum size reached");
                     return Err(ReaderError::InvalidSize)

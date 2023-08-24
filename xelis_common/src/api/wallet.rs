@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{transaction::{TransactionType, Transaction}, crypto::{key::PublicKey, hash::Hash}};
 
-use super::{DataHash, DataType};
+use super::{DataHash, DataElement};
 
 
 #[derive(Serialize, Deserialize)]
@@ -47,7 +47,7 @@ pub struct TransactionResponse<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetAddressParams {
-    pub data: Option<DataType>
+    pub data: Option<DataElement>
 }
 
 #[derive(Serialize, Deserialize)]

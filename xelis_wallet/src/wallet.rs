@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Error, Context};
 use tokio::sync::{Mutex, RwLock};
-use xelis_common::api::DataType;
+use xelis_common::api::DataElement;
 use xelis_common::api::wallet::FeeBuilder;
 use xelis_common::config::XELIS_ASSET;
 use xelis_common::crypto::address::Address;
@@ -369,7 +369,7 @@ impl Wallet {
     // create a transfer from the wallet to the given address to send the given amount of the given asset
     // and include extra data if present
     // TODO encrypt all the extra data for the receiver
-    pub fn create_transfer(&self, storage: &EncryptedStorage, asset: Hash, key: PublicKey, extra_data: Option<DataType>, amount: u64) -> Result<Transfer, Error> {
+    pub fn create_transfer(&self, storage: &EncryptedStorage, asset: Hash, key: PublicKey, extra_data: Option<DataElement>, amount: u64) -> Result<Transfer, Error> {
         let balance = storage.get_balance_for(&asset).unwrap_or(0);
         // check if we have enough funds for this asset
         if amount > balance {
@@ -532,7 +532,7 @@ impl Wallet {
         self.keypair.get_public_key().to_address(self.get_network().is_mainnet())
     }
 
-    pub fn get_address_with(&self, data: DataType) -> Address<'_> {
+    pub fn get_address_with(&self, data: DataElement) -> Address<'_> {
         self.keypair.get_public_key().to_address_with(self.get_network().is_mainnet(), data)
     }
 
