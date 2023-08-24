@@ -396,7 +396,7 @@ impl Wallet {
 
         let transfer = Transfer {
             amount,
-            asset: asset.clone(),
+            asset,
             to: key,
             extra_data
         };
