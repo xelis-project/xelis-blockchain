@@ -76,6 +76,7 @@ pub enum DataValue {
     U32(u32),
     U64(u64),
     U128(u128),
+    Hash(Hash),
 }
 
 impl Serializer for DataValue {
@@ -89,6 +90,7 @@ impl Serializer for DataValue {
             5 => Self::U32(reader.read_u32()?),
             6 => Self::U64(reader.read_u64()?),
             7 => Self::U128(reader.read_u128()?),
+            8 => Self::Hash(reader.read_hash()?),
             _ => return Err(ReaderError::InvalidValue)
         })
     }
@@ -125,6 +127,10 @@ impl Serializer for DataValue {
             Self::U128(value) => {
                 writer.write_u8(7);
                 writer.write_u128(value);
+            },
+            Self::Hash(hash) => {
+                writer.write_u8(8);
+                writer.write_hash(hash);
             }
         };
     }

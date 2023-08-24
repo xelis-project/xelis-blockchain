@@ -138,6 +138,17 @@ Transactions support any registered asset natively.
 To prevent any replay attack or double spending, each TX should include a nonce that match the account balance.
 After each TX, the nonce is incremented by 1.
 
+## Integrated Address
+
+Integrated address are base address with custom data integrated.
+For example, you can integrate in it a unique identifier that will be integrated in the future transaction done using it. Its helpful to determine easily which account to link a transaction with an account/order on service side.
+
+Maximum data allowed is 1KB (same as transaction payload).
+
+Every data is integrated in the transaction payload when using an integrated address.
+Some exceptions are used to execute actions in wallet side directly:
+- TODO
+
 ## P2p
 
 All transfered data are using a custom Serializer/Deserializer made by hand to transform a struct representation in raw bytes directly.
