@@ -1,10 +1,14 @@
 pub mod command;
 pub mod argument;
 
+use crate::crypto::hash::Hash;
+use crate::serializer::{Serializer, ReaderError};
+
 use self::command::{CommandManager, CommandError};
 use std::collections::VecDeque;
 use std::fmt::{Display, Formatter, self};
 use std::io::{Write, stdout, Error as IOError};
+use std::num::ParseFloatError;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
@@ -88,7 +92,11 @@ pub enum PromptError {
     #[error("Error while starting, not running")]
     NotRunning,
     #[error("No command manager found")]
-    NoCommandManager
+    NoCommandManager,
+    #[error(transparent)]
+    ParseFloatError(#[from] ParseFloatError),
+    #[error(transparent)]
+    ReaderError(#[from] ReaderError)
 }
 
 impl<T> From<PoisonError<T>> for PromptError {
@@ -476,6 +484,25 @@ impl<T> Prompt<T> {
             }
             prompt = colorize_string(Color::Red, &original_prompt);
         }
+    }
+
+    pub async fn ask_confirmation(&self) -> Result<bool, PromptError> {
+        let res = self.read_valid_str_value(
+            colorize_str(Color::Green, "Confirm ? (Y/N): "),
+            vec!["y", "n"]
+        ).await?;
+        Ok(res == "y")
+    }
+
+    pub async fn read_f64(&self, prompt: String) -> Result<f64, PromptError> {
+        let value = self.read_input(prompt, false).await?;
+        let float_value = value.parse()?;
+        Ok(float_value)
+    }
+
+    pub async fn read_hash(&self, prompt: String) -> Result<Hash, PromptError> {
+        let hash_hex = self.read_input(prompt, false).await?;
+        Ok(Hash::from_hex(hash_hex)?)
     }
 
     // read a message from the user and apply the input mask if necessary

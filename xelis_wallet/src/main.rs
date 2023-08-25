@@ -7,7 +7,7 @@ use log::{error, info};
 use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
-    VERSION, XELIS_ASSET
+    VERSION, XELIS_ASSET, COIN_VALUE
 }, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel, self, ShareablePrompt, PromptError}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, globals::{format_coin, set_network_to, get_network}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
 use xelis_wallet::wallet::Wallet;
 
@@ -186,10 +186,10 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, prompt: ShareableProm
     let mut command_manager: CommandManager<Arc<Wallet>> = CommandManager::default();
 
     command_manager.add_command(Command::new("change_password", "Set a new password to open your wallet", None, CommandHandler::Async(async_handler!(change_password))));
-    command_manager.add_command(Command::with_required_arguments("transfer", "Send asset to a specified address", vec![Arg::new("address", ArgType::String), Arg::new("amount", ArgType::Number)], Some(Arg::new("asset", ArgType::Hash)), CommandHandler::Async(async_handler!(transfer))));
+    command_manager.add_command(Command::new("transfer", "Send asset to a specified address", Some(Arg::new("asset", ArgType::Hash)), CommandHandler::Async(async_handler!(transfer))));
     command_manager.add_command(Command::with_required_arguments("burn", "Burn amount of asset", vec![Arg::new("asset", ArgType::Hash), Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(burn))));
     command_manager.add_command(Command::new("display_address", "Show your wallet address", None, CommandHandler::Async(async_handler!(display_address))));
-    command_manager.add_command(Command::new("balance", "Show your current balance", Some(Arg::new("asset", ArgType::String)), CommandHandler::Async(async_handler!(balance))));
+    command_manager.add_command(Command::new("balance", "Show your current balance", Some(Arg::new("asset", ArgType::Hash)), CommandHandler::Async(async_handler!(balance))));
     command_manager.add_command(Command::new("history", "Show all your transactions", Some(Arg::new("page", ArgType::Number)), CommandHandler::Async(async_handler!(history))));
     command_manager.add_command(Command::new("online_mode", "Set your wallet in online mode", Some(Arg::new("daemon_address", ArgType::String)), CommandHandler::Async(async_handler!(online_mode))));
     command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", None, CommandHandler::Async(async_handler!(offline_mode))));
@@ -427,20 +427,43 @@ async fn change_password(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManag
 }
 
 // Create a new transfer to a specified address
-async fn transfer(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let str_address = arguments.get_value("address")?.to_string_value()?;
-    let amount = arguments.get_value("amount")?.to_number()?;
+async fn transfer(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt()?;
+    let wallet = manager.get_data()?;
+
+    // read address
+    let str_address = prompt.read_input(
+        prompt::colorize_str(Color::Green, "Address: "),
+        false
+    ).await.context("Error while reading address")?;
     let address = Address::from_string(&str_address).context("Invalid address")?;
 
-    let asset = if arguments.has_argument("asset") {
-        arguments.get_value("asset")?.to_hash()?
-    } else {
-        XELIS_ASSET // default asset selected is XELIS
+    let asset = prompt.read_hash(
+        prompt::colorize_str(Color::Green, "Asset (default XELIS): ")
+    ).await.ok();
+
+    let asset = asset.unwrap_or(XELIS_ASSET);
+
+    let max_balance = {
+        let storage = wallet.get_storage().read().await;
+        storage.get_balance_for(&asset).unwrap_or(0)
     };
 
-    manager.message(format!("Sending {} of {} to {}", format_coin(amount), asset, address.to_string()));
+    // read amount
+    let float_amount = prompt.read_f64(
+        prompt::colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance)))
+    ).await.context("Error while reading amount")?;
 
-    let wallet = manager.get_data()?;
+    // TODO digit token standard
+    let amount = (float_amount * COIN_VALUE as f64) as u64;
+
+    manager.message(format!("Sending {} of {} to {}", float_amount, asset, address.to_string()));
+
+    if !prompt.ask_confirmation().await.context("Error while confirming action")? {
+        manager.message("Transaction has been aborted");
+        return Ok(())
+    }
+
     manager.message("Building transaction...");
 
     let (key, address_type) = address.split();
