@@ -542,6 +542,7 @@ impl<T> Prompt<T> {
             *user_input = old_user_input;
         }
         self.set_prompt(old_prompt)?;
+        self.state.show()?;
 
         Ok(input)
     }

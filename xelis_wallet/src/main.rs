@@ -607,8 +607,9 @@ async fn rescan(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentMa
 
 async fn seed(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let wallet = manager.get_data()?;
+    let prompt =  manager.get_prompt()?;
 
-    let password = manager.get_prompt()?.read_input("Password: ".into(), true)
+    let password = prompt.read_input("Password: ".into(), true)
         .await.context("Error while reading password")?;
     // check if password is valid
     wallet.is_valid_password(password).await?;
@@ -620,7 +621,10 @@ async fn seed(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentMana
     };
 
     let seed = wallet.get_seed(language as usize)?;
-    manager.message(format!("Seed: {}", seed));
+    prompt.read_input(
+        prompt::colorize_string(Color::Green, &format!("Seed: {}\r\nPress ENTER to continue", seed)),
+        false
+    ).await.context("Error while printing seed")?;
     Ok(())
 }
 
