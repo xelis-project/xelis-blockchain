@@ -84,18 +84,18 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
     command_manager.set_data(Some(blockchain.clone()));
 
     // Register all our commands
-    command_manager.add_command(Command::new("list_peers", "List all peers connected", None, CommandHandler::Async(async_handler!(list_peers))));
-    command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", None, CommandHandler::Async(async_handler!(list_assets))));
-    command_manager.add_command(Command::with_required_arguments("show_balance", "Show balance of an address", vec![Arg::new("address", ArgType::String), Arg::new("asset", ArgType::Hash)], Some(Arg::new("history", ArgType::Number)), CommandHandler::Async(async_handler!(show_balance))));
-    command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], None, CommandHandler::Async(async_handler!(print_block))));
-    command_manager.add_command(Command::new("top_block", "Print top block", None, CommandHandler::Async(async_handler!(top_block))));
-    command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(pop_blocks))));
-    command_manager.add_command(Command::new("clear_mempool", "Clear all transactions in mempool", None, CommandHandler::Async(async_handler!(clear_mempool))));
-    command_manager.add_command(Command::with_required_arguments("add_tx", "Add a TX in hex format in mempool", vec![Arg::new("hex", ArgType::String)], Some(Arg::new("broadcast", ArgType::Bool)), CommandHandler::Async(async_handler!(add_tx))));
-    command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified block height", vec![Arg::new("topoheight", ArgType::Number)], None, CommandHandler::Async(async_handler!(prune_chain))));
-    command_manager.add_command(Command::new("status", "Current daemon status", None, CommandHandler::Async(async_handler!(status))));
-    command_manager.add_command(Command::with_required_arguments("blacklist", "Add a peer address in Blacklist", vec![Arg::new("address", ArgType::String)], None, CommandHandler::Async(async_handler!(blacklist))));
-    command_manager.add_command(Command::with_required_arguments("whitelist", "Add a peer address in Whitelist", vec![Arg::new("address", ArgType::String)], None, CommandHandler::Async(async_handler!(whitelist))));
+    command_manager.add_command(Command::new("list_peers", "List all peers connected", CommandHandler::Async(async_handler!(list_peers))));
+    command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", CommandHandler::Async(async_handler!(list_assets))));
+    command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![Arg::new("address", ArgType::String), Arg::new("asset", ArgType::Hash)], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance))));
+    command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(print_block))));
+    command_manager.add_command(Command::new("top_block", "Print top block", CommandHandler::Async(async_handler!(top_block))));
+    command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], CommandHandler::Async(async_handler!(pop_blocks))));
+    command_manager.add_command(Command::new("clear_mempool", "Clear all transactions in mempool", CommandHandler::Async(async_handler!(clear_mempool))));
+    command_manager.add_command(Command::with_arguments("add_tx", "Add a TX in hex format in mempool", vec![Arg::new("hex", ArgType::String)], vec![Arg::new("broadcast", ArgType::Bool)], CommandHandler::Async(async_handler!(add_tx))));
+    command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified block height", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(prune_chain))));
+    command_manager.add_command(Command::new("status", "Current daemon status", CommandHandler::Async(async_handler!(status))));
+    command_manager.add_command(Command::with_required_arguments("blacklist", "Add a peer address in Blacklist", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(blacklist))));
+    command_manager.add_command(Command::with_required_arguments("whitelist", "Add a peer address in Whitelist", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(whitelist))));
 
     // Register the prompt in CommandManager in case we need it
     command_manager.set_prompt(Some(prompt.clone()));

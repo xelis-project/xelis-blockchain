@@ -122,9 +122,9 @@ async fn main() -> Result<()> {
         setup_wallet_command_manager(wallet, prompt.clone()).await;
     } else {
         let mut command_manager = CommandManager::default();
-        command_manager.add_command(Command::new("open", "Open a wallet", None, CommandHandler::Async(async_handler!(open_wallet))));
-        command_manager.add_command(Command::new("create", "Create a new wallet", None, CommandHandler::Async(async_handler!(create_wallet))));
-        command_manager.add_command(Command::new("recover", "Recover a wallet using a seed", None, CommandHandler::Async(async_handler!(recover_wallet))));
+        command_manager.add_command(Command::new("open", "Open a wallet", CommandHandler::Async(async_handler!(open_wallet))));
+        command_manager.add_command(Command::new("create", "Create a new wallet", CommandHandler::Async(async_handler!(create_wallet))));
+        command_manager.add_command(Command::new("recover", "Recover a wallet using a seed", CommandHandler::Async(async_handler!(recover_wallet))));
 
         command_manager.set_prompt(Some(prompt.clone()));
         prompt.set_command_manager(Some(command_manager))?;
@@ -185,17 +185,17 @@ async fn apply_config(wallet: &Arc<Wallet>) {
 async fn setup_wallet_command_manager(wallet: Arc<Wallet>, prompt: ShareablePrompt<Arc<Wallet>>) {
     let mut command_manager: CommandManager<Arc<Wallet>> = CommandManager::default();
 
-    command_manager.add_command(Command::new("change_password", "Set a new password to open your wallet", None, CommandHandler::Async(async_handler!(change_password))));
-    command_manager.add_command(Command::new("transfer", "Send asset to a specified address", Some(Arg::new("asset", ArgType::Hash)), CommandHandler::Async(async_handler!(transfer))));
-    command_manager.add_command(Command::with_required_arguments("burn", "Burn amount of asset", vec![Arg::new("asset", ArgType::Hash), Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(burn))));
-    command_manager.add_command(Command::new("display_address", "Show your wallet address", None, CommandHandler::Async(async_handler!(display_address))));
-    command_manager.add_command(Command::new("balance", "Show your current balance", Some(Arg::new("asset", ArgType::Hash)), CommandHandler::Async(async_handler!(balance))));
-    command_manager.add_command(Command::new("history", "Show all your transactions", Some(Arg::new("page", ArgType::Number)), CommandHandler::Async(async_handler!(history))));
-    command_manager.add_command(Command::new("online_mode", "Set your wallet in online mode", Some(Arg::new("daemon_address", ArgType::String)), CommandHandler::Async(async_handler!(online_mode))));
-    command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", None, CommandHandler::Async(async_handler!(offline_mode))));
-    command_manager.add_command(Command::new("rescan", "Rescan balance and transactions", Some(Arg::new("topoheight", ArgType::Number)), CommandHandler::Async(async_handler!(rescan))));
-    command_manager.add_command(Command::new("seed", "Show seed of selected language", Some(Arg::new("language", ArgType::Number)), CommandHandler::Async(async_handler!(seed))));
-    command_manager.add_command(Command::new("nonce", "Show current nonce", None, CommandHandler::Async(async_handler!(nonce))));
+    command_manager.add_command(Command::new("change_password", "Set a new password to open your wallet", CommandHandler::Async(async_handler!(change_password))));
+    command_manager.add_command(Command::with_optional_arguments("transfer", "Send asset to a specified address", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(transfer))));
+    command_manager.add_command(Command::with_required_arguments("burn", "Burn amount of asset", vec![Arg::new("asset", ArgType::Hash), Arg::new("amount", ArgType::Number)], CommandHandler::Async(async_handler!(burn))));
+    command_manager.add_command(Command::new("display_address", "Show your wallet address", CommandHandler::Async(async_handler!(display_address))));
+    command_manager.add_command(Command::with_optional_arguments("balance", "Show your current balance", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(balance))));
+    command_manager.add_command(Command::with_optional_arguments("history", "Show all your transactions", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(history))));
+    command_manager.add_command(Command::with_optional_arguments("online_mode", "Set your wallet in online mode", vec![Arg::new("daemon_address", ArgType::String)], CommandHandler::Async(async_handler!(online_mode))));
+    command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", CommandHandler::Async(async_handler!(offline_mode))));
+    command_manager.add_command(Command::with_optional_arguments("rescan", "Rescan balance and transactions", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(rescan))));
+    command_manager.add_command(Command::with_optional_arguments("seed", "Show seed of selected language", vec![Arg::new("language", ArgType::Number)], CommandHandler::Async(async_handler!(seed))));
+    command_manager.add_command(Command::new("nonce", "Show current nonce", CommandHandler::Async(async_handler!(nonce))));
 
     #[cfg(feature = "api_server")]
     {
@@ -204,12 +204,12 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, prompt: ShareableProm
             Arg::new("bind_address", ArgType::String),
             Arg::new("username", ArgType::String),
             Arg::new("password", ArgType::String)
-        ], None, CommandHandler::Async(async_handler!(start_rpc_server))));
+        ], CommandHandler::Async(async_handler!(start_rpc_server))));
 
-        command_manager.add_command(Command::new("start_xswd", "Start the XSWD Server",  None, CommandHandler::Async(async_handler!(start_xswd))));
+        command_manager.add_command(Command::new("start_xswd", "Start the XSWD Server",  CommandHandler::Async(async_handler!(start_xswd))));
 
         // Stop API Server (RPC or XSWD)
-        command_manager.add_command(Command::new("stop_api_server", "Stop the API Server", None, CommandHandler::Async(async_handler!(stop_api_server))));
+        command_manager.add_command(Command::new("stop_api_server", "Stop the API Server", CommandHandler::Async(async_handler!(stop_api_server))));
 
         // Save prompt in wallet
         wallet.set_prompt(prompt.clone()).await;
