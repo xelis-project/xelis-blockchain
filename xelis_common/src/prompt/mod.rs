@@ -112,6 +112,7 @@ struct State {
     user_input: Mutex<String>,
     mask_input: AtomicBool,
     readers: Mutex<Vec<oneshot::Sender<String>>>,
+    has_exited: AtomicBool,
 }
 
 impl State {
@@ -122,6 +123,7 @@ impl State {
             user_input: Mutex::new(String::new()),
             mask_input: AtomicBool::new(false),
             readers: Mutex::new(Vec::new()),
+            has_exited: AtomicBool::new(false),
         }
     }
 
@@ -246,8 +248,10 @@ impl State {
             };
         }
 
-        if let Err(e) = terminal::disable_raw_mode() {
-            error!("Error while disabling raw mode: {}", e);
+        if !self.has_exited.swap(true, Ordering::SeqCst) {
+            if let Err(e) = terminal::disable_raw_mode() {
+                error!("Error while disabling raw mode: {}", e);
+            }
         }
 
         info!("ioloop thread is now stopped");
@@ -424,6 +428,12 @@ impl<T> Prompt<T> {
                     let prompt = (fn_message)(self).await?;
                     self.update_prompt(prompt)?;
                 }
+            }
+        }
+
+        if !self.state.has_exited.swap(true, Ordering::SeqCst) {
+            if let Err(e) = terminal::disable_raw_mode() {
+                error!("Error while disabling raw mode: {}", e);
             }
         }
 
