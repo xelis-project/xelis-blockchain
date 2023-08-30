@@ -1,4 +1,4 @@
-use crate::api::DataType;
+use crate::api::DataElement;
 use crate::globals::get_network;
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 use super::address::{Address, AddressType};
@@ -38,7 +38,7 @@ impl PublicKey {
         Address::new(mainnet, AddressType::Normal, Cow::Borrowed(self))
     }
 
-    pub fn to_address_with(&self, mainnet: bool, data: DataType) -> Address {
+    pub fn to_address_with(&self, mainnet: bool, data: DataElement) -> Address {
         Address::new(mainnet, AddressType::Data(data), Cow::Borrowed(self))
     }
 }

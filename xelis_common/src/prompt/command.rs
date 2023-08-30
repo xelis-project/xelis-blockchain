@@ -2,7 +2,7 @@ use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display, time::{I
 
 use crate::config::VERSION;
 
-use super::argument::*;
+use super::{argument::*, ShareablePrompt};
 use anyhow::Error;
 use thiserror::Error;
 use log::{info, warn, error};
@@ -25,6 +25,8 @@ pub enum CommandError {
     Exit,
     #[error("No data was set in command manager")]
     NoData,
+    #[error("No prompt was set in command manager")]
+    NoPrompt,
     #[error(transparent)]
     Any(#[from] Error)
 }
@@ -41,27 +43,47 @@ pub struct Command<T> {
     name: String,
     description: String,
     required_args: Vec<Arg>,
-    optional_arg: Option<Arg>,
+    optional_args: Vec<Arg>,
     callback: CommandHandler<T>
 }
 
 impl<T> Command<T> {
-    pub fn new(name: &str, description: &str, optional_arg: Option<Arg>, callback: CommandHandler<T>) -> Self {
+    pub fn new(name: &str, description: &str, callback: CommandHandler<T>) -> Self {
         Self {
             name: name.to_owned(),
             description: description.to_owned(),
             required_args: Vec::new(),
-            optional_arg,
+            optional_args: Vec::new(),
             callback
         }
     }
 
-    pub fn with_required_arguments(name: &str, description: &str, required_args: Vec<Arg>, optional_arg: Option<Arg>, callback: CommandHandler<T>) -> Self {
+    pub fn with_optional_arguments(name: &str, description: &str, optional_args: Vec<Arg>, callback: CommandHandler<T>) -> Self {
+        Self {
+            name: name.to_owned(),
+            description: description.to_owned(),
+            required_args: Vec::new(),
+            optional_args,
+            callback
+        }
+    }
+
+    pub fn with_required_arguments(name: &str, description: &str, required_args: Vec<Arg>, callback: CommandHandler<T>) -> Self {
         Self {
             name: name.to_owned(),
             description: description.to_owned(),
             required_args,
-            optional_arg,
+            optional_args: Vec::new(),
+            callback
+        }
+    }
+
+    pub fn with_arguments(name: &str, description: &str, required_args: Vec<Arg>, optional_args: Vec<Arg>, callback: CommandHandler<T>) -> Self {
+        Self {
+            name: name.to_owned(),
+            description: description.to_owned(),
+            required_args,
+            optional_args,
             callback
         }
     }
@@ -89,23 +111,29 @@ impl<T> Command<T> {
         &self.required_args
     }
 
-    pub fn get_optional_arg(&self) -> &Option<Arg> {
-        &self.optional_arg
+    pub fn get_optional_args(&self) -> &Vec<Arg> {
+        &self.optional_args
     }
 
     pub fn get_usage(&self) -> String {
-        let required_args: Vec<String> = self.get_required_args().iter().map(|arg| format!("<{}>", arg.get_name())).collect();
-        let optional_arg: String = match self.get_optional_arg() {
-            Some(v) => format!("{}[{}]", if required_args.is_empty() { "" } else { " " }, v.get_name()),
-            None => "".to_owned()
-        };
-        format!("{} {}{}", self.get_name(), required_args.join(" "), optional_arg)
+        let required_args: Vec<String> = self.get_required_args()
+            .iter()
+            .map(|arg| format!("<{}>", arg.get_name()))
+            .collect();
+
+        let optional_args: Vec<String> = self.get_optional_args()
+            .iter()
+            .map(|arg| format!("[{}]", arg.get_name()))
+            .collect();
+
+        format!("{} {}{}", self.get_name(), required_args.join(" "), optional_args.join(" "))
     }
 }
 
 pub struct CommandManager<T> {
     commands: Vec<Command<T>>,
     data: Option<T>,
+    prompt: Option<ShareablePrompt<T>>,
     running_since: Instant
 }
 
@@ -114,15 +142,16 @@ impl<T> CommandManager<T> {
         Self {
             commands: Vec::new(),
             data,
+            prompt: None,
             running_since: Instant::now()
         }
     }
 
     pub fn default() -> Self {
         let mut zelf = CommandManager::new(None);
-        zelf.add_command(Command::new("help", "Show this help", Some(Arg::new("command", ArgType::String)), CommandHandler::Sync(help)));
-        zelf.add_command(Command::new("version", "Show the current version", None, CommandHandler::Sync(version)));
-        zelf.add_command(Command::new("exit", "Shutdown the daemon", None, CommandHandler::Sync(exit)));
+        zelf.add_command(Command::with_optional_arguments("help", "Show this help", vec![Arg::new("command", ArgType::String)], CommandHandler::Sync(help)));
+        zelf.add_command(Command::new("version", "Show the current version", CommandHandler::Sync(version)));
+        zelf.add_command(Command::new("exit", "Shutdown the daemon", CommandHandler::Sync(exit)));
         zelf
     }
 
@@ -132,6 +161,18 @@ impl<T> CommandManager<T> {
 
     pub fn get_data<'a>(&'a self) -> Result<&'a T, CommandError> {
         self.data.as_ref().ok_or(CommandError::NoData)
+    }
+
+    pub fn get_optional_data(&self) -> &Option<T> {
+        &self.data
+    }
+
+    pub fn set_prompt(&mut self, prompt: Option<ShareablePrompt<T>>) {
+        self.prompt = prompt;
+    }
+
+    pub fn get_prompt<'a>(&'a self) -> Result<&'a ShareablePrompt<T>, CommandError> {
+        self.prompt.as_ref().ok_or(CommandError::NoPrompt)
     }
 
     pub fn add_command(&mut self, command: Command<T>) {
@@ -156,11 +197,12 @@ impl<T> CommandManager<T> {
             arguments.insert(arg.get_name().clone(), arg.get_type().to_value(arg_value)?);
         }
 
-        if let Some(arg_value) = command_split.next() {
-            if let Some(optional_arg) = command.get_optional_arg() {
+        // include all options args available
+        for optional_arg in command.get_optional_args() {
+            if let Some(arg_value) = command_split.next() {
                 arguments.insert(optional_arg.get_name().clone(), optional_arg.get_type().to_value(arg_value)?);
             } else {
-                return Err(CommandError::TooManyArguments);
+                break;
             }
         }
 

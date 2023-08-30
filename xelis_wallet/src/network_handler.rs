@@ -5,7 +5,7 @@ use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
 use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance};
 
-use crate::{api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
+use crate::{daemon_api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
 
 // NetworkHandler must be behind a Arc to be accessed from Wallet (to stop it) or from tokio task
 pub type SharedNetworkHandler = Arc<NetworkHandler>;
@@ -26,6 +26,9 @@ pub struct NetworkHandler {
     // used in case the daemon is not responding but we're already connected
     is_paused: AtomicBool
 }
+
+// how many assets we get by request
+const MAX_ASSETS: usize = 64;
 
 impl NetworkHandler {
     pub async fn new<S: ToString>(wallet: Arc<Wallet>, daemon_address: S) -> Result<SharedNetworkHandler, Error> {
@@ -247,7 +250,7 @@ impl NetworkHandler {
             }
             debug!("New height detected for chain: {}", info.topoheight);
 
-            if let Err(e) = self.sync_new_blocks(&address, current_topoheight).await {
+            if let Err(e) = self.sync_new_blocks(&address, current_topoheight, info.topoheight).await {
                 error!("Error while syncing new blocks: {}", e);
             }
 
@@ -262,20 +265,32 @@ impl NetworkHandler {
         }
     }
 
-    async fn sync_new_blocks(&self, address: &Address<'_>, current_topoheight: u64) -> Result<(), Error> {
+    async fn sync_new_blocks(&self, address: &Address<'_>, current_topoheight: u64, network_topoheight: u64) -> Result<(), Error> {
         // TODO detect new changes in assets
         let mut assets = {
             let storage = self.wallet.get_storage().read().await;
             storage.get_assets()?
         };
 
-        if assets.is_empty() {
-            debug!("No assets registered on disk, fetching from chain...");
-            assets = self.api.get_assets().await?;
-            debug!("Found {} assets", assets.len());
-            let mut storage = self.wallet.get_storage().write().await;
-            for asset in &assets {
-                storage.add_asset(asset)?;
+        // fetch all new assets from chain
+        {
+            let mut has_next = true;
+            let mut skip = 0;
+            // Loop until we got all assets
+            while has_next {
+                let response = self.api.get_assets(Some(skip), Some(MAX_ASSETS), Some(current_topoheight), Some(network_topoheight)).await?;
+                // if the response is full that may mean we have another page to read
+                has_next = response.len() == MAX_ASSETS;
+                skip += response.len();
+    
+                let mut storage = self.wallet.get_storage().write().await;
+                for asset in &response {
+                    if !storage.contains_asset(asset)? {
+                        storage.add_asset(asset)?;
+                    }
+                }
+    
+                assets.extend(response);
             }
         }
 

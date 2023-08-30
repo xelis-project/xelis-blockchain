@@ -150,8 +150,8 @@ impl ChainResponse {
         }
     }
 
-    pub fn get_common_point(&self) -> &Option<CommonPoint> {
-        &self.common_point
+    pub fn get_common_point(&mut self) -> Option<CommonPoint> {
+        self.common_point.take()
     }
 
     pub fn size(&self) -> usize {
@@ -167,10 +167,10 @@ impl Serializer for ChainResponse {
     fn write(&self, writer: &mut Writer) {
         match &self.common_point {
             None => {
-                writer.write_bool(&false);
+                writer.write_bool(false);
             },
             Some(point) => {
-                writer.write_bool(&true);
+                writer.write_bool(true);
                 point.write(writer);
             }
         };

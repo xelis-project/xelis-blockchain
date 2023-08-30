@@ -1,4 +1,5 @@
 use crate::core::error::BlockchainError;
+use tokio::sync::AcquireError;
 use tokio::sync::mpsc::error::SendError as TSendError;
 use tokio::sync::oneshot::error::RecvError;
 use xelis_common::crypto::hash::Hash;
@@ -56,8 +57,14 @@ pub enum P2pError {
     RequestSyncChainTooFast,
     #[error(transparent)]
     AsyncTimeOut(#[from] Elapsed),
+    #[error("No response received from peer")]
+    NoResponse,
+    #[error("Invalid object hash, expected: {}, got: {}", _0, _1)]
+    InvalidObjectHash(Hash, Hash),
     #[error("Object requested {} not found", _0)]
     ObjectNotFound(ObjectRequest),
+    #[error("Object not requested {}", _0)]
+    ObjectNotRequested(ObjectRequest),
     #[error("Object requested {} already requested", _0)]
     ObjectAlreadyRequested(ObjectRequest),
     #[error("Invalid object response for request, received hash: {}", _0)]
@@ -77,7 +84,11 @@ pub enum P2pError {
     #[error("Invalid content in peerlist file")]
     InvalidPeerlist,
     #[error("Invalid bootstrap chain step, expected {:?}, got {:?}", _0, _1)]
-    InvalidBootstrapStep(StepKind, StepKind)
+    InvalidBootstrapStep(StepKind, StepKind),
+    #[error("Error while serde JSON: {}", _0)]
+    JsonError(#[from] serde_json::Error),
+    #[error(transparent)]
+    SemaphoreAcquireError(#[from] AcquireError)
 }
 
 impl From<BlockchainError> for P2pError {

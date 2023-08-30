@@ -85,6 +85,14 @@ impl OwnedObjectResponse {
             Self::Transaction(_, hash) => hash
         }
     }
+
+    pub fn get_request(&self) -> ObjectRequest {
+        match &self {
+            Self::Block(_, hash) => ObjectRequest::Block(hash.clone()),
+            Self::BlockHeader(_, hash) => ObjectRequest::BlockHeader(hash.clone()),
+            Self::Transaction(_, hash) => ObjectRequest::Transaction(hash.clone()),
+        }
+    }
 }
 
 #[derive(Debug)]

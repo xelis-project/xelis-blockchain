@@ -1,4 +1,4 @@
-use crate::core::{blockchain::Blockchain, storage::Storage, error::BlockchainError};
+use crate::core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError, mempool::Mempool};
 use super::{InternalRpcError, ApiError};
 use anyhow::Context;
 use serde_json::{json, Value};
@@ -17,7 +17,7 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetTopoHeightRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse, GetHeightRangeParams, GetNonceResult
+        GetTopoHeightRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse, GetHeightRangeParams, GetNonceResult, GetAssetsParams
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -84,7 +84,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
     Ok(value)
 }
 
-pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transaction>, hash: &Hash) -> Result<Value, InternalRpcError> {
+pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transaction>, hash: &Hash, in_mempool: bool) -> Result<Value, InternalRpcError> {
     let blocks = if storage.has_tx_blocks(hash).context("Error while checking if tx in included in blocks")? {
         Some(storage.get_blocks_for_tx(hash).context("Error while retrieving in which blocks its included")?)
     } else {
@@ -93,12 +93,20 @@ pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transact
 
     let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(tx) };
     let executed_in_block = storage.get_block_executer_for_tx(hash).ok();
-    Ok(json!(TransactionResponse { blocks, executed_in_block, data }))
+    Ok(json!(TransactionResponse { blocks, executed_in_block, data, in_mempool }))
 }
 
-pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, hash: &Hash) -> Result<Value, InternalRpcError> {
-    let tx = storage.get_transaction(hash).await.context("Error while retrieving transaction")?;
-    get_transaction_response(storage, &tx, hash).await
+// first check on disk, then check in mempool
+pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, mempool: &Mempool, hash: &Hash) -> Result<Value, InternalRpcError> {
+    let (transaction, in_mempool) = match storage.get_transaction(hash).await {
+        Ok(tx) => (tx, false),
+        Err(_) => {
+            let tx = mempool.get_tx(hash).context("Error while retrieving transaction from disk and mempool")?;
+            (tx, true)
+        }
+    };
+
+    get_transaction_response(storage, &transaction, hash, in_mempool).await
 }
 
 pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>) {
@@ -118,6 +126,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_info", async_handler!(get_info));
     handler.register_method("get_nonce", async_handler!(get_nonce));
     handler.register_method("get_assets", async_handler!(get_assets));
+    handler.register_method("count_assets", async_handler!(count_assets));
     handler.register_method("count_transactions", async_handler!(count_transactions));
     handler.register_method("submit_transaction", async_handler!(submit_transaction));
     handler.register_method("get_transaction", async_handler!(get_transaction));
@@ -201,7 +210,7 @@ async fn submit_block<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -
     let header = BlockHeader::from_hex(params.block_template)?;
     // TODO add block hashing blob on block template
     let block = blockchain.build_block_from_header(Immutable::Owned(header)).await.context("Error while building block from header")?;
-    blockchain.add_new_block(block, true).await.context("Error while adding new block to chain")?;
+    blockchain.add_new_block(block, true, true).await.context("Error while adding new block to chain")?;
     Ok(json!(true))
 }
 
@@ -227,15 +236,17 @@ async fn get_info<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Re
     let height = blockchain.get_height();
     let topoheight = blockchain.get_topo_height();
     let stableheight = blockchain.get_stable_height();
-    let (top_hash, native_supply, pruned_topoheight) = {
+    let (top_hash, native_supply, pruned_topoheight, average_block_time) = {
         let storage = blockchain.get_storage().read().await;
         let top_hash = storage.get_hash_at_topo_height(topoheight).await.context("Error while retrieving hash at topo height")?;
         let supply = storage.get_supply_for_block_hash(&top_hash).context("Error while supply for hash")?;
         let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?;
-        (top_hash, supply, pruned_topoheight)
+        let average_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
+        (top_hash, supply, pruned_topoheight, average_block_time)
     };
     let difficulty = blockchain.get_difficulty();
     let block_time_target = BLOCK_TIME_MILLIS;
+    let block_reward = get_block_reward(native_supply);
     let mempool_size = blockchain.get_mempool_size().await;
     let version = VERSION.into();
     let network = *blockchain.get_network();
@@ -249,6 +260,8 @@ async fn get_info<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Re
         native_supply,
         difficulty,
         block_time_target,
+        average_block_time,
+        block_reward,
         mempool_size,
         version,
         network
@@ -282,15 +295,36 @@ async fn get_nonce<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> R
     Ok(json!(GetNonceResult { topoheight, version }))
 }
 
-// TODO Rate limiter
+const MAX_ASSETS: usize = 100;
+
 async fn get_assets<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetAssetsParams = parse_params(body)?;
+    let maximum = if let Some(maximum) = params.maximum {
+        if maximum > MAX_ASSETS {
+            return Err(InternalRpcError::InvalidRequest).context(format!("Maximum assets requested cannot be greater than {}", MAX_ASSETS))?
+        }
+        maximum
+    } else {
+        MAX_ASSETS
+    };
+    let skip = params.skip.unwrap_or(0);
+
+    let storage = blockchain.get_storage().read().await;
+    let min = params.minimum_topoheight.unwrap_or(0);
+    let max =  params.maximum_topoheight.unwrap_or_else(|| blockchain.get_topo_height());
+    let assets = storage.get_partial_assets(maximum, skip, min, max).await.context("Error while retrieving registered assets")?;
+
+    Ok(json!(assets))
+}
+
+// TODO Rate limiter
+async fn count_assets<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
 
     let storage = blockchain.get_storage().read().await;
-    let assets = storage.get_assets().await.context("Error while retrieving registered assets")?;
-    Ok(json!(assets))
+    Ok(json!(storage.count_assets()))
 }
 
 // TODO Rate limiter
@@ -298,6 +332,7 @@ async fn count_transactions<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Va
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
+
     let storage = blockchain.get_storage().read().await;
     Ok(json!(storage.count_transactions()))
 }
@@ -311,8 +346,10 @@ async fn submit_transaction<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Va
 
 async fn get_transaction<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetTransactionParams = parse_params(body)?;
+    let mempool = blockchain.get_mempool().read().await;
     let storage = blockchain.get_storage().read().await;
-    get_transaction_response_for_hash(&*storage, &params.hash).await
+
+    get_transaction_response_for_hash(&*storage, &mempool, &params.hash).await
 }
 
 async fn p2p_status<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
@@ -352,7 +389,7 @@ async fn get_mempool<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) ->
     let storage = blockchain.get_storage().read().await;
     let mut transactions: Vec<Value> = Vec::new();
     for (hash, sorted_tx) in mempool.get_txs() {
-        transactions.push(get_transaction_response(&*storage, sorted_tx.get_tx(), hash).await?);
+        transactions.push(get_transaction_response(&*storage, sorted_tx.get_tx(), hash, true).await?);
     }
 
     Ok(json!(transactions))
@@ -384,26 +421,9 @@ const MAX_DAG_ORDER: u64 = 64;
 async fn get_dag_order<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetTopoHeightRangeParams = parse_params(body)?;
 
-    let current_topoheight = blockchain.get_topo_height();
-    let start_topoheight = params.start_topoheight.unwrap_or_else(|| {
-        if params.end_topoheight.is_none() && current_topoheight > MAX_DAG_ORDER {
-            current_topoheight - MAX_DAG_ORDER
-        } else {
-            0
-        }
-    });
-
-    let end_topoheight = params.end_topoheight.unwrap_or(current_topoheight);
-    if end_topoheight < start_topoheight || end_topoheight > current_topoheight {
-        debug!("get dag order range: start = {}, end = {}, max = {}", start_topoheight, end_topoheight, current_topoheight);
-        return Err(InternalRpcError::InvalidRequest)
-    }
-
+    let current = blockchain.get_topo_height();
+    let (start_topoheight, end_topoheight) = get_range(params.start_topoheight, params.end_topoheight, MAX_DAG_ORDER, current)?;
     let count = end_topoheight - start_topoheight;
-    if count > MAX_DAG_ORDER { // only retrieve max 64 blocks hash per request
-        debug!("get dag order requested count: {}", count);
-        return Err(InternalRpcError::InvalidRequest) 
-    }
 
     let storage = blockchain.get_storage().read().await;
     let mut order = Vec::with_capacity(count as usize);
@@ -417,10 +437,10 @@ async fn get_dag_order<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) 
 
 const MAX_BLOCKS: u64 = 20;
 
-fn get_range(start: Option<u64>, end: Option<u64>, current: u64) -> Result<(u64, u64), InternalRpcError> {
+fn get_range(start: Option<u64>, end: Option<u64>, maximum: u64, current: u64) -> Result<(u64, u64), InternalRpcError> {
     let range_start = start.unwrap_or_else(|| {
-        if end.is_none() && current > MAX_BLOCKS {
-            current - MAX_BLOCKS
+        if end.is_none() && current > maximum {
+            current - maximum
         } else {
             0
         }
@@ -428,14 +448,14 @@ fn get_range(start: Option<u64>, end: Option<u64>, current: u64) -> Result<(u64,
 
     let range_end = end.unwrap_or(current);
     if range_end < range_start || range_end > current {
-        debug!("get blocks range by topo height: start = {}, end = {}, max = {}", range_start, range_end, current);
-        return Err(InternalRpcError::InvalidRequest)
+        debug!("get range: start = {}, end = {}, max = {}", range_start, range_end, current);
+        return Err(InternalRpcError::InvalidRequest).context(format!("Invalid range requested, start: {}, end: {}", range_start, range_end))?
     }
 
     let count = range_end - range_start;
-    if count > MAX_BLOCKS { // only retrieve max 20 blocks hash per request
-        debug!("get blocks requested count: {}", count);
-        return Err(InternalRpcError::InvalidRequest) 
+    if count > maximum { // only retrieve max 20 blocks hash per request
+        debug!("get range requested count: {}", count);
+        return Err(InternalRpcError::InvalidRequest).context(format!("Invalid range count requested, received {} but maximum is {}", count, maximum))?
     }
 
     Ok((range_start, range_end))
@@ -447,7 +467,7 @@ async fn get_blocks_range_by_topoheight<S: Storage>(blockchain: Arc<Blockchain<S
     let params: GetTopoHeightRangeParams = parse_params(body)?;
 
     let current_topoheight = blockchain.get_topo_height();
-    let (start_topoheight, end_topoheight) = get_range(params.start_topoheight, params.end_topoheight, current_topoheight)?;
+    let (start_topoheight, end_topoheight) = get_range(params.start_topoheight, params.end_topoheight, MAX_BLOCKS, current_topoheight)?;
 
     let storage = blockchain.get_storage().read().await;
     let mut blocks = Vec::with_capacity((end_topoheight - start_topoheight) as usize);
@@ -466,7 +486,7 @@ async fn get_blocks_range_by_topoheight<S: Storage>(blockchain: Arc<Blockchain<S
 async fn get_blocks_range_by_height<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetHeightRangeParams = parse_params(body)?;
     let current_height = blockchain.get_height();
-    let (start_height, end_height) = get_range(params.start_height, params.end_height, current_height)?;
+    let (start_height, end_height) = get_range(params.start_height, params.end_height, MAX_BLOCKS, current_height)?;
 
     let storage = blockchain.get_storage().read().await;
     let mut blocks = Vec::with_capacity((end_height - start_height) as usize);
@@ -489,13 +509,14 @@ async fn get_transactions<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Valu
 
     let hashes = params.tx_hashes;
     if  hashes.len() > MAX_TXS {
-        return Err(InternalRpcError::InvalidRequest) 
+        return Err(InternalRpcError::InvalidRequest).context(format!("Too many requested txs: {}, maximum is {}", hashes.len(), MAX_TXS))?
     }
 
+    let mempool = blockchain.get_mempool().read().await;
     let storage = blockchain.get_storage().read().await;
     let mut transactions: Vec<Option<Value>> = Vec::with_capacity(hashes.len());
     for hash in hashes {
-        let tx = match get_transaction_response_for_hash(&*storage, &hash).await {
+        let tx = match get_transaction_response_for_hash(&*storage, &mempool, &hash).await {
             Ok(data) => Some(data),
             Err(e) => {
                 debug!("Error while retrieving tx {} from storage: {}", hash, e);

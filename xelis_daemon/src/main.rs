@@ -8,14 +8,14 @@ use log::{info, error, warn};
 use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
-    prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel},
+    prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel, self, ShareablePrompt},
     config::{VERSION, BLOCK_TIME}, globals::{format_hashrate, set_network_to}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer
 };
 use crate::core::{
     blockchain::{Config, Blockchain},
     storage::{Storage, SledStorage}
 };
-use std::sync::Arc;
+use std::{sync::Arc, net::SocketAddr};
 use std::time::Duration;
 use clap::Parser;
 use anyhow::{Result, Context};
@@ -42,16 +42,17 @@ pub struct NodeConfig {
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut config: NodeConfig = NodeConfig::parse();
+
+    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
+    info!("Xelis Blockchain running version: {}", VERSION);
+    info!("----------------------------------------------");
+
     if config.nested.simulator && config.network != Network::Dev {
         config.network = Network::Dev;
         warn!("Switching automatically to network {} because of simulator enabled", config.network);
     }
     set_network_to(config.network);
 
-    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
-    info!("Xelis Blockchain running version: {}", VERSION);
-    info!("----------------------------------------------");
-    
     let blockchain_config = config.nested;
     let storage = {
         let use_cache = if blockchain_config.cache_size > 0 {
@@ -69,7 +70,7 @@ async fn main() -> Result<()> {
     };
 
     let blockchain = Blockchain::new(blockchain_config, config.network, storage).await?;
-    if let Err(e) = run_prompt(&prompt, blockchain.clone(), config.network).await {
+    if let Err(e) = run_prompt(prompt, blockchain.clone(), config.network).await {
         error!("Error while running prompt: {}", e);
     }
 
@@ -77,19 +78,30 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_prompt<S: Storage>(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain<S>>, network: Network) -> Result<(), PromptError> {
+async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blockchain: Arc<Blockchain<S>>, network: Network) -> Result<(), PromptError> {
     let mut command_manager: CommandManager<Arc<Blockchain<S>>> = CommandManager::default();
+    // Set the data to use
     command_manager.set_data(Some(blockchain.clone()));
-    command_manager.add_command(Command::new("list_peers", "List all peers connected", None, CommandHandler::Async(async_handler!(list_peers))));
-    command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", None, CommandHandler::Async(async_handler!(list_assets))));
-    command_manager.add_command(Command::with_required_arguments("show_balance", "Show balance of an address", vec![Arg::new("address", ArgType::String), Arg::new("asset", ArgType::Hash)], Some(Arg::new("history", ArgType::Number)), CommandHandler::Async(async_handler!(show_balance))));
-    command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], None, CommandHandler::Async(async_handler!(print_block))));
-    command_manager.add_command(Command::new("top_block", "Print top block", None, CommandHandler::Async(async_handler!(top_block))));
-    command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], None, CommandHandler::Async(async_handler!(pop_blocks))));
-    command_manager.add_command(Command::new("clear_mempool", "Clear all transactions in mempool", None, CommandHandler::Async(async_handler!(clear_mempool))));
-    command_manager.add_command(Command::with_required_arguments("add_tx", "Add a TX in hex format in mempool", vec![Arg::new("hex", ArgType::String)], Some(Arg::new("broadcast", ArgType::Bool)), CommandHandler::Async(async_handler!(add_tx))));
-    command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified block height", vec![Arg::new("topoheight", ArgType::Number)], None, CommandHandler::Async(async_handler!(prune_chain))));
-    command_manager.add_command(Command::new("status", "Current daemon status", None, CommandHandler::Async(async_handler!(status))));
+
+    // Register all our commands
+    command_manager.add_command(Command::new("list_peers", "List all peers connected", CommandHandler::Async(async_handler!(list_peers))));
+    command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", CommandHandler::Async(async_handler!(list_assets))));
+    command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![Arg::new("address", ArgType::String), Arg::new("asset", ArgType::Hash)], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance))));
+    command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(print_block))));
+    command_manager.add_command(Command::new("top_block", "Print top block", CommandHandler::Async(async_handler!(top_block))));
+    command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], CommandHandler::Async(async_handler!(pop_blocks))));
+    command_manager.add_command(Command::new("clear_mempool", "Clear all transactions in mempool", CommandHandler::Async(async_handler!(clear_mempool))));
+    command_manager.add_command(Command::with_arguments("add_tx", "Add a TX in hex format in mempool", vec![Arg::new("hex", ArgType::String)], vec![Arg::new("broadcast", ArgType::Bool)], CommandHandler::Async(async_handler!(add_tx))));
+    command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified block height", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(prune_chain))));
+    command_manager.add_command(Command::new("status", "Current daemon status", CommandHandler::Async(async_handler!(status))));
+    command_manager.add_command(Command::with_required_arguments("blacklist", "Add a peer address in Blacklist", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(blacklist))));
+    command_manager.add_command(Command::with_required_arguments("whitelist", "Add a peer address in Whitelist", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(whitelist))));
+
+    // Register the prompt in CommandManager in case we need it
+    command_manager.set_prompt(Some(prompt.clone()));
+
+    // set the CommandManager to use
+    prompt.set_command_manager(Some(command_manager))?;
 
     let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().lock().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
@@ -100,7 +112,7 @@ async fn run_prompt<S: Storage>(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain
         None => None
     };
 
-    let closure = || async {
+    let closure = |_| async {
         let (peers, best) = match &p2p {
             Some(p2p) => (p2p.get_peer_count().await, p2p.get_best_topoheight().await),
             None => (0, blockchain.get_topo_height())
@@ -117,58 +129,69 @@ async fn run_prompt<S: Storage>(prompt: &Arc<Prompt>, blockchain: Arc<Blockchain
         };
 
         let network_hashrate = (blockchain.get_difficulty() / BLOCK_TIME) as f64;
-        build_prompt_message(blockchain.get_topo_height(), best, network_hashrate, peers, miners, mempool, network)
+
+        Ok(
+            build_prompt_message(
+                blockchain.get_topo_height(),
+                best,
+                network_hashrate,
+                peers,
+                miners,
+                mempool,
+                network
+            )
+        )
     };
 
-    prompt.start(Duration::from_millis(100), &closure, command_manager).await
+    prompt.start(Duration::from_millis(100), &closure).await
 }
 
 fn build_prompt_message(topoheight: u64, best_topoheight: u64, network_hashrate: f64, peers_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
     let topoheight_str = format!(
         "{}: {}/{}",
-        Prompt::colorize_str(Color::Yellow, "TopoHeight"),
-        Prompt::colorize_string(Color::Green, &format!("{}", topoheight)),
-        Prompt::colorize_string(Color::Green, &format!("{}", best_topoheight))
+        prompt::colorize_str(Color::Yellow, "TopoHeight"),
+        prompt::colorize_string(Color::Green, &format!("{}", topoheight)),
+        prompt::colorize_string(Color::Green, &format!("{}", best_topoheight))
     );
     let network_hashrate_str = format!(
         "{}: {}",
-        Prompt::colorize_str(Color::Yellow, "Network"),
-        Prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(network_hashrate))),
+        prompt::colorize_str(Color::Yellow, "Network"),
+        prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(network_hashrate))),
     );
     let mempool_str = format!(
         "{}: {}",
-        Prompt::colorize_str(Color::Yellow, "Mempool"),
-        Prompt::colorize_string(Color::Green, &format!("{}", mempool))
+        prompt::colorize_str(Color::Yellow, "Mempool"),
+        prompt::colorize_string(Color::Green, &format!("{}", mempool))
     );
     let peers_str = format!(
         "{}: {}",
-        Prompt::colorize_str(Color::Yellow, "Peers"),
-        Prompt::colorize_string(Color::Green, &format!("{}", peers_count))
+        prompt::colorize_str(Color::Yellow, "Peers"),
+        prompt::colorize_string(Color::Green, &format!("{}", peers_count))
     );
     let miners_str = format!(
         "{}: {}",
-        Prompt::colorize_str(Color::Yellow, "Miners"),
-        Prompt::colorize_string(Color::Green, &format!("{}", miners_count))
+        prompt::colorize_str(Color::Yellow, "Miners"),
+        prompt::colorize_string(Color::Green, &format!("{}", miners_count))
     );
 
 
     let network_str = if !network.is_mainnet() {
         format!(
             "{} ",
-            Prompt::colorize_string(Color::Red, &network.to_string())
+            prompt::colorize_string(Color::Red, &network.to_string())
         )
     } else { "".into() };
 
     format!(
         "{} | {} | {} | {} | {} | {} {}{} ",
-        Prompt::colorize_str(Color::Blue, "XELIS"),
+        prompt::colorize_str(Color::Blue, "XELIS"),
         topoheight_str,
         network_hashrate_str,
         mempool_str,
         peers_str,
         miners_str,
         network_str,
-        Prompt::colorize_str(Color::BrightBlack, ">>")
+        prompt::colorize_str(Color::BrightBlack, ">>")
     )
 }
 
@@ -326,12 +349,15 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
     let difficulty = blockchain.get_difficulty();
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
     let top_block_hash = blockchain.get_top_block_hash().await.context("Error while retrieving top block hash")?;
+    let avg_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
 
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
     manager.message(format!("Topo Height: {}", topoheight));
     manager.message(format!("Difficulty: {}", difficulty));
     manager.message(format!("Top block hash: {}", top_block_hash));
+    manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / 1000f64));
+    manager.message(format!("Target Block Time: {}s", BLOCK_TIME));
 
     manager.message(format!("Tips ({}):", tips.len()));
     for hash in tips {
@@ -347,5 +373,40 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
     let elapsed_seconds = manager.running_since().as_secs();
     let elapsed = format_duration(Duration::from_secs(elapsed_seconds)).to_string();
     manager.message(format!("Uptime: {}", elapsed));
+    manager.message(format!("Running on version {}", VERSION));
+    Ok(())
+}
+
+async fn blacklist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain: &Arc<Blockchain<S>> = manager.get_data()?;
+    let address: SocketAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+    match blockchain.get_p2p().lock().await.as_ref() {
+        Some(p2p) => {
+            let peer_list = p2p.get_peer_list();
+            peer_list.write().await.blacklist_address(&address).await;
+            manager.message(format!("Peer {} has been blacklisted", address));
+        },
+        None => {
+            manager.error("P2P is not enabled");
+        }
+    };
+
+    Ok(())
+}
+
+async fn whitelist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain: &Arc<Blockchain<S>> = manager.get_data()?;
+    let address: SocketAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+    match blockchain.get_p2p().lock().await.as_ref() {
+        Some(p2p) => {
+            let peer_list = p2p.get_peer_list();
+            peer_list.write().await.whitelist_address(&address);
+            manager.message(format!("Peer {} has been whitelisted", address));
+        },
+        None => {
+            manager.error("P2P is not enabled");
+        }
+    };
+
     Ok(())
 }

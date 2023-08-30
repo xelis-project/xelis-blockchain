@@ -1,5 +1,6 @@
-use std::{borrow::Cow, collections::HashSet};
+use std::borrow::Cow;
 
+use indexmap::IndexSet;
 use xelis_common::{crypto::hash::Hash, serializer::{Serializer, ReaderError, Reader, Writer}};
 
 pub const NOTIFY_MAX_LEN: usize = 1024; // 1024 * 32 bytes = 32KB
@@ -35,11 +36,11 @@ impl Serializer for NotifyInventoryRequest {
 #[derive(Debug)]
 pub struct NotifyInventoryResponse<'a> {
     next: Option<u8>,
-    txs: Cow<'a, HashSet<Cow<'a, Hash>>>,
+    txs: Cow<'a, IndexSet<Cow<'a, Hash>>>,
 }
 
 impl<'a> NotifyInventoryResponse<'a> {
-    pub fn new(next: Option<u8>, txs: Cow<'a, HashSet<Cow<'a, Hash>>>) -> Self {
+    pub fn new(next: Option<u8>, txs: Cow<'a, IndexSet<Cow<'a, Hash>>>) -> Self {
         Self {
             next,
             txs
@@ -50,7 +51,7 @@ impl<'a> NotifyInventoryResponse<'a> {
         self.next
     }
 
-    pub fn get_txs(self) -> Cow<'a, HashSet<Cow<'a, Hash>>> {
+    pub fn get_txs(self) -> Cow<'a, IndexSet<Cow<'a, Hash>>> {
         self.txs
     }
 }
@@ -63,7 +64,7 @@ impl<'a> Serializer for NotifyInventoryResponse<'a> {
             return Err(ReaderError::InvalidSize);
         }
  
-        let mut txs = HashSet::with_capacity(count as usize);
+        let mut txs = IndexSet::with_capacity(count as usize);
         for _ in 0..count {
             txs.insert(Cow::Owned(reader.read_hash()?));
         }

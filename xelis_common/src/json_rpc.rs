@@ -1,4 +1,4 @@
-use reqwest::{Client as HttpClient};
+use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};

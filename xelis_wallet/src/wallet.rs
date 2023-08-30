@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Error, Context};
 use tokio::sync::{Mutex, RwLock};
-use xelis_common::api::DataType;
+use xelis_common::api::DataElement;
 use xelis_common::api::wallet::FeeBuilder;
 use xelis_common::config::XELIS_ASSET;
 use xelis_common::crypto::address::Address;
@@ -24,8 +24,19 @@ use rand::RngCore;
 use thiserror::Error;
 use log::{error, debug};
 
-#[cfg(feature = "rpc_server")]
-use crate::rpc::{AuthConfig, WalletRpcServer};
+#[cfg(feature = "api_server")]
+use crate::api::{
+    XSWD,
+    WalletRpcServer,
+    AuthConfig,
+    APIServer,
+    ApplicationData,
+    PermissionResult,
+    PermissionRequest
+};
+
+#[cfg(feature = "api_server")]
+use xelis_common::prompt::ShareablePrompt;
 
 #[derive(Error, Debug)]
 pub enum WalletError {
@@ -76,7 +87,12 @@ pub enum WalletError {
     #[error("RPC Server is already running")]
     RPCServerAlreadyRunning,
     #[error("Invalid fees provided, minimum fees calculated: {}, provided: {}", format_coin(*_0), format_coin(*_1))]
-    InvalidFeeProvided(u64, u64)
+    InvalidFeeProvided(u64, u64),
+    #[error("Wallet name cannot be empty")]
+    EmptyName,
+    #[cfg(feature = "api_server")]
+    #[error("No handler available for this request")]
+    NoHandlerAvailable
 }
 
 pub struct Wallet {
@@ -89,8 +105,12 @@ pub struct Wallet {
     // network on which we are connected
     network: Network,
     // RPC Server
-    #[cfg(feature = "rpc_server")]
-    rpc_server: Mutex<Option<Arc<WalletRpcServer>>>
+    #[cfg(feature = "api_server")]
+    api_server: Mutex<Option<APIServer>>,
+    // Prompt for CLI
+    // Only used for requesting permissions through it
+    #[cfg(feature = "api_server")]
+    prompt: Mutex<Option<ShareablePrompt<Arc<Wallet>>>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -106,14 +126,30 @@ impl Wallet {
             keypair,
             network_handler: Mutex::new(None),
             network,
-            #[cfg(feature = "rpc_server")]
-            rpc_server: Mutex::new(None)
+            #[cfg(feature = "api_server")]
+            api_server: Mutex::new(None),
+            prompt: Mutex::new(None)
         };
 
         Arc::new(zelf)
     }
 
     pub fn create(name: String, password: String, seed: Option<String>, network: Network) -> Result<Arc<Self>, Error> {
+        if name.is_empty() {
+            return Err(WalletError::EmptyName.into())
+        }
+
+        // generate random keypair or recover it from seed
+        let keypair = if let Some(seed) = seed {
+        debug!("Retrieving keypair from seed...");
+        let words: Vec<String> = seed.split_whitespace().map(str::to_string).collect();
+        let key = mnemonics::words_to_key(words)?;
+            KeyPair::from_private_key(key)
+        } else {
+            debug!("Generating a new keypair...");
+            KeyPair::new()
+        };
+
         // generate random salt for hashed password
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
         OsRng.fill_bytes(&mut salt);
@@ -148,23 +184,16 @@ impl Wallet {
         debug!("Creating encrypted storage");
         let mut storage = EncryptedStorage::new(inner, &master_key, storage_salt, network)?;
 
-        // generate random keypair and save it to encrypted storage
-        let keypair = if let Some(seed) = seed {
-            debug!("Retrieving keypair from seed...");
-            let words: Vec<String> = seed.split_whitespace().map(str::to_string).collect();
-            let key = mnemonics::words_to_key(words)?;
-            KeyPair::from_private_key(key)
-        } else {
-            debug!("Generating a new keypair...");
-            KeyPair::new()
-        };
-
         storage.set_keypair(&keypair)?;
 
         Ok(Self::new(storage, keypair, network))
     }
 
     pub fn open(name: String, password: String, network: Network) -> Result<Arc<Self>, Error> {
+        if name.is_empty() {
+            return Err(WalletError::EmptyName.into())
+        }
+
         debug!("Creating storage for {}", name);
         let storage = Storage::new(name)?;
         
@@ -201,25 +230,102 @@ impl Wallet {
         Ok(Self::new(storage, keypair, network))
     }
 
-    #[cfg(feature = "rpc_server")]
+    #[cfg(feature = "api_server")]
+    pub async fn set_prompt(&self, prompt: ShareablePrompt<Arc<Wallet>>) {
+        {
+            let mut lock = self.prompt.lock().await;
+            *lock = Some(prompt);
+        }
+    }
+
+    #[cfg(feature = "api_server")]
     pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String, config: Option<AuthConfig>) -> Result<(), Error> {
-        let mut lock = self.rpc_server.lock().await;
+        let mut lock = self.api_server.lock().await;
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
         }
         let rpc_server = WalletRpcServer::new(bind_address, Arc::clone(self), config).await?;
-        *lock = Some(rpc_server);
+        *lock = Some(APIServer::RPCServer(rpc_server));
         Ok(())
     }
 
-    #[cfg(feature = "rpc_server")]
-    pub async fn stop_rpc_server(&self) -> Result<(), Error> {
-        let mut lock = self.rpc_server.lock().await;
+    #[cfg(feature = "api_server")]
+    pub async fn enable_xswd(self: &Arc<Self>) -> Result<(), Error> {
+        let mut lock = self.api_server.lock().await;
+        if lock.is_some() {
+            return Err(WalletError::RPCServerAlreadyRunning.into())
+        }
+        *lock = Some(APIServer::XSWD(XSWD::new(self.clone())?));
+        Ok(())
+    }
+
+    #[cfg(feature = "api_server")]
+    pub async fn request_permission(&self, app_data: &ApplicationData, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
+        if let Some(prompt) = self.prompt.lock().await.as_ref() {
+            match request {
+                PermissionRequest::Application(signed) => {
+                    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_data.get_name(), app_data.get_id());
+                    if signed {
+                        message = "NOTE: Application authorizaion was already approved previously.\r\n".to_string() + &message;
+                    }
+                    let accepted = prompt.read_valid_str_value(message, vec!["y", "n"]).await? == "y";
+                    if accepted {
+                        Ok(PermissionResult::Allow)
+                    } else {
+                        Ok(PermissionResult::Deny)
+                    }
+                },
+                PermissionRequest::Request(request) => {
+                    let params = if let Some(params) = &request.params {
+                        params.to_string()
+                    } else {
+                        "".to_string()
+                    };
+
+                    let message = format!(
+                        "XSWD: Request from {}: {}\r\nParams: {}\r\nDo you want to allow this request ?\r\n([A]llow / [D]eny / [AA] Always Allow / [AD] Always Deny): ",
+                        app_data.get_name(),
+                        request.method,
+                        params
+                    );
+
+                    let answer = prompt.read_valid_str_value(message, vec!["a", "d", "aa", "ad"]).await?;
+                    Ok(match answer.as_str() {
+                        "a" => PermissionResult::Allow,
+                        "d" => PermissionResult::Deny,
+                        "aa" => PermissionResult::AlwaysAllow,
+                        "ad" => PermissionResult::AlwaysDeny,
+                        _ => unreachable!()
+                    })
+                }
+            }
+        } else {
+            Err(WalletError::NoHandlerAvailable.into())
+        }
+
+    }
+
+    #[cfg(feature = "api_server")]
+    pub async fn stop_api_server(&self) -> Result<(), Error> {
+        let mut lock = self.api_server.lock().await;
         let rpc_server = lock.take().ok_or(WalletError::RPCServerNotRunning)?;
         rpc_server.stop().await;
         Ok(())
     }
 
+    // Verify if a password is valid or not
+    pub async fn is_valid_password(&self, password: String) -> Result<(), Error> {
+        let mut encrypted_storage = self.storage.write().await;
+        let storage = encrypted_storage.get_mutable_public_storage();
+        let salt = storage.get_password_salt()?;
+        let hashed_password = hash_password(password, &salt)?;
+        let cipher = Cipher::new(&hashed_password, None)?;
+        let encrypted_master_key = storage.get_encrypted_master_key()?;
+        let _ = cipher.decrypt_value(&encrypted_master_key).context("Invalid password provided")?;
+        Ok(())
+    }
+
+    // change the current password wallet to a new one
     pub async fn set_password(&self, old_password: String, password: String) -> Result<(), Error> {
         let mut encrypted_storage = self.storage.write().await;
         let storage = encrypted_storage.get_mutable_public_storage();
@@ -263,7 +369,7 @@ impl Wallet {
     // create a transfer from the wallet to the given address to send the given amount of the given asset
     // and include extra data if present
     // TODO encrypt all the extra data for the receiver
-    pub fn create_transfer(&self, storage: &EncryptedStorage, asset: Hash, key: PublicKey, extra_data: Option<DataType>, amount: u64) -> Result<Transfer, Error> {
+    pub fn create_transfer(&self, storage: &EncryptedStorage, asset: Hash, key: PublicKey, extra_data: Option<DataElement>, amount: u64) -> Result<Transfer, Error> {
         let balance = storage.get_balance_for(&asset).unwrap_or(0);
         // check if we have enough funds for this asset
         if amount > balance {
@@ -290,7 +396,7 @@ impl Wallet {
 
         let transfer = Transfer {
             amount,
-            asset: asset.clone(),
+            asset,
             to: key,
             extra_data
         };
@@ -383,7 +489,8 @@ impl Wallet {
                 storage.delete_top_block_hash()?;
                 // balances will be re-fetched from daemon
                 storage.delete_balances()?;
-                storage.set_nonce(0)?;
+                let nonce_result = network_handler.get_api().get_last_nonce(&self.get_address()).await?;
+                storage.set_nonce(nonce_result.version.get_nonce())?;
 
                 if topoheight == 0 {
                     storage.delete_transactions()?;
@@ -417,11 +524,15 @@ impl Wallet {
         &self.network_handler
     }
 
+    pub fn get_public_key(&self) -> &PublicKey {
+        self.keypair.get_public_key()
+    }
+
     pub fn get_address(&self) -> Address<'_> {
         self.keypair.get_public_key().to_address(self.get_network().is_mainnet())
     }
 
-    pub fn get_address_with(&self, data: DataType) -> Address<'_> {
+    pub fn get_address_with(&self, data: DataElement) -> Address<'_> {
         self.keypair.get_public_key().to_address_with(self.get_network().is_mainnet(), data)
     }
 

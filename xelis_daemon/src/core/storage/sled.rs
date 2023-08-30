@@ -1,14 +1,17 @@
 use async_trait::async_trait;
+use indexmap::IndexSet;
 use crate::core::error::{BlockchainError, DiskContext};
 use xelis_common::{
     serializer::{Reader, Serializer},
     crypto::{key::PublicKey, hash::{Hash, hash}},
     immutable::Immutable,
     transaction::Transaction,
-    block::{BlockHeader, Block, Difficulty}, account::{VersionedBalance, VersionedNonce}, network::Network,
+    block::{BlockHeader, Block, Difficulty},
+    account::{VersionedBalance, VersionedNonce},
+    network::Network,
 };
 use std::{
-    collections::{HashSet, BTreeSet},
+    collections::HashSet,
     hash::Hash as StdHash,
     sync::Arc
 };
@@ -487,14 +490,14 @@ impl Storage for SledStorage {
         Ok(())
     }
 
-    async fn get_partial_assets(&self, maximum: usize, skip: usize, maximum_topoheight: u64) -> Result<BTreeSet<Hash>, BlockchainError> {
-        let mut assets: BTreeSet<Hash> = BTreeSet::new();
+    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<Hash>, BlockchainError> {
+        let mut assets: IndexSet<Hash> = IndexSet::new();
         let mut skip_count = 0;
         for el in self.assets.iter() {
             let (key, value) = el?;
             let registered_at_topo = u64::from_bytes(&value)?;
             // check that we have a registered asset before the maximum topoheight
-            if registered_at_topo <= maximum_topoheight {
+            if registered_at_topo >= minimum_topoheight && registered_at_topo <= maximum_topoheight {
                 if skip_count < skip {
                     skip_count += 1;
                 } else {
@@ -509,15 +512,16 @@ impl Storage for SledStorage {
         Ok(assets)
     }
 
-    async fn get_partial_keys(&self, maximum: usize, skip: usize, maximum_topoheight: u64) -> Result<BTreeSet<PublicKey>, BlockchainError> {
-        let mut keys: BTreeSet<PublicKey> = BTreeSet::new();
+    // Get all keys that got a changes in their balances/nonces in the range given
+    async fn get_partial_keys(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<PublicKey>, BlockchainError> {
+        let mut keys: IndexSet<PublicKey> = IndexSet::new();
         let mut skip_count = 0;
         for el in self.nonces.iter().keys() {
             let key = el?;
             let pkey = PublicKey::from_bytes(&key)?;
 
             // check that we have a nonce before the maximum topoheight
-            if self.get_nonce_at_maximum_topoheight(&pkey, maximum_topoheight).await?.is_some() {
+            if self.has_key_updated_in_range(&pkey, minimum_topoheight, maximum_topoheight).await? {
                 if skip_count < skip {
                     skip_count += 1;
                 } else {
@@ -531,6 +535,90 @@ impl Storage for SledStorage {
         }
 
         Ok(keys)
+    }
+
+    async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<bool, BlockchainError> {
+        trace!("has key {} updated in range min topoheight {} and max topoheight {}", key, minimum_topoheight, maximum_topoheight);
+        // check first that this address has nonce, if no returns None
+        if !self.has_nonce(key).await? {
+            return Ok(false)
+        }
+
+        // fast path check the latest nonce
+        let (topo, mut version) = self.get_last_nonce(key).await?;
+        trace!("Last version of nonce for {} is at topoheight {}", key, topo);
+        
+        // TODO Should we keep it ? We have to checks incoming txs too!
+        // if its last nonce is under minimum topoheight, we can stop
+        // if topo < minimum_topoheight {
+        //     trace!("Last version nonce (invalid) found at {} (minimum topoheight = {})", topo, minimum_topoheight);
+        //     return Ok(false)
+        // }
+
+        // if it's the latest and its under the maximum topoheight and above minimum topoheight
+        if topo >= minimum_topoheight && topo <= maximum_topoheight {
+            trace!("Last version nonce (valid) found at {} (maximum topoheight = {})", topo, maximum_topoheight);
+            return Ok(true)
+        }
+
+        // otherwise, we have to go through the whole chain
+        while let Some(previous) = version.get_previous_topoheight() {
+            // we are under the minimum topoheight, we can stop
+            if previous < minimum_topoheight {
+                break;
+            }
+
+            let previous_version = self.get_nonce_at_exact_topoheight(key, previous).await?;
+            trace!("previous nonce version is at {}", previous);
+            if previous <= maximum_topoheight {
+                trace!("Highest version nonce found at {} (maximum topoheight = {})", previous, maximum_topoheight);
+                return Ok(true)
+            }
+
+            // security in case of DB corruption
+            if let Some(value) = previous_version.get_previous_topoheight() {
+                if value > previous {
+                    error!("FATAL ERROR: Previous topoheight ({}) should not be higher than current version ({})!", value, previous);
+                    return Err(BlockchainError::Unknown)
+                }
+            }
+            version = previous_version;
+        }
+
+        // if we are here, we didn't find any nonce in the range
+        // it start to be more and more heavy...
+        // lets check on balances now...
+
+        // check that we have a VersionedBalance between range given
+        for asset in self.get_assets_for(key).await? {
+            let (topo, mut version) = self.get_last_balance(key, &asset).await?;
+            if topo >= minimum_topoheight && topo <= maximum_topoheight {
+                return Ok(true)
+            }
+
+            while let Some(previous) = version.get_previous_topoheight() {
+                // we are under the minimum topoheight, we can stop
+                if previous < minimum_topoheight {
+                    break;
+                }
+
+                let previous_version = self.get_balance_at_exact_topoheight(key, &asset, previous).await?;
+                if previous <= maximum_topoheight {
+                    return Ok(true)
+                }
+
+                // security in case of DB corruption
+                if let Some(value) = previous_version.get_previous_topoheight() {
+                    if value > previous {
+                        error!("FATAL ERROR: Previous topoheight for balance ({}) should not be higher than current version of balance ({})!", value, previous);
+                        return Err(BlockchainError::Unknown)
+                    }
+                }
+                version = previous_version;
+            }
+        }
+
+        Ok(false)
     }
 
     async fn get_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<u64>>, BlockchainError> {
@@ -623,6 +711,11 @@ impl Storage for SledStorage {
         Ok(assets)
     }
 
+    // count assets in storage
+    fn count_assets(&self) -> usize {
+        self.assets.len()
+    }
+
     fn get_asset_registration_topoheight(&self, asset: &Hash) -> Result<u64, BlockchainError> {
         trace!("get asset registration topoheight {}", asset);
         self.load_from_disk(&self.assets, asset.as_bytes())
@@ -674,6 +767,20 @@ impl Storage for SledStorage {
 
         let tree = self.db.open_tree(asset.as_bytes())?;
         Ok(tree.contains_key(key.as_bytes())?)
+    }
+
+    // Returns all balances that the key has
+    async fn get_assets_for(&self, key: &PublicKey) -> Result<Vec<Hash>, BlockchainError> {
+        let mut assets = Vec::new();
+        for el in self.assets.iter().keys() {
+            let bytes = el?;
+            let tree = self.db.open_tree(&bytes)?;
+            if tree.contains_key(key.as_bytes())? {
+                let hash = Hash::from_bytes(&bytes)?;
+                assets.push(hash);
+            }
+        }
+        Ok(assets)
     }
 
     // returns the highest topoheight where a balance changes happened
@@ -873,7 +980,7 @@ impl Storage for SledStorage {
             let previous_version = self.get_nonce_at_exact_topoheight(key, previous).await?;
             trace!("previous nonce version is at {}", previous);
             if previous < topoheight {
-                trace!("Highest version nonce found at {} (maximum topoheight = {})", topo, topoheight);
+                trace!("Highest version nonce found at {} (maximum topoheight = {})", previous, topoheight);
                 return Ok(Some((previous, previous_version)))
             }
 

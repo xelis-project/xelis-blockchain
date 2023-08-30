@@ -2,6 +2,7 @@ use argon2::{Params, Argon2, Algorithm, Version};
 use lazy_static::lazy_static;
 
 pub const DIR_PATH: &str = "wallets/";
+pub const XSWD_BIND_ADDRESS: &str = "0.0.0.0:44325";
 pub const PASSWORD_HASH_SIZE: usize = 32;
 pub const SALT_SIZE: usize = 32;
 pub const KEY_SIZE: usize = 32;

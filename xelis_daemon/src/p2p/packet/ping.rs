@@ -19,7 +19,7 @@ use std::{
     net::SocketAddr,
     sync::Arc
 };
-use log::{error, trace};
+use log::{error, trace, debug};
 
 
 #[derive(Clone, Debug)]
@@ -72,14 +72,26 @@ impl<'a> Ping<'a> {
         peer.set_pruned_topoheight(self.pruned_topoheight);
         peer.set_cumulative_difficulty(self.cumulative_difficulty);
 
-        let mut peers = peer.get_peers().lock().await;
-        for addr in self.peer_list {
-            if peers.contains(&addr) {
-                error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", peer, addr);
-                return Err(P2pError::InvalidProtocolRules)
+        if !self.peer_list.is_empty() {
+            debug!("Received a peer list ({}) for {}", self.peer_list.len(), peer);
+            let mut peers = peer.get_peers(false).lock().await;
+            let peer_addr = peer.get_connection().get_address();
+            let peer_outgoing_addr = peer.get_outgoing_address();
+            for addr in self.peer_list {
+                if *peer_addr == addr || *peer_outgoing_addr == addr {
+                    error!("Invalid protocol rules: peer {} sent us its own socket address in ping packet", peer);
+                    return Err(P2pError::InvalidProtocolRules)
+                }
+
+                if peers.contains(&addr) {
+                    error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", peer, addr);
+                    return Err(P2pError::InvalidProtocolRules)
+                }
+                debug!("Adding {} for {} in ping packet", addr, peer);
+                peers.insert(addr);
             }
-            peers.insert(addr);
         }
+
         Ok(())
     }
 
@@ -105,7 +117,7 @@ impl Serializer for Ping<'_> {
         writer.write_hash(&self.top_hash);
         writer.write_u64(&self.topoheight);
         writer.write_u64(&self.height);
-        writer.write_optional_non_zero_u64(&self.pruned_topoheight);
+        self.pruned_topoheight.write(writer);
         writer.write_u64(&self.cumulative_difficulty);
         writer.write_u8(self.peer_list.len() as u8);
         for peer in &self.peer_list {
@@ -117,10 +129,17 @@ impl Serializer for Ping<'_> {
         let top_hash = Cow::Owned(reader.read_hash()?);
         let topoheight = reader.read_u64()?;
         let height = reader.read_u64()?;
-        let pruned_topoheight = reader.read_optional_non_zero_u64()?;
+        let pruned_topoheight = Option::read(reader)?;
+        if let Some(pruned_topoheight) = &pruned_topoheight {
+            if *pruned_topoheight == 0 {
+                debug!("Invalid pruned topoheight (0) in ping packet");
+                return Err(ReaderError::InvalidValue)
+            }
+        }
         let cumulative_difficulty = reader.read_u64()?;
         let peers_len = reader.read_u8()? as usize;
         if peers_len > P2P_PING_PEER_LIST_LIMIT {
+            debug!("Too much peers sent in this ping packet: received {} while max is {}", peers_len, P2P_PING_PEER_LIST_LIMIT);
             return Err(ReaderError::InvalidValue)
         }
 

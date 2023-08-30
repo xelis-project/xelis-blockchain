@@ -1,14 +1,18 @@
 mod handler;
+mod http_request;
 
 use std::{sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashSet, hash::{Hash, Hasher}, time::{Duration, Instant}};
-use actix_web::{HttpRequest, web::Payload, HttpResponse};
+use actix_web::{HttpRequest as ActixHttpRequest, web::Payload, HttpResponse};
 use actix_ws::{Session, MessageStream, Message, CloseReason, CloseCode};
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use log::{debug, trace};
 use tokio::{sync::Mutex, select};
 
-pub use self::handler::EventWebSocketHandler;
+pub use self::{
+    handler::EventWebSocketHandler,
+    http_request::HttpRequest
+};
 
 pub type WebSocketServerShared<H> = Arc<WebSocketServer<H>>;
 pub type WebSocketSessionShared<H> = Arc<WebSocketSession<H>>;
@@ -26,6 +30,7 @@ pub enum WebSocketError {
 
 pub struct WebSocketSession<H: WebSocketHandler + 'static> {
     id: u64,
+    request: HttpRequest,
     server: WebSocketServerShared<H>,
     inner: Mutex<Option<Session>>
 }
@@ -68,6 +73,14 @@ where
         Ok(())
     }
 
+    pub async fn is_closed(&self) -> bool {
+        self.inner.lock().await.is_none()
+    }
+
+    pub fn get_request(&self) -> &HttpRequest {
+        &self.request
+    }
+
     pub fn get_server(&self) -> &WebSocketServerShared<H> {
         &self.server
     }
@@ -97,16 +110,22 @@ where
 }
 
 #[async_trait]
-pub trait WebSocketHandler: Sized {
+pub trait WebSocketHandler: Sized + Sync + Send {
     // called when a new Session is added in websocket server
     // if an error is returned, maintaining the session is aborted
-    async fn on_connection(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error>;
+    async fn on_connection(&self, _: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
 
     // called when a new message is received
-    async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<(), anyhow::Error>;
+    async fn on_message(&self, _: &WebSocketSessionShared<Self>, _: &[u8]) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
 
     // called when a Session is closed
-    async fn on_close(&self,session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error>;
+    async fn on_close(&self, _: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
 }
 
 pub struct WebSocketServer<H: WebSocketHandler + 'static> {
@@ -132,13 +151,14 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         &self.sessions
     }
 
-    pub async fn handle_connection(self: &Arc<Self>, request: &HttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
+    pub async fn handle_connection(self: &Arc<Self>, request: ActixHttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
         debug!("Handling new WebSocket connection");
-        let (response, session, stream) = actix_ws::handle(request, body)?;
+        let (response, session, stream) = actix_ws::handle(&request, body)?;
         let id = self.next_id();
         debug!("Created new WebSocketSession with id {}", id);
         let session = Arc::new(WebSocketSession {
             id,
+            request: request.into(),
             server: Arc::clone(&self),
             inner: Mutex::new(Some(session)),
         });
@@ -150,7 +170,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             debug!("Session #{} has been inserted into sessions: {}", id, res);
         }
 
-        actix_rt::spawn(Arc::clone(self).handle_ws_internal(session.clone(), stream));
+        actix_rt::spawn(Arc::clone(self).handle_ws_internal(session, stream));
         Ok(response)
     }
 
@@ -158,7 +178,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         self.id_counter.fetch_add(1, Ordering::SeqCst)
     }
 
-    async fn delete_session(&self, session: &WebSocketSessionShared<H>, reason: Option<CloseReason>) {
+    pub async fn delete_session(self: &Arc<Self>, session: &WebSocketSessionShared<H>, reason: Option<CloseReason>) {
         debug!("deleting session");
         // close session
         if let Err(e) = session.close(reason).await {
@@ -171,9 +191,13 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         if sessions.remove(session) {
             debug!("deleted session");
             // call on_close
-            if let Err(e) = self.handler.on_close(session).await {
-                debug!("Error while calling on_close: {}", e);
-            }
+            let zelf = Arc::clone(self);
+            let session = session.clone();
+            tokio::spawn(async move {
+                if let Err(e) = zelf.handler.on_close(&session).await {
+                    debug!("Error while calling on_close: {}", e);
+                }
+            });
         }
         debug!("sessions unlocked");
     }
@@ -192,6 +216,11 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             select! {
                 // heartbeat
                 _ = interval.tick() => {
+                    if session.is_closed().await {
+                        debug!("Session is closed, stopping heartbeat");
+                        break None;
+                    }
+
                     trace!("Sending ping to session #{}", session.id);
                     if let Err(e) = session.ping().await {
                         debug!("Error while sending ping to session #{}: {}", session.id, e);

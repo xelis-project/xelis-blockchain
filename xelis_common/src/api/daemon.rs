@@ -121,6 +121,8 @@ pub struct GetInfoResult {
     pub native_supply: u64,
     pub difficulty: Difficulty,
     pub block_time_target: u64,
+    pub average_block_time: u64,
+    pub block_reward: u64,
     // count how many transactions are present in mempool
     pub mempool_size: usize,
     pub version: String,
@@ -170,23 +172,42 @@ pub struct TransactionResponse<'a, T: Clone> {
     pub blocks: Option<HashSet<Hash>>,
     // in which blocks it was executed
     pub executed_in_block: Option<Hash>,
+    // if it is in mempool
+    pub in_mempool: bool,
     #[serde(flatten)]
     pub data: DataHash<'a, T>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetAssetsParams {
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>,
+    pub minimum_topoheight: Option<u64>,
+    pub maximum_topoheight: Option<u64>
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {
     // When a new block is accepted by chain
+    // it contains Block struct as value
     NewBlock,
     // When a block (already in chain or not) is ordered (new topoheight)
+    // it contains BlockOrderedEvent as value
     BlockOrdered,
+    // When stable height has changed (different than the previous one)
+    // it contains StableHeightChangedEvent struct as value
+    StableHeightChanged,
     // When a new transaction is added in mempool
+    // it contains Transaction struct as value
     TransactionAddedInMempool,
     // When a transaction has been included in a valid block & executed on chain
+    // it contains TransactionExecutedEvent struct as value
     TransactionExecuted,
     // When a registered TX SC Call hash has been executed by chain
+    // TODO: Smart Contracts
     TransactionSCResult,
     // When a new asset has been registered
+    // TODO: Smart Contracts
     NewAsset
 }
 
@@ -197,6 +218,12 @@ pub struct BlockOrderedEvent<'a> {
     pub block_type: BlockType,
     // the new topoheight of the block
     pub topoheight: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct StableHeightChangedEvent {
+    pub previous_stable_height: u64,
+    pub new_stable_height: u64
 }
 
 #[derive(Serialize, Deserialize)]

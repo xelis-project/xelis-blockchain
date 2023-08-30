@@ -43,7 +43,8 @@ pub struct Peer {
     peer_list: SharedPeerList,
     chain_requested: AtomicBool,
     objects_requested: Mutex<RequestedObjects>,
-    peers: Mutex<HashSet<SocketAddr>>, // all peers from this peer
+    peers_received: Mutex<HashSet<SocketAddr>>, // all peers from this peer
+    peers_sent: Mutex<HashSet<SocketAddr>>, // all peers sent to this peer
     last_peer_list: AtomicU64, // last time we received a peerlist from this peer
     last_ping: AtomicU64, // last time we got a ping packet from this peer
     cumulative_difficulty: AtomicU64, // cumulative difficulty of peer chain
@@ -54,11 +55,16 @@ pub struct Peer {
     pruned_topoheight: AtomicU64, // pruned topoheight if its a pruned node
     is_pruned: AtomicBool, // cannot be set to false if its already to true (protocol rules)
     // used for await on bootstrap chain packets
-    bootstrap_chain: Mutex<Option<Sender<StepResponse>>>
+    bootstrap_chain: Mutex<Option<Sender<StepResponse>>>,
+    // IP address with local port
+    outgoing_address: SocketAddr
 }
 
 impl Peer {
     pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: u64, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
+        let mut outgoing_address = *connection.get_address();
+        outgoing_address.set_port(local_port);
+
         Self {
             connection,
             id,
@@ -76,7 +82,8 @@ impl Peer {
             peer_list,
             chain_requested: AtomicBool::new(false),
             objects_requested: Mutex::new(HashMap::new()),
-            peers: Mutex::new(peers),
+            peers_received: Mutex::new(peers),
+            peers_sent: Mutex::new(HashSet::new()),
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
             cumulative_difficulty: AtomicU64::new(cumulative_difficulty),
@@ -86,7 +93,8 @@ impl Peer {
             requested_inventory: AtomicBool::new(false),
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
             is_pruned: AtomicBool::new(pruned_topoheight.is_some()),
-            bootstrap_chain: Mutex::new(None)
+            bootstrap_chain: Mutex::new(None),
+            outgoing_address
         }
     }
 
@@ -304,8 +312,12 @@ impl Peer {
         &self.bootstrap_chain
     }
 
-    pub fn get_peers(&self) -> &Mutex<HashSet<SocketAddr>> {
-        &self.peers
+    pub fn get_peers(&self, sent: bool) -> &Mutex<HashSet<SocketAddr>> {
+        if sent {
+            &self.peers_sent
+        } else {
+            &self.peers_received
+        }
     }
 
     pub fn get_last_peer_list(&self) -> u64 {
@@ -340,10 +352,14 @@ impl Peer {
         self.requested_inventory.store(value, Ordering::Release)
     }
 
+    pub fn get_outgoing_address(&self) -> &SocketAddr {
+        &self.outgoing_address
+    }
+
     pub async fn close(&self) -> Result<(), P2pError> {
         trace!("Closing connection with {}", self);
         let mut peer_list = self.peer_list.write().await;
-        peer_list.remove_peer(&self);
+        peer_list.remove_peer(&self).await;
         self.get_connection().close().await?;
         trace!("{} has been disconnected", self);
         Ok(())
@@ -364,7 +380,7 @@ impl Display for Peer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
         // update fail counter to have up-to-date data to display
         self.update_fail_count_default();
-        let peers_count = if let Ok(peers) = self.get_peers().try_lock() {
+        let peers_count = if let Ok(peers) = self.get_peers(false).try_lock() {
             format!("{}", peers.len())
         } else {
             "Couldn't retrieve data".to_string()

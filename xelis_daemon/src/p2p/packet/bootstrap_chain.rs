@@ -1,5 +1,5 @@
-use std::{collections::BTreeSet, borrow::Cow};
-
+use std::borrow::Cow;
+use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, block::Difficulty};
 
@@ -75,14 +75,14 @@ impl StepKind {
 pub enum StepRequest<'a> {
     // Request chain info (topoheight, stable height, stable hash)
     ChainInfo,
-    // Max topoheight, Pagination
-    Assets(u64, Option<u64>),
-    // Max topoheight, Asset, pagination
-    Keys(u64, Option<u64>),
+    // Min topoheight, Max topoheight, Pagination
+    Assets(u64, u64, Option<u64>),
+    // Min topoheight, Max topoheight, Asset, pagination
+    Keys(u64, u64, Option<u64>),
     // Max topoheight, Asset, Accounts
-    Balances(u64, Cow<'a, Hash>, Cow<'a, BTreeSet<PublicKey>>),
+    Balances(u64, Cow<'a, Hash>, Cow<'a, IndexSet<PublicKey>>),
     // Max topoheight, Accounts
-    Nonces(u64, Cow<'a, BTreeSet<PublicKey>>),
+    Nonces(u64, Cow<'a, IndexSet<PublicKey>>),
     // Request blocks metadata starting topoheight
     BlocksMetadata(u64)
 }
@@ -91,8 +91,8 @@ impl<'a> StepRequest<'a> {
     pub fn kind(&self) -> StepKind {
         match self {
             Self::ChainInfo => StepKind::ChainInfo,
-            Self::Assets(_, _) => StepKind::Assets,
-            Self::Keys(_, _) => StepKind::Keys,
+            Self::Assets(_, _, _) => StepKind::Assets,
+            Self::Keys(_, _, _) => StepKind::Keys,
             Self::Balances(_, _, _) => StepKind::Balances,
             Self::Nonces(_, _) => StepKind::Nonces,
             Self::BlocksMetadata(_) => StepKind::BlocksMetadata
@@ -102,8 +102,8 @@ impl<'a> StepRequest<'a> {
     pub fn get_requested_topoheight(&self) -> Option<u64> {
         Some(*match self {
             Self::ChainInfo => return None,
-            Self::Assets(topo, _) => topo,
-            Self::Keys(topo, _) => topo,
+            Self::Assets(_, topo, _) => topo,
+            Self::Keys(_, topo, _) => topo,
             Self::Balances(topo, _, _) => topo,
             Self::Nonces(topo, _) => topo,
             Self::BlocksMetadata(topo) => topo
@@ -118,24 +118,48 @@ impl Serializer for StepRequest<'_> {
                 Self::ChainInfo
             }
             1 => {
+                let min_topoheight = reader.read_u64()?;
                 let topoheight = reader.read_u64()?;
-                let page = reader.read_optional_non_zero_u64()?;
-                Self::Assets(topoheight, page)
+                if min_topoheight > topoheight {
+                    debug!("Invalid min topoheight in Step Request");
+                    return Err(ReaderError::InvalidValue)
+                }
+
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Request");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+                Self::Assets(min_topoheight, topoheight, page)
             },
             2 => {
-                let topoheight = reader.read_u64()?;
-                let page = reader.read_optional_non_zero_u64()?;
-                Self::Keys(topoheight, page)
+                let min = reader.read_u64()?;
+                let max = reader.read_u64()?;
+                if min > max {
+                    debug!("Invalid min topoheight in Step Request");
+                    return Err(ReaderError::InvalidValue)
+                }
+
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Request");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+                Self::Keys(min, max, page)
             },
             3 => {
                 let topoheight = reader.read_u64()?;
                 let hash = Cow::<'_, Hash>::read(reader)?;
-                let keys = Cow::<'_, BTreeSet<PublicKey>>::read(reader)?;
+                let keys = Cow::<'_, IndexSet<PublicKey>>::read(reader)?;
                 Self::Balances(topoheight, hash, keys)
             },
             4 => {
                 let topoheight = reader.read_u64()?;
-                let keys = Cow::<'_, BTreeSet<PublicKey>>::read(reader)?;
+                let keys = Cow::<'_, IndexSet<PublicKey>>::read(reader)?;
                 Self::Nonces(topoheight, keys)
             },
             5 => {
@@ -153,15 +177,17 @@ impl Serializer for StepRequest<'_> {
             Self::ChainInfo => {
                 writer.write_u8(0);
             },
-            Self::Assets(topoheight, page) => {
+            Self::Assets(min, max, page) => {
                 writer.write_u8(1);
-                writer.write_u64(topoheight);
-                writer.write_optional_non_zero_u64(page);
+                writer.write_u64(min);
+                writer.write_u64(max);
+                page.write(writer);
             },
-            Self::Keys(topoheight, page) => {
+            Self::Keys(min, max, page) => {
                 writer.write_u8(2);
-                writer.write_u64(topoheight);
-                writer.write_optional_non_zero_u64(page);
+                writer.write_u64(min);
+                writer.write_u64(max);
+                page.write(writer);
             },
             Self::Balances(topoheight, asset, accounts) => {
                 writer.write_u8(3);
@@ -185,8 +211,8 @@ impl Serializer for StepRequest<'_> {
 #[derive(Debug)]
 pub enum StepResponse {
     ChainInfo(u64, u64, Hash), // topoheight of stable hash, stable height, stable hash
-    Assets(BTreeSet<Hash>, Option<u64>), // Set of assets, pagination
-    Keys(BTreeSet<PublicKey>, Option<u64>), // Set of keys, pagination
+    Assets(IndexSet<Hash>, Option<u64>), // Set of assets, pagination
+    Keys(IndexSet<PublicKey>, Option<u64>), // Set of keys, pagination
     Balances(Vec<Option<u64>>), // Balances requested
     Nonces(Vec<u64>), // Nonces for requested accounts
     BlocksMetadata(Vec<BlockMetadata>), // top blocks metadata
@@ -216,13 +242,25 @@ impl Serializer for StepResponse {
                 Self::ChainInfo(topoheight, stable_height, hash)
             },
             1 => {
-                let assets = BTreeSet::<Hash>::read(reader)?;
-                let page = reader.read_optional_non_zero_u64()?;
+                let assets = IndexSet::<Hash>::read(reader)?;
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
                 Self::Assets(assets, page)
             },
             2 => {
-                let keys = BTreeSet::<PublicKey>::read(reader)?;
-                let page = reader.read_optional_non_zero_u64()?;
+                let keys = IndexSet::<PublicKey>::read(reader)?;
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
                 Self::Keys(keys, page)
             },
             3 => {
@@ -252,12 +290,12 @@ impl Serializer for StepResponse {
             Self::Assets(assets, page) => {
                 writer.write_u8(1);
                 assets.write(writer);
-                writer.write_optional_non_zero_u64(page);
+                page.write(writer);
             },
             Self::Keys(keys, page) => {
                 writer.write_u8(2);
                 keys.write(writer);
-                writer.write_optional_non_zero_u64(page);
+                page.write(writer);
             },
             Self::Balances(balances) => {
                 writer.write_u8(3);

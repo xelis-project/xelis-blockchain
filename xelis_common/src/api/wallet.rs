@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{transaction::{TransactionType, Transaction}, crypto::key::PublicKey};
+use crate::{transaction::{TransactionType, Transaction}, crypto::{key::PublicKey, hash::Hash}};
 
-use super::DataHash;
+use super::{DataHash, DataElement};
 
 
 #[derive(Serialize, Deserialize)]
@@ -41,5 +41,21 @@ pub struct ListTransactionsParams {
 
 #[derive(Serialize, Deserialize)]
 pub struct TransactionResponse<'a> {
-    pub tx: DataHash<'a, Transaction>,
+    #[serde(flatten)]
+    pub inner: DataHash<'a, Transaction>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetAddressParams {
+    pub data: Option<DataElement>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetBalanceParams {
+    pub asset: Option<Hash>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetTransactionParams {
+    pub hash: Hash
 }

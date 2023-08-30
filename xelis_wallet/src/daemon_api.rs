@@ -1,7 +1,7 @@
-use std::{borrow::Cow, collections::HashSet};
+use std::borrow::Cow;
 
 use anyhow::{Context, Result};
-use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::{BlockHeader, Block}};
+use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams, GetNonceResult, GetAssetsParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::{BlockHeader, Block}};
 
 pub struct DaemonAPI {
     client: JsonRPCClient,
@@ -24,9 +24,19 @@ impl DaemonAPI {
         Ok(info)
     }
 
-    pub async fn get_assets(&self) -> Result<HashSet<Hash>> {
-        let info = self.client.call("get_assets").await.context("Error while retrieving assets registered")?;
-        Ok(info)
+    pub async fn count_assets(&self) -> Result<usize> {
+        let count = self.client.call("count_assets").await?;
+        Ok(count)
+    }
+
+    pub async fn get_assets(&self, skip: Option<usize>, maximum: Option<usize>, minimum_topoheight: Option<u64>, maximum_topoheight: Option<u64>) -> Result<Vec<Hash>> {
+        let assets = self.client.call_with("get_assets", &GetAssetsParams {
+            maximum,
+            skip,
+            minimum_topoheight,
+            maximum_topoheight
+        }).await?;
+        Ok(assets)
     }
 
     pub async fn get_last_balance(&self, address: &Address<'_>, asset: &Hash) -> Result<GetLastBalanceResult> {
@@ -76,7 +86,7 @@ impl DaemonAPI {
         Ok(())
     }
 
-    pub async fn get_last_nonce(&self, address: &Address<'_>) -> Result<u64> {
+    pub async fn get_last_nonce(&self, address: &Address<'_>) -> Result<GetNonceResult> {
         let nonce = self.client.call_with("get_nonce", &GetNonceParams {
             address: Cow::Borrowed(address),
             topoheight: None

@@ -1,6 +1,6 @@
 pub mod config;
 
-use std::{time::Duration, sync::{Arc, atomic::{AtomicU64, Ordering, AtomicUsize, AtomicBool}}, thread};
+use std::{time::Duration, sync::atomic::{AtomicU64, Ordering, AtomicUsize, AtomicBool}, thread};
 use crate::config::DEFAULT_DAEMON_ADDRESS;
 use fern::colors::Color;
 use futures_util::{StreamExt, SinkExt};
@@ -8,13 +8,13 @@ use serde::{Serialize, Deserialize};
 use tokio::{sync::{broadcast, mpsc, Mutex}, select, time::Instant};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use xelis_common::{
-    block::{EXTRA_NONCE_SIZE, BlockMiner, BLOCK_WORK_SIZE},
+    block::{BlockMiner, BLOCK_WORK_SIZE},
     serializer::Serializer,
     difficulty::check_difficulty,
     config::{VERSION, DEV_ADDRESS},
     globals::{get_current_timestamp, format_hashrate, format_difficulty},
     crypto::{hash::{Hashable, Hash, hash}, address::Address},
-    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel},
+    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel, ShareablePrompt, self},
 };
 use clap::Parser;
 use log::{error, info, debug, warn};
@@ -37,7 +37,7 @@ pub struct MinerConfig {
     #[clap(short, long)]
     benchmark: bool,
     /// Iterations to run the benchmark
-    #[clap(short, long, default_value_t = 100_000)]
+    #[clap(short, long, default_value_t = 1_000_000)]
     iterations: usize,
     /// Disable the log file
     #[clap(short = 'f', long)]
@@ -56,7 +56,8 @@ pub struct MinerConfig {
 #[derive(Clone)]
 enum ThreadNotification<'a> {
     NewJob(BlockMiner<'a>, u64, u64), // block work, difficulty, height
-    Exit
+    WebSocketClosed, // WebSocket connection has been closed
+    Exit // all threads must stop
 }
 
 #[derive(Serialize, Deserialize)]
@@ -75,6 +76,9 @@ static HASHRATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 lazy_static! {
     static ref HASHRATE_LAST_TIME: Mutex<Instant> = Mutex::new(Instant::now());
 }
+
+// After how many iterations we update the timestamp of the block to avoid too much CPU usage 
+const UPDATE_EVERY_NONCE: u64 = 1_000;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
@@ -147,13 +151,15 @@ async fn main() -> Result<()> {
 
 fn benchmark(threads: usize, iterations: usize) {
     println!("{0: <10} | {1: <10} | {2: <16} | {3: <13} | {4: <13}", "Threads", "Total Time", "Total Iterations", "Time/PoW (ms)", "Hashrate");
+
     for bench in 1..=threads {
         let start = Instant::now();
         let mut handles = vec![];
         for _ in 0..bench {
             let handle = thread::spawn(move || {
+                let mut random_bytes: [u8; BLOCK_WORK_SIZE] = [0; BLOCK_WORK_SIZE];
                 for _ in 0..iterations {
-                    let random_bytes: Vec<u8> = (0..BLOCK_WORK_SIZE).map(|_| { rand::random::<u8>() }).collect();
+                    random_bytes.iter_mut().for_each(|v| *v = rand::random::<u8>());
                     let _ = hash(&random_bytes);
                 }
             });
@@ -193,7 +199,17 @@ async fn communication_task(mut daemon_address: String, job_sender: broadcast::S
                 client
             },
             Err(e) => {
-                error!("Error while connecting to {}: {}", daemon_address, e);
+                if let tokio_tungstenite::tungstenite::Error::Http(e) = e {
+                    let body: String = e.into_body()
+                        .map_or(
+                            "Unknown error".to_owned(),
+                            |v| String::from_utf8_lossy(&v).to_string()
+                        );
+                    error!("Error while connecting to {}, got an unexpected response: {}", daemon_address, body);
+                } else {
+                    error!("Error while connecting to {}: {}", daemon_address, e);
+                }
+
                 warn!("Trying to connect to WebSocket again in 10 seconds...");
                 tokio::time::sleep(Duration::from_secs(10)).await;
                 continue 'main;
@@ -229,6 +245,10 @@ async fn communication_task(mut daemon_address: String, job_sender: broadcast::S
         }
 
         WEBSOCKET_CONNECTED.store(false, Ordering::SeqCst);
+        if job_sender.send(ThreadNotification::WebSocketClosed).is_err() {
+            error!("Error while sending WebSocketClosed message to threads");
+        }
+
         warn!("Trying to connect to WebSocket again in 10 seconds...");
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
@@ -284,83 +304,92 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
 
         info!("Mining Thread #{}: started", id);
         'main: loop {
-            if let Ok(message) = job_receiver.try_recv() { // TODO blocking
-                match message {
-                    ThreadNotification::Exit => {
-                        info!("Exiting Mining Thread #{}...", id);
-                        break 'main;
-                    },
-                    ThreadNotification::NewJob(new_job, expected_difficulty, height) => {
-                        debug!("Mining Thread #{} received a new job", id);
-                        job = new_job;
-                        // set thread id in extra nonce for more work spread between threads
-                        job.extra_nonce[EXTRA_NONCE_SIZE - 1] = id;
+            let message = match job_receiver.blocking_recv() {
+                Ok(message) => message,
+                Err(e) => {
+                    error!("Error on thread #{} while waiting on new job: {}", id, e);
+                    break;
+                }
+            };
 
-                        // Solve block
-                        hash = job.get_pow_hash();
-                        HASHRATE_COUNTER.fetch_add(1, Ordering::SeqCst);
-                        while !match check_difficulty(&hash, expected_difficulty) {
-                            Ok(value) => value,
-                            Err(e) => {
-                                error!("Mining Thread #{}: error on difficulty check: {}", id, e);
-                                continue 'main;
-                            }
-                        } {
-                            // check if we have a new job pending or that we're not connected to the daemon anymore
-                            if !job_receiver.is_empty() || !WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
-                                continue 'main;
-                            }
+            match message {
+                ThreadNotification::WebSocketClosed => {
+                    // wait until we receive a new job, check every 100ms
+                    while !job_receiver.is_empty() {
+                        thread::sleep(Duration::from_millis(100));
+                    }
+                }
+                ThreadNotification::Exit => {
+                    info!("Exiting Mining Thread #{}...", id);
+                    break 'main;
+                },
+                ThreadNotification::NewJob(new_job, expected_difficulty, height) => {
+                    debug!("Mining Thread #{} received a new job", id);
+                    job = new_job;
+                    // set thread id in extra nonce for more work spread between threads
+                    // because it's a u8, it support up to 255 threads
+                    job.extra_nonce[job.extra_nonce.len() - 1] = id;
 
-                            job.nonce += 1;
-                            job.timestamp = get_current_timestamp();
-                            hash = job.get_pow_hash();
-                            HASHRATE_COUNTER.fetch_add(1, Ordering::SeqCst);
-                        }
-
-                        // compute the reference hash for easier finding of the block
-                        let block_hash = job.hash();
-                        info!("Mining Thread #{}: block {} found at height {} with difficulty {}", id, block_hash, height, format_difficulty(expected_difficulty));
-                        if let Err(_) = block_sender.blocking_send(job) {
-                            error!("Mining Thread #{}: error while sending block found with hash {}", id, block_hash);
+                    // Solve block
+                    hash = job.get_pow_hash();
+                    while !match check_difficulty(&hash, expected_difficulty) {
+                        Ok(value) => value,
+                        Err(e) => {
+                            error!("Mining Thread #{}: error on difficulty check: {}", id, e);
                             continue 'main;
                         }
+                    } {
+                        // check if we have a new job pending
+                        // Only update every 1 000 iterations to avoid too much CPU usage
+                        if job.nonce % UPDATE_EVERY_NONCE == 0 {
+                            if !job_receiver.is_empty() {
+                                continue 'main;
+                            }
+                        }
+
+                        job.nonce += 1;
+                        hash = job.get_pow_hash();
+                        job.timestamp = get_current_timestamp();
+                        HASHRATE_COUNTER.fetch_add(1, Ordering::Relaxed);
                     }
-                };
-            } else {
-                if WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
-                    continue 'main;
-                } else {
-                    std::thread::sleep(Duration::from_millis(100));
+
+                    // compute the reference hash for easier finding of the block
+                    let block_hash = job.hash();
+                    info!("Mining Thread #{}: block {} found at height {} with difficulty {}", id, block_hash, height, format_difficulty(expected_difficulty));
+                    if let Err(_) = block_sender.blocking_send(job) {
+                        error!("Mining Thread #{}: error while sending block found with hash {}", id, block_hash);
+                        continue 'main;
+                    }
                 }
-            }
+            };
         }
         info!("Mining Thread #{}: stopped", id);
     })?;
     Ok(())
 }
 
-async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
+async fn run_prompt(prompt: ShareablePrompt<()>) -> Result<()> {
     let command_manager: CommandManager<()> = CommandManager::default();
-    let closure = || async {
+    let closure = |_| async {
         let height_str = format!(
             "{}: {}",
-            Prompt::colorize_str(Color::Yellow, "Height"),
-            Prompt::colorize_string(Color::Green, &format!("{}", CURRENT_HEIGHT.load(Ordering::SeqCst))),
+            prompt::colorize_str(Color::Yellow, "Height"),
+            prompt::colorize_string(Color::Green, &format!("{}", CURRENT_HEIGHT.load(Ordering::SeqCst))),
         );
         let blocks_found = format!(
             "{}: {}",
-            Prompt::colorize_str(Color::Yellow, "Accepted"),
-            Prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_FOUND.load(Ordering::SeqCst))),
+            prompt::colorize_str(Color::Yellow, "Accepted"),
+            prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_FOUND.load(Ordering::SeqCst))),
         );
         let blocks_rejected = format!(
             "{}: {}",
-            Prompt::colorize_str(Color::Yellow, "Rejected"),
-            Prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_REJECTED.load(Ordering::SeqCst))),
+            prompt::colorize_str(Color::Yellow, "Rejected"),
+            prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_REJECTED.load(Ordering::SeqCst))),
         );
         let status = if WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
-            Prompt::colorize_str(Color::Green, "Online")
+            prompt::colorize_str(Color::Green, "Online")
         } else {
-            Prompt::colorize_str(Color::Red, "Offline")
+            prompt::colorize_str(Color::Red, "Offline")
         };
         let hashrate = {
             let mut last_time = HASHRATE_LAST_TIME.lock().await;
@@ -369,20 +398,25 @@ async fn run_prompt(prompt: Arc<Prompt>) -> Result<()> {
             let hashrate = 1000f64 / (last_time.elapsed().as_millis() as f64 / counter as f64);
             *last_time = Instant::now();
 
-            Prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(hashrate)))
+            prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(hashrate)))
         };
 
-        format!(
-            "{} | {} | {} | {} | {} | {} {} ",
-            Prompt::colorize_str(Color::Blue, "XELIS Miner"),
-            height_str,
-            blocks_found,
-            blocks_rejected,
-            hashrate,
-            status,
-            Prompt::colorize_str(Color::BrightBlack, ">>")
+        Ok(
+            format!(
+                "{} | {} | {} | {} | {} | {} {} ",
+                prompt::colorize_str(Color::Blue, "XELIS Miner"),
+                height_str,
+                blocks_found,
+                blocks_rejected,
+                hashrate,
+                status,
+                prompt::colorize_str(Color::BrightBlack, ">>")
+            )
         )
     };
-    prompt.start(Duration::from_millis(100), &closure, command_manager).await?;
+
+    prompt.set_command_manager(Some(command_manager))?;
+
+    prompt.start(Duration::from_millis(100), &closure).await?;
     Ok(())
 }

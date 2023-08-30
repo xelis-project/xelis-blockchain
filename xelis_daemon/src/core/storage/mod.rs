@@ -1,12 +1,15 @@
 mod sled;
 pub use self::sled::SledStorage;
 
-use std::{collections::{HashSet, BTreeSet}, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 use async_trait::async_trait;
+use indexmap::IndexSet;
 use xelis_common::{
     crypto::{key::PublicKey, hash::Hash},
     transaction::Transaction,
-    block::{Block, BlockHeader, Difficulty}, account::{VersionedBalance, VersionedNonce}, immutable::Immutable, network::Network,
+    block::{Block, BlockHeader, Difficulty}, account::{VersionedBalance, VersionedNonce},
+    immutable::Immutable,
+    network::Network,
 };
 
 use crate::core::error::BlockchainError;
@@ -43,8 +46,9 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     // same as above but for nonces
     async fn create_snapshot_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    async fn get_partial_assets(&self, maximum: usize, skip: usize, maximum_topoheight: u64) -> Result<BTreeSet<Hash>, BlockchainError>;
-    async fn get_partial_keys(&self, maximum: usize, skip: usize, maximum_topoheight: u64) -> Result<BTreeSet<PublicKey>, BlockchainError>;
+    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<Hash>, BlockchainError>;
+    async fn get_partial_keys(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<PublicKey>, BlockchainError>;
+    async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<bool, BlockchainError>;
 
     async fn get_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<u64>>, BlockchainError>;
 
@@ -62,6 +66,8 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn asset_exist(&self, asset: &Hash) -> Result<bool, BlockchainError>;
     async fn add_asset(&mut self, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
     async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError>;
+    fn count_assets(&self) -> usize;
+
     fn get_asset_registration_topoheight(&self, asset: &Hash) -> Result<u64, BlockchainError>;
 
     fn has_tx_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError>;
@@ -73,6 +79,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     fn delete_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash) -> Result<(), BlockchainError>;
     async fn get_last_topoheight_for_balance(&self, key: &PublicKey, asset: &Hash) -> Result<u64, BlockchainError>;
     async fn has_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<bool, BlockchainError>;
+    async fn get_assets_for(&self, key: &PublicKey) -> Result<Vec<Hash>, BlockchainError>;
     async fn has_balance_at_exact_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<bool, BlockchainError>;
     async fn get_balance_at_exact_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError>;
     async fn get_balance_at_maximum_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<Option<(u64, VersionedBalance)>, BlockchainError>;

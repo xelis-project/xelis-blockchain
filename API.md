@@ -50,20 +50,23 @@ No parameters
 ##### Response
 ```json
 {
-	"id": 1,
-	"jsonrpc": "2.0",
-	"result": {
-		"block_time_target": 15000,
-		"difficulty": 310532,
-		"height": 9,
-		"pruned_topoheight": null,
-		"mempool_size": 0,
-		"native_supply": 8773780,
-		"stableheight": 1,
-		"top_hash": "00000d5f00dc3cf5873f9bd09963a011a2c007b4d1a987b93f5d3bed3d050ef0",
-		"topoheight": 9,
-		"version": "alpha-0.0.1"
-	}
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "average_block_time": 11812,
+        "block_reward": 865869,
+        "block_time_target": 15000,
+        "difficulty": 35533666,
+        "height": 27552,
+        "mempool_size": 0,
+        "native_supply": 24141030101,
+        "network": "Testnet",
+        "pruned_topoheight": null,
+        "stableheight": 27544,
+        "top_hash": "00000014adb905b46053363e264975dd32cd0020eaf474fe08c5f492110aa95c",
+        "topoheight": 28032,
+        "version": "1.4.0"
+    }
 }
 ```
 
@@ -510,9 +513,41 @@ NOTE: Balance is returned in atomic units
 ```
 
 #### Get Assets
-Get all assets available on network
+Get all assets available on network with its registered topoheight. 
 
 ##### Method `get_assets`
+
+##### Parameters
+|   Name  |   Type  | Required |                   Note                   |
+|:-------:|:-------:|:--------:|:----------------------------------------:|
+|   skip  | Integer | Optional |          How many assets to skip         |
+| maximum | Integer | Optional | Maximum assets to fetch (limited to 100) |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_assets",
+	"params": {}
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    ]
+}
+```
+
+#### Count Assets
+Counts the number of assets saved on disk
+
+##### Method `count_assets`
 
 ##### Parameters
 No parameters
@@ -522,7 +557,7 @@ No parameters
 {
 	"jsonrpc": "2.0",
 	"id": 1,
-	"method": "get_assets"
+	"method": "count_assets"
 }
 ```
 
@@ -531,9 +566,7 @@ No parameters
 {
 	"id": 1,
 	"jsonrpc": "2.0",
-	"result": [
-		"0000000000000000000000000000000000000000000000000000000000000000"
-	]
+	"result": 1
 }
 ```
 
@@ -696,7 +729,7 @@ Submit a transaction in hex format to daemon mempool.
 ```
 
 #### Get Transaction
-Fetch a transaction by its hash from daemon
+Fetch a transaction on disk and in mempool by its hash from daemon.
 
 NOTE: result returned in `data` field can changes based on the TransactionType (transfer, burn, Smart Contract call, Deploy Code..)
 
@@ -740,7 +773,9 @@ NOTE: result returned in `data` field can changes based on the TransactionType (
 				}
 			]
 		},
+		"version": 0,
 		"fee": 1000,
+		"in_mempool": false,
 		"nonce": 2,
 		"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
 		"signature": "d297ef720d388ff2aaedf6755a1f93b4ac1b55c987da5dc53c19350d8a779d970c7f4cfcc25d2f4ce3f4ef3a77d0f31d15635d221d5a72ef6651dbb7f1810301"
@@ -785,7 +820,9 @@ No parameters
 					}
 				]
 			},
+			"version": 0,
 			"fee": 1000,
+			"in_mempool": true,
 			"nonce": 3,
 			"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
 			"signature": "9e9fcd6be9b2e968b7d44ae15909e406b827b87f3108e08646b1d5e45754ffe3e166c4eaf26a63b8ddc0ac0668a893c339ed313fb522b46a4e95b8706a2ba005"
@@ -795,7 +832,7 @@ No parameters
 ```
 
 #### Get Transactions
-Fetch transactions by theirs hashes from daemon and keep the same order in response
+Fetch transactions by theirs hashes from database and mempool of daemon and keep the same order in response
 
 ##### Method `get_transactions`
 
@@ -841,7 +878,9 @@ Fetch transactions by theirs hashes from daemon and keep the same order in respo
 					}
 				]
 			},
+			"version": 0,
 			"fee": 1000,
+			"in_mempool": false,
 			"nonce": 2,
 			"owner": "xel1qyq2z43hcfwwl4pcnx9z5ppcvlhcm7g92ss832rjftdp427wqq7l8nqp5khq3",
 			"signature": "d297ef720d388ff2aaedf6755a1f93b4ac1b55c987da5dc53c19350d8a779d970c7f4cfcc25d2f4ce3f4ef3a77d0f31d15635d221d5a72ef6651dbb7f1810301"

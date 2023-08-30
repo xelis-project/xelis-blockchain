@@ -2,14 +2,14 @@ use anyhow::Error;
 use lru::LruCache;
 use serde_json::{Value, json};
 use xelis_common::{
-    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME, PRUNE_SAFETY_LIMIT},
+    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS},
     crypto::{key::PublicKey, hash::{Hashable, Hash}},
     difficulty::{check_difficulty, calculate_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     globals::{get_current_timestamp, format_coin},
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE, Difficulty},
     immutable::Immutable,
-    serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType}, DataHash}, network::Network
+    serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType, StableHeightChangedEvent}, DataHash}, network::Network
 };
 use crate::{p2p::P2pServer, rpc::{rpc::{get_block_response_for_hash, get_block_type_for_block}, DaemonRpcServer, SharedDaemonRpcServer}};
 use super::{storage::{Storage, DifficultyProvider}, mempool::SortedTx};
@@ -41,8 +41,13 @@ pub struct Config {
     #[clap(short, long, default_value_t = String::from(DEFAULT_RPC_BIND_ADDRESS))]
     pub rpc_bind_address: String,
     /// Add a priority node to connect when P2p is started
+    /// A priority node is connected only one time
     #[clap(short = 'o', long)]
     pub priority_nodes: Vec<String>,
+    /// An exclusive node is connected and its connection is maintained in case of disconnect
+    /// it also replaces seed nodes
+    #[clap(short, long)]
+    pub exclusive_nodes: Vec<String>,
     /// Set dir path for blockchain storage
     #[clap(short = 's', long)]
     pub dir_path: Option<String>,
@@ -169,18 +174,31 @@ impl<S: Storage> Blockchain<S> {
         // create P2P Server
         if !config.disable_p2p_server && arc.network != Network::Dev  {
             info!("Starting P2p server...");
-            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), config.priority_nodes.is_empty()) {
+            // setup exclusive nodes
+            let mut exclusive_nodes: Vec<SocketAddr> = Vec::with_capacity(config.exclusive_nodes.len());
+            for peer in config.exclusive_nodes {
+                let addr: SocketAddr = match peer.parse() {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        error!("Error while parsing priority node address: {}", e);
+                        continue;
+                    }
+                };
+                exclusive_nodes.push(addr);
+            }
+            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes) {
                 Ok(p2p) => {
+                    // connect to priority nodes
                     for addr in config.priority_nodes {
                         let addr: SocketAddr = match addr.parse() {
                             Ok(addr) => addr,
                             Err(e) => {
-                                error!("Error while parsing priority node: {}", e);
+                                error!("Error while parsing priority node address: {}", e);
                                 continue;
                             }
                         };
                         info!("Trying to connect to priority node: {}", addr);
-                        p2p.try_to_connect_to_peer(addr, true);
+                        p2p.try_to_connect_to_peer(addr, true).await;
                     }
                     *arc.p2p.lock().await = Some(p2p);
                 },
@@ -280,7 +298,7 @@ impl<S: Storage> Blockchain<S> {
         storage.set_topo_height_for_block(&genesis_block.hash(), 0).await?;
         storage.set_top_height(0)?;
 
-        self.add_new_block_for_storage(&mut storage, genesis_block, false).await?;
+        self.add_new_block_for_storage(&mut storage, genesis_block, false, false).await?;
 
         Ok(())
     }
@@ -308,14 +326,14 @@ impl<S: Storage> Blockchain<S> {
         let block = self.build_block_from_header(Immutable::Owned(header)).await?;
         let zelf = Arc::clone(self);
         let block_height = block.get_height();
-        zelf.add_new_block(block, true).await?;
+        zelf.add_new_block(block, true, true).await?;
         info!("Mined a new block {} at height {}", hash, block_height);
         Ok(())
     }
 
-    // fast sync can only happens when we are at topoheight 0 (no blocks included)
-    pub fn is_fast_sync_mode_enabled(&self) -> bool {
-        self.allow_fast_sync_mode && self.get_topo_height() == 0
+    // check if user has accepted to do fast sync mode
+    pub fn is_fast_sync_mode_allowed(&self) -> bool {
+        self.allow_fast_sync_mode
     }
 
     pub async fn prune_until_topoheight(&self, topoheight: u64) -> Result<u64, BlockchainError> {
@@ -423,7 +441,10 @@ impl<S: Storage> Blockchain<S> {
         let storage = self.storage.read().await;
         self.get_top_block_hash_for_storage(&storage).await
     }
-    
+
+    // because we are in chain, we already now the highest topoheight
+    // we call the get_hash_at_topo_height instead of get_top_block_hash to avoid reading value
+    // that we already know
     pub async fn get_top_block_hash_for_storage(&self, storage: &S) -> Result<Hash, BlockchainError> {
         storage.get_hash_at_topo_height(self.get_topo_height()).await
     }
@@ -887,14 +908,25 @@ impl<S: Storage> Blockchain<S> {
             let owner = tx.get_owner();
             // get the highest nonce available
             // if presents, it means we have at least one tx from this owner in mempool
-            if let Some(nonce) = mempool.get_cached_nonce(owner) {
+            if let Some(cache) = mempool.get_cached_nonce(owner) {
+                // we accept to delete a tx from mempool if the new one has a higher fee
+                if let Some(hash) = cache.has_tx_with_same_nonce(tx.get_nonce()) {
+                    // TX is in range, we have to delete an existing TX
+                    // check that fees are higher than the future deleted one
+                    let other_tx = mempool.view_tx(hash)?;
+                    if other_tx.get_fee() >= tx.get_fee() {
+                        return Err(BlockchainError::InvalidTxFee(other_tx.get_fee() + 1, tx.get_fee()));
+                    }
+                }
+
                 // check that the nonce is in the range
-                if !(tx.get_nonce() <= nonce.get_max() + 1 && tx.get_nonce() >= nonce.get_min()) {
+                if !(tx.get_nonce() <= cache.get_max() + 1 && tx.get_nonce() >= cache.get_min()) {
+                    debug!("TX {} nonce is not in the range of the pending TXs for this owner, received: {}, expected between {} and {}", hash, tx.get_nonce(), cache.get_min(), cache.get_max());
                     return Err(BlockchainError::InvalidTxNonceMempoolCache)
                 }
 
                 // compute balances of previous pending TXs
-                let txs_hashes = nonce.get_txs();
+                let txs_hashes = cache.get_txs().values();
                 let mut owner_txs = Vec::with_capacity(txs_hashes.len());
                 for hash in txs_hashes {
                     let tx = mempool.get_tx(hash)?;
@@ -903,16 +935,22 @@ impl<S: Storage> Blockchain<S> {
 
                 // we need to do it in two times because of the constraint of lifetime on &tx
                 let mut balances = HashMap::new();
+                let mut nonces = HashMap::new();
                 for tx in &owner_txs {
-                    self.verify_transaction_with_hash(storage, tx, &hash, &mut balances, None, true).await?;
+                    self.verify_transaction_with_hash(storage, tx, &hash, &mut balances, Some(&mut nonces), false).await?;
                 }
             } else {
                 let mut balances = HashMap::new();
-                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false).await?
+                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false).await?;
             }
         }
 
+        let tx = Arc::new(tx);
+        mempool.add_tx(hash.clone(), tx.clone())?;
+
+        //
         if broadcast {
+            // P2p broadcast to others peers
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
                 let p2p = Arc::clone(p2p);
                 let hash = hash.clone();
@@ -920,22 +958,21 @@ impl<S: Storage> Blockchain<S> {
                     p2p.broadcast_tx_hash(&hash).await;
                 });
             }
-        }
 
-        let tx = Arc::new(tx);
-        mempool.add_tx(hash.clone(), tx.clone())?;
-
-        // broadcast to websocket this tx
-        if let Some(rpc) = self.rpc.lock().await.as_ref() {
-            let rpc = rpc.clone();
-            tokio::spawn(async move {
-                let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) };
-                if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
-                    debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
+            // broadcast to websocket this tx
+            if let Some(rpc) = self.rpc.lock().await.as_ref() {
+                if rpc.is_tracking_event(&NotifyEvent::TransactionAddedInMempool).await {
+                    let rpc = rpc.clone();
+                    tokio::spawn(async move {
+                        let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) };
+                        if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
+                            debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
+                        }
+                    });
                 }
-            });
+            }
         }
-
+        
         Ok(())
     }
 
@@ -947,6 +984,22 @@ impl<S: Storage> Blockchain<S> {
     pub async fn get_block_template(&self, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
         let storage = self.storage.read().await;
         self.get_block_template_for_storage(&storage, address).await
+    }
+
+    // check that the TX Hash is present in mempool or in chain disk
+    pub async fn has_tx(&self, hash: &Hash) -> Result<bool, BlockchainError> {
+        // check in mempool first
+        // if its present, returns it
+        {
+            let mempool = self.mempool.read().await;
+            if mempool.contains_tx(hash) {
+                return Ok(true)
+            }
+        }
+
+        // check in storage now
+        let storage = self.storage.read().await;
+        storage.has_transaction(hash).await
     }
 
     pub async fn get_block_template_for_storage(&self, storage: &S, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
@@ -1024,12 +1077,12 @@ impl<S: Storage> Blockchain<S> {
         Ok(block)
     }
 
-    pub async fn add_new_block(&self, block: Block, broadcast: bool) -> Result<(), BlockchainError> {
+    pub async fn add_new_block(&self, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         let mut storage = self.storage.write().await;
-        self.add_new_block_for_storage(&mut storage, block, broadcast).await
+        self.add_new_block_for_storage(&mut storage, block, broadcast, mining).await
     }
 
-    pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, broadcast: bool) -> Result<(), BlockchainError> {
+    pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         let start = Instant::now();
         let block_hash = block.hash();
         debug!("Add new block {}", block_hash);
@@ -1256,7 +1309,12 @@ impl<S: Storage> Blockchain<S> {
 
         // rpc server lock
         let rpc_server = self.rpc.lock().await;
-
+        let should_track_events = if let Some(rpc) = rpc_server.as_ref() {
+            rpc.get_tracked_events().await
+        } else {
+            HashSet::new()
+        };
+        
         // track all changes in nonces to clean mempool from invalid txs stuck
         let mut nonces: HashMap<PublicKey, u64> = HashMap::new();
         // track all events to notify websocket
@@ -1372,7 +1430,7 @@ impl<S: Storage> Blockchain<S> {
 
                         self.execute_transaction(storage, &tx, &mut local_nonces, &mut balances, highest_topo).await?;    
                         // if the rpc_server is enable, track events
-                        if rpc_server.is_some() {
+                        if should_track_events.contains(&NotifyEvent::TransactionExecuted) {
                             let value = json!(TransactionExecutedEvent {
                                 tx_hash: Cow::Borrowed(&tx_hash),
                                 block_hash: Cow::Borrowed(&hash),
@@ -1404,14 +1462,13 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                if rpc_server.is_some() {
-                    let event = NotifyEvent::BlockOrdered;
+                if should_track_events.contains(&NotifyEvent::BlockOrdered) {
                     let value = json!(BlockOrderedEvent {
                         block_hash: Cow::Borrowed(&hash),
                         block_type: get_block_type_for_block(self, &storage, &hash).await.unwrap_or(BlockType::Normal),
                         topoheight: highest_topo,
                     });
-                    events.entry(event).or_insert_with(Vec::new).push(value);
+                    events.entry(NotifyEvent::BlockOrdered).or_insert_with(Vec::new).push(value);
                 }
             }
 
@@ -1489,6 +1546,16 @@ impl<S: Storage> Blockchain<S> {
         // update stable height and difficulty in cache
         {
             let (_, height) = self.find_common_base(&storage, &tips).await?;
+            if should_track_events.contains(&NotifyEvent::StableHeightChanged) { // detect the change in stable height
+                let previous_stable_height = self.get_stable_height();
+                if height != previous_stable_height {
+                    let value = json!(StableHeightChangedEvent {
+                        previous_stable_height,
+                        new_stable_height: height
+                    });
+                    events.entry(NotifyEvent::StableHeightChanged).or_insert_with(Vec::new).push(value);
+                }
+            }
             self.stable_height.store(height, Ordering::SeqCst);
 
             trace!("update difficulty in cache");
@@ -1499,15 +1566,19 @@ impl<S: Storage> Blockchain<S> {
             let difficulty = self.get_difficulty_at_tips(storage, &tips_vec).await?;
             self.difficulty.store(difficulty, Ordering::SeqCst);
         }
+        debug!("Processed block {} in {}ms", block_hash, start.elapsed().as_millis());
 
         if broadcast {
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
-                debug!("broadcast block to peers");
-                p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, storage.get_pruned_topoheight()?, &block_hash).await;
+                let p2p = p2p.clone();
+                let pruned_topoheight = storage.get_pruned_topoheight()?;
+                let block_hash = block_hash.clone();
+                tokio::spawn(async move {
+                    debug!("broadcast block to peers");
+                    p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, pruned_topoheight, &block_hash, mining).await;
+                });
             }
         }
-
-        debug!("Processed block {} in {}ms", block_hash, start.elapsed().as_millis());
 
         // broadcast to websocket new block
         if let Some(rpc) = rpc_server.as_ref() {
@@ -1523,14 +1594,16 @@ impl<S: Storage> Blockchain<S> {
 
             // notify websocket clients
             trace!("Notifying websocket clients");
-            match get_block_response_for_hash(self, storage, block_hash, false).await {
-                Ok(response) => {
-                    events.entry(NotifyEvent::NewBlock).or_insert_with(Vec::new).push(response);
-                },
-                Err(e) => {
-                    debug!("Error while getting block response for websocket: {}", e);
-                }
-            };
+            if should_track_events.contains(&NotifyEvent::NewBlock) {
+                match get_block_response_for_hash(self, storage, block_hash, false).await {
+                    Ok(response) => {
+                        events.entry(NotifyEvent::NewBlock).or_insert_with(Vec::new).push(response);
+                    },
+                    Err(e) => {
+                        debug!("Error while getting block response for websocket: {}", e);
+                    }
+                };
+            }
 
             let rpc = rpc.clone();
             // don't block mutex/lock more than necessary, we move it in another task
@@ -1664,6 +1737,26 @@ impl<S: Storage> Blockchain<S> {
         {
             let tips = storage.get_tips().await?;
             let (_, height) = self.find_common_base(&storage, &tips).await?;
+
+            // if we have a RPC server, propagate the StableHeightChanged if necessary
+            if let Some(rpc) = self.rpc.lock().await.as_ref() {
+                let previous_stable_height = self.get_stable_height();
+                if height != previous_stable_height {
+                    if rpc.is_tracking_event(&NotifyEvent::StableHeightChanged).await {
+                        let rpc = rpc.clone();
+                        tokio::spawn(async move {
+                            let event = json!(StableHeightChangedEvent {
+                                previous_stable_height,
+                                new_stable_height: height
+                            });
+    
+                            if let Err(e) = rpc.notify_clients(&NotifyEvent::StableHeightChanged, event).await {
+                                debug!("Error while broadcasting event StableHeightChanged to websocket: {}", e);
+                            }
+                        });
+                    }
+                }
+            }
             self.stable_height.store(height, Ordering::Release);
         }
 
@@ -1783,8 +1876,14 @@ impl<S: Storage> Blockchain<S> {
                 // we increment it in case any new tx for same owner is following
                 *nonce += 1;
             } else {
-                let (_, version) = storage.get_last_nonce(tx.get_owner()).await?;
-                let nonce = version.get_nonce();
+                // it is possible that a miner has balance but no nonces, so we need to check it
+                let nonce = if storage.has_nonce(tx.get_owner()).await? {
+                    let (_, version) = storage.get_last_nonce(tx.get_owner()).await?;
+                    version.get_nonce()
+                } else {
+                    0 // no nonce, so we start at 0
+                };
+
                 if nonce != tx.get_nonce() {
                     return Err(BlockchainError::InvalidTxNonce(tx.get_nonce(), nonce, tx.get_owner().clone()))
                 }
@@ -1878,6 +1977,38 @@ impl<S: Storage> Blockchain<S> {
         }
 
         Ok(())
+    }
+
+    pub async fn get_average_block_time_for_storage(&self, storage: &S) -> Result<u64, BlockchainError> {
+        // current topoheight
+        let topoheight = self.get_topo_height();
+
+        // we need to get the block hash at topoheight - 50 to compare
+        // if topoheight is 0, returns the target as we don't have any block
+        // otherwise returns topoheight
+        let mut count = if topoheight > 50 {
+            50
+        } else if topoheight == 0 {
+            return Ok(BLOCK_TIME_MILLIS);
+        } else {
+            topoheight
+        };
+
+        // check that we are not under the pruned topoheight
+        if let Some(pruned_topoheight) = storage.get_pruned_topoheight()? {
+            if topoheight - count < pruned_topoheight {
+                count = pruned_topoheight
+            }
+        }
+
+        let now_hash = storage.get_hash_at_topo_height(topoheight).await?;
+        let now_timestamp = storage.get_timestamp_for_block_hash(&now_hash).await?;
+
+        let count_hash = storage.get_hash_at_topo_height(topoheight - count).await?;
+        let count_timestamp = storage.get_timestamp_for_block_hash(&count_hash).await?;
+
+        let diff = (now_timestamp - count_timestamp) as u64;
+        Ok(diff / count)
     }
 }
 

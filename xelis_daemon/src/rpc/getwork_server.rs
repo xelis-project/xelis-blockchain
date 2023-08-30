@@ -247,7 +247,7 @@ impl<S: Storage> GetWorkServer<S> {
         }
 
         let block = self.blockchain.build_block_from_header(Immutable::Owned(miner_header)).await.context("Error while building block from header")?;
-        Ok(match self.blockchain.add_new_block(block, true).await {
+        Ok(match self.blockchain.add_new_block(block, true, true).await {
             Ok(_) => Response::BlockAccepted,
             Err(e) => {
                 debug!("Error while accepting miner block: {}", e);

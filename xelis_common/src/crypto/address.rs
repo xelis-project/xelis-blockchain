@@ -2,11 +2,13 @@ use core::fmt;
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 
-use crate::api::DataType;
+use crate::api::{DataElement, DataType, DataValue};
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
 use crate::config::{PREFIX_ADDRESS, TESTNET_PREFIX_ADDRESS};
+use crate::transaction::EXTRA_DATA_LIMIT_SIZE;
 use super::bech32::{Bech32Error, encode, convert_bits, decode};
 use super::key::PublicKey;
+use log::debug;
 use serde::de::Error as SerdeError;
 use anyhow::Error;
 
@@ -15,31 +17,31 @@ pub enum AddressType {
     Normal,
     // Data variant allow to integrate data in address for easier communication / data transfered
     // those data are directly integrated in the data part and can be transfered in the transaction directly
-    Data(DataType)
+    Data(DataElement)
 }
 
 #[derive(Clone)]
 pub struct Address<'a> {
     mainnet: bool,
     addr_type: AddressType,
-    pub_key: Cow<'a, PublicKey>
+    key: Cow<'a, PublicKey>
 }
 
 impl<'a> Address<'a> {
-    pub fn new(mainnet: bool, addr_type: AddressType, pub_key: Cow<'a, PublicKey>) -> Self {
+    pub fn new(mainnet: bool, addr_type: AddressType, key: Cow<'a, PublicKey>) -> Self {
         Self {
             mainnet,
             addr_type,
-            pub_key
+            key
         }
     }
 
     pub fn get_public_key(&self) -> &PublicKey {
-        &self.pub_key
+        &self.key
     }
 
     pub fn to_public_key(self) -> PublicKey {
-        self.pub_key.into_owned()
+        self.key.into_owned()
     }
 
     pub fn get_type(&self) -> &AddressType {
@@ -47,7 +49,7 @@ impl<'a> Address<'a> {
     }
 
     pub fn split(self) -> (PublicKey, AddressType) {
-        (self.pub_key.into_owned(), self.addr_type)
+        (self.key.into_owned(), self.addr_type)
     }
 
     pub fn is_normal(&self) -> bool {
@@ -59,6 +61,13 @@ impl<'a> Address<'a> {
 
     pub fn is_mainnet(&self) -> bool {
         self.mainnet
+    }
+
+    pub fn get_data(&self, name: String, data_type: DataType) -> Option<&DataValue> {
+        match &self.addr_type {
+            AddressType::Normal => None,
+            AddressType::Data(data) => data.get_value(name, data_type)
+        }
     }
 
     pub fn as_string(&self) -> Result<String, Bech32Error> {
@@ -98,6 +107,18 @@ impl<'a> Address<'a> {
     }
 }
 
+impl Into<PublicKey> for Address<'_> {
+    fn into(self) -> PublicKey {
+        self.to_public_key()
+    }
+}
+
+impl Into<AddressType> for Address<'_> {
+    fn into(self) -> AddressType {
+        self.addr_type
+    }
+}
+
 impl Serializer for AddressType {
     fn write(&self, writer: &mut Writer) {
         match self {
@@ -114,7 +135,16 @@ impl Serializer for AddressType {
     fn read(reader: &mut Reader) -> Result<AddressType, ReaderError> {
         let _type = match reader.read_u8()? {
             0 => AddressType::Normal,
-            1 => AddressType::Data(DataType::read(reader)?),
+            1 => {
+                let read = reader.total_read();
+                let addr_type = AddressType::Data(DataElement::read(reader)?);
+                if reader.total_read() - read > EXTRA_DATA_LIMIT_SIZE {
+                    debug!("Invalid data in integrated address, maximum size reached");
+                    return Err(ReaderError::InvalidSize)
+                }
+
+                addr_type
+            },
             _ => return Err(ReaderError::InvalidValue)
         };
         Ok(_type)
@@ -123,9 +153,9 @@ impl Serializer for AddressType {
 
 impl<'a> Serializer for Address<'a> {
     fn write(&self, writer: &mut Writer) {
-        writer.write_bool(&self.mainnet);
+        writer.write_bool(self.mainnet);
         self.addr_type.write(writer);
-        self.pub_key.write(writer);
+        self.key.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Address<'a>, ReaderError> {
@@ -136,7 +166,7 @@ impl<'a> Serializer for Address<'a> {
         Ok(Address {
             mainnet,
             addr_type,
-            pub_key: Cow::Owned(pub_key)
+            key: Cow::Owned(pub_key)
         })
     }
 }

@@ -1,5 +1,3 @@
-mod rpc;
-
 use std::sync::Arc;
 
 use actix_web_httpauth::{middleware::HttpAuthentication, extractors::basic::BasicAuth};
@@ -8,7 +6,11 @@ use log::{info, warn};
 use tokio::sync::Mutex;
 use xelis_common::{config, rpc_server::{RPCHandler, RPCServerHandler, json_rpc}};
 use actix_web::{get, HttpResponse, Responder, HttpServer, web::{Data, self}, App, dev::{ServerHandle, ServiceRequest}, Error, error::{ErrorUnauthorized, ErrorBadGateway, ErrorBadRequest}};
-use crate::wallet::{Wallet};
+use crate::wallet::Wallet;
+
+use super::rpc;
+
+pub type WalletRpcServerShared = Arc<WalletRpcServer>;
 
 pub struct AuthConfig {
     pub username: String,
@@ -22,7 +24,7 @@ pub struct WalletRpcServer {
 }
 
 impl WalletRpcServer {
-    pub async fn new(bind_address: String, wallet: Arc<Wallet>, auth_config: Option<AuthConfig>) -> Result<Arc<Self>> {
+    pub async fn new(bind_address: String, wallet: Arc<Wallet>, auth_config: Option<AuthConfig>) -> Result<WalletRpcServerShared> {
         let mut rpc_handler = RPCHandler::new(wallet);
         rpc::register_methods(&mut rpc_handler);
 
