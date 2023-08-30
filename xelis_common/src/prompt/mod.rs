@@ -11,7 +11,7 @@ use std::io::{Write, stdout, Error as IOError};
 use std::num::ParseFloatError;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize};
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
 use crossterm::terminal;
 use fern::colors::{ColoredLevelConfig, Color};
 use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
@@ -157,6 +157,11 @@ impl State {
                             buffer.push_str(&s);
                         }
                         Event::Key(key) => {
+                            // Windows bug - https://github.com/crossterm-rs/crossterm/issues/772
+                            if key.kind != KeyEventKind::Press {
+                                continue;
+                            }
+
                             match key.code {
                                 KeyCode::Up => {
                                     let mut buffer = self.user_input.lock()?;
