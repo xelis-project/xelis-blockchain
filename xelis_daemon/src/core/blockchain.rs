@@ -1765,9 +1765,14 @@ impl<S: Storage> Blockchain<S> {
 
     // verify the transaction and returns fees available
     // nonces allow us to support multiples tx from same owner in the same block
-    // txs must be sorted in ascending order based on account nonce 
+    // txs must be sorted in ascending order based on account nonce
     async fn verify_transaction_with_hash<'a>(&self, storage: &S, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool) -> Result<(), BlockchainError> {
         trace!("Verify transaction with hash {}", hash);
+
+        if !tx.verify_signature() {
+            return Err(BlockchainError::InvalidTransactionSignature)
+        }
+
         let owner_balances: &mut HashMap<&'a Hash, u64> = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
         {
             let balance = match owner_balances.entry(&XELIS_ASSET) {
