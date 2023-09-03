@@ -99,8 +99,8 @@ impl<S: Storage> DaemonRpcServer<S> {
         self.get_websocket().get_handler().get_tracked_events().await
     }
 
-    pub async fn is_tracking_event(&self, event: &NotifyEvent) -> bool {
-        self.get_websocket().get_handler().is_tracking_event(event).await
+    pub async fn is_event_tracked(&self, event: &NotifyEvent) -> bool {
+        self.get_websocket().get_handler().is_event_tracked(event).await
     }
 
     pub async fn notify_clients(&self, event: &NotifyEvent, value: Value) -> Result<(), anyhow::Error> {

@@ -59,3 +59,16 @@ pub struct GetBalanceParams {
 pub struct GetTransactionParams {
     pub hash: Hash
 }
+
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum NotifyEvent {
+    // When a new block is detected by wallet
+    // it contains Block struct as value
+    NewBlock,
+    // When a new asset is added to wallet
+    // Contains a Hash as value
+    NewAsset,
+    // When a new transaction is added to wallet
+    // Contains TransactionEntry struct as value
+    NewTransaction,
+}

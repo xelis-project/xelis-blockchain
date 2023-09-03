@@ -961,7 +961,7 @@ impl<S: Storage> Blockchain<S> {
 
             // broadcast to websocket this tx
             if let Some(rpc) = self.rpc.lock().await.as_ref() {
-                if rpc.is_tracking_event(&NotifyEvent::TransactionAddedInMempool).await {
+                if rpc.is_event_tracked(&NotifyEvent::TransactionAddedInMempool).await {
                     let rpc = rpc.clone();
                     tokio::spawn(async move {
                         let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) };
@@ -1742,7 +1742,7 @@ impl<S: Storage> Blockchain<S> {
             if let Some(rpc) = self.rpc.lock().await.as_ref() {
                 let previous_stable_height = self.get_stable_height();
                 if height != previous_stable_height {
-                    if rpc.is_tracking_event(&NotifyEvent::StableHeightChanged).await {
+                    if rpc.is_event_tracked(&NotifyEvent::StableHeightChanged).await {
                         let rpc = rpc.clone();
                         tokio::spawn(async move {
                             let event = json!(StableHeightChangedEvent {

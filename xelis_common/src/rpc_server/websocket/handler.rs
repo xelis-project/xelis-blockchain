@@ -30,7 +30,7 @@ where
         HashSet::from_iter(sessions.values().map(|e| e.keys().cloned()).flatten())
     }
 
-    pub async fn is_tracking_event(&self, event: &E) -> bool {
+    pub async fn is_event_tracked(&self, event: &E) -> bool {
         let sessions = self.sessions.lock().await;
         sessions
             .values()

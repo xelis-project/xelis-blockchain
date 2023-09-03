@@ -4,7 +4,7 @@ use actix_web::{get, web::{Data, Payload}, HttpRequest, Responder, HttpServer, A
 use log::{info, error};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use xelis_common::{rpc_server::{RPCHandler, websocket::{WebSocketHandler, WebSocketSessionShared, WebSocketServer}, RpcRequest, RpcResponseError, InternalRpcError}, crypto::{key::{Signature, SIGNATURE_LENGTH}, hash::hash}, serializer::{Serializer, ReaderError, Reader, Writer}};
+use xelis_common::{rpc_server::{RPCHandler, websocket::{WebSocketHandler, WebSocketSessionShared, WebSocketServer}, RpcRequest, RpcResponseError, InternalRpcError}, crypto::{key::{Signature, SIGNATURE_LENGTH}, hash::hash}, serializer::{Serializer, ReaderError, Reader, Writer}, api::wallet::NotifyEvent};
 use serde::{Deserialize, Serialize};
 use crate::{wallet::Wallet, config::XSWD_BIND_ADDRESS};
 
@@ -201,15 +201,20 @@ impl PermissionResult {
 }
 
 pub struct XSWDWebSocketHandler {
+    // RPC handler for methods
     handler: RPCHandler<Arc<Wallet>>,
-    applications: Mutex<HashMap<WebSocketSessionShared<Self>, ApplicationData>>
+    // All applications connected to the wallet
+    applications: Mutex<HashMap<WebSocketSessionShared<Self>, ApplicationData>>,
+    // Applications listening for events
+    listeners: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<NotifyEvent, Option<usize>>>>
 }
 
 impl XSWDWebSocketHandler {
     pub fn new(handler: RPCHandler<Arc<Wallet>>) -> Self {
         Self {
             handler,
-            applications: Mutex::new(HashMap::new())
+            applications: Mutex::new(HashMap::new()),
+            listeners: Mutex::new(HashMap::new())
         }
     }
 
@@ -221,7 +226,7 @@ impl XSWDWebSocketHandler {
 
     async fn verify_permission_for_request(&self, app: &mut ApplicationData, request: &RpcRequest) -> Result<(), RpcResponseError> {
         if !self.handler.has_method(&request.method) {
-            return Err(RpcResponseError::new(request.id.clone(), InternalRpcError::Custom(format!("Method {} was not found", request.method))))
+            return Err(RpcResponseError::new(request.id, InternalRpcError::Custom(format!("Method {} was not found", request.method))))
         }
 
         let permission = app.permissions.get(&request.method).map(|v| *v).unwrap_or(Permission::Ask);
@@ -230,25 +235,25 @@ impl XSWDWebSocketHandler {
             Permission::Ask => {
                 let result = self.handler.get_data()
                 .request_permission(app, PermissionRequest::Request(request)).await
-                .map_err(|msg| RpcResponseError::new(request.id.clone(), InternalRpcError::Custom(msg.to_string())))?;
+                .map_err(|msg| RpcResponseError::new(request.id, InternalRpcError::Custom(msg.to_string())))?;
 
                 match result {
                     PermissionResult::Allow => Ok(()),
-                    PermissionResult::Deny => Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR)),
+                    PermissionResult::Deny => Err(RpcResponseError::new(request.id, PERMISSION_DENIED_ERROR)),
                     PermissionResult::AlwaysAllow => {
                         app.permissions.insert(request.method.clone(), Permission::AcceptAlways);
                         Ok(())
                     },
                     PermissionResult::AlwaysDeny => {
                         app.permissions.insert(request.method.clone(), Permission::AcceptAlways);
-                        Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR))
+                        Err(RpcResponseError::new(request.id, PERMISSION_DENIED_ERROR))
                     }   
                 }
             }
             // User has already accepted this method
             Permission::AcceptAlways => Ok(()),
             // User has denied access to this method
-            Permission::DenyAlways => Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR))
+            Permission::DenyAlways => Err(RpcResponseError::new(request.id, PERMISSION_DENIED_ERROR))
         }
     }
 
@@ -323,19 +328,69 @@ impl XSWDWebSocketHandler {
         }))
     }
 
+    // register a new event listener for the specified connection/application
+    async fn subscribe_session_to_event(&self, session: &WebSocketSessionShared<Self>, event: NotifyEvent, id: Option<usize>) -> Result<(), RpcResponseError> {
+        let mut listeners = self.listeners.lock().await;
+        let events = listeners.entry(session.clone()).or_insert_with(HashMap::new);
+
+        if events.contains_key(&event) {
+            return Err(RpcResponseError::new(id, InternalRpcError::EventAlreadySubscribed));
+        }
+
+        events.insert(event, id);
+
+        Ok(())
+    }
+
+    // unregister an event listener for the specified connection/application
+    async fn unsubscribe_session_from_event(&self, session: &WebSocketSessionShared<Self>, event: NotifyEvent, id: Option<usize>) -> Result<(), RpcResponseError> {
+        let mut listeners = self.listeners.lock().await;
+        let events = listeners.get_mut(session).ok_or_else(|| RpcResponseError::new(id, InternalRpcError::EventNotSubscribed))?;
+
+        if events.remove(&event).is_none() {
+            return Err(RpcResponseError::new(id, InternalRpcError::EventNotSubscribed));
+        }
+
+        Ok(())
+    }
+
     async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
         let mut applications = self.applications.lock().await;
 
         // Application is already registered, verify permission and call the method
         if let Some(app) = applications.get_mut(session) {
             let request: RpcRequest = self.handler.parse_request(message)?;
+
+            // Verify first if the method exist (and that its not a built-in one)
+            let is_subscribe = request.method == "subscribe";
+            let is_unsubscribe = request.method == "unsubscribe";
+
+            if !self.handler.has_method(&request.method) && !is_subscribe && !is_unsubscribe {
+                return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
+            }
+
+            // let's check the permission set by user for this method
             self.verify_permission_for_request(app, &request).await?;
 
-            self.handler.execute_method(request).await.map(|v| Some(v))
+            if is_subscribe || is_unsubscribe {
+                // retrieve the event variant
+                let event = serde_json::from_value(
+                    request.params.ok_or_else(|| RpcResponseError::new(request.id, InternalRpcError::ExpectedParams))?)
+                    .map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e))
+                )?;
+                if is_subscribe {
+                    self.subscribe_session_to_event(session, event, request.id).await.map(|_| None)
+                } else {
+                    self.unsubscribe_session_from_event(session, event, request.id).await.map(|_| None)
+                }
+            } else {
+                // Call the method
+                self.handler.execute_method(request).await.map(|v| Some(v))
+            }
         } else {
             // Application is not registered, register it
-            match self.add_application(&mut applications, session, message).await.map(|v| Some(v)) {
-                Ok(v) => Ok(v),
+            match self.add_application(&mut applications, session, message).await {
+                Ok(v) => Ok(Some(v)),
                 Err(e) => {
                     // Send error message and then close the session
                     if let Err(e) = session.send_text(&e.to_json().to_string()).await {
@@ -357,6 +412,9 @@ impl WebSocketHandler for XSWDWebSocketHandler {
         if let Some(app) = applications.remove(session) {            
             info!("Application {} has disconnected", app.name);
         }
+
+        let mut listeners = self.listeners.lock().await;
+        listeners.remove(session);
 
         Ok(())
     }

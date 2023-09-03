@@ -188,7 +188,7 @@ impl Serializer for DataValue {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SubscribeParams<E> {
     pub notify: E
 }
