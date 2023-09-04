@@ -141,7 +141,7 @@ impl XSWD {
         })
     }
 
-    pub fn get_applications(&self) -> &XSWDWebSocketHandler {
+    pub fn get_handler(&self) -> &XSWDWebSocketHandler {
         self.websocket.get_handler()
     }
 
@@ -225,10 +225,6 @@ impl XSWDWebSocketHandler {
     }
 
     async fn verify_permission_for_request(&self, app: &mut ApplicationData, request: &RpcRequest) -> Result<(), RpcResponseError> {
-        if !self.handler.has_method(&request.method) {
-            return Err(RpcResponseError::new(request.id, InternalRpcError::Custom(format!("Method {} was not found", request.method))))
-        }
-
         let permission = app.permissions.get(&request.method).map(|v| *v).unwrap_or(Permission::Ask);
         match permission {
             // Request permission from user
