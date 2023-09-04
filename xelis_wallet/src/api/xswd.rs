@@ -1,14 +1,13 @@
-use std::{sync::Arc, collections::HashMap};
+use std::{sync::Arc, collections::{HashMap, HashSet}, borrow::Cow};
+use anyhow::Error;
 use async_trait::async_trait;
-use actix_web::{get, web::{Data, Payload}, HttpRequest, Responder, HttpServer, App, dev::ServerHandle, HttpResponse};
-use log::{info, error};
+use actix_web::{get, web::{Data, Payload, self}, HttpRequest, Responder, HttpServer, App, dev::ServerHandle, HttpResponse};
+use log::{info, error, debug};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use xelis_common::{rpc_server::{RPCHandler, websocket::{WebSocketHandler, WebSocketSessionShared, WebSocketServer}, RpcRequest, RpcResponseError, InternalRpcError}, crypto::{key::{Signature, SIGNATURE_LENGTH}, hash::hash}, serializer::{Serializer, ReaderError, Reader, Writer}, api::wallet::NotifyEvent};
+use xelis_common::{rpc_server::{RPCHandler, websocket::{WebSocketHandler, WebSocketSessionShared, WebSocketServer}, RpcRequest, RpcResponseError, InternalRpcError, RpcResponse}, crypto::{key::{Signature, SIGNATURE_LENGTH, PublicKey}, hash::hash}, serializer::{Serializer, ReaderError, Reader, Writer}, api::{wallet::NotifyEvent, EventResult}};
 use serde::{Deserialize, Serialize};
-use crate::{wallet::Wallet, config::XSWD_BIND_ADDRESS};
-
-use super::rpc;
+use crate::config::XSWD_BIND_ADDRESS;
 
 // XSWD Protocol (XELIS Secure WebSocket DApp)
 // is a way to communicate with the XELIS Wallet
@@ -25,9 +24,20 @@ use super::rpc;
 // For security reasons, in case the signed token leaks, at each connection,
 // the wallet will request the authorization of the user
 // but will keep already-configured permissions.
-pub struct XSWD {
-    websocket: Arc<WebSocketServer<XSWDWebSocketHandler>>,
+pub struct XSWD<W>
+where
+    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+{
+    websocket: Arc<WebSocketServer<XSWDWebSocketHandler<W>>>,
     handle: ServerHandle
+}
+
+#[async_trait]
+pub trait XSWDPermissionHandler {
+    // Handler function to request permission to user
+    async fn request_permission(&self, app_data: &ApplicationData, request: PermissionRequest<'_>) -> Result<PermissionResult, Error>;
+    // Public key to use to verify the signature
+    async fn get_public_key(&self) -> Result<&PublicKey, Error>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -111,20 +121,20 @@ impl Serializer for ApplicationData {
 
 const PERMISSION_DENIED_ERROR: InternalRpcError = InternalRpcError::CustomStr("Permission denied");
 
-impl XSWD {
-    pub fn new(wallet: Arc<Wallet>) -> Result<Self, anyhow::Error> {
+impl<W> XSWD<W>
+where
+    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+{
+    pub fn new(rpc_handler: RPCHandler<W>) -> Result<Self, anyhow::Error> {
         info!("Starting XSWD Server...");
-        let mut rpc_handler = RPCHandler::new(wallet);
-        rpc::register_methods(&mut rpc_handler);
-
         let websocket = WebSocketServer::new(XSWDWebSocketHandler::new(rpc_handler));
         let cloned_websocket = websocket.clone();
         let http_server = HttpServer::new(move || {
             let server = Arc::clone(&cloned_websocket);
             App::new()
                 .app_data(Data::from(server))
-                .service(endpoint)
                 .service(index)
+                .route("/xswd", web::get().to(endpoint::<W>))
         })
         .disable_signals()
         .bind(&XSWD_BIND_ADDRESS)?
@@ -141,7 +151,7 @@ impl XSWD {
         })
     }
 
-    pub fn get_handler(&self) -> &XSWDWebSocketHandler {
+    pub fn get_handler(&self) -> &XSWDWebSocketHandler<W> {
         self.websocket.get_handler()
     }
 
@@ -200,17 +210,23 @@ impl PermissionResult {
     }
 }
 
-pub struct XSWDWebSocketHandler {
+pub struct XSWDWebSocketHandler<W>
+where
+    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+{
     // RPC handler for methods
-    handler: RPCHandler<Arc<Wallet>>,
+    handler: RPCHandler<W>,
     // All applications connected to the wallet
     applications: Mutex<HashMap<WebSocketSessionShared<Self>, ApplicationData>>,
     // Applications listening for events
-    listeners: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<NotifyEvent, Option<usize>>>>
+    listeners: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<NotifyEvent, Option<usize>>>>,
 }
 
-impl XSWDWebSocketHandler {
-    pub fn new(handler: RPCHandler<Arc<Wallet>>) -> Self {
+impl<W> XSWDWebSocketHandler<W>
+where
+    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+{
+    pub fn new(handler: RPCHandler<W>) -> Self {
         Self {
             handler,
             applications: Mutex::new(HashMap::new()),
@@ -222,6 +238,38 @@ impl XSWDWebSocketHandler {
     // be careful by using it, and if you delete a session, please disconnect it
     pub fn get_applications(&self) -> &Mutex<HashMap<WebSocketSessionShared<Self>, ApplicationData>> {
         &self.applications
+    }
+
+    // get a HashSet of all events tracked
+    pub async fn get_tracked_events(&self) -> HashSet<NotifyEvent> {
+        let sessions = self.listeners.lock().await;
+        HashSet::from_iter(sessions.values().map(|e| e.keys().cloned()).flatten())
+    }
+
+    // verify if a event is tracked by XSWD
+    pub async fn is_event_tracked(&self, event: &NotifyEvent) -> bool {
+        let sessions = self.listeners.lock().await;
+        sessions
+            .values()
+            .find(|e| e.keys().into_iter().find(|x| *x == event).is_some())
+            .is_some()
+    }
+
+    // notify a new event to all connected WebSocket
+    pub async fn notify_event(&self, event: &NotifyEvent, value: Value) {
+        let value = json!(EventResult { event: Cow::Borrowed(event), value });
+        let sessions = self.listeners.lock().await;
+        for (session, subscriptions) in sessions.iter() {
+            if let Some(id) = subscriptions.get(event) {
+                let response = json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value)));
+                let session = session.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = session.send_text(response.to_string()).await {
+                        debug!("Error occured while notifying a new event: {}", e);
+                    };
+                });
+            }
+        }
     }
 
     async fn verify_permission_for_request(&self, app: &mut ApplicationData, request: &RpcRequest) -> Result<(), RpcResponseError> {
@@ -290,11 +338,15 @@ impl XSWDWebSocketHandler {
         }
 
         let wallet = self.handler.get_data();
-        // verify signature of application data
+        // verify signature of application data TODO
         if let Some(signature) = &app_data.signature {
             let bytes = app_data.to_bytes();
             let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
-            let key = wallet.get_public_key();
+            let key = wallet.get_public_key().await
+                .map_err(|e| {
+                    error!("error while retrieving public key: {}", e);
+                    RpcResponseError::new(None, InternalRpcError::CustomStr("Error while retrieving public key"))
+                })?;
 
             if !key.verify_signature(&hash(&bytes), signature) {
                 return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid signature for application data")));
@@ -402,7 +454,10 @@ impl XSWDWebSocketHandler {
 }
 
 #[async_trait]
-impl WebSocketHandler for XSWDWebSocketHandler {
+impl<W> WebSocketHandler for XSWDWebSocketHandler<W>
+where
+    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+{
     async fn on_close(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
         let mut applications = self.applications.lock().await;
         if let Some(app) = applications.remove(session) {            
@@ -434,8 +489,10 @@ async fn index() -> Result<impl Responder, actix_web::Error> {
     Ok(HttpResponse::Ok().body("XSWD is running !"))
 }
 
-#[get("/xswd")]
-async fn endpoint(server: Data<WebSocketServer<XSWDWebSocketHandler>>, request: HttpRequest, body: Payload) -> Result<impl Responder, actix_web::Error> {
+async fn endpoint<W>(server: Data<WebSocketServer<XSWDWebSocketHandler<W>>>, request: HttpRequest, body: Payload) -> Result<impl Responder, actix_web::Error>
+where
+    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+{
     let response = server.handle_connection(request, body).await?;
     Ok(response)
 }

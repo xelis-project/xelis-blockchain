@@ -25,18 +25,21 @@ use thiserror::Error;
 use log::{error, debug};
 
 #[cfg(feature = "api_server")]
-use crate::api::{
-    XSWD,
-    WalletRpcServer,
-    AuthConfig,
-    APIServer,
-    ApplicationData,
-    PermissionResult,
-    PermissionRequest
+use {
+    async_trait::async_trait,
+    crate::api::{
+        register_rpc_methods,
+        XSWD,
+        WalletRpcServer,
+        AuthConfig,
+        APIServer,
+        ApplicationData,
+        PermissionResult,
+        PermissionRequest,
+        XSWDPermissionHandler
+    },
+    xelis_common::prompt::ShareablePrompt
 };
-
-#[cfg(feature = "api_server")]
-use xelis_common::prompt::ShareablePrompt;
 
 #[derive(Error, Debug)]
 pub enum WalletError {
@@ -106,7 +109,7 @@ pub struct Wallet {
     network: Network,
     // RPC Server
     #[cfg(feature = "api_server")]
-    api_server: Mutex<Option<APIServer>>,
+    api_server: Mutex<Option<APIServer<Arc<Self>>>>,
     // Prompt for CLI
     // Only used for requesting permissions through it
     #[cfg(feature = "api_server")]
@@ -251,58 +254,17 @@ impl Wallet {
 
     #[cfg(feature = "api_server")]
     pub async fn enable_xswd(self: &Arc<Self>) -> Result<(), Error> {
+        use xelis_common::rpc_server::RPCHandler;
+
         let mut lock = self.api_server.lock().await;
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
         }
-        *lock = Some(APIServer::XSWD(XSWD::new(self.clone())?));
+        let mut rpc_handler = RPCHandler::new(self.clone());
+        register_rpc_methods(&mut rpc_handler);
+
+        *lock = Some(APIServer::XSWD(XSWD::new(rpc_handler)?));
         Ok(())
-    }
-
-    #[cfg(feature = "api_server")]
-    pub async fn request_permission(&self, app_data: &ApplicationData, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
-        if let Some(prompt) = self.prompt.lock().await.as_ref() {
-            match request {
-                PermissionRequest::Application(signed) => {
-                    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_data.get_name(), app_data.get_id());
-                    if signed {
-                        message = "NOTE: Application authorizaion was already approved previously.\r\n".to_string() + &message;
-                    }
-                    let accepted = prompt.read_valid_str_value(message, vec!["y", "n"]).await? == "y";
-                    if accepted {
-                        Ok(PermissionResult::Allow)
-                    } else {
-                        Ok(PermissionResult::Deny)
-                    }
-                },
-                PermissionRequest::Request(request) => {
-                    let params = if let Some(params) = &request.params {
-                        params.to_string()
-                    } else {
-                        "".to_string()
-                    };
-
-                    let message = format!(
-                        "XSWD: Request from {}: {}\r\nParams: {}\r\nDo you want to allow this request ?\r\n([A]llow / [D]eny / [AA] Always Allow / [AD] Always Deny): ",
-                        app_data.get_name(),
-                        request.method,
-                        params
-                    );
-
-                    let answer = prompt.read_valid_str_value(message, vec!["a", "d", "aa", "ad"]).await?;
-                    Ok(match answer.as_str() {
-                        "a" => PermissionResult::Allow,
-                        "d" => PermissionResult::Deny,
-                        "aa" => PermissionResult::AlwaysAllow,
-                        "ad" => PermissionResult::AlwaysDeny,
-                        _ => unreachable!()
-                    })
-                }
-            }
-        } else {
-            Err(WalletError::NoHandlerAvailable.into())
-        }
-
     }
 
     #[cfg(feature = "api_server")]
@@ -552,5 +514,57 @@ impl Wallet {
 
     pub fn get_network(&self) -> &Network {
         &self.network
+    }
+}
+
+#[cfg(feature = "api_server")]
+#[async_trait]
+impl XSWDPermissionHandler for Arc<Wallet> {
+    async fn request_permission(&self, app_data: &ApplicationData, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
+        if let Some(prompt) = self.prompt.lock().await.as_ref() {
+            match request {
+                PermissionRequest::Application(signed) => {
+                    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_data.get_name(), app_data.get_id());
+                    if signed {
+                        message = "NOTE: Application authorizaion was already approved previously.\r\n".to_string() + &message;
+                    }
+                    let accepted = prompt.read_valid_str_value(message, vec!["y", "n"]).await? == "y";
+                    if accepted {
+                        Ok(PermissionResult::Allow)
+                    } else {
+                        Ok(PermissionResult::Deny)
+                    }
+                },
+                PermissionRequest::Request(request) => {
+                    let params = if let Some(params) = &request.params {
+                        params.to_string()
+                    } else {
+                        "".to_string()
+                    };
+
+                    let message = format!(
+                        "XSWD: Request from {}: {}\r\nParams: {}\r\nDo you want to allow this request ?\r\n([A]llow / [D]eny / [AA] Always Allow / [AD] Always Deny): ",
+                        app_data.get_name(),
+                        request.method,
+                        params
+                    );
+
+                    let answer = prompt.read_valid_str_value(message, vec!["a", "d", "aa", "ad"]).await?;
+                    Ok(match answer.as_str() {
+                        "a" => PermissionResult::Allow,
+                        "d" => PermissionResult::Deny,
+                        "aa" => PermissionResult::AlwaysAllow,
+                        "ad" => PermissionResult::AlwaysDeny,
+                        _ => unreachable!()
+                    })
+                }
+            }
+        } else {
+            Err(WalletError::NoHandlerAvailable.into())
+        }
+    }
+
+    async fn get_public_key(&self) -> Result<&PublicKey, Error> {
+        Ok((self as &Wallet).get_public_key())
     }
 }

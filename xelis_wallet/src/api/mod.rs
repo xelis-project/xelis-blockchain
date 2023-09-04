@@ -8,16 +8,24 @@ pub use self::{
         XSWD,
         ApplicationData,
         PermissionResult,
-        PermissionRequest
-    }
+        PermissionRequest,
+        XSWDPermissionHandler
+    },
+    rpc::register_methods as register_rpc_methods
 };
 
-pub enum APIServer {
+pub enum APIServer<W>
+where
+    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+{
     RPCServer(WalletRpcServerShared),
-    XSWD(XSWD)
+    XSWD(XSWD<W>)
 }
 
-impl APIServer {
+impl<W> APIServer<W>
+where
+    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+{
     pub async fn stop(self) {
         match self {
             APIServer::RPCServer(server) => {
