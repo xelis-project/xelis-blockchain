@@ -256,7 +256,7 @@ where
     }
 
     // notify a new event to all connected WebSocket
-    pub async fn notify_event(&self, event: &NotifyEvent, value: Value) {
+    pub async fn notify(&self, event: &NotifyEvent, value: Value) {
         let value = json!(EventResult { event: Cow::Borrowed(event), value });
         let sessions = self.listeners.lock().await;
         for (session, subscriptions) in sessions.iter() {

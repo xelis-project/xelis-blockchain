@@ -38,7 +38,8 @@ use {
         PermissionRequest,
         XSWDPermissionHandler
     },
-    xelis_common::prompt::ShareablePrompt
+    xelis_common::prompt::ShareablePrompt,
+    xelis_common::rpc_server::RPCHandler
 };
 
 #[derive(Error, Debug)]
@@ -85,6 +86,8 @@ pub enum WalletError {
     RescanTopoheightTooHigh,
     #[error(transparent)]
     Any(#[from] Error),
+    #[error("No API Server is running")]
+    NoAPIServer,
     #[error("RPC Server is not running")]
     RPCServerNotRunning,
     #[error("RPC Server is already running")]
@@ -247,15 +250,16 @@ impl Wallet {
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
         }
-        let rpc_server = WalletRpcServer::new(bind_address, Arc::clone(self), config).await?;
+        let mut rpc_handler = RPCHandler::new(self.clone());
+        register_rpc_methods(&mut rpc_handler);
+
+        let rpc_server = WalletRpcServer::new(bind_address, rpc_handler, config).await?;
         *lock = Some(APIServer::RPCServer(rpc_server));
         Ok(())
     }
 
     #[cfg(feature = "api_server")]
     pub async fn enable_xswd(self: &Arc<Self>) -> Result<(), Error> {
-        use xelis_common::rpc_server::RPCHandler;
-
         let mut lock = self.api_server.lock().await;
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
@@ -273,6 +277,11 @@ impl Wallet {
         let rpc_server = lock.take().ok_or(WalletError::RPCServerNotRunning)?;
         rpc_server.stop().await;
         Ok(())
+    }
+
+    #[cfg(feature = "api_server")]
+    pub fn get_api_server<'a>(&'a self) -> &Mutex<Option<APIServer<Arc<Self>>>> {
+        &self.api_server
     }
 
     // Verify if a password is valid or not

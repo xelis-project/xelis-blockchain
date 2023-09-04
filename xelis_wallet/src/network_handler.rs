@@ -3,7 +3,7 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance};
+use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, api::wallet::NotifyEvent};
 
 use crate::{daemon_api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
 
@@ -126,6 +126,15 @@ impl NetworkHandler {
                 if let Some(reward) = response.reward {
                     let coinbase = EntryData::Coinbase(reward);
                     let entry = TransactionEntry::new(response.data.hash.into_owned(), topoheight, None, None, coinbase);
+
+                    // New coinbase entry, inform listeners
+                    #[cfg(feature = "api_server")]
+                    {
+                        if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
+                            api_server.notify_event(&NotifyEvent::NewTransaction, &entry).await;
+                        }
+                    }
+
                     let mut storage = self.wallet.get_storage().write().await;
                     storage.save_transaction(entry.get_hash(), &entry)?;
                 } else {
@@ -135,6 +144,7 @@ impl NetworkHandler {
 
             let mut latest_nonce_sent = None;
             let (block, txs) = block.split();
+            // TODO check only executed txs in this block
             for (tx_hash, tx) in block.get_txs_hashes().iter().zip(txs) {
                 let tx = tx.into_owned();
                 let is_owner = *tx.get_owner() == *address.get_public_key();
@@ -175,7 +185,18 @@ impl NetworkHandler {
                 if let Some(entry) = entry {
                     let entry = TransactionEntry::new(tx_hash.clone(), topoheight, fee, nonce, entry);
                     let mut storage = self.wallet.get_storage().write().await;
-                    storage.save_transaction(entry.get_hash(), &entry)?;
+
+                    if !storage.has_transaction(entry.get_hash())? {
+                        // notify listeners of new transaction
+                        #[cfg(feature = "api_server")]
+                        {
+                            if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
+                                api_server.notify_event(&NotifyEvent::NewTransaction, &entry).await;
+                            }
+                        }
+    
+                        storage.save_transaction(entry.get_hash(), &entry)?;
+                    }
                 }
 
                 if is_owner {

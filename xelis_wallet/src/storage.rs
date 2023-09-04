@@ -170,6 +170,10 @@ impl EncryptedStorage {
         self.save_to_disk(&self.transactions, hash.as_bytes(), &transaction.to_bytes())
     }
 
+    pub fn has_transaction(&self, hash: &Hash) -> Result<bool> {
+        self.contains_data(&self.transactions, hash.as_bytes())
+    }
+
     pub fn get_nonce(&self) -> Result<u64> {
         self.load_from_disk(&self.extra, NONCE_KEY)
     }
