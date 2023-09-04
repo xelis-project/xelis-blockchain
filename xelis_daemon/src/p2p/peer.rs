@@ -1,6 +1,6 @@
 use lru::LruCache;
 use xelis_common::config::{PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP};
-use xelis_common::globals::get_current_time;
+use xelis_common::utils::get_current_time;
 use xelis_common::{
     crypto::hash::Hash,
     config::PEER_TIMEOUT_REQUEST_OBJECT,

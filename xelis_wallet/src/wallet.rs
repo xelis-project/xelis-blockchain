@@ -9,7 +9,7 @@ use xelis_common::config::XELIS_ASSET;
 use xelis_common::crypto::address::Address;
 use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey};
-use xelis_common::globals::format_coin;
+use xelis_common::utils::format_coin;
 use xelis_common::network::Network;
 use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};

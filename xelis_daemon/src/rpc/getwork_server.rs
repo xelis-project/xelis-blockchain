@@ -8,7 +8,7 @@ use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
-use xelis_common::{crypto::{key::PublicKey, hash::Hash}, globals::get_current_timestamp, api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, serializer::Serializer, block::{BlockHeader, BlockMiner, Difficulty}, config::{DEV_PUBLIC_KEY, STABLE_LIMIT}, immutable::Immutable, rpc_server::{RpcResponseError, InternalRpcError}};
+use xelis_common::{crypto::{key::PublicKey, hash::Hash}, utils::get_current_timestamp, api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, serializer::Serializer, block::{BlockHeader, BlockMiner, Difficulty}, config::{DEV_PUBLIC_KEY, STABLE_LIMIT}, immutable::Immutable, rpc_server::{RpcResponseError, InternalRpcError}};
 use crate::core::{blockchain::Blockchain, storage::Storage};
 
 pub type SharedGetWorkServer<S> = Arc<GetWorkServer<S>>;

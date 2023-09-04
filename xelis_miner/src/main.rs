@@ -12,7 +12,7 @@ use xelis_common::{
     serializer::Serializer,
     difficulty::check_difficulty,
     config::{VERSION, DEV_ADDRESS},
-    globals::{get_current_timestamp, format_hashrate, format_difficulty},
+    utils::{get_current_timestamp, format_hashrate, format_difficulty},
     crypto::{hash::{Hashable, Hash, hash}, address::Address},
     api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel, ShareablePrompt, self},
 };

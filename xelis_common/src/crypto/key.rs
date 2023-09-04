@@ -1,5 +1,5 @@
 use crate::api::DataElement;
-use crate::globals::get_network;
+use crate::utils::get_network;
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 use super::address::{Address, AddressType};
 use super::hash::Hash;

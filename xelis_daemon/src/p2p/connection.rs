@@ -8,7 +8,7 @@ use humantime::format_duration;
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedWriteHalf, OwnedReadHalf};
 use xelis_common::{
-    globals::get_current_time,
+    utils::get_current_time,
     serializer::{Reader, Serializer},
 };
 use std::fmt::{Display, Error, Formatter};

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use xelis_common::{
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
-    globals::calculate_tx_fee,
+    utils::calculate_tx_fee,
     serializer::{Writer, Serializer},
     crypto::{key::{SIGNATURE_LENGTH, PublicKey, KeyPair}, hash::Hash}, api::wallet::FeeBuilder
 };

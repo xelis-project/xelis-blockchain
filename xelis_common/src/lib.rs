@@ -5,7 +5,7 @@ pub mod block;
 pub mod account;
 pub mod api;
 
-pub mod globals;
+pub mod utils;
 pub mod config;
 pub mod immutable;
 pub mod difficulty;

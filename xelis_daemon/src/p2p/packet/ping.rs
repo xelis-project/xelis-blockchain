@@ -7,7 +7,7 @@ use xelis_common::{
         ReaderError,
         Reader
     },
-    globals::{
+    utils::{
         ip_to_bytes,
         ip_from_bytes
     }, block::Difficulty

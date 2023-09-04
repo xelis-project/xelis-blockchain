@@ -12,7 +12,7 @@ use xelis_common::{
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::{BlockHeader, Block},
-    globals::get_current_time, immutable::Immutable, account::VersionedNonce
+    utils::get_current_time, immutable::Immutable, account::VersionedNonce
 };
 use crate::{core::{blockchain::Blockchain, storage::Storage}, p2p::{chain_validator::ChainValidator, packet::{bootstrap_chain::{StepRequest, StepResponse, BootstrapChainResponse, MAX_ITEMS_PER_PAGE, BlockMetadata}, inventory::{NOTIFY_MAX_LEN, NotifyInventoryRequest, NotifyInventoryResponse}}, tracker::WaiterResponse}};
 use crate::core::error::BlockchainError;
