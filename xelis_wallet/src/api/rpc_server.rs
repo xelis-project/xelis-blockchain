@@ -19,7 +19,6 @@ where
     W: Clone + Send + Sync + 'static
 {
     handle: Mutex<Option<ServerHandle>>,
-    rpc_handler: Arc<RPCHandler<W>>,
     websocket: WebSocketServerShared<EventWebSocketHandler<W, NotifyEvent>>,
     auth_config: Option<AuthConfig>
 }
@@ -29,11 +28,9 @@ where
     W: Clone + Send + Sync + 'static
 {
     pub async fn new(bind_address: String, rpc_handler: RPCHandler<W>, auth_config: Option<AuthConfig>) -> Result<WalletRpcServerShared<W>> {
-        let rpc_handler = Arc::new(rpc_handler);
         let server = Arc::new(Self {
             handle: Mutex::new(None),
-            websocket: WebSocketServer::new(EventWebSocketHandler::new(rpc_handler.clone())),
-            rpc_handler,
+            websocket: WebSocketServer::new(EventWebSocketHandler::new(rpc_handler)),
             auth_config
         });
 
@@ -104,7 +101,7 @@ where
     W: Clone + Send + Sync + 'static
 {
     fn get_rpc_handler(&self) -> &RPCHandler<W> {
-        &self.rpc_handler
+        &self.get_websocket().get_handler().get_rpc_handler()
     }
 }
 

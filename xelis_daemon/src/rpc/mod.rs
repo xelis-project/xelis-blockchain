@@ -28,7 +28,6 @@ pub type SharedDaemonRpcServer<S> = Arc<DaemonRpcServer<S>>;
 
 pub struct DaemonRpcServer<S: Storage> {
     handle: Mutex<Option<ServerHandle>>,
-    rpc_handler: Arc<RPCHandler<Arc<Blockchain<S>>>>,
     websocket: WebSocketServerShared<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>>,
     getwork: Option<SharedGetWorkServer<S>>
 }
@@ -58,15 +57,12 @@ impl<S: Storage> DaemonRpcServer<S> {
         let mut rpc_handler = RPCHandler::new(blockchain);
         rpc::register_methods(&mut rpc_handler);
 
-        let rpc_handler = Arc::new(rpc_handler);
-
         // create the default websocket server (support event & rpc methods)
-        let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler.clone()));
+        let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler));
 
         let server = Arc::new(Self {
             handle: Mutex::new(None),
             websocket: ws,
-            rpc_handler,
             getwork,
         });
 
@@ -132,7 +128,7 @@ impl<S: Storage> WebSocketServerHandler<EventWebSocketHandler<Arc<Blockchain<S>>
 
 impl<S: Storage> RPCServerHandler<Arc<Blockchain<S>>> for DaemonRpcServer<S> {
     fn get_rpc_handler(&self) -> &RPCHandler<Arc<Blockchain<S>>> {
-        &self.rpc_handler
+        self.get_websocket().get_handler().get_rpc_handler()
     }
 }
 
