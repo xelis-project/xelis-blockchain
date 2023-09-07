@@ -16,7 +16,7 @@ use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DA
 use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
 use crate::mnemonics;
-use crate::network_handler::{NetworkHandler, SharedNetworkHandler};
+use crate::network_handler::{NetworkHandler, SharedNetworkHandler, NetworkError};
 use crate::storage::{EncryptedStorage, Storage};
 use crate::transaction_builder::TransactionBuilder;
 use chacha20poly1305::{aead::OsRng, Error as CryptoError};
@@ -98,7 +98,9 @@ pub enum WalletError {
     EmptyName,
     #[cfg(feature = "api_server")]
     #[error("No handler available for this request")]
-    NoHandlerAvailable
+    NoHandlerAvailable,
+    #[error(transparent)]
+    NetworkError(#[from] NetworkError)
 }
 
 pub struct Wallet {
@@ -434,7 +436,7 @@ impl Wallet {
     pub async fn set_offline_mode(&self) -> Result<(), WalletError> {
         let mut handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.take() {
-            network_handler.stop().await;
+            network_handler.stop().await?;
         } else {
             return Err(WalletError::NotOnlineMode)
         }
@@ -444,13 +446,13 @@ impl Wallet {
 
     pub async fn rescan(&self, topoheight: u64) -> Result<(), WalletError> {
         if !self.is_online().await {
-            // user have to set in offline mode himself first
-            return Err(WalletError::AlreadyOnlineMode.into())
+            // user have to set it online
+            return Err(WalletError::NotOnlineMode)
         }
 
         let handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.as_ref() {
-            network_handler.stop().await;
+            network_handler.stop().await?;
             {
                 let mut storage = self.get_storage().write().await;
                 if topoheight >= storage.get_daemon_topoheight()? {

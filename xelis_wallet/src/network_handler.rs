@@ -13,7 +13,13 @@ pub type SharedNetworkHandler = Arc<NetworkHandler>;
 #[derive(Debug, Error)]
 pub enum NetworkError {
     #[error("network handler is already running")]
-    AlreadyRunning
+    AlreadyRunning,
+    #[error("network handler is not running")]
+    NotRunning,
+    #[error(transparent)]
+    TaskError(#[from] tokio::task::JoinError),
+    #[error(transparent)]
+    DaemonAPIError(#[from] Error)
 }
 
 pub struct NetworkHandler {
@@ -56,15 +62,16 @@ impl NetworkHandler {
         Ok(())
     }
 
-    pub async fn stop(&self) {
+    pub async fn stop(&self) -> Result<(), NetworkError> {
         if let Some(handle) = self.task.lock().await.take() {
             if handle.is_finished() {
-                if let Err(e) = handle.await {
-                    debug!("Network handler was finished with error: {}", e);
-                }
+                handle.await??;
             } else {
                 handle.abort();
             }
+            Ok(())
+        } else {
+            Err(NetworkError::NotRunning)
         }
     }
 
