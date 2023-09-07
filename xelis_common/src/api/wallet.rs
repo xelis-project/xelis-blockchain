@@ -64,7 +64,10 @@ pub struct GetTransactionParams {
 pub enum NotifyEvent {
     // When a new block is detected by wallet
     // it contains Block struct as value
-    NewBlock,
+    // NewBlock,
+    // When a a get_info request is made
+    // and we receive a different topoheight than previous one
+    NewChainInfo,
     // When a new asset is added to wallet
     // Contains a Hash as value
     NewAsset,

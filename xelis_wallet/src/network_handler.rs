@@ -145,7 +145,7 @@ impl NetworkHandler {
             let mut latest_nonce_sent = None;
             let (block, txs) = block.split();
             // TODO check only executed txs in this block
-            for (tx_hash, tx) in block.get_txs_hashes().iter().zip(txs) {
+            for (tx_hash, tx) in block.into_owned().take_txs_hashes().into_iter().zip(txs) {
                 let tx = tx.into_owned();
                 let is_owner = *tx.get_owner() == *address.get_public_key();
                 let fee = if is_owner { Some(tx.get_fee()) } else { None };
@@ -183,7 +183,7 @@ impl NetworkHandler {
                 };
 
                 if let Some(entry) = entry {
-                    let entry = TransactionEntry::new(tx_hash.clone(), topoheight, fee, nonce, entry);
+                    let entry = TransactionEntry::new(tx_hash, topoheight, fee, nonce, entry);
                     let mut storage = self.wallet.get_storage().write().await;
 
                     if !storage.has_transaction(entry.get_hash())? {
@@ -271,6 +271,14 @@ impl NetworkHandler {
             }
             debug!("New height detected for chain: {}", info.topoheight);
 
+            // New get_info with different topoheight, inform listeners
+            #[cfg(feature = "api_server")]
+            {
+                if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
+                    api_server.notify_event(&NotifyEvent::NewChainInfo, &info).await;
+                }
+            }
+
             if let Err(e) = self.sync_new_blocks(&address, current_topoheight, info.topoheight).await {
                 error!("Error while syncing new blocks: {}", e);
             }
@@ -307,6 +315,14 @@ impl NetworkHandler {
                 let mut storage = self.wallet.get_storage().write().await;
                 for asset in &response {
                     if !storage.contains_asset(asset)? {
+                        // New asset added to the wallet, inform listeners
+                        #[cfg(feature = "api_server")]
+                        {
+                            if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
+                                api_server.notify_event(&NotifyEvent::NewAsset, &asset).await;
+                            }
+                        }
+
                         storage.add_asset(asset)?;
                     }
                 }
