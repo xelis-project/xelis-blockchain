@@ -62,7 +62,7 @@ impl PrivateKey {
     }
 }
 
-// Extended private key
+// Expanded private key
 pub struct ExpandedPrivateKey {
     _inner: PrivateKey,
     key: PublicKey,
