@@ -112,12 +112,8 @@ impl PublicKey {
         }
     }
 
-    pub fn encrypt(&self, value: u64) -> Result<Ciphertext, CryptoError> {
-        let plaintext = Integer::from(value);
-        if plaintext >= self.n {
-            return Err(CryptoError::InvalidPlaintext)
-        }
-
+    // Generate r = 0 < r < n
+    pub fn generate_random_r(&self) -> Integer  {
         // Create a random number generator
         let mut rng = RandState::new();
         // Generate a random number between 0 and n
@@ -127,6 +123,16 @@ impl PublicKey {
             r += 1;
         }
 
+        r
+    }
+
+    pub fn encrypt(&self, value: u64) -> Result<Ciphertext, CryptoError> {
+        let plaintext = Integer::from(value);
+        if plaintext >= self.n {
+            return Err(CryptoError::InvalidPlaintext)
+        }
+
+        let r = self.generate_random_r();
         // c = g^value * r^n (mod n^2)
         let c1: Integer = self.g.pow_mod_ref(&plaintext, &self.nn)
             .ok_or(CryptoError::InvalidOperation)?
