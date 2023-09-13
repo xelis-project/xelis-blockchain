@@ -17,7 +17,9 @@ pub enum CryptoError {
     #[error("Invalid plaintext")]
     InvalidPlaintext,
     #[error("Invalid decrypted value")]
-    InvalidDecryptedValue
+    InvalidDecryptedValue,
+    #[error("Invalid bits size")]
+    InvalidBitsSize
 }
 
 pub struct PrivateKey {
@@ -26,23 +28,25 @@ pub struct PrivateKey {
 }
 
 impl PrivateKey {
-    pub fn new(p: Integer, q: Integer) -> Self {
+    pub fn new(p: Integer, q: Integer) -> Result<Self, CryptoError> {
         if p.significant_bits() != PRIME_BITS_SIZE as u32 || q.significant_bits() != PRIME_BITS_SIZE as u32 {
-            panic!("Invalid prime size p: {}, q: {}", p.significant_bits(), q.significant_bits())
+            return Err(CryptoError::InvalidBitsSize)
         }
 
-        Self {
-            p,
-            q
-        }
+        Ok(
+            Self {
+                p,
+                q
+            }
+        )
     }
 
     // n = p * q
-    pub fn get_public_key(&self) -> PublicKey {
+    pub fn get_public_key(&self) -> Result<PublicKey, CryptoError> {
         PublicKey::new((&self.p * &self.q).into())
     }
 
-    pub fn expand(self) -> ExpandedPrivateKey {
+    pub fn expand(self) -> Result<ExpandedPrivateKey, CryptoError> {
         let n: Integer = (&self.p * &self.q).into();
 
         // lambda = (p-1) * (q-1)
@@ -53,12 +57,14 @@ impl PrivateKey {
         // boost performance, use invert_ref instead of extended GCD
         let mu: Integer = lambda.invert_ref(&n).unwrap().into();
 
-        ExpandedPrivateKey {
-            key: self.get_public_key(),
-            _inner: self,
-            lambda,
-            mu,
-        }
+        Ok(
+            ExpandedPrivateKey {
+                key: self.get_public_key()?,
+                _inner: self,
+                lambda,
+                mu,
+            }
+        )
     }
 }
 
@@ -104,12 +110,18 @@ pub struct PublicKey {
 }
 
 impl PublicKey {
-    pub fn new(n: Integer) -> PublicKey {
-        Self {
-            g: &n + Integer::from(1),
-            nn:  n.square_ref().into(),
-            n,
+    pub fn new(n: Integer) -> Result<PublicKey, CryptoError> {
+        if n.significant_bits() != PRIME_BITS_SIZE as u32 * 2 {
+            return Err(CryptoError::InvalidCiphertext)
         }
+
+        Ok(
+            Self {
+                g: &n + Integer::from(1),
+                nn:  n.square_ref().into(),
+                n,
+            }
+        )
     }
 
     // Generate r = 0 < r < n
@@ -238,7 +250,7 @@ mod tests {
         let p = Integer::from_str("26946565058508556335703057678479193452304038415320320612739026385225298610008864186185248157667939692602914497266158802716790474833947772826137352516209983737629258254217925182069688200921824682629208537057830159202300700254744398401385317004557290421622059016544387100633064484394429299712612387988787656113893086893594807335060378763142902668584121938589954668585758578121584153647867617579207136469100271575899315110489594116527521092010000583127405316221856395802750870474485516597674185947739156275281462539159055254987599109169478119201211066791295912114221003467197211019730323321923834862781706821839382425319").unwrap();
         let q = Integer::from_str("30285103848165032371432135057580005479137385975250075866315362110663210942596615960809988401619020086330330323690859032150264976037456961162655919684888298622597867407709454379915077961482177205641007860316172930122789053649106796228331050588480104621044323245329249654789956970860084725229793041508008076837900555099704375472732833392770407190572998528495204954650991713220053319696501576522725356507569592271456467055934422479932228786490254699513808991388789871837682571567374631101622153747215563532592329904419750104317088696095242472742008866975771374389004813336895149595148338528131027712001071213942813066383").unwrap();
 
-        PrivateKey::new(p, q).expand()
+        PrivateKey::new(p, q).unwrap().expand().unwrap()
     }
 
     #[test]
