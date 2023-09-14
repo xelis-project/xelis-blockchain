@@ -88,10 +88,10 @@ impl ExpandedPrivateKey {
             .into();
 
         // L(x) = (x - 1) / n
-        let plaintext = (&c_lambda - Integer::from(1)) / &self.key.n;
+        let l_ = (c_lambda - Integer::from(1)) / &self.key.n;
         // m = L(c^lambda mod n^2) * mu mod n
-        let result = plaintext * &self.mu % &self.key.n;
-        Ok(result.to_u64().ok_or(CryptoError::InvalidDecryptedValue)?)
+        let plaintext = l_ * &self.mu % &self.key.n;
+        Ok(plaintext.to_u64().ok_or(CryptoError::InvalidDecryptedValue)?)
     }
 
     pub fn get_public_key(&self) -> &PublicKey {
@@ -252,10 +252,21 @@ mod tests {
 
         PrivateKey::new(p, q).unwrap().expand().unwrap()
     }
-
+    
     #[test]
     fn test_generate_private_key() {
-        _generate_private_key();
+        let key = _generate_private_key();
+        assert!(key._inner.p != key._inner.q);
+        assert!(key.key.n.significant_bits() == key._inner.p.significant_bits() + key._inner.q.significant_bits());
+        assert!(key._inner.p * key._inner.q == key.key.n);
+    }
+
+    #[test]
+    fn test_public_key_gcd_g_n_equal_one() {
+        let private_key = _generate_private_key();
+        let public_key = private_key.get_public_key();
+        let gcd: Integer = public_key.g.gcd_ref(&public_key.n).into();
+        assert!(gcd == 1);
     }
 
     #[test]
