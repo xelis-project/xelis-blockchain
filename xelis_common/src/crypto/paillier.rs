@@ -125,7 +125,7 @@ impl PublicKey {
     }
 
     // Generate r = 0 < r < n
-    pub fn generate_random_r(&self) -> Integer  {
+    pub fn generate_random_r(&self) -> Integer {
         // Create a random number generator
         let mut rng = RandState::new();
         // Generate a random number between 0 and n
@@ -149,11 +149,28 @@ impl PublicKey {
         let c1: Integer = self.g.pow_mod_ref(&plaintext, &self.nn)
             .ok_or(CryptoError::InvalidOperation)?
             .into();
-        let c2: Integer = r.pow_mod_ref(&self.n, &self.nn)
-            .ok_or(CryptoError::InvalidOperation)?
-            .into();
+        let c2: Integer = r.pow_mod(&self.n, &self.nn)
+            .map_err(|_| CryptoError::InvalidOperation)?;
 
         let mul: Integer = c1 * c2;
+        Ok(Ciphertext::new(mul % &self.nn))
+    }
+
+    pub fn blind(&self, c1: Ciphertext) -> Result<Ciphertext, CryptoError> {
+        let r = self.generate_random_r();
+        self.blind_with(c1, r)
+    }
+
+    pub fn blind_with(&self, c1: Ciphertext, r: Integer) -> Result<Ciphertext, CryptoError> {
+        if !c1.is_valid(self) {
+            return Err(CryptoError::InvalidCiphertext)
+        }
+
+        // C = c * r^n mod n^2
+        let c2: Integer = r.pow_mod(&self.n, &self.nn)
+            .map_err(|_| CryptoError::InvalidOperation)?;
+
+        let mul: Integer = c1.value * c2;
         Ok(Ciphertext::new(mul % &self.nn))
     }
 
@@ -275,6 +292,18 @@ mod tests {
         let value = 10u64;
         let ciphertext = key.get_public_key().encrypt(value).unwrap();
         let decrypted = key.decrypt(ciphertext).unwrap();
+        assert_eq!(value, decrypted);
+    }
+
+    #[test]
+    fn test_blind() {
+        let key = _generate_private_key();
+        let value = 10u64;
+
+        let ciphertext = key.get_public_key().encrypt(value).unwrap();
+        let blinded = key.get_public_key().blind(ciphertext).unwrap();
+
+        let decrypted = key.decrypt(blinded).unwrap();
         assert_eq!(value, decrypted);
     }
 
