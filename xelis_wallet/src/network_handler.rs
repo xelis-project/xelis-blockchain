@@ -3,9 +3,15 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, api::wallet::NotifyEvent};
+use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance};
 
 use crate::{daemon_api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
+
+#[cfg(feature = "api_server")]
+use {
+    std::borrow::Cow,
+    xelis_common::api::wallet::{NotifyEvent, BalanceChanged}
+};
 
 // NetworkHandler must be behind a Arc to be accessed from Wallet (to stop it) or from tokio task
 pub type SharedNetworkHandler = Arc<NetworkHandler>;
@@ -105,6 +111,17 @@ impl NetworkHandler {
                     }
                 };
                 let balance = res.balance;
+
+                // Inform the change of the balance
+                #[cfg(feature = "api_server")]
+                {
+                    if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
+                        api_server.notify_event(&NotifyEvent::BalanceChanged, &BalanceChanged {
+                            asset: Cow::Borrowed(&asset),
+                            balance: balance.get_balance()
+                        }).await;
+                    }
+                }
 
                 // lets write the final balance
                 let mut storage = self.wallet.get_storage().write().await;

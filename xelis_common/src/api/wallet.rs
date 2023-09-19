@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{transaction::{TransactionType, Transaction}, crypto::{key::PublicKey, hash::Hash}};
@@ -60,6 +62,12 @@ pub struct GetTransactionParams {
     pub hash: Hash
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct BalanceChanged<'a> {
+    pub asset: Cow<'a, Hash>,
+    pub balance: u64
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {
     // When a new block is detected by wallet
@@ -74,4 +82,7 @@ pub enum NotifyEvent {
     // When a new transaction is added to wallet
     // Contains TransactionEntry struct as value
     NewTransaction,
+    // When a balance is changed
+    // Contains a BalanceChanged as value
+    BalanceChanged,
 }
