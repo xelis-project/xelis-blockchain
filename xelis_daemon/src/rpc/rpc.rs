@@ -84,7 +84,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
     Ok(value)
 }
 
-pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transaction>, hash: &Hash, in_mempool: bool) -> Result<Value, InternalRpcError> {
+pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transaction>, hash: &Hash, in_mempool: bool, first_seen: Option<u64>) -> Result<Value, InternalRpcError> {
     let blocks = if storage.has_tx_blocks(hash).context("Error while checking if tx in included in blocks")? {
         Some(storage.get_blocks_for_tx(hash).context("Error while retrieving in which blocks its included")?)
     } else {
@@ -93,20 +93,18 @@ pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transact
 
     let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(tx) };
     let executed_in_block = storage.get_block_executer_for_tx(hash).ok();
-    Ok(json!(TransactionResponse { blocks, executed_in_block, data, in_mempool }))
+    Ok(json!(TransactionResponse { blocks, executed_in_block, data, in_mempool, first_seen }))
 }
 
 // first check on disk, then check in mempool
 pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, mempool: &Mempool, hash: &Hash) -> Result<Value, InternalRpcError> {
-    let (transaction, in_mempool) = match storage.get_transaction(hash).await {
-        Ok(tx) => (tx, false),
+    match storage.get_transaction(hash).await {
+        Ok(tx) => get_transaction_response(storage, &tx, hash, false, None).await,
         Err(_) => {
-            let tx = mempool.get_tx(hash).context("Error while retrieving transaction from disk and mempool")?;
-            (tx, true)
+            let tx = mempool.get_sorted_tx(hash).context("Error while retrieving transaction from disk and mempool")?;
+            get_transaction_response(storage, &tx.get_tx(), hash, true, Some(tx.get_first_seen())).await
         }
-    };
-
-    get_transaction_response(storage, &transaction, hash, in_mempool).await
+    }
 }
 
 pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>) {
@@ -389,7 +387,7 @@ async fn get_mempool<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) ->
     let storage = blockchain.get_storage().read().await;
     let mut transactions: Vec<Value> = Vec::new();
     for (hash, sorted_tx) in mempool.get_txs() {
-        transactions.push(get_transaction_response(&*storage, sorted_tx.get_tx(), hash, true).await?);
+        transactions.push(get_transaction_response(&*storage, sorted_tx.get_tx(), hash, true, Some(sorted_tx.get_first_seen())).await?);
     }
 
     Ok(json!(transactions))

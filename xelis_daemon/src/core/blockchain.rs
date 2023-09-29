@@ -1050,7 +1050,7 @@ impl<S: Storage> Blockchain<S> {
                         nonces.insert(transaction.get_owner(), 0);
                         0
                     };
-    
+
                     if account_nonce < transaction.get_nonce() {
                         trace!("Skipping {} with {} fees because another TX should be selected first due to nonce", hash, format_coin(fee.0));
                     } else if account_nonce == transaction.get_nonce() {

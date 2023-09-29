@@ -3,6 +3,7 @@ use std::cmp::Reverse;
 use std::collections::{HashMap, BTreeMap, HashSet};
 use std::sync::Arc;
 use log::{trace, debug};
+use xelis_common::utils::get_current_time;
 use xelis_common::{
     crypto::{
         hash::Hash,
@@ -15,6 +16,7 @@ use xelis_common::{
 #[derive(serde::Serialize)]
 pub struct SortedTx {
     tx: Arc<Transaction>,
+    first_seen: u64, // timestamp when the tx was added
     size: usize
 }
 
@@ -80,6 +82,7 @@ impl Mempool {
 
         let sorted_tx = SortedTx {
             size: tx.size(),
+            first_seen: get_current_time(),
             tx
         };
 
@@ -219,6 +222,10 @@ impl SortedTx {
 
     pub fn get_size(&self) -> usize {
         self.size
+    }
+
+    pub fn get_first_seen(&self) -> u64 {
+        self.first_seen
     }
 
     pub fn consume(self) -> Arc<Transaction> {

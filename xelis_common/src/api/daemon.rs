@@ -174,6 +174,10 @@ pub struct TransactionResponse<'a, T: Clone> {
     pub executed_in_block: Option<Hash>,
     // if it is in mempool
     pub in_mempool: bool,
+    // if its a mempool tx, we add the timestamp when it was added
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub first_seen: Option<u64>,
     #[serde(flatten)]
     pub data: DataHash<'a, T>
 }
