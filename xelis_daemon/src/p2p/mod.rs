@@ -1537,7 +1537,7 @@ impl<S: Storage> P2pServer<S> {
             let our_topoheight = self.blockchain.get_topo_height();
             let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
             // verify that the topoheight asked is above the PRUNE_SAFETY_LIMIT
-            if topoheight < PRUNE_SAFETY_LIMIT || pruned_topoheight + PRUNE_SAFETY_LIMIT > topoheight || our_topoheight < PRUNE_SAFETY_LIMIT {
+            if pruned_topoheight >= topoheight || topoheight > our_topoheight || topoheight < PRUNE_SAFETY_LIMIT || our_topoheight < PRUNE_SAFETY_LIMIT {
                 warn!("Invalid begin topoheight (received {}, our is {}, pruned: {}) received from {}", topoheight, our_topoheight, pruned_topoheight, peer);
                 return Err(P2pError::InvalidPacket.into())
             }
@@ -1551,6 +1551,11 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::ChainInfo(stable_topo, height, hash)
             },
             StepRequest::Assets(min, max, page) => {
+                if min > max {
+                    warn!("Invalid range for assets");
+                    return Err(P2pError::InvalidPacket.into())
+                }
+
                 let page = page.unwrap_or(0);
                 let assets = storage.get_partial_assets(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
                 let page = if assets.len() == MAX_ITEMS_PER_PAGE {
@@ -1573,6 +1578,11 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::Nonces(nonces)
             },
             StepRequest::Keys(min, max, page) => {
+                if min > max {
+                    warn!("Invalid range for assets");
+                    return Err(P2pError::InvalidPacket.into())
+                }
+
                 let page = page.unwrap_or(0);
                 let keys = storage.get_partial_keys(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
                 let page = if keys.len() == MAX_ITEMS_PER_PAGE {
