@@ -209,7 +209,11 @@ impl<S: Storage> GetWorkServer<S> {
 
         // notify the new miner so he can work ASAP
         let zelf = Arc::clone(&self);
-        tokio::spawn(zelf.send_new_job(addr, key));
+        tokio::spawn(async move {
+            if let Err(e) = zelf.send_new_job(addr, key).await {
+                error!("Error while sending new job to miner: {}", e);
+            }
+        });
     }
 
     pub async fn delete_miner(&self, addr: &Addr<GetWorkWebSocketHandler<S>>) {

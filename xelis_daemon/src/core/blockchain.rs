@@ -1042,10 +1042,13 @@ impl<S: Storage> Blockchain<S> {
                     let transaction = sorted_tx.get_tx();
                     let account_nonce = if let Some(nonce) = nonces.get(transaction.get_owner()) {
                         *nonce
-                    } else {
+                    } else if storage.has_nonce(transaction.get_owner()).await? {
                         let (_, version) = storage.get_last_nonce(transaction.get_owner()).await?;
                         nonces.insert(transaction.get_owner(), version.get_nonce());
                         version.get_nonce()
+                    } else { // This sender has no nonce, we start at 0
+                        nonces.insert(transaction.get_owner(), 0);
+                        0
                     };
     
                     if account_nonce < transaction.get_nonce() {
