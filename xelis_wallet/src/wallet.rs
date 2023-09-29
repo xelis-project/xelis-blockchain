@@ -46,6 +46,8 @@ use {
 pub enum WalletError {
     #[error("Invalid key pair")]
     InvalidKeyPair,
+    #[error("Invalid signature")]
+    InvalidSignature,
     #[error("Expected a TX")]
     ExpectedOneTx,
     #[error("Too many txs included max is {}", u8::MAX)]

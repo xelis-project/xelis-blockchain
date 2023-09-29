@@ -87,6 +87,10 @@ impl Writer {
         self.bytes.len()
     }
 
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
     pub fn bytes(self) -> Vec<u8> {
         self.bytes
     }

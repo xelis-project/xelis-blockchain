@@ -4,7 +4,7 @@ use xelis_common::{
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     utils::calculate_tx_fee,
     serializer::{Writer, Serializer},
-    crypto::{key::{SIGNATURE_LENGTH, PublicKey, KeyPair}, hash::Hash}, api::wallet::FeeBuilder
+    crypto::{key::{SIGNATURE_LENGTH, PublicKey, KeyPair}, hash::{Hash, hash}}, api::wallet::FeeBuilder
 };
 
 use crate::wallet::WalletError;
@@ -28,6 +28,7 @@ impl TransactionBuilder {
 
     fn serialize(&self) -> Writer {
         let mut writer = Writer::new();
+        writer.write_u8(0);
         self.owner.write(&mut writer);
         self.data.write(&mut writer);
         writer
@@ -122,9 +123,14 @@ impl TransactionBuilder {
         let mut writer = self.serialize();
         let fee = self.verify_fees_internal(self.estimate_fees_internal(&writer))?;
         writer.write_u64(&fee);
+        writer.write_u64(&self.nonce);
 
-        let signature = keypair.sign(&writer.bytes());
+        let signature = keypair.sign(hash(writer.as_bytes()).as_bytes());
         let tx = Transaction::new(self.owner, self.data, fee, self.nonce, signature);
+
+        if !tx.verify_signature() {
+            return Err(WalletError::InvalidSignature)
+        }
 
         Ok(tx)
     }
