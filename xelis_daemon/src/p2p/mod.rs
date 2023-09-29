@@ -1533,11 +1533,16 @@ impl<S: Storage> P2pServer<S> {
         debug!("Handle bootstrap chain request {:?} from {}", request_kind, peer);
 
         let storage = self.blockchain.get_storage().read().await;
+        let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
         if let Some(topoheight) = request.get_requested_topoheight() {
             let our_topoheight = self.blockchain.get_topo_height();
-            let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
             // verify that the topoheight asked is above the PRUNE_SAFETY_LIMIT
-            if pruned_topoheight >= topoheight || topoheight > our_topoheight || topoheight < PRUNE_SAFETY_LIMIT || our_topoheight < PRUNE_SAFETY_LIMIT {
+            // TODO check that the block is stable
+            if
+                pruned_topoheight >= topoheight
+                || topoheight > our_topoheight
+                || topoheight < PRUNE_SAFETY_LIMIT
+            {
                 warn!("Invalid begin topoheight (received {}, our is {}, pruned: {}) received from {}", topoheight, our_topoheight, pruned_topoheight, peer);
                 return Err(P2pError::InvalidPacket.into())
             }
@@ -1594,8 +1599,14 @@ impl<S: Storage> P2pServer<S> {
             },
             StepRequest::BlocksMetadata(topoheight) => {
                 let mut blocks = Vec::with_capacity(PRUNE_SAFETY_LIMIT as usize);
-                // go until the requested stable topoheight
-                for topoheight in (topoheight-PRUNE_SAFETY_LIMIT..=topoheight).rev() {
+                // go from the lowest available point until the requested stable topoheight
+                let lower = if topoheight - PRUNE_SAFETY_LIMIT <= pruned_topoheight {
+                    pruned_topoheight + 1
+                } else {
+                    topoheight - PRUNE_SAFETY_LIMIT
+                };
+
+                for topoheight in (lower..=topoheight).rev() {
                     let hash = storage.get_hash_at_topo_height(topoheight).await?;
                     let supply = storage.get_supply_for_block_hash(&hash)?;
                     let reward = storage.get_block_reward(&hash)?;
