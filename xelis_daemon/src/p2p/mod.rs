@@ -1538,7 +1538,7 @@ impl<S: Storage> P2pServer<S> {
             let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
             // verify that the topoheight asked is above the PRUNE_SAFETY_LIMIT
             if topoheight < PRUNE_SAFETY_LIMIT || pruned_topoheight + PRUNE_SAFETY_LIMIT > topoheight || our_topoheight < PRUNE_SAFETY_LIMIT {
-                warn!("Invalid begin topoheight (received {}, our is {}) received from {}", topoheight, our_topoheight, peer);
+                warn!("Invalid begin topoheight (received {}, our is {}, pruned: {}) received from {}", topoheight, our_topoheight, pruned_topoheight, peer);
                 return Err(P2pError::InvalidPacket.into())
             }
         }
