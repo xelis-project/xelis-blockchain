@@ -317,7 +317,7 @@ impl<S: Storage> P2pServer<S> {
             peer_list.add_peer(peer_id, peer)
         };
 
-        self.handle_connection(peer.clone()).await
+        self.handle_connection(peer).await
     }
 
     // Connect to a specific peer address
@@ -655,6 +655,7 @@ impl<S: Storage> P2pServer<S> {
         // task for reading from peer
         {
             let zelf = Arc::clone(&self);
+            let peer = Arc::clone(&peer);
             tokio::spawn(async move {
                 if let Err(e) = zelf.handle_connection_read_side(&peer, write_task).await {
                     debug!("Error while running read part from peer {}: {}", peer, e);
@@ -665,6 +666,11 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
             });
+        }
+
+        // Request its inventory to be sure to be synced
+        if let Err(e) = self.request_inventory_of(&peer).await {
+            warn!("Error while requesting inventory of {}: {}", peer, e);
         }
 
         Ok(())
@@ -1118,7 +1124,6 @@ impl<S: Storage> P2pServer<S> {
                     });
                 }
 
-
                 // request the next page
                 if next_page.is_some() {
                     trace!("Requesting next page of inventory from {}", peer);
@@ -1127,7 +1132,6 @@ impl<S: Storage> P2pServer<S> {
                     peer.set_requested_inventory(true);
                     peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping))).await?;
                 }
-
             },
             Packet::BootstrapChainRequest(request) => {
                 self.handle_bootstrap_chain_request(peer, request.step()).await?;
