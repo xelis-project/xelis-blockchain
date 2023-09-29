@@ -464,8 +464,12 @@ impl Wallet {
                 storage.delete_top_block_hash()?;
                 // balances will be re-fetched from daemon
                 storage.delete_balances()?;
-                let nonce_result = network_handler.get_api().get_last_nonce(&self.get_address()).await?;
-                storage.set_nonce(nonce_result.version.get_nonce())?;
+                let nonce_result = network_handler.get_api()
+                    .get_last_nonce(&self.get_address()).await
+                    // User has no transactions/balances yet, set its nonce to 0
+                    .map(|v| v.version.get_nonce()).unwrap_or(0);
+
+                storage.set_nonce(nonce_result)?;
 
                 if topoheight == 0 {
                     storage.delete_transactions()?;
