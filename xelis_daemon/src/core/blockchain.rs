@@ -952,11 +952,7 @@ impl<S: Storage> Blockchain<S> {
         if broadcast {
             // P2p broadcast to others peers
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
-                let p2p = Arc::clone(p2p);
-                let hash = hash.clone();
-                tokio::spawn(async move {
-                    p2p.broadcast_tx_hash(&hash).await;
-                });
+                p2p.broadcast_tx_hash(&storage, hash.clone()).await;
             }
 
             // broadcast to websocket this tx

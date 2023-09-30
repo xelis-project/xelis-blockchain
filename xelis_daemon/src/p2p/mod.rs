@@ -5,6 +5,7 @@ pub mod packet;
 pub mod peer_list;
 pub mod chain_validator;
 mod tracker;
+mod queue;
 
 use indexmap::IndexSet;
 use xelis_common::{
@@ -18,7 +19,7 @@ use crate::{core::{blockchain::Blockchain, storage::Storage}, p2p::{chain_valida
 use crate::core::error::BlockchainError;
 use crate::p2p::connection::ConnectionMessage;
 use crate::p2p::packet::chain::CommonPoint;
-use self::{packet::chain::{BlockId, ChainRequest, ChainResponse}, tracker::{ObjectTracker, SharedObjectTracker}};
+use self::{packet::chain::{BlockId, ChainRequest, ChainResponse}, tracker::{ObjectTracker, SharedObjectTracker}, queue::QueuedFetcher};
 use self::packet::object::{ObjectRequest, ObjectResponse, OwnedObjectResponse};
 use self::peer_list::{SharedPeerList, PeerList};
 use self::connection::{State, Connection};
@@ -59,8 +60,8 @@ pub struct P2pServer<S: Storage> {
     verify_syncing_time_out: AtomicBool, // chain sync timeout check
     last_sync_request_sent: AtomicU64, // used to check if we are already syncing with one peer or not
     object_tracker: SharedObjectTracker, // used to requests objects to peers and avoid requesting the same object to multiple peers
-    broadcast_semaphore: Semaphore, // used to limit the number of broadcast messages
-    propagation_semaphore: Semaphore, // used to limit the number of block propagations common peers check
+    queued_fetcher: QueuedFetcher, // used to requests all propagated txs in one task only
+    block_propagation_semaphore: Semaphore, // used to limit the number of block propagations common peers check
     is_running: AtomicBool // used to check if the server is running or not in tasks
 }
 
@@ -76,6 +77,10 @@ impl<S: Storage> P2pServer<S> {
         let addr: SocketAddr = bind_address.parse()?; // parse the bind address
         // create mspc channel
         let (connections_sender, receiver) = mpsc::unbounded_channel();
+
+        let object_tracker = ObjectTracker::new();
+        let queued_fetcher = QueuedFetcher::new(Arc::clone(&blockchain), Arc::clone(&object_tracker));
+
         let server = Self {
             peer_id,
             tag,
@@ -87,9 +92,9 @@ impl<S: Storage> P2pServer<S> {
             syncing: AtomicBool::new(false),
             verify_syncing_time_out: AtomicBool::new(false),
             last_sync_request_sent: AtomicU64::new(0),
-            object_tracker: ObjectTracker::new(),
-            broadcast_semaphore: Semaphore::new(1),
-            propagation_semaphore: Semaphore::new(1),
+            object_tracker,
+            queued_fetcher,
+            block_propagation_semaphore: Semaphore::new(1),
             is_running: AtomicBool::new(true)
         };
 
@@ -354,9 +359,8 @@ impl<S: Storage> P2pServer<S> {
 
     // build a ping packet with the current state of the blockchain
     // if a peer is given, we will check and update the peers list
-    async fn build_generic_ping_packet(&self) -> Ping<'_> {
+    async fn build_generic_ping_packet_with_storage(&self, storage: &S) -> Ping<'_> {
         let (cumulative_difficulty, block_top_hash, pruned_topoheight) = {
-            let storage = self.blockchain.get_storage().read().await;
             let pruned_topoheight = match storage.get_pruned_topoheight() {
                 Ok(pruned_topoheight) => pruned_topoheight,
                 Err(e) => {
@@ -377,6 +381,11 @@ impl<S: Storage> P2pServer<S> {
         let highest_height = self.blockchain.get_height();
         let new_peers = Vec::new();
         Ping::new(Cow::Owned(block_top_hash), highest_topo_height, highest_height, pruned_topoheight, cumulative_difficulty, new_peers)
+    }
+
+    async fn build_generic_ping_packet(&self) -> Ping<'_> {
+        let storage = self.blockchain.get_storage().read().await;
+        self.build_generic_ping_packet_with_storage(&*storage).await
     }
 
     // select a random peer which is greater than us to sync chain
@@ -694,38 +703,18 @@ impl<S: Storage> P2pServer<S> {
 
                 // peer should not send us twice the same transaction
                 debug!("Received tx hash {} from {}", hash, peer);
-                let mut txs_cache = peer.get_txs_cache().lock().await;
-                if txs_cache.contains(&hash) {
-                    warn!("{} send us a transaction ({}) already tracked by him", peer, hash);
-                    return Err(P2pError::InvalidProtocolRules)
+                {
+                    let mut txs_cache = peer.get_txs_cache().lock().await;
+                    if txs_cache.contains(&hash) {
+                        warn!("{} send us a transaction ({}) already tracked by him", peer, hash);
+                        return Err(P2pError::InvalidProtocolRules)
+                    }
+                    txs_cache.put(hash.clone(), ());
                 }
-                txs_cache.put(hash.clone(), ());
 
                 ping.into_owned().update_peer(peer).await?;
                 if !self.blockchain.has_tx(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
-                    let peer = Arc::clone(peer);
-                    let zelf = Arc::clone(&self);
-                    tokio::spawn(async move {
-                        let response = match zelf.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash)).await {
-                            Ok(response) => response,
-                            Err(e) => {
-                                error!("Error while requesting TX to {} using ObjectTracker: {}", peer, e);
-                                peer.increment_fail_count();
-                                return;
-                            }
-                        };
-
-                        if let OwnedObjectResponse::Transaction(tx, hash) = response {
-                            if let Err(e) = zelf.blockchain.add_tx_with_hash_to_mempool(tx, hash, true).await {
-                                if let BlockchainError::TxAlreadyInMempool(_) = e {
-                                    debug!("TX is already in mempool finally, another peer was faster");
-                                } else {
-                                    error!("Error while adding new requested tx to mempool: {}", e);
-                                    peer.increment_fail_count();
-                                }
-                            }
-                        }
-                    });
+                    self.queued_fetcher.fetch(Arc::clone(peer), ObjectRequest::Transaction(hash));
                 }
             },
             Packet::BlockPropagation(packet_wrapper) => {
@@ -767,7 +756,7 @@ impl<S: Storage> P2pServer<S> {
                 // because we track peerlist of each peers, we can try to determinate it
                 {
                     // semaphore allows to prevent any deadlock because of loop lock
-                    let _permit = self.propagation_semaphore.acquire().await?;
+                    let _permit = self.block_propagation_semaphore.acquire().await?;
                     let peer_list = self.peer_list.read().await;
                     let peer_peers = peer.get_peers(false).lock().await;
                     // iterate over all peers of this peer broadcaster
@@ -1104,7 +1093,7 @@ impl<S: Storage> P2pServer<S> {
                     let zelf = Arc::clone(&self);
                     tokio::spawn(async move {
                         for hash in missing_txs {
-                            let response = match zelf.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash)).await {
+                            let response = match zelf.object_tracker.fetch_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash)).await {
                                 Ok(response) => response,
                                 Err(e) => {
                                     error!("Error while requesting TX to {} using ObjectTracker: {}", peer, e);
@@ -1464,16 +1453,11 @@ impl<S: Storage> P2pServer<S> {
         &self.peer_list
     }
 
-    pub async fn broadcast_tx_hash(&self, tx: &Hash) {
-        if let Err(e) = self.broadcast_semaphore.acquire().await {
-            error!("Error while acquiring semaphore: {}", e);
-            return;
-        }
-
-        debug!("Broadcasting tx hash {}", tx);
-        let ping = self.build_generic_ping_packet().await;
+    pub async fn broadcast_tx_hash(&self, storage: &S, tx: Hash) {
+        info!("Broadcasting tx hash {}", tx);
+        let ping = self.build_generic_ping_packet_with_storage(storage).await;
         let current_topoheight = ping.get_topoheight();
-        let packet = Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(tx), Cow::Owned(ping)));
+        let packet = Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(&tx), Cow::Owned(ping)));
         // transform packet to bytes (so we don't need to transform it for each peer)
         let bytes = Bytes::from(packet.to_bytes());
         let peer_list = self.peer_list.read().await;
@@ -1484,7 +1468,7 @@ impl<S: Storage> P2pServer<S> {
                 trace!("Peer {} is not too far from us, checking cache for tx hash {}", peer, tx);
                 let mut txs_cache = peer.get_txs_cache().lock().await;
                 // check that we didn't already send this tx to this peer or that he don't already have it
-                if !txs_cache.contains(tx) {
+                if !txs_cache.contains(&tx) {
                     trace!("Broadcasting tx hash {} to {}", tx, peer);
                     if let Err(e) = peer.send_bytes(bytes.clone()).await {
                         error!("Error while broadcasting tx hash {} to {}: {}", tx, peer, e);

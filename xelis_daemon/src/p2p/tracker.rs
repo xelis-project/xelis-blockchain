@@ -7,6 +7,7 @@ use log::{error, debug};
 
 use super::{packet::{object::{ObjectRequest, OwnedObjectResponse}, Packet}, error::P2pError, peer::Peer};
 
+pub type WaiterResponse = oneshot::Receiver<Result<OwnedObjectResponse, P2pError>>;
 pub type SharedObjectTracker = Arc<ObjectTracker>;
 
 // this ObjectTracker is a unique sender allows to create a queue system in one task only
@@ -104,11 +105,14 @@ impl ObjectTracker {
         Ok(())
     }
 
-    pub async fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
+    pub fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<WaiterResponse, P2pError> {
         let (sender, receiver) = oneshot::channel();
         self.request_sender.send(Message::Request(peer, request, sender))?;
+        Ok(receiver)
+    }
 
-        Ok(receiver.await??)
+    pub async fn fetch_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
+        Ok(self.request_object_from_peer(peer, request)?.await??)
     }
 
     async fn request_object_from_peer_internal(&self, peer: &Peer, request: ObjectRequest) -> Result<(), P2pError> {
