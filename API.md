@@ -1016,7 +1016,6 @@ Retrieve a specific range of blocks (up to 20 maximum) based on topoheight
 }
 ```
 
-
 #### Get Blocks Range By Height
 Retrieve a specific range of blocks (up to 20 maximum) based on height
 
@@ -1108,6 +1107,45 @@ Retrieve a specific range of blocks (up to 20 maximum) based on height
 			"txs_hashes": [],
 			"version": 0
 		}
+	]
+}
+```
+
+#### Get Accounts
+Retrieve a list of available accounts (each account returned had at least one interaction on-chain)
+
+##### Method `get_accounts`
+
+##### Parameters
+|        Name        |   Type  | Required |                        Note                       |
+|:------------------:|:-------:|:--------:|:-------------------------------------------------:|
+|        skip        | Integer | Optional |             How many accounts to skip             |
+|       maximum      | Integer | Optional |     Maximum accounts to fetch (limited to 100)    |
+| minimum_topoheight | Integer | Optional | Minimum topoheight for first on-chain interaction |
+| maximum_topoheight | Integer | Optional | Maximum topoheight for first on-chain interaction |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_accounts",
+	"params": {}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": [
+		"xet1qqq9rrdy6s2zy4yavp59094jzlm66n33vy0datvv900yls8pugvyvmqn46pvl",
+		"xet1qqqgpk6n5klceg9gg9tcw0xa8r3e7zd3gc5mzv2v4m48knxd0y9wadg3mdp9t",
+		"xet1qqqvpwf9qprl6hzysg0zycm3y56ygys32wukxnl7yezqc7ydudy3azcxq6nwv",
+		"xet1qqqvltq9dsmvdsvapr6y0742sv477766g9vpvp2expe5v7x7fadvftc9h2vyw",
+		"xet1qqqd9ur03xahtts6q00t8z8ya2gxm39qx43ljz32vmv8p7j9ccxn6zccrfnxp",
+		"xet1qqqd2jtz9f2u3z6uznpx8mqdkh6llt3yn3eg3a5tpsfn8jcsthufg5qmwwl2j"
 	]
 }
 ```

@@ -190,6 +190,14 @@ pub struct GetAssetsParams {
     pub maximum_topoheight: Option<u64>
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct GetAccountsParams {
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>,
+    pub minimum_topoheight: Option<u64>,
+    pub maximum_topoheight: Option<u64>
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {
     // When a new block is accepted by chain

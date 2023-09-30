@@ -17,7 +17,7 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetTopoHeightRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse, GetHeightRangeParams, GetNonceResult, GetAssetsParams
+        GetTopoHeightRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse, GetHeightRangeParams, GetNonceResult, GetAssetsParams, GetAccountsParams
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -135,6 +135,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight));
     handler.register_method("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height));
     handler.register_method("get_transactions", async_handler!(get_transactions));
+    handler.register_method("get_accounts", async_handler!(get_accounts));
 }
 
 async fn version<S: Storage>(_: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
@@ -525,4 +526,47 @@ async fn get_transactions<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Valu
     }
 
     Ok(json!(transactions))
+}
+
+const MAX_ACCOUNTS: usize = 100;
+// retrieve all available accounts (each account got at least one interaction on chain)
+async fn get_accounts<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetAccountsParams = parse_params(body)?;
+
+    let topoheight = blockchain.get_topo_height();
+    let maximum = if let Some(maximum) = params.maximum {
+        if maximum > MAX_ACCOUNTS {
+            return Err(InternalRpcError::InvalidRequest).context(format!("Maximum accounts requested cannot be greater than {}", MAX_ACCOUNTS))?
+        }
+        maximum
+    } else {
+        MAX_ACCOUNTS
+    };
+    let skip = params.skip.unwrap_or(0);
+    let minimum_topoheight = if let Some(minimum) = params.minimum_topoheight {
+        if minimum > topoheight {
+            return Err(InternalRpcError::InvalidRequest).context(format!("Minimum topoheight requested cannot be greater than {}", topoheight))?
+        }
+
+        minimum
+    } else {
+        0
+    };
+    let maximum_topoheight = if let Some(maximum) = params.maximum_topoheight {
+        if maximum > topoheight {
+            return Err(InternalRpcError::InvalidRequest).context(format!("Maximum topoheight requested cannot be greater than {}", topoheight))?
+        }
+
+        if maximum < minimum_topoheight {
+            return Err(InternalRpcError::InvalidRequest).context(format!("Maximum topoheight requested must be greater or equal to {}", minimum_topoheight))?
+        }
+        maximum
+    } else {
+        topoheight
+    };
+
+    let storage = blockchain.get_storage().read().await;
+    let accounts = storage.get_partial_keys(maximum, skip, minimum_topoheight, maximum_topoheight).await.context("Error while retrieving accounts")?;
+
+    Ok(json!(accounts))
 }
