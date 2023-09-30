@@ -1022,6 +1022,7 @@ impl<S: Storage> Blockchain<S> {
 
         // txs are sorted in descending order thanks to Reverse<u64>
         {
+            let mut balances = HashMap::new();
             'main: for (fee, hashes) in txs {
                 let mut transactions: Vec<(&Arc<Hash>, &SortedTx)> = Vec::with_capacity(hashes.len());
                 // prepare TXs by sorting them by nonce
@@ -1054,12 +1055,17 @@ impl<S: Storage> Blockchain<S> {
                     if account_nonce < transaction.get_nonce() {
                         trace!("Skipping {} with {} fees because another TX should be selected first due to nonce", hash, format_coin(fee.0));
                     } else if account_nonce == transaction.get_nonce() {
-                        trace!("Selected {} (nonce: {}, account nonce: {}, fees: {}) for mining", hash, transaction.get_nonce(), account_nonce, format_coin(fee.0));
-                        // TODO no clone
-                        block.txs_hashes.push(hash.as_ref().clone());
-                        total_txs_size += sorted_tx.get_size();
-                        // we use unwrap because above we insert it
-                        *nonces.get_mut(transaction.get_owner()).unwrap() += 1;
+                        // Check if it can be added to the block
+                        if self.verify_transaction_with_hash(&storage, sorted_tx.get_tx(), hash, &mut balances, None, true).await.is_ok() {
+                            trace!("Selected {} (nonce: {}, account nonce: {}, fees: {}) for mining", hash, transaction.get_nonce(), account_nonce, format_coin(fee.0));
+                            // TODO no clone
+                            block.txs_hashes.push(hash.as_ref().clone());
+                            total_txs_size += sorted_tx.get_size();
+                            // we use unwrap because above we insert it
+                            *nonces.get_mut(transaction.get_owner()).unwrap() += 1;
+                        } else {
+                            warn!("This TX {} is not suitable for this block (nonce: {}, account nonce: {}, fees: {})", hash, transaction.get_nonce(), account_nonce, format_coin(fee.0));
+                        }
                     } else {
                         warn!("This TX in mempool {} is in advance (nonce: {}, account nonce: {}, fees: {}), it should be removed from mempool", hash, transaction.get_nonce(), account_nonce, format_coin(fee.0));
                     }
@@ -1825,7 +1831,7 @@ impl<S: Storage> Blockchain<S> {
                     if let Some(value) = balance.checked_sub(output.amount) {
                         *balance = value;
                     } else {
-                        warn!("Overflow detected with transaction {}", hash);
+                        warn!("Overflow detected with transaction transfer {}", hash);
                         return Err(BlockchainError::Overflow)
                     }
                 }
@@ -1850,7 +1856,7 @@ impl<S: Storage> Blockchain<S> {
                 if let Some(value) = balance.checked_sub(*amount) {
                     *balance = value;
                 } else {
-                    warn!("Overflow detected with transaction {}", hash);
+                    warn!("Overflow detected with transaction burn {}", hash);
                     return Err(BlockchainError::Overflow)
                 }
             },

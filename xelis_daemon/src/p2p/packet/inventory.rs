@@ -1,9 +1,10 @@
 use std::borrow::Cow;
 
 use indexmap::IndexSet;
+use log::debug;
 use xelis_common::{crypto::hash::Hash, serializer::{Serializer, ReaderError, Reader, Writer}};
 
-pub const NOTIFY_MAX_LEN: usize = 1024; // 1024 * 32 bytes = 32KB
+pub const NOTIFY_MAX_LEN: usize = 16384; // 16384 * 32 bytes = 512 KiB
 
 #[derive(Debug, Clone)]
 pub struct NotifyInventoryRequest {
@@ -66,7 +67,10 @@ impl<'a> Serializer for NotifyInventoryResponse<'a> {
  
         let mut txs = IndexSet::with_capacity(count as usize);
         for _ in 0..count {
-            txs.insert(Cow::Owned(reader.read_hash()?));
+            if !txs.insert(Cow::Owned(reader.read_hash()?)) {
+                debug!("Duplicate transaction in NotifyInventoryResponse");
+                return Err(ReaderError::InvalidValue)
+            }
         }
         Ok(Self::new(next, Cow::Owned(txs)))
     }

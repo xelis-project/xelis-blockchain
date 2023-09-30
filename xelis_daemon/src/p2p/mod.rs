@@ -14,7 +14,7 @@ use xelis_common::{
     block::{BlockHeader, Block},
     utils::get_current_time, immutable::Immutable, account::VersionedNonce
 };
-use crate::{core::{blockchain::Blockchain, storage::Storage}, p2p::{chain_validator::ChainValidator, packet::{bootstrap_chain::{StepRequest, StepResponse, BootstrapChainResponse, MAX_ITEMS_PER_PAGE, BlockMetadata}, inventory::{NOTIFY_MAX_LEN, NotifyInventoryRequest, NotifyInventoryResponse}}, tracker::WaiterResponse}};
+use crate::{core::{blockchain::Blockchain, storage::Storage}, p2p::{chain_validator::ChainValidator, packet::{bootstrap_chain::{StepRequest, StepResponse, BootstrapChainResponse, MAX_ITEMS_PER_PAGE, BlockMetadata}, inventory::{NOTIFY_MAX_LEN, NotifyInventoryRequest, NotifyInventoryResponse}}}};
 use crate::core::error::BlockchainError;
 use crate::p2p::connection::ConnectionMessage;
 use crate::p2p::packet::chain::CommonPoint;
@@ -668,18 +668,13 @@ impl<S: Storage> P2pServer<S> {
             });
         }
 
-        // Request its inventory to be sure to be synced
-        if let Err(e) = self.request_inventory_of(&peer).await {
-            warn!("Error while requesting inventory of {}: {}", peer, e);
-        }
-
-        Ok(())
-    }
-
-    async fn handle_transaction_propagation_response(self: Arc<Self>, waiter: WaiterResponse) -> Result<(), P2pError> {
-        let response = waiter.await??;
-        if let OwnedObjectResponse::Transaction(tx, hash) = response {
-            self.blockchain.add_tx_with_hash_to_mempool(tx, hash, true).await?;
+        // verify that we are synced with him to receive all TXs correctly
+        let our_topoheight = self.blockchain.get_topo_height();
+        let peer_topoheight = peer.get_topoheight();
+        if peer_topoheight == our_topoheight {
+            if let Err(e) = self.request_inventory_of(&peer).await {
+                warn!("Error while requesting inventory of {}: {}", peer, e);
+            }
         }
 
         Ok(())
@@ -708,14 +703,28 @@ impl<S: Storage> P2pServer<S> {
 
                 ping.into_owned().update_peer(peer).await?;
                 if !self.blockchain.has_tx(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
-                    let waiter: WaiterResponse = self.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash))?;
                     let peer = Arc::clone(peer);
                     let zelf = Arc::clone(&self);
                     tokio::spawn(async move {
-                        if let Err(e) = zelf.handle_transaction_propagation_response(waiter).await {
-                            peer.increment_fail_count();
-                            error!("Error while handling transaction propagation response: {}", e);
+                        let response = match zelf.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash)).await {
+                            Ok(response) => response,
+                            Err(e) => {
+                                error!("Error while requesting TX to {} using ObjectTracker: {}", peer, e);
+                                peer.increment_fail_count();
+                                return;
+                            }
                         };
+
+                        if let OwnedObjectResponse::Transaction(tx, hash) = response {
+                            if let Err(e) = zelf.blockchain.add_tx_with_hash_to_mempool(tx, hash, true).await {
+                                if let BlockchainError::TxAlreadyInMempool(_) = e {
+                                    debug!("TX is already in mempool finally, another peer was faster");
+                                } else {
+                                    error!("Error while adding new requested tx to mempool: {}", e);
+                                    peer.increment_fail_count();
+                                }
+                            }
+                        }
                     });
                 }
             },
@@ -1024,21 +1033,22 @@ impl<S: Storage> P2pServer<S> {
                 ping.into_owned().update_peer(peer).await?;
 
                 let request = request.into_owned();
-                let mut hashes = IndexSet::new();
+
+                let page_id = request.page().unwrap_or(0);
+                let skip = page_id as usize * NOTIFY_MAX_LEN;
 
                 let mempool = self.blockchain.get_mempool().read().await;
                 let nonces_cache = mempool.get_nonces_cache();
-                let all_txs = nonces_cache.values().flat_map(|v| v.get_txs().values()).collect::<Vec<_>>();
-                let next_page = {
-                    let page_id = request.page().unwrap_or(0);
-                    let skip = page_id as usize * NOTIFY_MAX_LEN;
+                let all_txs = nonces_cache.values()
+                    .flat_map(|v| v.get_txs().values())
+                    .skip(skip).take(NOTIFY_MAX_LEN)
+                    .map(|tx| Cow::Borrowed(tx.as_ref()))
+                    .collect::<IndexSet<_>>();
 
-                    let all_txs_size = all_txs.len(); 
+                let next_page = {
+                    let all_txs_size = mempool.size(); 
                     if skip < all_txs_size {
-                        for tx_hash in all_txs.into_iter().skip(skip).take(NOTIFY_MAX_LEN) {
-                            hashes.insert(Cow::Borrowed(tx_hash.as_ref()));
-                        }
-                        let left = all_txs_size - (hashes.len() + skip);
+                        let left = all_txs_size - (all_txs.len() + skip);
                         if left > 0 {
                             Some(page_id + 1)
                         } else {
@@ -1049,7 +1059,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                 };
 
-                let packet = NotifyInventoryResponse::new(next_page, Cow::Owned(hashes));
+                let packet = NotifyInventoryResponse::new(next_page, Cow::Owned(all_txs));
                 peer.send_packet(Packet::NotifyInventoryResponse(packet)).await?
             },
             Packet::NotifyInventoryResponse(inventory) => {
@@ -1081,7 +1091,7 @@ impl<S: Storage> P2pServer<S> {
                     let mempool = self.blockchain.get_mempool().read().await;
                     let storage = self.blockchain.get_storage().read().await;
                     for hash in txs.into_owned() {
-                        if !mempool.contains_tx(&hash) && !storage.has_transaction(&hash).await? {
+                        if !mempool.contains_tx(&hash) && !storage.has_transaction(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
                             missing_txs.push(hash.into_owned());
                         }
                     }
@@ -1089,22 +1099,23 @@ impl<S: Storage> P2pServer<S> {
 
                 // second part is to retrieve all txs we don't have concurrently
                 // we don't want to block the peer and others locks for too long so we do it in a separate task
-                {
+                if !missing_txs.is_empty() {
                     let peer = Arc::clone(&peer);
-                    let blockchain = Arc::clone(&self.blockchain);
+                    let zelf = Arc::clone(&self);
                     tokio::spawn(async move {
                         for hash in missing_txs {
-                            let response = match peer.request_blocking_object(ObjectRequest::Transaction(hash)).await {
+                            let response = match zelf.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash)).await {
                                 Ok(response) => response,
                                 Err(e) => {
-                                    error!("Error while retrieving tx from {} inventory: {}", peer, e);
+                                    error!("Error while requesting TX to {} using ObjectTracker: {}", peer, e);
                                     peer.increment_fail_count();
                                     return;
                                 }
                             };
     
                             if let OwnedObjectResponse::Transaction(tx, hash) = response {
-                                if let Err(e) = blockchain.add_tx_with_hash_to_mempool(tx, hash, false).await {
+                                debug!("Received {} with nonce {}", hash, tx.get_nonce());
+                                if let Err(e) = zelf.blockchain.add_tx_with_hash_to_mempool(tx, hash, false).await {
                                     match e {
                                         BlockchainError::TxAlreadyInMempool(hash) | BlockchainError::TxAlreadyInBlockchain(hash) => {
                                             // ignore because maybe another peer send us this same tx

@@ -9,9 +9,7 @@ use super::{packet::{object::{ObjectRequest, OwnedObjectResponse}, Packet}, erro
 
 pub type SharedObjectTracker = Arc<ObjectTracker>;
 
-pub type WaiterResponse = oneshot::Receiver<Result<OwnedObjectResponse, P2pError>>;
-
-// this sender allows to create a queue system in one task only
+// this ObjectTracker is a unique sender allows to create a queue system in one task only
 // currently used to fetch in order all txs propagated by the network
 pub struct ObjectTracker {
     request_sender: UnboundedSender<Message>,
@@ -106,11 +104,11 @@ impl ObjectTracker {
         Ok(())
     }
 
-    pub fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<WaiterResponse, P2pError> {
+    pub async fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
         let (sender, receiver) = oneshot::channel();
         self.request_sender.send(Message::Request(peer, request, sender))?;
 
-        Ok(receiver)
+        Ok(receiver.await??)
     }
 
     async fn request_object_from_peer_internal(&self, peer: &Peer, request: ObjectRequest) -> Result<(), P2pError> {
