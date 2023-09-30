@@ -648,7 +648,6 @@ impl Storage for SledStorage {
 
     fn remove_tx_executed(&mut self, tx: &Hash) -> Result<(), BlockchainError> {
         self.txs_executed.remove(tx.as_bytes())?;
-        self.remove_tx_executed(tx)?;
 
         Ok(())
     }
