@@ -1172,6 +1172,22 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
+    async fn find_common_point(&self, storage: &S, blocks: Vec<BlockId>) -> Result<Option<CommonPoint>, BlockchainError> {
+        for block_id in blocks { // search a common point
+            trace!("Searching common point for block {} at topoheight {}", block_id.get_hash(), block_id.get_topoheight());
+            if storage.has_block(block_id.get_hash()).await? {
+                let (hash, topoheight) = block_id.consume();
+                trace!("Block {} is common, expected topoheight: {}", hash, topoheight);
+                // check that the block is ordered like us
+                if storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
+                    debug!("common point found at block {} with same topoheight at {}", hash, topoheight);
+                    return Ok(Some(CommonPoint::new(hash, topoheight)))
+                }
+            }
+        }
+        Ok(None)
+    }
+
     // search a common point between our blockchain and the peer's one
     // when the common point is found, start sending blocks from this point
     async fn handle_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, blocks: Vec<BlockId>) -> Result<(), BlockchainError> {
@@ -1181,59 +1197,48 @@ impl<S: Storage> P2pServer<S> {
         let mut response_blocks = Vec::new();
         let mut top_blocks = Vec::new();
         // common point used to notify peer if he should rewind or not
-        let mut common_point = None;
-        for block_id in blocks { // search a common point
-            trace!("Searching common point for block {} at topoheight {}", block_id.get_hash(), block_id.get_topoheight());
-            if storage.has_block(block_id.get_hash()).await? {
-                let (hash, mut topoheight) = block_id.consume();
-                trace!("Block {} is common, expected topoheight from {}: {}", hash, peer, topoheight);
-                // check that the block is ordered like us
-                if storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
-                    debug!("common point with {} found at block {} with same topoheight at {}", peer, hash, topoheight);
-                    common_point = Some(CommonPoint::new(hash, topoheight));
+        let common_point = self.find_common_point(&*storage, blocks).await?;
+        if let Some(common_point) = &common_point {
+            let mut topoheight = common_point.get_topoheight();
+            // lets add all blocks ordered hash
+            let top_topoheight = self.blockchain.get_topo_height();
+            let stable_height = self.blockchain.get_stable_height();
+            // used to detect if we find unstable height for alt tips
+            let mut potential_unstable_height = None;
+            // check to see if we should search for alt tips (and above unstable height)
+            let should_search_alt_tips = top_topoheight - topoheight < CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u64;
 
-                    // lets add all blocks ordered hash
-                    let top_topoheight = self.blockchain.get_topo_height();
-                    let stable_height = self.blockchain.get_stable_height();
-                    // used to detect if we find unstable height for alt tips
-                    let mut potential_unstable_height = None;
-                    // check to see if we should search for alt tips (and above unstable height)
-                    let should_search_alt_tips = top_topoheight - topoheight < CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u64;
-
-                    // complete ChainResponse blocks until we are full or that we reach the top topheight
-                    while response_blocks.len() < CHAIN_SYNC_RESPONSE_MAX_BLOCKS && topoheight <= top_topoheight {
-                        trace!("looking for hash at topoheight {}", topoheight);
-                        let hash = storage.get_hash_at_topo_height(topoheight).await?;
-                        if should_search_alt_tips && potential_unstable_height.is_none() {
-                            let height = storage.get_height_for_block_hash(&hash).await?;
-                            if height >= stable_height {
-                                debug!("Found unstable height at {}", height);
-                                potential_unstable_height = Some(height);
-                            }
-                        }
-                        trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
-                        response_blocks.push(hash);
-                        topoheight += 1;
+            // complete ChainResponse blocks until we are full or that we reach the top topheight
+            while response_blocks.len() < CHAIN_SYNC_RESPONSE_MAX_BLOCKS && topoheight <= top_topoheight {
+                trace!("looking for hash at topoheight {}", topoheight);
+                let hash = storage.get_hash_at_topo_height(topoheight).await?;
+                if should_search_alt_tips && potential_unstable_height.is_none() {
+                    let height = storage.get_height_for_block_hash(&hash).await?;
+                    if height >= stable_height {
+                        debug!("Found unstable height at {}", height);
+                        potential_unstable_height = Some(height);
                     }
+                }
+                trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
+                response_blocks.push(hash);
+                topoheight += 1;
+            }
 
-                    // now, lets check if peer is near to be synced, and send him alt tips blocks
-                    if let Some(mut height) = potential_unstable_height {
-                        let top_height = self.blockchain.get_height();
-                        trace!("unstable height: {}, top height: {}", height, top_height);
-                        while height <= top_height && top_blocks.len() < CHAIN_SYNC_TOP_BLOCKS {
-                            trace!("get blocks at height {} for top blocks", height);
-                            for hash in storage.get_blocks_at_height(height).await? {
-                                if !response_blocks.contains(&hash) {
-                                    trace!("Adding top block at height {}: {}", height, hash);
-                                    top_blocks.push(hash);
-                                } else {
-                                    trace!("Top block at height {}: {} was skipped because its already present in response blocks", height, hash);
-                                }
-                            }
-                            height += 1;
+            // now, lets check if peer is near to be synced, and send him alt tips blocks
+            if let Some(mut height) = potential_unstable_height {
+                let top_height = self.blockchain.get_height();
+                trace!("unstable height: {}, top height: {}", height, top_height);
+                while height <= top_height && top_blocks.len() < CHAIN_SYNC_TOP_BLOCKS {
+                    trace!("get blocks at height {} for top blocks", height);
+                    for hash in storage.get_blocks_at_height(height).await? {
+                        if !response_blocks.contains(&hash) {
+                            trace!("Adding top block at height {}: {}", height, hash);
+                            top_blocks.push(hash);
+                        } else {
+                            trace!("Top block at height {}: {} was skipped because its already present in response blocks", height, hash);
                         }
                     }
-                    break;
+                    height += 1;
                 }
             }
         }
@@ -1267,7 +1272,7 @@ impl<S: Storage> P2pServer<S> {
             // check that if we can trust him
             if peer.is_priority() {
                 warn!("Rewinding chain without checking because {} is a priority node (pop count: {})", peer, pop_count);
-                self.blockchain.rewind_chain(pop_count as usize).await?;
+                self.blockchain.rewind_chain(pop_count).await?;
             } else {
                 // request all blocks header and verify basic chain structure
                 let mut chain_validator = ChainValidator::new(self.blockchain.clone());
@@ -1291,7 +1296,7 @@ impl<S: Storage> P2pServer<S> {
                 }
                 // peer chain looks correct, lets rewind our chain
                 warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
-                self.blockchain.rewind_chain(pop_count as usize).await?;
+                self.blockchain.rewind_chain(pop_count).await?;
 
                 // now retrieve all txs from all blocks header and add block in chain
                 for hash in chain_validator.get_order() {
@@ -1548,11 +1553,12 @@ impl<S: Storage> P2pServer<S> {
         }
 
         let response = match request {
-            StepRequest::ChainInfo => {
+            StepRequest::ChainInfo(blocks) => {
+                let common_point = self.find_common_point(&*storage, blocks).await?;
                 let tips = storage.get_tips().await?;
                 let (hash, height) = self.blockchain.find_common_base(&storage, &tips).await?;
                 let stable_topo = storage.get_topo_height_for_hash(&hash).await?;
-                StepResponse::ChainInfo(stable_topo, height, hash)
+                StepResponse::ChainInfo(common_point, stable_topo, height, hash)
             },
             StepRequest::Assets(min, max, page) => {
                 if min > max {
@@ -1621,6 +1627,42 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
+    async fn build_list_of_blocks_id(&self, storage: &S) -> Result<Vec<BlockId>, BlockchainError> {
+        let mut blocks = Vec::new();
+        let topoheight = self.blockchain.get_topo_height();
+        let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
+        let mut i = 0;
+
+        // we add 1 for the genesis block added below
+        while i < topoheight && topoheight - i >= pruned_topoheight && blocks.len() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
+            trace!("Requesting hash at topo {} for ChainInfo", topoheight - i);
+            let hash = storage.get_hash_at_topo_height(topoheight - i).await?;
+            blocks.push(BlockId::new(hash, topoheight - i));
+            match blocks.len() {
+                0..=19 => {
+                    i += 1;
+                },
+                20..=39 => {
+                    i += 5;
+                }
+                40..=59 => {
+                    i += 50;
+                },
+                60..=79 => {
+                    i += 500;
+                }
+                _ => {
+                    i = i * 2;
+                }
+            };
+        }
+
+        // add genesis block
+        let genesis_block = storage.get_hash_at_topo_height(0).await?;
+        blocks.push(BlockId::new(genesis_block, 0));
+        Ok(blocks)
+    }
+
     // first, retrieve chain info of selected peer
     // We retrieve all assets through pagination,
     // then we fetch all keys with its nonces and its balances (also through pagination)
@@ -1630,11 +1672,11 @@ impl<S: Storage> P2pServer<S> {
     async fn bootstrap_chain(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         debug!("Starting fast sync with {}", peer);
 
-        let our_topoheight = self.blockchain.get_topo_height();
+        let mut our_topoheight = self.blockchain.get_topo_height();
 
         let mut stable_topoheight = 0;
         let mut storage = self.blockchain.get_storage().write().await;
-        let mut step: Option<StepRequest> = Some(StepRequest::ChainInfo);
+        let mut step: Option<StepRequest> = Some(StepRequest::ChainInfo(self.build_list_of_blocks_id(&*storage).await?));
 
         // keep them in memory, we add them when we're syncing
         // it's done to prevent any sync failure
@@ -1650,7 +1692,28 @@ impl<S: Storage> P2pServer<S> {
             };
 
             step = match response {
-                StepResponse::ChainInfo(topoheight, height, hash) => {
+                StepResponse::ChainInfo(common_point, topoheight, height, hash) => {
+                    // first, check the common point in case we deviated from the chain
+                    if let Some(common_point) = common_point {
+                        debug!("Unverified common point found at {} with hash {}", common_point.get_topoheight(), common_point.get_hash());
+                        let hash_at_topo = storage.get_hash_at_topo_height(common_point.get_topoheight()).await?;
+                        if hash_at_topo != *common_point.get_hash() {
+                            warn!("Common point is {} while our hash at topoheight {} is {}. Aborting", common_point.get_hash(), common_point.get_topoheight(), storage.get_hash_at_topo_height(common_point.get_topoheight()).await?);
+                            return Err(BlockchainError::Unknown)
+                        }
+
+                        let top_block_hash = storage.get_top_block_hash().await?;
+                        if *common_point.get_hash() != top_block_hash {
+                            let deviation = our_topoheight - common_point.get_topoheight();
+                            warn!("Common point is {} while our top block hash is {} ! Deviation of {} topoheight blocks", common_point.get_hash(), top_block_hash, deviation);
+                            our_topoheight = self.blockchain.rewind_chain_for_storage(&mut *storage, deviation).await?;
+                            debug!("New topoheight after rewind is now {}", our_topoheight);
+                        }
+                    } else {
+                        warn!("No common point with {} ! Not same chain ?", peer);
+                        return Err(BlockchainError::Unknown)
+                    }
+
                     top_topoheight = topoheight;
                     top_height = height;
                     top_block_hash = Some(hash);
@@ -1789,44 +1852,11 @@ impl<S: Storage> P2pServer<S> {
     // its used to find a common point with the peer to which we ask the chain
     pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         debug!("Requesting chain from {}", peer);
-        let mut request = ChainRequest::new();
-        {
-            let storage = self.blockchain.get_storage().read().await;
-            let topoheight = self.blockchain.get_topo_height();
-            let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
-            let mut i = 0;
-
-            // we add 1 for the genesis block added below
-            while i < topoheight && topoheight - i >= pruned_topoheight && request.size() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
-                trace!("Requesting hash at topo {}", topoheight - i);
-                let hash = storage.get_hash_at_topo_height(topoheight - i).await?;
-                request.add_block_id(hash, topoheight - i);
-                match request.size() {
-                    0..=19 => {
-                        i += 1;
-                    },
-                    20..=39 => {
-                        i += 5;
-                    }
-                    40..=59 => {
-                        i += 50;
-                    },
-                    60..=79 => {
-                        i += 500;
-                    }
-                    _ => {
-                        i = i * 2;
-                    }
-                };
-            }
-    
-            // add genesis block
-            let genesis_block = storage.get_hash_at_topo_height(0).await?;
-            request.add_block_id(genesis_block, 0);
-            trace!("Sending a chain request with {} blocks", request.size());
-            peer.set_chain_sync_requested(true);
-        }
-        let ping = self.build_generic_ping_packet().await;
+        let storage = self.blockchain.get_storage().read().await;
+        let request = ChainRequest::new(self.build_list_of_blocks_id(&*storage).await?);
+        trace!("Sending a chain request with {} blocks", request.size());
+        peer.set_chain_sync_requested(true);
+        let ping = self.build_generic_ping_packet_with_storage(&*storage).await;
         peer.send_packet(Packet::ChainRequest(PacketWrapper::new(Cow::Owned(request), Cow::Owned(ping)))).await?;
         Ok(())
     }

@@ -1691,17 +1691,17 @@ impl<S: Storage> Blockchain<S> {
         Ok(false)
     }
 
-    pub async fn rewind_chain(&self, count: usize) -> Result<u64, BlockchainError> {
+    pub async fn rewind_chain(&self, count: u64) -> Result<u64, BlockchainError> {
         let mut storage = self.storage.write().await;
         self.rewind_chain_for_storage(&mut storage, count).await
     }
 
-    pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: usize) -> Result<u64, BlockchainError> {
+    pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64) -> Result<u64, BlockchainError> {
         trace!("rewind chain with count = {}", count);
         let current_height = self.get_height();
         let current_topoheight = self.get_topo_height();
         warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, current_height, current_topoheight);
-        let (new_height, new_topoheight, txs) = storage.pop_blocks(current_height, current_topoheight, count as u64).await?;
+        let (new_height, new_topoheight, txs) = storage.pop_blocks(current_height, current_topoheight, count).await?;
         debug!("New topoheight: {} (diff: {})", new_topoheight, current_topoheight - new_topoheight);
 
         {
