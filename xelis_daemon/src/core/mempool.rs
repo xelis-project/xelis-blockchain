@@ -1,6 +1,7 @@
 use super::error::BlockchainError;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::HashMap;
 use std::sync::Arc;
+use indexmap::IndexSet;
 use log::{trace, debug, warn};
 use xelis_common::utils::get_current_time;
 use xelis_common::{
@@ -24,7 +25,7 @@ pub struct NonceCache {
     min: u64,
     max: u64,
     // all txs for this user ordered by nonce
-    txs: BTreeMap<u64, Arc<Hash>>,
+    txs: IndexSet<Arc<Hash>>,
 }
 
 #[derive(serde::Serialize)]
@@ -48,25 +49,34 @@ impl Mempool {
         let hash = Arc::new(hash);
         let nonce = tx.get_nonce();
         // update the cache for this owner
+        let mut must_update = true;
         if let Some(cache) = self.nonces_cache.get_mut(tx.get_owner()) {
             // delete the TX if its in the range of already tracked nonces
             trace!("Cache found for owner {} with nonce range {}-{}, nonce = {}", tx.get_owner(), cache.get_min(), cache.get_max(), nonce);
             if nonce >= cache.get_min() && nonce <= cache.get_max() {
                 trace!("nonce {} is in range {}-{}", nonce, cache.get_min(), cache.get_max());
                 // because it's based on order and we may have the same order
-                if let Some(tx_hash) = cache.txs.remove(&nonce) {
+                let index = ((nonce - cache.get_min()) % (cache.get_max() - cache.get_min())) as usize;
+                cache.txs.insert(hash.clone());
+                must_update = false;
+
+                if let Some(tx_hash) = cache.txs.swap_remove_index(index) {
                     trace!("TX {} with same nonce found in cache, removing it from sorted txs", tx_hash);
                     // remove the tx hash from sorted txs
                     if self.txs.remove(&tx_hash).is_none() {
                         warn!("TX {} not found in mempool while deleting collision with {}", tx_hash, hash);
                     }
+                } else {
+                    warn!("No TX found in cache for nonce {} while adding {}", nonce, hash);
                 }
             }
 
-            cache.update(nonce, hash.clone());
+            if must_update {
+                cache.update(nonce, hash.clone());
+            }
         } else {
-            let mut txs = BTreeMap::new();
-            txs.insert(nonce, hash.clone());
+            let mut txs = IndexSet::new();
+            txs.insert(hash.clone());
 
             // init the cache
             let cache = NonceCache {
@@ -152,10 +162,15 @@ impl Mempool {
                     // filter all txs hashes which are not found
                     // or where its nonce is smaller than the new nonce
                     // TODO when drain_filter is stable, use it (allow to get all hashes deleted)
-                    cache.txs.retain(|tx_nonce, tx| {
-                        let delete = *tx_nonce < nonce;
+                    cache.txs.retain(|hash| {
+                        let delete = if let Some(tx) = self.txs.get(hash) {
+                            tx.get_tx().get_nonce() < nonce
+                        } else {
+                            true
+                        };
+
                         if delete {
-                            hashes.push(Arc::clone(tx));
+                            hashes.push(Arc::clone(hash));
                         }
                         !delete
                     });
@@ -211,13 +226,13 @@ impl NonceCache {
         self.max
     }
 
-    pub fn get_txs(&self) -> &BTreeMap<u64, Arc<Hash>> {
+    pub fn get_txs(&self) -> &IndexSet<Arc<Hash>> {
         &self.txs
     }
 
     fn update(&mut self, nonce: u64, hash: Arc<Hash>) {
         self.update_nonce_range(nonce);
-        self.txs.insert(nonce, hash);
+        self.txs.insert(hash);
     }
 
     fn update_nonce_range(&mut self, nonce: u64) {
@@ -233,6 +248,11 @@ impl NonceCache {
     }
 
     pub fn has_tx_with_same_nonce(&self, nonce: u64) -> Option<&Arc<Hash>> {
-        self.txs.get(&nonce)
+        if nonce < self.min || nonce > self.max {
+            return None;
+        }
+
+        let index = ((nonce - self.min) % (self.max - self.min)) as usize;
+        self.txs.get_index(index)
     }
 }

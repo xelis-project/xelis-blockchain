@@ -926,7 +926,7 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 // compute balances of previous pending TXs
-                let txs_hashes = cache.get_txs().values();
+                let txs_hashes = cache.get_txs();
                 let mut owner_txs = Vec::with_capacity(txs_hashes.len());
                 for hash in txs_hashes {
                     let tx = mempool.get_tx(hash)?;
@@ -936,9 +936,12 @@ impl<S: Storage> Blockchain<S> {
                 // we need to do it in two times because of the constraint of lifetime on &tx
                 let mut balances = HashMap::new();
                 let mut nonces = HashMap::new();
+                // compute balances and nonces
                 for tx in &owner_txs {
                     self.verify_transaction_with_hash(storage, tx, &hash, &mut balances, Some(&mut nonces), false).await?;
                 }
+                // Verify original TX
+                self.verify_transaction_with_hash(storage, &tx, &hash, &mut balances, Some(&mut nonces), false).await?;
             } else {
                 let mut balances = HashMap::new();
                 self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false).await?;

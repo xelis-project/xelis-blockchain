@@ -1029,7 +1029,7 @@ impl<S: Storage> P2pServer<S> {
                 let mempool = self.blockchain.get_mempool().read().await;
                 let nonces_cache = mempool.get_nonces_cache();
                 let all_txs = nonces_cache.values()
-                    .flat_map(|v| v.get_txs().values())
+                    .flat_map(|v| v.get_txs())
                     .skip(skip).take(NOTIFY_MAX_LEN)
                     .map(|tx| Cow::Borrowed(tx.as_ref()))
                     .collect::<IndexSet<_>>();
