@@ -282,7 +282,7 @@ impl PeerList {
     // we check that we're not already connected to this peer and that we didn't tried to connect to it recently
     fn find_peer_to_connect_to_with_state(&mut self, current_time: u64, state: StoredPeerState) -> Option<SocketAddr> {
         for (addr, stored_peer) in &mut self.stored_peers {
-            if *stored_peer.get_state() == state && stored_peer.get_last_connection_try() + P2P_EXTEND_PEERLIST_DELAY <= current_time && Self::internal_get_peer_by_addr(&self.peers, addr).is_none() {
+            if *stored_peer.get_state() == state && stored_peer.get_last_connection_try() + (stored_peer.get_fail_count() as u64 * P2P_EXTEND_PEERLIST_DELAY) <= current_time && Self::internal_get_peer_by_addr(&self.peers, addr).is_none() {
                 stored_peer.set_last_connection_try(current_time);
                 return Some(addr.clone());
             }
@@ -294,6 +294,11 @@ impl PeerList {
     // increase the fail count of a peer
     pub fn increase_fail_count_for_saved_peer(&mut self, addr: &SocketAddr) {
         if let Some(stored_peer) = self.stored_peers.get_mut(addr) {
+            let fail_count = stored_peer.get_fail_count();
+            if fail_count == u8::MAX {
+                // we reached the max value, we can't increase it anymore
+                return;
+            }
             stored_peer.set_fail_count(stored_peer.get_fail_count() + 1);
         }
     }
