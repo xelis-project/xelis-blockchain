@@ -924,23 +924,14 @@ impl<S: Storage> Blockchain<S> {
                     debug!("TX {} nonce is not in the range of the pending TXs for this owner, received: {}, expected between {} and {}", hash, tx.get_nonce(), cache.get_min(), cache.get_max());
                     return Err(BlockchainError::InvalidTxNonceMempoolCache)
                 }
-
-                // compute balances of previous pending TXs
-                let txs_hashes = cache.get_txs();
-                let mut owner_txs = Vec::with_capacity(txs_hashes.len());
-                for hash in txs_hashes {
-                    let tx = mempool.get_tx(hash)?;
-                    owner_txs.push(tx);
-                }
-
                 // we need to do it in two times because of the constraint of lifetime on &tx
                 let mut balances = HashMap::new();
                 let mut nonces = HashMap::new();
-                // compute balances and nonces
-                for tx in &owner_txs {
-                    self.verify_transaction_with_hash(storage, tx, &hash, &mut balances, Some(&mut nonces), false).await?;
-                }
+                // because we already verified the range of nonce
+                nonces.insert(tx.get_owner(), tx.get_nonce());
+
                 // Verify original TX
+                // We may have double spending in balances, but it is ok because miner check that all txs included are valid
                 self.verify_transaction_with_hash(storage, &tx, &hash, &mut balances, Some(&mut nonces), false).await?;
             } else {
                 let mut balances = HashMap::new();
@@ -1873,7 +1864,7 @@ impl<S: Storage> Blockchain<S> {
                 }
                 // we increment it in case any new tx for same owner is following
                 *nonce += 1;
-            } else {
+            } else { // We don't have any cache, compute using chain data
                 // it is possible that a miner has balance but no nonces, so we need to check it
                 let nonce = if storage.has_nonce(tx.get_owner()).await? {
                     let (_, version) = storage.get_last_nonce(tx.get_owner()).await?;
