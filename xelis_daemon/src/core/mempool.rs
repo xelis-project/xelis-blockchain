@@ -1,8 +1,7 @@
 use super::error::BlockchainError;
-use std::cmp::Reverse;
-use std::collections::{HashMap, BTreeMap, HashSet};
+use std::collections::{HashMap, BTreeMap};
 use std::sync::Arc;
-use log::{trace, debug};
+use log::{trace, debug, warn};
 use xelis_common::utils::get_current_time;
 use xelis_common::{
     crypto::{
@@ -33,18 +32,14 @@ pub struct Mempool {
     // store all txs waiting to be included in a block
     txs: HashMap<Arc<Hash>, SortedTx>,
     // store all sender's nonce for faster finding
-    nonces_cache: HashMap<PublicKey, NonceCache>,
-    // binary tree map for sorted txs hash by fees
-    // keys represents fees, while value represents all txs hash
-    sorted_txs: BTreeMap<Reverse<u64>, HashSet<Arc<Hash>>>,
+    nonces_cache: HashMap<PublicKey, NonceCache>
 }
 
 impl Mempool {
     pub fn new() -> Self {
         Mempool {
             txs: HashMap::new(),
-            nonces_cache: HashMap::new(),
-            sorted_txs: BTreeMap::new()
+            nonces_cache: HashMap::new()
         }
     }
 
@@ -62,7 +57,9 @@ impl Mempool {
                 if let Some(tx_hash) = cache.txs.remove(&nonce) {
                     trace!("TX {} with same nonce found in cache, removing it from sorted txs", tx_hash);
                     // remove the tx hash from sorted txs
-                    Self::delete_tx(&mut self.txs, &mut self.sorted_txs, tx_hash);
+                    if self.txs.remove(&tx_hash).is_none() {
+                        warn!("TX {} not found in mempool while deleting collision with {}", tx_hash, hash);
+                    }
                 }
             }
 
@@ -85,10 +82,6 @@ impl Mempool {
             first_seen: get_current_time(),
             tx
         };
-
-        let entry = self.sorted_txs.entry(Reverse(sorted_tx.get_fee())).or_insert_with(HashSet::new);
-        // add the tx hash in sorted txs
-        entry.insert(hash.clone());
 
         // insert in map
         self.txs.insert(hash, sorted_tx);
@@ -126,10 +119,6 @@ impl Mempool {
         &self.txs
     }
 
-    pub fn get_sorted_txs(&self) -> &BTreeMap<Reverse<u64>, HashSet<Arc<Hash>>> {
-        &self.sorted_txs
-    }
-
     pub fn get_cached_nonce(&self, key: &PublicKey) -> Option<&NonceCache> {
         self.nonces_cache.get(key)
     }
@@ -140,7 +129,6 @@ impl Mempool {
 
     pub fn clear(&mut self) {
         self.txs.clear();
-        self.sorted_txs.clear();
         self.nonces_cache.clear();
     }
 
@@ -177,7 +165,9 @@ impl Mempool {
 
                     // now delete all necessary txs
                     for hash in hashes {
-                        Self::delete_tx(&mut self.txs, &mut self.sorted_txs, hash);
+                        if self.txs.remove(&hash).is_none() {
+                            warn!("TX {} not found in mempool while deleting", hash);
+                        }
                     }
                 }
             }
@@ -185,27 +175,6 @@ impl Mempool {
             if delete_cache {
                 trace!("Removing empty nonce cache for owner {}", key);
                 self.nonces_cache.remove(&key);
-            }
-        }
-    }
-
-
-    fn delete_tx(txs: &mut HashMap<Arc<Hash>, SortedTx>, sorted_txs: &mut BTreeMap<Reverse<u64>, HashSet<Arc<Hash>>>, hash: Arc<Hash>) {
-        trace!("Trying to delete {}", hash);
-        if let Some(sorted_tx) = txs.remove(&hash) {
-            trace!("Deleted from HashMap: {}", hash);
-            let fee_reverse = Reverse(sorted_tx.get_fee());
-            let mut is_empty = false;
-            if let Some(hashes) = sorted_txs.get_mut(&fee_reverse) {
-                trace!("Removing tx hash {} for fee entry {}", hash, fee_reverse.0);
-                hashes.remove(&hash);
-                is_empty = hashes.is_empty();
-            }
-
-            // don't keep empty data
-            if is_empty {
-                trace!("Removing empty fee ({}) entry", fee_reverse.0);
-                sorted_txs.remove(&fee_reverse);
             }
         }
     }

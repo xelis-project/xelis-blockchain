@@ -3,7 +3,7 @@ use lru::LruCache;
 use serde_json::{Value, json};
 use xelis_common::{
     config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS},
-    crypto::{key::PublicKey, hash::{Hashable, Hash}},
+    crypto::{key::PublicKey, hash::{Hashable, Hash, HASH_SIZE}},
     difficulty::{check_difficulty, calculate_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     utils::{get_current_timestamp, format_coin},
@@ -12,7 +12,7 @@ use xelis_common::{
     serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType, StableHeightChangedEvent}, DataHash}, network::Network
 };
 use crate::{p2p::P2pServer, rpc::{rpc::{get_block_response_for_hash, get_block_type_for_block}, DaemonRpcServer, SharedDaemonRpcServer}};
-use super::{storage::{Storage, DifficultyProvider}, mempool::SortedTx};
+use super::storage::{Storage, DifficultyProvider};
 use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::{Duration, Instant}, borrow::Cow};
 use std::collections::{HashMap, HashSet};
 use async_recursion::async_recursion;
@@ -1012,59 +1012,44 @@ impl<S: Storage> Blockchain<S> {
         let mut block = BlockHeader::new(self.get_version_at_height(height), height, get_current_timestamp(), sorted_tips, extra_nonce, address, Vec::new());
 
         let mempool = self.mempool.read().await;
-        let txs = mempool.get_sorted_txs();
+
+        // get all availables txs and sort them by fee per size
+        let mut txs = mempool.get_txs()
+            .iter()
+            .map(|(hash, tx)| (tx.get_fee(), tx.get_size(), hash, tx.get_tx()))
+            .collect::<Vec<_>>();
+        txs.sort_by(|(a_fee, a_size, _, a_tx), (b_fee, b_size, _, b_tx)| {
+            // If its the same sender, check the nonce
+            if a_tx.get_owner() == b_tx.get_owner() {
+                // Increasing nonces (lower first)
+                return a_tx.get_nonce().cmp(&b_tx.get_nonce())
+            }
+
+            let a = a_fee * *a_size as u64;
+            let b = b_fee * *b_size as u64;
+            // Decreasing fees (higher first)
+            b.cmp(&a)
+        });
+
         let mut total_txs_size = 0;
         let mut nonces: HashMap<&PublicKey, u64> = HashMap::new();
-
-        // txs are sorted in descending order thanks to Reverse<u64>
+        let mut block_size = block.size();
         {
             let mut balances = HashMap::new();
-            'main: for (fee, hashes) in txs {
-                let mut transactions: Vec<(&Arc<Hash>, &SortedTx)> = Vec::with_capacity(hashes.len());
-                // prepare TXs by sorting them by nonce
-                // only txs from same owner who have same fees or decreasing fees with increasing nonce will have
-                // all its txs in the same block
-                // maybe we can improve this to support all levels of fees
-                for hash in hashes {
-                    let tx = mempool.get_sorted_tx(hash)?;
-                    transactions.push((hash, tx));
+            'main: for (fee, size, hash, tx) in txs {
+                if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
+                    break 'main;
                 }
-                transactions.sort_by(|(_, a), (_, b)| a.get_tx().get_nonce().cmp(&b.get_tx().get_nonce()));
 
-                for (hash, sorted_tx) in transactions {
-                    if block.size() + total_txs_size + sorted_tx.get_size() >= MAX_BLOCK_SIZE {
-                        break 'main;
-                    }
-
-                    let transaction = sorted_tx.get_tx();
-                    let account_nonce = if let Some(nonce) = nonces.get(transaction.get_owner()) {
-                        *nonce
-                    } else if storage.has_nonce(transaction.get_owner()).await? {
-                        let (_, version) = storage.get_last_nonce(transaction.get_owner()).await?;
-                        nonces.insert(transaction.get_owner(), version.get_nonce());
-                        version.get_nonce()
-                    } else { // This sender has no nonce, we start at 0
-                        nonces.insert(transaction.get_owner(), 0);
-                        0
-                    };
-
-                    if account_nonce < transaction.get_nonce() {
-                        trace!("Skipping {} with {} fees because another TX should be selected first due to nonce", hash, format_coin(fee.0));
-                    } else if account_nonce == transaction.get_nonce() {
-                        // Check if it can be added to the block
-                        if self.verify_transaction_with_hash(&storage, sorted_tx.get_tx(), hash, &mut balances, None, true).await.is_ok() {
-                            trace!("Selected {} (nonce: {}, account nonce: {}, fees: {}) for mining", hash, transaction.get_nonce(), account_nonce, format_coin(fee.0));
-                            // TODO no clone
-                            block.txs_hashes.push(hash.as_ref().clone());
-                            total_txs_size += sorted_tx.get_size();
-                            // we use unwrap because above we insert it
-                            *nonces.get_mut(transaction.get_owner()).unwrap() += 1;
-                        } else {
-                            warn!("This TX {} is not suitable for this block (nonce: {}, account nonce: {}, fees: {})", hash, transaction.get_nonce(), account_nonce, format_coin(fee.0));
-                        }
-                    } else {
-                        warn!("This TX in mempool {} is in advance (nonce: {}, account nonce: {}, fees: {}), it should be removed from mempool", hash, transaction.get_nonce(), account_nonce, format_coin(fee.0));
-                    }
+                // Check if the TX is valid for this potential block
+                if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false).await {
+                    warn!("TX {} is not valid for mining: {}", hash, e);
+                } else {
+                    trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_coin(fee));
+                    // TODO no clone
+                    block.txs_hashes.push(hash.as_ref().clone());
+                    block_size += HASH_SIZE; // add the hash size
+                    total_txs_size += size;
                 }
             }
         }

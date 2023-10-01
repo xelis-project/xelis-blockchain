@@ -1113,6 +1113,7 @@ Retrieve a specific range of blocks (up to 20 maximum) based on height
 
 #### Get Accounts
 Retrieve a list of available accounts (each account returned had at least one interaction on-chain)
+The topoheight range in parameters search for all accounts having a on-chain interaction in this inclusive range.
 
 ##### Method `get_accounts`
 
