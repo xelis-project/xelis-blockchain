@@ -811,7 +811,7 @@ No parameters
 			"blocks": null,
 			"executed_in_block": null,
 			"data": {
-				"Transfer": [
+				"transfers": [
 					{
 						"amount": 1500,
 						"asset": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -869,7 +869,7 @@ Fetch transactions by theirs hashes from database and mempool of daemon and keep
 			],
 			"executed_in_block": "0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692",
 			"data": {
-				"Transfer": [
+				"transfers": [
 					{
 						"amount": 15000,
 						"asset": "0000000000000000000000000000000000000000000000000000000000000000",
