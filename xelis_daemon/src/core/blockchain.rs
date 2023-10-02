@@ -514,7 +514,16 @@ impl<S: Storage> Blockchain<S> {
     }
 
     #[async_recursion]
-    async fn find_tip_base(&self, storage: &S, hash: &Hash, height: u64) -> Result<(Hash, u64), BlockchainError> {
+    async fn find_tip_base(&self, storage: &S, hash: &Hash, height: u64, pruned_topoheight: u64) -> Result<(Hash, u64), BlockchainError> {
+        if pruned_topoheight > 0 && storage.is_block_topological_ordered(hash).await {
+            let topoheight = storage.get_topo_height_for_hash(hash).await?;
+            // Node is pruned, we only prune chain to stable height so we can return the hash
+            if topoheight <= pruned_topoheight {
+                debug!("Node is pruned, returns {} at {} as stable tip base", hash, height);
+                return Ok((hash.clone(), height))
+            }
+        }
+
         let (tips, tips_count) = {
             // first, check if we have it in cache
             let mut cache = self.tip_base_cache.lock().await;
@@ -535,6 +544,15 @@ impl<S: Storage> Blockchain<S> {
 
         let mut bases = Vec::with_capacity(tips_count);
         for hash in tips.iter() {
+            if pruned_topoheight > 0 && storage.is_block_topological_ordered(hash).await {
+                let topoheight = storage.get_topo_height_for_hash(hash).await?;
+                // Node is pruned, we only prune chain to stable height so we can return the hash
+                if topoheight <= pruned_topoheight {
+                    let block_height = storage.get_height_for_block_hash(hash).await?;
+                    debug!("Node is pruned, returns tip {} at {} as stable tip base", hash, block_height);
+                    return Ok((hash.clone(), block_height))
+                }
+            }
             // if block is sync, it is a tip base
             if self.is_sync_block_at_height(storage, hash, height).await? {
                 let block_height = storage.get_height_for_block_hash(hash).await?;
@@ -546,7 +564,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             // if block is not sync, we need to find its tip base too
-            bases.push(self.find_tip_base(storage, hash, height).await?);
+            bases.push(self.find_tip_base(storage, hash, height, pruned_topoheight).await?);
         }
 
         if bases.is_empty() {
@@ -579,9 +597,10 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
+        let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
         let mut bases = Vec::new();
         for hash in tips.into_iter() {
-            bases.push(self.find_tip_base(storage, hash, best_height).await?);
+            bases.push(self.find_tip_base(storage, hash, best_height, pruned_topoheight).await?);
         }
 
         

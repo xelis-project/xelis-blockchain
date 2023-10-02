@@ -1704,9 +1704,15 @@ impl<S: Storage> P2pServer<S> {
 
                         let top_block_hash = storage.get_top_block_hash().await?;
                         if *common_point.get_hash() != top_block_hash {
-                            let deviation = our_topoheight - common_point.get_topoheight();
-                            warn!("Common point is {} while our top block hash is {} ! Deviation of {} topoheight blocks", common_point.get_hash(), top_block_hash, deviation);
-                            our_topoheight = self.blockchain.rewind_chain_for_storage(&mut *storage, deviation).await?;
+                            let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
+                            
+                            warn!("Common point is {} while our top block hash is {} !", common_point.get_hash(), top_block_hash);
+                            let pop_count = if pruned_topoheight >= common_point.get_topoheight() {
+                                our_topoheight - pruned_topoheight
+                            } else {
+                                our_topoheight - common_point.get_topoheight()
+                            };
+                            our_topoheight = self.blockchain.rewind_chain_for_storage(&mut *storage, pop_count).await?;
                             debug!("New topoheight after rewind is now {}", our_topoheight);
                         }
                     } else {

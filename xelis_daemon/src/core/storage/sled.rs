@@ -806,7 +806,7 @@ impl Storage for SledStorage {
         trace!("has balance {} for {} at exact topoheight {}", asset, key, topoheight);
         // check first that this address has balance, if no returns
         if !self.has_balance_for(key, asset).await? {
-            return Err(BlockchainError::NoBalanceChanges(key.clone()))
+            return Ok(false)
         }
 
         let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
@@ -818,7 +818,7 @@ impl Storage for SledStorage {
     async fn get_balance_at_exact_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("get balance {} for {} at exact topoheight {}", asset, key, topoheight);
         // check first that this address has balance, if no returns
-        if !self.has_balance_for(key, asset).await? {
+        if !self.has_balance_at_exact_topoheight(key, asset, topoheight).await? {
             return Err(BlockchainError::NoBalanceChanges(key.clone()))
         }
 
@@ -1224,7 +1224,7 @@ impl Storage for SledStorage {
                 while let Some(previous_topoheight) = version.get_previous_topoheight() {
                     if previous_topoheight < topoheight {
                         // we find the new highest version which is under new topoheight
-                        trace!("New highest version for {} is at topoheight {}", pkey, previous_topoheight);
+                        trace!("New highest version nonce for {} is at topoheight {}", pkey, previous_topoheight);
                         self.nonces.insert(&key, &previous_topoheight.to_be_bytes())?;
                         break;
                     }
@@ -1244,20 +1244,25 @@ impl Storage for SledStorage {
                 let (key, value) = el?;
                 let highest_topoheight = u64::from_bytes(&value)?;
                 if highest_topoheight > topoheight {
-                    self.nonces.remove(&key)?;
                     // find the first version which is under topoheight
                     let pkey = PublicKey::from_bytes(&key)?;
+                    let mut delete = true;
                     let mut version = self.get_balance_at_exact_topoheight(&pkey, asset, highest_topoheight).await?;
                     while let Some(previous_topoheight) = version.get_previous_topoheight() {
                         if previous_topoheight < topoheight {
                             // we find the new highest version which is under new topoheight
-                            trace!("New highest version for {} is at topoheight {} with asset {}", pkey, previous_topoheight, asset);
+                            trace!("New highest version balance for {} is at topoheight {} with asset {}", pkey, previous_topoheight, asset);
                             tree.insert(&key, &previous_topoheight.to_be_bytes())?;
+                            delete = false;
                             break;
                         }
     
                         // keep searching
                         version = self.get_balance_at_exact_topoheight(&pkey, asset, previous_topoheight).await?;
+                    }
+
+                    if delete {
+                        tree.remove(&key)?;
                     }
                 } else {
                     // nothing to do as its under the rewinded topoheight
