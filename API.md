@@ -289,10 +289,8 @@ Retrieve all blocks at a specific height
 		}
 	]
 }
-
-NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
-
 ```
+NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
 
 #### Get Block By Hash
 Retrieve a block by its hash
