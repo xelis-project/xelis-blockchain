@@ -1163,12 +1163,28 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Listen to incoming packets from a connection
+    // Packet is read from the same task always, while its handling is delegated to a unique task
     async fn listen_connection(self: &Arc<Self>, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
-        let packet = peer.get_connection().read_packet(buf, MAX_BLOCK_SIZE as u32).await?;
-        if let Err(e) = self.handle_incoming_packet(peer, packet).await {
-            error!("Error occured while handling incoming packet from {}: {}", peer, e);
-            peer.increment_fail_count();
-        }
+        let bytes = peer.get_connection().read_packet_bytes(buf, MAX_BLOCK_SIZE as u32).await?;
+        let zelf = Arc::clone(self);
+        let peer = Arc::clone(peer);
+        tokio::spawn(async move {
+            // Parse the packet
+            let packet = match peer.get_connection().read_packet_from_bytes(&bytes).await {
+                Ok(packet) => packet,
+                Err(e) => {
+                    error!("Error while parsing packet from bytes: {}", e);
+                    peer.increment_fail_count();
+                    return;
+                }
+            };
+
+            // Handle the packet
+            if let Err(e) = zelf.handle_incoming_packet(&peer, packet).await {
+                error!("Error occured while handling incoming packet from {}: {}", peer, e);
+                peer.increment_fail_count();
+            }
+        });
         Ok(())
     }
 
