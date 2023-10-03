@@ -1149,6 +1149,9 @@ impl Storage for SledStorage {
                         self.remove_tx_executed(&tx_hash)?;
                     }
 
+                    trace!("Deleting TX {} in block {}", tx_hash, hash);
+                    self.delete_data(&self.transactions, &self.transactions_cache, tx_hash).await?;
+
                     txs.push((tx_hash.clone(), tx));
                 }
 
@@ -1172,10 +1175,7 @@ impl Storage for SledStorage {
                 // generate new tips
                 trace!("Removing {} from {} tips", hash, tips.len());
                 tips.remove(&hash);
-                trace!("Tips: {}", tips.len());
-                for tip in &tips {
-                    trace!("Tip {}", tip);
-                }
+                trace!("Tips: {}", tips.iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
 
                 for hash in block.get_tips() {
                     trace!("Adding {} to {} tips", hash, tips.len());
@@ -1189,7 +1189,7 @@ impl Storage for SledStorage {
         }
         debug!("Blocks processed {}, new topoheight: {}, tips: {}", done, topoheight, tips.len());
         for hash in &tips {
-            trace!("hash {} at height {}", hash, self.get_height_for_block_hash(&hash).await?);
+            trace!("tip {} at height {}", hash, self.get_height_for_block_hash(&hash).await?);
         }
 
         // clean all assets
