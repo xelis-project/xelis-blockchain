@@ -41,6 +41,10 @@ pub async fn get_block_type_for_block<S: Storage>(blockchain: &Blockchain<S>, st
 }
 
 pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: Hash, include_txs: bool) -> Result<Value, InternalRpcError> {
+    if !storage.has_block(&hash).await.context("Error while checking if block exist")? {
+        return Err(InternalRpcError::AnyError(BlockchainError::BlockNotFound(hash).into()))
+    }
+
     let (topoheight, supply, reward) = if  storage.is_block_topological_ordered(&hash).await {
         (
             Some(storage.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?),
