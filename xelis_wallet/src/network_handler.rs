@@ -133,9 +133,8 @@ impl NetworkHandler {
         Ok(Some((topoheight, balance)))
     }
 
-    async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, min_topoheight: u64, mut current_topoheight: Option<u64>) -> Result<(), Error> {
+    async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, min_topoheight: u64, current_topoheight: Option<u64>) -> Result<(), Error> {
         let mut res = self.get_versioned_balance_and_topoheight(address, asset, current_topoheight).await?;
-        let mut is_highest_nonce = true;
         while let Some((topoheight, balance)) = res.take() {
             // don't sync already synced blocks
             if min_topoheight > topoheight {
@@ -166,7 +165,6 @@ impl NetworkHandler {
                 }
             }
 
-            let mut latest_nonce_sent = None;
             let (block, txs) = block.split();
             // TODO check only executed txs in this block
             for (tx_hash, tx) in block.into_owned().take_txs_hashes().into_iter().zip(txs) {
@@ -221,21 +219,6 @@ impl NetworkHandler {
     
                         storage.save_transaction(entry.get_hash(), &entry)?;
                     }
-                }
-
-                if is_owner {
-                    latest_nonce_sent = nonce;
-                }
-            }
-
-            // check that we have a outgoing tx (in case of same wallets used in differents places at same time)
-            if is_highest_nonce {
-                if let (Some(last_nonce), None) = (latest_nonce_sent, current_topoheight.take()) {
-                    // don't keep the lock in case of a request
-                    debug!("Detected a nonce changes for balance at topoheight {} with last nonce {} current topoheight {:?}", topoheight, last_nonce, current_topoheight);
-                    let mut storage = self.wallet.get_storage().write().await;
-                    storage.set_nonce(last_nonce + 1)?;
-                    is_highest_nonce = false;
                 }
             }
 
@@ -355,6 +338,16 @@ impl NetworkHandler {
             }
         }
 
+        // Retrieve the highest nonce (in one call, in case of assets/txs not tracked correctly)
+        {
+            let res = self.api.get_last_nonce(&address).await?;
+            let nonce = res.version.get_nonce();
+            debug!("New nonce found is {}", nonce);
+            let mut storage = self.wallet.get_storage().write().await;
+            storage.set_nonce(nonce)?;
+        }
+
+        // get balance and transactions for each asset
         for asset in assets {
             debug!("calling get balances and transactions {}", current_topoheight);
             if let Err(e) = self.get_balance_and_transactions(&address, &asset, current_topoheight, None).await {
