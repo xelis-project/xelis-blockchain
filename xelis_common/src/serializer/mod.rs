@@ -73,11 +73,10 @@ impl Writer {
 
     pub fn write_optional_non_zero_u8(&mut self, opt: Option<u8>) {
         match opt {
-            Some(v) => {
-                self.bytes.push(1);
-                self.write_u8(v);
+            Some(v) if v != 0 => {
+                self.bytes.push(v);
             },
-            None => {
+            _ => {
                 self.bytes.push(0);
             }
         };

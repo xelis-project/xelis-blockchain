@@ -1062,8 +1062,6 @@ impl<S: Storage> P2pServer<S> {
                 peer.set_requested_inventory(false);
                 peer.set_last_inventory(get_current_time());
 
-                // check and add if we are missing a TX in our mempool or storage
-                let mut missing_txs: Vec<Hash> = Vec::new();
                 let next_page = inventory.next();
                 {
                     let txs = inventory.get_txs();
@@ -1081,47 +1079,9 @@ impl<S: Storage> P2pServer<S> {
                     let storage = self.blockchain.get_storage().read().await;
                     for hash in txs.into_owned() {
                         if !mempool.contains_tx(&hash) && !storage.has_transaction(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
-                            missing_txs.push(hash.into_owned());
+                            self.queued_fetcher.fetch(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned()));
                         }
                     }
-                }
-
-                // second part is to retrieve all txs we don't have concurrently
-                // we don't want to block the peer and others locks for too long so we do it in a separate task
-                if !missing_txs.is_empty() {
-                    let peer = Arc::clone(&peer);
-                    let zelf = Arc::clone(&self);
-                    tokio::spawn(async move {
-                        for hash in missing_txs {
-                            let response = match zelf.object_tracker.fetch_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash)).await {
-                                Ok(response) => response,
-                                Err(e) => {
-                                    error!("Error while requesting TX to {} using ObjectTracker: {}", peer, e);
-                                    peer.increment_fail_count();
-                                    return;
-                                }
-                            };
-    
-                            if let OwnedObjectResponse::Transaction(tx, hash) = response {
-                                debug!("Received {} with nonce {}", hash, tx.get_nonce());
-                                if let Err(e) = zelf.blockchain.add_tx_with_hash_to_mempool(tx, hash, false).await {
-                                    match e {
-                                        BlockchainError::TxAlreadyInMempool(hash) | BlockchainError::TxAlreadyInBlockchain(hash) => {
-                                            // ignore because maybe another peer send us this same tx
-                                            trace!("Received a tx we already have in mempool: {}", hash);
-                                        },
-                                        _ => {
-                                            error!("Error while adding tx to mempool from {} inventory: {}", peer, e);
-                                            peer.increment_fail_count();
-                                        }
-                                    }
-                                }
-                            } else {
-                                error!("Error while retrieving tx from {} inventory, got an invalid type, we should ban this peer", peer);
-                                peer.increment_fail_count();
-                            }
-                        }
-                    });
                 }
 
                 // request the next page

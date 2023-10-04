@@ -4,6 +4,7 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use crate::core::{blockchain::Blockchain, storage::Storage};
 use super::{peer::Peer, packet::object::{ObjectRequest, OwnedObjectResponse}, tracker::SharedObjectTracker};
 
+// TODO optimize to request the data but only handle in good order
 pub struct QueuedFetcher {
     sender: UnboundedSender<(Arc<Peer>, ObjectRequest)>
 }
