@@ -28,7 +28,8 @@ use xelis_common::{
         GetNonceResult,
         GetAssetsParams,
         GetAccountsParams,
-        HasNonceResult
+        HasNonceResult,
+        HasNonceParams
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -300,7 +301,7 @@ async fn get_balance_at_topoheight<S: Storage>(blockchain: Arc<Blockchain<S>>, b
 }
 
 async fn has_nonce<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetNonceParams = parse_params(body)?;
+    let params: HasNonceParams = parse_params(body)?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
         return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
     }
