@@ -400,15 +400,16 @@ NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at
 #### Get Nonce
 Retrieve the nonce for address in request params.
 
-If no nonce is found for this address and its valid, value start at 0.
-Each nonce represents how many TX has been made by this address.
+If no nonce is found for this address and its a valid one, it is safe to assume its nonce start at 0.
+Each nonce represents how many TX has been made by this address and prevent replay attacks.
 
 ##### Method `get_nonce`
 
 ##### Parameters
-|   Name  |   Type  | Required |                Note               |
-|:-------:|:-------:|:--------:|:---------------------------------:|
-| address | Address | Required | Valid address registered on chain |
+|    Name    |   Type  | Required |                    Note                    |
+|:----------:|:-------:|:--------:|:------------------------------------------:|
+|   address  | Address | Required |      Valid address registered on chain     |
+| topoheight | Integer | Optional |        nonce at specified topoheight       |
 
 ##### Request
 ```json
@@ -427,7 +428,45 @@ Each nonce represents how many TX has been made by this address.
 {
 	"id": 1,
 	"jsonrpc": "2.0",
-	"result": 17
+    "result": {
+        "nonce": 6216,
+        "previous_topoheight": 454254,
+        "topoheight": 454352
+    }
+}
+```
+
+#### Has Nonce
+Verify if address has a nonce on-chain registered.
+
+##### Method `has_nonce`
+
+##### Parameters
+|    Name    |   Type  | Required |                    Note                    |
+|:----------:|:-------:|:--------:|:------------------------------------------:|
+|   address  | Address | Required |      Valid address registered on chain     |
+| topoheight | Integer | Optional |        nonce at specified topoheight       |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "has_nonce",
+	"params": {
+		"address": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"
+	}
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "exist": true
+    }
 }
 ```
 

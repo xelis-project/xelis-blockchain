@@ -114,7 +114,6 @@ pub struct GetNonceResult {
 
 #[derive(Serialize, Deserialize)]
 pub struct HasNonceResult {
-    #[serde(flatten)]
     pub exist: bool
 }
 
