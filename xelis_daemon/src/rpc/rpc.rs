@@ -17,7 +17,18 @@ use xelis_common::{
         GetTransactionParams,
         P2pStatusResult,
         GetBlocksAtHeightParams,
-        GetTopoHeightRangeParams, GetBalanceAtTopoHeightParams, GetLastBalanceResult, GetInfoResult, GetTopBlockParams, GetTransactionsParams, TransactionResponse, GetHeightRangeParams, GetNonceResult, GetAssetsParams, GetAccountsParams
+        GetTopoHeightRangeParams,
+        GetBalanceAtTopoHeightParams,
+        GetLastBalanceResult,
+        GetInfoResult,
+        GetTopBlockParams,
+        GetTransactionsParams,
+        TransactionResponse,
+        GetHeightRangeParams,
+        GetNonceResult,
+        GetAssetsParams,
+        GetAccountsParams,
+        HasNonceResult
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -127,6 +138,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight));
     handler.register_method("get_info", async_handler!(get_info));
     handler.register_method("get_nonce", async_handler!(get_nonce));
+    handler.register_method("has_nonce", async_handler!(has_nonce));
     handler.register_method("get_assets", async_handler!(get_assets));
     handler.register_method("count_assets", async_handler!(count_assets));
     handler.register_method("count_transactions", async_handler!(count_transactions));
@@ -287,6 +299,22 @@ async fn get_balance_at_topoheight<S: Storage>(blockchain: Arc<Blockchain<S>>, b
     Ok(json!(balance))
 }
 
+async fn has_nonce<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetNonceParams = parse_params(body)?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+    }
+
+    let storage = blockchain.get_storage().read().await;
+    let exist = if let Some(topoheight) = params.topoheight {
+        storage.has_nonce_at_exact_topoheight(params.address.get_public_key(), topoheight).await.context("Error while checking nonce at topo for account")?
+    } else {
+        storage.has_nonce(params.address.get_public_key()).await.context("Error while checking nonce for account")?
+    };
+
+    Ok(json!(HasNonceResult { exist }))
+}
+
 async fn get_nonce<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetNonceParams = parse_params(body)?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
@@ -294,7 +322,14 @@ async fn get_nonce<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> R
     }
 
     let storage = blockchain.get_storage().read().await;
-    let (topoheight, version) = storage.get_last_nonce(params.address.get_public_key()).await.context("Error while retrieving nonce for account")?;
+    let (topoheight, version) = if let Some(topoheight) = params.topoheight {
+        (topoheight, storage.get_nonce_at_exact_topoheight(params.address.get_public_key(), topoheight).await
+            .context("Error while retrieving nonce at topo for account")?)
+    } else {
+         storage.get_last_nonce(params.address.get_public_key()).await
+            .context("Error while retrieving nonce for account")?
+    };
+
     Ok(json!(GetNonceResult { topoheight, version }))
 }
 

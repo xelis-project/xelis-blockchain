@@ -99,10 +99,23 @@ pub struct GetNonceParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct HasNonceParams<'a> {
+    pub address: Cow<'a, Address<'a>>,
+    #[serde(default)]
+    pub topoheight: Option<u64>
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetNonceResult {
     pub topoheight: u64,
     #[serde(flatten)]
     pub version: VersionedNonce
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HasNonceResult {
+    #[serde(flatten)]
+    pub exist: bool
 }
 
 #[derive(Serialize, Deserialize)]
