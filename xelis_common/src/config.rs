@@ -25,7 +25,8 @@ pub const TIMESTAMP_IN_FUTURE_LIMIT: u128 = 2 * 1000; // 2 seconds maximum in fu
 
 pub const PREFIX_ADDRESS: &str = "xel"; // mainnet prefix address
 pub const TESTNET_PREFIX_ADDRESS: &str = "xet"; // testnet prefix address
-pub const COIN_VALUE: u64 = 100_000; // 5 decimals for a full coin
+pub const COIN_DECIMALS: u8 = 5; // 5 decimals numbers
+pub const COIN_VALUE: u64 = 10u64.pow(COIN_DECIMALS as u32); // 100 000
 pub const MAX_SUPPLY: u64 = 18_400_000 * COIN_VALUE; // 18.4M full coin
 pub const EMISSION_SPEED_FACTOR: u64 = 21;
 

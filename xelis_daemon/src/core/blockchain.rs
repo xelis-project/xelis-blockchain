@@ -2,14 +2,14 @@ use anyhow::Error;
 use lru::LruCache;
 use serde_json::{Value, json};
 use xelis_common::{
-    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS},
+    config::{DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE, EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT, STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, XELIS_ASSET, SIDE_BLOCK_REWARD_PERCENT, DEV_PUBLIC_KEY, BLOCK_TIME, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS, COIN_DECIMALS},
     crypto::{key::PublicKey, hash::{Hashable, Hash, HASH_SIZE}},
     difficulty::{check_difficulty, calculate_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     utils::{get_current_timestamp, format_coin},
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE, Difficulty},
     immutable::Immutable,
-    serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType, StableHeightChangedEvent}, DataHash}, network::Network
+    serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType, StableHeightChangedEvent}, DataHash}, network::Network, asset::AssetData
 };
 use crate::{p2p::P2pServer, rpc::{rpc::{get_block_response_for_hash, get_block_type_for_block}, DaemonRpcServer, SharedDaemonRpcServer}};
 use super::storage::{Storage, DifficultyProvider};
@@ -268,7 +268,7 @@ impl<S: Storage> Blockchain<S> {
 
         // register XELIS asset
         debug!("Registering XELIS asset: {} at topoheight 0", XELIS_ASSET);
-        storage.add_asset(&XELIS_ASSET, 0).await?;
+        storage.add_asset(&XELIS_ASSET, AssetData::new(0, COIN_DECIMALS)).await?;
 
         let genesis_block = if GENESIS_BLOCK.len() != 0 {
             info!("De-serializing genesis block...");

@@ -195,6 +195,11 @@ pub struct TransactionResponse<'a, T: Clone> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetAssetParams {
+    pub asset: Hash
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetAssetsParams {
     pub skip: Option<usize>,
     pub maximum: Option<usize>,

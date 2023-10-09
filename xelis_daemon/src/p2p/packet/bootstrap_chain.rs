@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use indexmap::IndexSet;
 use log::debug;
-use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, block::Difficulty, config::CHAIN_SYNC_REQUEST_MAX_BLOCKS};
+use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, block::Difficulty, config::CHAIN_SYNC_REQUEST_MAX_BLOCKS, asset::AssetWithData};
 
 use super::chain::{BlockId, CommonPoint};
 
@@ -227,7 +227,7 @@ impl Serializer for StepRequest<'_> {
 #[derive(Debug)]
 pub enum StepResponse {
     ChainInfo(Option<CommonPoint>, u64, u64, Hash), // common point, topoheight of stable hash, stable height, stable hash
-    Assets(IndexSet<Hash>, Option<u64>), // Set of assets, pagination
+    Assets(IndexSet<AssetWithData>, Option<u64>), // Set of assets, pagination
     Keys(IndexSet<PublicKey>, Option<u64>), // Set of keys, pagination
     Balances(Vec<Option<u64>>), // Balances requested
     Nonces(Vec<u64>), // Nonces for requested accounts
@@ -259,7 +259,7 @@ impl Serializer for StepResponse {
                 Self::ChainInfo(common_point, topoheight, stable_height, hash)
             },
             1 => {
-                let assets = IndexSet::<Hash>::read(reader)?;
+                let assets = IndexSet::<AssetWithData>::read(reader)?;
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
                     if *page_number == 0 {

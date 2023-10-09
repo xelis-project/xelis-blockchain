@@ -550,7 +550,7 @@ NOTE: Balance is returned in atomic units
 ```
 
 #### Get Assets
-Get all assets available on network with its registered topoheight. 
+Get all assets available on network with its registered topoheight and necessary decimals for a full coin.
 
 ##### Method `get_assets`
 
@@ -576,8 +576,46 @@ Get all assets available on network with its registered topoheight.
     "id": 1,
     "jsonrpc": "2.0",
     "result": [
-        "0000000000000000000000000000000000000000000000000000000000000000"
+        {
+            "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+            "decimals": 5,
+            "topoheight": 0
+        }
     ]
+}
+```
+
+#### Get Asset
+Get registered topoheight and decimals data from a specific asset.
+
+##### Method `get_asset`
+
+##### Parameters
+|  Name | Type | Required |        Note        |
+|:-----:|:----:|:--------:|:------------------:|
+| asset | Hash | Required | Asset ID requested |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_asset",
+    "id": 1,
+    "params": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "decimals": 5,
+        "topoheight": 0
+    }
 }
 ```
 

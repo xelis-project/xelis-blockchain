@@ -10,6 +10,7 @@ pub mod config;
 pub mod immutable;
 pub mod difficulty;
 pub mod network;
+pub mod asset;
 
 #[cfg(feature = "json_rpc")]
 pub mod json_rpc;

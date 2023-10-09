@@ -29,7 +29,7 @@ use xelis_common::{
         GetAssetsParams,
         GetAccountsParams,
         HasNonceResult,
-        HasNonceParams
+        HasNonceParams, GetAssetParams
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -140,6 +140,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_info", async_handler!(get_info));
     handler.register_method("get_nonce", async_handler!(get_nonce));
     handler.register_method("has_nonce", async_handler!(has_nonce));
+    handler.register_method("get_asset", async_handler!(get_asset));
     handler.register_method("get_assets", async_handler!(get_assets));
     handler.register_method("count_assets", async_handler!(count_assets));
     handler.register_method("count_transactions", async_handler!(count_transactions));
@@ -334,6 +335,13 @@ async fn get_nonce<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> R
     Ok(json!(GetNonceResult { topoheight, version }))
 }
 
+async fn get_asset<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetAssetParams = parse_params(body)?;
+    let storage = blockchain.get_storage().read().await;
+    let asset = storage.get_asset_data(&params.asset).context("Asset was not found")?;
+    Ok(json!(asset))
+}
+
 const MAX_ASSETS: usize = 100;
 
 async fn get_assets<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
@@ -347,11 +355,11 @@ async fn get_assets<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> 
         MAX_ASSETS
     };
     let skip = params.skip.unwrap_or(0);
-
     let storage = blockchain.get_storage().read().await;
     let min = params.minimum_topoheight.unwrap_or(0);
     let max =  params.maximum_topoheight.unwrap_or_else(|| blockchain.get_topo_height());
-    let assets = storage.get_partial_assets(maximum, skip, min, max).await.context("Error while retrieving registered assets")?;
+    let assets = storage.get_partial_assets(maximum, skip, min, max).await
+        .context("Error while retrieving registered assets")?;
 
     Ok(json!(assets))
 }

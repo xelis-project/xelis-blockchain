@@ -3,7 +3,7 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance};
+use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, asset::AssetWithData};
 
 use crate::{daemon_api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
 
@@ -320,21 +320,22 @@ impl NetworkHandler {
                 skip += response.len();
     
                 let mut storage = self.wallet.get_storage().write().await;
-                for asset in &response {
-                    if !storage.contains_asset(asset)? {
+                for asset_data in &response {
+                    if !storage.contains_asset(asset_data.get_asset())? {
                         // New asset added to the wallet, inform listeners
                         #[cfg(feature = "api_server")]
                         {
                             if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
-                                api_server.notify_event(&NotifyEvent::NewAsset, &asset).await;
+                                api_server.notify_event(&NotifyEvent::NewAsset, asset_data.get_asset()).await;
                             }
                         }
 
-                        storage.add_asset(asset)?;
+                        // TODO save decimals
+                        storage.add_asset(asset_data.get_asset())?;
                     }
                 }
     
-                assets.extend(response);
+                assets.extend(response.into_iter().map(AssetWithData::to_asset).collect::<Vec<_>>());
             }
         }
 

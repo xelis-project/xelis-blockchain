@@ -8,7 +8,7 @@ use xelis_common::{
     transaction::Transaction,
     block::{BlockHeader, Block, Difficulty},
     account::{VersionedBalance, VersionedNonce},
-    network::Network,
+    network::Network, asset::{AssetData, AssetWithData},
 };
 use std::{
     collections::HashSet,
@@ -490,18 +490,19 @@ impl Storage for SledStorage {
         Ok(())
     }
 
-    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<Hash>, BlockchainError> {
-        let mut assets: IndexSet<Hash> = IndexSet::new();
+    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<AssetWithData>, BlockchainError> {
+        let mut assets = IndexSet::new();
         let mut skip_count = 0;
         for el in self.assets.iter() {
             let (key, value) = el?;
-            let registered_at_topo = u64::from_bytes(&value)?;
+            let data = AssetData::from_bytes(&value)?;
             // check that we have a registered asset before the maximum topoheight
-            if registered_at_topo >= minimum_topoheight && registered_at_topo <= maximum_topoheight {
+            if data.get_topoheight() >= minimum_topoheight && data.get_topoheight() <= maximum_topoheight {
                 if skip_count < skip {
                     skip_count += 1;
                 } else {
-                    assets.insert(Hash::from_bytes(&key)?);
+                    let asset = Hash::from_bytes(&key)?;
+                    assets.insert(AssetWithData::new(asset, data));
 
                     if assets.len() == maximum {
                         break;
@@ -685,9 +686,9 @@ impl Storage for SledStorage {
         self.contains_data(&self.assets, &self.assets_cache, asset).await
     }
 
-    async fn add_asset(&mut self, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("add asset {} at topoheight {}", asset, topoheight);
-        self.assets.insert(asset.as_bytes(), &topoheight.to_be_bytes())?;
+    async fn add_asset(&mut self, asset: &Hash, data: AssetData) -> Result<(), BlockchainError> {
+        trace!("add asset {} at topoheight {}", asset, data.get_topoheight());
+        self.assets.insert(asset.as_bytes(), data.to_bytes())?;
         if let Some(cache) = &self.assets_cache {
             let mut cache = cache.lock().await;
             cache.put(asset.clone(), ());
@@ -714,7 +715,7 @@ impl Storage for SledStorage {
         self.assets.len()
     }
 
-    fn get_asset_registration_topoheight(&self, asset: &Hash) -> Result<u64, BlockchainError> {
+    fn get_asset_data(&self, asset: &Hash) -> Result<AssetData, BlockchainError> {
         trace!("get asset registration topoheight {}", asset);
         self.load_from_disk(&self.assets, asset.as_bytes())
     }

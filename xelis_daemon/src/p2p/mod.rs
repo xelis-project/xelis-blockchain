@@ -1694,8 +1694,9 @@ impl<S: Storage> P2pServer<S> {
                 // fetch all assets from peer
                 StepResponse::Assets(assets, next_page) => {
                     for asset in assets {
+                        let (asset, data) = asset.consume();
                         debug!("Saving asset {} at topoheight {}", asset, stable_topoheight);
-                        storage.add_asset(&asset, stable_topoheight).await?;
+                        storage.add_asset(&asset, data).await?;
                     }
 
                     if next_page.is_some() {
