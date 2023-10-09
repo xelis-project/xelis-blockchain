@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{transaction::{TransactionType, Transaction}, crypto::{key::PublicKey, hash::Hash}};
+use crate::{transaction::{TransactionType, Transaction}, crypto::{key::PublicKey, hash::Hash, address::Address}};
 
 use super::{DataHash, DataElement};
 
@@ -52,6 +52,20 @@ pub struct GetAddressParams {
     // Data to use for creating an integrated address
     // Returned address will contains all the data provided here
     pub integrated_data: Option<DataElement>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SplitAddressParams<'a> {
+    // address which must be in integrated form
+    pub address: Address<'a>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SplitAddressResult {
+    // Normal address
+    pub address: PublicKey,
+    // Encoded data from address
+    pub integrated_data: DataElement
 }
 
 #[derive(Serialize, Deserialize)]
