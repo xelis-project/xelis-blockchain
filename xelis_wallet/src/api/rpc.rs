@@ -2,7 +2,7 @@ use std::{sync::Arc, borrow::Cow};
 
 use anyhow::Context;
 use log::info;
-use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams}, DataHash, DataElement}, crypto::hash::Hashable};
+use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams}, DataHash}, crypto::hash::Hashable};
 use serde_json::{Value, json};
 use crate::{wallet::{Wallet, WalletError}, entry::{EntryData, TransactionEntry}};
 
@@ -18,7 +18,6 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_transaction", async_handler!(get_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("list_transactions", async_handler!(list_transactions));
-    handler.register_method("make_integrated_address", async_handler!(make_integrated_address));
 }
 
 async fn version(_: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
@@ -60,7 +59,7 @@ async fn get_topoheight(wallet: Arc<Wallet>, body: Value) -> Result<Value, Inter
 async fn get_address(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAddressParams = parse_params(body)?;
 
-    let address = if let Some(data) = params.data {
+    let address = if let Some(data) = params.integrated_data {
         wallet.get_address_with(data)
     } else {
         wallet.get_address()
@@ -162,11 +161,4 @@ async fn list_transactions(wallet: Arc<Wallet>, body: Value) -> Result<Value, In
     }).collect();
 
     Ok(json!(response))
-}
-
-async fn make_integrated_address(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
-    let params: DataElement = parse_params(body)?;
-
-    let integrated_address = wallet.get_address_with(params);
-    Ok(json!(integrated_address))
 }

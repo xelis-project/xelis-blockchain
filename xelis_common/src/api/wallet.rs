@@ -49,7 +49,9 @@ pub struct TransactionResponse<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetAddressParams {
-    pub data: Option<DataElement>
+    // Data to use for creating an integrated address
+    // Returned address will contains all the data provided here
+    pub integrated_data: Option<DataElement>
 }
 
 #[derive(Serialize, Deserialize)]
