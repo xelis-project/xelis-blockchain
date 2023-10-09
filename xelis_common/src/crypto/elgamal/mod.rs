@@ -83,7 +83,7 @@ mod tests {
         let m1 = _generate_point(50);
         let m2 = _generate_point(100);
 
-        // Enc(m1) + m2 = Enc(m1 + m2)
+        // Enc(m1) - m2 = Enc(m1 - m2)
         let c1 = public_key.encrypt_point(m1);
         let c2 = c1 - m2;
 
