@@ -341,8 +341,7 @@ impl NetworkHandler {
 
         // Retrieve the highest nonce (in one call, in case of assets/txs not tracked correctly)
         {
-            let res = self.api.get_last_nonce(&address).await?;
-            let nonce = res.version.get_nonce();
+            let nonce = self.api.get_last_nonce(&address).await.map(|v| v.version.get_nonce()).unwrap_or(0);
             debug!("New nonce found is {}", nonce);
             let mut storage = self.wallet.get_storage().write().await;
             storage.set_nonce(nonce)?;
