@@ -10,10 +10,11 @@ use std::fmt::{Display, Formatter, self};
 use std::io::{Write, stdout, Error as IOError};
 use std::num::ParseFloatError;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize};
+use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize, AtomicU16};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
 use crossterm::terminal;
 use fern::colors::{ColoredLevelConfig, Color};
+use regex::Regex;
 use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 use tokio::sync::oneshot;
 use std::sync::{PoisonError, Arc, Mutex};
@@ -108,22 +109,26 @@ impl<T> From<PoisonError<T>> for PromptError {
 // State used to be shared between stdin thread and Prompt instance
 struct State {
     prompt: Mutex<Option<String>>,
+    width: AtomicU16,
     previous_prompt_line: AtomicUsize,
     user_input: Mutex<String>,
     mask_input: AtomicBool,
     readers: Mutex<Vec<oneshot::Sender<String>>>,
     has_exited: AtomicBool,
+    ascii_escape_regex: Regex,
 }
 
 impl State {
     fn new() -> Self {
         Self {
             prompt: Mutex::new(None),
+            width: AtomicU16::new(crossterm::terminal::size().unwrap_or((80, 0)).0),
             previous_prompt_line: AtomicUsize::new(0),
             user_input: Mutex::new(String::new()),
             mask_input: AtomicBool::new(false),
             readers: Mutex::new(Vec::new()),
             has_exited: AtomicBool::new(false),
+            ascii_escape_regex: Regex::new("\x1B\\[[0-9;]*[A-Za-z]").unwrap()
         }
     }
 
@@ -148,7 +153,8 @@ impl State {
             match event::read() {
                 Ok(event) => {
                     match event {
-                        Event::Resize(_, _) => {
+                        Event::Resize(width, _) => {
+                            self.width.store(width, Ordering::SeqCst);
                             self.show()?;
                         }
                         Event::Paste(s) => {
@@ -277,11 +283,36 @@ impl State {
         self.mask_input.load(Ordering::SeqCst)
     }
 
+    fn count_lines(&self, value: &String) -> usize {
+        let width = self.width.load(Ordering::SeqCst);
+
+        let mut lines = 0;
+        let mut current_line_width = 0;
+        let input = self.ascii_escape_regex.replace_all(value, "");
+
+        for c in input.chars() {
+            if c == '\n' || current_line_width >= width {
+                lines += 1;
+                current_line_width = 0;
+            } else {
+                current_line_width += 1;
+            }
+        }
+
+        if current_line_width > 0 {
+            lines += 1;
+        }
+
+        lines
+    }
+
     fn show_with_prompt_and_input(&self, prompt: &String, input: &String) -> Result<(), PromptError> {
-        let lines_count = prompt.lines().count();
-        let previous_lines_count = self.previous_prompt_line.swap(lines_count, Ordering::SeqCst);
-        let lines_eraser = if previous_lines_count > 1 {
-            format!("{}", "\x1B[A".repeat(previous_lines_count))
+        let lines_count = self.count_lines(&format!("\r{}{}", prompt, input));
+        let count = self.previous_prompt_line.swap(lines_count, Ordering::SeqCst);
+
+        // > 1 because prompt line is already counted 
+        let lines_eraser: String = if count > 1 {
+            format!("\x1B[{}A", count - 1)
         } else {
             String::new()
         };
@@ -290,6 +321,11 @@ impl State {
             print!("\r\x1B[2K{}{}{}", lines_eraser, prompt, "*".repeat(input.len()));
         } else {
             print!("\r\x1B[2K{}{}{}", lines_eraser, prompt, input);
+        }        
+
+        // Scroll up if we a empty line
+        if lines_count < count {
+            // TODO
         }
 
         stdout().flush()?;
