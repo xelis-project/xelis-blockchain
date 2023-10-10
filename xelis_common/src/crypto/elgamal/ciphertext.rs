@@ -68,6 +68,16 @@ impl Add<&Ciphertext> for &Ciphertext {
     }
 }
 
+impl Add<Ciphertext> for &Ciphertext {
+    type Output = Ciphertext;
+
+    fn add(self, mut other: Ciphertext) -> Self::Output {
+        other.left += self.left;
+        other.right += self.right;
+        other
+    }
+}
+
 impl Add<RistrettoPoint> for Ciphertext {
     type Output = Self;
 
