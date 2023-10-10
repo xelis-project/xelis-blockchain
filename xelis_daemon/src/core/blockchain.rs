@@ -1448,6 +1448,23 @@ impl<S: Storage> Blockchain<S> {
                 // reward the miner
                 self.reward_miner(storage, &block, block_reward, total_fees, &mut balances, highest_topo).await?;
 
+                // save balances for each topoheight
+                for (key, assets) in balances {
+                    for (asset, balance) in assets {
+                        trace!("Saving balance {} for {} at topo {}, previous: {:?}", asset, key, highest_topo, balance.get_previous_topoheight());
+                        storage.set_balance_to(key, asset, highest_topo, &balance).await?;
+                    }
+
+                    // No nonce update for this key
+                    if !local_nonces.contains_key(key) {
+                        // Check if its a known account, otherwise set nonce to 0
+                        if !storage.has_nonce(key).await? {
+                            // This public key is new, register it by setting 0
+                            storage.set_nonce_at_topoheight(key, 0, highest_topo).await?;
+                        }
+                    }
+                }
+
                 // save nonces for each pubkey for new topoheight
                 for (key, nonce) in local_nonces {
                     trace!("Saving nonce {} for {} at topoheight {}", nonce, key, highest_topo);
@@ -1455,14 +1472,6 @@ impl<S: Storage> Blockchain<S> {
 
                     // insert in "global" nonces map for easier mempool cleaning
                     nonces.insert(key, nonce);
-                }
-
-                // save balances for each topoheight
-                for (key, assets) in balances {
-                    for (asset, balance) in assets {
-                        trace!("Saving balance {} for {} at topo {}, previous: {:?}", asset, key, highest_topo, balance.get_previous_topoheight());
-                        storage.set_balance_to(key, asset, highest_topo, &balance).await?;
-                    }
                 }
 
                 if should_track_events.contains(&NotifyEvent::BlockOrdered) {
