@@ -28,7 +28,7 @@ use self::packet::ping::Ping;
 use self::error::P2pError;
 use self::packet::{Packet, PacketWrapper};
 use self::peer::Peer;
-use tokio::{net::{TcpListener, TcpStream}, sync::{mpsc::{self, UnboundedSender, UnboundedReceiver}, Semaphore}, select, task::JoinHandle};
+use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, UnboundedSender, UnboundedReceiver}, select, task::JoinHandle};
 use log::{info, warn, error, debug, trace};
 use tokio::io::AsyncWriteExt;
 use tokio::time::{interval, timeout, sleep};
@@ -61,7 +61,6 @@ pub struct P2pServer<S: Storage> {
     last_sync_request_sent: AtomicU64, // used to check if we are already syncing with one peer or not
     object_tracker: SharedObjectTracker, // used to requests objects to peers and avoid requesting the same object to multiple peers
     queued_fetcher: QueuedFetcher, // used to requests all propagated txs in one task only
-    block_propagation_semaphore: Semaphore, // used to limit the number of block propagations common peers check
     is_running: AtomicBool // used to check if the server is running or not in tasks
 }
 
@@ -94,7 +93,6 @@ impl<S: Storage> P2pServer<S> {
             last_sync_request_sent: AtomicU64::new(0),
             object_tracker,
             queued_fetcher,
-            block_propagation_semaphore: Semaphore::new(1),
             is_running: AtomicBool::new(true)
         };
 
@@ -755,18 +753,14 @@ impl<S: Storage> P2pServer<S> {
                 // Avoid sending the same block to a common peer
                 // because we track peerlist of each peers, we can try to determinate it
                 {
-                    // semaphore allows to prevent any deadlock because of loop lock
-                    let _permit = self.block_propagation_semaphore.acquire().await?;
                     let peer_list = self.peer_list.read().await;
                     let peer_peers = peer.get_peers(false).lock().await;
                     // iterate over all peers of this peer broadcaster
                     for peer_peer in peer_peers.iter() {
                         // if we have a common peer with him
                         if let Some(peer_peer) = peer_list.get_peer_by_addr(peer_peer) {
-                            {
-                                let mut peers = peer_peer.get_blocks_propagation().lock().await;
-                                peers.put(block_hash.clone(), ());
-                            }
+                            let mut blocks_propagation = peer_peer.get_blocks_propagation().lock().await;
+                            blocks_propagation.put(block_hash.clone(), ());
                         }
                     }
                 }
