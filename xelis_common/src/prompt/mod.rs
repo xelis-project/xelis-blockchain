@@ -17,7 +17,7 @@ use fern::colors::{ColoredLevelConfig, Color};
 use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 use tokio::sync::oneshot;
 use std::sync::{PoisonError, Arc, Mutex};
-use log::{info, error, Level, debug, LevelFilter};
+use log::{info, error, Level, debug, LevelFilter, warn};
 use tokio::time::interval;
 use std::future::Future;
 use std::time::Duration;
@@ -260,6 +260,16 @@ impl State {
         }
 
         info!("ioloop thread is now stopped");
+        let mut readers = self.readers.lock()?;
+        let mut values = Vec::with_capacity(readers.len());
+        std::mem::swap(&mut *readers, &mut values);
+
+        for reader in values {
+            if let Err(e) = reader.send(String::new()) {
+                warn!("Error while sending empty string to reader: {}", e);
+            }
+        }
+
         Ok(())
     }
 
@@ -271,7 +281,7 @@ impl State {
         let lines_count = prompt.lines().count();
         let previous_lines_count = self.previous_prompt_line.swap(lines_count, Ordering::SeqCst);
         let lines_eraser = if previous_lines_count > 1 {
-            format!("{}", "\x1B[A".repeat(previous_lines_count - 1))
+            format!("{}", "\x1B[A".repeat(previous_lines_count))
         } else {
             String::new()
         };
@@ -522,6 +532,10 @@ impl<T> Prompt<T> {
 
     // read a message from the user and apply the input mask if necessary
     pub async fn read_input(&self, prompt: String, apply_mask: bool) -> Result<String, PromptError> {
+        if self.state.has_exited.load(Ordering::SeqCst) {
+            return Err(PromptError::NotRunning)
+        }
+
         // register our reader
         let receiver = {
             let mut readers = self.state.readers.lock()?;
