@@ -433,6 +433,10 @@ impl<S: Storage> Blockchain<S> {
         &self.network
     }
 
+    pub async fn get_supply(&self) -> Result<u64, BlockchainError> {
+        self.storage.read().await.get_supply_at_topo_height(self.get_topo_height()).await
+    }
+
     pub async fn get_mempool_size(&self) -> usize {
         self.mempool.read().await.size()
     }
@@ -2038,5 +2042,5 @@ impl<S: Storage> Blockchain<S> {
 
 pub fn get_block_reward(supply: u64) -> u64 {
     let base_reward = (MAX_SUPPLY - supply) >> EMISSION_SPEED_FACTOR;
-    base_reward
+    base_reward * BLOCK_TIME / 180
 }

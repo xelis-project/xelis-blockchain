@@ -28,7 +28,7 @@ pub const TESTNET_PREFIX_ADDRESS: &str = "xet"; // testnet prefix address
 pub const COIN_DECIMALS: u8 = 5; // 5 decimals numbers
 pub const COIN_VALUE: u64 = 10u64.pow(COIN_DECIMALS as u32); // 100 000
 pub const MAX_SUPPLY: u64 = 18_400_000 * COIN_VALUE; // 18.4M full coin
-pub const EMISSION_SPEED_FACTOR: u64 = 21;
+pub const EMISSION_SPEED_FACTOR: u64 = 20;
 
 pub const GENESIS_BLOCK: &str = "0000000000000000000000000000000000000001872f3e0c02000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd"; // Genesis block in hexadecimal format
 pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"; // Dev address
