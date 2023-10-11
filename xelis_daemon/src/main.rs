@@ -12,10 +12,9 @@ use xelis_common::{
     config::{VERSION, BLOCK_TIME}, utils::{format_hashrate, set_network_to, format_coin}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer
 };
 use crate::core::{
-    blockchain::{Config, Blockchain},
+    blockchain::{Config, Blockchain, get_block_reward},
     storage::{Storage, SledStorage}
 };
-use core::blockchain::get_block_reward;
 use std::{sync::Arc, net::SocketAddr};
 use std::time::Duration;
 use clap::Parser;
