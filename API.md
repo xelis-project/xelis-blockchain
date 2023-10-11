@@ -648,7 +648,7 @@ No parameters
 #### Count Accounts
 Counts the number of accounts saved on disk
 
-##### Method `count_assets`
+##### Method `count_accounts`
 
 ##### Parameters
 No parameters
