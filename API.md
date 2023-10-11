@@ -645,6 +645,32 @@ No parameters
 }
 ```
 
+#### Count Accounts
+Counts the number of accounts saved on disk
+
+##### Method `count_assets`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "count_accounts"
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 1271
+}
+```
+
 #### Count Transactions
 Counts the number of transactions saved on disk
 

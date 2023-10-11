@@ -51,6 +51,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<bool, BlockchainError>;
 
     async fn get_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<u64>>, BlockchainError>;
+    fn count_accounts(&self) -> usize;
 
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError>;
     fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError>;

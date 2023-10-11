@@ -638,6 +638,10 @@ impl Storage for SledStorage {
         Ok(balances)
     }
 
+    fn count_accounts(&self) -> usize {
+        self.nonces.len()
+    }
+
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
         self.load_from_disk(&self.txs_executed, tx.as_bytes())
     }
