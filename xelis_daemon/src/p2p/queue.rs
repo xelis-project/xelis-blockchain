@@ -5,6 +5,7 @@ use crate::core::{blockchain::Blockchain, storage::Storage};
 use super::{peer::Peer, packet::object::{ObjectRequest, OwnedObjectResponse}, tracker::SharedObjectTracker};
 
 // TODO optimize to request the data but only handle in good order
+// This allow to have a special queue for this and to not block/flood the other queue
 pub struct QueuedFetcher {
     sender: UnboundedSender<(Arc<Peer>, ObjectRequest)>
 }
@@ -19,7 +20,7 @@ impl QueuedFetcher {
         tokio::spawn(async move {
             while let Some((peer, request)) = receiver.recv().await {
                 match tracker.fetch_object_from_peer(peer.clone(), request).await {
-                    Ok(response) => {
+                    Ok((response, listener)) => {
                         if let OwnedObjectResponse::Transaction(tx, hash) = response {
                             debug!("Adding {} to mempool from {}", hash, peer);
                             if let Err(e) = blockchain.add_tx_to_mempool(tx, true).await {
@@ -30,6 +31,7 @@ impl QueuedFetcher {
                             error!("Received non tx object from peer");
                             peer.increment_fail_count();
                         }
+                        listener.notify();
                     },
                     Err(e) => {
                         error!("Error while fetching object from peer: {}", e);

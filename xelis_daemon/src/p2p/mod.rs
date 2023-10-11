@@ -15,7 +15,7 @@ use xelis_common::{
     block::{BlockHeader, Block},
     utils::get_current_time, immutable::Immutable, account::VersionedNonce
 };
-use crate::{core::{blockchain::Blockchain, storage::Storage}, p2p::{chain_validator::ChainValidator, packet::{bootstrap_chain::{StepRequest, StepResponse, BootstrapChainResponse, MAX_ITEMS_PER_PAGE, BlockMetadata}, inventory::{NOTIFY_MAX_LEN, NotifyInventoryRequest, NotifyInventoryResponse}}}};
+use crate::{core::{blockchain::Blockchain, storage::Storage}, p2p::{chain_validator::ChainValidator, packet::{bootstrap_chain::{StepRequest, StepResponse, BootstrapChainResponse, MAX_ITEMS_PER_PAGE, BlockMetadata}, inventory::{NOTIFY_MAX_LEN, NotifyInventoryRequest, NotifyInventoryResponse}}, tracker::ResponseBlocker}};
 use crate::core::error::BlockchainError;
 use crate::p2p::connection::ConnectionMessage;
 use crate::p2p::packet::chain::CommonPoint;
@@ -771,33 +771,51 @@ impl<S: Storage> P2pServer<S> {
                 let peer = Arc::clone(peer);
                 // verify that we have all txs in local or ask peer to get missing txs
                 tokio::spawn(async move {
+                    let mut response_blockers: Vec<ResponseBlocker> = Vec::new();
                     for hash in header.get_txs_hashes() {
                         let contains = { // we don't lock one time because we may wait on p2p response
-                            let in_mempool = {
+                            // Check in mempool first
+                            let mut found = {
                                 let mempool = zelf.blockchain.get_mempool().read().await;
                                 mempool.contains_tx(hash)
                             };
 
-                            if in_mempool {
-                                true
-                            } else {
+                            // Check in ObjectTracker
+                            if !found {
+                                if let Some(response_blocker) = zelf.object_tracker.get_response_blocker_for_requested_object(hash).await {
+                                    response_blockers.push(response_blocker);
+                                    found = true;       
+                                }
+                            }
+
+                            // Check on chain directly
+                            if !found {
                                 let storage = zelf.blockchain.get_storage().read().await;
-                                match storage.has_transaction(hash).await {
+                                found = match storage.has_transaction(hash).await {
                                     Ok(contains) => contains,
                                     Err(e) => {
                                         warn!("Error while checking if we have tx {} in storage: {}", hash, e);
                                         false
                                     }
-                                }
+                                };
                             }
+
+                            found
                         };
 
                         if !contains { // retrieve one by one to prevent acquiring the lock for nothing
                             debug!("Requesting TX {} to {} for block {}", hash, peer, block_hash);
-                            let response = match peer.request_blocking_object(ObjectRequest::Transaction(hash.clone())).await {
-                                Ok(response) => response,
+                           let (response, listener) =  match zelf.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone())) {
+                                Ok(response) => match response.await {
+                                    Ok(Ok(response)) => response,
+                                    _ => {
+                                        error!("Error while handling response for TX {} from {}", hash, peer);
+                                        peer.increment_fail_count();
+                                        return;
+                                    }
+                                },
                                 Err(e) => {
-                                    error!("Error while requesting TX {} to peer {}: {}", hash, peer, e);
+                                    error!("Error while requesting TX {} from {}: {}", hash, peer, e);
                                     peer.increment_fail_count();
                                     return;
                                 }
@@ -816,6 +834,17 @@ impl<S: Storage> P2pServer<S> {
                                 peer.increment_fail_count();
                                 return;
                             }
+                            // if listener is dropped before it is ok, receivers will stop listening
+                            listener.notify();
+                        }
+                    }
+
+                    // Wait on all already requested txs
+                    for mut blocker in response_blockers {
+                        if let Err(e) = blocker.recv().await {
+                            error!("Error while waiting on response blocker: {}", e);
+                            peer.increment_fail_count();
+                            return;
                         }
                     }
 

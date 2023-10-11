@@ -7,19 +7,74 @@ use log::{error, debug};
 
 use super::{packet::{object::{ObjectRequest, OwnedObjectResponse}, Packet}, error::P2pError, peer::Peer};
 
-pub type WaiterResponse = oneshot::Receiver<Result<OwnedObjectResponse, P2pError>>;
+pub type WaiterResponse = oneshot::Receiver<Result<(OwnedObjectResponse, Listener), P2pError>>;
 pub type SharedObjectTracker = Arc<ObjectTracker>;
+
+pub type ResponseBlocker = tokio::sync::broadcast::Receiver<()>;
+
+pub struct Listener {
+    sender: Option<tokio::sync::broadcast::Sender<()>>
+}
+
+impl Listener {
+    pub fn new(sender: Option<tokio::sync::broadcast::Sender<()>>) -> Self {
+        Self {
+            sender
+        }
+    }
+
+    pub fn notify(self) {
+        if let Some(sender) = self.sender {
+            if sender.send(()).is_err() {
+                error!("Error while sending notification to ObjectTracker");
+            }
+        }
+    }
+}
+
+struct Request {
+    request: ObjectRequest,
+    sender: Option<tokio::sync::broadcast::Sender<()>>
+}
+
+
+impl Request {
+    pub fn new(request: ObjectRequest) -> Self {
+        Self {
+            request,
+            sender: None
+        }
+    }
+
+    pub fn get_hash(&self) -> &Hash {
+        self.request.get_hash()
+    }
+
+    pub fn get_response_blocker(&mut self) -> ResponseBlocker {
+        if let Some(sender) = &self.sender {
+            sender.subscribe()
+        } else {
+            let (sender, receiver) = tokio::sync::broadcast::channel(1);
+            self.sender = Some(sender);
+            receiver
+        }
+    }
+
+    pub fn to_listener(self) -> Listener {
+        Listener::new(self.sender)
+    }
+}
 
 // this ObjectTracker is a unique sender allows to create a queue system in one task only
 // currently used to fetch in order all txs propagated by the network
 pub struct ObjectTracker {
     request_sender: UnboundedSender<Message>,
-    response_sender: UnboundedSender<Result<OwnedObjectResponse, P2pError>>,
-    queue: RwLock<HashMap<Hash, ObjectRequest>>
+    response_sender: UnboundedSender<Result<(OwnedObjectResponse, Listener), P2pError>>,
+    queue: RwLock<HashMap<Hash, Request>>
 }
 
 enum Message {
-    Request(Arc<Peer>, ObjectRequest, oneshot::Sender<Result<OwnedObjectResponse, P2pError>>),
+    Request(Arc<Peer>, ObjectRequest, oneshot::Sender<Result<(OwnedObjectResponse, Listener), P2pError>>),
     Exit
 }
 
@@ -51,7 +106,7 @@ impl ObjectTracker {
         }
     }
 
-    async fn requester_loop(&self, mut request_receiver: UnboundedReceiver<Message>, mut response_receiver: UnboundedReceiver<Result<OwnedObjectResponse, P2pError>>) {
+    async fn requester_loop(&self, mut request_receiver: UnboundedReceiver<Message>, mut response_receiver: UnboundedReceiver<Result<(OwnedObjectResponse, Listener), P2pError>>) {
         debug!("Starting requester loop...");
         while let Some(msg) = request_receiver.recv().await {
             match msg {
@@ -61,7 +116,7 @@ impl ObjectTracker {
                             error!("Error while sending error response from ObjectTracker");
                         }
                     } else {
-                        let res: Result<OwnedObjectResponse, P2pError> = timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), response_receiver.recv()).await
+                        let res: Result<(OwnedObjectResponse, Listener), P2pError> = timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), response_receiver.recv()).await
                             .map_err(|e| P2pError::AsyncTimeOut(e))
                             .and_then(|res| res.ok_or(P2pError::NoResponse))
                             .and_then(|res| res);
@@ -81,6 +136,12 @@ impl ObjectTracker {
         queue.contains_key(object_hash)
     }
 
+    pub async fn get_response_blocker_for_requested_object(&self, object_hash: &Hash) -> Option<ResponseBlocker> {
+        let mut queue = self.queue.write().await;
+        let request = queue.get_mut(object_hash)?;
+        Some(request.get_response_blocker())
+    }
+
     pub async fn handle_object_response(&self, response: OwnedObjectResponse) -> Result<(), P2pError> {
         let request = {
             let mut queue = self.queue.write().await;
@@ -98,7 +159,7 @@ impl ObjectTracker {
             return Err(P2pError::InvalidObjectHash(request.get_hash().clone(), response.get_hash().clone()));
         }
 
-        if self.response_sender.send(Ok(response)).is_err() {
+        if self.response_sender.send(Ok((response, request.to_listener()))).is_err() {
             error!("Error while sending object response in ObjectTracker");
         }
 
@@ -111,7 +172,7 @@ impl ObjectTracker {
         Ok(receiver)
     }
 
-    pub async fn fetch_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
+    pub async fn fetch_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<(OwnedObjectResponse, Listener), P2pError> {
         Ok(self.request_object_from_peer(peer, request)?.await??)
     }
 
@@ -125,7 +186,7 @@ impl ObjectTracker {
                 return Err(P2pError::ObjectAlreadyRequested(request))
             }
 
-            queue.insert(request.get_hash().clone(), request);
+            queue.insert(request.get_hash().clone(), Request::new(request));
         }
 
         // send the packet to the Peer
