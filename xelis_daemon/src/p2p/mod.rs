@@ -773,8 +773,23 @@ impl<S: Storage> P2pServer<S> {
                 tokio::spawn(async move {
                     for hash in header.get_txs_hashes() {
                         let contains = { // we don't lock one time because we may wait on p2p response
-                            let mempool = zelf.blockchain.get_mempool().read().await;
-                            mempool.contains_tx(hash)
+                            let in_mempool = {
+                                let mempool = zelf.blockchain.get_mempool().read().await;
+                                mempool.contains_tx(hash)
+                            };
+
+                            if in_mempool {
+                                true
+                            } else {
+                                let storage = zelf.blockchain.get_storage().read().await;
+                                match storage.has_transaction(hash).await {
+                                    Ok(contains) => contains,
+                                    Err(e) => {
+                                        warn!("Error while checking if we have tx {} in storage: {}", hash, e);
+                                        false
+                                    }
+                                }
+                            }
                         };
 
                         if !contains { // retrieve one by one to prevent acquiring the lock for nothing
