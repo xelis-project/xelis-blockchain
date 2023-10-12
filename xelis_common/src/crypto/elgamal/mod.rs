@@ -1,9 +1,11 @@
 mod ciphertext;
 mod key;
+mod lookup;
 
 pub use self::{
     ciphertext::Ciphertext,
     key::{PrivateKey, PublicKey},
+    lookup::LookupTable
 };
 
 mod tests {
