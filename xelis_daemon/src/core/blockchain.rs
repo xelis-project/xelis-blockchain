@@ -2041,6 +2041,12 @@ impl<S: Storage> Blockchain<S> {
 }
 
 pub fn get_block_reward(supply: u64) -> u64 {
+    // Prevent any overflow
+    if supply >= MAX_SUPPLY {
+        // Max supply reached, do we want to generate small fixed amount of coins? 
+        return 0
+    }
+
     let base_reward = (MAX_SUPPLY - supply) >> EMISSION_SPEED_FACTOR;
     base_reward * BLOCK_TIME / 180
 }
