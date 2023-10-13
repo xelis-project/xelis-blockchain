@@ -1305,12 +1305,16 @@ impl<S: Storage> Blockchain<S> {
             cumulative_difficulty
         };
 
+        debug!("Locking mempool write mode");
         let mut mempool = self.mempool.write().await;
+        debug!("mempool write mode ok");
+
         let mut tips = storage.get_tips().await?;
         tips.insert(block_hash.clone());
         for hash in block.get_tips() {
             tips.remove(hash);
         }
+        debug!("New tips: {}", tips.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
 
         let (base_hash, base_height) = self.find_common_base(storage, &tips).await?;
         let best_tip = self.find_best_tip(storage, &tips, &base_hash, base_height).await?;
