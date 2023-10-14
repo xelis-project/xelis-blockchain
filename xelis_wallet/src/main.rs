@@ -7,8 +7,8 @@ use log::{error, info};
 use clap::Parser;
 use xelis_common::{config::{
     DEFAULT_DAEMON_ADDRESS,
-    VERSION, XELIS_ASSET, COIN_VALUE
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel, self, ShareablePrompt, PromptError}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, utils::{format_coin, set_network_to, get_network}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
+    VERSION, XELIS_ASSET, COIN_DECIMALS
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel, self, ShareablePrompt, PromptError}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, utils::{format_xelis, set_network_to, get_network, format_coin}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
 use xelis_wallet::wallet::Wallet;
 
 #[cfg(feature = "api_server")]
@@ -189,7 +189,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, prompt: ShareableProm
     command_manager.add_command(Command::with_optional_arguments("transfer", "Send asset to a specified address", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(transfer))));
     command_manager.add_command(Command::with_required_arguments("burn", "Burn amount of asset", vec![Arg::new("asset", ArgType::Hash), Arg::new("amount", ArgType::Number)], CommandHandler::Async(async_handler!(burn))));
     command_manager.add_command(Command::new("display_address", "Show your wallet address", CommandHandler::Async(async_handler!(display_address))));
-    command_manager.add_command(Command::with_optional_arguments("balance", "Show your current balance", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(balance))));
+    command_manager.add_command(Command::with_optional_arguments("balance", "List all non-zero balances or show the selected one", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(balance))));
     command_manager.add_command(Command::with_optional_arguments("history", "Show all your transactions", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(history))));
     command_manager.add_command(Command::with_optional_arguments("online_mode", "Set your wallet in online mode", vec![Arg::new("daemon_address", ArgType::String)], CommandHandler::Async(async_handler!(online_mode))));
     command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", CommandHandler::Async(async_handler!(offline_mode))));
@@ -248,7 +248,7 @@ async fn prompt_message_builder(prompt: &Prompt<Arc<Wallet>>) -> Result<String, 
             let balance = format!(
                 "{}: {}",
                 prompt::colorize_str(Color::Yellow, "Balance"),
-                prompt::colorize_string(Color::Green, &format_coin(storage.get_balance_for(&XELIS_ASSET).unwrap_or(0))),
+                prompt::colorize_string(Color::Green, &format_xelis(storage.get_balance_for(&XELIS_ASSET).unwrap_or(0))),
             );
             let status = if wallet.is_online().await {
                 prompt::colorize_str(Color::Green, "Online")
@@ -444,20 +444,20 @@ async fn transfer(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> 
 
     let asset = asset.unwrap_or(XELIS_ASSET);
 
-    let max_balance = {
+    let (max_balance, decimals) = {
         let storage = wallet.get_storage().read().await;
-        storage.get_balance_for(&asset).unwrap_or(0)
+        let balance = storage.get_balance_for(&asset).unwrap_or(0);
+        let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
+        (balance, decimals)
     };
 
     // read amount
     let float_amount = prompt.read_f64(
-        prompt::colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance)))
+        prompt::colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
     ).await.context("Error while reading amount")?;
 
-    // TODO digit token standard
-    let amount = (float_amount * COIN_VALUE as f64) as u64;
-
-    manager.message(format!("Sending {} of {} to {}", float_amount, asset, address.to_string()));
+    let amount = (float_amount * 10u32.pow(decimals as u32) as f64) as u64;
+    manager.message(format!("Sending {} of {} to {}", format_coin(amount, decimals), asset, address.to_string()));
 
     if !prompt.ask_confirmation().await.context("Error while confirming action")? {
         manager.message("Transaction has been aborted");
@@ -486,12 +486,14 @@ async fn burn(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentMana
     let amount = arguments.get_value("amount")?.to_number()?;
     let asset = arguments.get_value("asset")?.to_hash()?;
     let wallet = manager.get_data()?;
-    manager.message(format!("Burning {} of {}", format_coin(amount), asset));
-
     let tx = {
         let storage = wallet.get_storage().read().await;
+        let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
+
+        manager.message(format!("Burning {} of {}", format_coin(amount, decimals), asset));
         wallet.create_transaction(&storage, TransactionType::Burn { asset, amount }, FeeBuilder::Multiplier(1f64))?
     };
+
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
 }
@@ -503,18 +505,24 @@ async fn display_address(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManag
     Ok(())
 }
 
-// Show current balance for specified asset
+// Show current balance for specified asset or list all non-zero balances
 async fn balance(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let asset = if arguments.has_argument("asset") {
-        arguments.get_value("asset")?.to_hash()?
-    } else {
-        XELIS_ASSET // default asset selected is XELIS
-    };
-
     let wallet = manager.get_data()?;
     let storage = wallet.get_storage().read().await;
-    let balance = storage.get_balance_for(&asset).unwrap_or(0);
-    manager.message(format!("Balance for asset {}: {}", asset, balance));
+
+    if arguments.has_argument("asset") {
+        let asset = arguments.get_value("asset")?.to_hash()?;
+        let balance = storage.get_balance_for(&asset).unwrap_or(0);
+        let decimals = storage.get_asset_decimals(&asset).unwrap_or(0);
+        manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, decimals)));
+    } else {
+        for (asset, decimals) in storage.get_assets_with_decimals()? {
+            let balance = storage.get_balance_for(&asset).unwrap_or(0);
+            if balance > 0 {
+                manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, decimals)));
+            }
+        }
+    }
 
     Ok(())
 }

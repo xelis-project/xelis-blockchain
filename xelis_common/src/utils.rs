@@ -1,7 +1,7 @@
 use crate::block::Difficulty;
 use crate::network::Network;
 use crate::serializer::{Reader, ReaderError};
-use crate::config::{COIN_VALUE, FEE_PER_KB};
+use crate::config::{FEE_PER_KB, COIN_DECIMALS};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr};
@@ -29,8 +29,12 @@ pub fn get_current_timestamp() -> u128 {
     time.as_millis()
 }
 
-pub fn format_coin(value: u64) -> String {
-    format!("{:.5}", value as f64 / COIN_VALUE as f64)
+pub fn format_coin(value: u64, decimals: u8) -> String {
+    format!("{:.1$}", value as f64 / 10usize.pow(decimals as u32) as f64, decimals as usize)
+}
+
+pub fn format_xelis(value: u64) -> String {
+    format_coin(value, COIN_DECIMALS)
 }
 
 // format a IP:port to byte format

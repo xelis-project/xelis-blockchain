@@ -5,11 +5,11 @@ use anyhow::{Error, Context};
 use tokio::sync::{Mutex, RwLock};
 use xelis_common::api::DataElement;
 use xelis_common::api::wallet::FeeBuilder;
-use xelis_common::config::XELIS_ASSET;
+use xelis_common::config::{XELIS_ASSET, COIN_DECIMALS};
 use xelis_common::crypto::address::Address;
 use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey};
-use xelis_common::utils::format_coin;
+use xelis_common::utils::{format_xelis, format_coin};
 use xelis_common::network::Network;
 use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
@@ -70,9 +70,9 @@ pub enum WalletError {
     InvalidSaltSize,
     #[error("Error while fetching password salt from DB")]
     NoSaltFound,
-    #[error("Your wallet contains only {} instead of {} for asset {}", format_coin(*_0), format_coin(*_1), _2)]
-    NotEnoughFunds(u64, u64, Hash),
-    #[error("Your wallet don't have enough funds to pay fees: expected {} but have only {}", format_coin(*_0), format_coin(*_1))]
+    #[error("Your wallet contains only {} instead of {} for asset {}", format_coin(*_0, *_2), format_coin(*_1, *_2), _3)]
+    NotEnoughFunds(u64, u64, u8, Hash),
+    #[error("Your wallet don't have enough funds to pay fees: expected {} but have only {}", format_xelis(*_0), format_xelis(*_1))]
     NotEnoughFundsForFee(u64, u64),
     #[error("Invalid address params")]
     InvalidAddressParams,
@@ -94,7 +94,7 @@ pub enum WalletError {
     RPCServerNotRunning,
     #[error("RPC Server is already running")]
     RPCServerAlreadyRunning,
-    #[error("Invalid fees provided, minimum fees calculated: {}, provided: {}", format_coin(*_0), format_coin(*_1))]
+    #[error("Invalid fees provided, minimum fees calculated: {}, provided: {}", format_xelis(*_0), format_xelis(*_1))]
     InvalidFeeProvided(u64, u64),
     #[error("Wallet name cannot be empty")]
     EmptyName,
@@ -102,7 +102,7 @@ pub enum WalletError {
     #[error("No handler available for this request")]
     NoHandlerAvailable,
     #[error(transparent)]
-    NetworkError(#[from] NetworkError)
+    NetworkError(#[from] NetworkError),
 }
 
 pub struct Wallet {
@@ -348,7 +348,8 @@ impl Wallet {
         let balance = storage.get_balance_for(&asset).unwrap_or(0);
         // check if we have enough funds for this asset
         if amount > balance {
-            return Err(WalletError::NotEnoughFunds(balance, amount, asset).into())
+            let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
+            return Err(WalletError::NotEnoughFunds(balance, amount, decimals, asset).into())
         }
         
         // include all extra data in the TX
@@ -362,8 +363,9 @@ impl Wallet {
             // NOTE: We must be sure to have a different key each time
 
             if writer.total_write() > EXTRA_DATA_LIMIT_SIZE {
-                return Err(WalletError::InvalidAddressParams.into())
+                return Err(WalletError::ExtraDataTooBig(EXTRA_DATA_LIMIT_SIZE, writer.total_write()).into())
             }
+
             Some(writer.bytes())
         } else {
             None
@@ -390,7 +392,8 @@ impl Wallet {
             let asset: &Hash = *asset;
             let balance = storage.get_balance_for(asset).unwrap_or(0);
             if balance < *amount {
-                return Err(WalletError::NotEnoughFunds(balance, *amount, asset.clone()).into())
+                let decimals = storage.get_asset_decimals(asset).unwrap_or(COIN_DECIMALS);
+                return Err(WalletError::NotEnoughFunds(balance, *amount, decimals, asset.clone()).into())
             }
         }
 

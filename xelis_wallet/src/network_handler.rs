@@ -330,8 +330,7 @@ impl NetworkHandler {
                             }
                         }
 
-                        // TODO save decimals
-                        storage.add_asset(asset_data.get_asset())?;
+                        storage.add_asset(asset_data.get_asset(), asset_data.get_data().get_decimals())?;
                     }
                 }
     

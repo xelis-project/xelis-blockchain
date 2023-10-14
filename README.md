@@ -249,7 +249,9 @@ Password hashing algorithm used is Argon2id with a configuration of 15 MB and 16
 Wallet implement a fully-encrypted storage system with following features:
 - Tree names are hashed with generated salt
 - Keys data are hashed with generated salt
-- Values are encrypted using XChaCha20Poly1305 and a random newly generated Nonce each time its saved. 
+- Values are encrypted using XChaCha20Poly1305 and a random newly generated nonce each time its saved. 
+
+Exception for assets list which has its key encrypted to be able to retrieve them later.
 
 Hash algorithm used is Keccak-256 for keys / tree names.
 The random salt generated is a 64 bytes length.

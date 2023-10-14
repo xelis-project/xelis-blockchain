@@ -46,6 +46,16 @@ impl Serializer for u64 {
     }
 }
 
+// Implement Serializer for u8
+impl Serializer for u8 {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u8(*self);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(reader.read_u8()?)
+    }
+}
 
 const MAX_ITEMS: usize = 1024;
 

@@ -6,7 +6,7 @@ use xelis_common::{
     crypto::{key::PublicKey, hash::{Hashable, Hash, HASH_SIZE}},
     difficulty::{check_difficulty, calculate_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
-    utils::{get_current_timestamp, format_coin},
+    utils::{get_current_timestamp, format_xelis},
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE, Difficulty},
     immutable::Immutable,
     serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType, StableHeightChangedEvent}, DataHash}, network::Network, asset::AssetData
@@ -1062,7 +1062,7 @@ impl<S: Storage> Blockchain<S> {
                 if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false).await {
                     warn!("TX {} is not valid for mining: {}", hash, e);
                 } else {
-                    trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_coin(fee));
+                    trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(fee));
                     // TODO no clone
                     block.txs_hashes.push(hash.as_ref().clone());
                     block_size += HASH_SIZE; // add the hash size

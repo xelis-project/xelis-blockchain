@@ -63,19 +63,38 @@ impl EncryptedStorage {
         Ok(storage)
     }
 
-    // load from disk, decrypt the value and deserialize it
-    fn load_from_disk<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
-        let hashed_key = self.cipher.hash_key(key);
-        let data = tree.get(hashed_key)?.context(format!("load from disk: tree = {:?}, key = {}", tree.name(), String::from_utf8_lossy(key)))?;
+    // Key must be hashed or encrypted before calling this function
+    fn internal_load<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
+        let data = tree.get(key)?.context(format!("load from disk: tree = {:?}, key = {}", tree.name(), String::from_utf8_lossy(key)))?;
         let bytes = self.cipher.decrypt_value(&data).context("Error while decrypting value from disk")?;
         let mut reader = Reader::new(&bytes);
         Ok(V::read(&mut reader).context("Error while de-serializing value from disk")?)
+    }
+
+    // load from disk using a hashed key, decrypt the value and deserialize it
+    fn load_from_disk<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
+        let hashed_key = self.cipher.hash_key(key);
+        self.internal_load(tree, &hashed_key)
+    }
+
+    // load from disk using an encrypted key, decrypt the value and deserialize it
+    fn load_from_disk_with_encrypted_key<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
+        let encrypted_key = self.cipher.encrypt_value(key)?;
+        self.internal_load(tree, &encrypted_key)
     }
 
     // hash key, encrypt data and then save to disk 
     fn save_to_disk(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
         let hashed_key = self.cipher.hash_key(key);
         tree.insert(hashed_key, self.cipher.encrypt_value(value)?)?;
+        Ok(())
+    }
+
+    // Encrypt key, encrypt data and then save to disk
+    // We encrypt instead of hashing to be able to retrieve the key
+    fn save_to_disk_with_encrypted_key(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
+        let encrypted_key = self.cipher.encrypt_value(key)?;
+        tree.insert(encrypted_key, self.cipher.encrypt_value(value)?)?;
         Ok(())
     }
 
@@ -86,10 +105,18 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // Search if the data is present in the tree using hashed key
     fn contains_data(&self, tree: &Tree, key: &[u8]) -> Result<bool> {
         let hashed_key = self.cipher.hash_key(key);
         Ok(tree.contains_key(hashed_key)?)
     }
+
+    // Encrypt instead of hash the key to recover it later
+    fn contains_encrypted_data(&self, tree: &Tree, key: &[u8]) -> Result<bool> {
+        let encrypted_key = self.cipher.encrypt_value(key)?;
+        Ok(tree.contains_key(encrypted_key)?)
+    }
+
     // this function is specific because we save the key in encrypted form (and not hashed as others)
     // returns all saved assets
     pub fn get_assets(&self) -> Result<HashSet<Hash>> {
@@ -105,24 +132,37 @@ impl EncryptedStorage {
         Ok(assets)
     }
 
-    // we can't use a simple Tree#contains_key because of the encrypted form
-    // and we can't encrypt it first because of the random nonce generated each time
-    // so we currently read the whole tree
-    // TODO build a cache instead of read the whole tree each time
-    // will be necessary when we will have a lot of assets registered on chain
-    pub fn contains_asset(&self, asset: &Hash) -> Result<bool> {
-        Ok(self.get_assets()?.contains(asset))
+    // Retrieve all assets with their decimals
+    pub fn get_assets_with_decimals(&self) -> Result<Vec<(Hash, u8)>> {
+        let mut assets = Vec::new();
+        for res in self.assets.iter() {
+            let (key, value) = res?;
+            let asset = Hash::from_bytes(&self.cipher.decrypt_value(&key)?)?;
+            let decimals = u8::from_bytes(&self.cipher.decrypt_value(&value)?)?;
+
+            assets.push((asset, decimals));
+        }
+
+        Ok(assets)
     }
 
-    // save asset in encrypted form
-    pub fn add_asset(&mut self, asset: &Hash) -> Result<()> {
+    // Check if the asset is already registered
+    pub fn contains_asset(&self, asset: &Hash) -> Result<bool> {
+        self.contains_encrypted_data(&self.assets, asset.as_bytes())
+    }
+
+    // save asset with its corresponding decimals
+    pub fn add_asset(&mut self, asset: &Hash, decimals: u8) -> Result<()> {
         if self.contains_asset(asset)? {
             return Err(WalletError::AssetAlreadyRegistered.into());
         }
 
-        let encrypted_asset = self.cipher.encrypt_value(asset.as_bytes())?;
-        self.assets.insert(encrypted_asset, &[])?;
-        Ok(())
+        self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &decimals.to_be_bytes())
+    }
+
+    // Retrieve the stored decimals for this asset for better display
+    pub fn get_asset_decimals(&self, asset: &Hash) -> Result<u8> {
+        self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())
     }
 
     pub fn get_balance_for(&self, asset: &Hash) -> Result<u64> {
@@ -166,6 +206,9 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // Save the transaction with its TX hash as key
+    // We hash the hash of the TX to use it as a key to not let anyone being able to see txs saved on disk
+    // with no access to the decrypted master key
     pub fn save_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
         self.save_to_disk(&self.transactions, hash.as_bytes(), &transaction.to_bytes())
     }

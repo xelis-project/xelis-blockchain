@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 
 use serde::Serialize;
-use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, transaction::EXTRA_DATA_LIMIT_SIZE, utils::format_coin};
+use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, transaction::EXTRA_DATA_LIMIT_SIZE, utils::format_xelis};
 
 #[derive(Serialize, Clone)]
 pub struct Transfer {
@@ -242,21 +242,22 @@ impl Serializer for TransactionEntry {
     }
 }
 
+// TODO display values with correct decimals from asset
 impl Display for TransactionEntry {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let entry_str = match self.get_entry() {
-            EntryData::Coinbase(reward) => format!("Coinbase {} XELIS", format_coin(*reward)),
+            EntryData::Coinbase(reward) => format!("Coinbase {} XELIS", format_xelis(*reward)),
             EntryData::Burn { asset, amount } => format!("Burn {} of {}", amount, asset),
             EntryData::Incoming(sender, txs) => {
                 if txs.len() == 1 {
-                    format!("Received from {} {} {}", sender, format_coin(txs[0].amount), txs[0].asset)
+                    format!("Received from {} {} {}", sender, format_xelis(txs[0].amount), txs[0].asset)
                 } else {
                     format!("Incoming from {} {} transfers", sender, txs.len())
                 }
             },
             EntryData::Outgoing(txs) => {
                 if txs.len() == 1 {
-                    format!("Sent to {} {} {}", txs[0].key, format_coin(txs[0].amount), txs[0].asset)
+                    format!("Sent to {} {} {}", txs[0].key, format_xelis(txs[0].amount), txs[0].asset)
                 } else {
                     format!("{} differents transfers", txs.len())
                 }
@@ -264,7 +265,7 @@ impl Display for TransactionEntry {
         };
 
         if let (Some(fee), Some(nonce)) = (self.fee, self.nonce) {
-            write!(f, "Hash {} at TopoHeight {}, Nonce {}, Fee: {}, Data: {}", self.hash, self.topoheight, nonce, format_coin(fee), entry_str)
+            write!(f, "Hash {} at TopoHeight {}, Nonce {}, Fee: {}, Data: {}", self.hash, self.topoheight, nonce, format_xelis(fee), entry_str)
         } else { // mostly coinbase
             write!(f, "Hash {} at TopoHeight {}: {}", self.hash, self.topoheight, entry_str)
         }
