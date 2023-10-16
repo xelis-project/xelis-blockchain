@@ -631,8 +631,8 @@ async fn get_account_history<S: Storage>(blockchain: Arc<Blockchain<S>>, body: V
                     });
                 }
 
-                for tx in block_header.get_transactions() {
-                    let tx = storage.get_transaction(tx).await.context(format!("Error while retrieving transaction {tx} at topo height {topo}"))?;
+                for hash in block_header.get_transactions() {
+                    let tx = storage.get_transaction(hash).await.context(format!("Error while retrieving transaction {hash} at topo height {topo}"))?;
                     let is_sender = *tx.get_owner() == *key;
                     match tx.get_data() {
                         TransactionType::Transfer(transfers) => {
