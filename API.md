@@ -991,6 +991,57 @@ Fetch transactions by theirs hashes from database and mempool of daemon and keep
 }
 ```
 
+#### Get Account History
+Fetch up to 20 history events for an account on a specific asset
+
+##### Method `get_account_history`
+
+##### Parameters
+|        Name        |   Type  | Required |                Note               |
+|:------------------:|:-------:|:--------:|:---------------------------------:|
+|       address      | Address | Required | Valid address registered on chain |
+|        asset       |   Hash  | Optional |           Asset to track          |
+| minimum_topoheight | Integer | Optional |   minimum topoheight for history  |
+| maximum_topoheight | Integer | Optional | Maximum topoheight for history    |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "get_account_history",
+    "params": {
+        "address": "xet1qqqyvh9vgkcurtj2la0e4jspnfsq7vkaqm863zcfdnej92xg4mpzz3suf96k4"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "block_timestamp": 1697492997128,
+            "hash": "0000006f160df7d7aaa5d519f341136ae95fce1324280546070fecd8efe93751",
+            "mining": {
+                "reward": 117059
+            },
+            "topoheight": 485818
+        },
+        {
+            "block_timestamp": 1697492967931,
+            "hash": "0000001f62cc170349de2475a7f2338513f5340481c73af9e94c35aa2805d9cf",
+            "mining": {
+                "reward": 117059
+            },
+            "topoheight": 485817
+        }
+	]
+}
+```
+
 #### Submit Block
 Submit a block to the daemon
 
