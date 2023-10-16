@@ -29,13 +29,17 @@ use xelis_common::{
         GetAssetsParams,
         GetAccountsParams,
         HasNonceResult,
-        HasNonceParams, GetAssetParams
+        HasNonceParams,
+        GetAssetParams,
+        GetAccountHistoryParams,
+        AccountHistoryEntry,
+        AccountHistoryType
     }, DataHash},
     async_handler,
     serializer::Serializer,
-    transaction::Transaction,
+    transaction::{Transaction, TransactionType},
     crypto::hash::Hash,
-    block::{BlockHeader, Block}, config::{BLOCK_TIME_MILLIS, VERSION}, immutable::Immutable, rpc_server::{RPCHandler, parse_params},
+    block::{BlockHeader, Block}, config::{BLOCK_TIME_MILLIS, VERSION, XELIS_ASSET}, immutable::Immutable, rpc_server::{RPCHandler, parse_params},
 };
 use std::{sync::Arc, borrow::Cow};
 use log::{info, debug};
@@ -154,6 +158,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight));
     handler.register_method("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height));
     handler.register_method("get_transactions", async_handler!(get_transactions));
+    handler.register_method("get_account_history", async_handler!(get_account_history));
     handler.register_method("get_accounts", async_handler!(get_accounts));
 }
 
@@ -585,6 +590,105 @@ async fn get_transactions<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Valu
     }
 
     Ok(json!(transactions))
+}
+
+const MAX_HISTORY: usize = 20;
+// retrieve all history changes for an account on an asset
+async fn get_account_history<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetAccountHistoryParams = parse_params(body)?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+    }
+
+    let key = params.address.get_public_key();
+    let minimum_topoheight = params.minimum_topoheight.unwrap_or(0);
+    let storage = blockchain.get_storage().read().await;
+    let (topo, versioned_balance) = if let Some(topo) = params.maximum_topoheight {
+        (topo, storage.get_balance_at_exact_topoheight(key, &params.asset, topo).await.context(format!("Error while retrieving balance at topo height {topo}"))?)
+    } else {
+        storage.get_last_balance(key, &params.asset).await.context("Error while retrieving last balance")?
+    };
+
+    let mut history_count = 0;
+    let mut history = Vec::new();
+    let mut version = Some((topo, versioned_balance));
+    loop {
+        if let Some((topo, versioned_balance)) = version {
+            if topo < minimum_topoheight {
+                break;
+            }
+
+            {
+                let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
+                if params.asset == XELIS_ASSET && *block_header.get_miner() == *key {
+                    let reward = storage.get_block_reward(&hash).context(format!("Error while retrieving reward at topo height {topo}"))?;
+                    let history_type = AccountHistoryType::Mining { reward };
+                    history.push(AccountHistoryEntry {
+                        topoheight: topo,
+                        hash: hash.clone(),
+                        history_type,
+                        block_timestamp: block_header.get_timestamp()
+                    });
+                }
+
+                for tx in block_header.get_transactions() {
+                    let tx = storage.get_transaction(tx).await.context(format!("Error while retrieving transaction {tx} at topo height {topo}"))?;
+                    let is_sender = *tx.get_owner() == *key;
+                    match tx.get_data() {
+                        TransactionType::Transfer(transfers) => {
+                            for transfer in transfers {
+                                if transfer.asset == params.asset {
+                                    if transfer.to == *key {
+                                        history.push(AccountHistoryEntry {
+                                            topoheight: topo,
+                                            hash: hash.clone(),
+                                            history_type: AccountHistoryType::Incoming { amount: transfer.amount },
+                                            block_timestamp: block_header.get_timestamp()
+                                        });
+                                    }
+    
+                                    if is_sender {
+                                        history.push(AccountHistoryEntry {
+                                            topoheight: topo,
+                                            hash: hash.clone(),
+                                            history_type: AccountHistoryType::Outgoing { amount: transfer.amount },
+                                            block_timestamp: block_header.get_timestamp()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        TransactionType::Burn { asset, amount } => {
+                            if *asset == params.asset {
+                                if is_sender {
+                                    history.push(AccountHistoryEntry {
+                                        topoheight: topo,
+                                        hash: hash.clone(),
+                                        history_type: AccountHistoryType::Burn { amount: *amount },
+                                        block_timestamp: block_header.get_timestamp()
+                                    });
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            }
+
+            history_count += 1;
+            if history_count >= MAX_HISTORY {
+                break;   
+            }        
+    
+            if let Some(previous) = versioned_balance.get_previous_topoheight() {
+                version = Some((previous, storage.get_balance_at_exact_topoheight(key, &params.asset, previous).await.context(format!("Error while retrieving previous balance at topo height {previous}"))?));
+            }
+        } else {
+            break;
+        }
+    }
+
+    Ok(json!(history))
 }
 
 const MAX_ACCOUNTS: usize = 100;

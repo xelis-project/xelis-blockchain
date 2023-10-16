@@ -73,12 +73,6 @@ pub struct SubmitBlockParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetMessagesParams<'a> {
-    pub address: Address<'a>,
-    pub from: Option<Address<'a>>
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct GetBalanceParams<'a> {
     pub address: Cow<'a, Address<'a>>,
     pub asset: Cow<'a, Hash>
@@ -192,6 +186,38 @@ pub struct TransactionResponse<'a, T: Clone> {
     pub first_seen: Option<u64>,
     #[serde(flatten)]
     pub data: DataHash<'a, T>
+}
+
+fn default_xelis_asset() -> Hash {
+    crate::config::XELIS_ASSET
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetAccountHistoryParams<'a> {
+    pub address: Address<'a>,
+    #[serde(default = "default_xelis_asset")]
+    pub asset: Hash,
+    pub minimum_topoheight: Option<u64>,
+    pub maximum_topoheight: Option<u64>
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")] 
+pub enum AccountHistoryType {
+    Mining { reward: u64 },
+    Burn { amount: u64 },
+    // TODO delete those two fields with upcoming privacy layer
+    Outgoing { amount: u64 },
+    Incoming { amount: u64 },
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct AccountHistoryEntry {
+    pub topoheight: u64,
+    pub hash: Hash,
+    #[serde(flatten)]
+    pub history_type: AccountHistoryType,
+    pub block_timestamp: u128
 }
 
 #[derive(Serialize, Deserialize)]
