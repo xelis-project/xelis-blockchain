@@ -221,6 +221,11 @@ pub struct AccountHistoryEntry {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetAccountAssetsParams<'a> {
+    pub address: Address<'a>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetAssetParams {
     pub asset: Hash
 }

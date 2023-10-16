@@ -33,7 +33,8 @@ use xelis_common::{
         GetAssetParams,
         GetAccountHistoryParams,
         AccountHistoryEntry,
-        AccountHistoryType
+        AccountHistoryType,
+        GetAccountAssetsParams
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -159,6 +160,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height));
     handler.register_method("get_transactions", async_handler!(get_transactions));
     handler.register_method("get_account_history", async_handler!(get_account_history));
+    handler.register_method("get_account_assets", async_handler!(get_account_assets));
     handler.register_method("get_accounts", async_handler!(get_accounts));
 }
 
@@ -689,6 +691,18 @@ async fn get_account_history<S: Storage>(blockchain: Arc<Blockchain<S>>, body: V
     }
 
     Ok(json!(history))
+}
+
+async fn get_account_assets<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetAccountAssetsParams = parse_params(body)?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+    }
+
+    let key = params.address.get_public_key();
+    let storage = blockchain.get_storage().read().await;
+    let assets = storage.get_assets_for(key).await.context("Error while retrieving assets for account")?;
+    Ok(json!(assets))
 }
 
 const MAX_ACCOUNTS: usize = 100;
