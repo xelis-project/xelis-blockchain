@@ -1042,6 +1042,32 @@ Fetch up to 20 history events for an account on a specific asset
 }
 ```
 
+#### Get Account Assets
+Retrieve all assets for an account
+
+##### Method `get_account_assets`
+
+##### Parameters
+|   Name  |   Type  | Required |                Note               |
+|:-------:|:-------:|:--------:|:---------------------------------:|
+| address | Address | Required | Valid address registered on chain |
+
+##### Request
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    ]
+}
+```
+
+##### Response
+```json
+
+```
+
 #### Submit Block
 Submit a block to the daemon
 
