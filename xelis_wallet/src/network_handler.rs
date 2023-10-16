@@ -3,7 +3,7 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, asset::AssetWithData};
+use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, asset::AssetWithData, serializer::Serializer};
 
 use crate::{daemon_api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
 
@@ -185,7 +185,12 @@ impl NetworkHandler {
                         let mut transfers: Vec<Transfer> = Vec::new();
                         for tx in txs {
                             if is_owner || tx.to == *address.get_public_key() {
-                                let transfer = Transfer::new(tx.to, tx.asset, tx.amount, tx.extra_data);
+                                let extra_data = if let Some(bytes) = tx.extra_data {
+                                    Option::from_bytes(&bytes)?
+                                } else {
+                                    None
+                                };
+                                let transfer = Transfer::new(tx.to, tx.asset, tx.amount, extra_data);
                                 transfers.push(transfer);
                             }
                         }

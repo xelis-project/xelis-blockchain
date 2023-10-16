@@ -4,7 +4,7 @@ use anyhow::Context;
 use log::info;
 use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult}, DataHash}, crypto::{hash::Hashable, address::AddressType}};
 use serde_json::{Value, json};
-use crate::{wallet::{Wallet, WalletError}, entry::{EntryData, TransactionEntry}};
+use crate::{wallet::{Wallet, WalletError}, entry::TransactionEntry};
 
 pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     info!("Registering RPC methods...");
@@ -143,39 +143,6 @@ async fn build_transaction(wallet: Arc<Wallet>, body: Value) -> Result<Value, In
 async fn list_transactions(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
     let params: ListTransactionsParams = parse_params(body)?;
     let wallet = wallet.get_storage().read().await;
-    let txs = wallet.get_transactions()?;
-    let response: Vec<DataHash<'_, TransactionEntry>> = txs.iter().filter(|e| {
-        if let Some(topoheight) = &params.min_topoheight {
-            if e.get_topoheight() < *topoheight {
-                return false
-            }
-        }
-
-        if let Some(topoheight) = &params.max_topoheight {
-            if e.get_topoheight() > *topoheight {
-                return false
-            }
-        }
-
-        match e.get_entry() {
-            EntryData::Coinbase(_) if params.accept_coinbase => true,
-            EntryData::Burn { .. } if params.accept_burn => true,
-            EntryData::Incoming(sender, _) if params.accept_incoming => match &params.address {
-                Some(key) => *key == *sender,
-                None => true
-            },
-            EntryData::Outgoing(txs) if params.accept_outgoing => match &params.address {
-                Some(filter_key) => txs.iter().find(|tx| {
-                    *tx.get_key() == *filter_key
-                }).is_some(),
-                None => true,
-            },
-            _ => false
-        }
-    }).map(|e| {
-        let hash = e.get_hash();
-        DataHash { hash: Cow::Borrowed(hash), data: Cow::Borrowed(e) }
-    }).collect();
-
-    Ok(json!(response))
+    let txs = wallet.get_filtered_transactions(params.address.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?;
+    Ok(json!(txs))
 }

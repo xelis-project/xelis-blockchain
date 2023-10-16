@@ -66,7 +66,7 @@ impl<'a> Address<'a> {
     pub fn get_data(&self, name: String, data_type: DataType) -> Option<&DataValue> {
         match &self.addr_type {
             AddressType::Normal => None,
-            AddressType::Data(data) => data.get_value(name, data_type)
+            AddressType::Data(data) => data.get_value_by_string_key(name, data_type)
         }
     }
 

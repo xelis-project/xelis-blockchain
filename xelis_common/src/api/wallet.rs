@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{transaction::{TransactionType, Transaction}, crypto::{key::PublicKey, hash::Hash, address::Address}};
 
-use super::{DataHash, DataElement};
+use super::{DataHash, DataElement, DataValue, DataType};
 
 
 #[derive(Serialize, Deserialize)]
@@ -39,6 +39,16 @@ pub struct ListTransactionsParams {
     pub accept_coinbase: bool,
     #[serde(default = "default_filter_value")]
     pub accept_burn: bool,
+    // Filter by extra data
+    pub query: Option<QuerySearcher>
+}
+
+// Structure to allow for searching a precise key/value pair in extra data
+// Value is nullable to allow for searching only by key also
+#[derive(Serialize, Deserialize)]
+pub enum QuerySearcher {
+    KeyValue { key: DataValue, value: Option<DataValue> },
+    KeyType { key: DataValue, kind: DataType }
 }
 
 #[derive(Serialize, Deserialize)]

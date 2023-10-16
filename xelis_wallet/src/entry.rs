@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 
 use serde::Serialize;
-use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, transaction::EXTRA_DATA_LIMIT_SIZE, utils::format_xelis};
+use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, utils::format_xelis, api::DataElement};
 
 #[derive(Serialize, Clone)]
 pub struct Transfer {
@@ -9,11 +9,11 @@ pub struct Transfer {
     asset: Hash,
     amount: u64,
     // raw (plain text) extra data if build by this wallet
-    extra_data: Option<Vec<u8>>
+    extra_data: Option<DataElement>
 }
 
 impl Transfer {
-    pub fn new(key: PublicKey, asset: Hash, amount: u64, extra_data: Option<Vec<u8>>) -> Self {
+    pub fn new(key: PublicKey, asset: Hash, amount: u64, extra_data: Option<DataElement>) -> Self {
         Self {
             key,
             asset,
@@ -34,7 +34,7 @@ impl Transfer {
         self.amount
     }
 
-    pub fn get_extra_data(&self) -> &Option<Vec<u8>> {
+    pub fn get_extra_data(&self) -> &Option<DataElement> {
         &self.extra_data
     }
 }
@@ -45,16 +45,7 @@ impl Serializer for Transfer {
         let asset = reader.read_hash()?;
         let amount = reader.read_u64()?;
 
-        let extra_data = if reader.read_bool()? {
-            let extra_data_size = reader.read_u16()? as usize;
-            if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
-                return Err(ReaderError::InvalidSize)
-            }
-
-            Some(reader.read_bytes(extra_data_size)?)
-        } else {
-            None
-        };
+        let extra_data = Option::read(reader)?;
 
         Ok(Self {
             key,
@@ -70,10 +61,7 @@ impl Serializer for Transfer {
         writer.write_u64(&self.amount);
 
         writer.write_bool(self.extra_data.is_some());
-        if let Some(extra_data) = &self.extra_data {
-            writer.write_u16(extra_data.len() as u16);
-            writer.write_bytes(extra_data);
-        }
+        self.extra_data.write(writer);
     }
 }
 
@@ -194,6 +182,10 @@ impl TransactionEntry {
 
     pub fn get_entry(&self) -> &EntryData {
         &self.entry
+    }
+
+    pub fn get_mut_entry(&mut self) -> &mut EntryData {
+        &mut self.entry
     }
 }
 

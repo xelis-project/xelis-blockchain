@@ -2,11 +2,13 @@ use std::collections::HashSet;
 
 use sled::{Tree, Db};
 use xelis_common::{
-    crypto::{hash::Hash, key::KeyPair},
-    serializer::{Reader, Serializer}, network::Network,
+    crypto::{hash::Hash, key::{KeyPair, PublicKey}},
+    serializer::{Reader, Serializer},
+    network::Network,
+    api::wallet::QuerySearcher,
 };
 use anyhow::{Context, Result, anyhow};
-use crate::{config::SALT_SIZE, cipher::Cipher, wallet::WalletError, entry::TransactionEntry};
+use crate::{config::SALT_SIZE, cipher::Cipher, wallet::WalletError, entry::{TransactionEntry, EntryData}};
 
 // keys used to retrieve from storage
 const NONCE_KEY: &[u8] = b"NONCE";
@@ -179,13 +181,79 @@ impl EncryptedStorage {
 
     // read whole disk and returns all transactions
     pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
+        self.get_filtered_transactions(None, None, None, true, true, true, true, None)
+    }
+
+    // Filter when the data is deserialized to not load all transactions in memory
+    pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, key_value: Option<&QuerySearcher>) -> Result<Vec<TransactionEntry>> {
         let mut transactions = Vec::new();
         for res in self.transactions.iter() {
             let (_, value) = res?;
             let raw_value = &self.cipher.decrypt_value(&value)?;
-            let mut reader = Reader::new(raw_value);
-            let transaction = TransactionEntry::read(&mut reader)?;
-            transactions.push(transaction);
+            let mut e = TransactionEntry::from_bytes(raw_value)?;
+            if let Some(topoheight) = min_topoheight {
+                if e.get_topoheight() < topoheight {
+                    continue;
+                }
+            }
+    
+            if let Some(topoheight) = &max_topoheight {
+                if e.get_topoheight() > *topoheight {
+                    continue;
+                }
+            }
+    
+            let (save, mut transfers) = match e.get_mut_entry() {
+                EntryData::Coinbase(_) if accept_coinbase => (true, None),
+                EntryData::Burn { .. } if accept_burn => (true, None),
+                EntryData::Incoming(sender, transfers) if accept_incoming => match address {
+                    Some(key) => (*key == *sender, Some(transfers)),
+                    None => (true, None)
+                },
+                EntryData::Outgoing(txs) if accept_outgoing => match address {
+                    Some(filter_key) => (txs.iter().find(|tx| {
+                        *tx.get_key() == *filter_key
+                    }).is_some(), Some(txs)),
+                    None => (true, None),
+                },
+                _ => (false, None)
+            };
+
+            if save {
+                // Check if it has requested extra data
+                if let Some(key_value) = key_value {
+                    if let Some(transfers) = transfers.as_mut() {
+                        transfers.retain(|transfer| {
+                            if let Some(element) = transfer.get_extra_data() {
+                                match key_value {
+                                    QuerySearcher::KeyValue { key, value: Some(v) } => {
+                                        element.get_value_by_key(key, Some(v.kind())) == Some(v)
+                                    },
+                                    QuerySearcher::KeyValue { key, value: None } => {
+                                        element.has_key(key)
+                                    },
+                                    QuerySearcher::KeyType { key, kind } => {
+                                        element.get_value_by_key(key, Some(*kind)) != None
+                                    }
+                                }
+                            } else {
+                                false
+                            }
+                        });
+                    } else {
+                        // Coinbase, burn, etc will be discarded always with such filter
+                        continue;
+                    }
+                }
+
+                // Keep only transactions entries that have one transfer at least
+                match transfers {
+                    Some(transfers) if !transfers.is_empty() => {
+                        transactions.push(e);
+                    },
+                    _ => {}
+                }
+            }
         }
 
         Ok(transactions)
