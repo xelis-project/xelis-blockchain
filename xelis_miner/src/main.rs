@@ -11,7 +11,7 @@ use xelis_common::{
     block::{BlockMiner, BLOCK_WORK_SIZE},
     serializer::Serializer,
     difficulty::check_difficulty,
-    config::{VERSION, DEV_ADDRESS},
+    config::VERSION,
     utils::{get_current_timestamp, format_hashrate, format_difficulty},
     crypto::{hash::{Hashable, Hash, hash}, address::Address},
     api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel, ShareablePrompt, self},
@@ -25,7 +25,7 @@ use lazy_static::lazy_static;
 #[clap(version = VERSION, about = "XELIS Miner")]
 pub struct MinerConfig {
     /// Wallet address to mine and receive block rewards on
-    #[clap(short, long, default_value_t = String::from(DEV_ADDRESS))]
+    #[clap(short, long)]
     miner_address: String,
     /// Daemon address to connect to for mining
     #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
@@ -110,12 +110,7 @@ async fn main() -> Result<()> {
         return Ok(())
     }
 
-    info!("Miner address: {}", address);
-    if address.to_string() == *DEV_ADDRESS {
-        warn!("You are using the default developer address. Please consider using your own address.");
-    }
-
-    
+    info!("Miner address: {}", address);    
     if config.num_threads != 0 && threads as usize != threads_count {
         warn!("Attention, the number of threads used may not be optimal, recommended is: {}", threads_count);
     }

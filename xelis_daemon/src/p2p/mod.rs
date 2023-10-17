@@ -9,34 +9,74 @@ mod queue;
 
 use indexmap::IndexSet;
 use xelis_common::{
-    config::{VERSION, NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT, CHAIN_SYNC_TIMEOUT_SECS, P2P_EXTEND_PEERLIST_DELAY},
+    config::VERSION,
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::{BlockHeader, Block},
     utils::get_current_time, immutable::Immutable, account::VersionedNonce
 };
-use crate::{core::{blockchain::Blockchain, storage::Storage}, p2p::{chain_validator::ChainValidator, packet::{bootstrap_chain::{StepRequest, StepResponse, BootstrapChainResponse, MAX_ITEMS_PER_PAGE, BlockMetadata}, inventory::{NOTIFY_MAX_LEN, NotifyInventoryRequest, NotifyInventoryResponse}}, tracker::ResponseBlocker}};
-use crate::core::error::BlockchainError;
-use crate::p2p::connection::ConnectionMessage;
-use crate::p2p::packet::chain::CommonPoint;
-use self::{packet::chain::{BlockId, ChainRequest, ChainResponse}, tracker::{ObjectTracker, SharedObjectTracker}, queue::QueuedFetcher};
-use self::packet::object::{ObjectRequest, ObjectResponse, OwnedObjectResponse};
-use self::peer_list::{SharedPeerList, PeerList};
-use self::connection::{State, Connection};
-use self::packet::handshake::Handshake;
-use self::packet::ping::Ping;
-use self::error::P2pError;
-use self::packet::{Packet, PacketWrapper};
-use self::peer::Peer;
-use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, UnboundedSender, UnboundedReceiver}, select, task::JoinHandle};
+use crate::{
+    core::{
+        blockchain::Blockchain,
+        storage::Storage,
+        error::BlockchainError
+    },
+    p2p::{
+        chain_validator::ChainValidator,
+        packet::{
+            bootstrap_chain::{
+                StepRequest, StepResponse, BootstrapChainResponse, MAX_ITEMS_PER_PAGE, BlockMetadata
+            },
+            inventory::{
+                NOTIFY_MAX_LEN, NotifyInventoryRequest, NotifyInventoryResponse
+            },
+            chain::CommonPoint
+        },
+        tracker::ResponseBlocker,
+        connection::ConnectionMessage,
+    },
+    config::{
+        NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS,
+        P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT,
+        CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT,
+        CHAIN_SYNC_TIMEOUT_SECS, P2P_EXTEND_PEERLIST_DELAY
+    }
+};
+use self::{
+    packet::{
+        chain::{BlockId, ChainRequest, ChainResponse},
+        object::{ObjectRequest, ObjectResponse, OwnedObjectResponse},
+        handshake::Handshake,
+        ping::Ping,
+        {Packet, PacketWrapper}
+    },
+    peer::Peer,
+    tracker::{ObjectTracker, SharedObjectTracker},
+    queue::QueuedFetcher,
+    peer_list::{SharedPeerList, PeerList},
+    connection::{State, Connection},
+    error::P2pError
+};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::mpsc::{self, UnboundedSender, UnboundedReceiver},
+    select,
+    task::JoinHandle,
+    io::AsyncWriteExt,
+    time::{interval, timeout, sleep}
+};
 use log::{info, warn, error, debug, trace};
-use tokio::io::AsyncWriteExt;
-use tokio::time::{interval, timeout, sleep};
-use std::{borrow::Cow, sync::atomic::{AtomicBool, Ordering, AtomicU64}, collections::HashSet};
-use std::convert::TryInto;
-use std::net::SocketAddr;
-use std::time::Duration;
-use std::sync::Arc;
+use std::{
+    borrow::Cow,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering, AtomicU64}
+    },
+    collections::HashSet,
+    convert::TryInto,
+    net::SocketAddr,
+    time::Duration,
+};
 use bytes::Bytes;
 use rand::Rng;
 

@@ -40,8 +40,12 @@ use xelis_common::{
     serializer::Serializer,
     transaction::{Transaction, TransactionType},
     crypto::hash::Hash,
-    block::{BlockHeader, Block}, config::{BLOCK_TIME_MILLIS, VERSION, XELIS_ASSET}, immutable::Immutable, rpc_server::{RPCHandler, parse_params},
+    block::{BlockHeader, Block},
+    config::{XELIS_ASSET, VERSION},
+    immutable::Immutable,
+    rpc_server::{RPCHandler, parse_params},
 };
+use crate::config::BLOCK_TIME_MILLIS;
 use std::{sync::Arc, borrow::Cow};
 use log::{info, debug};
 

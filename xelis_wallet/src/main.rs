@@ -6,10 +6,12 @@ use fern::colors::Color;
 use log::{error, info};
 use clap::Parser;
 use xelis_common::{config::{
-    DEFAULT_DAEMON_ADDRESS,
     VERSION, XELIS_ASSET, COIN_DECIMALS
 }, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel, self, ShareablePrompt, PromptError}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, utils::{format_xelis, set_network_to, get_network, format_coin}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
-use xelis_wallet::wallet::Wallet;
+use xelis_wallet::{
+    wallet::Wallet,
+    config::DEFAULT_DAEMON_ADDRESS
+};
 
 #[cfg(feature = "api_server")]
 use xelis_wallet::api::AuthConfig;

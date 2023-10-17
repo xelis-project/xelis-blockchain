@@ -19,6 +19,7 @@ async-recursion = "1"
 async-trait = "0.1.64"
 humantime = "2.1.0"
 human_bytes = "0.4.2"
+lazy_static = "1.4.0"
 
 # Common dependencies
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "time", "macros", "sync", "net"] }

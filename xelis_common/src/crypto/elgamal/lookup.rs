@@ -105,15 +105,10 @@ impl Default for LookupTable {
 }
 
 mod tests {
-    use lazy_static::lazy_static;
-
-    lazy_static!(
-        static ref TABLE: super::LookupTable = super::LookupTable::default();
-    );
-
     fn _assert_value(value: u64) {
         let m = &super::Scalar::from(value) * &super::RISTRETTO_BASEPOINT_TABLE;
-        assert_eq!(TABLE.lookup(&m), value);
+        let table = super::LookupTable::default();
+        assert_eq!(table.lookup(&m), value);
     }
 
     #[test]

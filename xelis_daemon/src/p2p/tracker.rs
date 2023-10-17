@@ -2,7 +2,8 @@ use std::{borrow::Cow, collections::HashMap, time::Duration, sync::Arc};
 
 use bytes::Bytes;
 use tokio::{sync::{mpsc::{UnboundedSender, UnboundedReceiver}, RwLock, oneshot}, time::timeout};
-use xelis_common::{crypto::hash::Hash, config::PEER_TIMEOUT_REQUEST_OBJECT, serializer::Serializer};
+use xelis_common::{crypto::hash::Hash, serializer::Serializer};
+use crate::config::PEER_TIMEOUT_REQUEST_OBJECT;
 use log::{error, debug};
 
 use super::{packet::{object::{ObjectRequest, OwnedObjectResponse}, Packet}, error::P2pError, peer::Peer};

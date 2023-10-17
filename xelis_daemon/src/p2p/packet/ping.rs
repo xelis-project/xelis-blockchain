@@ -1,5 +1,4 @@
 use xelis_common::{
-    config::P2P_PING_PEER_LIST_LIMIT,
     crypto::hash::Hash,
     serializer::{
         Writer,
@@ -12,7 +11,10 @@ use xelis_common::{
         ip_from_bytes
     }, block::Difficulty
 };
-use crate::p2p::{peer::Peer, error::P2pError};
+use crate::{
+    p2p::{peer::Peer, error::P2pError},
+    config::P2P_PING_PEER_LIST_LIMIT
+};
 use std::{
     fmt::Display,
     borrow::Cow,

@@ -6,8 +6,9 @@ use xelis_common::{
         Writer,
         ReaderError,
         Reader
-    }, config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, TIPS_LIMIT}
+    },
 };
+use crate::config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, TIPS_LIMIT};
 
 #[derive(Clone, Debug)]
 pub struct BlockId {

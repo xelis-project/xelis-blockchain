@@ -1,9 +1,14 @@
 use std::borrow::Cow;
 use indexmap::IndexSet;
 use log::debug;
-use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, block::Difficulty, config::CHAIN_SYNC_REQUEST_MAX_BLOCKS, asset::AssetWithData};
-
+use xelis_common::{
+    crypto::{hash::Hash, key::PublicKey},
+    serializer::{Serializer, ReaderError, Reader, Writer},
+    block::Difficulty,
+    asset::AssetWithData
+};
 use super::chain::{BlockId, CommonPoint};
+use crate::config::CHAIN_SYNC_REQUEST_MAX_BLOCKS;
 
 // this file implements the protocol for the fast sync (bootstrapped chain)
 // You will have to request through StepRequest::FetchAssets all the registered assets

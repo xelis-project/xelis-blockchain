@@ -1,10 +1,12 @@
-use crate::p2p::packet::peer_disconnected::PacketPeerDisconnected;
-
+use crate::{
+    p2p::packet::peer_disconnected::PacketPeerDisconnected,
+    config::{P2P_EXTEND_PEERLIST_DELAY, PEER_FAIL_LIMIT}
+};
 use super::{peer::Peer, packet::Packet, error::P2pError};
 use std::{collections::HashMap, net::SocketAddr, fs};
 use serde::{Serialize, Deserialize};
 use tokio::sync::RwLock;
-use xelis_common::{serializer::Serializer, utils::get_current_time, config::{P2P_EXTEND_PEERLIST_DELAY, PEER_FAIL_LIMIT}};
+use xelis_common::{serializer::Serializer, utils::get_current_time};
 use std::sync::Arc;
 use bytes::Bytes;
 use log::{info, debug, trace, error, warn};

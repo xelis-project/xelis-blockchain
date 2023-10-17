@@ -1,6 +1,7 @@
 pub mod rpc;
 pub mod p2p;
 pub mod core;
+pub mod config;
 
 use fern::colors::Color;
 use humantime::format_duration;
@@ -9,11 +10,14 @@ use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
     prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel, self, ShareablePrompt},
-    config::{VERSION, BLOCK_TIME, XELIS_ASSET}, utils::{format_hashrate, set_network_to, format_xelis, format_coin}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer
+    config::{VERSION, XELIS_ASSET}, utils::{format_hashrate, set_network_to, format_xelis, format_coin}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer
 };
-use crate::core::{
-    blockchain::{Config, Blockchain, get_block_reward},
-    storage::{Storage, SledStorage}
+use crate::{
+    core::{
+        blockchain::{Config, Blockchain, get_block_reward},
+        storage::{Storage, SledStorage}
+    },
+    config::BLOCK_TIME
 };
 use std::{sync::Arc, net::SocketAddr};
 use std::time::Duration;
