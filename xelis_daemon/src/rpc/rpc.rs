@@ -34,7 +34,8 @@ use xelis_common::{
         GetAccountHistoryParams,
         AccountHistoryEntry,
         AccountHistoryType,
-        GetAccountAssetsParams
+        GetAccountAssetsParams,
+        PeerEntry
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -429,15 +430,34 @@ async fn p2p_status<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> 
     let p2p = blockchain.get_p2p().lock().await;
     match p2p.as_ref() {
         Some(p2p) => {
-            let peer_count = p2p.get_peer_count().await;
             let tag = p2p.get_tag();
             let peer_id = p2p.get_peer_id();
             let best_topoheight = p2p.get_best_topoheight().await;
             let max_peers = p2p.get_max_peers();
             let our_topoheight = blockchain.get_topo_height();
+            let peer_list = p2p.get_peer_list().read().await;
+            let peers_values = peer_list.get_peers().values();
+            let mut peers = Vec::new();
+            for p in peers_values {
+                let top_block_hash = p.get_top_block_hash().lock().await.clone();
+                peers.push(
+                    PeerEntry {
+                        id: p.get_id(),
+                        addr: Cow::Borrowed(p.get_outgoing_address()),
+                        tag: Cow::Borrowed(p.get_node_tag()),
+                        version: Cow::Borrowed(p.get_version()),
+                        top_block_hash,
+                        topoheight: p.get_topoheight(),
+                        height: p.get_height(),
+                        last_ping: p.get_last_ping(),
+                        pruned_topoheight: p.get_pruned_topoheight(),
+                        cumulative_difficulty: p.get_cumulative_difficulty()
+                    }
+                );
+            }
 
             Ok(json!(P2pStatusResult {
-                peer_count,
+                peers,
                 tag: Cow::Borrowed(tag),
                 peer_id,
                 our_topoheight,

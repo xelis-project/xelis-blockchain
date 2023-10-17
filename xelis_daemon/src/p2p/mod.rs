@@ -1450,13 +1450,13 @@ impl<S: Storage> P2pServer<S> {
     }
 
     pub async fn get_best_topoheight(&self) -> u64 {
-        let our_height = self.blockchain.get_topo_height();
+        let our = self.blockchain.get_topo_height();
         let peer_list = self.peer_list.read().await;
-        let best_height = peer_list.get_best_topoheight();
-        if best_height > our_height {
-            best_height
+        let best = peer_list.get_best_topoheight();
+        if best > our {
+            best
         } else {
-            our_height
+            our
         }
     }
 

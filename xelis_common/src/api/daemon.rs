@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashSet};
+use std::{borrow::Cow, collections::HashSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
@@ -146,8 +146,22 @@ pub struct GetTransactionParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct PeerEntry<'a> {
+    pub id: u64,
+    pub addr: Cow<'a, SocketAddr>,
+    pub tag: Cow<'a, Option<String>>,
+    pub version: Cow<'a, String>,
+    pub top_block_hash: Hash,
+    pub topoheight: u64,
+    pub height: u64,
+    pub last_ping: u64,
+    pub pruned_topoheight: Option<u64>,
+    pub cumulative_difficulty: Difficulty
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct P2pStatusResult<'a> {
-    pub peer_count: usize,
+    pub peers: Vec<PeerEntry<'a>>,
     pub max_peers: usize,
     pub tag: Cow<'a, Option<String>>,
     pub our_topoheight: u64,
