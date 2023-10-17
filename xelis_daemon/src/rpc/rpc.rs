@@ -158,6 +158,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("submit_transaction", async_handler!(submit_transaction));
     handler.register_method("get_transaction", async_handler!(get_transaction));
     handler.register_method("p2p_status", async_handler!(p2p_status));
+    handler.register_method("get_peers", async_handler!(get_peers));
     handler.register_method("get_mempool", async_handler!(get_mempool));
     handler.register_method("get_tips", async_handler!(get_tips));
     handler.register_method("get_dag_order", async_handler!(get_dag_order));
@@ -435,10 +436,32 @@ async fn p2p_status<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> 
             let best_topoheight = p2p.get_best_topoheight().await;
             let max_peers = p2p.get_max_peers();
             let our_topoheight = blockchain.get_topo_height();
+            let peer_count = p2p.get_peer_count().await;
+
+            Ok(json!(P2pStatusResult {
+                peer_count,
+                tag: Cow::Borrowed(tag),
+                peer_id,
+                our_topoheight,
+                best_topoheight,
+                max_peers
+            }))
+        },
+        None => Err(InternalRpcError::AnyError(ApiError::NoP2p.into()))
+    }
+}
+
+async fn get_peers<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    let p2p = blockchain.get_p2p().lock().await;
+    match p2p.as_ref() {
+        Some(p2p) => {
             let peer_list = p2p.get_peer_list().read().await;
-            let peers_values = peer_list.get_peers().values();
             let mut peers = Vec::new();
-            for p in peers_values {
+            for p in  peer_list.get_peers().values() {
                 let top_block_hash = p.get_top_block_hash().lock().await.clone();
                 peers.push(
                     PeerEntry {
@@ -455,15 +478,7 @@ async fn p2p_status<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> 
                     }
                 );
             }
-
-            Ok(json!(P2pStatusResult {
-                peers,
-                tag: Cow::Borrowed(tag),
-                peer_id,
-                our_topoheight,
-                best_topoheight,
-                max_peers
-            }))
+            Ok(json!(peers))
         },
         None => Err(InternalRpcError::AnyError(ApiError::NoP2p.into()))
     }

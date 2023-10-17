@@ -161,7 +161,7 @@ pub struct PeerEntry<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct P2pStatusResult<'a> {
-    pub peers: Vec<PeerEntry<'a>>,
+    pub peer_count: usize,
     pub max_peers: usize,
     pub tag: Cow<'a, Option<String>>,
     pub our_topoheight: u64,
