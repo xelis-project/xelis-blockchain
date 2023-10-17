@@ -1055,7 +1055,13 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let mut sorted_tips = blockdag::sort_tips(storage, &tips).await.unwrap();
-        sorted_tips.truncate(TIPS_LIMIT); // keep only first 3 heavier tips
+        if sorted_tips.len() > TIPS_LIMIT {
+            let dropped_tips = sorted_tips.drain(TIPS_LIMIT..); // keep only first 3 heavier tips
+            for hash in dropped_tips {
+                debug!("Dropping tip {} because it is not in the first 3 heavier tips", hash);
+            }
+        }
+
         let height = blockdag::calculate_height_at_tips(storage, &sorted_tips).await?;
         let mut block = BlockHeader::new(self.get_version_at_height(height), height, get_current_timestamp(), sorted_tips, extra_nonce, address, Vec::new());
 
