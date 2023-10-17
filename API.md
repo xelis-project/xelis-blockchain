@@ -234,7 +234,6 @@ Retrieve a block at a specific topo height
 	}
 }
 ```
-
 NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
 
 #### Get Blocks At Height
@@ -343,7 +342,6 @@ Retrieve a block by its hash
 	}
 }
 ```
-
 NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
 
 #### Get Top Block
@@ -394,7 +392,6 @@ Retrieve the highest block based on the topological height
 	}
 }
 ```
-
 NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
 
 #### Get Nonce
@@ -474,6 +471,7 @@ Verify if address has a nonce on-chain registered.
 Get up-to-date asset's balance for a specific address
 
 NOTE: Balance is returned in atomic units
+
 ##### Method `get_last_balance`
 
 ##### Parameters
@@ -514,6 +512,7 @@ NOTE: Balance is returned in atomic units
 Get asset's balance from address at exact topoheight
 
 NOTE: Balance is returned in atomic units
+
 ##### Method `get_balance_at_topoheight`
 
 ##### Parameters
@@ -757,6 +756,58 @@ No parameters
 	}
 }
 ```
+
+#### Get Peers
+Retrieve all peers connected
+
+##### Method `get_peers`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_peers"
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "addr": "255.255.255.255:2125",
+            "cumulative_difficulty": 15429361306853,
+            "height": 488400,
+            "id": 8185485348476293826,
+            "last_ping": 1697559833,
+            "pruned_topoheight": 488000,
+            "tag": null,
+            "top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
+            "topoheight": 489291,
+            "version": "1.5.0"
+        },
+        {
+            "addr": "192.168.55.43:2125",
+            "cumulative_difficulty": 15429361306853,
+            "height": 488400,
+            "id": 2491091954271682078,
+            "last_ping": 1697559834,
+            "pruned_topoheight": 489200,
+            "tag": null,
+            "top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
+            "topoheight": 489291,
+            "version": "1.5.0"
+        }
+    ]
+}
+```
+NOTE: Addresses are not real one and were replaced for privacy reasons.
 
 #### Get DAG Order
 Retrieve the whole DAG order (all blocks hash ordered by topoheight).
