@@ -1038,9 +1038,25 @@ impl<S: Storage> Blockchain<S> {
             tips.push(hash);
         }
 
-        let mut sorted_tips = blockdag::sort_tips(storage, &tips).await?;
+        if tips.len() > 1 {
+            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &tips).await?.clone();
+            debug!("Best tip selected for this block template is {}", best_tip);
+            let mut selected_tips = Vec::with_capacity(tips.len());
+            for hash in tips {
+                if best_tip != hash {
+                    if !self.validate_tips(storage, &best_tip, &hash).await? {
+                        debug!("Tip {} is invalid, not selecting it because difficulty can't be less than 91% of {}", hash, best_tip);
+                        continue;
+                    }
+                }
+                selected_tips.push(hash);
+            }
+            tips = selected_tips;
+        }
+
+        let mut sorted_tips = blockdag::sort_tips(storage, &tips).await.unwrap();
         sorted_tips.truncate(TIPS_LIMIT); // keep only first 3 heavier tips
-        let height = blockdag::calculate_height_at_tips(storage, &tips).await?;
+        let height = blockdag::calculate_height_at_tips(storage, &sorted_tips).await?;
         let mut block = BlockHeader::new(self.get_version_at_height(height), height, get_current_timestamp(), sorted_tips, extra_nonce, address, Vec::new());
 
         let mempool = self.mempool.read().await;
@@ -1531,18 +1547,18 @@ impl<S: Storage> Blockchain<S> {
 
         tips = HashSet::new();
         debug!("find best tip by cumulative difficulty");
-        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &new_tips).await?.clone();
+        // let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &new_tips).await?.clone();
         for hash in new_tips {
-            if best_tip != hash {
-                if !self.validate_tips(&storage, &best_tip, &hash).await? {
-                    warn!("Rusty TIP {} declared stale", hash);
-                } else {
-                    debug!("Tip {} is valid, adding to final Tips list", hash);
-                    tips.insert(hash);
-                }
-            }
+            // if best_tip != hash {
+            //     if !self.validate_tips(&storage, &best_tip, &hash).await? {
+            //         warn!("Rusty TIP {} declared stale", hash);
+            //     } else {
+            //         debug!("Tip {} is valid, adding to final Tips list", hash);
+            //     }
+            tips.insert(hash);
+            // }
         }
-        tips.insert(best_tip);
+        // tips.insert(best_tip);
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
