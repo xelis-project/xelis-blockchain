@@ -686,6 +686,16 @@ impl<T> Prompt<T> {
     }
 }
 
+impl<T> Drop for Prompt<T> {
+    fn drop(&mut self) {
+        if let Ok(true) = terminal::is_raw_mode_enabled() {
+            if let Err(e) = terminal::disable_raw_mode() {
+                error!("Error while forcing to disable raw mode: {}", e);
+            }
+        } 
+    }
+}
+
 pub fn colorize_string(color: Color, message: &String) -> String {
     format!("\x1B[{}m{}\x1B[0m", color.to_fg_str(), message)
 }
