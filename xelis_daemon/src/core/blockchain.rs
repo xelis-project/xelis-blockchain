@@ -1547,18 +1547,18 @@ impl<S: Storage> Blockchain<S> {
 
         tips = HashSet::new();
         debug!("find best tip by cumulative difficulty");
-        // let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &new_tips).await?.clone();
+        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &new_tips).await?.clone();
         for hash in new_tips {
-            // if best_tip != hash {
-            //     if !self.validate_tips(&storage, &best_tip, &hash).await? {
-            //         warn!("Rusty TIP {} declared stale", hash);
-            //     } else {
-            //         debug!("Tip {} is valid, adding to final Tips list", hash);
-            //     }
-            tips.insert(hash);
-            // }
+            if best_tip != hash {
+                if !self.validate_tips(&storage, &best_tip, &hash).await? {
+                    warn!("Rusty TIP {} declared stale", hash);
+                } else {
+                    debug!("Tip {} is valid, adding to final Tips list", hash);
+                    tips.insert(hash);
+                }
+            }
         }
-        // tips.insert(best_tip);
+        tips.insert(best_tip);
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
