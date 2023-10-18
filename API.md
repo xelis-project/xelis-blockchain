@@ -807,7 +807,7 @@ No parameters
     ]
 }
 ```
-NOTE: Addresses are not real one and were replaced for privacy reasons.
+NOTE: Addresses displayed in this example are not real one and were replaced for privacy reasons.
 
 #### Get DAG Order
 Retrieve the whole DAG order (all blocks hash ordered by topoheight).
