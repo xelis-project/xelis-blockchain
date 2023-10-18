@@ -796,11 +796,23 @@ impl<S: Storage> P2pServer<S> {
                     let peer_list = self.peer_list.read().await;
                     let peer_peers = peer.get_peers(false).lock().await;
                     // iterate over all peers of this peer broadcaster
-                    for peer_peer in peer_peers.iter() {
+                    for common_peer_addr in peer_peers.iter() {
                         // if we have a common peer with him
-                        if let Some(peer_peer) = peer_list.get_peer_by_addr(peer_peer) {
-                            let mut blocks_propagation = peer_peer.get_blocks_propagation().lock().await;
-                            blocks_propagation.put(block_hash.clone(), ());
+                        if let Some(common_peer) = peer_list.get_peer_by_addr(common_peer_addr) {
+                            if peer.get_id() != common_peer.get_id() {
+                                let peers_received = common_peer.get_peers(false).lock().await;
+                                let peers_sent = common_peer.get_peers(true).lock().await;
+                                // verify that we already know that he his connected to it and that we informed him we are connected too to prevent any desync
+                                if peers_received.iter().find(
+                                    |addr: &&SocketAddr| *addr == peer.get_outgoing_address()
+                                ).is_some() && peers_sent.iter().find(
+                                    |addr: &&SocketAddr| *addr == common_peer.get_outgoing_address()
+                                ).is_some() {
+                                    debug!("{} is a common peer with {}, adding block {} to its propagation cache", common_peer, peer, block_hash);
+                                    let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
+                                    blocks_propagation.put(block_hash.clone(), ());
+                                }
+                            }
                         }
                     }
                 }
@@ -1183,8 +1195,8 @@ impl<S: Storage> P2pServer<S> {
             Packet::PeerDisconnected(packet) => {
                 let addr = packet.get_addr();
                 debug!("{} disconnected from {}", addr, peer);
-                let mut peer_peers_sent = peer.get_peers(true).lock().await;
                 let mut peer_peers = peer.get_peers(false).lock().await;
+                let mut peer_peers_sent = peer.get_peers(true).lock().await;
                 // peer should be a common one (we sent it, and received it from him)
                 if !(peer_peers.remove(&addr) && peer_peers_sent.remove(&addr)) {
                     warn!("{} disconnected from {} but we didn't have it in our peer list", addr, peer);
