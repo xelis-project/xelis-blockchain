@@ -372,6 +372,7 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
     manager.message(format!("Stable Height: {}", stableheight));
     manager.message(format!("Topo Height: {}", topoheight));
     manager.message(format!("Difficulty: {}", difficulty));
+    manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / BLOCK_TIME) as f64)));
     manager.message(format!("Top block hash: {}", top_block_hash));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / 1000f64));
     manager.message(format!("Target Block Time: {:.2}s", BLOCK_TIME as f64));
