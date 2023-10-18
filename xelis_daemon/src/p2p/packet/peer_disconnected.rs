@@ -19,8 +19,8 @@ impl PacketPeerDisconnected {
         }
     }
 
-    pub fn get_addr(&self) -> &SocketAddr {
-        &self.addr
+    pub fn to_addr(self) -> SocketAddr {
+        self.addr
     }
 }
 

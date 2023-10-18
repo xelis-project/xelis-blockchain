@@ -745,7 +745,7 @@ impl<S: Storage> P2pServer<S> {
                     let mut txs_cache = peer.get_txs_cache().lock().await;
                     if txs_cache.contains(&hash) {
                         warn!("{} send us a transaction ({}) already tracked by him", peer, hash);
-                        return Err(P2pError::InvalidProtocolRules)
+                        return Err(P2pError::AlreadyTrackedTx(hash))
                     }
                     txs_cache.put(hash.clone(), ());
                 }
@@ -762,20 +762,19 @@ impl<S: Storage> P2pServer<S> {
                 let block_height = header.get_height();
 
                 // check that the block height is valid
-                if block_height < self.blockchain.get_stable_height() {
-                    error!("{} send us a block propagation packet which is under stable height (height = {})!", peer, block_height);
-                    return Err(P2pError::InvalidProtocolRules)
-                }
-
                 let header = header.into_owned();
                 let block_hash = header.hash();
+                if block_height < self.blockchain.get_stable_height() {
+                    error!("{} send us a block propagation packet which is under stable height (height = {})!", peer, block_height);
+                    return Err(P2pError::BlockPropagatedUnderStableHeight(block_hash, block_height))
+                }
 
                 // verify that this block wasn't already sent by him
                 {
                     let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                     if blocks_propagation.contains(&block_hash) {
                         warn!("{} send us a block ({}) already tracked by him", peer, block_hash);
-                        return Err(P2pError::InvalidProtocolRules)
+                        return Err(P2pError::AlreadyTrackedBlock(block_hash))
                     }
                     debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
                     blocks_propagation.put(block_hash.clone(), ());
@@ -932,9 +931,10 @@ impl<S: Storage> P2pServer<S> {
                 peer.set_last_chain_sync(time);
 
                 // at least one block necessary (genesis block)
-                if request.size() == 0 || request.size() > CHAIN_SYNC_REQUEST_MAX_BLOCKS { // allows maximum 64 blocks id (2560 bytes max)
-                    warn!("{} sent us a malformed chain request ({} blocks)!", peer, request.size());
-                    return Err(P2pError::InvalidProtocolRules)
+                let request_size = request.size();
+                if request_size == 0 || request_size > CHAIN_SYNC_REQUEST_MAX_BLOCKS { // allows maximum 64 blocks id (2560 bytes max)
+                    warn!("{} sent us a malformed chain request ({} blocks)!", peer, request_size);
+                    return Err(P2pError::MalformedChainRequest(request_size))
                 }
 
                 let zelf = Arc::clone(self);
@@ -953,26 +953,27 @@ impl<S: Storage> P2pServer<S> {
                 trace!("Received a chain response from {}", peer);
                 if !peer.chain_sync_requested() {
                     warn!("{} sent us a chain response but we haven't requested any.", peer);
-                    return Err(P2pError::InvalidProtocolRules)
+                    return Err(P2pError::UnrequestedChainResponse)
                 }
                 peer.set_chain_sync_requested(false);
 
                 self.last_sync_request_sent.store(get_current_time(), Ordering::SeqCst);
 
+                let response_size = response.size();
                 if response.size() > CHAIN_SYNC_RESPONSE_MAX_BLOCKS { // peer is trying to spam us
                     warn!("{} is maybe trying to spam us", peer);
-                    return Err(P2pError::InvalidProtocolRules)
+                    return Err(P2pError::MalformedChainResponse(response_size))
                 }
 
                 if let Some(common_point) = response.get_common_point() {
-                    debug!("{} found a common point with block {} at {} for sync, received {} blocks", peer, common_point.get_hash(), common_point.get_topoheight(), response.size());
+                    debug!("{} found a common point with block {} at {} for sync, received {} blocks", peer, common_point.get_hash(), common_point.get_topoheight(), response_size);
                     let pop_count = {
                         let storage = self.blockchain.get_storage().read().await;
                         let block_height = match storage.get_height_for_block_hash(common_point.get_hash()).await {
                             Ok(height) => height,
                             Err(e) => {
                                 warn!("{} sent us an invalid common point: {}", peer, e);
-                                return Err(P2pError::InvalidPacket)
+                                return Err(P2pError::InvalidCommonPoint(common_point.get_topoheight()))
                             }
                         };
                         let topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
@@ -1156,7 +1157,7 @@ impl<S: Storage> P2pServer<S> {
                     if next_page.is_some() {
                         if total_count != NOTIFY_MAX_LEN {
                             error!("Received only {} while maximum is {} elements, and tell us that there is another page", total_count, NOTIFY_MAX_LEN);
-                            return Err(P2pError::InvalidProtocolRules)
+                            return Err(P2pError::InvalidInventoryPagination)
                         }
                     }
 
@@ -1188,19 +1189,19 @@ impl<S: Storage> P2pServer<S> {
                         error!("Error while sending bootstrap response to channel: {:?}", e);
                     }
                 } else {
-                    error!("{} send us a bootstrap chain response but we didn't asked it", peer);
-                    return Err(P2pError::InvalidProtocolRules)
+                    debug!("{} send us a bootstrap chain response but we didn't asked it", peer);
+                    return Err(P2pError::UnrequestedBootstrapChainResponse)
                 }
             },
             Packet::PeerDisconnected(packet) => {
-                let addr = packet.get_addr();
+                let addr = packet.to_addr();
                 debug!("{} disconnected from {}", addr, peer);
                 let mut peer_peers = peer.get_peers(false).lock().await;
                 let mut peer_peers_sent = peer.get_peers(true).lock().await;
                 // peer should be a common one (we sent it, and received it from him)
                 if !(peer_peers.remove(&addr) && peer_peers_sent.remove(&addr)) {
                     warn!("{} disconnected from {} but we didn't have it in our peer list", addr, peer);
-                    return Err(P2pError::InvalidProtocolRules)
+                    return Err(P2pError::UnknownPeerReceived(addr))
                 }
             }
         };

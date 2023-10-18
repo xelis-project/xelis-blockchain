@@ -5,7 +5,7 @@ use tokio::sync::oneshot::error::RecvError;
 use xelis_common::crypto::hash::Hash;
 use xelis_common::serializer::ReaderError;
 use std::array::TryFromSliceError;
-use std::net::AddrParseError;
+use std::net::{AddrParseError, SocketAddr};
 use tokio::time::error::Elapsed;
 use std::sync::mpsc::SendError;
 use std::io::Error as IOError;
@@ -19,6 +19,26 @@ use super::packet::object::ObjectRequest;
 pub enum P2pError {
     #[error("Invalid protocol rules")]
     InvalidProtocolRules,
+    #[error("Invalid list size in pagination with a next page")]
+    InvalidInventoryPagination,
+    #[error("unknown common peer {} received: not found in list", _0)]
+    UnknownPeerReceived(SocketAddr),
+    #[error("Block {} at height {} propagated is under our stable height", _0, _1)]
+    BlockPropagatedUnderStableHeight(Hash, u64),
+    #[error("Block {} propagated is already tracked", _0)]
+    AlreadyTrackedBlock(Hash),
+    #[error("Transaction {} propagated is already tracked", _0)]
+    AlreadyTrackedTx(Hash),
+    #[error("Malformed chain request, received {} blocks id", _0)]
+    MalformedChainRequest(usize),
+    #[error("Received a unrequested chain response")]
+    UnrequestedChainResponse,
+    #[error("Received a unrequested bootstrap chain response")]
+    UnrequestedBootstrapChainResponse,
+    #[error("Malformed chain response, received {} blocks id", _0)]
+    MalformedChainResponse(usize),
+    #[error("Invalid common point at topoheight {}", _0)]
+    InvalidCommonPoint(u64),
     #[error("Peer disconnected")]
     Disconnected,
     #[error("Invalid handshake")]
