@@ -1100,7 +1100,6 @@ impl<S: Storage> P2pServer<S> {
                         error!("Error while sending object response to sender!");
                     }
                 }
-
             },
             Packet::NotifyInventoryRequest(packet_wrapper) => {
                 trace!("Received a inventory request from {}", peer);

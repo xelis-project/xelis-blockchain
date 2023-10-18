@@ -1112,8 +1112,8 @@ impl<S: Storage> Blockchain<S> {
 
     pub async fn build_block_from_header(&self, header: Immutable<BlockHeader>) -> Result<Block, BlockchainError> {
         let mut transactions: Vec<Immutable<Transaction>> = Vec::with_capacity(header.get_txs_count());
-        let mempool = self.mempool.read().await;
         let storage = self.storage.read().await;
+        let mempool = self.mempool.read().await;
         for hash in header.get_txs_hashes() {
             // at this point, we don't want to lose/remove any tx, we clone it only
             let tx = if mempool.contains_tx(hash) {
