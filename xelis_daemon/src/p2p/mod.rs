@@ -1734,7 +1734,7 @@ impl<S: Storage> P2pServer<S> {
     // reload blockchain cache from disk, and we're ready to sync the rest of the chain
     // NOTE: it could be even faster without retrieving each TXs, but we do it in case user don't enable pruning
     async fn bootstrap_chain(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
-        debug!("Starting fast sync with {}", peer);
+        info!("Starting fast sync with {}", peer);
 
         let mut our_topoheight = self.blockchain.get_topo_height();
 
@@ -1750,6 +1750,7 @@ impl<S: Storage> P2pServer<S> {
 
         loop {
             let response = if let Some(step) = step.take() {
+                info!("Requesting step {:?}", step.kind());
                 peer.request_boostrap_chain(step).await?
             } else {
                 break;
@@ -1904,6 +1905,7 @@ impl<S: Storage> P2pServer<S> {
             };
         }
         self.blockchain.reload_from_disk(&storage).await?;
+        info!("Fast sync done with {}", peer);
 
         Ok(())
     }
