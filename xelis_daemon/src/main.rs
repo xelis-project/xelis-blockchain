@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     let mut config: NodeConfig = NodeConfig::parse();
 
     let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
-    info!("Xelis Blockchain running version: {}", VERSION);
+    info!("XELIS Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
 
     if config.nested.simulator && config.network != Network::Dev {
