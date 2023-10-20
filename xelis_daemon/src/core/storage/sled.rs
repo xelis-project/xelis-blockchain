@@ -169,7 +169,7 @@ impl SledStorage {
         Ok(value)
     }
 
-    async fn get_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
+    async fn delete_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
         let bytes = match tree.remove(key.to_bytes())? {
             Some(data) => data.to_vec(),
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
@@ -353,8 +353,8 @@ impl Storage for SledStorage {
 
     async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<Arc<BlockHeader>, BlockchainError> {
         // delete topoheight<->hash pointers
-        let hash = self.get_cacheable_data(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await?;
-        self.get_cacheable_data::<Hash, u64>(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
+        let hash = self.delete_cacheable_data(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await?;
+        self.delete_cacheable_data::<Hash, u64>(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
 
         let topoheight_bytes = topoheight.to_be_bytes();
         // delete block reward
@@ -387,7 +387,7 @@ impl Storage for SledStorage {
     }
 
     async fn delete_tx(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
-        self.get_cacheable_data::<Hash, HashSet<Hash>>(&self.tx_blocks, &None, hash).await?;
+        self.delete_cacheable_data::<Hash, HashSet<Hash>>(&self.tx_blocks, &None, hash).await?;
         self.delete_data(&self.transactions, &self.transactions_cache, hash).await
     }
 
@@ -884,7 +884,7 @@ impl Storage for SledStorage {
     async fn delete_balance_at_topoheight(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("delete balance {} for {} at topoheight {}", asset, key, topoheight);
         let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
-        self.get_cacheable_data(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone()))
+        self.delete_cacheable_data(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone()))
     }
 
     // returns a new versioned balance with already-set previous topoheight
@@ -1121,7 +1121,7 @@ impl Storage for SledStorage {
 
             // get all blocks at same height, and delete current block hash from the list
             trace!("Searching blocks at height {}", height);
-            let blocks_at_height: Tips = self.get_cacheable_data(&self.blocks_at_height, &None, &height).await?;
+            let blocks_at_height: Tips = self.delete_cacheable_data(&self.blocks_at_height, &None, &height).await?;
             trace!("Blocks at height {}: {}", height, blocks_at_height.len());
 
             for hash in blocks_at_height {
@@ -1129,20 +1129,24 @@ impl Storage for SledStorage {
                 let block = self.delete_data(&self.blocks, &self.blocks_cache, &hash).await?;
                 trace!("block header deleted successfully");
 
-                let _: Difficulty = self.get_cacheable_data(&self.supply, &None, &hash).await?;
-                let _: Difficulty = self.get_cacheable_data(&self.difficulty, &None, &hash).await?;
+                if self.is_block_topological_ordered(&hash).await {
+                    trace!("Deleting supply and difficulty");
+                    let _: u64 = self.delete_cacheable_data(&self.supply, &None, &hash).await?;
+                    let _: Difficulty = self.delete_cacheable_data(&self.difficulty, &None, &hash).await?;
+                }
 
                 trace!("Deleting cumulative difficulty");
-                let cumulative_difficulty: u64 = self.get_cacheable_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
+                let cumulative_difficulty: u64 = self.delete_cacheable_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
                 trace!("Cumulative difficulty deleted: {}", cumulative_difficulty);
 
-                let reward: u64 = self.get_cacheable_data(&self.rewards, &None, &hash).await?;
+
+                let reward: u64 = self.delete_cacheable_data(&self.rewards, &None, &hash).await?;
                 trace!("Reward for block {} was: {}", hash, reward);
 
                 for tx_hash in block.get_transactions() {
                     let tx: Arc<Transaction> = self.delete_data(&self.transactions, &self.transactions_cache, tx_hash).await?;
                     if self.has_tx_blocks(tx_hash)? {
-                        let mut blocks: Tips = self.get_cacheable_data(&self.tx_blocks, &None, tx_hash).await?;
+                        let mut blocks: Tips = self.delete_cacheable_data(&self.tx_blocks, &None, tx_hash).await?;
                         let blocks_len =  blocks.len();
                         blocks.remove(&hash);
                         self.set_blocks_for_tx(tx_hash, &blocks)?;
@@ -1167,12 +1171,12 @@ impl Storage for SledStorage {
                     }
 
                     trace!("Block was at topoheight {}", topo);
-                    self.get_cacheable_data(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
+                    self.delete_cacheable_data(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
 
                     if let Ok(hash_at_topo) = self.get_hash_at_topo_height(topo).await {
                         if hash_at_topo == hash {
                             trace!("Deleting hash '{}' at topo height '{}'", hash_at_topo, topo);
-                            self.get_cacheable_data(&self.hash_at_topo, &self.hash_at_topo_cache, &topo).await?;
+                            self.delete_cacheable_data(&self.hash_at_topo, &self.hash_at_topo_cache, &topo).await?;
                         }
                     }
                 }

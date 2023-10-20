@@ -228,6 +228,7 @@ All theses data are saved in plaintext.
 **NOTE**:
 - Balances and nonces are versioned, which means they are stored each time a change happened on disk.
 - Assets registered have in value their topoheight at which it was registered.
+- Supply and block rewards are only stored when the block is topologically ordered
 
 The database engine used is sled. It may changes in future.
 
