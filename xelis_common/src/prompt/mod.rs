@@ -7,8 +7,10 @@ use crate::serializer::{Serializer, ReaderError};
 use self::command::{CommandManager, CommandError};
 use std::collections::VecDeque;
 use std::fmt::{Display, Formatter, self};
+use std::fs::create_dir;
 use std::io::{Write, stdout, Error as IOError};
 use std::num::ParseFloatError;
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize, AtomicU16};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
@@ -652,10 +654,19 @@ impl<T> Prompt<T> {
                     error!("Error on prompt refresh: {}", e);
                 }
                 res
-            }).chain(std::io::stdout());
+            })
+            .chain(std::io::stdout())
+            .level(level.into());
 
         let mut base = base.chain(stdout_log);
         if !disable_file_logging {
+            let logs_path = Path::new("logs/");
+            if !logs_path.exists() {
+                if let Err(e) = create_dir(logs_path) {
+                    error!("Error while creating logs folder: {}", e);
+                };
+            }
+
             let file_log = fern::Dispatch::new()
             .format(move |out, message, record| {
                 let pad = " ".repeat((30i16 - record.target().len() as i16).max(0) as usize);
@@ -669,11 +680,9 @@ impl<T> Prompt<T> {
                     pad,
                     message
                 ))
-            }).chain(fern::log_file(filename_log)?);
+            }).chain(fern::DateBased::new(logs_path, format!("%Y-%m-%d.{filename_log}")));
             base = base.chain(file_log);
         }
-
-        base = base.level(level.into());
 
         base.level_for("sled", log::LevelFilter::Warn)
         .level_for("actix_server", log::LevelFilter::Warn)

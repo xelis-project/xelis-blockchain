@@ -1143,7 +1143,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         if block.get_timestamp() > get_current_timestamp() + TIMESTAMP_IN_FUTURE_LIMIT { // accept 2s in future
-            error!("Block timestamp in too much in future!");
+            error!("Block timestamp is too much in future!");
             return Err(BlockchainError::TimestampIsInFuture(get_current_timestamp(), block.get_timestamp()));
         }
 
