@@ -689,6 +689,8 @@ impl<T> Prompt<T> {
         .level_for("actix_web", log::LevelFilter::Warn)
         .level_for("actix_http", log::LevelFilter::Warn)
         .level_for("mio", log::LevelFilter::Warn)
+        .level_for("tokio_tungstenite", log::LevelFilter::Warn)
+        .level_for("tungstenite", log::LevelFilter::Warn)
         .apply()?;
 
         Ok(())
