@@ -8,6 +8,7 @@ mod tracker;
 mod queue;
 
 use indexmap::IndexSet;
+use lru::LruCache;
 use xelis_common::{
     config::VERSION,
     serializer::Serializer,
@@ -39,7 +40,7 @@ use crate::{
         NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS,
         P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT,
         CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT,
-        CHAIN_SYNC_TIMEOUT_SECS, P2P_EXTEND_PEERLIST_DELAY
+        CHAIN_SYNC_TIMEOUT_SECS, P2P_EXTEND_PEERLIST_DELAY, TIPS_LIMIT
     }
 };
 use self::{
@@ -59,7 +60,7 @@ use self::{
 };
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::mpsc::{self, UnboundedSender, UnboundedReceiver},
+    sync::{mpsc::{self, UnboundedSender, UnboundedReceiver}, Mutex},
     select,
     task::JoinHandle,
     io::AsyncWriteExt,
@@ -101,7 +102,8 @@ pub struct P2pServer<S: Storage> {
     last_sync_request_sent: AtomicU64, // used to check if we are already syncing with one peer or not
     object_tracker: SharedObjectTracker, // used to requests objects to peers and avoid requesting the same object to multiple peers
     queued_fetcher: QueuedFetcher, // used to requests all propagated txs in one task only
-    is_running: AtomicBool // used to check if the server is running or not in tasks
+    is_running: AtomicBool, // used to check if the server is running or not in tasks
+    blocks_propagation_queue: Mutex<LruCache<Hash, ()>> // Synced cache to prevent concurrent tasks adding the block
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -133,7 +135,8 @@ impl<S: Storage> P2pServer<S> {
             last_sync_request_sent: AtomicU64::new(0),
             object_tracker,
             queued_fetcher,
-            is_running: AtomicBool::new(true)
+            is_running: AtomicBool::new(true),
+            blocks_propagation_queue: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT))
         };
 
         let arc = Arc::new(server);
@@ -550,7 +553,7 @@ impl<S: Storage> P2pServer<S> {
                     let mut new_peers = Vec::new();
 
                     // all the peers we already sent to this current peer
-                    let mut peer_peers_sent = peer.get_peers(true).lock().await;
+                    let mut peers_sent = peer.get_peers(true).lock().await;
 
                     // iterate through our peerlist to determinate which peers we have to send
                     for p in peer_list.get_peers().values() {
@@ -561,9 +564,9 @@ impl<S: Storage> P2pServer<S> {
 
                         // if we haven't send him this peer addr and that he don't have him already, insert it
                         let addr = p.get_outgoing_address();
-                        if !peer_peers_sent.contains(addr) {
+                        if !peers_sent.contains(addr) {
                             // add it in our side to not re send it again
-                            peer_peers_sent.insert(*addr);
+                            peers_sent.insert(*addr);
                             // add it to new list to send it
                             new_peers.push(*addr);
                             if new_peers.len() >= P2P_PING_PEER_LIST_LIMIT {
@@ -780,15 +783,6 @@ impl<S: Storage> P2pServer<S> {
                     blocks_propagation.put(block_hash.clone(), ());
                 }
 
-                // check that we don't have this block in our chain
-                {
-                    let storage = self.blockchain.get_storage().read().await;
-                    if storage.has_block(&block_hash).await? {
-                        debug!("{}: {} with hash {} is already in our chain. Skipping", peer, header, block_hash);
-                        return Ok(())
-                    }
-                }
-
                 // Avoid sending the same block to a common peer
                 // because we track peerlist of each peers, we can try to determinate it
                 {
@@ -814,6 +808,25 @@ impl<S: Storage> P2pServer<S> {
                             }
                         }
                     }
+                }
+
+                // check that we don't have this block in our chain
+                {
+                    let storage = self.blockchain.get_storage().read().await;
+                    if storage.has_block(&block_hash).await? {
+                        debug!("{}: {} with hash {} is already in our chain. Skipping", peer, header, block_hash);
+                        return Ok(())
+                    }
+                }
+
+                // Check that we are not already waiting on it
+                {
+                    let mut blocks_propagation_queue = self.blocks_propagation_queue.lock().await;
+                    if blocks_propagation_queue.contains(&block_hash) {
+                        debug!("Block {} propagated is already in processing from another peer", block_hash);
+                        return Ok(())
+                    }
+                    blocks_propagation_queue.put(block_hash.clone(), ());
                 }
 
                 let block_height = header.get_height();
@@ -909,7 +922,7 @@ impl<S: Storage> P2pServer<S> {
                         }
                     };
 
-                    debug!("Adding received block {} to chain", block_hash);
+                    debug!("Adding received block {} from {} to chain", block_hash, peer);
                     if let Err(e) = zelf.blockchain.add_new_block(block, true, false).await {
                         error!("Error while adding new block: {}", e);
                         peer.increment_fail_count();
@@ -1198,8 +1211,10 @@ impl<S: Storage> P2pServer<S> {
                 let mut peer_peers = peer.get_peers(false).lock().await;
                 let mut peer_peers_sent = peer.get_peers(true).lock().await;
                 // peer should be a common one (we sent it, and received it from him)
-                if !(peer_peers.remove(&addr) && peer_peers_sent.remove(&addr)) {
-                    warn!("{} disconnected from {} but we didn't have it in our peer list", addr, peer);
+                let recv_removed = peer_peers.remove(&addr);
+                let sent_removed = peer_peers_sent.remove(&addr);
+                if !recv_removed || !sent_removed {
+                    warn!("{} disconnected from {} but we didn't have it in our peer list: {recv_removed} {sent_removed}", addr, peer);
                     return Err(P2pError::UnknownPeerReceived(addr))
                 }
             }
