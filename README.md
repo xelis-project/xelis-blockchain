@@ -211,7 +211,7 @@ All theses data are saved in plaintext.
 |      transactions     |    Hash    |    Transaction    |      Save the whole transaction based on its hash      |
 |         blocks        |    Hash    |    Block Header   |      Save the block header only based on its hash      |
 |    blocks_at_height   |   Integer  |   Array of Hash   |        Save all blocks hash at a specific height       |
-|         extra         |    Bytes   |  No specific type | Actually used to save the highest topo height and TIPS |
+|         extra         |    Bytes   |  No specific type |Save the highest topo height, pruned topoheight and TIPS|
 |      topo_by_hash     |    Hash    |      Integer      |       Save a block hash at a specific topo height      |
 |      hash_by_topo     |   Integer  |        Hash       |      Save a topo height for a specific block hash      |
 | cumulative_difficulty |    Hash    |      Integer      |   Save the cumulative difficulty for each block hash   |

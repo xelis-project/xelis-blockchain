@@ -100,8 +100,8 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     fn set_last_topoheight_for_nonce(&mut self, key: &PublicKey, topoheight: u64) -> Result<(), BlockchainError>;
     async fn set_nonce_at_topoheight(&mut self, key: &PublicKey, nonce: u64, topoheight: u64) -> Result<(), BlockchainError>;
 
-    fn get_block_reward(&self, hash: &Hash) -> Result<u64, BlockchainError>;
-    fn set_block_reward(&mut self, hash: &Hash, reward: u64) -> Result<(), BlockchainError>;
+    fn get_block_reward_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError>;
+    fn set_block_reward_at_topo_height(&mut self, topoheight: u64, reward: u64) -> Result<(), BlockchainError>;
 
     async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
     fn count_transactions(&self) -> usize;
@@ -129,9 +129,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError>;
 
     async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError>;
-
-    fn get_supply_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
-    fn set_supply_for_block_hash(&mut self, hash: &Hash, supply: u64) -> Result<(), BlockchainError>;
+    fn set_supply_at_topo_height(&mut self, topoheight: u64, supply: u64) -> Result<(), BlockchainError>;
 
     async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: u64) -> Result<(), BlockchainError>;
 

@@ -1446,10 +1446,12 @@ impl<S: Storage> Blockchain<S> {
                     get_block_reward(past_supply)
                 };
 
-                trace!("set block {} reward to {}", hash, block_reward);
-                storage.set_block_reward(&hash, block_reward)?;
-                trace!("set block {} supply to {}", hash, past_supply + block_reward);
-                storage.set_supply_for_block_hash(&hash, past_supply + block_reward)?;
+                trace!("set block reward to {} at {}", block_reward, highest_topo);
+                storage.set_block_reward_at_topo_height(highest_topo, block_reward)?;
+                
+                let supply = past_supply + block_reward;
+                trace!("set block supply to {} at {}", supply, highest_topo);
+                storage.set_supply_at_topo_height(highest_topo, supply)?;
 
                 // track all changes in balances
                 let mut balances: HashMap<&PublicKey, HashMap<&Hash, VersionedBalance>> = HashMap::new();

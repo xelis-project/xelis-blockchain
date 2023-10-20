@@ -40,8 +40,8 @@ pub struct SledStorage {
     cumulative_difficulty: Tree, // cumulative difficulty for each block hash on disk
     assets: Tree, // keep tracks of all available assets on network
     nonces: Tree, // account nonces to prevent TX replay attack
-    rewards: Tree, // all block rewards for blocks
-    supply: Tree, // supply for each block hash
+    rewards: Tree, // block reward for each block topoheight
+    supply: Tree, // supply for each block topoheight
     difficulty: Tree, // difficulty for each block hash
     tx_blocks: Tree, // tree to store all blocks hashes where a tx was included in 
     db: sled::Db, // opened DB used for assets to create dynamic assets
@@ -351,6 +351,7 @@ impl Storage for SledStorage {
         Ok(())
     }
 
+    // Delete the whole block using its topoheight
     async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<Arc<BlockHeader>, BlockchainError> {
         // delete topoheight<->hash pointers
         let hash = self.delete_cacheable_data(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await?;
@@ -362,9 +363,10 @@ impl Storage for SledStorage {
         // delete supply
         self.supply.remove(topoheight_bytes)?;
         // delete difficulty
-        self.difficulty.remove(topoheight_bytes)?;
+        self.difficulty.remove(hash.as_bytes())?;
+
         // delete cummulative difficulty
-        self.cumulative_difficulty.remove(topoheight_bytes)?;
+        self.cumulative_difficulty.remove(hash.as_bytes())?;
 
         // delete block header
         let block_header = self.delete_data(&self.blocks, &self.blocks_cache, &hash).await?;
@@ -1013,14 +1015,14 @@ impl Storage for SledStorage {
         Ok(())
     }
 
-    fn get_block_reward(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        trace!("get block reward for {}", hash);
-        Ok(self.load_from_disk(&self.rewards, hash.as_bytes())?)
+    fn get_block_reward_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {
+        trace!("get block reward at topo height {}", topoheight);
+        Ok(self.load_from_disk(&self.rewards, &topoheight.to_be_bytes())?)
     }
 
-    fn set_block_reward(&mut self, hash: &Hash, reward: u64) -> Result<(), BlockchainError> {
-        trace!("set block reward for {} to {}", hash, reward);
-        self.rewards.insert(hash.as_bytes(), &reward.to_be_bytes())?;
+    fn set_block_reward_at_topo_height(&mut self, topoheight: u64, reward: u64) -> Result<(), BlockchainError> {
+        trace!("set block reward to {} at topo height {}", reward, topoheight);
+        self.rewards.insert(topoheight.to_be_bytes(), &reward.to_be_bytes())?;
         Ok(())
     }
 
@@ -1129,19 +1131,25 @@ impl Storage for SledStorage {
                 let block = self.delete_data(&self.blocks, &self.blocks_cache, &hash).await?;
                 trace!("block header deleted successfully");
 
-                if self.is_block_topological_ordered(&hash).await {
-                    trace!("Deleting supply and difficulty");
-                    let _: u64 = self.delete_cacheable_data(&self.supply, &None, &hash).await?;
-                    let _: Difficulty = self.delete_cacheable_data(&self.difficulty, &None, &hash).await?;
-                }
+                let block_topoheight = if self.is_block_topological_ordered(&hash).await {
+                    let topoheight = self.get_topo_height_for_hash(&hash).await?;
+                    trace!("Deleting supply and block reward");
+                    let supply: u64 = self.delete_cacheable_data(&self.supply, &None, &topoheight).await?;
+                    trace!("Supply was {}", supply);
+     
+                    let reward: u64 = self.delete_cacheable_data(&self.rewards, &None, &topoheight).await?;
+                    trace!("Reward for block {} was: {}", hash, reward);
+                    Some(topoheight)
+                } else {
+                    None
+                };
+
+                trace!("Deleting difficulty");
+                let _: Difficulty = self.delete_cacheable_data(&self.difficulty, &None, &hash).await?;
 
                 trace!("Deleting cumulative difficulty");
-                let cumulative_difficulty: u64 = self.delete_cacheable_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
+                let cumulative_difficulty: Difficulty = self.delete_cacheable_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
                 trace!("Cumulative difficulty deleted: {}", cumulative_difficulty);
-
-
-                let reward: u64 = self.delete_cacheable_data(&self.rewards, &None, &hash).await?;
-                trace!("Reward for block {} was: {}", hash, reward);
 
                 for tx_hash in block.get_transactions() {
                     let tx: Arc<Transaction> = self.delete_data(&self.transactions, &self.transactions_cache, tx_hash).await?;
@@ -1165,7 +1173,7 @@ impl Storage for SledStorage {
                 }
 
                 // if block is ordered, delete data that are linked to it
-                if let Ok(topo) = self.get_topo_height_for_hash(&hash).await {
+                if let Some(topo) = block_topoheight {
                     if topo < topoheight {
                         topoheight = topo;
                     }
@@ -1483,18 +1491,12 @@ impl Storage for SledStorage {
 
     async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {
         trace!("get supply at topo height {}", topoheight);
-        let hash = self.get_hash_at_topo_height(topoheight).await?;
-        self.get_supply_for_block_hash(&hash)
-    }
-    
-    fn get_supply_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        trace!("get supply for hash {}", hash);
-        self.load_from_disk(&self.supply, hash.as_bytes())
+        self.load_from_disk(&self.supply, &topoheight.to_be_bytes())
     }
 
-    fn set_supply_for_block_hash(&mut self, hash: &Hash, supply: u64) -> Result<(), BlockchainError> {
-        trace!("set supply for hash {}", hash);
-        self.supply.insert(hash.as_bytes(), &supply.to_be_bytes())?;
+    fn set_supply_at_topo_height(&mut self, topoheight: u64, supply: u64) -> Result<(), BlockchainError> {
+        trace!("set supply at topo height {}", topoheight);
+        self.supply.insert(topoheight.to_be_bytes(), &supply.to_be_bytes())?;
         Ok(())
     }
 

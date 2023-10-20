@@ -67,11 +67,12 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
         return Err(InternalRpcError::AnyError(BlockchainError::BlockNotFound(hash).into()))
     }
 
-    let (topoheight, supply, reward) = if  storage.is_block_topological_ordered(&hash).await {
+    let (topoheight, supply, reward) = if storage.is_block_topological_ordered(&hash).await {
+        let topoheight = storage.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?;
         (
-            Some(storage.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?),
-            Some(storage.get_supply_for_block_hash(&hash).context("Error while retrieving supply")?),
-            Some(storage.get_block_reward(&hash).context("Error while retrieving block reward")?),
+            Some(topoheight),
+            Some(storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?),
+            Some(storage.get_block_reward_at_topo_height(topoheight).context("Error while retrieving block reward")?),
         )
     } else {
         (
@@ -270,7 +271,7 @@ async fn get_info<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Re
     let (top_hash, native_supply, pruned_topoheight, average_block_time) = {
         let storage = blockchain.get_storage().read().await;
         let top_hash = storage.get_hash_at_topo_height(topoheight).await.context("Error while retrieving hash at topo height")?;
-        let supply = storage.get_supply_for_block_hash(&top_hash).context("Error while supply for hash")?;
+        let supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply at topo height")?;
         let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?;
         let average_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
         (top_hash, supply, pruned_topoheight, average_block_time)
@@ -662,7 +663,7 @@ async fn get_account_history<S: Storage>(blockchain: Arc<Blockchain<S>>, body: V
             {
                 let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
                 if params.asset == XELIS_ASSET && *block_header.get_miner() == *key {
-                    let reward = storage.get_block_reward(&hash).context(format!("Error while retrieving reward at topo height {topo}"))?;
+                    let reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
                     let history_type = AccountHistoryType::Mining { reward };
                     history.push(AccountHistoryEntry {
                         topoheight: topo,

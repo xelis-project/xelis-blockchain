@@ -1677,8 +1677,8 @@ impl<S: Storage> P2pServer<S> {
 
                 for topoheight in (lower..=topoheight).rev() {
                     let hash = storage.get_hash_at_topo_height(topoheight).await?;
-                    let supply = storage.get_supply_for_block_hash(&hash)?;
-                    let reward = storage.get_block_reward(&hash)?;
+                    let supply = storage.get_supply_at_topo_height(topoheight).await?;
+                    let reward = storage.get_block_reward_at_topo_height(topoheight)?;
                     let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
 
@@ -1882,11 +1882,11 @@ impl<S: Storage> P2pServer<S> {
                         }
 
                         // save metadata of this block
-                        storage.set_supply_for_block_hash(&hash, metadata.supply)?;
-                        storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
-                        storage.set_block_reward(&hash, metadata.reward)?;
-
+                        storage.set_supply_at_topo_height(lowest_topoheight, metadata.supply)?;
+                        storage.set_block_reward_at_topo_height(lowest_topoheight, metadata.reward)?;
                         storage.set_topo_height_for_block(&hash, lowest_topoheight).await?;
+
+                        storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
 
                         // save the block with its transactions, difficulty
                         storage.add_new_block(Arc::new(header), &txs, metadata.difficulty, hash).await?;
