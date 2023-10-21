@@ -464,6 +464,7 @@ async fn get_peers<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> R
             let mut peers = Vec::new();
             for p in  peer_list.get_peers().values() {
                 let top_block_hash = p.get_top_block_hash().lock().await.clone();
+                let peer_peers = p.get_peers(false).lock().await.clone();
                 peers.push(
                     PeerEntry {
                         id: p.get_id(),
@@ -474,6 +475,7 @@ async fn get_peers<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> R
                         topoheight: p.get_topoheight(),
                         height: p.get_height(),
                         last_ping: p.get_last_ping(),
+                        peers: peer_peers,
                         pruned_topoheight: p.get_pruned_topoheight(),
                         cumulative_difficulty: p.get_cumulative_difficulty()
                     }

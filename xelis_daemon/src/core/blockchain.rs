@@ -1390,6 +1390,7 @@ impl<S: Storage> Blockchain<S> {
                     trace!("Cleaning txs at topoheight {} ({})", topoheight, hash_at_topo);
                     if !is_written {
                         if let Some(order) = full_order.get(0) {
+                            // Verify that the block is still at the same topoheight
                             if storage.is_block_topological_ordered(order).await && *order == hash_at_topo {
                                 trace!("Hash {} at topo {} stay the same, skipping cleaning", hash_at_topo, topoheight);
                                 // remove the hash from the order because we don't need to recompute it
@@ -1399,6 +1400,7 @@ impl<S: Storage> Blockchain<S> {
                                 continue;
                             }
                         }
+                        // if we are here, it means that the block was re-ordered
                         is_written = true;
                     }
 
@@ -1506,6 +1508,7 @@ impl<S: Storage> Blockchain<S> {
                 for (key, assets) in balances {
                     for (asset, balance) in assets {
                         trace!("Saving balance {} for {} at topo {}, previous: {:?}", asset, key, highest_topo, balance.get_previous_topoheight());
+                        // Save the balance as the latest one
                         storage.set_balance_to(key, asset, highest_topo, &balance).await?;
                     }
 

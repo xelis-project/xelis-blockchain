@@ -156,6 +156,7 @@ pub struct PeerEntry<'a> {
     pub height: u64,
     pub last_ping: u64,
     pub pruned_topoheight: Option<u64>,
+    pub peers: HashSet<SocketAddr>,
     pub cumulative_difficulty: Difficulty
 }
 
