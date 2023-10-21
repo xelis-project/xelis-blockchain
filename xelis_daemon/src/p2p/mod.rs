@@ -14,7 +14,10 @@ use xelis_common::{
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::{BlockHeader, Block},
-    utils::get_current_time, immutable::Immutable, account::VersionedNonce
+    utils::get_current_time,
+    immutable::Immutable,
+    account::VersionedNonce,
+    api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent}
 };
 use crate::{
     core::{
@@ -41,7 +44,7 @@ use crate::{
         P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT,
         CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT,
         CHAIN_SYNC_TIMEOUT_SECS, P2P_EXTEND_PEERLIST_DELAY, TIPS_LIMIT
-    }
+    }, rpc::rpc::get_peer_entry
 };
 use self::{
     packet::{
@@ -362,6 +365,17 @@ impl<S: Storage> P2pServer<S> {
             let mut peer_list = self.peer_list.write().await;
             peer_list.add_peer(peer_id, peer)
         };
+
+        {
+            trace!("Locking RPC Server to notify PeerConnected event");
+            if let Some(rpc) = self.blockchain.get_rpc().lock().await.as_ref() {
+                if rpc.is_event_tracked(&NotifyEvent::PeerConnected).await {
+                    debug!("Notifying clients with PeerConnected event");
+                    rpc.notify_clients_with(&NotifyEvent::PeerConnected, get_peer_entry(&peer).await).await;
+                }
+            }
+            trace!("End locking for PeerConnected event");
+        }
 
         self.handle_connection(peer).await
     }
@@ -753,7 +767,7 @@ impl<S: Storage> P2pServer<S> {
                     txs_cache.put(hash.clone(), ());
                 }
 
-                ping.into_owned().update_peer(peer).await?;
+                ping.into_owned().update_peer(peer, &self.blockchain).await?;
                 if !self.blockchain.has_tx(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
                     self.queued_fetcher.fetch(Arc::clone(peer), ObjectRequest::Transaction(hash));
                 }
@@ -761,7 +775,7 @@ impl<S: Storage> P2pServer<S> {
             Packet::BlockPropagation(packet_wrapper) => {
                 trace!("Received a block propagation packet from {}", peer);
                 let (header, ping) = packet_wrapper.consume();
-                ping.into_owned().update_peer(peer).await?;
+                ping.into_owned().update_peer(peer, &self.blockchain).await?;
                 let block_height = header.get_height();
 
                 // check that the block height is valid
@@ -932,7 +946,7 @@ impl<S: Storage> P2pServer<S> {
             Packet::ChainRequest(packet_wrapper) => {
                 trace!("Received a chain request from {}", peer);
                 let (request, ping) = packet_wrapper.consume();
-                ping.into_owned().update_peer(peer).await?;
+                ping.into_owned().update_peer(peer, &self.blockchain).await?;
                 let request = request.into_owned();
                 let last_request = peer.get_last_chain_sync();
                 let time = get_current_time();
@@ -1046,7 +1060,7 @@ impl<S: Storage> P2pServer<S> {
                         self.try_to_connect_to_peer(peer, false).await;
                     }
                 }
-                ping.into_owned().update_peer(peer).await?;
+                ping.into_owned().update_peer(peer, &self.blockchain).await?;
             },
             Packet::ObjectRequest(request) => {
                 trace!("Received a object request from {}", peer);
@@ -1117,7 +1131,7 @@ impl<S: Storage> P2pServer<S> {
             Packet::NotifyInventoryRequest(packet_wrapper) => {
                 trace!("Received a inventory request from {}", peer);
                 let (request, ping) = packet_wrapper.consume();
-                ping.into_owned().update_peer(peer).await?;
+                ping.into_owned().update_peer(peer, &self.blockchain).await?;
 
                 let request = request.into_owned();
 
@@ -1216,6 +1230,20 @@ impl<S: Storage> P2pServer<S> {
                 if !recv_removed || !sent_removed {
                     warn!("{} disconnected from {} but we didn't have it in our peer list: {recv_removed} {sent_removed}", addr, peer);
                     return Err(P2pError::UnknownPeerReceived(addr))
+                }
+
+                if recv_removed {
+                    trace!("Locking RPC Server to notify PeerDisconnected event");
+                    if let Some(rpc) = self.blockchain.get_rpc().lock().await.as_ref() {
+                        if rpc.is_event_tracked(&NotifyEvent::PeerDisconnected).await {
+                            let value = PeerPeerDisconnectedEvent {
+                                peer_id: peer.get_id(),
+                                peer_addr: addr
+                            };
+                            rpc.notify_clients_with(&NotifyEvent::PeerDisconnected, value).await;
+                        }
+                    }
+                    trace!("End locking for PeerDisconnected event");
                 }
             }
         };

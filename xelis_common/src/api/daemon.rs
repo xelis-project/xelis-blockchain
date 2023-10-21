@@ -261,7 +261,7 @@ pub struct GetAccountsParams {
     pub maximum_topoheight: Option<u64>
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {
     // When a new block is accepted by chain
     // it contains Block struct as value
@@ -283,7 +283,20 @@ pub enum NotifyEvent {
     TransactionSCResult,
     // When a new asset has been registered
     // TODO: Smart Contracts
-    NewAsset
+    NewAsset,
+    // When a new peer has connected to us
+    // It contains PeerEntry struct as value
+    PeerConnected,
+    // When a peer has disconnected from us
+    // It contains peer id as value
+    PeerDisconnected,
+    // Peer peerlist updated, its all its connected peers
+    // It contains PeerPeerListUpdatedEvent as value
+    PeerPeerListUpdated,
+    // When a peer of a peer has disconnected
+    // and that he notified us
+    // It contains PeerPeerDisconnectedEvent as value
+    PeerPeerDisconnected,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -306,4 +319,20 @@ pub struct TransactionExecutedEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
     pub tx_hash: Cow<'a, Hash>,
     pub topoheight: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PeerPeerListUpdatedEvent {
+    // Peer ID of the peer that sent us the new peer list
+    pub peer_id: u64,
+    // Peerlist received from this peer
+    pub peerlist: Vec<SocketAddr>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PeerPeerDisconnectedEvent {
+    // Peer ID of the peer that sent us this notification
+    pub peer_id: u64,
+    // address of the peer that disconnected from him
+    pub peer_addr: SocketAddr
 }

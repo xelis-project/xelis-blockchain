@@ -1,4 +1,4 @@
-use crate::core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError, mempool::Mempool};
+use crate::{core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError, mempool::Mempool}, p2p::peer::Peer};
 use super::{InternalRpcError, ApiError};
 use anyhow::Context;
 use serde_json::{json, Value};
@@ -131,6 +131,24 @@ pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, mempool:
             let tx = mempool.get_sorted_tx(hash).context("Error while retrieving transaction from disk and mempool")?;
             get_transaction_response(storage, &tx.get_tx(), hash, true, Some(tx.get_first_seen())).await
         }
+    }
+}
+
+pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
+    let top_block_hash = peer.get_top_block_hash().lock().await.clone();
+    let peer_peers = peer.get_peers(false).lock().await.clone();
+    PeerEntry {
+        id: peer.get_id(),
+        addr: Cow::Borrowed(peer.get_outgoing_address()),
+        tag: Cow::Borrowed(peer.get_node_tag()),
+        version: Cow::Borrowed(peer.get_version()),
+        top_block_hash,
+        topoheight: peer.get_topoheight(),
+        height: peer.get_height(),
+        last_ping: peer.get_last_ping(),
+        peers: peer_peers,
+        pruned_topoheight: peer.get_pruned_topoheight(),
+        cumulative_difficulty: peer.get_cumulative_difficulty()
     }
 }
 
@@ -463,23 +481,7 @@ async fn get_peers<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> R
             let peer_list = p2p.get_peer_list().read().await;
             let mut peers = Vec::new();
             for p in  peer_list.get_peers().values() {
-                let top_block_hash = p.get_top_block_hash().lock().await.clone();
-                let peer_peers = p.get_peers(false).lock().await.clone();
-                peers.push(
-                    PeerEntry {
-                        id: p.get_id(),
-                        addr: Cow::Borrowed(p.get_outgoing_address()),
-                        tag: Cow::Borrowed(p.get_node_tag()),
-                        version: Cow::Borrowed(p.get_version()),
-                        top_block_hash,
-                        topoheight: p.get_topoheight(),
-                        height: p.get_height(),
-                        last_ping: p.get_last_ping(),
-                        peers: peer_peers,
-                        pruned_topoheight: p.get_pruned_topoheight(),
-                        cumulative_difficulty: p.get_cumulative_difficulty()
-                    }
-                );
+                peers.push(get_peer_entry(p).await);
             }
             Ok(json!(peers))
         },

@@ -12,7 +12,7 @@ use actix_web::{
     error::Error
 };
 use actix_web_actors::ws::WsResponseBuilder;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use xelis_common::api::daemon::NotifyEvent;
 use xelis_common::config;
@@ -97,6 +97,12 @@ impl<S: Storage> DaemonRpcServer<S> {
 
     pub async fn is_event_tracked(&self, event: &NotifyEvent) -> bool {
         self.get_websocket().get_handler().is_event_tracked(event).await
+    }
+
+    pub async fn notify_clients_with<V: serde::Serialize>(&self, event: &NotifyEvent, value: V) {
+        if let Err(e) = self.notify_clients(event, json!(value)).await {
+            error!("Error while notifying event {:?}: {}", event, e);
+        }
     }
 
     pub async fn notify_clients(&self, event: &NotifyEvent, value: Value) -> Result<(), anyhow::Error> {
