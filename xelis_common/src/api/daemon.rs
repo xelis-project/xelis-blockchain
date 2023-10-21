@@ -289,6 +289,7 @@ pub enum NotifyEvent {
     PeerConnected,
     // When a peer has disconnected from us
     // It contains peer id as value
+    // TODO not implemented yet
     PeerDisconnected,
     // Peer peerlist updated, its all its connected peers
     // It contains PeerPeerListUpdatedEvent as value
