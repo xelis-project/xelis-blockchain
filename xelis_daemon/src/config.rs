@@ -71,7 +71,7 @@ pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60; // time in seconds between each t
 pub const PEER_FAIL_TIME_RESET: u64 = 60 * 5; // number of seconds to reset the counter
 pub const PEER_FAIL_LIMIT: u8 = 20; // number of fail to disconnect the peer
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 3000; // millis until we timeout
-pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 10000; // millis until we timeout
+pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 20000; // millis until we timeout
 
 lazy_static! {
     pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
