@@ -846,6 +846,7 @@ impl Storage for SledStorage {
     // get the latest balance at maximum specified topoheight
     // when a DAG re-ordering happens, we need to select the right balance and not the last one
     // returns None if the key has no balances for this asset
+    // Maximum topoheight is inclusive
     async fn get_balance_at_maximum_topoheight(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<Option<(u64, VersionedBalance)>, BlockchainError> {
         trace!("get balance {} for {} at maximum topoheight {}", asset, key, topoheight);
         // check first that this address has balance for this asset, if no returns None
@@ -853,10 +854,16 @@ impl Storage for SledStorage {
             return Ok(None)
         }
 
+        // Fast path: if the balance is at exact topoheight, return it
+        if self.has_balance_at_exact_topoheight(key, asset, topoheight).await? {
+            trace!("Balance version found at exact (maximum) topoheight {}", topoheight);
+            return Ok(Some((topoheight, self.get_balance_at_exact_topoheight(key, asset, topoheight).await?)))
+        }
+
         let (topo, mut version) = self.get_last_balance(key, asset).await?;
         trace!("Last version balance {} for {} is at topoheight {}", asset, key, topo);
         // if it's the latest and its under the maximum topoheight
-        if topo < topoheight {
+        if topo <= topoheight {
             trace!("Last version balance (valid) found at {} (maximum topoheight = {})", topo, topoheight);
             return Ok(Some((topo, version)))
         }
@@ -865,7 +872,7 @@ impl Storage for SledStorage {
         while let Some(previous) = version.get_previous_topoheight() {
             let previous_version = self.get_balance_at_exact_topoheight(key, asset, previous).await?;
             trace!("previous version {}", previous);
-            if previous < topoheight {
+            if previous <= topoheight {
                 trace!("Highest version balance found at {} (maximum topoheight = {})", topo, topoheight);
                 return Ok(Some((previous, previous_version)))
             }

@@ -1198,7 +1198,7 @@ impl<S: Storage> P2pServer<S> {
                 if let Some(sender) = peer.get_bootstrap_chain_channel().lock().await.take() {
                     let response = response.response();
                     if let Err(e) = sender.send(response) {
-                        error!("Error while sending bootstrap response to channel: {:?}", e);
+                        error!("Error while sending bootstrap response to channel: {:?}", e.kind());
                     }
                 } else {
                     debug!("{} send us a bootstrap chain response but we didn't asked it", peer);
