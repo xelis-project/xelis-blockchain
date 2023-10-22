@@ -85,6 +85,8 @@ pub enum P2pError {
     ObjectNotFound(ObjectRequest),
     #[error("Object not requested {}", _0)]
     ObjectNotRequested(ObjectRequest),
+    #[error("Object requested {} is not present any more in queue", _0)]
+    ObjectHashNotPresentInQueue(Hash),
     #[error("Object requested {} already requested", _0)]
     ObjectAlreadyRequested(ObjectRequest),
     #[error("Invalid object response for request, received hash: {}", _0)]

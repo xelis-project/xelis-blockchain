@@ -805,7 +805,7 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 if !self.blockchain.has_tx(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
-                    self.queued_fetcher.fetch(Arc::clone(peer), ObjectRequest::Transaction(hash));
+                    self.queued_fetcher.fetch(Arc::clone(peer), ObjectRequest::Transaction(hash)).await?;
                 }
             },
             Packet::BlockPropagation(packet_wrapper) => {
@@ -900,7 +900,7 @@ impl<S: Storage> P2pServer<S> {
 
                         if !contains { // retrieve one by one to prevent acquiring the lock for nothing
                             debug!("Requesting TX {} to {} for block {}", hash, peer, block_hash);
-                           let (response, listener) =  match zelf.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone())) {
+                           let (response, listener) =  match zelf.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone())).await {
                                 Ok(response) => match response.await {
                                     Ok(Ok(response)) => response,
                                     _ => {

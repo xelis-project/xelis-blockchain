@@ -47,6 +47,10 @@ impl Request {
         }
     }
 
+    pub fn get_object(&self) -> &ObjectRequest {
+        &self.request
+    }
+
     pub fn get_hash(&self) -> &Hash {
         self.request.get_hash()
     }
@@ -75,7 +79,7 @@ pub struct ObjectTracker {
 }
 
 enum Message {
-    Request(Arc<Peer>, ObjectRequest, oneshot::Sender<Result<(OwnedObjectResponse, Listener), P2pError>>),
+    Request(Arc<Peer>, Hash, oneshot::Sender<Result<(OwnedObjectResponse, Listener), P2pError>>),
     Exit
 }
 
@@ -167,34 +171,36 @@ impl ObjectTracker {
         Ok(())
     }
 
-    pub fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<WaiterResponse, P2pError> {
-        let (sender, receiver) = oneshot::channel();
-        self.request_sender.send(Message::Request(peer, request, sender))?;
-        Ok(receiver)
-    }
-
-    pub async fn fetch_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<(OwnedObjectResponse, Listener), P2pError> {
-        Ok(self.request_object_from_peer(peer, request)?.await??)
-    }
-
-    async fn request_object_from_peer_internal(&self, peer: &Peer, request: ObjectRequest) -> Result<(), P2pError> {
-        debug!("Requesting {}", request);
-        let packet = Bytes::from(Packet::ObjectRequest(Cow::Borrowed(&request)).to_bytes());
-        let hash = request.get_hash().clone();
-        {
+    pub async fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<WaiterResponse, P2pError> {
+        let hash = {
             let mut queue = self.queue.write().await;
             if queue.contains_key(request.get_hash()) {
                 return Err(P2pError::ObjectAlreadyRequested(request))
             }
 
-            queue.insert(request.get_hash().clone(), Request::new(request));
-        }
+            let hash = request.get_hash().clone();
+            queue.insert(hash.clone(), Request::new(request));
+            hash
+        };
+
+        let (sender, receiver) = oneshot::channel();
+        self.request_sender.send(Message::Request(peer, hash, sender))?;
+        Ok(receiver)
+    }
+
+    async fn request_object_from_peer_internal(&self, peer: &Peer, request_hash: Hash) -> Result<(), P2pError> {
+        debug!("Requesting object with hash {}", request_hash);
+        let packet = {
+            let queue = self.queue.write().await;
+            let request = queue.get(&request_hash).ok_or_else(|| P2pError::ObjectHashNotPresentInQueue(request_hash.clone()))?;
+            Bytes::from(Packet::ObjectRequest(Cow::Borrowed(request.get_object())).to_bytes())
+        };
 
         // send the packet to the Peer
         if let Err(e) = peer.send_bytes(packet).await {
             error!("Error while sending object request to peer: {}", e);
             let mut queue = self.queue.write().await;
-            queue.remove(&hash);
+            queue.remove(&request_hash);
             return Err(e);
         }
 
