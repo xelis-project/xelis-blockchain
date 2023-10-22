@@ -1,19 +1,19 @@
 use std::sync::Arc;
 use log::{error, debug};
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{Sender, channel};
 use crate::core::{blockchain::Blockchain, storage::Storage};
 use super::{peer::Peer, packet::object::{ObjectRequest, OwnedObjectResponse}, tracker::{SharedObjectTracker, WaiterResponse}, error::P2pError};
 
 // TODO optimize to request the data but only handle in good order
 // This allow to not wait for the data to be fetched to request the next one
 pub struct QueuedFetcher {
-    sender: UnboundedSender<WaiterResponse>,
+    sender: Sender<WaiterResponse>,
     tracker: SharedObjectTracker
 }
 
 impl QueuedFetcher {
     pub fn new<S: Storage>(blockchain: Arc<Blockchain<S>>, tracker: SharedObjectTracker) -> Self {
-        let (sender, mut receiver) = unbounded_channel();
+        let (sender, mut receiver) = channel(128);
         let fetcher = Self {
             sender,
             tracker
@@ -50,7 +50,7 @@ impl QueuedFetcher {
             Err(e) => return Err(e),
             Ok(r) => r
         };
-        if let Err(e) = self.sender.send(receiver) {
+        if let Err(e) = self.sender.send(receiver).await {
             error!("Error while sending object fetcher response: {}", e);
         }
         Ok(())
