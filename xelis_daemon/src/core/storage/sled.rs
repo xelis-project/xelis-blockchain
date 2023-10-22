@@ -123,6 +123,53 @@ impl SledStorage {
         Ok(storage)
     }
 
+    async fn clear_caches(&self) {
+        if let Some(cache) = self.transactions_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.blocks_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.past_blocks_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.topo_by_hash_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.hash_at_topo_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.cumulative_difficulty_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.assets_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.balances_trees_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.nonces_trees_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+    }
+
     fn load_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<T, BlockchainError> {
         match tree.get(key)? {
             Some(bytes) => {
@@ -1082,6 +1129,7 @@ impl Storage for SledStorage {
         // search the lowest topo height available based on count + 1
         // (last lowest topo height accepted)
         let mut lowest_topo = topoheight;
+        let mut lowest_height = height;
         trace!("search lowest topo height available, height = {}, count = {}", height, count);
         for i in (height-count..=height).rev() {
             trace!("checking lowest topoheight for blocks at {}", i);
@@ -1094,11 +1142,12 @@ impl Storage for SledStorage {
                         }
                     }
                 }
+                lowest_height = i;
             } else {
                 warn!("No blocks found at {}, how ?", i);
             }
         }
-        trace!("Lowest topoheight for rewind: {}", lowest_topo);
+        trace!("Lowest topoheight for rewind: {}, height: {}", lowest_topo, lowest_height);
 
         let pruned_topoheight = self.get_pruned_topoheight()?.unwrap_or(0);
         if lowest_topo < pruned_topoheight {
@@ -1304,6 +1353,9 @@ impl Storage for SledStorage {
             self.delete_versioned_nonces_at_topoheight(topoheight).await?;
         }
 
+        // Clear all caches to not have old data after rewind
+        self.clear_caches().await;
+
         // store the new tips and topo topoheight
         self.store_tips(&tips)?;
         self.set_top_topoheight(topoheight)?;
@@ -1311,6 +1363,7 @@ impl Storage for SledStorage {
 
         // reverse order of txs so its ascending order
         txs.reverse();
+
         Ok((height, topoheight, txs))
     }
 
