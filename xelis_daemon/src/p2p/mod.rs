@@ -1164,14 +1164,9 @@ impl<S: Storage> P2pServer<S> {
                     .collect::<IndexSet<_>>();
 
                 let next_page = {
-                    let all_txs_size = mempool.size(); 
-                    if skip < all_txs_size {
-                        let left = all_txs_size - (all_txs.len() + skip);
-                        if left > 0 {
-                            Some(page_id + 1)
-                        } else {
-                            None
-                        }
+                    let mempool_size = mempool.size();
+                    if all_txs.len() == NOTIFY_MAX_LEN && mempool_size > skip && mempool_size - skip > NOTIFY_MAX_LEN {
+                        Some(page_id + 1)
                     } else {
                         None
                     }
