@@ -828,7 +828,7 @@ impl<S: Storage> P2pServer<S> {
                 {
                     let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                     if blocks_propagation.contains(&block_hash) {
-                        warn!("{} send us a block ({}) already tracked by him", peer, block_hash);
+                        debug!("{} send us a block ({}) already tracked by him", peer, block_hash);
                         return Err(P2pError::AlreadyTrackedBlock(block_hash))
                     }
                     debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
