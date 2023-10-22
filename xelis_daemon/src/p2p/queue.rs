@@ -44,8 +44,12 @@ impl QueuedFetcher {
         fetcher
     }
 
-    pub async fn fetch(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<(), P2pError> {
-        let receiver = self.tracker.request_object_from_peer(peer, request).await?;
+    pub async fn fetch_if_not_requested(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<(), P2pError> {
+        let receiver = match self.tracker.request_object_from_peer(peer, request).await {
+            Err(P2pError::ObjectAlreadyRequested(_)) => return Ok(()),
+            Err(e) => return Err(e),
+            Ok(r) => r
+        };
         if let Err(e) = self.sender.send(receiver) {
             error!("Error while sending object fetcher response: {}", e);
         }

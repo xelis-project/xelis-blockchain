@@ -789,10 +789,16 @@ impl<S: Storage> P2pServer<S> {
                 {
                     let mut txs_cache = peer.get_txs_cache().lock().await;
                     if txs_cache.contains(&hash) {
-                        warn!("{} send us a transaction ({}) already tracked by him", peer, hash);
-                        return Err(P2pError::AlreadyTrackedTx(hash))
+                        debug!("{} send us a transaction ({}) already tracked by him", peer, hash);
+                        // TODO fix common peers detection
+                        return Ok(()) // Err(P2pError::AlreadyTrackedTx(hash))
                     }
                     txs_cache.put(hash.clone(), ());
+                }
+
+                // Check that the tx is not in mempool or on disk already
+                if !self.blockchain.has_tx(&hash).await? {
+                    self.queued_fetcher.fetch_if_not_requested(Arc::clone(peer), ObjectRequest::Transaction(hash.clone())).await?;
                 }
 
                 // Avoid sending the TX propagated to a common peer
@@ -802,10 +808,6 @@ impl<S: Storage> P2pServer<S> {
                     debug!("{} is a common peer with {}, adding TX {} to its cache", common_peer, peer, hash);
                     let mut txs_cache = common_peer.get_txs_cache().lock().await;
                     txs_cache.put(hash.clone(), ());
-                }
-
-                if !self.blockchain.has_tx(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
-                    self.queued_fetcher.fetch(Arc::clone(peer), ObjectRequest::Transaction(hash)).await?;
                 }
             },
             Packet::BlockPropagation(packet_wrapper) => {
@@ -1203,7 +1205,7 @@ impl<S: Storage> P2pServer<S> {
                     let storage = self.blockchain.get_storage().read().await;
                     for hash in txs.into_owned() {
                         if !mempool.contains_tx(&hash) && !storage.has_transaction(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
-                            self.queued_fetcher.fetch(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned())).await?;
+                            self.queued_fetcher.fetch_if_not_requested(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned())).await?;
                         }
                     }
                 }

@@ -174,12 +174,10 @@ impl ObjectTracker {
     pub async fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<WaiterResponse, P2pError> {
         let hash = {
             let mut queue = self.queue.write().await;
-            if queue.contains_key(request.get_hash()) {
-                return Err(P2pError::ObjectAlreadyRequested(request))
-            }
-
             let hash = request.get_hash().clone();
-            queue.insert(hash.clone(), Request::new(request));
+            if let Some(old) = queue.insert(hash.clone(), Request::new(request)) {
+                return Err(P2pError::ObjectAlreadyRequested(old.request))
+            }
             hash
         };
 
