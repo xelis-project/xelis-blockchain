@@ -316,7 +316,17 @@ impl<S: Storage> GetWorkServer<S> {
 
     // notify every miners connected to the getwork server
     // each miner have his own task so nobody wait on other
-    pub async fn notify_new_job(&self) -> Result<(), InternalRpcError> {        
+    pub async fn notify_new_job(&self) -> Result<(), InternalRpcError> {
+        // Check that there is at least one miner connected
+        // otherwise, no need to build a new job
+        {
+            let miners = self.miners.lock().await;
+            if miners.is_empty() {
+                debug!("No miners connected, no need to notify them");
+                return Ok(());
+            }
+        }    
+    
         debug!("Notify all miners for a new job");
         let (header, difficulty) = {
             let storage = self.blockchain.get_storage().read().await;
