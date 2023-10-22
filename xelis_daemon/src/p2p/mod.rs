@@ -744,6 +744,32 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
+    // Returns the list of all common peers we have between Peer and us
+    async fn get_common_peers_for(&self, peer: &Arc<Peer>) -> Vec<Arc<Peer>> {
+        let peer_list = self.peer_list.read().await;
+        let peer_peers = peer.get_peers(false).lock().await;
+        let mut common_peers = Vec::new();
+        for common_peer_addr in peer_peers.iter() {
+            // if we have a common peer with him
+            if let Some(common_peer) = peer_list.get_peer_by_addr(common_peer_addr) {
+                if peer.get_id() != common_peer.get_id() {
+                    let peers_received = common_peer.get_peers(false).lock().await;
+                    let peers_sent = common_peer.get_peers(true).lock().await;
+                    // verify that we already know that he his connected to it and that we informed him we are connected too to prevent any desync
+                    if peers_received.iter().find(
+                        |addr: &&SocketAddr| *addr == peer.get_outgoing_address()
+                    ).is_some() && peers_sent.iter().find(
+                        |addr: &&SocketAddr| *addr == common_peer.get_outgoing_address()
+                    ).is_some() {
+                        common_peers.push(common_peer.clone());
+                    }
+                }
+            }
+        }
+
+        common_peers
+    }
+
     async fn handle_incoming_packet(self: &Arc<Self>, peer: &Arc<Peer>, packet: Packet<'_>) -> Result<(), P2pError> {
         match packet {
             Packet::Handshake(_) => {
@@ -751,13 +777,15 @@ impl<S: Storage> P2pServer<S> {
                 peer.get_connection().close().await?;
                 return Err(P2pError::InvalidPacket)
             },
-            Packet::TransactionPropagation(packet_wrapper) => { // TODO prevent spam
+            Packet::TransactionPropagation(packet_wrapper) => {
                 trace!("{}: Transaction Propagation packet", peer);
                 let (hash, ping) = packet_wrapper.consume();
                 let hash = hash.into_owned();
 
+                ping.into_owned().update_peer(peer, &self.blockchain).await?;
+
                 // peer should not send us twice the same transaction
-                debug!("Received tx hash {} from {}", hash, peer);
+                debug!("Received tx hash {} from {}", hash, peer.get_outgoing_address());
                 {
                     let mut txs_cache = peer.get_txs_cache().lock().await;
                     if txs_cache.contains(&hash) {
@@ -767,7 +795,15 @@ impl<S: Storage> P2pServer<S> {
                     txs_cache.put(hash.clone(), ());
                 }
 
-                ping.into_owned().update_peer(peer, &self.blockchain).await?;
+                // Avoid sending the TX propagated to a common peer
+                // because we track peerlist of each peers, we can try to determinate it
+                // iterate over all common peers of this peer broadcaster
+                for common_peer in self.get_common_peers_for(&peer).await {
+                    debug!("{} is a common peer with {}, adding TX {} to its cache", common_peer, peer, hash);
+                    let mut txs_cache = common_peer.get_txs_cache().lock().await;
+                    txs_cache.put(hash.clone(), ());
+                }
+
                 if !self.blockchain.has_tx(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
                     self.queued_fetcher.fetch(Arc::clone(peer), ObjectRequest::Transaction(hash));
                 }
@@ -797,31 +833,12 @@ impl<S: Storage> P2pServer<S> {
                     blocks_propagation.put(block_hash.clone(), ());
                 }
 
-                // Avoid sending the same block to a common peer
+                // Avoid sending the same block to a common peer that may have already got it
                 // because we track peerlist of each peers, we can try to determinate it
-                {
-                    let peer_list = self.peer_list.read().await;
-                    let peer_peers = peer.get_peers(false).lock().await;
-                    // iterate over all peers of this peer broadcaster
-                    for common_peer_addr in peer_peers.iter() {
-                        // if we have a common peer with him
-                        if let Some(common_peer) = peer_list.get_peer_by_addr(common_peer_addr) {
-                            if peer.get_id() != common_peer.get_id() {
-                                let peers_received = common_peer.get_peers(false).lock().await;
-                                let peers_sent = common_peer.get_peers(true).lock().await;
-                                // verify that we already know that he his connected to it and that we informed him we are connected too to prevent any desync
-                                if peers_received.iter().find(
-                                    |addr: &&SocketAddr| *addr == peer.get_outgoing_address()
-                                ).is_some() && peers_sent.iter().find(
-                                    |addr: &&SocketAddr| *addr == common_peer.get_outgoing_address()
-                                ).is_some() {
-                                    debug!("{} is a common peer with {}, adding block {} to its propagation cache", common_peer, peer, block_hash);
-                                    let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
-                                    blocks_propagation.put(block_hash.clone(), ());
-                                }
-                            }
-                        }
-                    }
+                for common_peer in self.get_common_peers_for(&peer).await {
+                    debug!("{} is a common peer with {}, adding block {} to its propagation cache", common_peer, peer, block_hash);
+                    let mut blocks_propagation = common_peer.get_blocks_propagation().lock().await;
+                    blocks_propagation.put(block_hash.clone(), ());
                 }
 
                 // check that we don't have this block in our chain
