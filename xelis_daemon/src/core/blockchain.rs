@@ -1003,6 +1003,16 @@ impl<S: Storage> Blockchain<S> {
 
             // broadcast to websocket this tx
             if let Some(rpc) = self.rpc.lock().await.as_ref() {
+                // Notify miners if getwork is enabled
+                if let Some(getwork) = rpc.getwork_server() {
+                    let getwork = getwork.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = getwork.notify_new_job_rate_limited().await {
+                            debug!("Error while notifying miners for new tx: {}", e);
+                        };
+                    });
+                }
+
                 if rpc.is_event_tracked(&NotifyEvent::TransactionAddedInMempool).await {
                     let rpc = rpc.clone();
                     tokio::spawn(async move {

@@ -152,7 +152,10 @@ pub struct GetWorkServer<S: Storage> {
     // we can keep them in cache up to STABLE_LIMIT blocks
     // so even a late miner have a chance to not be orphaned and be included in chain
     mining_jobs: Mutex<LruCache<Hash, (BlockHeader, Difficulty)>>,
-    last_header_hash: Mutex<Option<Hash>>
+    last_header_hash: Mutex<Option<Hash>>,
+    // used only when a new TX is received in mempool
+    last_notify: Mutex<u128>,
+    notify_rate_limit_ms: u128
 }
 
 impl<S: Storage> GetWorkServer<S> {
@@ -161,7 +164,9 @@ impl<S: Storage> GetWorkServer<S> {
             miners: Mutex::new(HashMap::new()),
             blockchain,
             mining_jobs: Mutex::new(LruCache::new(STABLE_LIMIT as usize)),
-            last_header_hash: Mutex::new(None)
+            last_header_hash: Mutex::new(None),
+            last_notify: Mutex::new(0),
+            notify_rate_limit_ms: 500 // maximum one time every 500ms
         }
     }
 
@@ -312,6 +317,22 @@ impl<S: Storage> GetWorkServer<S> {
         });
 
         Ok(())
+    }
+
+    // notify every miners connected to the getwork server
+    // each miner have his own task so nobody wait on other
+    pub async fn notify_new_job_rate_limited(&self) -> Result<(), InternalRpcError> {
+        {
+            let now = get_current_timestamp();
+            let mut last_notify = self.last_notify.lock().await;
+            if now - *last_notify < self.notify_rate_limit_ms {
+                debug!("Rate limit reached, not notifying miners");
+                return Ok(());
+            }
+            *last_notify = now;
+        }
+
+        self.notify_new_job().await
     }
 
     // notify every miners connected to the getwork server
