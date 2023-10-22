@@ -871,33 +871,13 @@ impl<S: Storage> P2pServer<S> {
                     let mut response_blockers: Vec<ResponseBlocker> = Vec::new();
                     for hash in header.get_txs_hashes() {
                         let contains = { // we don't lock one time because we may wait on p2p response
-                            // Check in mempool first
-                            let mut found = {
-                                let mempool = zelf.blockchain.get_mempool().read().await;
-                                mempool.contains_tx(hash)
-                            };
-
                             // Check in ObjectTracker
-                            if !found {
-                                if let Some(response_blocker) = zelf.object_tracker.get_response_blocker_for_requested_object(hash).await {
-                                    response_blockers.push(response_blocker);
-                                    found = true;       
-                                }
+                            if let Some(response_blocker) = zelf.object_tracker.get_response_blocker_for_requested_object(hash).await {
+                                response_blockers.push(response_blocker);
+                                true
+                            } else {
+                                zelf.blockchain.has_tx(hash).await.unwrap_or(false)
                             }
-
-                            // Check on chain directly
-                            if !found {
-                                let storage = zelf.blockchain.get_storage().read().await;
-                                found = match storage.has_transaction(hash).await {
-                                    Ok(contains) => contains,
-                                    Err(e) => {
-                                        warn!("Error while checking if we have tx {} in storage: {}", hash, e);
-                                        false
-                                    }
-                                };
-                            }
-
-                            found
                         };
 
                         if !contains { // retrieve one by one to prevent acquiring the lock for nothing
