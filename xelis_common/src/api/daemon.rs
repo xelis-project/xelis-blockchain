@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::HashSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::{hash::Hash, address::Address}, account::{VersionedBalance, VersionedNonce}, network::Network, block::Difficulty};
+use crate::{crypto::{hash::Hash, address::Address}, account::{VersionedBalance, VersionedNonce}, network::Network, block::Difficulty, transaction::Transaction};
 
 use super::DataHash;
 
@@ -188,7 +188,7 @@ pub struct GetTransactionsParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct TransactionResponse<'a, T: Clone> {
+pub struct TransactionResponse<'a, T: Clone + AsRef<Transaction>> {
     // in which blocks it was included
     pub blocks: Option<HashSet<Hash>>,
     // in which blocks it was executed

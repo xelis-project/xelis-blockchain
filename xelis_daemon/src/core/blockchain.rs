@@ -6,10 +6,24 @@ use xelis_common::{
     crypto::{key::PublicKey, hash::{Hashable, Hash, HASH_SIZE}},
     difficulty::check_difficulty,
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
-    utils::{get_current_timestamp, format_xelis},
+    utils::{get_current_timestamp, format_xelis, get_current_time},
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE, Difficulty},
     immutable::Immutable,
-    serializer::Serializer, account::VersionedBalance, api::{daemon::{NotifyEvent, BlockOrderedEvent, TransactionExecutedEvent, BlockType, StableHeightChangedEvent}, DataHash}, network::Network, asset::AssetData
+    serializer::Serializer,
+    account::VersionedBalance,
+    api::{
+        daemon::{
+            NotifyEvent,
+            BlockOrderedEvent,
+            TransactionExecutedEvent,
+            BlockType,
+            StableHeightChangedEvent,
+            TransactionResponse
+        },
+        DataHash
+    },
+    network::Network,
+    asset::AssetData
 };
 use crate::{
     config::{
@@ -992,7 +1006,14 @@ impl<S: Storage> Blockchain<S> {
                 if rpc.is_event_tracked(&NotifyEvent::TransactionAddedInMempool).await {
                     let rpc = rpc.clone();
                     tokio::spawn(async move {
-                        let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) };
+                        let data: TransactionResponse<'_, Arc<Transaction>> = TransactionResponse {
+                            blocks: None,
+                            executed_in_block: None,
+                            in_mempool: true,
+                            first_seen: Some(get_current_time()),
+                            data: DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) }
+                        };
+
                         if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
                             debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
                         }
