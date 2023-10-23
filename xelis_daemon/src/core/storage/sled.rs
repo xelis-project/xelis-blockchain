@@ -1048,6 +1048,7 @@ impl Storage for SledStorage {
         self.load_from_disk(tree, &key.to_bytes())
     }
 
+    // topoheight is inclusive bounds
     async fn get_nonce_at_maximum_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<Option<(u64, VersionedNonce)>, BlockchainError> {
         trace!("get nonce at maximum topoheight {} for {}", topoheight, key);
         // check first that this address has nonce, if no returns None
@@ -1058,7 +1059,7 @@ impl Storage for SledStorage {
         let (topo, mut version) = self.get_last_nonce(key).await?;
         trace!("Last version of nonce for {} is at topoheight {}", key, topo);
         // if it's the latest and its under the maximum topoheight
-        if topo < topoheight {
+        if topo <= topoheight {
             trace!("Last version nonce (valid) found at {} (maximum topoheight = {})", topo, topoheight);
             return Ok(Some((topo, version)))
         }
@@ -1067,7 +1068,7 @@ impl Storage for SledStorage {
         while let Some(previous) = version.get_previous_topoheight() {
             let previous_version = self.get_nonce_at_exact_topoheight(key, previous).await?;
             trace!("previous nonce version is at {}", previous);
-            if previous < topoheight {
+            if previous <= topoheight {
                 trace!("Highest version nonce found at {} (maximum topoheight = {})", previous, topoheight);
                 return Ok(Some((previous, previous_version)))
             }
@@ -1086,8 +1087,15 @@ impl Storage for SledStorage {
 
     async fn set_nonce_at_topoheight(&mut self, key: &PublicKey, nonce: u64, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("set nonce to {} for {} at topo {}", nonce, key, topoheight);
+        let previous_topoheight = if topoheight > 0 {
+            self.get_nonce_at_maximum_topoheight(key, topoheight - 1).await?.map(|(topo, _)| topo)
+        } else {
+            None
+        };
+
+        let versioned = VersionedNonce::new(nonce, previous_topoheight);
         let tree = self.get_versioned_nonce_tree(topoheight).await?;
-        tree.insert(&key.as_bytes(), &nonce.to_be_bytes())?;
+        tree.insert(&key.as_bytes(), versioned.to_bytes())?;
         self.set_last_topoheight_for_nonce(key, topoheight)?;
         Ok(())
     }

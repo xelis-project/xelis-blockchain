@@ -16,7 +16,6 @@ use xelis_common::{
     block::{BlockHeader, Block},
     utils::get_current_time,
     immutable::Immutable,
-    account::VersionedNonce,
     api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent}
 };
 use crate::{
@@ -1673,8 +1672,8 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::Nonces(topoheight, keys) => {
                 let mut nonces = Vec::with_capacity(keys.len());
                 for key in keys.iter() {
-                    let (_, version) = storage.get_nonce_at_maximum_topoheight(key, topoheight).await?.unwrap_or_else(|| (0, VersionedNonce::new(0, None)));
-                    nonces.push(version.get_nonce());
+                    let nonce = storage.get_nonce_at_maximum_topoheight(key, topoheight).await?.map(|(_, v)| v.get_nonce()).unwrap_or(0);
+                    nonces.push(nonce);
                 }
                 StepResponse::Nonces(nonces)
             },
