@@ -37,17 +37,19 @@ struct Request {
     request: ObjectRequest,
     sender: Option<tokio::sync::broadcast::Sender<()>>,
     response: Option<OwnedObjectResponse>,
-    requested_at: Option<Instant>
+    requested_at: Option<Instant>,
+    broadcast: bool
 }
 
 
 impl Request {
-    pub fn new(request: ObjectRequest) -> Self {
+    pub fn new(request: ObjectRequest, broadcast: bool) -> Self {
         Self {
             request,
             sender: None,
             response: None,
-            requested_at: None
+            requested_at: None,
+            broadcast
         }
     }
 
@@ -87,6 +89,10 @@ impl Request {
             self.sender = Some(sender);
             receiver
         }
+    }
+
+    pub fn broadcast(&self) -> bool {
+        self.broadcast
     }
 
     pub fn to_listener(self) -> Listener {
@@ -142,11 +148,10 @@ impl ObjectTracker {
         }
     }
 
-
-    async fn handle_object_response_internal<S: Storage>(&self, blockchain: &Arc<Blockchain<S>>, response: OwnedObjectResponse) -> Result<(), P2pError> {
+    async fn handle_object_response_internal<S: Storage>(&self, blockchain: &Arc<Blockchain<S>>, response: OwnedObjectResponse, broadcast: bool) -> Result<(), P2pError> {
         match response {
             OwnedObjectResponse::Transaction(tx, hash) => {
-                blockchain.add_tx_with_hash_to_mempool(tx, hash, true).await?;
+                blockchain.add_tx_with_hash_to_mempool(tx, hash, broadcast).await?;
             },
             _ => {
                 debug!("ObjectTracker received an invalid object response");
@@ -172,24 +177,29 @@ impl ObjectTracker {
                 };
 
                 if handle {
-                    let (_, mut request) = queue.shift_remove_index(0).unwrap();
-                    let response = request.take_response().unwrap();
-                    if let Err(e) = self.handle_object_response_internal(&blockchain, response).await {
-                        error!("Error while handling object response in ObjectTracker: {}", e);
+                    if let Some((_, mut request)) = queue.shift_remove_index(0) {
+                        if let Some(response) = request.take_response() {
+                            if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast()).await {
+                                error!("Error while handling object response in ObjectTracker: {}", e);
+                            }
+                            request.to_listener().notify();
+                            continue;
+                        }
                     }
-                    request.to_listener().notify();
                 } else {
                     // Maybe it timed out
                     if let Some((_, request)) = queue.get_index(0) {
                         if let Some(requested_at) = request.get_requested() {
                             if requested_at.elapsed() > Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT) {
-                                let (_, request) = queue.shift_remove_index(0).unwrap();
-                                request.to_listener().notify();
+                                if let Some((_, request)) = queue.shift_remove_index(0) {
+                                    request.to_listener().notify();
+                                    continue;
+                                }
                             }
                         }
                     }
-                    break 'inner;
                 }
+                break 'inner;
             }
         }
     }
@@ -241,11 +251,11 @@ impl ObjectTracker {
         Ok(())
     }
 
-    pub async fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest) -> Result<(), P2pError> {
+    pub async fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest, broadcast: bool) -> Result<(), P2pError> {
         let hash = {
             let mut queue = self.queue.write().await;
             let hash = request.get_hash().clone();
-            if let Some(old) = queue.insert(hash.clone(), Request::new(request)) {
+            if let Some(old) = queue.insert(hash.clone(), Request::new(request, broadcast)) {
                 return Err(P2pError::ObjectAlreadyRequested(old.request))
             }
             hash

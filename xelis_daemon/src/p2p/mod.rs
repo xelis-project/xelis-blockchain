@@ -797,7 +797,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // Check that the tx is not in mempool or on disk already
                 if !self.blockchain.has_tx(&hash).await? {
-                    self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.clone())).await?;
+                    self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.clone()), true).await?;
                 }
 
                 // Avoid sending the TX propagated to a common peer
@@ -881,7 +881,7 @@ impl<S: Storage> P2pServer<S> {
 
                         if !contains { // retrieve one by one to prevent acquiring the lock for nothing
                             debug!("Requesting TX {} to {} for block {}", hash, peer, block_hash);
-                            if let Err(e) = zelf.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone())).await {
+                            if let Err(e) = zelf.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone()), false).await {
                                     error!("Error while requesting TX {} to {} for block {}: {}", hash, peer, block_hash, e);
                                     peer.increment_fail_count();
                                     return;
@@ -1162,7 +1162,7 @@ impl<S: Storage> P2pServer<S> {
                     let mempool = self.blockchain.get_mempool().read().await;
                     for hash in txs.into_owned() {
                         if !mempool.contains_tx(&hash) && !storage.has_transaction(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
-                            self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned())).await?;
+                            self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned()), false).await?;
                         }
                     }
                 }
