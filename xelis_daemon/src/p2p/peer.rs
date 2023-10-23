@@ -280,7 +280,7 @@ impl Peer {
     }
 
     pub async fn request_boostrap_chain(&self, step: StepRequest<'_>) -> Result<StepResponse, P2pError> {
-        debug!("Requesting bootstrap chain step: {:?}", step);
+        debug!("Requesting bootstrap chain step: {:?}", step.kind());
         let step_kind = step.kind();
         let (sender, receiver) = tokio::sync::oneshot::channel();
         {

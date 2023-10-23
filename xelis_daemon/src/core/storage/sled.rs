@@ -399,40 +399,69 @@ impl Storage for SledStorage {
     }
 
     // Delete the whole block using its topoheight
-    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<Arc<BlockHeader>, BlockchainError> {
+    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
+        trace!("Delete block at topoheight {topoheight}");
+
         // delete topoheight<->hash pointers
         let hash = self.delete_cacheable_data(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await?;
+        trace!("Hash is {hash} at topo {topoheight}");
+
         self.delete_cacheable_data::<Hash, u64>(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
 
-        let topoheight_bytes = topoheight.to_be_bytes();
-        // delete block reward
-        self.rewards.remove(topoheight_bytes)?;
-        // delete supply
-        self.supply.remove(topoheight_bytes)?;
-        // delete difficulty
-        self.difficulty.remove(hash.as_bytes())?;
+        trace!("deleting block header {}", hash);
+        let block = self.delete_data(&self.blocks, &self.blocks_cache, &hash).await?;
+        trace!("block header deleted successfully");
 
-        // delete cummulative difficulty
-        self.cumulative_difficulty.remove(hash.as_bytes())?;
+        trace!("Deleting supply and block reward");
+        let supply: u64 = self.delete_cacheable_data(&self.supply, &None, &topoheight).await?;
+        trace!("Supply was {}", supply);
 
-        // delete block header
-        let block_header = self.delete_data(&self.blocks, &self.blocks_cache, &hash).await?;
-        // remove the block hash from the set, and delete the set if empty
-        let mut blocks = self.get_blocks_at_height(block_header.get_height()).await?;
-        blocks.remove(&hash);
-        let height_bytes = block_header.get_height().to_be_bytes();
-        if blocks.is_empty() {
-            self.blocks_at_height.remove(height_bytes)?;
-        } else {
-            self.blocks_at_height.insert(height_bytes, blocks.to_bytes())?;
+        let reward: u64 = self.delete_cacheable_data(&self.rewards, &None, &topoheight).await?;
+        trace!("Reward for block {} was: {}", hash, reward);
+
+        trace!("Deleting difficulty");
+        let _: Difficulty = self.delete_cacheable_data(&self.difficulty, &None, &hash).await?;
+
+        trace!("Deleting cumulative difficulty");
+        let cumulative_difficulty: Difficulty = self.delete_cacheable_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
+        trace!("Cumulative difficulty deleted: {}", cumulative_difficulty);
+
+        let mut txs = Vec::new();
+        for tx_hash in block.get_transactions() {
+            if self.has_tx_blocks(tx_hash)? {
+                let mut blocks: Tips = self.delete_cacheable_data(&self.tx_blocks, &None, tx_hash).await?;
+                let blocks_len =  blocks.len();
+                blocks.remove(&hash);
+                self.set_blocks_for_tx(tx_hash, &blocks)?;
+                trace!("Tx was included in {}, blocks left: {}", blocks_len, blocks.into_iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
+            }
+
+            if self.is_tx_executed_in_a_block(tx_hash)? {
+                trace!("Tx {} was executed, deleting", tx_hash);
+                self.remove_tx_executed(&tx_hash)?;
+            }
+
+            // We have to check first as we may have already deleted it because of client protocol
+            // which allow multiple time the same txs in differents blocks
+            if self.contains_data(&self.transactions, &self.transactions_cache, tx_hash).await? {
+                trace!("Deleting TX {} in block {}", tx_hash, hash);
+                let tx: Arc<Transaction> = self.delete_data(&self.transactions, &self.transactions_cache, tx_hash).await?;
+                txs.push((tx_hash.clone(), tx));
+            }
         }
 
+        // remove the block hash from the set, and delete the set if empty
+        if self.has_blocks_at_height(block.get_height()).await? {
+            self.remove_block_hash_at_height(&hash, block.get_height()).await?;
+        }
+
+        // Delete cache of past blocks
         if let Some(cache) = &self.past_blocks_cache {
             let mut cache = cache.lock().await;
             cache.pop(&hash);
         }
 
-        Ok(block_header)
+        Ok((hash, block, txs))
     }
 
     async fn delete_tx(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
@@ -1128,26 +1157,8 @@ impl Storage for SledStorage {
 
         // search the lowest topo height available based on count + 1
         // (last lowest topo height accepted)
-        let mut lowest_topo = topoheight;
-        let mut lowest_height = height;
-        trace!("search lowest topo height available, height = {}, count = {}", height, count);
-        for i in (height-count..=height).rev() {
-            trace!("checking lowest topoheight for blocks at {}", i);
-            if self.has_blocks_at_height(i).await? {
-                for hash in self.get_blocks_at_height(i).await? {
-                    if self.is_block_topological_ordered(&hash).await {
-                        let topo = self.get_topo_height_for_hash(&hash).await?;
-                        if topo < lowest_topo {
-                            lowest_topo = topo;
-                        }
-                    }
-                }
-                lowest_height = i;
-            } else {
-                warn!("No blocks found at {}, how ?", i);
-            }
-        }
-        trace!("Lowest topoheight for rewind: {}, height: {}", lowest_topo, lowest_height);
+        let mut lowest_topo = topoheight - count;
+        trace!("Lowest topoheight for rewind: {}", lowest_topo);
 
         let pruned_topoheight = self.get_pruned_topoheight()?.unwrap_or(0);
         if lowest_topo < pruned_topoheight {
@@ -1161,115 +1172,34 @@ impl Storage for SledStorage {
         let mut txs = Vec::new();
         let mut done = 0;
         'main: loop {
-            // check if the next block is alone at its height, if yes stop rewinding
-            if done >= count || height == 0 { // prevent removing genesis block
-                trace!("Done: {done}, count: {count}, height: {height}");
-                let tmp_blocks_at_height = self.get_blocks_at_height(height).await?;
-                trace!("tmp_blocks_at_height: {}", tmp_blocks_at_height.len());
-                if tmp_blocks_at_height.len() == 1 {
-                    for unique in tmp_blocks_at_height {
-                        if self.is_block_topological_ordered(&unique).await {
-                            topoheight = self.get_topo_height_for_hash(&unique).await?;
-                            if topoheight <= lowest_topo {
-                                trace!("Unique block at height {} and topoheight {} found!", height, topoheight);
-                                break 'main;
-                            }
-                        }
-                    }
-                }
+            // stop rewinding if its genesis block or if we reached the lowest topo
+            if topoheight <= lowest_topo || topoheight == 0 || height == 0 { // prevent removing genesis block
+                trace!("Done: {done}, count: {count}, height: {height}, topoheight: {topoheight}");
+                break 'main;
             }
 
-            // get all blocks at same height, and delete current block hash from the list
-            trace!("Searching blocks at height {}", height);
-            let blocks_at_height: Tips = self.delete_cacheable_data(&self.blocks_at_height, &None, &height).await?;
-            trace!("Blocks at height {}: {}", height, blocks_at_height.len());
+            // Delete the hash at topoheight
+            let (hash, block, block_txs) = self.delete_block_at_topoheight(topoheight).await?;
+            txs.extend(block_txs);
 
-            for hash in blocks_at_height {
-                trace!("deleting block header {}", hash);
-                let block = self.delete_data(&self.blocks, &self.blocks_cache, &hash).await?;
-                trace!("block header deleted successfully");
-
-                let block_topoheight = if self.is_block_topological_ordered(&hash).await {
-                    let topoheight = self.get_topo_height_for_hash(&hash).await?;
-                    trace!("Deleting supply and block reward");
-                    let supply: u64 = self.delete_cacheable_data(&self.supply, &None, &topoheight).await?;
-                    trace!("Supply was {}", supply);
-     
-                    let reward: u64 = self.delete_cacheable_data(&self.rewards, &None, &topoheight).await?;
-                    trace!("Reward for block {} was: {}", hash, reward);
-                    Some(topoheight)
-                } else {
-                    None
-                };
-
-                trace!("Deleting difficulty");
-                let _: Difficulty = self.delete_cacheable_data(&self.difficulty, &None, &hash).await?;
-
-                trace!("Deleting cumulative difficulty");
-                let cumulative_difficulty: Difficulty = self.delete_cacheable_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
-                trace!("Cumulative difficulty deleted: {}", cumulative_difficulty);
-
-                for tx_hash in block.get_transactions() {
-                    let tx: Arc<Transaction> = self.delete_data(&self.transactions, &self.transactions_cache, tx_hash).await?;
-                    if self.has_tx_blocks(tx_hash)? {
-                        let mut blocks: Tips = self.delete_cacheable_data(&self.tx_blocks, &None, tx_hash).await?;
-                        let blocks_len =  blocks.len();
-                        blocks.remove(&hash);
-                        self.set_blocks_for_tx(tx_hash, &blocks)?;
-                        trace!("Tx was included in {}, blocks left: {}", blocks_len, blocks.into_iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
-                    }
-
-                    if self.is_tx_executed_in_a_block(tx_hash)? {
-                        trace!("Tx {} was executed, deleting", tx_hash);
-                        self.remove_tx_executed(&tx_hash)?;
-                    }
-
-                    trace!("Deleting TX {} in block {}", tx_hash, hash);
-                    // We have to check first as we may have already deleted it because of client protocol
-                    // which allow multiple time the same txs in differents blocks
-                    if self.contains_data(&self.transactions, &self.transactions_cache, tx_hash).await? {
-                        self.delete_data(&self.transactions, &self.transactions_cache, tx_hash).await?;
-                    }
-
-                    txs.push((tx_hash.clone(), tx));
-                }
-
-                // if block is ordered, delete data that are linked to it
-                if let Some(topo) = block_topoheight {
-                    if topo < topoheight {
-                        topoheight = topo;
-                    }
-
-                    trace!("Block was at topoheight {}", topo);
-                    self.delete_cacheable_data(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
-
-                    if let Ok(hash_at_topo) = self.get_hash_at_topo_height(topo).await {
-                        if hash_at_topo == hash {
-                            trace!("Deleting hash '{}' at topo height '{}'", hash_at_topo, topo);
-                            self.delete_cacheable_data(&self.hash_at_topo, &self.hash_at_topo_cache, &topo).await?;
-                        }
-                    }
-                }
-
-                // generate new tips
-                trace!("Removing {} from {} tips", hash, tips.len());
-                tips.remove(&hash);
-                trace!("Tips: {}", tips.iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", "));
-
-                for hash in block.get_tips() {
-                    trace!("Adding {} to {} tips", hash, tips.len());
-                    tips.insert(hash.clone());
-                }
+            // generate new tips
+            trace!("Removing {} from {} tips", hash, tips.len());
+            tips.remove(&hash);
+ 
+            for hash in block.get_tips() {
+                trace!("Adding {} to {} tips", hash, tips.len());
+                tips.insert(hash.clone());
             }
 
+            topoheight -= 1;
             // height of old block become new height
-            height -= 1;
+            if block.get_height() < height {
+                height = block.get_height();
+            }
             done += 1;
         }
-        debug!("Blocks processed {}, new topoheight: {}, tips: {}", done, topoheight, tips.len());
-        for hash in &tips {
-            trace!("tip {} at height {}", hash, self.get_height_for_block_hash(&hash).await?);
-        }
+
+        debug!("Blocks processed {}, new topoheight: {}, new height: {}, tips: {}", done, topoheight, height, tips.len());
 
         // clean all assets
         let mut deleted_assets = HashSet::new();
@@ -1471,6 +1401,12 @@ impl Storage for SledStorage {
         Ok(self.blocks_at_height.contains_key(&height.to_be_bytes())?)
     }
 
+    async fn set_blocks_at_height(&self, tips: Tips, height: u64) -> Result<(), BlockchainError> {
+        trace!("set {} blocks at height {}", tips.len(), height);
+        self.blocks_at_height.insert(height.to_be_bytes(), tips.to_bytes())?;
+        Ok(())
+    }
+
     // returns all blocks hash at specified height
     async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError> {
         trace!("get blocks at height {}", height);
@@ -1489,8 +1425,21 @@ impl Storage for SledStorage {
         };
 
         tips.insert(hash);
+        self.set_blocks_at_height(tips, height).await
+    }
 
-        self.blocks_at_height.insert(height.to_be_bytes(), tips.to_bytes())?;
+    async fn remove_block_hash_at_height(&self, hash: &Hash, height: u64) -> Result<(), BlockchainError> {
+        trace!("remove block {} at height {}", hash, height);
+        let mut tips = self.get_blocks_at_height(height).await?;
+        tips.remove(hash);
+
+        // Delete the height if there is no blocks present anymore
+        if tips.is_empty() {
+            self.blocks_at_height.remove(&height.to_be_bytes())?;
+        } else {
+            self.set_blocks_at_height(tips, height).await?;
+        }
+
         Ok(())
     }
 

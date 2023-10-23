@@ -33,7 +33,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     fn set_pruned_topoheight(&mut self, pruned_topoheight: u64) -> Result<(), BlockchainError>;
 
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
-    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<Arc<BlockHeader>, BlockchainError>;
+    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
     async fn delete_tx(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
     // delete versioned balances at a specific topoheight
     async fn delete_versioned_balances_for_asset_at_topoheight(&mut self, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
@@ -108,6 +108,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
     async fn add_new_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError>;
+    // Count is the number of blocks (topoheight) to rewind
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
     fn has_blocks(&self) -> bool;
     fn count_blocks(&self) -> usize;
@@ -120,8 +121,10 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn get_top_block(&self) -> Result<Block, BlockchainError>;
     async fn get_top_block_header(&self) -> Result<(Arc<BlockHeader>, Hash), BlockchainError>;
 
+    async fn set_blocks_at_height(&self, tips: Tips, height: u64) -> Result<(), BlockchainError>;
     async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError>;
     async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError>;
+    async fn remove_block_hash_at_height(&self, hash: &Hash, height: u64) -> Result<(), BlockchainError>;
 
     async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
     async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: u64) -> Result<(), BlockchainError>;

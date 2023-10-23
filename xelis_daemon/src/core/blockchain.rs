@@ -403,7 +403,7 @@ impl<S: Storage> Blockchain<S> {
             for topoheight in last_pruned_topoheight..located_sync_topoheight {
                 trace!("Pruning block at topoheight {}", topoheight);
                 // delete block
-                let block_header = storage.delete_block_at_topoheight(topoheight).await?;
+                let _ = storage.delete_block_at_topoheight(topoheight).await?;
 
                 // delete balances for all assets
                 for asset in &assets {
@@ -412,13 +412,6 @@ impl<S: Storage> Blockchain<S> {
 
                 // delete nonces versions
                 storage.delete_versioned_nonces_at_topoheight(topoheight).await?;
-
-                // delete transactions for this block
-                for tx_hash in block_header.get_txs_hashes() {
-                    if storage.has_transaction(tx_hash).await? {
-                        storage.delete_tx(tx_hash).await?;
-                    }
-                }
             }
             storage.set_pruned_topoheight(located_sync_topoheight)?;
             Ok(located_sync_topoheight)

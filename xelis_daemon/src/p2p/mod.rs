@@ -745,6 +745,12 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Returns the list of all common peers we have between Peer and us
+    // TODO fix common peers detection
+    // Problem is:
+    // We are connected to node A and node B, we know that they are connected each other
+    // But they may not already shared their peerlist about us so they don't know we are
+    // a common peer between them two, which result in false positive in our case and they send
+    // us both the same object
     async fn get_common_peers_for(&self, peer: &Arc<Peer>) -> Vec<Arc<Peer>> {
         let peer_list = self.peer_list.read().await;
         let peer_peers = peer.get_peers(false).lock().await;
@@ -790,8 +796,7 @@ impl<S: Storage> P2pServer<S> {
                     let mut txs_cache = peer.get_txs_cache().lock().await;
                     if txs_cache.contains(&hash) {
                         debug!("{} send us a transaction ({}) already tracked by him", peer, hash);
-                        // TODO fix common peers detection
-                        return Ok(()) // Err(P2pError::AlreadyTrackedTx(hash))
+                        return Err(P2pError::AlreadyTrackedTx(hash))
                     }
                     txs_cache.put(hash.clone(), ());
                 }
@@ -995,19 +1000,19 @@ impl<S: Storage> P2pServer<S> {
                     debug!("{} found a common point with block {} at {} for sync, received {} blocks", peer, common_point.get_hash(), common_point.get_topoheight(), response_size);
                     let pop_count = {
                         let storage = self.blockchain.get_storage().read().await;
-                        let block_height = match storage.get_height_for_block_hash(common_point.get_hash()).await {
-                            Ok(height) => height,
-                            Err(e) => {
-                                warn!("{} sent us an invalid common point: {}", peer, e);
-                                return Err(P2pError::InvalidCommonPoint(common_point.get_topoheight()))
-                            }
-                        };
                         let topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
                         if topoheight != common_point.get_topoheight() {
-                            error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, block_height, common_point.get_topoheight());
-                            return Err(P2pError::InvalidPacket)
+                            error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, topoheight, common_point.get_topoheight());
+                            return Err(P2pError::InvalidCommonPoint(common_point.get_topoheight()))
                         }
-                        self.blockchain.get_height() - block_height
+
+                        let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
+                        // We are under the stable height, rewind is necessary
+                        if block_height <= self.blockchain.get_stable_height() {
+                            self.blockchain.get_topo_height() - topoheight
+                        } else {
+                            0
+                        }
                     };
 
                     let peer = Arc::clone(peer);
@@ -1086,7 +1091,7 @@ impl<S: Storage> P2pServer<S> {
                         }
                     },
                     ObjectRequest::Transaction(hash) => {
-                        let on_disk = {
+                        let search_on_disk = {
                             let mempool = self.blockchain.get_mempool().read().await;
                             if let Ok(tx) = mempool.view_tx(hash) {
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(tx)))).await?;
@@ -1097,7 +1102,7 @@ impl<S: Storage> P2pServer<S> {
                             }
                         };
 
-                        if on_disk {
+                        if search_on_disk {
                             debug!("Looking on disk for transaction {}", hash);
                             let storage = self.blockchain.get_storage().read().await;
                             if storage.has_transaction(hash).await? {
