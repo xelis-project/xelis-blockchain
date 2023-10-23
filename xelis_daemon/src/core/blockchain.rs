@@ -486,6 +486,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     async fn is_sync_block_at_height(&self, storage: &S, hash: &Hash, height: u64) -> Result<bool, BlockchainError> {
+        trace!("is sync block {} at height {}", hash, height);
         let block_height = storage.get_height_for_block_hash(hash).await?;
         if block_height == 0 { // genesis block is a sync block
             return Ok(true)
