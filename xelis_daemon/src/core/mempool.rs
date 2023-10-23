@@ -248,11 +248,17 @@ impl NonceCache {
     }
 
     pub fn has_tx_with_same_nonce(&self, nonce: u64) -> Option<&Arc<Hash>> {
-        if nonce < self.min || nonce > self.max {
+        if nonce < self.min || nonce > self.max || self.txs.is_empty() {
             return None;
         }
 
-        let index = ((nonce - self.min) % (self.max - self.min)) as usize;
+        trace!("has tx with same nonce: {}, max: {}, min: {}, size: {}", nonce, self.max, self.min, self.txs.len());
+        let mut r = self.max - self.min;
+        if r == 0 {
+            r = self.txs.len() as u64;
+        }
+
+        let index = ((nonce - self.min) % r) as usize;
         self.txs.get_index(index)
     }
 }
