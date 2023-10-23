@@ -1186,8 +1186,8 @@ impl<S: Storage> P2pServer<S> {
                         }
                     }
 
-                    let mempool = self.blockchain.get_mempool().read().await;
                     let storage = self.blockchain.get_storage().read().await;
+                    let mempool = self.blockchain.get_mempool().read().await;
                     for hash in txs.into_owned() {
                         if !mempool.contains_tx(&hash) && !storage.has_transaction(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
                             self.queued_fetcher.fetch_if_not_requested(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned())).await?;
