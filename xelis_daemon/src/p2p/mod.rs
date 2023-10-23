@@ -5,7 +5,6 @@ pub mod packet;
 pub mod peer_list;
 pub mod chain_validator;
 mod tracker;
-mod queue;
 
 use indexmap::IndexSet;
 use lru::LruCache;
@@ -55,7 +54,6 @@ use self::{
     },
     peer::Peer,
     tracker::{ObjectTracker, SharedObjectTracker},
-    queue::QueuedFetcher,
     peer_list::{SharedPeerList, PeerList},
     connection::{State, Connection},
     error::P2pError
@@ -103,7 +101,6 @@ pub struct P2pServer<S: Storage> {
     verify_syncing_time_out: AtomicBool, // chain sync timeout check
     last_sync_request_sent: AtomicU64, // used to check if we are already syncing with one peer or not
     object_tracker: SharedObjectTracker, // used to requests objects to peers and avoid requesting the same object to multiple peers
-    queued_fetcher: QueuedFetcher, // used to requests all propagated txs in one task only
     is_running: AtomicBool, // used to check if the server is running or not in tasks
     blocks_propagation_queue: Mutex<LruCache<Hash, ()>> // Synced cache to prevent concurrent tasks adding the block
 }
@@ -121,8 +118,7 @@ impl<S: Storage> P2pServer<S> {
         // create mspc channel
         let (connections_sender, receiver) = mpsc::unbounded_channel();
 
-        let object_tracker = ObjectTracker::new();
-        let queued_fetcher = QueuedFetcher::new(Arc::clone(&blockchain), Arc::clone(&object_tracker));
+        let object_tracker = ObjectTracker::new(blockchain.clone());
 
         let server = Self {
             peer_id,
@@ -136,7 +132,6 @@ impl<S: Storage> P2pServer<S> {
             verify_syncing_time_out: AtomicBool::new(false),
             last_sync_request_sent: AtomicU64::new(0),
             object_tracker,
-            queued_fetcher,
             is_running: AtomicBool::new(true),
             blocks_propagation_queue: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT))
         };
@@ -802,7 +797,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // Check that the tx is not in mempool or on disk already
                 if !self.blockchain.has_tx(&hash).await? {
-                    self.queued_fetcher.fetch_if_not_requested(Arc::clone(peer), ObjectRequest::Transaction(hash.clone())).await?;
+                    self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.clone())).await?;
                 }
 
                 // Avoid sending the TX propagated to a common peer
@@ -886,37 +881,15 @@ impl<S: Storage> P2pServer<S> {
 
                         if !contains { // retrieve one by one to prevent acquiring the lock for nothing
                             debug!("Requesting TX {} to {} for block {}", hash, peer, block_hash);
-                           let (response, listener) =  match zelf.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone())).await {
-                                Ok(response) => match response.await {
-                                    Ok(Ok(response)) => response,
-                                    _ => {
-                                        error!("Error while handling response for TX {} from {}", hash, peer);
-                                        peer.increment_fail_count();
-                                        return;
-                                    }
-                                },
-                                Err(e) => {
-                                    error!("Error while requesting TX {} from {}: {}", hash, peer, e);
+                            if let Err(e) = zelf.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone())).await {
+                                    error!("Error while requesting TX {} to {} for block {}: {}", hash, peer, block_hash, e);
                                     peer.increment_fail_count();
                                     return;
-                                }
-                            };
-                            if let OwnedObjectResponse::Transaction(tx, _) = response {
-                                if let Err(e) = zelf.blockchain.add_tx_to_mempool(tx, false).await {
-                                    if let BlockchainError::TxAlreadyInMempool(_) = e {
-                                        debug!("TX {} is already in mempool finally, another peer was faster", hash);
-                                    } else {
-                                        error!("Error while adding new requested tx to mempool: {}", e);
-                                        peer.increment_fail_count();
-                                    }
-                                }
-                            } else {
-                                error!("Invalid object response received from {}, expected {} got {}", peer, hash, response.get_hash());
-                                peer.increment_fail_count();
-                                return;
                             }
-                            // if listener is dropped before it is ok, receivers will stop listening
-                            listener.notify();
+
+                            if let Some(response_blocker) = zelf.object_tracker.get_response_blocker_for_requested_object(hash).await {
+                                response_blockers.push(response_blocker);
+                            }
                         }
                     }
 
@@ -1189,7 +1162,7 @@ impl<S: Storage> P2pServer<S> {
                     let mempool = self.blockchain.get_mempool().read().await;
                     for hash in txs.into_owned() {
                         if !mempool.contains_tx(&hash) && !storage.has_transaction(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
-                            self.queued_fetcher.fetch_if_not_requested(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned())).await?;
+                            self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned())).await?;
                         }
                     }
                 }
