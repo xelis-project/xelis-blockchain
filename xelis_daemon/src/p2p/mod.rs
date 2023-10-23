@@ -1726,7 +1726,7 @@ impl<S: Storage> P2pServer<S> {
 
         // we add 1 for the genesis block added below
         while i < topoheight && topoheight - i >= pruned_topoheight && blocks.len() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
-            trace!("Requesting hash at topo {} for ChainInfo", topoheight - i);
+            trace!("Requesting hash at topo {} for building list of blocks id", topoheight - i);
             let hash = storage.get_hash_at_topo_height(topoheight - i).await?;
             blocks.push(BlockId::new(hash, topoheight - i));
             match blocks.len() {
@@ -1836,11 +1836,18 @@ impl<S: Storage> P2pServer<S> {
                 },
                 // fetch all new accounts
                 StepResponse::Keys(keys, next_page) => {
+                    debug!("Requesting nonces for keys");
                     let StepResponse::Nonces(nonces) = peer.request_boostrap_chain(StepRequest::Nonces(stable_topoheight, Cow::Borrowed(&keys))).await? else {
                         // shouldn't happen
                         error!("Received an invalid StepResponse (how ?) while fetching nonces");
                         return Err(P2pError::InvalidPacket.into())
                     };
+
+                    // save all nonces
+                    for (key, nonce) in keys.iter().zip(nonces) {
+                        debug!("Saving nonce {} for {}", nonce, key);
+                        storage.set_nonce_at_topoheight(key, nonce, stable_topoheight).await?;
+                    }
 
                     // TODO don't retrieve ALL each time but one by one
                     // otherwise in really long time, it may consume lot of memory
@@ -1863,12 +1870,6 @@ impl<S: Storage> P2pServer<S> {
                                 storage.set_last_topoheight_for_balance(key, &asset, stable_topoheight)?;
                             }
                         }
-                    }
-
-                    // save all nonces
-                    for (key, nonce) in keys.into_iter().zip(nonces) {
-                        debug!("Saving nonce {} for {}", nonce, key);
-                        storage.set_nonce_at_topoheight(&key, nonce, stable_topoheight).await?;
                     }
 
                     if next_page.is_some() {
