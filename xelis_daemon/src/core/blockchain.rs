@@ -945,7 +945,8 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::TxAlreadyInMempool(hash))
         }
 
-        if storage.has_transaction(&hash).await? {
+        // check that the TX is not already in blockchain
+        if storage.is_tx_executed_in_a_block(&hash)? {
             return Err(BlockchainError::TxAlreadyInBlockchain(hash))
         }
 
