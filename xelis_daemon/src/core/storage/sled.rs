@@ -1163,7 +1163,9 @@ impl Storage for SledStorage {
         'main: loop {
             // check if the next block is alone at its height, if yes stop rewinding
             if done >= count || height == 0 { // prevent removing genesis block
+                trace!("Done: {done}, count: {count}, height: {height}");
                 let tmp_blocks_at_height = self.get_blocks_at_height(height).await?;
+                trace!("tmp_blocks_at_height: {}", tmp_blocks_at_height.len());
                 if tmp_blocks_at_height.len() == 1 {
                     for unique in tmp_blocks_at_height {
                         if self.is_block_topological_ordered(&unique).await {
@@ -1223,7 +1225,11 @@ impl Storage for SledStorage {
                     }
 
                     trace!("Deleting TX {} in block {}", tx_hash, hash);
-                    self.delete_data(&self.transactions, &self.transactions_cache, tx_hash).await?;
+                    // We have to check first as we may have already deleted it because of client protocol
+                    // which allow multiple time the same txs in differents blocks
+                    if self.contains_data(&self.transactions, &self.transactions_cache, tx_hash).await? {
+                        self.delete_data(&self.transactions, &self.transactions_cache, tx_hash).await?;
+                    }
 
                     txs.push((tx_hash.clone(), tx));
                 }
