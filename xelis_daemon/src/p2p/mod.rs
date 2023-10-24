@@ -1612,7 +1612,7 @@ impl<S: Storage> P2pServer<S> {
                 || topoheight < PRUNE_SAFETY_LIMIT
             {
                 warn!("Invalid begin topoheight (received {}, our is {}, pruned: {}) received from {}", topoheight, our_topoheight, pruned_topoheight, peer);
-                return Err(P2pError::InvalidPacket.into())
+                return Err(P2pError::InvalidRequestedTopoheight.into())
             }
         }
 

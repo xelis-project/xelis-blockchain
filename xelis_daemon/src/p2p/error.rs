@@ -69,6 +69,8 @@ pub enum P2pError {
     ParseAddressError(#[from] AddrParseError),
     #[error("Invalid packet ID")]
     InvalidPacket,
+    #[error("Peer topoheight is higher than our")]
+    InvalidRequestedTopoheight,
     #[error("Packet size exceed limit")]
     InvalidPacketSize,
     #[error("Received valid packet with not used bytes")]
