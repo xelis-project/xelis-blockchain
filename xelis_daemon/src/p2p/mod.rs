@@ -1739,8 +1739,10 @@ impl<S: Storage> P2pServer<S> {
         let mut our_topoheight = self.blockchain.get_topo_height();
 
         let mut stable_topoheight = 0;
-        let mut storage = self.blockchain.get_storage().write().await;
-        let mut step: Option<StepRequest> = Some(StepRequest::ChainInfo(self.build_list_of_blocks_id(&*storage).await?));
+        let mut step: Option<StepRequest> = {
+            let storage = self.blockchain.get_storage().read().await;
+            Some(StepRequest::ChainInfo(self.build_list_of_blocks_id(&*storage).await?))
+        };
 
         // keep them in memory, we add them when we're syncing
         // it's done to prevent any sync failure
@@ -1748,6 +1750,7 @@ impl<S: Storage> P2pServer<S> {
         let mut top_height: u64 = 0;
         let mut top_block_hash: Option<Hash> = None;
 
+        let mut all_assets = HashSet::new();
         loop {
             let response = if let Some(step) = step.take() {
                 info!("Requesting step {:?}", step.kind());
@@ -1760,6 +1763,7 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::ChainInfo(common_point, topoheight, height, hash) => {
                     // first, check the common point in case we deviated from the chain
                     if let Some(common_point) = common_point {
+                        let mut storage = self.blockchain.get_storage().write().await;
                         debug!("Unverified common point found at {} with hash {}", common_point.get_topoheight(), common_point.get_hash());
                         let hash_at_topo = storage.get_hash_at_topo_height(common_point.get_topoheight()).await?;
                         if hash_at_topo != *common_point.get_hash() {
@@ -1794,10 +1798,12 @@ impl<S: Storage> P2pServer<S> {
                 },
                 // fetch all assets from peer
                 StepResponse::Assets(assets, next_page) => {
+                    let mut storage = self.blockchain.get_storage().write().await;
                     for asset in assets {
                         let (asset, data) = asset.consume();
                         debug!("Saving asset {} at topoheight {}", asset, stable_topoheight);
                         storage.add_asset(&asset, data).await?;
+                        all_assets.insert(asset);
                     }
 
                     if next_page.is_some() {
@@ -1816,15 +1822,18 @@ impl<S: Storage> P2pServer<S> {
                         return Err(P2pError::InvalidPacket.into())
                     };
 
-                    // save all nonces
-                    for (key, nonce) in keys.iter().zip(nonces) {
-                        debug!("Saving nonce {} for {}", nonce, key);
-                        storage.set_nonce_at_topoheight(key, nonce, stable_topoheight).await?;
+                    {
+                        let mut storage = self.blockchain.get_storage().write().await;
+                        // save all nonces
+                        for (key, nonce) in keys.iter().zip(nonces) {
+                            debug!("Saving nonce {} for {}", nonce, key);
+                            storage.set_nonce_at_topoheight(key, nonce, stable_topoheight).await?;
+                        }
                     }
 
                     // TODO don't retrieve ALL each time but one by one
                     // otherwise in really long time, it may consume lot of memory
-                    for asset in storage.get_assets().await? {
+                    for asset in &all_assets {
                         debug!("Request balances for asset {}", asset);
                         let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(stable_topoheight, Cow::Borrowed(&asset), Cow::Borrowed(&keys))).await? else {
                             // shouldn't happen
@@ -1833,6 +1842,7 @@ impl<S: Storage> P2pServer<S> {
                         };
 
                         // save all balances for this asset
+                        let mut storage = self.blockchain.get_storage().write().await;
                         for (key, balance) in keys.iter().zip(balances) {
                             // check that the account have balance for this asset
                             if let Some(balance) = balance {
@@ -1853,6 +1863,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                 },
                 StepResponse::BlocksMetadata(blocks) => {
+                    let mut storage = self.blockchain.get_storage().write().await;
                     let mut lowest_topoheight = stable_topoheight;
                     for (i, metadata) in blocks.into_iter().enumerate() {
                         // check that we don't already have this block in storage
@@ -1905,7 +1916,7 @@ impl<S: Storage> P2pServer<S> {
                 }
             };
         }
-        self.blockchain.reload_from_disk(&storage).await?;
+        self.blockchain.reload_from_disk().await?;
         info!("Fast sync done with {}", peer);
 
         Ok(())

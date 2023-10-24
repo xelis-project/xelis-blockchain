@@ -276,17 +276,18 @@ impl<S: Storage> Blockchain<S> {
         info!("All modules are now stopped!");
     }
 
-    pub async fn reload_from_disk(&self, storage: &S) -> Result<(), BlockchainError> {
+    pub async fn reload_from_disk(&self) -> Result<(), BlockchainError> {
+        let storage = self.storage.read().await;
         let topoheight = storage.get_top_topoheight()?;
         let height = storage.get_top_height()?;
         self.topoheight.store(topoheight, Ordering::SeqCst);
         self.height.store(height, Ordering::SeqCst);
 
         let tips = storage.get_tips().await?;
-        let (_, stable_height) = self.find_common_base(storage, &tips).await?;
+        let (_, stable_height) = self.find_common_base(&*storage, &tips).await?;
         self.stable_height.store(stable_height, Ordering::SeqCst);
 
-        let difficulty = self.get_difficulty_at_tips(storage, &tips.into_iter().collect()).await?;
+        let difficulty = self.get_difficulty_at_tips(&*storage, &tips.into_iter().collect()).await?;
         self.difficulty.store(difficulty, Ordering::SeqCst);
 
         // TXs in mempool may be outdated, clear them as they will be asked later again
