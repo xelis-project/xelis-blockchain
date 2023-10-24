@@ -277,6 +277,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     pub async fn reload_from_disk(&self) -> Result<(), BlockchainError> {
+        trace!("Reloading chain from disk");
         let storage = self.storage.read().await;
         let topoheight = storage.get_top_topoheight()?;
         let height = storage.get_top_height()?;
@@ -291,8 +292,9 @@ impl<S: Storage> Blockchain<S> {
         self.difficulty.store(difficulty, Ordering::SeqCst);
 
         // TXs in mempool may be outdated, clear them as they will be asked later again
-        debug!("Clearing mempool");
+        debug!("locking mempool for cleaning");
         let mut mempool = self.mempool.write().await;
+        debug!("Clearing mempool");
         mempool.clear();
 
         Ok(())
