@@ -510,6 +510,7 @@ impl<S: Storage> P2pServer<S> {
                         if let Err(e) = self.bootstrap_chain(&peer).await {
                             warn!("Error occured while fast syncing with {}: {}", peer, e);
                         } else {
+                            debug!("Requesting inventory after successfull fast sync with {}", peer);
                             if let Err(e) = self.request_inventory_of(&peer).await {
                                 debug!("Error occured while asking inventory of {} after fast sync: {}", peer, e);
                             }

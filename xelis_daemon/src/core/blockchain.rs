@@ -288,6 +288,12 @@ impl<S: Storage> Blockchain<S> {
 
         let difficulty = self.get_difficulty_at_tips(storage, &tips.into_iter().collect()).await?;
         self.difficulty.store(difficulty, Ordering::SeqCst);
+
+        // TXs in mempool may be outdated, clear them as they will be asked later again
+        debug!("Clearing mempool");
+        let mut mempool = self.mempool.write().await;
+        mempool.clear();
+
         Ok(())
     }
 

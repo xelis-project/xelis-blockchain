@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use tokio::sync::{mpsc::{UnboundedSender, UnboundedReceiver, Sender, Receiver}, RwLock};
 use xelis_common::{crypto::hash::Hash, serializer::Serializer};
 use crate::{core::{blockchain::Blockchain, storage::Storage}, config::PEER_TIMEOUT_REQUEST_OBJECT};
-use log::{error, debug};
+use log::{error, debug, trace};
 
 use super::{packet::{object::{ObjectRequest, OwnedObjectResponse}, Packet}, error::P2pError, peer::Peer};
 
@@ -35,6 +35,7 @@ impl Listener {
 
 struct Request {
     request: ObjectRequest,
+    peer: Arc<Peer>,
     sender: Option<tokio::sync::broadcast::Sender<()>>,
     response: Option<OwnedObjectResponse>,
     requested_at: Option<Instant>,
@@ -43,9 +44,10 @@ struct Request {
 
 
 impl Request {
-    pub fn new(request: ObjectRequest, broadcast: bool) -> Self {
+    pub fn new(request: ObjectRequest, peer: Arc<Peer>, broadcast: bool) -> Self {
         Self {
             request,
+            peer,
             sender: None,
             response: None,
             requested_at: None,
@@ -55,6 +57,10 @@ impl Request {
 
     pub fn get_object(&self) -> &ObjectRequest {
         &self.request
+    }
+
+    pub fn get_peer(&self) -> &Arc<Peer> {
+        &self.peer
     }
 
     pub fn set_response(&mut self, response: OwnedObjectResponse) {
@@ -109,7 +115,7 @@ pub struct ObjectTracker {
 }
 
 enum Message {
-    Request(Arc<Peer>, Hash),
+    Request(Hash),
     Exit
 }
 
@@ -180,7 +186,7 @@ impl ObjectTracker {
                     if let Some((_, mut request)) = queue.shift_remove_index(0) {
                         if let Some(response) = request.take_response() {
                             if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast()).await {
-                                error!("Error while handling object response in ObjectTracker: {}", e);
+                                error!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
                             }
                             request.to_listener().notify();
                             continue;
@@ -208,10 +214,8 @@ impl ObjectTracker {
         debug!("Starting requester loop...");
         while let Some(msg) = request_receiver.recv().await {
             match msg {
-                Message::Request(peer, object) => {
-                    if let Err(e) = self.request_object_from_peer_internal(&peer, &object).await {
-                        error!("Error while requesting object {} from {}: {}", object, peer, e);
-                    };
+                Message::Request(object) => {
+                    self.request_object_from_peer_internal(&object).await;
                 },
                 Message::Exit => break
             }
@@ -255,30 +259,37 @@ impl ObjectTracker {
         let hash = {
             let mut queue = self.queue.write().await;
             let hash = request.get_hash().clone();
-            if let Some(old) = queue.insert(hash.clone(), Request::new(request, broadcast)) {
+            if let Some(old) = queue.insert(hash.clone(), Request::new(request, peer, broadcast)) {
                 return Err(P2pError::ObjectAlreadyRequested(old.request))
             }
             hash
         };
 
-        self.request_sender.send(Message::Request(peer, hash))?;
+        self.request_sender.send(Message::Request(hash))?;
         Ok(())
     }
 
-    async fn request_object_from_peer_internal(&self, peer: &Peer, request_hash: &Hash) -> Result<(), P2pError> {
+    async fn request_object_from_peer_internal(&self, request_hash: &Hash) {
         debug!("Requesting object with hash {}", request_hash);
-        let mut queue = self.queue.write().await;
-        let request = queue.get_mut(request_hash).ok_or_else(|| P2pError::ObjectHashNotPresentInQueue(request_hash.clone()))?;
-        request.set_requested();
-        let packet = Bytes::from(Packet::ObjectRequest(Cow::Borrowed(request.get_object())).to_bytes());
-
-        // send the packet to the Peer
-        peer.send_bytes(packet).await.map_err(|e| {
-            if let Some(request) = queue.remove(request_hash) {
-                request.to_listener().notify();
+        let mut delete = false;
+        {
+            let mut queue = self.queue.write().await;
+            if let Some(request) = queue.get_mut(request_hash) {
+                request.set_requested();
+                let packet = Bytes::from(Packet::ObjectRequest(Cow::Borrowed(request.get_object())).to_bytes());
+                // send the packet to the Peer
+                if let Err(e) = request.get_peer().send_bytes(packet).await {
+                    error!("Error while requesting object {} using Object Tracker: {}", request_hash, e);
+                    request.get_peer().increment_fail_count();
+                    delete = true;
+                }
             }
+        }
 
-            e
-        })
+        if delete {
+            trace!("Deleting requested object with hash {}", request_hash);
+            let mut queue = self.queue.write().await;
+            queue.remove(request_hash);
+        }
     }
 }
