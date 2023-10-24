@@ -1881,7 +1881,7 @@ impl<S: Storage> Blockchain<S> {
             if let Some(value) = balance.checked_sub(tx.get_fee()) {
                 *balance = value;
             } else {
-                warn!("Overflow detected using fees in transaction {}", hash);
+                warn!("Overflow detected using fees ({} XEL) in transaction {}", format_xelis(tx.get_fee()), hash);
                 return Err(BlockchainError::Overflow)
             }
         }
