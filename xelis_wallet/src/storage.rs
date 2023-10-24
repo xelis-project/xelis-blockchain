@@ -248,9 +248,15 @@ impl EncryptedStorage {
 
                 // Keep only transactions entries that have one transfer at least
                 match transfers {
+                    // Transfers which are not empty
                     Some(transfers) if !transfers.is_empty() => {
                         transactions.push(e);
                     },
+                    // Something else than outgoing/incoming txs
+                    None => {
+                        transactions.push(e);
+                    },
+                    // All the left is discarded
                     _ => {}
                 }
             }
