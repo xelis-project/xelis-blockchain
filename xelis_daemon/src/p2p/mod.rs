@@ -1186,7 +1186,7 @@ impl<S: Storage> P2pServer<S> {
                         error!("Error while sending bootstrap response to channel: {:?}", e.kind());
                     }
                 } else {
-                    debug!("{} send us a bootstrap chain response but we didn't asked it", peer);
+                    debug!("{} send us a bootstrap chain response of step {:?} but we didn't asked it", peer, response.kind());
                     return Err(P2pError::UnrequestedBootstrapChainResponse)
                 }
             },
