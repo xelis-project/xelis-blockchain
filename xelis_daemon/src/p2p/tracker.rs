@@ -13,7 +13,7 @@ pub type SharedObjectTracker = Arc<ObjectTracker>;
 
 pub type ResponseBlocker = tokio::sync::broadcast::Receiver<()>;
 
-pub struct Listener {
+struct Listener {
     sender: Option<tokio::sync::broadcast::Sender<()>>
 }
 
@@ -41,7 +41,6 @@ struct Request {
     requested_at: Option<Instant>,
     broadcast: bool
 }
-
 
 impl Request {
     pub fn new(request: ObjectRequest, peer: Arc<Peer>, broadcast: bool) -> Self {
@@ -101,8 +100,14 @@ impl Request {
         self.broadcast
     }
 
-    pub fn to_listener(self) -> Listener {
-        Listener::new(self.sender)
+    fn to_listener(&mut self) -> Listener {
+        Listener::new(self.sender.take())
+    }
+}
+
+impl Drop for Request {
+    fn drop(&mut self) {
+        self.to_listener().notify();
     }
 }
 
@@ -188,7 +193,6 @@ impl ObjectTracker {
                             if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast()).await {
                                 error!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
                             }
-                            request.to_listener().notify();
                             continue;
                         }
                     }
@@ -197,8 +201,7 @@ impl ObjectTracker {
                     if let Some((_, request)) = queue.get_index(0) {
                         if let Some(requested_at) = request.get_requested() {
                             if requested_at.elapsed() > Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT) {
-                                if let Some((_, request)) = queue.shift_remove_index(0) {
-                                    request.to_listener().notify();
+                                if queue.shift_remove_index(0).is_some() {
                                     continue;
                                 }
                             }

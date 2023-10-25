@@ -896,9 +896,8 @@ impl<S: Storage> P2pServer<S> {
                     // Wait on all already requested txs
                     for mut blocker in response_blockers {
                         if let Err(e) = blocker.recv().await {
-                            error!("Error while waiting on response blocker: {}", e);
-                            peer.increment_fail_count();
-                            return;
+                            // It's mostly a closed channel error, so we can ignore it
+                            debug!("Error while waiting on response blocker: {}", e);
                         }
                     }
 
