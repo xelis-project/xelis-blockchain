@@ -1192,16 +1192,19 @@ impl<S: Storage> P2pServer<S> {
                 let addr = packet.to_addr();
                 debug!("{} disconnected from {}", addr, peer);
                 let mut peers_received = peer.get_peers(false).lock().await;
-                let mut peers_sent = peer.get_peers(true).lock().await;
-                // peer should be a common one (we sent it, and received it from him)
-                let recv_removed = peers_received.remove(&addr);
-                let sent_removed = peers_sent.remove(&addr);
+                let peers_sent = peer.get_peers(true).lock().await;
+
+                let received_contains = peers_received.contains(&addr);
+                let sent_contains = peers_sent.contains(&addr);
+
                 // It must be a common peer
-                if !(recv_removed && sent_removed) {
-                    debug!("{} disconnected from {} but we didn't have it in our peer list", addr, peer);
-                    trace!("Our peerlist is: {:?} and {:?}", peers_received, peers_sent);
-                    return Err(P2pError::UnknownPeerReceived(addr))
+                if !(received_contains && sent_contains) {
+                    debug!("{} disconnected from {} but its not a common peer ? {} {}", addr, peer.get_outgoing_address(), received_contains, sent_contains);
+                    return Err(P2pError::UnknownPeerReceived(addr))                    
                 }
+
+                // Delete the peer received
+                peers_received.remove(&addr);
 
                 trace!("Locking RPC Server to notify PeerDisconnected event");
                 if let Some(rpc) = self.blockchain.get_rpc().lock().await.as_ref() {
