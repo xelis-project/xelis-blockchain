@@ -255,18 +255,21 @@ impl ObjectTracker {
         Ok(())
     }
 
-    pub async fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest, broadcast: bool) -> Result<(), P2pError> {
+    // Request the object from the peer or return false if it is already requested
+    pub async fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest, broadcast: bool) -> Result<bool, P2pError> {
+        trace!("Requesting object {} from {}", request.get_hash(), peer);
         let hash = {
             let mut queue = self.queue.write().await;
             let hash = request.get_hash().clone();
-            if let Some(old) = queue.insert(hash.clone(), Request::new(request, peer, broadcast)) {
-                return Err(P2pError::ObjectAlreadyRequested(old.request))
+            if queue.insert(hash.clone(), Request::new(request, peer, broadcast)).is_some() {
+                return Ok(false)
             }
             hash
         };
 
+        trace!("Transfering object request {} to task", hash);
         self.request_sender.send(Message::Request(hash))?;
-        Ok(())
+        Ok(true)
     }
 
     async fn request_object_from_peer_internal(&self, request_hash: &Hash) {

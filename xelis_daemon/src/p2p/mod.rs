@@ -795,7 +795,9 @@ impl<S: Storage> P2pServer<S> {
 
                 // Check that the tx is not in mempool or on disk already
                 if !self.blockchain.has_tx(&hash).await? {
-                    self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.clone()), true).await?;
+                    if !self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.clone()), true).await? {
+                        debug!("TX propagated {} was already requested, ignoring", hash);
+                    }
                 }
 
                 // Avoid sending the TX propagated to a common peer
@@ -1159,8 +1161,10 @@ impl<S: Storage> P2pServer<S> {
                     let storage = self.blockchain.get_storage().read().await;
                     let mempool = self.blockchain.get_mempool().read().await;
                     for hash in txs.into_owned() {
-                        if !mempool.contains_tx(&hash) && !storage.has_transaction(&hash).await? && !self.object_tracker.has_requested_object(&hash).await {
-                            self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned()), false).await?;
+                        if !mempool.contains_tx(&hash) && !storage.has_transaction(&hash).await? {
+                            if !self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned()), false).await? {
+                                debug!("TX was already requested, ignoring");
+                            }
                         }
                     }
                 }
