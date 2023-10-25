@@ -78,7 +78,7 @@ impl<'a> Ping<'a> {
         peer.set_cumulative_difficulty(self.cumulative_difficulty);
 
         if !self.peer_list.is_empty() {
-            debug!("Received a peer list ({}) for {}", self.peer_list.len(), peer);
+            debug!("Received a peer list ({:?}) for {}", self.peer_list, peer);
             let mut peers_received = peer.get_peers(false).lock().await;
             let peer_addr = peer.get_connection().get_address();
             let peer_outgoing_addr = peer.get_outgoing_address();

@@ -580,6 +580,7 @@ impl<S: Storage> P2pServer<S> {
                     }
 
                     // update the ping packet with the new peers
+                    debug!("Set peers: {:?}, current: {:?}, going to {}", new_peers, ping.get_peers(), peer.get_outgoing_address());
                     ping.set_peers(new_peers);
                     // send the ping packet to the peer
                     if let Err(e) = peer.get_connection().send_bytes(&Packet::Ping(Cow::Borrowed(&ping)).to_bytes()).await {
