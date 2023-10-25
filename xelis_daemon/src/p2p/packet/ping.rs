@@ -121,12 +121,12 @@ impl<'a> Ping<'a> {
         self.topoheight
     }
 
-    pub fn set_peers(&mut self, peers: Vec<SocketAddr>) {
-        self.peer_list = peers;
-    }
-
     pub fn get_peers(&self) -> &Vec<SocketAddr> {
         &self.peer_list
+    }
+
+    pub fn get_mut_peers(&mut self) -> &mut Vec<SocketAddr> {
+        &mut self.peer_list
     }
 }
 

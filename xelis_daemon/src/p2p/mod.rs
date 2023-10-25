@@ -554,7 +554,8 @@ impl<S: Storage> P2pServer<S> {
                 last_peerlist_update = current_time;
                 let peer_list = self.peer_list.read().await;
                 for peer in peer_list.get_peers().values() {
-                    let mut new_peers = Vec::new();
+                    let new_peers = ping.get_mut_peers();
+                    new_peers.clear();
 
                     // all the peers we already sent to this current peer
                     let mut peers_sent = peer.get_peers(true).lock().await;
@@ -570,6 +571,7 @@ impl<S: Storage> P2pServer<S> {
                         let addr = p.get_outgoing_address();
                         if !peers_sent.contains(addr) {
                             // add it in our side to not re send it again
+                            trace!("{} didn't received {} yet, adding it to peerlist in ping packet", peer.get_outgoing_address(), addr);
                             peers_sent.insert(*addr);
                             // add it to new list to send it
                             new_peers.push(*addr);
@@ -580,8 +582,7 @@ impl<S: Storage> P2pServer<S> {
                     }
 
                     // update the ping packet with the new peers
-                    debug!("Set peers: {:?}, current: {:?}, going to {}", new_peers, ping.get_peers(), peer.get_outgoing_address());
-                    ping.set_peers(new_peers);
+                    debug!("Set peers: {:?}, going to {}", new_peers, peer.get_outgoing_address());
                     // send the ping packet to the peer
                     if let Err(e) = peer.get_connection().send_bytes(&Packet::Ping(Cow::Borrowed(&ping)).to_bytes()).await {
                         debug!("Error sending specific ping packet to {}: {}", peer, e);
