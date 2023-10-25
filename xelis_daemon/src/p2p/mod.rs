@@ -1189,29 +1189,29 @@ impl<S: Storage> P2pServer<S> {
             Packet::PeerDisconnected(packet) => {
                 let addr = packet.to_addr();
                 debug!("{} disconnected from {}", addr, peer);
-                let mut peer_peers = peer.get_peers(false).lock().await;
-                let mut peer_peers_sent = peer.get_peers(true).lock().await;
+                let mut peers_received = peer.get_peers(false).lock().await;
+                let mut peers_sent = peer.get_peers(true).lock().await;
                 // peer should be a common one (we sent it, and received it from him)
-                let recv_removed = peer_peers.remove(&addr);
-                let sent_removed = peer_peers_sent.remove(&addr);
-                if !recv_removed || !sent_removed {
-                    warn!("{} disconnected from {} but we didn't have it in our peer list: {recv_removed} {sent_removed}", addr, peer);
+                let recv_removed = peers_received.remove(&addr);
+                let sent_removed = peers_sent.remove(&addr);
+                // It must be a common peer
+                if !(recv_removed && sent_removed) {
+                    debug!("{} disconnected from {} but we didn't have it in our peer list", addr, peer);
+                    trace!("Our peerlist is: {:?} and {:?}", peers_received, peers_sent);
                     return Err(P2pError::UnknownPeerReceived(addr))
                 }
 
-                if recv_removed {
-                    trace!("Locking RPC Server to notify PeerDisconnected event");
-                    if let Some(rpc) = self.blockchain.get_rpc().lock().await.as_ref() {
-                        if rpc.is_event_tracked(&NotifyEvent::PeerDisconnected).await {
-                            let value = PeerPeerDisconnectedEvent {
-                                peer_id: peer.get_id(),
-                                peer_addr: addr
-                            };
-                            rpc.notify_clients_with(&NotifyEvent::PeerDisconnected, value).await;
-                        }
+                trace!("Locking RPC Server to notify PeerDisconnected event");
+                if let Some(rpc) = self.blockchain.get_rpc().lock().await.as_ref() {
+                    if rpc.is_event_tracked(&NotifyEvent::PeerPeerDisconnected).await {
+                        let value = PeerPeerDisconnectedEvent {
+                            peer_id: peer.get_id(),
+                            peer_addr: addr
+                        };
+                        rpc.notify_clients_with(&NotifyEvent::PeerPeerDisconnected, value).await;
                     }
-                    trace!("End locking for PeerDisconnected event");
                 }
+                trace!("End locking for PeerDisconnected event");
             }
         };
         Ok(())

@@ -208,7 +208,6 @@ impl PeerList {
         best_height
     }
 
-
     // get a peer by its address
     fn internal_get_peer_by_addr<'a>(peers: &'a HashMap<u64, Arc<Peer>>, addr: &SocketAddr) -> Option<&'a Arc<Peer>> {
         peers.values().find(|peer| {
