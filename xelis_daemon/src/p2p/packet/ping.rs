@@ -85,13 +85,13 @@ impl<'a> Ping<'a> {
             let peer_outgoing_addr = peer.get_outgoing_address();
             for addr in &self.peer_list {
                 if peer_addr == addr || peer_outgoing_addr == addr {
-                    error!("Invalid protocol rules: peer {} sent us its own socket address in ping packet", peer);
+                    error!("Invalid protocol rules: peer {} sent us its own socket address in ping packet", peer.get_outgoing_address());
                     return Err(P2pError::InvalidProtocolRules)
                 }
 
                 debug!("Adding {} for {} in ping packet", addr, peer.get_outgoing_address());
                 if !peers_received.insert(*addr) {
-                    error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", peer, addr);
+                    error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", addr, peer.get_outgoing_address());
                     trace!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, peers_received);
                     return Err(P2pError::InvalidProtocolRules)
                 }
