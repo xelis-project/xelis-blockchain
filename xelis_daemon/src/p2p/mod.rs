@@ -872,6 +872,7 @@ impl<S: Storage> P2pServer<S> {
                         let contains = { // we don't lock one time because we may wait on p2p response
                             // Check in ObjectTracker
                             if let Some(response_blocker) = zelf.object_tracker.get_response_blocker_for_requested_object(hash).await {
+                                trace!("{} is already requested, waiting on response blocker for block {}", hash, block_hash);
                                 response_blockers.push(response_blocker);
                                 true
                             } else {
@@ -913,7 +914,7 @@ impl<S: Storage> P2pServer<S> {
 
                     debug!("Adding received block {} from {} to chain", block_hash, peer);
                     if let Err(e) = zelf.blockchain.add_new_block(block, true, false).await {
-                        error!("Error while adding new block: {}", e);
+                        error!("Error while adding new block from {}: {}", peer, e);
                         peer.increment_fail_count();
                     }
                 });
