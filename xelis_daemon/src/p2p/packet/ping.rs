@@ -78,8 +78,9 @@ impl<'a> Ping<'a> {
         peer.set_cumulative_difficulty(self.cumulative_difficulty);
 
         if !self.peer_list.is_empty() {
-            debug!("Received a peer list ({:?}) for {}", self.peer_list, peer);
+            debug!("Received a peer list ({:?}) for {}", self.peer_list, peer.get_outgoing_address());
             let mut peers_received = peer.get_peers(false).lock().await;
+            debug!("Our peer list is ({:?}) for {}", peers_received, peer.get_outgoing_address());
             let peer_addr = peer.get_connection().get_address();
             let peer_outgoing_addr = peer.get_outgoing_address();
             for addr in &self.peer_list {
@@ -88,7 +89,7 @@ impl<'a> Ping<'a> {
                     return Err(P2pError::InvalidProtocolRules)
                 }
 
-                debug!("Adding {} for {} in ping packet", addr, peer);
+                debug!("Adding {} for {} in ping packet", addr, peer.get_outgoing_address());
                 if !peers_received.insert(*addr) {
                     error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", peer, addr);
                     trace!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, peers_received);
