@@ -584,7 +584,7 @@ impl<S: Storage> P2pServer<S> {
                     // update the ping packet with the new peers
                     debug!("Set peers: {:?}, going to {}", new_peers, peer.get_outgoing_address());
                     // send the ping packet to the peer
-                    if let Err(e) = peer.get_connection().send_bytes(&Packet::Ping(Cow::Borrowed(&ping)).to_bytes()).await {
+                    if let Err(e) = peer.send_packet(Packet::Ping(Cow::Borrowed(&ping))).await {
                         debug!("Error sending specific ping packet to {}: {}", peer, e);
                     }
                 }
@@ -596,7 +596,7 @@ impl<S: Storage> P2pServer<S> {
                 // broadcast directly the ping packet asap to all peers
                 for peer in peerlist.get_peers().values() {
                     trace!("broadcast to {}", peer);
-                    if let Err(e) = peer.get_connection().send_bytes(&bytes).await {
+                    if let Err(e) = peer.send_bytes(bytes.clone()).await {
                         error!("Error while trying to broadcast directly ping packet to {}: {}", peer, e);
                     };
                 }
