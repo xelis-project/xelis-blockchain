@@ -436,8 +436,8 @@ async fn submit_transaction<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Va
 
 async fn get_transaction<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetTransactionParams = parse_params(body)?;
-    let mempool = blockchain.get_mempool().read().await;
     let storage = blockchain.get_storage().read().await;
+    let mempool = blockchain.get_mempool().read().await;
 
     get_transaction_response_for_hash(&*storage, &mempool, &params.hash).await
 }
@@ -494,8 +494,8 @@ async fn get_mempool<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) ->
         return Err(InternalRpcError::UnexpectedParams)
     }
 
-    let mempool = blockchain.get_mempool().read().await;
     let storage = blockchain.get_storage().read().await;
+    let mempool = blockchain.get_mempool().read().await;
     let mut transactions: Vec<Value> = Vec::new();
     for (hash, sorted_tx) in mempool.get_txs() {
         transactions.push(get_transaction_response(&*storage, sorted_tx.get_tx(), hash, true, Some(sorted_tx.get_first_seen())).await?);
@@ -621,8 +621,8 @@ async fn get_transactions<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Valu
         return Err(InternalRpcError::InvalidRequest).context(format!("Too many requested txs: {}, maximum is {}", hashes.len(), MAX_TXS))?
     }
 
-    let mempool = blockchain.get_mempool().read().await;
     let storage = blockchain.get_storage().read().await;
+    let mempool = blockchain.get_mempool().read().await;
     let mut transactions: Vec<Option<Value>> = Vec::with_capacity(hashes.len());
     for hash in hashes {
         let tx = match get_transaction_response_for_hash(&*storage, &mempool, &hash).await {
