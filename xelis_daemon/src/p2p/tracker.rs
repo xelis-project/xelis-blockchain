@@ -26,8 +26,8 @@ impl Listener {
 
     pub fn notify(self) {
         if let Some(sender) = self.sender {
-            if sender.send(()).is_err() {
-                error!("Error while sending notification to ObjectTracker");
+            if let Err(e) = sender.send(()) {
+                debug!("Error while sending notification: {}", e);
             }
         }
     }
