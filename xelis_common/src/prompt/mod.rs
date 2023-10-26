@@ -668,6 +668,7 @@ impl<T> Prompt<T> {
             }
 
             let file_log = fern::Dispatch::new()
+            .level(level.into())
             .format(move |out, message, record| {
                 let pad = " ".repeat((30i16 - record.target().len() as i16).max(0) as usize);
                 let level_pad = if record.level() == Level::Error || record.level() == Level::Debug { "" } else { " " };
