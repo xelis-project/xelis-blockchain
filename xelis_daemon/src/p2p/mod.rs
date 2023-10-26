@@ -1914,6 +1914,7 @@ impl<S: Storage> P2pServer<S> {
                                 };
                                 Immutable::Owned(tx)
                             };
+                            trace!("TX {} ok", tx_hash);
                             txs.push(tx);
                         }
 
