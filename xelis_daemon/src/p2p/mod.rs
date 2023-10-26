@@ -1258,23 +1258,12 @@ impl<S: Storage> P2pServer<S> {
     // Packet is read from the same task always, while its handling is delegated to a unique task
     async fn listen_connection(self: &Arc<Self>, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
         // Read & parse the packet
-        let bytes = peer.get_connection().read_packet_bytes(buf, MAX_BLOCK_SIZE as u32).await?;
+        let packet = peer.get_connection().read_packet(buf, MAX_BLOCK_SIZE as u32).await?;
         // Handle the packet
-        let zelf = self.clone();
-        let peer = peer.clone();
-        tokio::spawn(async move {
-            let packet = match peer.get_connection().read_packet_from_bytes(&bytes).await {
-                Ok(packet) => packet,
-                Err(e) => {
-                    error!("Error while parsing packet from bytes: {}", e);
-                    return;
-                }
-            };
-            if let Err(e) = zelf.handle_incoming_packet(&peer, packet).await {
-                error!("Error occured while handling incoming packet from {}: {}", peer, e);
-                peer.increment_fail_count();
-            }
-        });
+        if let Err(e) = self.handle_incoming_packet(&peer, packet).await {
+            error!("Error occured while handling incoming packet from {}: {}", peer, e);
+            peer.increment_fail_count();
+        }
 
         Ok(())
     }
