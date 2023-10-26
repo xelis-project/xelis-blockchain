@@ -93,6 +93,8 @@ pub enum P2pError {
     ObjectAlreadyRequested(ObjectRequest),
     #[error("Invalid object response for request, received hash: {}", _0)]
     InvalidObjectResponse(Hash),
+    #[error("Invalid object response type for request")]
+    InvalidObjectResponseType,
     #[error(transparent)]
     ObjectRequestError(#[from] RecvError),
     #[error("Expected a block type")]

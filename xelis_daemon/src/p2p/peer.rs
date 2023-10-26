@@ -244,6 +244,11 @@ impl Peer {
         &self.objects_requested
     }
 
+    pub async fn has_requested_object(&self, request: &ObjectRequest) -> bool {
+        let objects = self.objects_requested.lock().await;
+        objects.contains_key(&request)
+    }
+
     pub async fn remove_object_request(&self, request: ObjectRequest) -> Result<Sender<OwnedObjectResponse>, P2pError> {
         let mut objects = self.objects_requested.lock().await;
         objects.remove(&request).ok_or(P2pError::ObjectNotFound(request))

@@ -1091,17 +1091,22 @@ impl<S: Storage> P2pServer<S> {
             Packet::ObjectResponse(response) => {
                 trace!("Received a object response from {}", peer);
                 let response = response.to_owned()?;
-                // check if the Object Tracker has requested this object
-                if self.object_tracker.has_requested_object(response.get_hash()).await {
-                    self.object_tracker.handle_object_response(response).await?;
-                } else { // otherwise check if its specific to the peer
-                    // check if we have requested this object & get the sender from it
-                    let request = response.get_request();
+                trace!("Object response received is {}", response.get_hash());
+
+                // check if we requested it from this peer
+                let request = response.get_request();
+                if peer.has_requested_object(&request).await {
                     let sender = peer.remove_object_request(request).await?;
                     // handle the response
                     if sender.send(response).is_err() {
                         error!("Error while sending object response to sender!");
                     }
+                // check if the Object Tracker has requested this object
+                } else if self.object_tracker.has_requested_object(request.get_hash()).await {
+                    trace!("Object Tracker requested it, handling it");
+                    self.object_tracker.handle_object_response(response).await?;
+                } else {
+                    return Err(P2pError::ObjectNotRequested(request))
                 }
             },
             Packet::NotifyInventoryRequest(packet_wrapper) => {
@@ -1539,7 +1544,8 @@ impl<S: Storage> P2pServer<S> {
         for peer in peer_list.get_peers().values() {
             // check that the peer is not too far from us
             // otherwise we may spam him for nothing
-            if peer.get_topoheight() + CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u64 > current_topoheight {
+            let peer_topoheight = peer.get_topoheight();
+            if (peer_topoheight >= current_topoheight && peer_topoheight - current_topoheight < STABLE_LIMIT) || current_topoheight - peer_topoheight < STABLE_LIMIT {
                 trace!("Peer {} is not too far from us, checking cache for tx hash {}", peer, tx);
                 let mut txs_cache = peer.get_txs_cache().lock().await;
                 // check that we didn't already send this tx to this peer or that he don't already have it
@@ -1869,11 +1875,10 @@ impl<S: Storage> P2pServer<S> {
                     }
                 },
                 StepResponse::BlocksMetadata(blocks) => {
-                    let mut storage = self.blockchain.get_storage().write().await;
                     let mut lowest_topoheight = stable_topoheight;
                     for (i, metadata) in blocks.into_iter().enumerate() {
                         // check that we don't already have this block in storage
-                        if storage.has_block(&metadata.hash).await? {
+                        if self.blockchain.has_block(&metadata.hash).await? {
                             continue;
                         }
 
@@ -1886,16 +1891,20 @@ impl<S: Storage> P2pServer<S> {
 
                         let mut txs = Vec::with_capacity(header.get_txs_hashes().len());
                         for tx_hash in header.get_txs_hashes() {
-                            if !storage.has_transaction(tx_hash).await? {
+                            let tx = if self.blockchain.has_tx(tx_hash).await? {
+                                Immutable::Arc(self.blockchain.get_tx(tx_hash).await?)
+                            } else {
                                 let OwnedObjectResponse::Transaction(tx, _) = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await? else {
                                     error!("Received an invalid requested object while fetching block transaction {}", tx_hash);
-                                    return Err(P2pError::InvalidPacket.into())
+                                    return Err(P2pError::InvalidObjectResponseType.into())
                                 };
-                                txs.push(Immutable::Owned(tx));
-                            }
+                                Immutable::Owned(tx)
+                            };
+                            txs.push(tx);
                         }
 
                         // link its TX to the block
+                        let mut storage = self.blockchain.get_storage().write().await;
                         for tx_hash in header.get_txs_hashes() {
                             storage.add_block_for_tx(tx_hash, &hash)?;
                         }
@@ -1910,6 +1919,8 @@ impl<S: Storage> P2pServer<S> {
                         // save the block with its transactions, difficulty
                         storage.add_new_block(Arc::new(header), &txs, metadata.difficulty, hash).await?;
                     }
+
+                    let mut storage = self.blockchain.get_storage().write().await;
                     storage.set_pruned_topoheight(lowest_topoheight)?;
                     storage.set_top_topoheight(top_topoheight)?;
                     storage.set_top_height(top_height)?;
