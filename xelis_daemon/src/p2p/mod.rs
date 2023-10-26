@@ -665,7 +665,7 @@ impl<S: Storage> P2pServer<S> {
                     if let Err(e) = self.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone()), false).await {
                             error!("Error while requesting TX {} to {} for block {}: {}", hash, peer, block_hash, e);
                             peer.increment_fail_count();
-                            return;
+                            continue;
                     }
 
                     if let Some(response_blocker) = self.object_tracker.get_response_blocker_for_requested_object(hash).await {
@@ -688,7 +688,7 @@ impl<S: Storage> P2pServer<S> {
                 Err(e) => {
                     error!("Error while building block {} from peer {}: {}", block_hash, peer, e);
                     peer.increment_fail_count();
-                    return;
+                    continue;
                 }
             };
 
@@ -1911,7 +1911,9 @@ impl<S: Storage> P2pServer<S> {
                         };
 
                         let mut txs = Vec::with_capacity(header.get_txs_hashes().len());
+                        debug!("Retrieving {} txs for block {}", header.get_txs_count(), hash);
                         for tx_hash in header.get_txs_hashes() {
+                            trace!("Retrieving TX {} for block {}", tx_hash, hash);
                             let tx = if self.blockchain.has_tx(tx_hash).await? {
                                 Immutable::Arc(self.blockchain.get_tx(tx_hash).await?)
                             } else {
