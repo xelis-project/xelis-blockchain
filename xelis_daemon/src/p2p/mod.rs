@@ -102,7 +102,8 @@ pub struct P2pServer<S: Storage> {
     last_sync_request_sent: AtomicU64, // used to check if we are already syncing with one peer or not
     object_tracker: SharedObjectTracker, // used to requests objects to peers and avoid requesting the same object to multiple peers
     is_running: AtomicBool, // used to check if the server is running or not in tasks
-    blocks_propagation_queue: Mutex<LruCache<Hash, ()>> // Synced cache to prevent concurrent tasks adding the block
+    blocks_propagation_queue: Mutex<LruCache<Hash, ()>>, // Synced cache to prevent concurrent tasks adding the block
+    blocks_processor: UnboundedSender<(Arc<Peer>, BlockHeader, Hash)> // Sender for the blocks processing task to have a ordered queue
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -115,8 +116,10 @@ impl<S: Storage> P2pServer<S> {
         let mut rng = rand::thread_rng();
         let peer_id: u64 = rng.gen(); // generate a random peer id for network
         let addr: SocketAddr = bind_address.parse()?; // parse the bind address
-        // create mspc channel
-        let (connections_sender, receiver) = mpsc::unbounded_channel();
+        // create mspc channel for connections to peers
+        let (connections_sender, connections_receiver) = mpsc::unbounded_channel();
+
+        let (blocks_processer, blocks_processor_receiver) = mpsc::unbounded_channel();
 
         let object_tracker = ObjectTracker::new(blockchain.clone());
 
@@ -133,16 +136,26 @@ impl<S: Storage> P2pServer<S> {
             last_sync_request_sent: AtomicU64::new(0),
             object_tracker,
             is_running: AtomicBool::new(true),
-            blocks_propagation_queue: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT))
+            blocks_propagation_queue: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
+            blocks_processor: blocks_processer
         };
 
         let arc = Arc::new(server);
-        let zelf = Arc::clone(&arc);
-        tokio::spawn(async move {
-            if let Err(e) = zelf.start(receiver, use_peerlist, exclusive_nodes).await {
-                error!("Unexpected error on P2p module: {}", e);
-            }
-        });
+        {
+            let zelf = Arc::clone(&arc);
+            tokio::spawn(async move {
+                if let Err(e) = zelf.start(connections_receiver, use_peerlist, exclusive_nodes).await {
+                    error!("Unexpected error on P2p module: {}", e);
+                }
+            });
+        }
+
+        // Start the blocks processing task to have a queued handler
+        {
+            let zelf = Arc::clone(&arc);
+            tokio::spawn(zelf.blocks_processing_task(blocks_processor_receiver));
+        }
+
         Ok(arc)
     }
 
@@ -630,6 +643,65 @@ impl<S: Storage> P2pServer<S> {
         }
     }
 
+    // Task for all blocks propagation
+    async fn blocks_processing_task(self: Arc<Self>, mut receiver: UnboundedReceiver<(Arc<Peer>, BlockHeader, Hash)>) {
+        debug!("Starting blocks processing task");
+        while let Some((peer, header, block_hash)) = receiver.recv().await {
+            let mut response_blockers: Vec<ResponseBlocker> = Vec::new();
+            for hash in header.get_txs_hashes() {
+                let contains = { // we don't lock one time because we may wait on p2p response
+                    // Check in ObjectTracker
+                    if let Some(response_blocker) = self.object_tracker.get_response_blocker_for_requested_object(hash).await {
+                        trace!("{} is already requested, waiting on response blocker for block {}", hash, block_hash);
+                        response_blockers.push(response_blocker);
+                        true
+                    } else {
+                        self.blockchain.has_tx(hash).await.unwrap_or(false)
+                    }
+                };
+
+                if !contains { // retrieve one by one to prevent acquiring the lock for nothing
+                    debug!("Requesting TX {} to {} for block {}", hash, peer, block_hash);
+                    if let Err(e) = self.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone()), false).await {
+                            error!("Error while requesting TX {} to {} for block {}: {}", hash, peer, block_hash, e);
+                            peer.increment_fail_count();
+                            return;
+                    }
+
+                    if let Some(response_blocker) = self.object_tracker.get_response_blocker_for_requested_object(hash).await {
+                        response_blockers.push(response_blocker);
+                    }
+                }
+            }
+
+            // Wait on all already requested txs
+            for mut blocker in response_blockers {
+                if let Err(e) = blocker.recv().await {
+                    // It's mostly a closed channel error, so we can ignore it
+                    debug!("Error while waiting on response blocker: {}", e);
+                }
+            }
+
+            // add immediately the block to chain as we are synced with
+            let block = match self.blockchain.build_block_from_header(Immutable::Owned(header)).await {
+                Ok(block) => block,
+                Err(e) => {
+                    error!("Error while building block {} from peer {}: {}", block_hash, peer, e);
+                    peer.increment_fail_count();
+                    return;
+                }
+            };
+
+            debug!("Adding received block {} from {} to chain", block_hash, peer);
+            if let Err(e) = self.blockchain.add_new_block(block, true, false).await {
+                error!("Error while adding new block from {}: {}", peer, e);
+                peer.increment_fail_count();
+            }
+        }
+
+        debug!("Blocks processing task ended");
+    }
+
     // this function handle the logic to send all packets to the peer
     async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut UnboundedReceiver<ConnectionMessage>) -> Result<(), P2pError> {
         loop {
@@ -863,61 +935,10 @@ impl<S: Storage> P2pServer<S> {
 
                 let block_height = header.get_height();
                 debug!("Received block at height {} from {}", block_height, peer);
-                let zelf = Arc::clone(self);
                 let peer = Arc::clone(peer);
-                // verify that we have all txs in local or ask peer to get missing txs
-                tokio::spawn(async move {
-                    let mut response_blockers: Vec<ResponseBlocker> = Vec::new();
-                    for hash in header.get_txs_hashes() {
-                        let contains = { // we don't lock one time because we may wait on p2p response
-                            // Check in ObjectTracker
-                            if let Some(response_blocker) = zelf.object_tracker.get_response_blocker_for_requested_object(hash).await {
-                                trace!("{} is already requested, waiting on response blocker for block {}", hash, block_hash);
-                                response_blockers.push(response_blocker);
-                                true
-                            } else {
-                                zelf.blockchain.has_tx(hash).await.unwrap_or(false)
-                            }
-                        };
-
-                        if !contains { // retrieve one by one to prevent acquiring the lock for nothing
-                            debug!("Requesting TX {} to {} for block {}", hash, peer, block_hash);
-                            if let Err(e) = zelf.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone()), false).await {
-                                    error!("Error while requesting TX {} to {} for block {}: {}", hash, peer, block_hash, e);
-                                    peer.increment_fail_count();
-                                    return;
-                            }
-
-                            if let Some(response_blocker) = zelf.object_tracker.get_response_blocker_for_requested_object(hash).await {
-                                response_blockers.push(response_blocker);
-                            }
-                        }
-                    }
-
-                    // Wait on all already requested txs
-                    for mut blocker in response_blockers {
-                        if let Err(e) = blocker.recv().await {
-                            // It's mostly a closed channel error, so we can ignore it
-                            debug!("Error while waiting on response blocker: {}", e);
-                        }
-                    }
-
-                    // add immediately the block to chain as we are synced with
-                    let block = match zelf.blockchain.build_block_from_header(Immutable::Owned(header)).await {
-                        Ok(block) => block,
-                        Err(e) => {
-                            error!("Error while building block {} from peer {}: {}", block_hash, peer, e);
-                            peer.increment_fail_count();
-                            return;
-                        }
-                    };
-
-                    debug!("Adding received block {} from {} to chain", block_hash, peer);
-                    if let Err(e) = zelf.blockchain.add_new_block(block, true, false).await {
-                        error!("Error while adding new block from {}: {}", peer, e);
-                        peer.increment_fail_count();
-                    }
-                });
+                if let Err(e) = self.blocks_processor.send((peer, header, block_hash)) {
+                    error!("Error while sending block propagated to blocks processor task: {}", e);
+                }
             },
             Packet::ChainRequest(packet_wrapper) => {
                 trace!("Received a chain request from {}", peer);
