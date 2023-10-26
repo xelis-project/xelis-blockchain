@@ -376,7 +376,9 @@ impl Peer {
     }
 
     pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), P2pError> {
+        trace!("Sending {} bytes to {}", bytes.len(), self.get_outgoing_address());
         let tx = self.connection.get_tx().lock().await;
+        trace!("Lock acquired, Sending packet");
         tx.send(ConnectionMessage::Packet(bytes))?;
         Ok(())
     }

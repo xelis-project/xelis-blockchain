@@ -605,7 +605,9 @@ impl<S: Storage> P2pServer<S> {
                 trace!("Sending generic ping packet...");
                 let packet = Packet::Ping(Cow::Owned(ping));
                 let bytes = Bytes::from(packet.to_bytes());
+                trace!("Locking peerlist... (generic ping)");
                 let peerlist = self.peer_list.read().await;
+                trace!("End locking peerlist... (generic ping)");
                 // broadcast directly the ping packet asap to all peers
                 for peer in peerlist.get_peers().values() {
                     trace!("broadcast to {}", peer);
