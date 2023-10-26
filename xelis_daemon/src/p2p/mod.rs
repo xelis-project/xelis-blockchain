@@ -41,7 +41,7 @@ use crate::{
         NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS,
         P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT,
         CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT,
-        CHAIN_SYNC_TIMEOUT_SECS, P2P_EXTEND_PEERLIST_DELAY, TIPS_LIMIT
+        CHAIN_SYNC_TIMEOUT_SECS, P2P_EXTEND_PEERLIST_DELAY, TIPS_LIMIT, PEER_TIMEOUT_INIT_CONNECTION
     }, rpc::rpc::get_peer_entry
 };
 use self::{
@@ -350,7 +350,7 @@ impl<S: Storage> P2pServer<S> {
     // if the handshake is valid, we accept it & register it on server
     async fn handle_new_connection(self: &Arc<Self>, buf: &mut [u8], mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
         trace!("New connection: {}", connection);
-        let handshake: Handshake = match timeout(Duration::from_millis(800), connection.read_packet(buf, buf.len() as u32)).await?? {
+        let handshake: Handshake = match timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), connection.read_packet(buf, buf.len() as u32)).await?? {
             Packet::Handshake(h) => h.into_owned(), // only allow handshake packet
             _ => return Err(P2pError::ExpectedHandshake)
         };
@@ -818,15 +818,23 @@ impl<S: Storage> P2pServer<S> {
     // a common peer between them two, which result in false positive in our case and they send
     // us both the same object
     async fn get_common_peers_for(&self, peer: &Arc<Peer>) -> Vec<Arc<Peer>> {
+        debug!("get common peers for {}", peer);
         let peer_list = self.peer_list.read().await;
+        trace!("locked peer_list, locking peers received (common peers)");
         let peer_peers = peer.get_peers(false).lock().await;
+        trace!("locked peers received (common peers)");
+
         let mut common_peers = Vec::new();
         for common_peer_addr in peer_peers.iter() {
             // if we have a common peer with him
             if let Some(common_peer) = peer_list.get_peer_by_addr(common_peer_addr) {
                 if peer.get_id() != common_peer.get_id() {
+                    trace!("locking common peers received");
                     let peers_received = common_peer.get_peers(false).lock().await;
+                    trace!("locking common peers sent");
                     let peers_sent = common_peer.get_peers(true).lock().await;
+                    trace!("lock acquired (common peer)");
+
                     // verify that we already know that he his connected to it and that we informed him we are connected too to prevent any desync
                     if peers_received.iter().find(
                         |addr: &&SocketAddr| *addr == peer.get_outgoing_address()
@@ -1555,11 +1563,15 @@ impl<S: Storage> P2pServer<S> {
     pub async fn broadcast_tx_hash(&self, storage: &S, tx: Hash) {
         info!("Broadcasting tx hash {}", tx);
         let ping = self.build_generic_ping_packet_with_storage(storage).await;
+        trace!("Ping packet has been generated for tx broadcast");
         let current_topoheight = ping.get_topoheight();
         let packet = Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(&tx), Cow::Owned(ping)));
         // transform packet to bytes (so we don't need to transform it for each peer)
         let bytes = Bytes::from(packet.to_bytes());
+        trace!("Locking peer list for tx broadcast");
         let peer_list = self.peer_list.read().await;
+        trace!("Lock acquired for tx broadcast");
+
         for peer in peer_list.get_peers().values() {
             // check that the peer is not too far from us
             // otherwise we may spam him for nothing
@@ -1623,7 +1635,9 @@ impl<S: Storage> P2pServer<S> {
     }
 
     pub async fn broadcast_packet(&self, packet: Packet<'_>) {
+        trace!("Locking peer list for broadcasting packet");
         let peer_list = self.peer_list.read().await;
+        trace!("Lock acquired, broadcast packet");
         peer_list.broadcast(packet).await;
     }
 
