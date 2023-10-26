@@ -1,8 +1,8 @@
-use std::{borrow::Cow, collections::HashSet};
+use std::{borrow::Cow, collections::HashSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::{hash::Hash, address::Address}, account::{VersionedBalance, VersionedNonce}, network::Network, block::Difficulty};
+use crate::{crypto::{hash::Hash, address::Address}, account::{VersionedBalance, VersionedNonce}, network::Network, block::Difficulty, transaction::Transaction};
 
 use super::DataHash;
 
@@ -73,12 +73,6 @@ pub struct SubmitBlockParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetMessagesParams<'a> {
-    pub address: Address<'a>,
-    pub from: Option<Address<'a>>
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct GetBalanceParams<'a> {
     pub address: Cow<'a, Address<'a>>,
     pub asset: Cow<'a, Hash>
@@ -99,10 +93,22 @@ pub struct GetNonceParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct HasNonceParams<'a> {
+    pub address: Cow<'a, Address<'a>>,
+    #[serde(default)]
+    pub topoheight: Option<u64>
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetNonceResult {
     pub topoheight: u64,
     #[serde(flatten)]
     pub version: VersionedNonce
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HasNonceResult {
+    pub exist: bool
 }
 
 #[derive(Serialize, Deserialize)]
@@ -140,6 +146,21 @@ pub struct GetTransactionParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct PeerEntry<'a> {
+    pub id: u64,
+    pub addr: Cow<'a, SocketAddr>,
+    pub tag: Cow<'a, Option<String>>,
+    pub version: Cow<'a, String>,
+    pub top_block_hash: Hash,
+    pub topoheight: u64,
+    pub height: u64,
+    pub last_ping: u64,
+    pub pruned_topoheight: Option<u64>,
+    pub peers: HashSet<SocketAddr>,
+    pub cumulative_difficulty: Difficulty
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct P2pStatusResult<'a> {
     pub peer_count: usize,
     pub max_peers: usize,
@@ -167,15 +188,61 @@ pub struct GetTransactionsParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct TransactionResponse<'a, T: Clone> {
+pub struct TransactionResponse<'a, T: Clone + AsRef<Transaction>> {
     // in which blocks it was included
     pub blocks: Option<HashSet<Hash>>,
     // in which blocks it was executed
     pub executed_in_block: Option<Hash>,
     // if it is in mempool
     pub in_mempool: bool,
+    // if its a mempool tx, we add the timestamp when it was added
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub first_seen: Option<u64>,
     #[serde(flatten)]
     pub data: DataHash<'a, T>
+}
+
+fn default_xelis_asset() -> Hash {
+    crate::config::XELIS_ASSET
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetAccountHistoryParams<'a> {
+    pub address: Address<'a>,
+    #[serde(default = "default_xelis_asset")]
+    pub asset: Hash,
+    pub minimum_topoheight: Option<u64>,
+    pub maximum_topoheight: Option<u64>
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")] 
+pub enum AccountHistoryType {
+    Mining { reward: u64 },
+    Burn { amount: u64 },
+    // TODO delete those two fields with upcoming privacy layer
+    Outgoing { amount: u64 },
+    Incoming { amount: u64 },
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct AccountHistoryEntry {
+    pub topoheight: u64,
+    pub hash: Hash,
+    #[serde(flatten)]
+    pub history_type: AccountHistoryType,
+    pub block_timestamp: u128
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetAccountAssetsParams<'a> {
+    pub address: Address<'a>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetAssetParams {
+    pub asset: Hash
 }
 
 #[derive(Serialize, Deserialize)]
@@ -186,7 +253,15 @@ pub struct GetAssetsParams {
     pub maximum_topoheight: Option<u64>
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
+pub struct GetAccountsParams {
+    pub skip: Option<usize>,
+    pub maximum: Option<usize>,
+    pub minimum_topoheight: Option<u64>,
+    pub maximum_topoheight: Option<u64>
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {
     // When a new block is accepted by chain
     // it contains Block struct as value
@@ -208,7 +283,21 @@ pub enum NotifyEvent {
     TransactionSCResult,
     // When a new asset has been registered
     // TODO: Smart Contracts
-    NewAsset
+    NewAsset,
+    // When a new peer has connected to us
+    // It contains PeerEntry struct as value
+    PeerConnected,
+    // When a peer has disconnected from us
+    // It contains peer id as value
+    // TODO not implemented yet
+    PeerDisconnected,
+    // Peer peerlist updated, its all its connected peers
+    // It contains PeerPeerListUpdatedEvent as value
+    PeerPeerListUpdated,
+    // When a peer of a peer has disconnected
+    // and that he notified us
+    // It contains PeerPeerDisconnectedEvent as value
+    PeerPeerDisconnected,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -231,4 +320,20 @@ pub struct TransactionExecutedEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
     pub tx_hash: Cow<'a, Hash>,
     pub topoheight: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PeerPeerListUpdatedEvent {
+    // Peer ID of the peer that sent us the new peer list
+    pub peer_id: u64,
+    // Peerlist received from this peer
+    pub peerlist: Vec<SocketAddr>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PeerPeerDisconnectedEvent {
+    // Peer ID of the peer that sent us this notification
+    pub peer_id: u64,
+    // address of the peer that disconnected from him
+    pub peer_addr: SocketAddr
 }

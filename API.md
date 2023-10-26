@@ -234,7 +234,6 @@ Retrieve a block at a specific topo height
 	}
 }
 ```
-
 NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
 
 #### Get Blocks At Height
@@ -289,10 +288,8 @@ Retrieve all blocks at a specific height
 		}
 	]
 }
-
-NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
-
 ```
+NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
 
 #### Get Block By Hash
 Retrieve a block by its hash
@@ -345,7 +342,6 @@ Retrieve a block by its hash
 	}
 }
 ```
-
 NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
 
 #### Get Top Block
@@ -396,21 +392,21 @@ Retrieve the highest block based on the topological height
 	}
 }
 ```
-
 NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
 
 #### Get Nonce
 Retrieve the nonce for address in request params.
 
-If no nonce is found for this address and its valid, value start at 0.
-Each nonce represents how many TX has been made by this address.
+If no nonce is found for this address and its a valid one, it is safe to assume its nonce start at 0.
+Each nonce represents how many TX has been made by this address and prevent replay attacks.
 
 ##### Method `get_nonce`
 
 ##### Parameters
-|   Name  |   Type  | Required |                Note               |
-|:-------:|:-------:|:--------:|:---------------------------------:|
-| address | Address | Required | Valid address registered on chain |
+|    Name    |   Type  | Required |                    Note                    |
+|:----------:|:-------:|:--------:|:------------------------------------------:|
+|   address  | Address | Required |      Valid address registered on chain     |
+| topoheight | Integer | Optional |        nonce at specified topoheight       |
 
 ##### Request
 ```json
@@ -429,7 +425,45 @@ Each nonce represents how many TX has been made by this address.
 {
 	"id": 1,
 	"jsonrpc": "2.0",
-	"result": 17
+    "result": {
+        "nonce": 6216,
+        "previous_topoheight": 454254,
+        "topoheight": 454352
+    }
+}
+```
+
+#### Has Nonce
+Verify if address has a nonce on-chain registered.
+
+##### Method `has_nonce`
+
+##### Parameters
+|    Name    |   Type  | Required |                    Note                    |
+|:----------:|:-------:|:--------:|:------------------------------------------:|
+|   address  | Address | Required |      Valid address registered on chain     |
+| topoheight | Integer | Optional |        nonce at specified topoheight       |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "has_nonce",
+	"params": {
+		"address": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5"
+	}
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "exist": true
+    }
 }
 ```
 
@@ -437,6 +471,7 @@ Each nonce represents how many TX has been made by this address.
 Get up-to-date asset's balance for a specific address
 
 NOTE: Balance is returned in atomic units
+
 ##### Method `get_last_balance`
 
 ##### Parameters
@@ -477,6 +512,7 @@ NOTE: Balance is returned in atomic units
 Get asset's balance from address at exact topoheight
 
 NOTE: Balance is returned in atomic units
+
 ##### Method `get_balance_at_topoheight`
 
 ##### Parameters
@@ -513,7 +549,7 @@ NOTE: Balance is returned in atomic units
 ```
 
 #### Get Assets
-Get all assets available on network with its registered topoheight. 
+Get all assets available on network with its registered topoheight and necessary decimals for a full coin.
 
 ##### Method `get_assets`
 
@@ -539,8 +575,46 @@ Get all assets available on network with its registered topoheight.
     "id": 1,
     "jsonrpc": "2.0",
     "result": [
-        "0000000000000000000000000000000000000000000000000000000000000000"
+        {
+            "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+            "decimals": 5,
+            "topoheight": 0
+        }
     ]
+}
+```
+
+#### Get Asset
+Get registered topoheight and decimals data from a specific asset.
+
+##### Method `get_asset`
+
+##### Parameters
+|  Name | Type | Required |        Note        |
+|:-----:|:----:|:--------:|:------------------:|
+| asset | Hash | Required | Asset ID requested |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_asset",
+    "id": 1,
+    "params": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "decimals": 5,
+        "topoheight": 0
+    }
 }
 ```
 
@@ -567,6 +641,32 @@ No parameters
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": 1
+}
+```
+
+#### Count Accounts
+Counts the number of accounts saved on disk
+
+##### Method `count_accounts`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "count_accounts"
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 1271
 }
 ```
 
@@ -656,6 +756,58 @@ No parameters
 	}
 }
 ```
+
+#### Get Peers
+Retrieve all peers connected
+
+##### Method `get_peers`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_peers"
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "addr": "255.255.255.255:2125",
+            "cumulative_difficulty": 15429361306853,
+            "height": 488400,
+            "id": 8185485348476293826,
+            "last_ping": 1697559833,
+            "pruned_topoheight": 488000,
+            "tag": null,
+            "top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
+            "topoheight": 489291,
+            "version": "1.5.0"
+        },
+        {
+            "addr": "192.168.55.43:2125",
+            "cumulative_difficulty": 15429361306853,
+            "height": 488400,
+            "id": 2491091954271682078,
+            "last_ping": 1697559834,
+            "pruned_topoheight": 489200,
+            "tag": null,
+            "top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
+            "topoheight": 489291,
+            "version": "1.5.0"
+        }
+    ]
+}
+```
+NOTE: Addresses displayed in this example are not real one and were replaced for privacy reasons.
 
 #### Get DAG Order
 Retrieve the whole DAG order (all blocks hash ordered by topoheight).
@@ -764,7 +916,7 @@ NOTE: result returned in `data` field can changes based on the TransactionType (
 		],
 		"executed_in_block": "0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692",
 		"data": {
-			"Transfer": [
+			"transfers": [
 				{
 					"amount": 15000,
 					"asset": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -811,7 +963,7 @@ No parameters
 			"blocks": null,
 			"executed_in_block": null,
 			"data": {
-				"Transfer": [
+				"transfers": [
 					{
 						"amount": 1500,
 						"asset": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -869,7 +1021,7 @@ Fetch transactions by theirs hashes from database and mempool of daemon and keep
 			],
 			"executed_in_block": "0000073b071e04ce4e79b095f3c44f4aefb65f4e70f8a5591c986cb4b688d692",
 			"data": {
-				"Transfer": [
+				"transfers": [
 					{
 						"amount": 15000,
 						"asset": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -888,6 +1040,83 @@ Fetch transactions by theirs hashes from database and mempool of daemon and keep
 		null
 	]
 }
+```
+
+#### Get Account History
+Fetch up to 20 history events for an account on a specific asset
+
+##### Method `get_account_history`
+
+##### Parameters
+|        Name        |   Type  | Required |                Note               |
+|:------------------:|:-------:|:--------:|:---------------------------------:|
+|       address      | Address | Required | Valid address registered on chain |
+|        asset       |   Hash  | Optional |           Asset to track          |
+| minimum_topoheight | Integer | Optional |   minimum topoheight for history  |
+| maximum_topoheight | Integer | Optional | Maximum topoheight for history    |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "get_account_history",
+    "params": {
+        "address": "xet1qqqyvh9vgkcurtj2la0e4jspnfsq7vkaqm863zcfdnej92xg4mpzz3suf96k4"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "block_timestamp": 1697492997128,
+            "hash": "0000006f160df7d7aaa5d519f341136ae95fce1324280546070fecd8efe93751",
+            "mining": {
+                "reward": 117059
+            },
+            "topoheight": 485818
+        },
+        {
+            "block_timestamp": 1697492967931,
+            "hash": "0000001f62cc170349de2475a7f2338513f5340481c73af9e94c35aa2805d9cf",
+            "mining": {
+                "reward": 117059
+            },
+            "topoheight": 485817
+        }
+	]
+}
+```
+
+#### Get Account Assets
+Retrieve all assets for an account
+
+##### Method `get_account_assets`
+
+##### Parameters
+|   Name  |   Type  | Required |                Note               |
+|:-------:|:-------:|:--------:|:---------------------------------:|
+| address | Address | Required | Valid address registered on chain |
+
+##### Request
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    ]
+}
+```
+
+##### Response
+```json
+
 ```
 
 #### Submit Block
@@ -1016,7 +1245,6 @@ Retrieve a specific range of blocks (up to 20 maximum) based on topoheight
 }
 ```
 
-
 #### Get Blocks Range By Height
 Retrieve a specific range of blocks (up to 20 maximum) based on height
 
@@ -1108,6 +1336,46 @@ Retrieve a specific range of blocks (up to 20 maximum) based on height
 			"txs_hashes": [],
 			"version": 0
 		}
+	]
+}
+```
+
+#### Get Accounts
+Retrieve a list of available accounts (each account returned had at least one interaction on-chain)
+The topoheight range in parameters search for all accounts having a on-chain interaction in this inclusive range.
+
+##### Method `get_accounts`
+
+##### Parameters
+|        Name        |   Type  | Required |                        Note                       |
+|:------------------:|:-------:|:--------:|:-------------------------------------------------:|
+|        skip        | Integer | Optional |             How many accounts to skip             |
+|       maximum      | Integer | Optional |     Maximum accounts to fetch (limited to 100)    |
+| minimum_topoheight | Integer | Optional | Minimum topoheight for first on-chain interaction |
+| maximum_topoheight | Integer | Optional | Maximum topoheight for first on-chain interaction |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_accounts",
+	"params": {}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": [
+		"xet1qqq9rrdy6s2zy4yavp59094jzlm66n33vy0datvv900yls8pugvyvmqn46pvl",
+		"xet1qqqgpk6n5klceg9gg9tcw0xa8r3e7zd3gc5mzv2v4m48knxd0y9wadg3mdp9t",
+		"xet1qqqvpwf9qprl6hzysg0zycm3y56ygys32wukxnl7yezqc7ydudy3azcxq6nwv",
+		"xet1qqqvltq9dsmvdsvapr6y0742sv477766g9vpvp2expe5v7x7fadvftc9h2vyw",
+		"xet1qqqd9ur03xahtts6q00t8z8ya2gxm39qx43ljz32vmv8p7j9ccxn6zccrfnxp",
+		"xet1qqqd2jtz9f2u3z6uznpx8mqdkh6llt3yn3eg3a5tpsfn8jcsthufg5qmwwl2j"
 	]
 }
 ```

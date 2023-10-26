@@ -3,9 +3,15 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance};
+use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, asset::AssetWithData, serializer::Serializer};
 
 use crate::{daemon_api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
+
+#[cfg(feature = "api_server")]
+use {
+    std::borrow::Cow,
+    xelis_common::api::wallet::{NotifyEvent, BalanceChanged}
+};
 
 // NetworkHandler must be behind a Arc to be accessed from Wallet (to stop it) or from tokio task
 pub type SharedNetworkHandler = Arc<NetworkHandler>;
@@ -13,7 +19,13 @@ pub type SharedNetworkHandler = Arc<NetworkHandler>;
 #[derive(Debug, Error)]
 pub enum NetworkError {
     #[error("network handler is already running")]
-    AlreadyRunning
+    AlreadyRunning,
+    #[error("network handler is not running")]
+    NotRunning,
+    #[error(transparent)]
+    TaskError(#[from] tokio::task::JoinError),
+    #[error(transparent)]
+    DaemonAPIError(#[from] Error)
 }
 
 pub struct NetworkHandler {
@@ -56,15 +68,16 @@ impl NetworkHandler {
         Ok(())
     }
 
-    pub async fn stop(&self) {
+    pub async fn stop(&self) -> Result<(), NetworkError> {
         if let Some(handle) = self.task.lock().await.take() {
             if handle.is_finished() {
-                if let Err(e) = handle.await {
-                    debug!("Network handler was finished with error: {}", e);
-                }
+                handle.await??;
             } else {
                 handle.abort();
             }
+            Ok(())
+        } else {
+            Err(NetworkError::NotRunning)
         }
     }
 
@@ -99,6 +112,17 @@ impl NetworkHandler {
                 };
                 let balance = res.balance;
 
+                // Inform the change of the balance
+                #[cfg(feature = "api_server")]
+                {
+                    if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
+                        api_server.notify_event(&NotifyEvent::BalanceChanged, &BalanceChanged {
+                            asset: Cow::Borrowed(&asset),
+                            balance: balance.get_balance()
+                        }).await;
+                    }
+                }
+
                 // lets write the final balance
                 let mut storage = self.wallet.get_storage().write().await;
                 storage.set_balance_for(asset, balance.get_balance())?;
@@ -109,9 +133,8 @@ impl NetworkHandler {
         Ok(Some((topoheight, balance)))
     }
 
-    async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, min_topoheight: u64, mut current_topoheight: Option<u64>) -> Result<(), Error> {
+    async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, min_topoheight: u64, current_topoheight: Option<u64>) -> Result<(), Error> {
         let mut res = self.get_versioned_balance_and_topoheight(address, asset, current_topoheight).await?;
-        let mut is_highest_nonce = true;
         while let Some((topoheight, balance)) = res.take() {
             // don't sync already synced blocks
             if min_topoheight > topoheight {
@@ -126,6 +149,15 @@ impl NetworkHandler {
                 if let Some(reward) = response.reward {
                     let coinbase = EntryData::Coinbase(reward);
                     let entry = TransactionEntry::new(response.data.hash.into_owned(), topoheight, None, None, coinbase);
+
+                    // New coinbase entry, inform listeners
+                    #[cfg(feature = "api_server")]
+                    {
+                        if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
+                            api_server.notify_event(&NotifyEvent::NewTransaction, &entry).await;
+                        }
+                    }
+
                     let mut storage = self.wallet.get_storage().write().await;
                     storage.save_transaction(entry.get_hash(), &entry)?;
                 } else {
@@ -133,9 +165,9 @@ impl NetworkHandler {
                 }
             }
 
-            let mut latest_nonce_sent = None;
             let (block, txs) = block.split();
-            for (tx_hash, tx) in block.get_txs_hashes().iter().zip(txs) {
+            // TODO check only executed txs in this block
+            for (tx_hash, tx) in block.into_owned().take_txs_hashes().into_iter().zip(txs) {
                 let tx = tx.into_owned();
                 let is_owner = *tx.get_owner() == *address.get_public_key();
                 let fee = if is_owner { Some(tx.get_fee()) } else { None };
@@ -153,7 +185,12 @@ impl NetworkHandler {
                         let mut transfers: Vec<Transfer> = Vec::new();
                         for tx in txs {
                             if is_owner || tx.to == *address.get_public_key() {
-                                let transfer = Transfer::new(tx.to, tx.asset, tx.amount, tx.extra_data);
+                                let extra_data = if let Some(bytes) = tx.extra_data {
+                                    Option::from_bytes(&bytes)?
+                                } else {
+                                    None
+                                };
+                                let transfer = Transfer::new(tx.to, tx.asset, tx.amount, extra_data);
                                 transfers.push(transfer);
                             }
                         }
@@ -173,24 +210,20 @@ impl NetworkHandler {
                 };
 
                 if let Some(entry) = entry {
-                    let entry = TransactionEntry::new(tx_hash.clone(), topoheight, fee, nonce, entry);
+                    let entry = TransactionEntry::new(tx_hash, topoheight, fee, nonce, entry);
                     let mut storage = self.wallet.get_storage().write().await;
-                    storage.save_transaction(entry.get_hash(), &entry)?;
-                }
 
-                if is_owner {
-                    latest_nonce_sent = nonce;
-                }
-            }
-
-            // check that we have a outgoing tx (in case of same wallets used in differents places at same time)
-            if is_highest_nonce {
-                if let (Some(last_nonce), None) = (latest_nonce_sent, current_topoheight.take()) {
-                    // don't keep the lock in case of a request
-                    debug!("Detected a nonce changes for balance at topoheight {} with last nonce {} current topoheight {:?}", topoheight, last_nonce, current_topoheight);
-                    let mut storage = self.wallet.get_storage().write().await;
-                    storage.set_nonce(last_nonce + 1)?;
-                    is_highest_nonce = false;
+                    if !storage.has_transaction(entry.get_hash())? {
+                        // notify listeners of new transaction
+                        #[cfg(feature = "api_server")]
+                        {
+                            if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
+                                api_server.notify_event(&NotifyEvent::NewTransaction, &entry).await;
+                            }
+                        }
+    
+                        storage.save_transaction(entry.get_hash(), &entry)?;
+                    }
                 }
             }
 
@@ -250,6 +283,14 @@ impl NetworkHandler {
             }
             debug!("New height detected for chain: {}", info.topoheight);
 
+            // New get_info with different topoheight, inform listeners
+            #[cfg(feature = "api_server")]
+            {
+                if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
+                    api_server.notify_event(&NotifyEvent::NewChainInfo, &info).await;
+                }
+            }
+
             if let Err(e) = self.sync_new_blocks(&address, current_topoheight, info.topoheight).await {
                 error!("Error while syncing new blocks: {}", e);
             }
@@ -284,16 +325,33 @@ impl NetworkHandler {
                 skip += response.len();
     
                 let mut storage = self.wallet.get_storage().write().await;
-                for asset in &response {
-                    if !storage.contains_asset(asset)? {
-                        storage.add_asset(asset)?;
+                for asset_data in &response {
+                    if !storage.contains_asset(asset_data.get_asset())? {
+                        // New asset added to the wallet, inform listeners
+                        #[cfg(feature = "api_server")]
+                        {
+                            if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
+                                api_server.notify_event(&NotifyEvent::NewAsset, asset_data.get_asset()).await;
+                            }
+                        }
+
+                        storage.add_asset(asset_data.get_asset(), asset_data.get_data().get_decimals())?;
                     }
                 }
     
-                assets.extend(response);
+                assets.extend(response.into_iter().map(AssetWithData::to_asset).collect::<Vec<_>>());
             }
         }
 
+        // Retrieve the highest nonce (in one call, in case of assets/txs not tracked correctly)
+        {
+            let nonce = self.api.get_last_nonce(&address).await.map(|v| v.version.get_nonce()).unwrap_or(0);
+            debug!("New nonce found is {}", nonce);
+            let mut storage = self.wallet.get_storage().write().await;
+            storage.set_nonce(nonce)?;
+        }
+
+        // get balance and transactions for each asset
         for asset in assets {
             debug!("calling get balances and transactions {}", current_topoheight);
             if let Err(e) = self.get_balance_and_transactions(&address, &asset, current_topoheight, None).await {

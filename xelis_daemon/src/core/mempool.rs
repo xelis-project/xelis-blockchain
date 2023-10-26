@@ -1,8 +1,9 @@
 use super::error::BlockchainError;
-use std::cmp::Reverse;
-use std::collections::{HashMap, BTreeMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
-use log::{trace, debug};
+use indexmap::IndexSet;
+use log::{trace, debug, warn};
+use xelis_common::utils::get_current_time;
 use xelis_common::{
     crypto::{
         hash::Hash,
@@ -15,6 +16,7 @@ use xelis_common::{
 #[derive(serde::Serialize)]
 pub struct SortedTx {
     tx: Arc<Transaction>,
+    first_seen: u64, // timestamp when the tx was added
     size: usize
 }
 
@@ -23,7 +25,7 @@ pub struct NonceCache {
     min: u64,
     max: u64,
     // all txs for this user ordered by nonce
-    txs: BTreeMap<u64, Arc<Hash>>,
+    txs: IndexSet<Arc<Hash>>,
 }
 
 #[derive(serde::Serialize)]
@@ -31,18 +33,14 @@ pub struct Mempool {
     // store all txs waiting to be included in a block
     txs: HashMap<Arc<Hash>, SortedTx>,
     // store all sender's nonce for faster finding
-    nonces_cache: HashMap<PublicKey, NonceCache>,
-    // binary tree map for sorted txs hash by fees
-    // keys represents fees, while value represents all txs hash
-    sorted_txs: BTreeMap<Reverse<u64>, HashSet<Arc<Hash>>>,
+    nonces_cache: HashMap<PublicKey, NonceCache>
 }
 
 impl Mempool {
     pub fn new() -> Self {
         Mempool {
             txs: HashMap::new(),
-            nonces_cache: HashMap::new(),
-            sorted_txs: BTreeMap::new()
+            nonces_cache: HashMap::new()
         }
     }
 
@@ -51,23 +49,34 @@ impl Mempool {
         let hash = Arc::new(hash);
         let nonce = tx.get_nonce();
         // update the cache for this owner
+        let mut must_update = true;
         if let Some(cache) = self.nonces_cache.get_mut(tx.get_owner()) {
             // delete the TX if its in the range of already tracked nonces
             trace!("Cache found for owner {} with nonce range {}-{}, nonce = {}", tx.get_owner(), cache.get_min(), cache.get_max(), nonce);
             if nonce >= cache.get_min() && nonce <= cache.get_max() {
                 trace!("nonce {} is in range {}-{}", nonce, cache.get_min(), cache.get_max());
                 // because it's based on order and we may have the same order
-                if let Some(tx_hash) = cache.txs.remove(&nonce) {
+                let index = ((nonce - cache.get_min()) % (cache.get_max() - cache.get_min())) as usize;
+                cache.txs.insert(hash.clone());
+                must_update = false;
+
+                if let Some(tx_hash) = cache.txs.swap_remove_index(index) {
                     trace!("TX {} with same nonce found in cache, removing it from sorted txs", tx_hash);
                     // remove the tx hash from sorted txs
-                    Self::delete_tx(&mut self.txs, &mut self.sorted_txs, tx_hash);
+                    if self.txs.remove(&tx_hash).is_none() {
+                        warn!("TX {} not found in mempool while deleting collision with {}", tx_hash, hash);
+                    }
+                } else {
+                    warn!("No TX found in cache for nonce {} while adding {}", nonce, hash);
                 }
             }
 
-            cache.update(nonce, hash.clone());
+            if must_update {
+                cache.update(nonce, hash.clone());
+            }
         } else {
-            let mut txs = BTreeMap::new();
-            txs.insert(nonce, hash.clone());
+            let mut txs = IndexSet::new();
+            txs.insert(hash.clone());
 
             // init the cache
             let cache = NonceCache {
@@ -80,12 +89,9 @@ impl Mempool {
 
         let sorted_tx = SortedTx {
             size: tx.size(),
+            first_seen: get_current_time(),
             tx
         };
-
-        let entry = self.sorted_txs.entry(Reverse(sorted_tx.get_fee())).or_insert_with(HashSet::new);
-        // add the tx hash in sorted txs
-        entry.insert(hash.clone());
 
         // insert in map
         self.txs.insert(hash, sorted_tx);
@@ -123,10 +129,6 @@ impl Mempool {
         &self.txs
     }
 
-    pub fn get_sorted_txs(&self) -> &BTreeMap<Reverse<u64>, HashSet<Arc<Hash>>> {
-        &self.sorted_txs
-    }
-
     pub fn get_cached_nonce(&self, key: &PublicKey) -> Option<&NonceCache> {
         self.nonces_cache.get(key)
     }
@@ -137,7 +139,6 @@ impl Mempool {
 
     pub fn clear(&mut self) {
         self.txs.clear();
-        self.sorted_txs.clear();
         self.nonces_cache.clear();
     }
 
@@ -161,10 +162,15 @@ impl Mempool {
                     // filter all txs hashes which are not found
                     // or where its nonce is smaller than the new nonce
                     // TODO when drain_filter is stable, use it (allow to get all hashes deleted)
-                    cache.txs.retain(|tx_nonce, tx| {
-                        let delete = *tx_nonce < nonce;
+                    cache.txs.retain(|hash| {
+                        let delete = if let Some(tx) = self.txs.get(hash) {
+                            tx.get_tx().get_nonce() < nonce
+                        } else {
+                            true
+                        };
+
                         if delete {
-                            hashes.push(Arc::clone(tx));
+                            hashes.push(Arc::clone(hash));
                         }
                         !delete
                     });
@@ -174,7 +180,9 @@ impl Mempool {
 
                     // now delete all necessary txs
                     for hash in hashes {
-                        Self::delete_tx(&mut self.txs, &mut self.sorted_txs, hash);
+                        if self.txs.remove(&hash).is_none() {
+                            warn!("TX {} not found in mempool while deleting", hash);
+                        }
                     }
                 }
             }
@@ -182,27 +190,6 @@ impl Mempool {
             if delete_cache {
                 trace!("Removing empty nonce cache for owner {}", key);
                 self.nonces_cache.remove(&key);
-            }
-        }
-    }
-
-
-    fn delete_tx(txs: &mut HashMap<Arc<Hash>, SortedTx>, sorted_txs: &mut BTreeMap<Reverse<u64>, HashSet<Arc<Hash>>>, hash: Arc<Hash>) {
-        trace!("Trying to delete {}", hash);
-        if let Some(sorted_tx) = txs.remove(&hash) {
-            trace!("Deleted from HashMap: {}", hash);
-            let fee_reverse = Reverse(sorted_tx.get_fee());
-            let mut is_empty = false;
-            if let Some(hashes) = sorted_txs.get_mut(&fee_reverse) {
-                trace!("Removing tx hash {} for fee entry {}", hash, fee_reverse.0);
-                hashes.remove(&hash);
-                is_empty = hashes.is_empty();
-            }
-
-            // don't keep empty data
-            if is_empty {
-                trace!("Removing empty fee ({}) entry", fee_reverse.0);
-                sorted_txs.remove(&fee_reverse);
             }
         }
     }
@@ -221,6 +208,10 @@ impl SortedTx {
         self.size
     }
 
+    pub fn get_first_seen(&self) -> u64 {
+        self.first_seen
+    }
+
     pub fn consume(self) -> Arc<Transaction> {
         self.tx
     }
@@ -235,13 +226,13 @@ impl NonceCache {
         self.max
     }
 
-    pub fn get_txs(&self) -> &BTreeMap<u64, Arc<Hash>> {
+    pub fn get_txs(&self) -> &IndexSet<Arc<Hash>> {
         &self.txs
     }
 
     fn update(&mut self, nonce: u64, hash: Arc<Hash>) {
         self.update_nonce_range(nonce);
-        self.txs.insert(nonce, hash);
+        self.txs.insert(hash);
     }
 
     fn update_nonce_range(&mut self, nonce: u64) {
@@ -257,6 +248,17 @@ impl NonceCache {
     }
 
     pub fn has_tx_with_same_nonce(&self, nonce: u64) -> Option<&Arc<Hash>> {
-        self.txs.get(&nonce)
+        if nonce < self.min || nonce > self.max || self.txs.is_empty() {
+            return None;
+        }
+
+        trace!("has tx with same nonce: {}, max: {}, min: {}, size: {}", nonce, self.max, self.min, self.txs.len());
+        let mut r = self.max - self.min;
+        if r == 0 {
+            r = self.txs.len() as u64;
+        }
+
+        let index = ((nonce - self.min) % r) as usize;
+        self.txs.get_index(index)
     }
 }

@@ -7,17 +7,20 @@ use crate::serializer::{Serializer, ReaderError};
 use self::command::{CommandManager, CommandError};
 use std::collections::VecDeque;
 use std::fmt::{Display, Formatter, self};
+use std::fs::create_dir;
 use std::io::{Write, stdout, Error as IOError};
 use std::num::ParseFloatError;
+use std::path::Path;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize};
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize, AtomicU16};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
 use crossterm::terminal;
 use fern::colors::{ColoredLevelConfig, Color};
+use regex::Regex;
 use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 use tokio::sync::oneshot;
 use std::sync::{PoisonError, Arc, Mutex};
-use log::{info, error, Level, debug, LevelFilter};
+use log::{info, error, Level, debug, LevelFilter, warn};
 use tokio::time::interval;
 use std::future::Future;
 use std::time::Duration;
@@ -108,22 +111,26 @@ impl<T> From<PoisonError<T>> for PromptError {
 // State used to be shared between stdin thread and Prompt instance
 struct State {
     prompt: Mutex<Option<String>>,
+    width: AtomicU16,
     previous_prompt_line: AtomicUsize,
     user_input: Mutex<String>,
     mask_input: AtomicBool,
     readers: Mutex<Vec<oneshot::Sender<String>>>,
     has_exited: AtomicBool,
+    ascii_escape_regex: Regex,
 }
 
 impl State {
     fn new() -> Self {
         Self {
             prompt: Mutex::new(None),
+            width: AtomicU16::new(crossterm::terminal::size().unwrap_or((80, 0)).0),
             previous_prompt_line: AtomicUsize::new(0),
             user_input: Mutex::new(String::new()),
             mask_input: AtomicBool::new(false),
             readers: Mutex::new(Vec::new()),
             has_exited: AtomicBool::new(false),
+            ascii_escape_regex: Regex::new("\x1B\\[[0-9;]*[A-Za-z]").unwrap()
         }
     }
 
@@ -148,7 +155,8 @@ impl State {
             match event::read() {
                 Ok(event) => {
                     match event {
-                        Event::Resize(_, _) => {
+                        Event::Resize(width, _) => {
+                            self.width.store(width, Ordering::SeqCst);
                             self.show()?;
                         }
                         Event::Paste(s) => {
@@ -157,6 +165,11 @@ impl State {
                             buffer.push_str(&s);
                         }
                         Event::Key(key) => {
+                            // Windows bug - https://github.com/crossterm-rs/crossterm/issues/772
+                            if key.kind != KeyEventKind::Press {
+                                continue;
+                            }
+
                             match key.code {
                                 KeyCode::Up => {
                                     let mut buffer = self.user_input.lock()?;
@@ -255,6 +268,16 @@ impl State {
         }
 
         info!("ioloop thread is now stopped");
+        let mut readers = self.readers.lock()?;
+        let mut values = Vec::with_capacity(readers.len());
+        std::mem::swap(&mut *readers, &mut values);
+
+        for reader in values {
+            if let Err(e) = reader.send(String::new()) {
+                warn!("Error while sending empty string to reader: {}", e);
+            }
+        }
+
         Ok(())
     }
 
@@ -262,11 +285,36 @@ impl State {
         self.mask_input.load(Ordering::SeqCst)
     }
 
+    fn count_lines(&self, value: &String) -> usize {
+        let width = self.width.load(Ordering::SeqCst);
+
+        let mut lines = 0;
+        let mut current_line_width = 0;
+        let input = self.ascii_escape_regex.replace_all(value, "");
+
+        for c in input.chars() {
+            if c == '\n' || current_line_width >= width {
+                lines += 1;
+                current_line_width = 0;
+            } else {
+                current_line_width += 1;
+            }
+        }
+
+        if current_line_width > 0 {
+            lines += 1;
+        }
+
+        lines
+    }
+
     fn show_with_prompt_and_input(&self, prompt: &String, input: &String) -> Result<(), PromptError> {
-        let lines_count = prompt.lines().count();
-        let previous_lines_count = self.previous_prompt_line.swap(lines_count, Ordering::SeqCst);
-        let lines_eraser = if previous_lines_count > 1 {
-            format!("{}", "\x1B[A".repeat(previous_lines_count - 1))
+        let lines_count = self.count_lines(&format!("\r{}{}", prompt, input));
+        let count = self.previous_prompt_line.swap(lines_count, Ordering::SeqCst);
+
+        // > 1 because prompt line is already counted 
+        let lines_eraser: String = if count > 1 {
+            format!("\x1B[{}A", count - 1)
         } else {
             String::new()
         };
@@ -275,6 +323,11 @@ impl State {
             print!("\r\x1B[2K{}{}{}", lines_eraser, prompt, "*".repeat(input.len()));
         } else {
             print!("\r\x1B[2K{}{}{}", lines_eraser, prompt, input);
+        }        
+
+        // Scroll up if we a empty line
+        if lines_count < count {
+            // TODO
         }
 
         stdout().flush()?;
@@ -517,6 +570,10 @@ impl<T> Prompt<T> {
 
     // read a message from the user and apply the input mask if necessary
     pub async fn read_input(&self, prompt: String, apply_mask: bool) -> Result<String, PromptError> {
+        if self.state.has_exited.load(Ordering::SeqCst) {
+            return Err(PromptError::NotRunning)
+        }
+
         // register our reader
         let receiver = {
             let mut readers = self.state.readers.lock()?;
@@ -597,11 +654,21 @@ impl<T> Prompt<T> {
                     error!("Error on prompt refresh: {}", e);
                 }
                 res
-            }).chain(std::io::stdout());
+            })
+            .chain(std::io::stdout())
+            .level(level.into());
 
         let mut base = base.chain(stdout_log);
         if !disable_file_logging {
+            let logs_path = Path::new("logs/");
+            if !logs_path.exists() {
+                if let Err(e) = create_dir(logs_path) {
+                    error!("Error while creating logs folder: {}", e);
+                };
+            }
+
             let file_log = fern::Dispatch::new()
+            .level(level.into())
             .format(move |out, message, record| {
                 let pad = " ".repeat((30i16 - record.target().len() as i16).max(0) as usize);
                 let level_pad = if record.level() == Level::Error || record.level() == Level::Debug { "" } else { " " };
@@ -614,20 +681,30 @@ impl<T> Prompt<T> {
                     pad,
                     message
                 ))
-            }).chain(fern::log_file(filename_log)?);
+            }).chain(fern::DateBased::new(logs_path, format!("%Y-%m-%d.{filename_log}")));
             base = base.chain(file_log);
         }
-
-        base = base.level(level.into());
 
         base.level_for("sled", log::LevelFilter::Warn)
         .level_for("actix_server", log::LevelFilter::Warn)
         .level_for("actix_web", log::LevelFilter::Warn)
         .level_for("actix_http", log::LevelFilter::Warn)
         .level_for("mio", log::LevelFilter::Warn)
+        .level_for("tokio_tungstenite", log::LevelFilter::Warn)
+        .level_for("tungstenite", log::LevelFilter::Warn)
         .apply()?;
 
         Ok(())
+    }
+}
+
+impl<T> Drop for Prompt<T> {
+    fn drop(&mut self) {
+        if let Ok(true) = terminal::is_raw_mode_enabled() {
+            if let Err(e) = terminal::disable_raw_mode() {
+                error!("Error while forcing to disable raw mode: {}", e);
+            }
+        } 
     }
 }
 

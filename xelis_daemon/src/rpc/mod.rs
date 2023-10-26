@@ -12,7 +12,7 @@ use actix_web::{
     error::Error
 };
 use actix_web_actors::ws::WsResponseBuilder;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use xelis_common::api::daemon::NotifyEvent;
 use xelis_common::config;
@@ -28,7 +28,6 @@ pub type SharedDaemonRpcServer<S> = Arc<DaemonRpcServer<S>>;
 
 pub struct DaemonRpcServer<S: Storage> {
     handle: Mutex<Option<ServerHandle>>,
-    rpc_handler: Arc<RPCHandler<Arc<Blockchain<S>>>>,
     websocket: WebSocketServerShared<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>>,
     getwork: Option<SharedGetWorkServer<S>>
 }
@@ -58,15 +57,12 @@ impl<S: Storage> DaemonRpcServer<S> {
         let mut rpc_handler = RPCHandler::new(blockchain);
         rpc::register_methods(&mut rpc_handler);
 
-        let rpc_handler = Arc::new(rpc_handler);
-
         // create the default websocket server (support event & rpc methods)
-        let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler.clone()));
+        let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler));
 
         let server = Arc::new(Self {
             handle: Mutex::new(None),
             websocket: ws,
-            rpc_handler,
             getwork,
         });
 
@@ -99,8 +95,14 @@ impl<S: Storage> DaemonRpcServer<S> {
         self.get_websocket().get_handler().get_tracked_events().await
     }
 
-    pub async fn is_tracking_event(&self, event: &NotifyEvent) -> bool {
-        self.get_websocket().get_handler().is_tracking_event(event).await
+    pub async fn is_event_tracked(&self, event: &NotifyEvent) -> bool {
+        self.get_websocket().get_handler().is_event_tracked(event).await
+    }
+
+    pub async fn notify_clients_with<V: serde::Serialize>(&self, event: &NotifyEvent, value: V) {
+        if let Err(e) = self.notify_clients(event, json!(value)).await {
+            error!("Error while notifying event {:?}: {}", event, e);
+        }
     }
 
     pub async fn notify_clients(&self, event: &NotifyEvent, value: Value) -> Result<(), anyhow::Error> {
@@ -132,7 +134,7 @@ impl<S: Storage> WebSocketServerHandler<EventWebSocketHandler<Arc<Blockchain<S>>
 
 impl<S: Storage> RPCServerHandler<Arc<Blockchain<S>>> for DaemonRpcServer<S> {
     fn get_rpc_handler(&self) -> &RPCHandler<Arc<Blockchain<S>>> {
-        &self.rpc_handler
+        self.get_websocket().get_handler().get_rpc_handler()
     }
 }
 

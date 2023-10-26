@@ -1,7 +1,14 @@
 use std::borrow::Cow;
 use indexmap::IndexSet;
 use log::debug;
-use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, block::Difficulty};
+use xelis_common::{
+    crypto::{hash::Hash, key::PublicKey},
+    serializer::{Serializer, ReaderError, Reader, Writer},
+    block::Difficulty,
+    asset::AssetWithData
+};
+use super::chain::{BlockId, CommonPoint};
+use crate::config::CHAIN_SYNC_REQUEST_MAX_BLOCKS;
 
 // this file implements the protocol for the fast sync (bootstrapped chain)
 // You will have to request through StepRequest::FetchAssets all the registered assets
@@ -73,8 +80,8 @@ impl StepKind {
 
 #[derive(Debug)]
 pub enum StepRequest<'a> {
-    // Request chain info (topoheight, stable height, stable hash)
-    ChainInfo,
+    // Request chain info (top topoheight, top height, top hash)
+    ChainInfo(Vec<BlockId>),
     // Min topoheight, Max topoheight, Pagination
     Assets(u64, u64, Option<u64>),
     // Min topoheight, Max topoheight, Asset, pagination
@@ -90,7 +97,7 @@ pub enum StepRequest<'a> {
 impl<'a> StepRequest<'a> {
     pub fn kind(&self) -> StepKind {
         match self {
-            Self::ChainInfo => StepKind::ChainInfo,
+            Self::ChainInfo(_) => StepKind::ChainInfo,
             Self::Assets(_, _, _) => StepKind::Assets,
             Self::Keys(_, _, _) => StepKind::Keys,
             Self::Balances(_, _, _) => StepKind::Balances,
@@ -101,7 +108,7 @@ impl<'a> StepRequest<'a> {
 
     pub fn get_requested_topoheight(&self) -> Option<u64> {
         Some(*match self {
-            Self::ChainInfo => return None,
+            Self::ChainInfo(_) => return None,
             Self::Assets(_, topo, _) => topo,
             Self::Keys(_, topo, _) => topo,
             Self::Balances(topo, _, _) => topo,
@@ -115,7 +122,17 @@ impl Serializer for StepRequest<'_> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(match reader.read_u8()? {
             0 => {
-                Self::ChainInfo
+                let len = reader.read_u8()?;
+                if len == 0 || len > CHAIN_SYNC_REQUEST_MAX_BLOCKS as u8 {
+                    debug!("Invalid chain info request length: {}", len);
+                    return Err(ReaderError::InvalidValue)
+                }
+
+                let mut blocks = Vec::with_capacity(len as usize);
+                for _ in 0..len {
+                    blocks.push(BlockId::read(reader)?);
+                }
+                Self::ChainInfo(blocks)
             }
             1 => {
                 let min_topoheight = reader.read_u64()?;
@@ -174,8 +191,12 @@ impl Serializer for StepRequest<'_> {
 
     fn write(&self, writer: &mut Writer) {
         match self {
-            Self::ChainInfo => {
+            Self::ChainInfo(blocks) => {
                 writer.write_u8(0);
+                writer.write_u8(blocks.len() as u8);
+                for block_id in blocks {
+                    block_id.write(writer);
+                }
             },
             Self::Assets(min, max, page) => {
                 writer.write_u8(1);
@@ -210,8 +231,8 @@ impl Serializer for StepRequest<'_> {
 
 #[derive(Debug)]
 pub enum StepResponse {
-    ChainInfo(u64, u64, Hash), // topoheight of stable hash, stable height, stable hash
-    Assets(IndexSet<Hash>, Option<u64>), // Set of assets, pagination
+    ChainInfo(Option<CommonPoint>, u64, u64, Hash), // common point, topoheight of stable hash, stable height, stable hash
+    Assets(IndexSet<AssetWithData>, Option<u64>), // Set of assets, pagination
     Keys(IndexSet<PublicKey>, Option<u64>), // Set of keys, pagination
     Balances(Vec<Option<u64>>), // Balances requested
     Nonces(Vec<u64>), // Nonces for requested accounts
@@ -221,7 +242,7 @@ pub enum StepResponse {
 impl StepResponse {
     pub fn kind(&self) -> StepKind {
         match self {
-            Self::ChainInfo(_, _, _) => StepKind::ChainInfo,
+            Self::ChainInfo(_, _, _, _) => StepKind::ChainInfo,
             Self::Assets(_, _) => StepKind::Assets,
             Self::Keys(_, _) => StepKind::Keys,
             Self::Balances(_) => StepKind::Balances,
@@ -235,14 +256,15 @@ impl Serializer for StepResponse {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(match reader.read_u8()? {
             0 => {
+                let common_point = Option::read(reader)?;
                 let topoheight = reader.read_u64()?;
                 let stable_height = reader.read_u64()?;
                 let hash = reader.read_hash()?;
 
-                Self::ChainInfo(topoheight, stable_height, hash)
+                Self::ChainInfo(common_point, topoheight, stable_height, hash)
             },
             1 => {
-                let assets = IndexSet::<Hash>::read(reader)?;
+                let assets = IndexSet::<AssetWithData>::read(reader)?;
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
                     if *page_number == 0 {
@@ -281,8 +303,9 @@ impl Serializer for StepResponse {
 
     fn write(&self, writer: &mut Writer) {
         match self {
-            Self::ChainInfo(topoheight, stable_height, hash) => {
+            Self::ChainInfo(common_point, topoheight, stable_height, hash) => {
                 writer.write_u8(0);
+                common_point.write(writer);
                 writer.write_u64(topoheight);
                 writer.write_u64(stable_height);
                 writer.write_hash(hash);

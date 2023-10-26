@@ -1,8 +1,10 @@
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 
-use crate::{transaction::{TransactionType, Transaction}, crypto::{key::PublicKey, hash::Hash}};
+use crate::{transaction::{TransactionType, Transaction}, crypto::{key::PublicKey, hash::Hash, address::Address}};
 
-use super::{DataHash, DataElement};
+use super::{DataHash, DataElement, DataValue, DataType};
 
 
 #[derive(Serialize, Deserialize)]
@@ -37,6 +39,16 @@ pub struct ListTransactionsParams {
     pub accept_coinbase: bool,
     #[serde(default = "default_filter_value")]
     pub accept_burn: bool,
+    // Filter by extra data
+    pub query: Option<QuerySearcher>
+}
+
+// Structure to allow for searching a precise key/value pair in extra data
+// Value is nullable to allow for searching only by key also
+#[derive(Serialize, Deserialize)]
+pub enum QuerySearcher {
+    KeyValue { key: DataValue, value: Option<DataValue> },
+    KeyType { key: DataValue, kind: DataType }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -47,7 +59,23 @@ pub struct TransactionResponse<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetAddressParams {
-    pub data: Option<DataElement>
+    // Data to use for creating an integrated address
+    // Returned address will contains all the data provided here
+    pub integrated_data: Option<DataElement>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SplitAddressParams<'a> {
+    // address which must be in integrated form
+    pub address: Address<'a>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SplitAddressResult {
+    // Normal address
+    pub address: PublicKey,
+    // Encoded data from address
+    pub integrated_data: DataElement
 }
 
 #[derive(Serialize, Deserialize)]
@@ -58,4 +86,29 @@ pub struct GetBalanceParams {
 #[derive(Serialize, Deserialize)]
 pub struct GetTransactionParams {
     pub hash: Hash
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct BalanceChanged<'a> {
+    pub asset: Cow<'a, Hash>,
+    pub balance: u64
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum NotifyEvent {
+    // When a new block is detected by wallet
+    // it contains Block struct as value
+    // NewBlock,
+    // When a a get_info request is made
+    // and we receive a different topoheight than previous one
+    NewChainInfo,
+    // When a new asset is added to wallet
+    // Contains a Hash as value
+    NewAsset,
+    // When a new transaction is added to wallet
+    // Contains TransactionEntry struct as value
+    NewTransaction,
+    // When a balance is changed
+    // Contains a BalanceChanged as value
+    BalanceChanged,
 }

@@ -7,7 +7,7 @@ pub mod wallet;
 pub mod daemon;
 
 // All types availables
-#[derive(Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
+#[derive(Serialize, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
 pub enum DataType {
     Bool,
     String,
@@ -31,12 +31,20 @@ pub enum DataElement {
 }
 
 impl DataElement {
-    pub fn get_value(&self, name: String, data_type: DataType) -> Option<&DataValue> {
+    pub fn has_key(&self, key: &DataValue) -> bool {
+        let Self::Fields(fields) = &self else {
+            return false
+        };
+
+        fields.contains_key(key)
+    }
+
+    pub fn get_value_by_key(&self, key: &DataValue, data_type: Option<DataType>) -> Option<&DataValue> {
         let Self::Fields(data) = &self else {
             return None
         };
 
-        let Self::Value(value) = data.get(&DataValue::String(name))? else {
+        let Self::Value(value) = data.get(key)? else {
             return None;
         };
 
@@ -44,11 +52,17 @@ impl DataElement {
             return None;
         };
 
-        if unwrapped.kind() != data_type {
-            return None
+        if let Some(data_type) = data_type {
+            if unwrapped.kind() != data_type {
+                return None
+            }
         }
 
         value.as_ref()
+    }
+
+    pub fn get_value_by_string_key(&self, name: String, data_type: DataType) -> Option<&DataValue> {
+        self.get_value_by_key(&DataValue::String(name), Some(data_type))
     }
 } 
 
@@ -188,7 +202,7 @@ impl Serializer for DataValue {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SubscribeParams<E> {
     pub notify: E
 }

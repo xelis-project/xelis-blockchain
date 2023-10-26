@@ -1,7 +1,14 @@
 use std::{collections::{HashMap, HashSet}, sync::Arc};
 use async_trait::async_trait;
-use xelis_common::{crypto::hash::Hash, block::{BlockHeader, Difficulty}, config::TIPS_LIMIT};
-use crate::core::{error::BlockchainError, blockchain::Blockchain, storage::{DifficultyProvider, Storage}};
+use xelis_common::{crypto::hash::Hash, block::{BlockHeader, Difficulty}};
+use crate::{
+    core::{
+        error::BlockchainError,
+        blockchain::Blockchain,
+        storage::{DifficultyProvider, Storage}
+    },
+    config::TIPS_LIMIT
+};
 use log::{error, trace};
 
 struct Data {

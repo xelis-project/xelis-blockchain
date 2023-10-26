@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use xelis_common::{serializer::{Serializer, Reader, ReaderError, Writer}, globals::{ip_from_bytes, ip_to_bytes}};
+use xelis_common::{serializer::{Serializer, Reader, ReaderError, Writer}, utils::{ip_from_bytes, ip_to_bytes}};
 
 // this packet is sent when a peer disconnects from one of our peer
 // it is used to continue to track common peers between us and our peers
@@ -19,8 +19,8 @@ impl PacketPeerDisconnected {
         }
     }
 
-    pub fn get_addr(&self) -> &SocketAddr {
-        &self.addr
+    pub fn to_addr(self) -> SocketAddr {
+        self.addr
     }
 }
 

@@ -12,6 +12,10 @@ pub fn sort_descending_by_cumulative_difficulty(scores: &mut Vec<(&Hash, Difficu
             b_hash.cmp(a_hash)
         }
     });
+
+    if scores.len() >= 2 {
+        debug_assert!(scores[0].1 >= scores[1].1);
+    }
 }
 
 // TODO Refactor

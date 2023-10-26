@@ -124,6 +124,10 @@ impl BlockHeader {
         &self.txs_hashes
     }
 
+    pub fn take_txs_hashes(self) -> Vec<Hash> {
+        self.txs_hashes
+    }
+
     pub fn get_txs_hash(&self) -> Hash {
         let mut bytes = vec![];
 

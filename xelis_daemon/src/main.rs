@@ -1,6 +1,7 @@
 pub mod rpc;
 pub mod p2p;
 pub mod core;
+pub mod config;
 
 use fern::colors::Color;
 use humantime::format_duration;
@@ -9,11 +10,14 @@ use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
     prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel, self, ShareablePrompt},
-    config::{VERSION, BLOCK_TIME}, globals::{format_hashrate, set_network_to}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer
+    config::{VERSION, XELIS_ASSET}, utils::{format_hashrate, set_network_to, format_xelis, format_coin}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer
 };
-use crate::core::{
-    blockchain::{Config, Blockchain},
-    storage::{Storage, SledStorage}
+use crate::{
+    core::{
+        blockchain::{Config, Blockchain, get_block_reward},
+        storage::{Storage, SledStorage}
+    },
+    config::BLOCK_TIME
 };
 use std::{sync::Arc, net::SocketAddr};
 use std::time::Duration;
@@ -44,7 +48,7 @@ async fn main() -> Result<()> {
     let mut config: NodeConfig = NodeConfig::parse();
 
     let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
-    info!("Xelis Blockchain running version: {}", VERSION);
+    info!("XELIS Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
 
     if config.nested.simulator && config.network != Network::Dev {
@@ -86,7 +90,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
     // Register all our commands
     command_manager.add_command(Command::new("list_peers", "List all peers connected", CommandHandler::Async(async_handler!(list_peers))));
     command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", CommandHandler::Async(async_handler!(list_assets))));
-    command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![Arg::new("address", ArgType::String), Arg::new("asset", ArgType::Hash)], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance))));
+    command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance))));
     command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(print_block))));
     command_manager.add_command(Command::new("top_block", "Print top block", CommandHandler::Async(async_handler!(top_block))));
     command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], CommandHandler::Async(async_handler!(pop_blocks))));
@@ -224,8 +228,21 @@ async fn list_assets<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _
 }
 
 async fn show_balance<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let address = arguments.get_value("address")?.to_string_value()?;
-    let asset = arguments.get_value("asset")?.to_hash()?;
+    let prompt = manager.get_prompt()?;
+    // read address
+    let str_address = prompt.read_input(
+        prompt::colorize_str(Color::Green, "Address: "),
+        false
+    ).await.context("Error while reading address")?;
+    let address = Address::from_string(&str_address).context("Invalid address")?;
+
+    // Read asset
+    let asset = prompt.read_hash(
+        prompt::colorize_str(Color::Green, "Asset (default XELIS): ")
+    ).await.ok();
+
+    let asset = asset.unwrap_or(XELIS_ASSET);
+
     let mut history = if arguments.has_argument("history") {
         let value = arguments.get_value("history")?.to_number()?;
         if value == 0 {
@@ -236,15 +253,14 @@ async fn show_balance<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, 
         1
     };
 
-    let address = Address::from_string(&address)?;
     let key = address.to_public_key();
-
     let blockchain = manager.get_data()?;
     let storage = blockchain.get_storage().read().await;
+    let asset_data = storage.get_asset_data(&asset).context("Error while retrieving asset data")?;
     let (mut topo, mut version) = storage.get_last_balance(&key, &asset).await.context("Error while retrieving last balance")?;
     loop {
         history -= 1;
-        manager.message(format!("Balance found at topoheight {}: {}", topo, version.get_balance()));
+        manager.message(format!("Balance found at topoheight {}: {}", topo, format_coin(version.get_balance(), asset_data.get_decimals())));
 
         if history == 0 || topo == 0 {
             break;
@@ -289,7 +305,7 @@ async fn pop_blocks<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mu
     }
 
     info!("Trying to pop {} blocks from chain...", amount);
-    let topoheight = blockchain.rewind_chain(amount as usize).await.context("Error while rewinding chain")?;
+    let topoheight = blockchain.rewind_chain(amount).await.context("Error while rewinding chain")?;
     info!("Chain as been rewinded until topoheight {}", topoheight);
 
     Ok(())
@@ -350,14 +366,18 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
     let top_block_hash = blockchain.get_top_block_hash().await.context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
+    let supply = blockchain.get_supply().await.context("Error while retrieving supply")?;
 
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
     manager.message(format!("Topo Height: {}", topoheight));
     manager.message(format!("Difficulty: {}", difficulty));
+    manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / BLOCK_TIME) as f64)));
     manager.message(format!("Top block hash: {}", top_block_hash));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / 1000f64));
-    manager.message(format!("Target Block Time: {}s", BLOCK_TIME));
+    manager.message(format!("Target Block Time: {:.2}s", BLOCK_TIME as f64));
+    manager.message(format!("Current Supply: {} XELIS", format_xelis(supply)));
+    manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(supply))));
 
     manager.message(format!("Tips ({}):", tips.len()));
     for hash in tips {

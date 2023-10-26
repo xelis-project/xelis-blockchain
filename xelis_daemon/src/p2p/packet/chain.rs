@@ -6,8 +6,9 @@ use xelis_common::{
         Writer,
         ReaderError,
         Reader
-    }, config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, TIPS_LIMIT}
+    },
 };
+use crate::config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, TIPS_LIMIT};
 
 #[derive(Clone, Debug)]
 pub struct BlockId {
@@ -53,17 +54,10 @@ pub struct ChainRequest {
 }
 
 impl ChainRequest {
-    pub fn new() -> Self {
+    pub fn new(blocks: Vec<BlockId>) -> Self {
         Self {
-            blocks: Vec::new()
+            blocks
         }
-    }
-
-    pub fn add_block_id(&mut self, hash: Hash, topoheight: u64) {
-        self.blocks.push(BlockId {
-            hash,
-            topoheight
-        });
     }
 
     pub fn size(&self) -> usize {
@@ -165,15 +159,7 @@ impl ChainResponse {
 
 impl Serializer for ChainResponse {
     fn write(&self, writer: &mut Writer) {
-        match &self.common_point {
-            None => {
-                writer.write_bool(false);
-            },
-            Some(point) => {
-                writer.write_bool(true);
-                point.write(writer);
-            }
-        };
+        self.common_point.write(writer);
         writer.write_u16(self.blocks.len() as u16);
         for hash in &self.blocks {
             writer.write_hash(hash);
@@ -186,11 +172,7 @@ impl Serializer for ChainResponse {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let common_point = match reader.read_bool()? {
-            true => Some(CommonPoint::read(reader)?),
-            false => None
-        };
-
+        let common_point = Option::read(reader)?;
         let len = reader.read_u16()?;
         if len > CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u16 {
             debug!("Invalid chain response length: {}", len);

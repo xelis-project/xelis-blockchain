@@ -8,7 +8,7 @@ use humantime::format_duration;
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedWriteHalf, OwnedReadHalf};
 use xelis_common::{
-    globals::get_current_time,
+    utils::get_current_time,
     serializer::{Reader, Serializer},
 };
 use std::fmt::{Display, Error, Formatter};
@@ -81,7 +81,7 @@ impl Connection {
         Ok(())
     }
 
-    pub async fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<Packet<'_>> {
+    pub async fn read_packet_bytes(&self, buf: &mut [u8], max_size: u32) -> P2pResult<Vec<u8>> {
         let mut stream = self.read.lock().await;
         let size = self.read_packet_size(&mut stream, buf).await?;
         if size == 0 || size > max_size {
@@ -91,6 +91,10 @@ impl Connection {
         trace!("Size received: {}", size);
 
         let bytes = self.read_all_bytes(&mut stream, buf, size).await?;
+        Ok(bytes)
+    }
+
+    pub async fn read_packet_from_bytes(&self, bytes: &[u8]) -> P2pResult<Packet<'_>> {
         let mut reader = Reader::new(&bytes);
         let packet = Packet::read(&mut reader)?;
         if reader.total_read() != bytes.len() {
@@ -98,6 +102,11 @@ impl Connection {
             return Err(P2pError::InvalidPacketNotFullRead)
         }
         Ok(packet)
+    }
+
+    pub async fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<Packet<'_>> {
+        let bytes = self.read_packet_bytes(buf, max_size).await?;
+        self.read_packet_from_bytes(&bytes).await
     }
 
     async fn read_packet_size(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<u32> {

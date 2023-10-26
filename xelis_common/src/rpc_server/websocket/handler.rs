@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, hash::Hash, sync::Arc, borrow::Cow};
+use std::{collections::{HashMap, HashSet}, hash::Hash, borrow::Cow};
 use async_trait::async_trait;
 use log::debug;
 use serde_json::{Value, json};
@@ -10,7 +10,7 @@ use super::{WebSocketSessionShared, WebSocketHandler};
 // generic websocket handler supporting event subscriptions 
 pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: Serialize + DeserializeOwned + Send + Eq + Hash + Clone + 'static> {
     sessions: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<E, Option<usize>>>>,
-    handler: Arc<RPCHandler<T>>
+    handler: RPCHandler<T>
 }
 
 impl<T, E> EventWebSocketHandler<T, E>
@@ -18,7 +18,7 @@ where
     T: Sync + Send + Clone + 'static,
     E: Serialize + DeserializeOwned + Send + Eq + Hash + Clone + 'static
 {
-    pub fn new(handler: Arc<RPCHandler<T>>) -> Self {
+    pub fn new(handler: RPCHandler<T>) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
             handler
@@ -30,7 +30,7 @@ where
         HashSet::from_iter(sessions.values().map(|e| e.keys().cloned()).flatten())
     }
 
-    pub async fn is_tracking_event(&self, event: &E) -> bool {
+    pub async fn is_event_tracked(&self, event: &E) -> bool {
         let sessions = self.sessions.lock().await;
         sessions
             .values()
@@ -101,6 +101,10 @@ where
             }
         };
         Ok(response)
+    }
+
+    pub fn get_rpc_handler(&self) -> &RPCHandler<T> {
+        &self.handler
     }
 }
 

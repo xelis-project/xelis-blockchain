@@ -1,9 +1,10 @@
 use lru::LruCache;
-use xelis_common::config::{PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP};
-use xelis_common::globals::get_current_time;
+use crate::config::{
+    PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT
+};
+use xelis_common::utils::get_current_time;
 use xelis_common::{
     crypto::hash::Hash,
-    config::PEER_TIMEOUT_REQUEST_OBJECT,
     serializer::Serializer
 };
 use super::packet::bootstrap_chain::{StepRequest, BootstrapChainRequest, StepResponse};
@@ -243,6 +244,11 @@ impl Peer {
         &self.objects_requested
     }
 
+    pub async fn has_requested_object(&self, request: &ObjectRequest) -> bool {
+        let objects = self.objects_requested.lock().await;
+        objects.contains_key(&request)
+    }
+
     pub async fn remove_object_request(&self, request: ObjectRequest) -> Result<Sender<OwnedObjectResponse>, P2pError> {
         let mut objects = self.objects_requested.lock().await;
         objects.remove(&request).ok_or(P2pError::ObjectNotFound(request))
@@ -279,7 +285,7 @@ impl Peer {
     }
 
     pub async fn request_boostrap_chain(&self, step: StepRequest<'_>) -> Result<StepResponse, P2pError> {
-        debug!("Requesting bootstrap chain step: {:?}", step);
+        debug!("Requesting bootstrap chain step: {:?}", step.kind());
         let step_kind = step.kind();
         let (sender, receiver) = tokio::sync::oneshot::channel();
         {

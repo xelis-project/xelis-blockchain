@@ -5,7 +5,7 @@ use tokio::sync::oneshot::error::RecvError;
 use xelis_common::crypto::hash::Hash;
 use xelis_common::serializer::ReaderError;
 use std::array::TryFromSliceError;
-use std::net::AddrParseError;
+use std::net::{AddrParseError, SocketAddr};
 use tokio::time::error::Elapsed;
 use std::sync::mpsc::SendError;
 use std::io::Error as IOError;
@@ -19,6 +19,26 @@ use super::packet::object::ObjectRequest;
 pub enum P2pError {
     #[error("Invalid protocol rules")]
     InvalidProtocolRules,
+    #[error("Invalid list size in pagination with a next page")]
+    InvalidInventoryPagination,
+    #[error("unknown common peer {} received: not found in list", _0)]
+    UnknownPeerReceived(SocketAddr),
+    #[error("Block {} at height {} propagated is under our stable height", _0, _1)]
+    BlockPropagatedUnderStableHeight(Hash, u64),
+    #[error("Block {} propagated is already tracked", _0)]
+    AlreadyTrackedBlock(Hash),
+    #[error("Transaction {} propagated is already tracked", _0)]
+    AlreadyTrackedTx(Hash),
+    #[error("Malformed chain request, received {} blocks id", _0)]
+    MalformedChainRequest(usize),
+    #[error("Received a unrequested chain response")]
+    UnrequestedChainResponse,
+    #[error("Received a unrequested bootstrap chain response")]
+    UnrequestedBootstrapChainResponse,
+    #[error("Malformed chain response, received {} blocks id", _0)]
+    MalformedChainResponse(usize),
+    #[error("Invalid common point at topoheight {}", _0)]
+    InvalidCommonPoint(u64),
     #[error("Peer disconnected")]
     Disconnected,
     #[error("Invalid handshake")]
@@ -49,6 +69,8 @@ pub enum P2pError {
     ParseAddressError(#[from] AddrParseError),
     #[error("Invalid packet ID")]
     InvalidPacket,
+    #[error("Peer topoheight is higher than our")]
+    InvalidRequestedTopoheight,
     #[error("Packet size exceed limit")]
     InvalidPacketSize,
     #[error("Received valid packet with not used bytes")]
@@ -65,10 +87,14 @@ pub enum P2pError {
     ObjectNotFound(ObjectRequest),
     #[error("Object not requested {}", _0)]
     ObjectNotRequested(ObjectRequest),
+    #[error("Object requested {} is not present any more in queue", _0)]
+    ObjectHashNotPresentInQueue(Hash),
     #[error("Object requested {} already requested", _0)]
     ObjectAlreadyRequested(ObjectRequest),
     #[error("Invalid object response for request, received hash: {}", _0)]
     InvalidObjectResponse(Hash),
+    #[error("Invalid object response type for request")]
+    InvalidObjectResponseType,
     #[error(transparent)]
     ObjectRequestError(#[from] RecvError),
     #[error("Expected a block type")]

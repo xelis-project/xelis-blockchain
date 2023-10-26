@@ -8,8 +8,19 @@ use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
-use xelis_common::{crypto::{key::PublicKey, hash::Hash}, globals::get_current_timestamp, api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, serializer::Serializer, block::{BlockHeader, BlockMiner, Difficulty}, config::{DEV_PUBLIC_KEY, STABLE_LIMIT}, immutable::Immutable, rpc_server::{RpcResponseError, InternalRpcError}};
-use crate::core::{blockchain::Blockchain, storage::Storage};
+use xelis_common::{
+    crypto::{key::PublicKey, hash::Hash},
+    utils::get_current_timestamp,
+    api::daemon::{GetBlockTemplateResult, SubmitBlockParams},
+    serializer::Serializer,
+    block::{BlockHeader, BlockMiner, Difficulty},
+    immutable::Immutable,
+    rpc_server::{RpcResponseError, InternalRpcError}
+};
+use crate::{
+    core::{blockchain::Blockchain, storage::Storage},
+    config::{DEV_PUBLIC_KEY, STABLE_LIMIT}
+};
 
 pub type SharedGetWorkServer<S> = Arc<GetWorkServer<S>>;
 
@@ -141,7 +152,10 @@ pub struct GetWorkServer<S: Storage> {
     // we can keep them in cache up to STABLE_LIMIT blocks
     // so even a late miner have a chance to not be orphaned and be included in chain
     mining_jobs: Mutex<LruCache<Hash, (BlockHeader, Difficulty)>>,
-    last_header_hash: Mutex<Option<Hash>>
+    last_header_hash: Mutex<Option<Hash>>,
+    // used only when a new TX is received in mempool
+    last_notify: Mutex<u128>,
+    notify_rate_limit_ms: u128
 }
 
 impl<S: Storage> GetWorkServer<S> {
@@ -150,7 +164,9 @@ impl<S: Storage> GetWorkServer<S> {
             miners: Mutex::new(HashMap::new()),
             blockchain,
             mining_jobs: Mutex::new(LruCache::new(STABLE_LIMIT as usize)),
-            last_header_hash: Mutex::new(None)
+            last_header_hash: Mutex::new(None),
+            last_notify: Mutex::new(0),
+            notify_rate_limit_ms: 500 // maximum one time every 500ms
         }
     }
 
@@ -209,7 +225,11 @@ impl<S: Storage> GetWorkServer<S> {
 
         // notify the new miner so he can work ASAP
         let zelf = Arc::clone(&self);
-        tokio::spawn(zelf.send_new_job(addr, key));
+        tokio::spawn(async move {
+            if let Err(e) = zelf.send_new_job(addr, key).await {
+                error!("Error while sending new job to miner: {}", e);
+            }
+        });
     }
 
     pub async fn delete_miner(&self, addr: &Addr<GetWorkWebSocketHandler<S>>) {
@@ -301,7 +321,33 @@ impl<S: Storage> GetWorkServer<S> {
 
     // notify every miners connected to the getwork server
     // each miner have his own task so nobody wait on other
-    pub async fn notify_new_job(&self) -> Result<(), InternalRpcError> {        
+    pub async fn notify_new_job_rate_limited(&self) -> Result<(), InternalRpcError> {
+        {
+            let now = get_current_timestamp();
+            let mut last_notify = self.last_notify.lock().await;
+            if now - *last_notify < self.notify_rate_limit_ms {
+                debug!("Rate limit reached, not notifying miners");
+                return Ok(());
+            }
+            *last_notify = now;
+        }
+
+        self.notify_new_job().await
+    }
+
+    // notify every miners connected to the getwork server
+    // each miner have his own task so nobody wait on other
+    pub async fn notify_new_job(&self) -> Result<(), InternalRpcError> {
+        // Check that there is at least one miner connected
+        // otherwise, no need to build a new job
+        {
+            let miners = self.miners.lock().await;
+            if miners.is_empty() {
+                debug!("No miners connected, no need to notify them");
+                return Ok(());
+            }
+        }    
+    
         debug!("Notify all miners for a new job");
         let (header, difficulty) = {
             let storage = self.blockchain.get_storage().read().await;

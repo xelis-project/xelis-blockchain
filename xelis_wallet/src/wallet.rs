@@ -5,18 +5,18 @@ use anyhow::{Error, Context};
 use tokio::sync::{Mutex, RwLock};
 use xelis_common::api::DataElement;
 use xelis_common::api::wallet::FeeBuilder;
-use xelis_common::config::XELIS_ASSET;
+use xelis_common::config::{XELIS_ASSET, COIN_DECIMALS};
 use xelis_common::crypto::address::Address;
 use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey};
-use xelis_common::globals::format_coin;
+use xelis_common::utils::{format_xelis, format_coin};
 use xelis_common::network::Network;
 use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
 use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
 use crate::mnemonics;
-use crate::network_handler::{NetworkHandler, SharedNetworkHandler};
+use crate::network_handler::{NetworkHandler, SharedNetworkHandler, NetworkError};
 use crate::storage::{EncryptedStorage, Storage};
 use crate::transaction_builder::TransactionBuilder;
 use chacha20poly1305::{aead::OsRng, Error as CryptoError};
@@ -25,23 +25,29 @@ use thiserror::Error;
 use log::{error, debug};
 
 #[cfg(feature = "api_server")]
-use crate::api::{
-    XSWD,
-    WalletRpcServer,
-    AuthConfig,
-    APIServer,
-    ApplicationData,
-    PermissionResult,
-    PermissionRequest
+use {
+    async_trait::async_trait,
+    crate::api::{
+        register_rpc_methods,
+        XSWD,
+        WalletRpcServer,
+        AuthConfig,
+        APIServer,
+        ApplicationData,
+        PermissionResult,
+        PermissionRequest,
+        XSWDPermissionHandler
+    },
+    xelis_common::prompt::ShareablePrompt,
+    xelis_common::rpc_server::RPCHandler
 };
-
-#[cfg(feature = "api_server")]
-use xelis_common::prompt::ShareablePrompt;
 
 #[derive(Error, Debug)]
 pub enum WalletError {
     #[error("Invalid key pair")]
     InvalidKeyPair,
+    #[error("Invalid signature")]
+    InvalidSignature,
     #[error("Expected a TX")]
     ExpectedOneTx,
     #[error("Too many txs included max is {}", u8::MAX)]
@@ -64,9 +70,9 @@ pub enum WalletError {
     InvalidSaltSize,
     #[error("Error while fetching password salt from DB")]
     NoSaltFound,
-    #[error("Your wallet contains only {} instead of {} for asset {}", format_coin(*_0), format_coin(*_1), _2)]
-    NotEnoughFunds(u64, u64, Hash),
-    #[error("Your wallet don't have enough funds to pay fees: expected {} but have only {}", format_coin(*_0), format_coin(*_1))]
+    #[error("Your wallet contains only {} instead of {} for asset {}", format_coin(*_0, *_2), format_coin(*_1, *_2), _3)]
+    NotEnoughFunds(u64, u64, u8, Hash),
+    #[error("Your wallet don't have enough funds to pay fees: expected {} but have only {}", format_xelis(*_0), format_xelis(*_1))]
     NotEnoughFundsForFee(u64, u64),
     #[error("Invalid address params")]
     InvalidAddressParams,
@@ -82,17 +88,21 @@ pub enum WalletError {
     RescanTopoheightTooHigh,
     #[error(transparent)]
     Any(#[from] Error),
+    #[error("No API Server is running")]
+    NoAPIServer,
     #[error("RPC Server is not running")]
     RPCServerNotRunning,
     #[error("RPC Server is already running")]
     RPCServerAlreadyRunning,
-    #[error("Invalid fees provided, minimum fees calculated: {}, provided: {}", format_coin(*_0), format_coin(*_1))]
+    #[error("Invalid fees provided, minimum fees calculated: {}, provided: {}", format_xelis(*_0), format_xelis(*_1))]
     InvalidFeeProvided(u64, u64),
     #[error("Wallet name cannot be empty")]
     EmptyName,
     #[cfg(feature = "api_server")]
     #[error("No handler available for this request")]
-    NoHandlerAvailable
+    NoHandlerAvailable,
+    #[error(transparent)]
+    NetworkError(#[from] NetworkError),
 }
 
 pub struct Wallet {
@@ -106,7 +116,7 @@ pub struct Wallet {
     network: Network,
     // RPC Server
     #[cfg(feature = "api_server")]
-    api_server: Mutex<Option<APIServer>>,
+    api_server: Mutex<Option<APIServer<Arc<Self>>>>,
     // Prompt for CLI
     // Only used for requesting permissions through it
     #[cfg(feature = "api_server")]
@@ -244,7 +254,10 @@ impl Wallet {
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
         }
-        let rpc_server = WalletRpcServer::new(bind_address, Arc::clone(self), config).await?;
+        let mut rpc_handler = RPCHandler::new(self.clone());
+        register_rpc_methods(&mut rpc_handler);
+
+        let rpc_server = WalletRpcServer::new(bind_address, rpc_handler, config).await?;
         *lock = Some(APIServer::RPCServer(rpc_server));
         Ok(())
     }
@@ -255,54 +268,11 @@ impl Wallet {
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
         }
-        *lock = Some(APIServer::XSWD(XSWD::new(self.clone())?));
+        let mut rpc_handler = RPCHandler::new(self.clone());
+        register_rpc_methods(&mut rpc_handler);
+
+        *lock = Some(APIServer::XSWD(XSWD::new(rpc_handler)?));
         Ok(())
-    }
-
-    #[cfg(feature = "api_server")]
-    pub async fn request_permission(&self, app_data: &ApplicationData, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
-        if let Some(prompt) = self.prompt.lock().await.as_ref() {
-            match request {
-                PermissionRequest::Application(signed) => {
-                    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_data.get_name(), app_data.get_id());
-                    if signed {
-                        message = "NOTE: Application authorizaion was already approved previously.\r\n".to_string() + &message;
-                    }
-                    let accepted = prompt.read_valid_str_value(message, vec!["y", "n"]).await? == "y";
-                    if accepted {
-                        Ok(PermissionResult::Allow)
-                    } else {
-                        Ok(PermissionResult::Deny)
-                    }
-                },
-                PermissionRequest::Request(request) => {
-                    let params = if let Some(params) = &request.params {
-                        params.to_string()
-                    } else {
-                        "".to_string()
-                    };
-
-                    let message = format!(
-                        "XSWD: Request from {}: {}\r\nParams: {}\r\nDo you want to allow this request ?\r\n([A]llow / [D]eny / [AA] Always Allow / [AD] Always Deny): ",
-                        app_data.get_name(),
-                        request.method,
-                        params
-                    );
-
-                    let answer = prompt.read_valid_str_value(message, vec!["a", "d", "aa", "ad"]).await?;
-                    Ok(match answer.as_str() {
-                        "a" => PermissionResult::Allow,
-                        "d" => PermissionResult::Deny,
-                        "aa" => PermissionResult::AlwaysAllow,
-                        "ad" => PermissionResult::AlwaysDeny,
-                        _ => unreachable!()
-                    })
-                }
-            }
-        } else {
-            Err(WalletError::NoHandlerAvailable.into())
-        }
-
     }
 
     #[cfg(feature = "api_server")]
@@ -311,6 +281,11 @@ impl Wallet {
         let rpc_server = lock.take().ok_or(WalletError::RPCServerNotRunning)?;
         rpc_server.stop().await;
         Ok(())
+    }
+
+    #[cfg(feature = "api_server")]
+    pub fn get_api_server<'a>(&'a self) -> &Mutex<Option<APIServer<Arc<Self>>>> {
+        &self.api_server
     }
 
     // Verify if a password is valid or not
@@ -373,7 +348,8 @@ impl Wallet {
         let balance = storage.get_balance_for(&asset).unwrap_or(0);
         // check if we have enough funds for this asset
         if amount > balance {
-            return Err(WalletError::NotEnoughFunds(balance, amount, asset).into())
+            let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
+            return Err(WalletError::NotEnoughFunds(balance, amount, decimals, asset).into())
         }
         
         // include all extra data in the TX
@@ -387,8 +363,9 @@ impl Wallet {
             // NOTE: We must be sure to have a different key each time
 
             if writer.total_write() > EXTRA_DATA_LIMIT_SIZE {
-                return Err(WalletError::InvalidAddressParams.into())
+                return Err(WalletError::ExtraDataTooBig(EXTRA_DATA_LIMIT_SIZE, writer.total_write()).into())
             }
+
             Some(writer.bytes())
         } else {
             None
@@ -415,7 +392,8 @@ impl Wallet {
             let asset: &Hash = *asset;
             let balance = storage.get_balance_for(asset).unwrap_or(0);
             if balance < *amount {
-                return Err(WalletError::NotEnoughFunds(balance, *amount, asset.clone()).into())
+                let decimals = storage.get_asset_decimals(asset).unwrap_or(COIN_DECIMALS);
+                return Err(WalletError::NotEnoughFunds(balance, *amount, decimals, asset.clone()).into())
             }
         }
 
@@ -463,7 +441,7 @@ impl Wallet {
     pub async fn set_offline_mode(&self) -> Result<(), WalletError> {
         let mut handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.take() {
-            network_handler.stop().await;
+            network_handler.stop().await?;
         } else {
             return Err(WalletError::NotOnlineMode)
         }
@@ -473,13 +451,13 @@ impl Wallet {
 
     pub async fn rescan(&self, topoheight: u64) -> Result<(), WalletError> {
         if !self.is_online().await {
-            // user have to set in offline mode himself first
-            return Err(WalletError::AlreadyOnlineMode.into())
+            // user have to set it online
+            return Err(WalletError::NotOnlineMode)
         }
 
         let handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.as_ref() {
-            network_handler.stop().await;
+            network_handler.stop().await?;
             {
                 let mut storage = self.get_storage().write().await;
                 if topoheight >= storage.get_daemon_topoheight()? {
@@ -489,8 +467,12 @@ impl Wallet {
                 storage.delete_top_block_hash()?;
                 // balances will be re-fetched from daemon
                 storage.delete_balances()?;
-                let nonce_result = network_handler.get_api().get_last_nonce(&self.get_address()).await?;
-                storage.set_nonce(nonce_result.version.get_nonce())?;
+                let nonce_result = network_handler.get_api()
+                    .get_last_nonce(&self.get_address()).await
+                    // User has no transactions/balances yet, set its nonce to 0
+                    .map(|v| v.version.get_nonce()).unwrap_or(0);
+
+                storage.set_nonce(nonce_result)?;
 
                 if topoheight == 0 {
                     storage.delete_transactions()?;
@@ -552,5 +534,57 @@ impl Wallet {
 
     pub fn get_network(&self) -> &Network {
         &self.network
+    }
+}
+
+#[cfg(feature = "api_server")]
+#[async_trait]
+impl XSWDPermissionHandler for Arc<Wallet> {
+    async fn request_permission(&self, app_data: &ApplicationData, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
+        if let Some(prompt) = self.prompt.lock().await.as_ref() {
+            match request {
+                PermissionRequest::Application(signed) => {
+                    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_data.get_name(), app_data.get_id());
+                    if signed {
+                        message = "NOTE: Application authorizaion was already approved previously.\r\n".to_string() + &message;
+                    }
+                    let accepted = prompt.read_valid_str_value(message, vec!["y", "n"]).await? == "y";
+                    if accepted {
+                        Ok(PermissionResult::Allow)
+                    } else {
+                        Ok(PermissionResult::Deny)
+                    }
+                },
+                PermissionRequest::Request(request) => {
+                    let params = if let Some(params) = &request.params {
+                        params.to_string()
+                    } else {
+                        "".to_string()
+                    };
+
+                    let message = format!(
+                        "XSWD: Request from {}: {}\r\nParams: {}\r\nDo you want to allow this request ?\r\n([A]llow / [D]eny / [AA] Always Allow / [AD] Always Deny): ",
+                        app_data.get_name(),
+                        request.method,
+                        params
+                    );
+
+                    let answer = prompt.read_valid_str_value(message, vec!["a", "d", "aa", "ad"]).await?;
+                    Ok(match answer.as_str() {
+                        "a" => PermissionResult::Allow,
+                        "d" => PermissionResult::Deny,
+                        "aa" => PermissionResult::AlwaysAllow,
+                        "ad" => PermissionResult::AlwaysDeny,
+                        _ => unreachable!()
+                    })
+                }
+            }
+        } else {
+            Err(WalletError::NoHandlerAvailable.into())
+        }
+    }
+
+    async fn get_public_key(&self) -> Result<&PublicKey, Error> {
+        Ok((self as &Wallet).get_public_key())
     }
 }

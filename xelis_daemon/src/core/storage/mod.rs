@@ -9,7 +9,7 @@ use xelis_common::{
     transaction::Transaction,
     block::{Block, BlockHeader, Difficulty}, account::{VersionedBalance, VersionedNonce},
     immutable::Immutable,
-    network::Network,
+    network::Network, asset::{AssetData, AssetWithData},
 };
 
 use crate::core::error::BlockchainError;
@@ -33,7 +33,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     fn set_pruned_topoheight(&mut self, pruned_topoheight: u64) -> Result<(), BlockchainError>;
 
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
-    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<Arc<BlockHeader>, BlockchainError>;
+    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
     async fn delete_tx(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
     // delete versioned balances at a specific topoheight
     async fn delete_versioned_balances_for_asset_at_topoheight(&mut self, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
@@ -46,11 +46,12 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     // same as above but for nonces
     async fn create_snapshot_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<Hash>, BlockchainError>;
+    async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<AssetWithData>, BlockchainError>;
     async fn get_partial_keys(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<PublicKey>, BlockchainError>;
     async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<bool, BlockchainError>;
 
     async fn get_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<u64>>, BlockchainError>;
+    fn count_accounts(&self) -> usize;
 
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError>;
     fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError>;
@@ -64,11 +65,11 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     fn has_network(&self) -> Result<bool, BlockchainError>;
 
     async fn asset_exist(&self, asset: &Hash) -> Result<bool, BlockchainError>;
-    async fn add_asset(&mut self, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
+    async fn add_asset(&mut self, asset: &Hash, data: AssetData) -> Result<(), BlockchainError>;
     async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError>;
     fn count_assets(&self) -> usize;
 
-    fn get_asset_registration_topoheight(&self, asset: &Hash) -> Result<u64, BlockchainError>;
+    fn get_asset_data(&self, asset: &Hash) -> Result<AssetData, BlockchainError>;
 
     fn has_tx_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError>;
     fn has_block_linked_to_tx(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError>;
@@ -99,14 +100,15 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     fn set_last_topoheight_for_nonce(&mut self, key: &PublicKey, topoheight: u64) -> Result<(), BlockchainError>;
     async fn set_nonce_at_topoheight(&mut self, key: &PublicKey, nonce: u64, topoheight: u64) -> Result<(), BlockchainError>;
 
-    fn get_block_reward(&self, hash: &Hash) -> Result<u64, BlockchainError>;
-    fn set_block_reward(&mut self, hash: &Hash, reward: u64) -> Result<(), BlockchainError>;
+    fn get_block_reward_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError>;
+    fn set_block_reward_at_topo_height(&mut self, topoheight: u64, reward: u64) -> Result<(), BlockchainError>;
 
     async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
     fn count_transactions(&self) -> usize;
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
     async fn add_new_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError>;
+    // Count is the number of blocks (topoheight) to rewind
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
     fn has_blocks(&self) -> bool;
     fn count_blocks(&self) -> usize;
@@ -119,8 +121,10 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn get_top_block(&self) -> Result<Block, BlockchainError>;
     async fn get_top_block_header(&self) -> Result<(Arc<BlockHeader>, Hash), BlockchainError>;
 
+    async fn set_blocks_at_height(&self, tips: Tips, height: u64) -> Result<(), BlockchainError>;
     async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError>;
     async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError>;
+    async fn remove_block_hash_at_height(&self, hash: &Hash, height: u64) -> Result<(), BlockchainError>;
 
     async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
     async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
@@ -128,9 +132,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError>;
 
     async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError>;
-
-    fn get_supply_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
-    fn set_supply_for_block_hash(&mut self, hash: &Hash, supply: u64) -> Result<(), BlockchainError>;
+    fn set_supply_at_topo_height(&mut self, topoheight: u64, supply: u64) -> Result<(), BlockchainError>;
 
     async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: u64) -> Result<(), BlockchainError>;
 

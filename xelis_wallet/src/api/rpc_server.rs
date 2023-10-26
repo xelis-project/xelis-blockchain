@@ -4,34 +4,33 @@ use actix_web_httpauth::{middleware::HttpAuthentication, extractors::basic::Basi
 use anyhow::Result;
 use log::{info, warn};
 use tokio::sync::Mutex;
-use xelis_common::{config, rpc_server::{RPCHandler, RPCServerHandler, json_rpc}};
+use xelis_common::{config, rpc_server::{RPCHandler, RPCServerHandler, json_rpc, websocket, websocket::{EventWebSocketHandler, WebSocketServerShared, WebSocketServer}, WebSocketServerHandler}, api::wallet::NotifyEvent};
 use actix_web::{get, HttpResponse, Responder, HttpServer, web::{Data, self}, App, dev::{ServerHandle, ServiceRequest}, Error, error::{ErrorUnauthorized, ErrorBadGateway, ErrorBadRequest}};
-use crate::wallet::Wallet;
 
-use super::rpc;
-
-pub type WalletRpcServerShared = Arc<WalletRpcServer>;
+pub type WalletRpcServerShared<W> = Arc<WalletRpcServer<W>>;
 
 pub struct AuthConfig {
     pub username: String,
     pub password: String
 }
 
-pub struct WalletRpcServer {
+pub struct WalletRpcServer<W>
+where
+    W: Clone + Send + Sync + 'static
+{
     handle: Mutex<Option<ServerHandle>>,
-    rpc_handler: Arc<RPCHandler<Arc<Wallet>>>,
+    websocket: WebSocketServerShared<EventWebSocketHandler<W, NotifyEvent>>,
     auth_config: Option<AuthConfig>
 }
 
-impl WalletRpcServer {
-    pub async fn new(bind_address: String, wallet: Arc<Wallet>, auth_config: Option<AuthConfig>) -> Result<WalletRpcServerShared> {
-        let mut rpc_handler = RPCHandler::new(wallet);
-        rpc::register_methods(&mut rpc_handler);
-
-        let rpc_handler = Arc::new(rpc_handler);
+impl<W> WalletRpcServer<W>
+where
+    W: Clone + Send + Sync + 'static
+{
+    pub async fn new(bind_address: String, rpc_handler: RPCHandler<W>, auth_config: Option<AuthConfig>) -> Result<WalletRpcServerShared<W>> {
         let server = Arc::new(Self {
             handle: Mutex::new(None),
-            rpc_handler,
+            websocket: WebSocketServer::new(EventWebSocketHandler::new(rpc_handler)),
             auth_config
         });
 
@@ -39,11 +38,12 @@ impl WalletRpcServer {
             let clone = Arc::clone(&server);
             let http_server = HttpServer::new(move || {
                 let server = Arc::clone(&clone);
-                let auth = HttpAuthentication::basic(auth);
+                let auth = HttpAuthentication::basic(auth::<W>);
                 App::new()
                     .app_data(Data::from(server))
                     .wrap(auth)
-                    .route("/json_rpc", web::post().to(json_rpc::<Arc<Wallet>, WalletRpcServer>))
+                    .route("/ws", web::get().to(websocket::<EventWebSocketHandler<W, NotifyEvent>, Self>))
+                    .route("/json_rpc", web::post().to(json_rpc::<W, WalletRpcServer<W>>))
                     .service(index)
             })
             .disable_signals()
@@ -87,14 +87,29 @@ impl WalletRpcServer {
     }
 }
 
-impl RPCServerHandler<Arc<Wallet>> for WalletRpcServer {
-    fn get_rpc_handler(&self) -> &RPCHandler<Arc<Wallet>> {
-        &self.rpc_handler
+impl<W> WebSocketServerHandler<EventWebSocketHandler<W, NotifyEvent>> for WalletRpcServer<W>
+where
+    W: Clone + Send + Sync + 'static
+{
+    fn get_websocket(&self) -> &WebSocketServerShared<EventWebSocketHandler<W, NotifyEvent>> {
+        &self.websocket
     }
 }
 
-async fn auth(request: ServiceRequest, credentials: BasicAuth) -> Result<ServiceRequest, (Error, ServiceRequest)> {
-    let data: Option<&Data<WalletRpcServer>> = request.app_data();
+impl<W> RPCServerHandler<W> for WalletRpcServer<W>
+where
+    W: Clone + Send + Sync + 'static
+{
+    fn get_rpc_handler(&self) -> &RPCHandler<W> {
+        &self.get_websocket().get_handler().get_rpc_handler()
+    }
+}
+
+async fn auth<W>(request: ServiceRequest, credentials: BasicAuth) -> Result<ServiceRequest, (Error, ServiceRequest)>
+where
+    W: Clone + Send + Sync + 'static
+{
+    let data: Option<&Data<WalletRpcServer<W>>> = request.app_data();
     match data {
         Some(server) => match server.authenticate(credentials).await {
             Ok(_) => Ok(request),

@@ -211,7 +211,7 @@ All theses data are saved in plaintext.
 |      transactions     |    Hash    |    Transaction    |      Save the whole transaction based on its hash      |
 |         blocks        |    Hash    |    Block Header   |      Save the block header only based on its hash      |
 |    blocks_at_height   |   Integer  |   Array of Hash   |        Save all blocks hash at a specific height       |
-|         extra         |    Bytes   |  No specific type | Actually used to save the highest topo height and TIPS |
+|         extra         |    Bytes   |  No specific type |Save the highest topo height, pruned topoheight and TIPS|
 |      topo_by_hash     |    Hash    |      Integer      |       Save a block hash at a specific topo height      |
 |      hash_by_topo     |   Integer  |        Hash       |      Save a topo height for a specific block hash      |
 | cumulative_difficulty |    Hash    |      Integer      |   Save the cumulative difficulty for each block hash   |
@@ -228,6 +228,7 @@ All theses data are saved in plaintext.
 **NOTE**:
 - Balances and nonces are versioned, which means they are stored each time a change happened on disk.
 - Assets registered have in value their topoheight at which it was registered.
+- Supply and block rewards are only stored when the block is topologically ordered
 
 The database engine used is sled. It may changes in future.
 
@@ -249,7 +250,9 @@ Password hashing algorithm used is Argon2id with a configuration of 15 MB and 16
 Wallet implement a fully-encrypted storage system with following features:
 - Tree names are hashed with generated salt
 - Keys data are hashed with generated salt
-- Values are encrypted using XChaCha20Poly1305 and a random newly generated Nonce each time its saved. 
+- Values are encrypted using XChaCha20Poly1305 and a random newly generated nonce each time its saved. 
+
+Exception for assets list which has its key encrypted to be able to retrieve them later.
 
 Hash algorithm used is Keccak-256 for keys / tree names.
 The random salt generated is a 64 bytes length.

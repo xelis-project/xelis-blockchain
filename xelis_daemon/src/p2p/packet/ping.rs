@@ -1,5 +1,4 @@
 use xelis_common::{
-    config::P2P_PING_PEER_LIST_LIMIT,
     crypto::hash::Hash,
     serializer::{
         Writer,
@@ -7,12 +6,18 @@ use xelis_common::{
         ReaderError,
         Reader
     },
-    globals::{
+    utils::{
         ip_to_bytes,
         ip_from_bytes
-    }, block::Difficulty
+    },
+    block::Difficulty,
+    api::daemon::{NotifyEvent, PeerPeerListUpdatedEvent}
 };
-use crate::p2p::{peer::Peer, error::P2pError};
+use crate::{
+    p2p::{peer::Peer, error::P2pError},
+    config::P2P_PING_PEER_LIST_LIMIT,
+    core::{blockchain::Blockchain, storage::Storage}
+};
 use std::{
     fmt::Display,
     borrow::Cow,
@@ -44,7 +49,7 @@ impl<'a> Ping<'a> {
         }
     }
 
-    pub async fn update_peer(self, peer: &Arc<Peer>) -> Result<(), P2pError> {
+    pub async fn update_peer<S: Storage>(self, peer: &Arc<Peer>, blockchain: &Arc<Blockchain<S>>) -> Result<(), P2pError> {
         trace!("Updating {} with {}", peer, self);
         peer.set_block_top_hash(self.top_hash.into_owned()).await;
         peer.set_topoheight(self.topoheight);
@@ -73,23 +78,36 @@ impl<'a> Ping<'a> {
         peer.set_cumulative_difficulty(self.cumulative_difficulty);
 
         if !self.peer_list.is_empty() {
-            debug!("Received a peer list ({}) for {}", self.peer_list.len(), peer);
-            let mut peers = peer.get_peers(false).lock().await;
+            debug!("Received a peer list ({:?}) for {}", self.peer_list, peer.get_outgoing_address());
+            let mut peers_received = peer.get_peers(false).lock().await;
+            debug!("Our peer list is ({:?}) for {}", peers_received, peer.get_outgoing_address());
             let peer_addr = peer.get_connection().get_address();
             let peer_outgoing_addr = peer.get_outgoing_address();
-            for addr in self.peer_list {
-                if *peer_addr == addr || *peer_outgoing_addr == addr {
-                    error!("Invalid protocol rules: peer {} sent us its own socket address in ping packet", peer);
+            for addr in &self.peer_list {
+                if peer_addr == addr || peer_outgoing_addr == addr {
+                    error!("Invalid protocol rules: peer {} sent us its own socket address in ping packet", peer.get_outgoing_address());
                     return Err(P2pError::InvalidProtocolRules)
                 }
 
-                if peers.contains(&addr) {
-                    error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", peer, addr);
+                debug!("Adding {} for {} in ping packet", addr, peer.get_outgoing_address());
+                if !peers_received.insert(*addr) {
+                    error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", addr, peer.get_outgoing_address());
+                    trace!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, peers_received);
                     return Err(P2pError::InvalidProtocolRules)
                 }
-                debug!("Adding {} for {} in ping packet", addr, peer);
-                peers.insert(addr);
             }
+
+            trace!("Locking RPC Server to notify PeerPeerListUpdated event");
+            if let Some(rpc) = blockchain.get_rpc().lock().await.as_ref() {
+                if rpc.is_event_tracked(&NotifyEvent::PeerPeerListUpdated).await {
+                    let value = PeerPeerListUpdatedEvent {
+                        peer_id: peer.get_id(),
+                        peerlist: self.peer_list
+                    };
+                    rpc.notify_clients_with(&NotifyEvent::PeerPeerListUpdated, value).await;
+                }
+            }
+            trace!("End locking for PeerPeerListUpdated event");
         }
 
         Ok(())
@@ -103,12 +121,12 @@ impl<'a> Ping<'a> {
         self.topoheight
     }
 
-    pub fn set_peers(&mut self, peers: Vec<SocketAddr>) {
-        self.peer_list = peers;
-    }
-
     pub fn get_peers(&self) -> &Vec<SocketAddr> {
         &self.peer_list
+    }
+
+    pub fn get_mut_peers(&mut self) -> &mut Vec<SocketAddr> {
+        &mut self.peer_list
     }
 }
 

@@ -7,6 +7,9 @@ pub const PASSWORD_HASH_SIZE: usize = 32;
 pub const SALT_SIZE: usize = 32;
 pub const KEY_SIZE: usize = 32;
 
+// daemon address by default when no specified
+pub const DEFAULT_DAEMON_ADDRESS: &str = "http://127.0.0.1:8080";
+
 lazy_static! {
     pub static ref PASSWORD_ALGORITHM: Argon2<'static> = {
         // 15 MB, 16 iterations

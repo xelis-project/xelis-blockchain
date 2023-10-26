@@ -2,26 +2,26 @@ use std::{sync::Arc, borrow::Cow};
 
 use anyhow::Context;
 use log::info;
-use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams}, DataHash, DataElement}, crypto::hash::Hashable};
+use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult}, DataHash}, crypto::{hash::Hashable, address::AddressType}};
 use serde_json::{Value, json};
-use crate::{wallet::{Wallet, WalletError}, entry::{EntryData, TransactionEntry}};
+use crate::{wallet::{Wallet, WalletError}, entry::TransactionEntry};
 
 pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     info!("Registering RPC methods...");
-    handler.register_method("version", async_handler!(version));
+    handler.register_method("get_version", async_handler!(get_version));
     handler.register_method("get_network", async_handler!(get_network));
     handler.register_method("get_nonce", async_handler!(get_nonce));
     handler.register_method("get_topoheight", async_handler!(get_topoheight));
     handler.register_method("get_address", async_handler!(get_address));
+    handler.register_method("split_address", async_handler!(split_address));
     handler.register_method("get_balance", async_handler!(get_balance));
     handler.register_method("get_tracked_assets", async_handler!(get_tracked_assets));
     handler.register_method("get_transaction", async_handler!(get_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("list_transactions", async_handler!(list_transactions));
-    handler.register_method("make_integrated_address", async_handler!(make_integrated_address));
 }
 
-async fn version(_: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_version(_: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
@@ -60,13 +60,29 @@ async fn get_topoheight(wallet: Arc<Wallet>, body: Value) -> Result<Value, Inter
 async fn get_address(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAddressParams = parse_params(body)?;
 
-    let address = if let Some(data) = params.data {
+    let address = if let Some(data) = params.integrated_data {
         wallet.get_address_with(data)
     } else {
         wallet.get_address()
     };
 
     Ok(json!(address))
+}
+
+async fn split_address(_: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: SplitAddressParams<'_> = parse_params(body)?;
+    let address = params.address;
+
+    let (address, addr_type) = address.split();
+    let integrated_data = match addr_type {
+        AddressType::Data(data) => data,
+        AddressType::Normal => return Err(InternalRpcError::CustomStr("Address is not an integrated address"))
+    };
+
+    Ok(json!(SplitAddressResult {
+        address,
+        integrated_data
+    }))
 }
 
 async fn get_balance(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
@@ -127,46 +143,6 @@ async fn build_transaction(wallet: Arc<Wallet>, body: Value) -> Result<Value, In
 async fn list_transactions(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
     let params: ListTransactionsParams = parse_params(body)?;
     let wallet = wallet.get_storage().read().await;
-    let txs = wallet.get_transactions()?;
-    let response: Vec<DataHash<'_, TransactionEntry>> = txs.iter().filter(|e| {
-        if let Some(topoheight) = &params.min_topoheight {
-            if e.get_topoheight() < *topoheight {
-                return false
-            }
-        }
-
-        if let Some(topoheight) = &params.max_topoheight {
-            if e.get_topoheight() > *topoheight {
-                return false
-            }
-        }
-
-        match e.get_entry() {
-            EntryData::Coinbase(_) if params.accept_coinbase => true,
-            EntryData::Burn { .. } if params.accept_burn => true,
-            EntryData::Incoming(sender, _) if params.accept_incoming => match &params.address {
-                Some(key) => *key == *sender,
-                None => true
-            },
-            EntryData::Outgoing(txs) if params.accept_outgoing => match &params.address {
-                Some(filter_key) => txs.iter().find(|tx| {
-                    *tx.get_key() == *filter_key
-                }).is_some(),
-                None => true,
-            },
-            _ => false
-        }
-    }).map(|e| {
-        let hash = e.get_hash();
-        DataHash { hash: Cow::Borrowed(hash), data: Cow::Borrowed(e) }
-    }).collect();
-
-    Ok(json!(response))
-}
-
-async fn make_integrated_address(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
-    let params: DataElement = parse_params(body)?;
-
-    let integrated_address = wallet.get_address_with(params);
-    Ok(json!(integrated_address))
+    let txs = wallet.get_filtered_transactions(params.address.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?;
+    Ok(json!(txs))
 }
