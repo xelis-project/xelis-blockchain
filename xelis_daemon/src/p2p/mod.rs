@@ -1184,10 +1184,9 @@ impl<S: Storage> P2pServer<S> {
                         }
                     }
 
-                    let storage = self.blockchain.get_storage().read().await;
-                    let mempool = self.blockchain.get_mempool().read().await;
                     for hash in txs.into_owned() {
-                        if !mempool.contains_tx(&hash) && !storage.has_transaction(&hash).await? {
+                        // Verify that we don't already have it
+                        if !self.blockchain.has_tx(&hash).await? {
                             if !self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned()), false).await? {
                                 debug!("TX was already requested, ignoring");
                             }
