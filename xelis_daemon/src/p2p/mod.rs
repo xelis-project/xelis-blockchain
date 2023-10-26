@@ -1064,45 +1064,50 @@ impl<S: Storage> P2pServer<S> {
                 let request = request.into_owned();
                 match &request {
                     ObjectRequest::Block(hash) => {
-                        let storage = self.blockchain.get_storage().read().await;
-                        if storage.has_block(hash).await? {
-                            let block = storage.get_block(hash).await?;
-                            peer.send_packet(Packet::ObjectResponse(ObjectResponse::Block(Cow::Owned(block)))).await?;
-                        } else {
-                            debug!("{} asked block '{}' but not present in our chain", peer, hash);
-                            peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
-                        }
-                    },
-                    ObjectRequest::BlockHeader(hash) => {
-                        let storage = self.blockchain.get_storage().read().await;
-                        if storage.has_block(hash).await? {
-                            let header = storage.get_block_header_by_hash(hash).await?;
-                            peer.send_packet(Packet::ObjectResponse(ObjectResponse::BlockHeader(Cow::Borrowed(&header)))).await?;
-                        } else {
-                            debug!("{} asked block header '{}' but not present in our chain", peer, hash);
-                            peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
-                        }
-                    },
-                    ObjectRequest::Transaction(hash) => {
-                        let search_on_disk = {
-                            let mempool = self.blockchain.get_mempool().read().await;
-                            if let Ok(tx) = mempool.view_tx(hash) {
-                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(tx)))).await?;
-                                false
-                            } else {
-                                debug!("{} asked transaction '{}' but not present in our mempool", peer, hash);
-                                true
-                            }
+                        debug!("{} asked full block {}", peer, hash);
+                        let block = {
+                            let storage = self.blockchain.get_storage().read().await;
+                            storage.get_block(hash).await
                         };
 
-                        if search_on_disk {
-                            debug!("Looking on disk for transaction {}", hash);
+                        match block {
+                            Ok(block) => {
+                                debug!("block {} found, sending it", hash);
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Block(Cow::Borrowed(&block)))).await?;
+                            },
+                            Err(e) => {
+                                debug!("{} asked block '{}' but not present in our chain: {}", peer, hash, e);
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
+                            }
+                        };
+                    },
+                    ObjectRequest::BlockHeader(hash) => {
+                        debug!("{} asked block header {}", peer, hash);
+                        let block = {
                             let storage = self.blockchain.get_storage().read().await;
-                            if storage.has_transaction(hash).await? {
-                                let tx = storage.get_transaction(hash).await?;
+                            storage.get_block_header_by_hash(hash).await
+                        };
+
+                        match block {
+                            Ok(block) => {
+                                debug!("block header {} found, sending it", hash);
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::BlockHeader(Cow::Borrowed(&block)))).await?;
+                            },
+                            Err(e) => {
+                                debug!("{} asked block header '{}' but not present in our chain: {}", peer, hash, e);
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
+                            }
+                        };
+                    },
+                    ObjectRequest::Transaction(hash) => {
+                        debug!("{} asked tx {}", peer, hash);
+                        match self.blockchain.get_tx(hash).await {
+                            Ok(tx) => {
+                                debug!("tx {} found, sending it", hash);
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(&tx)))).await?;
-                            } else {
-                                debug!("{} asked transaction '{}' but not present in our chain", peer, hash);
+                            },
+                            Err(e) => {
+                                debug!("{} asked tx '{}' but not present in our chain: {}", peer, hash, e);
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
                             }
                         }
