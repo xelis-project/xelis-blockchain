@@ -1403,16 +1403,8 @@ impl<S: Storage> P2pServer<S> {
                         for tx_hash in header.get_txs_hashes() {
                             // check first on disk in case it was already fetch by a previous block
                             // it can happens as TXs can be integrated in multiple blocks and executed only one time
-                            let potential_tx_on_disk = {
-                                let storage = self.blockchain.get_storage().read().await;
-                                if storage.has_transaction(tx_hash).await? {
-                                    Some(storage.get_transaction(tx_hash).await?)
-                                } else {
-                                    None
-                                }
-                            };
                             // check if we find it
-                            if let Some(tx) = potential_tx_on_disk {
+                            if let Some(tx) = self.blockchain.get_tx(tx_hash).await.ok() {
                                 trace!("Found the transaction {} on disk", tx_hash);
                                 transactions.push(Immutable::Arc(tx));
                             } else { // otherwise, ask it from peer
@@ -1439,8 +1431,7 @@ impl<S: Storage> P2pServer<S> {
             for hash in blocks { // Request all blocks now
                 if !self.blockchain.has_block(&hash).await? {
                     trace!("Block {} is not found, asking it to peer", hash);
-                    let object_request = ObjectRequest::Block(hash.clone());
-                    let response = peer.request_blocking_object(object_request).await?;
+                    let response = peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?;
                     if let OwnedObjectResponse::Block(block, hash) = response {
                         trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
                         self.blockchain.add_new_block(block, false, false).await?;

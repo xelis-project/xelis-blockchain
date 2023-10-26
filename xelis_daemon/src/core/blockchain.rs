@@ -1189,7 +1189,7 @@ impl<S: Storage> Blockchain<S> {
         let block_hash = block.hash();
         debug!("Add new block {}", block_hash);
         if storage.has_block(&block_hash).await? {
-            error!("Block is already in chain!");
+            error!("Block {} is already in chain!", block_hash);
             return Err(BlockchainError::AlreadyInChain)
         }
 
