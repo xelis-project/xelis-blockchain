@@ -860,7 +860,8 @@ impl<S: Storage> P2pServer<S> {
                     let mut txs_cache = peer.get_txs_cache().lock().await;
                     if txs_cache.contains(&hash) {
                         debug!("{} send us a transaction ({}) already tracked by him", peer, hash);
-                        return Err(P2pError::AlreadyTrackedTx(hash))
+                        // TODO Fix common peer detection
+                        return Ok(()) // Err(P2pError::AlreadyTrackedTx(hash))
                     }
                     txs_cache.put(hash.clone(), ());
                 }
