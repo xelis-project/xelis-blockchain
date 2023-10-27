@@ -48,7 +48,7 @@ use xelis_common::{
 };
 use crate::config::BLOCK_TIME_MILLIS;
 use std::{sync::Arc, borrow::Cow};
-use log::{info, debug};
+use log::{info, debug, trace};
 
 pub async fn get_block_type_for_block<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<BlockType, InternalRpcError> {
     Ok(if blockchain.is_block_orphaned_for_storage(storage, hash).await {
@@ -662,65 +662,65 @@ async fn get_account_history<S: Storage>(blockchain: Arc<Blockchain<S>>, body: V
     let mut history_count = 0;
     let mut history = Vec::new();
     loop {
-        if let Some((topo, versioned_balance)) = version {
+        if let Some((topo, versioned_balance)) = version.take() {
+            trace!("Searching history at topoheight {}", topo);
             if topo < minimum_topoheight || topo < pruned_topoheight {
                 break;
             }
 
-            {
-                let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
-                if params.asset == XELIS_ASSET && *block_header.get_miner() == *key {
-                    let reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
-                    let history_type = AccountHistoryType::Mining { reward };
-                    history.push(AccountHistoryEntry {
-                        topoheight: topo,
-                        hash: hash.clone(),
-                        history_type,
-                        block_timestamp: block_header.get_timestamp()
-                    });
-                }
+            let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
+            if params.asset == XELIS_ASSET && *block_header.get_miner() == *key {
+                let reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
+                let history_type = AccountHistoryType::Mining { reward };
+                history.push(AccountHistoryEntry {
+                    topoheight: topo,
+                    hash: hash.clone(),
+                    history_type,
+                    block_timestamp: block_header.get_timestamp()
+                });
+            }
 
-                for hash in block_header.get_transactions() {
-                    let tx = storage.get_transaction(hash).await.context(format!("Error while retrieving transaction {hash} at topo height {topo}"))?;
-                    let is_sender = *tx.get_owner() == *key;
-                    match tx.get_data() {
-                        TransactionType::Transfer(transfers) => {
-                            for transfer in transfers {
-                                if transfer.asset == params.asset {
-                                    if transfer.to == *key {
-                                        history.push(AccountHistoryEntry {
-                                            topoheight: topo,
-                                            hash: hash.clone(),
-                                            history_type: AccountHistoryType::Incoming { amount: transfer.amount },
-                                            block_timestamp: block_header.get_timestamp()
-                                        });
-                                    }
-    
-                                    if is_sender {
-                                        history.push(AccountHistoryEntry {
-                                            topoheight: topo,
-                                            hash: hash.clone(),
-                                            history_type: AccountHistoryType::Outgoing { amount: transfer.amount },
-                                            block_timestamp: block_header.get_timestamp()
-                                        });
-                                    }
+            for tx_hash in block_header.get_transactions() {
+                trace!("Searching tx {} in block {}", tx_hash, hash);
+                let tx = storage.get_transaction(tx_hash).await.context(format!("Error while retrieving transaction {tx_hash} from block {hash}"))?;
+                let is_sender = *tx.get_owner() == *key;
+                match tx.get_data() {
+                    TransactionType::Transfer(transfers) => {
+                        for transfer in transfers {
+                            if transfer.asset == params.asset {
+                                if transfer.to == *key {
+                                    history.push(AccountHistoryEntry {
+                                        topoheight: topo,
+                                        hash: tx_hash.clone(),
+                                        history_type: AccountHistoryType::Incoming { amount: transfer.amount },
+                                        block_timestamp: block_header.get_timestamp()
+                                    });
                                 }
-                            }
-                        }
-                        TransactionType::Burn { asset, amount } => {
-                            if *asset == params.asset {
+
                                 if is_sender {
                                     history.push(AccountHistoryEntry {
                                         topoheight: topo,
-                                        hash: hash.clone(),
-                                        history_type: AccountHistoryType::Burn { amount: *amount },
+                                        hash: tx_hash.clone(),
+                                        history_type: AccountHistoryType::Outgoing { amount: transfer.amount },
                                         block_timestamp: block_header.get_timestamp()
                                     });
                                 }
                             }
-                        },
-                        _ => {}
+                        }
                     }
+                    TransactionType::Burn { asset, amount } => {
+                        if *asset == params.asset {
+                            if is_sender {
+                                history.push(AccountHistoryEntry {
+                                    topoheight: topo,
+                                    hash: tx_hash.clone(),
+                                    history_type: AccountHistoryType::Burn { amount: *amount },
+                                    block_timestamp: block_header.get_timestamp()
+                                });
+                            }
+                        }
+                    },
+                    _ => {}
                 }
             }
 
