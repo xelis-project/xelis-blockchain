@@ -394,7 +394,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let last_pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
-        if topoheight <= last_pruned_topoheight {
+        if topoheight < last_pruned_topoheight {
             return Err(BlockchainError::PruneLowerThanLastPruned)
         }
 
