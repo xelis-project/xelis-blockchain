@@ -107,11 +107,11 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
     // set the CommandManager to use
     prompt.set_command_manager(Some(command_manager))?;
 
-    let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().lock().await.as_ref() {
+    let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => Some(p2p.clone()),
         None => None
     };
-    let getwork: Option<SharedGetWorkServer<S>> = match blockchain.get_rpc().lock().await.as_ref() {
+    let getwork: Option<SharedGetWorkServer<S>> = match blockchain.get_rpc().read().await.as_ref() {
         Some(rpc) => rpc.getwork_server().clone(),
         None => None
     };
@@ -201,7 +201,7 @@ fn build_prompt_message(topoheight: u64, best_topoheight: u64, network_hashrate:
 
 async fn list_peers<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
     let blockchain = manager.get_data()?;
-    match blockchain.get_p2p().lock().await.as_ref() {
+    match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
             let peer_list = p2p.get_peer_list().read().await;
             for peer in peer_list.get_peers().values() {
@@ -400,7 +400,7 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
 async fn blacklist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let blockchain: &Arc<Blockchain<S>> = manager.get_data()?;
     let address: SocketAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
-    match blockchain.get_p2p().lock().await.as_ref() {
+    match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
             let peer_list = p2p.get_peer_list();
             peer_list.write().await.blacklist_address(&address).await;
@@ -417,7 +417,7 @@ async fn blacklist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut
 async fn whitelist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let blockchain: &Arc<Blockchain<S>> = manager.get_data()?;
     let address: SocketAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
-    match blockchain.get_p2p().lock().await.as_ref() {
+    match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
             let peer_list = p2p.get_peer_list();
             peer_list.write().await.whitelist_address(&address);

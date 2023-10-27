@@ -110,8 +110,8 @@ pub struct Blockchain<S: Storage> {
     stable_height: AtomicU64, // current stable height
     mempool: RwLock<Mempool>, // mempool to retrieve/add all txs
     storage: RwLock<S>, // storage to retrieve/add blocks
-    p2p: Mutex<Option<Arc<P2pServer<S>>>>, // P2p module
-    rpc: Mutex<Option<SharedDaemonRpcServer<S>>>, // Rpc module
+    p2p: RwLock<Option<Arc<P2pServer<S>>>>, // P2p module
+    rpc: RwLock<Option<SharedDaemonRpcServer<S>>>, // Rpc module
     // current difficulty at tips
     // its used as cache to display current network hashrate
     difficulty: AtomicU64,
@@ -162,8 +162,8 @@ impl<S: Storage> Blockchain<S> {
             stable_height: AtomicU64::new(0),
             mempool: RwLock::new(Mempool::new()),
             storage: RwLock::new(storage),
-            p2p: Mutex::new(None),
-            rpc: Mutex::new(None),
+            p2p: RwLock::new(None),
+            rpc: RwLock::new(None),
             difficulty: AtomicU64::new(GENESIS_BLOCK_DIFFICULTY),
             simulator: config.simulator,
             network,
@@ -229,7 +229,7 @@ impl<S: Storage> Blockchain<S> {
                         info!("Trying to connect to priority node: {}", addr);
                         p2p.try_to_connect_to_peer(addr, true).await;
                     }
-                    *arc.p2p.lock().await = Some(p2p);
+                    *arc.p2p.write().await = Some(p2p);
                 },
                 Err(e) => error!("Error while starting P2p server: {}", e)
             };
@@ -239,7 +239,7 @@ impl<S: Storage> Blockchain<S> {
         {
             info!("Starting RPC server...");
             match DaemonRpcServer::new(config.rpc_bind_address, Arc::clone(&arc), config.disable_getwork_server).await {
-                Ok(server) => *arc.rpc.lock().await = Some(server),
+                Ok(server) => *arc.rpc.write().await = Some(server),
                 Err(e) => error!("Error while starting RPC server: {}", e)
             };
         }
@@ -264,12 +264,12 @@ impl<S: Storage> Blockchain<S> {
 
     pub async fn stop(&self) {
         info!("Stopping modules...");
-        let mut p2p = self.p2p.lock().await;
+        let mut p2p = self.p2p.write().await;
         if let Some(p2p) = p2p.take() {
             p2p.stop().await;
         }
 
-        let mut rpc = self.rpc.lock().await;
+        let mut rpc = self.rpc.write().await;
         if let Some(rpc) = rpc.take() {
             rpc.stop().await;
         }
@@ -922,11 +922,11 @@ impl<S: Storage> Blockchain<S> {
         }
     }
 
-    pub fn get_p2p(&self) -> &Mutex<Option<Arc<P2pServer<S>>>> {
+    pub fn get_p2p(&self) -> &RwLock<Option<Arc<P2pServer<S>>>> {
         &self.p2p
     }
 
-    pub fn get_rpc(&self) -> &Mutex<Option<SharedDaemonRpcServer<S>>> {
+    pub fn get_rpc(&self) -> &RwLock<Option<SharedDaemonRpcServer<S>>> {
         &self.rpc
     }
 
@@ -998,12 +998,12 @@ impl<S: Storage> Blockchain<S> {
 
         if broadcast {
             // P2p broadcast to others peers
-            if let Some(p2p) = self.p2p.lock().await.as_ref() {
+            if let Some(p2p) = self.p2p.read().await.as_ref() {
                 p2p.broadcast_tx_hash(hash.clone()).await;
             }
 
             // broadcast to websocket this tx
-            if let Some(rpc) = self.rpc.lock().await.as_ref() {
+            if let Some(rpc) = self.rpc.read().await.as_ref() {
                 // Notify miners if getwork is enabled
                 if let Some(getwork) = rpc.getwork_server() {
                     if let Err(e) = getwork.notify_new_job_rate_limited().await {
@@ -1419,7 +1419,7 @@ impl<S: Storage> Blockchain<S> {
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
 
         // rpc server lock
-        let rpc_server = self.rpc.lock().await;
+        let rpc_server = self.rpc.read().await;
         let should_track_events = if let Some(rpc) = rpc_server.as_ref() {
             rpc.get_tracked_events().await
         } else {
@@ -1699,7 +1699,7 @@ impl<S: Storage> Blockchain<S> {
 
         if broadcast {
             trace!("Broadcasting block");
-            if let Some(p2p) = self.p2p.lock().await.as_ref() {
+            if let Some(p2p) = self.p2p.read().await.as_ref() {
                 trace!("P2p locked, broadcasting in new task");
                 let p2p = p2p.clone();
                 let pruned_topoheight = storage.get_pruned_topoheight()?;
@@ -1865,7 +1865,7 @@ impl<S: Storage> Blockchain<S> {
             let (_, height) = self.find_common_base(&storage, &tips).await?;
 
             // if we have a RPC server, propagate the StableHeightChanged if necessary
-            if let Some(rpc) = self.rpc.lock().await.as_ref() {
+            if let Some(rpc) = self.rpc.read().await.as_ref() {
                 let previous_stable_height = self.get_stable_height();
                 if height != previous_stable_height {
                     if rpc.is_event_tracked(&NotifyEvent::StableHeightChanged).await {

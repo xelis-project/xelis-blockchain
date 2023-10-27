@@ -98,7 +98,7 @@ impl<'a> Ping<'a> {
             }
 
             trace!("Locking RPC Server to notify PeerPeerListUpdated event");
-            if let Some(rpc) = blockchain.get_rpc().lock().await.as_ref() {
+            if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
                 if rpc.is_event_tracked(&NotifyEvent::PeerPeerListUpdated).await {
                     let value = PeerPeerListUpdatedEvent {
                         peer_id: peer.get_id(),

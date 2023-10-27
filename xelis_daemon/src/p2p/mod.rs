@@ -375,7 +375,7 @@ impl<S: Storage> P2pServer<S> {
 
         {
             trace!("Locking RPC Server to notify PeerConnected event");
-            if let Some(rpc) = self.blockchain.get_rpc().lock().await.as_ref() {
+            if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
                 if rpc.is_event_tracked(&NotifyEvent::PeerConnected).await {
                     debug!("Notifying clients with PeerConnected event");
                     rpc.notify_clients_with(&NotifyEvent::PeerConnected, get_peer_entry(&peer).await).await;
@@ -1275,7 +1275,7 @@ impl<S: Storage> P2pServer<S> {
                 peers_received.remove(&addr);
 
                 trace!("Locking RPC Server to notify PeerDisconnected event");
-                if let Some(rpc) = self.blockchain.get_rpc().lock().await.as_ref() {
+                if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
                     if rpc.is_event_tracked(&NotifyEvent::PeerPeerDisconnected).await {
                         let value = PeerPeerDisconnectedEvent {
                             peer_id: peer.get_id(),
