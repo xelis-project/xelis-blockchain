@@ -878,6 +878,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // Check that the tx is not in mempool or on disk already
                 if !self.blockchain.has_tx(&hash).await? {
+                    trace!("Requesting tx {} propagated because we don't have it", hash);
                     if !self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.clone()), true).await? {
                         debug!("TX propagated {} was already requested, ignoring", hash);
                     }
@@ -1203,6 +1204,7 @@ impl<S: Storage> P2pServer<S> {
                     for hash in txs.into_owned() {
                         // Verify that we don't already have it
                         if !self.blockchain.has_tx(&hash).await? {
+                            trace!("Requesting TX {} from inventory response", hash);
                             if !self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Transaction(hash.into_owned()), false).await? {
                                 debug!("TX was already requested, ignoring");
                             }
