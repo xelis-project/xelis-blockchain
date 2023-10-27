@@ -1574,9 +1574,9 @@ impl<S: Storage> P2pServer<S> {
         &self.peer_list
     }
 
-    pub async fn broadcast_tx_hash(&self, storage: &S, tx: Hash) {
+    pub async fn broadcast_tx_hash(&self, tx: Hash) {
         info!("Broadcasting tx hash {}", tx);
-        let ping = self.build_generic_ping_packet_with_storage(storage).await;
+        let ping = self.build_generic_ping_packet().await;
         trace!("Ping packet has been generated for tx broadcast");
         let current_topoheight = ping.get_topoheight();
         let packet = Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(&tx), Cow::Owned(ping)));

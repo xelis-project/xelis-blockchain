@@ -335,7 +335,7 @@ async fn add_tx<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut ar
     manager.message(format!("Adding TX {} to mempool...", hash));
 
     let blockchain = manager.get_data()?;
-    blockchain.add_tx_with_hash_to_mempool(tx, hash, broadcast).await.context("Error while adding TX to mempool")?;
+    blockchain.add_tx_to_mempool_with_hash(tx, hash, broadcast).await.context("Error while adding TX to mempool")?;
     manager.message("TX has been added to mempool");
     Ok(())
 }

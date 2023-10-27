@@ -162,7 +162,7 @@ impl ObjectTracker {
     async fn handle_object_response_internal<S: Storage>(&self, blockchain: &Arc<Blockchain<S>>, response: OwnedObjectResponse, broadcast: bool) -> Result<(), P2pError> {
         match response {
             OwnedObjectResponse::Transaction(tx, hash) => {
-                blockchain.add_tx_with_hash_to_mempool(tx, hash, broadcast).await?;
+                blockchain.add_tx_to_mempool_with_hash(tx, hash, broadcast).await?;
             },
             _ => {
                 debug!("ObjectTracker received an invalid object response");

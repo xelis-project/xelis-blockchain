@@ -940,26 +940,25 @@ impl<S: Storage> Blockchain<S> {
 
     pub async fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
-        self.add_tx_with_hash_to_mempool(tx, hash, broadcast).await
+        self.add_tx_to_mempool_with_hash(tx, hash, broadcast).await
     }
 
-    pub async fn add_tx_with_hash_to_mempool(&self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
-        let storage = self.storage.read().await;
-        let mut mempool = self.mempool.write().await;
-        self.add_tx_for_mempool(&storage, &mut mempool, tx, hash, broadcast).await
-    }
 
-    async fn add_tx_for_mempool<'a>(&'a self, storage: &S, mempool: &mut Mempool, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
-        if mempool.contains_tx(&hash) {
-            return Err(BlockchainError::TxAlreadyInMempool(hash))
-        }
-
-        // check that the TX is not already in blockchain
-        if storage.is_tx_executed_in_a_block(&hash)? {
-            return Err(BlockchainError::TxAlreadyInBlockchain(hash))
-        }
-
+    pub async fn add_tx_to_mempool_with_hash<'a>(&'a self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
+        let tx = Arc::new(tx);
         {
+            let storage = self.storage.read().await;
+            let mut mempool = self.mempool.write().await;
+    
+            if mempool.contains_tx(&hash) {
+                return Err(BlockchainError::TxAlreadyInMempool(hash))
+            }
+    
+            // check that the TX is not already in blockchain
+            if storage.is_tx_executed_in_a_block(&hash)? {
+                return Err(BlockchainError::TxAlreadyInBlockchain(hash))
+            }
+    
             // get the highest nonce for this owner
             let owner = tx.get_owner();
             // get the highest nonce available
@@ -988,50 +987,42 @@ impl<S: Storage> Blockchain<S> {
 
                 // Verify original TX
                 // We may have double spending in balances, but it is ok because miner check that all txs included are valid
-                self.verify_transaction_with_hash(storage, &tx, &hash, &mut balances, Some(&mut nonces), false).await?;
+                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, Some(&mut nonces), false).await?;
             } else {
                 let mut balances = HashMap::new();
                 self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false).await?;
             }
+
+            mempool.add_tx(hash.clone(), tx.clone())?;
         }
 
-        let tx = Arc::new(tx);
-        mempool.add_tx(hash.clone(), tx.clone())?;
-
-        //
         if broadcast {
             // P2p broadcast to others peers
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
-                p2p.broadcast_tx_hash(&storage, hash.clone()).await;
+                p2p.broadcast_tx_hash(hash.clone()).await;
             }
 
             // broadcast to websocket this tx
             if let Some(rpc) = self.rpc.lock().await.as_ref() {
                 // Notify miners if getwork is enabled
                 if let Some(getwork) = rpc.getwork_server() {
-                    let getwork = getwork.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = getwork.notify_new_job_rate_limited().await {
-                            debug!("Error while notifying miners for new tx: {}", e);
-                        };
-                    });
+                    if let Err(e) = getwork.notify_new_job_rate_limited().await {
+                        debug!("Error while notifying miners for new tx: {}", e);
+                    }
                 }
 
                 if rpc.is_event_tracked(&NotifyEvent::TransactionAddedInMempool).await {
-                    let rpc = rpc.clone();
-                    tokio::spawn(async move {
-                        let data: TransactionResponse<'_, Arc<Transaction>> = TransactionResponse {
-                            blocks: None,
-                            executed_in_block: None,
-                            in_mempool: true,
-                            first_seen: Some(get_current_time()),
-                            data: DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) }
-                        };
+                    let data: TransactionResponse<'_, Arc<Transaction>> = TransactionResponse {
+                        blocks: None,
+                        executed_in_block: None,
+                        in_mempool: true,
+                        first_seen: Some(get_current_time()),
+                        data: DataHash { hash: Cow::Owned(hash), data: Cow::Borrowed(&tx) }
+                    };
 
-                        if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
-                            debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
-                        }
-                    });
+                    if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
+                        debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
+                    }
                 }
             }
         }
@@ -1067,10 +1058,13 @@ impl<S: Storage> Blockchain<S> {
 
     // retrieve the TX based on its hash by searching in mempool then on disk
     pub async fn get_tx(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
+        trace!("get tx {} from blockchain", hash);
         // check in mempool first
         // if its present, returns it
         {
+            trace!("Locking mempool for get tx {}", hash);
             let mempool = self.mempool.read().await;
+            trace!("Mempool locked for get tx {}", hash);
             if let Ok(tx) = mempool.get_tx(hash) {
                 return Ok(tx)
             } 
@@ -1116,7 +1110,9 @@ impl<S: Storage> Blockchain<S> {
         let height = blockdag::calculate_height_at_tips(storage, &sorted_tips).await?;
         let mut block = BlockHeader::new(self.get_version_at_height(height), height, get_current_timestamp(), sorted_tips, extra_nonce, address, Vec::new());
 
+        trace!("Locking mempool for building block template");
         let mempool = self.mempool.read().await;
+        trace!("Mempool locked for building block template");
 
         // get all availables txs and sort them by fee per size
         let mut txs = mempool.get_txs()
@@ -1170,7 +1166,9 @@ impl<S: Storage> Blockchain<S> {
         trace!("Searching TXs for block at height {}", header.get_height());
         let mut transactions: Vec<Immutable<Transaction>> = Vec::with_capacity(header.get_txs_count());
         let storage = self.storage.read().await;
+        trace!("Locking mempool for building block from header");
         let mempool = self.mempool.read().await;
+        trace!("Mempool lock acquired for building block from header");
         for hash in header.get_txs_hashes() {
             trace!("Searching TX {} for building block", hash);
             // at this point, we don't want to lose/remove any tx, we clone it only
@@ -1848,11 +1846,9 @@ impl<S: Storage> Blockchain<S> {
         debug!("New topoheight: {} (diff: {})", new_topoheight, current_topoheight - new_topoheight);
 
         {
-            debug!("Locking mempool");
-            let mut mempool = self.mempool.write().await;
             for (hash, tx) in txs {
                 debug!("Trying to add TX {} to mempool again", hash);
-                if let Err(e) = self.add_tx_for_mempool(&storage, &mut mempool, tx.as_ref().clone(), hash, false).await {
+                if let Err(e) = self.add_tx_to_mempool_with_hash(tx.as_ref().clone(), hash, false).await {
                     debug!("TX rewinded is not compatible anymore: {}", e);
                 }
             }
