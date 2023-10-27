@@ -730,6 +730,9 @@ async fn get_account_history<S: Storage>(blockchain: Arc<Blockchain<S>>, body: V
             }        
     
             if let Some(previous) = versioned_balance.get_previous_topoheight() {
+                if previous < pruned_topoheight {
+                    break;
+                }
                 version = Some((previous, storage.get_balance_at_exact_topoheight(key, &params.asset, previous).await.context(format!("Error while retrieving previous balance at topo height {previous}"))?));
             }
         } else {
