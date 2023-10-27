@@ -1691,10 +1691,16 @@ impl<S: Storage> Blockchain<S> {
             let difficulty = self.get_difficulty_at_tips(storage, &tips_vec).await?;
             self.difficulty.store(difficulty, Ordering::SeqCst);
         }
+
+        // Clean all old txs
+        mempool.clean_up(nonces).await;
+
         debug!("Processed block {} in {}ms", block_hash, start.elapsed().as_millis());
 
         if broadcast {
+            trace!("Broadcasting block");
             if let Some(p2p) = self.p2p.lock().await.as_ref() {
+                trace!("P2p locked, broadcasting in new task");
                 let p2p = p2p.clone();
                 let pruned_topoheight = storage.get_pruned_topoheight()?;
                 let block_hash = block_hash.clone();
@@ -1742,9 +1748,6 @@ impl<S: Storage> Blockchain<S> {
                 }
             });
         }
-
-        // Clean all old txs
-        mempool.clean_up(nonces).await;
 
         Ok(())
     }

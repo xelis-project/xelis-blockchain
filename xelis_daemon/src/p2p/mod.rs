@@ -390,8 +390,10 @@ impl<S: Storage> P2pServer<S> {
     // Connect to a specific peer address
     // Buffer is passed in parameter to prevent the re-allocation each time
     pub async fn try_to_connect_to_peer(&self, addr: SocketAddr, priority: bool) {
+        trace!("try to connect to peer addr {}, priority: {}", addr, priority);
         {
             let peer_list = self.peer_list.read().await;
+            trace!("peer list locked for trying to connect to peer {}", addr);
             if peer_list.is_blacklisted(&addr) {
                 debug!("{} is banned, we can't connect to it", addr);
                 return;
@@ -457,6 +459,7 @@ impl<S: Storage> P2pServer<S> {
     async fn select_random_best_peer(&self, fast_sync: bool) -> Option<Arc<Peer>> {
         trace!("select random best peer");
         let peer_list = self.peer_list.read().await;
+        trace!("peer list locked for select random best peer");
         let our_height = self.blockchain.get_height();
         let our_topoheight = self.blockchain.get_topo_height();
         // search for peers which are greater than us
@@ -504,7 +507,9 @@ impl<S: Storage> P2pServer<S> {
                 // and then we check if we have a potential peer above us to fast sync
                 // otherwise we sync normally 
                 let fast_sync = if self.blockchain.is_fast_sync_mode_allowed() {
+                    trace!("locking peer list for fast sync check");
                     let peerlist = self.peer_list.read().await;
+                    trace!("peer list locked for fast sync check");
                     let our_topoheight = self.blockchain.get_topo_height();
                     peerlist.get_peers().values().find(|p| {
                         let peer_topoheight = p.get_topoheight();
@@ -565,7 +570,9 @@ impl<S: Storage> P2pServer<S> {
             if current_time > last_peerlist_update + P2P_PING_PEER_LIST_DELAY {
                 trace!("Sending ping packet with peerlist...");
                 last_peerlist_update = current_time;
+                trace!("locking peer list for ping loop extended");
                 let peer_list = self.peer_list.read().await;
+                trace!("peer list locked for ping loop extended");
                 for peer in peer_list.get_peers().values() {
                     let new_peers = ping.get_mut_peers();
                     new_peers.clear();
@@ -1495,7 +1502,10 @@ impl<S: Storage> P2pServer<S> {
     // determine if we are connected to a priority node and that this node is equal / greater to our chain
     async fn is_connected_to_a_synced_priority_node(&self) -> bool {
         let topoheight = self.blockchain.get_topo_height();
+        trace!("locking peer list for checking if connected to a synced priority node");
         let peer_list = self.peer_list.read().await;
+        trace!("locked peer list for checking if connected to a synced priority node");
+
         for peer in peer_list.get_peers().values() {
             if peer.is_priority() {
                 let peer_topoheight = peer.get_topoheight();
@@ -1617,6 +1627,7 @@ impl<S: Storage> P2pServer<S> {
         let packet_block_bytes = Bytes::from(block_packet.to_bytes());
         let packet_ping_bytes = Bytes::from(Packet::Ping(Cow::Owned(ping)).to_bytes());
 
+        trace!("Locking peer list for broadcasting block {}", hash);
         let peer_list = self.peer_list.read().await;
         trace!("start broadcasting block {} to all peers", hash);
         for (_, peer) in peer_list.get_peers() {
