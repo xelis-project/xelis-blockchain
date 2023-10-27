@@ -649,7 +649,11 @@ async fn get_account_history<S: Storage>(blockchain: Arc<Blockchain<S>>, body: V
     let key = params.address.get_public_key();
     let minimum_topoheight = params.minimum_topoheight.unwrap_or(0);
     let storage = blockchain.get_storage().read().await;
+    let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?.unwrap_or(0);
     let mut version = if let Some(topo) = params.maximum_topoheight {
+        if topo < pruned_topoheight {
+            return Err(InternalRpcError::CustomStr("Maximum topoheight is lower than pruned topoheight"));
+        }
         storage.get_balance_at_maximum_topoheight(key, &params.asset, topo).await.context(format!("Error while retrieving balance at topo height {topo}"))?
     } else {
         Some(storage.get_last_balance(key, &params.asset).await.context("Error while retrieving last balance")?)
@@ -659,7 +663,7 @@ async fn get_account_history<S: Storage>(blockchain: Arc<Blockchain<S>>, body: V
     let mut history = Vec::new();
     loop {
         if let Some((topo, versioned_balance)) = version {
-            if topo < minimum_topoheight {
+            if topo < minimum_topoheight || topo < pruned_topoheight {
                 break;
             }
 
