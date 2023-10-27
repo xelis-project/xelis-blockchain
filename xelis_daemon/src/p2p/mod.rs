@@ -599,6 +599,8 @@ impl<S: Storage> P2pServer<S> {
                     // send the ping packet to the peer
                     if let Err(e) = peer.send_packet(Packet::Ping(Cow::Borrowed(&ping))).await {
                         debug!("Error sending specific ping packet to {}: {}", peer, e);
+                    } else {
+                        peer.set_last_ping_sent(get_current_time());
                     }
                 }
             } else {
@@ -609,11 +611,18 @@ impl<S: Storage> P2pServer<S> {
                 let peerlist = self.peer_list.read().await;
                 trace!("End locking peerlist... (generic ping)");
                 // broadcast directly the ping packet asap to all peers
+                let current_time = get_current_time();
                 for peer in peerlist.get_peers().values() {
-                    trace!("broadcast to {}", peer);
-                    if let Err(e) = peer.send_bytes(bytes.clone()).await {
-                        error!("Error while trying to broadcast directly ping packet to {}: {}", peer, e);
-                    };
+                    trace!("broadcast generic ping packet to {}", peer);
+                    if current_time - peer.get_last_ping_sent() > P2P_PING_DELAY {
+                        if let Err(e) = peer.send_bytes(bytes.clone()).await {
+                            error!("Error while trying to broadcast directly ping packet to {}: {}", peer, e);
+                        } else {
+                            peer.set_last_ping_sent(current_time);
+                        }
+                    } else {
+                        trace!("we already sent a ping packet to {}, skipping", peer);
+                    }
                 }
             }
         }
@@ -1047,14 +1056,16 @@ impl<S: Storage> P2pServer<S> {
                 let current_time = get_current_time();
                 // verify the respect of the coutdown to prevent massive packet incoming
                 // if he send 2x faster than rules, throw error (because of connection latency / packets being queued)
-                if last_ping != 0 && current_time - last_ping < P2P_PING_DELAY / 2 {
+                let empty_peer_list = ping.get_peers().is_empty();
+                if current_time - last_ping < P2P_PING_DELAY / 4 && empty_peer_list {
                     return Err(P2pError::PeerInvalidPingCoutdown)
                 }
+
                 // update the last ping only if he respect the protocol rules
                 peer.set_last_ping(current_time);
 
                 // we verify the respect of the countdown of peer list updates to prevent any spam
-                if ping.get_peers().len() > 0 {
+                if !empty_peer_list {
                     trace!("received peer list from {}: {}", peer, ping.get_peers().len());
                     let last_peer_list = peer.get_last_peer_list();
                     peer.set_last_peer_list(current_time);
@@ -1602,7 +1613,8 @@ impl<S: Storage> P2pServer<S> {
         // because this function can be call from Blockchain, which would lead to a deadlock
         let ping = Ping::new(Cow::Borrowed(hash), our_topoheight, our_height, pruned_topoheight, cumulative_difficulty, Vec::new());
         let block_packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Borrowed(&ping)));
-        let bytes = Bytes::from(block_packet.to_bytes());
+        let packet_block_bytes = Bytes::from(block_packet.to_bytes());
+        let packet_ping_bytes = Bytes::from(Packet::Ping(Cow::Owned(ping)).to_bytes());
 
         let peer_list = self.peer_list.read().await;
         trace!("start broadcasting block {} to all peers", hash);
@@ -1625,11 +1637,17 @@ impl<S: Storage> P2pServer<S> {
                     }
 
                     debug!("Broadcast {} to {}", hash, peer);
-                    if let Err(e) = peer.send_bytes(bytes.clone()).await {
+                    if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
                         debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
                     }
                 } else {
                     debug!("{} contains {}, don't broadcast block to him", peer, hash);
+                    // But we can notify him with a ping packet that we got the block
+                    if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
+                        debug!("Error on sending ping for notifying that we accepted the block {} to {}: {}", hash, peer, e);
+                    } else {
+                        peer.set_last_ping_sent(get_current_time());
+                    }
                 }
             }
         }

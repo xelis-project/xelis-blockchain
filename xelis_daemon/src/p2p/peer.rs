@@ -48,6 +48,7 @@ pub struct Peer {
     peers_sent: Mutex<HashSet<SocketAddr>>, // all peers sent to this peer
     last_peer_list: AtomicU64, // last time we received a peerlist from this peer
     last_ping: AtomicU64, // last time we got a ping packet from this peer
+    last_ping_sent: AtomicU64, // last time we sent a ping packet to this peer
     cumulative_difficulty: AtomicU64, // cumulative difficulty of peer chain
     txs_cache: Mutex<LruCache<Hash, ()>>, // All transactions propagated to/from this peer
     blocks_propagation: Mutex<LruCache<Hash, ()>>, // last blocks propagated to/from this peer
@@ -87,6 +88,7 @@ impl Peer {
             peers_sent: Mutex::new(HashSet::new()),
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
+            last_ping_sent: AtomicU64::new(0),
             cumulative_difficulty: AtomicU64::new(cumulative_difficulty),
             txs_cache: Mutex::new(LruCache::new(128)),
             blocks_propagation: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
@@ -339,6 +341,14 @@ impl Peer {
     }
 
     pub fn set_last_ping(&self, value: u64) {
+        self.last_ping.store(value, Ordering::Release)
+    }
+
+    pub fn get_last_ping_sent(&self) -> u64 {
+        self.last_ping_sent.load(Ordering::Acquire)
+    }
+
+    pub fn set_last_ping_sent(&self, value: u64) {
         self.last_ping.store(value, Ordering::Release)
     }
 
