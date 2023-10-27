@@ -1052,14 +1052,15 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::Ping(ping) => {
                 trace!("Received a ping packet from {}", peer);
-                let last_ping = peer.get_last_ping();
                 let current_time = get_current_time();
-                // verify the respect of the coutdown to prevent massive packet incoming
-                // if he send 2x faster than rules, throw error (because of connection latency / packets being queued)
                 let empty_peer_list = ping.get_peers().is_empty();
-                if current_time - last_ping < P2P_PING_DELAY / 4 && empty_peer_list {
-                    return Err(P2pError::PeerInvalidPingCoutdown)
-                }
+                // verify the respect of the coutdown to prevent massive packet incoming
+                // if he send 4x faster than rules, throw error (because of connection latency / packets being queued)
+                // let last_ping = peer.get_last_ping();
+                // Disabled for testing block notification
+                // if current_time - last_ping < P2P_PING_DELAY / 4 && empty_peer_list {
+                //     return Err(P2pError::PeerInvalidPingCoutdown)
+                // }
 
                 // update the last ping only if he respect the protocol rules
                 peer.set_last_ping(current_time);
@@ -1649,6 +1650,8 @@ impl<S: Storage> P2pServer<S> {
                         peer.set_last_ping_sent(get_current_time());
                     }
                 }
+            } else {
+                trace!("Cannot broadcast {} at height {} to {}, too far", hash, block.get_height(), peer);
             }
         }
         trace!("broadcasting block {} is done", hash);
