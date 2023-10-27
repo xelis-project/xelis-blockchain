@@ -1127,7 +1127,11 @@ impl<S: Storage> Blockchain<S> {
             // If its the same sender, check the nonce
             if a_tx.get_owner() == b_tx.get_owner() {
                 // Increasing nonces (lower first)
-                return a_tx.get_nonce().cmp(&b_tx.get_nonce())
+                let cmp = a_tx.get_nonce().cmp(&b_tx.get_nonce());
+                // If its not equal nonce, returns it
+                if cmp != std::cmp::Ordering::Equal {
+                    return cmp
+                }
             }
 
             let a = a_fee * *a_size as u64;
@@ -1147,6 +1151,7 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 // Check if the TX is valid for this potential block
+                trace!("Checking TX {} with nonce {}", hash, tx.get_nonce());
                 if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false).await {
                     warn!("TX {} is not valid for mining: {}", hash, e);
                 } else {
