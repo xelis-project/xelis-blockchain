@@ -1590,7 +1590,7 @@ impl<S: Storage> P2pServer<S> {
             // check that the peer is not too far from us
             // otherwise we may spam him for nothing
             let peer_topoheight = peer.get_topoheight();
-            if (peer_topoheight >= current_topoheight && peer_topoheight - current_topoheight < STABLE_LIMIT) || current_topoheight - peer_topoheight < STABLE_LIMIT {
+            if (peer_topoheight >= current_topoheight && peer_topoheight - current_topoheight < STABLE_LIMIT) || (current_topoheight >= peer_topoheight && current_topoheight - peer_topoheight < STABLE_LIMIT) {
                 trace!("Peer {} is not too far from us, checking cache for tx hash {}", peer, tx);
                 let mut txs_cache = peer.get_txs_cache().lock().await;
                 // check that we didn't already send this tx to this peer or that he don't already have it
