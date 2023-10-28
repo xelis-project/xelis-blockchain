@@ -261,6 +261,12 @@ pub struct GetAccountsParams {
     pub maximum_topoheight: Option<u64>
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct IsTxExecutedInBlockParams<'a> {
+    pub tx_hash: Cow<'a, Hash>,
+    pub block_hash: Cow<'a, Hash>
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {
     // When a new block is accepted by chain

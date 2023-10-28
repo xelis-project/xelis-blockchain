@@ -35,7 +35,8 @@ use xelis_common::{
         AccountHistoryEntry,
         AccountHistoryType,
         GetAccountAssetsParams,
-        PeerEntry
+        PeerEntry,
+        IsTxExecutedInBlockParams
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -187,6 +188,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_account_history", async_handler!(get_account_history));
     handler.register_method("get_account_assets", async_handler!(get_account_assets));
     handler.register_method("get_accounts", async_handler!(get_accounts));
+    handler.register_method("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block));
 }
 
 async fn version<S: Storage>(_: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
@@ -796,4 +798,11 @@ async fn get_accounts<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -
     let accounts = storage.get_partial_keys(maximum, skip, minimum_topoheight, maximum_topoheight).await.context("Error while retrieving accounts")?;
 
     Ok(json!(accounts))
+}
+
+// Check if the asked TX is executed in the block
+async fn is_tx_executed_in_block<S: Storage>(blockchain: Arc<Blockchain<S>>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: IsTxExecutedInBlockParams = parse_params(body)?;
+    let storage = blockchain.get_storage().read().await;
+    Ok(json!(storage.is_tx_executed_in_block(&params.tx_hash, &params.block_hash).context("Error while checking if tx was executed in block")?))
 }
