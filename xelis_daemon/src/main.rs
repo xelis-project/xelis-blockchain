@@ -10,7 +10,7 @@ use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
     prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel, self, ShareablePrompt},
-    config::{VERSION, XELIS_ASSET}, utils::{format_hashrate, set_network_to, format_xelis, format_coin}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer
+    config::{VERSION, XELIS_ASSET}, utils::{format_hashrate, set_network_to, format_xelis, format_coin, format_difficulty}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer
 };
 use crate::{
     core::{
@@ -371,7 +371,7 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
     manager.message(format!("Topo Height: {}", topoheight));
-    manager.message(format!("Difficulty: {}", difficulty));
+    manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
     manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / BLOCK_TIME) as f64)));
     manager.message(format!("Top block hash: {}", top_block_hash));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / 1000f64));
