@@ -93,7 +93,7 @@ const HASHRATE_FORMATS: [&str; 5] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s"];
 pub fn format_hashrate(mut hashrate: f64) -> String {
     let max = HASHRATE_FORMATS.len() - 1;
     let mut count = 0;
-    while hashrate > 1000f64 && count < max {
+    while hashrate >= 1000f64 && count < max {
         count += 1;
         hashrate = hashrate / 1000f64;
     }
