@@ -1464,10 +1464,12 @@ impl<S: Storage> Blockchain<S> {
 
                     let block = storage.get_block_header_by_hash(&hash_at_topo).await?;
 
-                    // mark txs as unexecuted
+                    // mark txs as unexecuted if it was executed in this block
                     for tx_hash in block.get_txs_hashes() {
-                        trace!("Removing execution of {}", tx_hash);
-                        storage.remove_tx_executed(&tx_hash)?;
+                        if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo)? {
+                            trace!("Removing execution of {}", tx_hash);
+                            storage.remove_tx_executed(&tx_hash)?;
+                        }
                     }
 
                     topoheight += 1;
