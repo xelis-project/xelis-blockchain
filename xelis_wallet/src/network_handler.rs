@@ -143,12 +143,13 @@ impl NetworkHandler {
 
             let response = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
             let block: Block = response.data.data.into_owned();
+            let block_hash = response.data.hash.into_owned();
 
             // create Coinbase entry
             if *block.get_miner() == *address.get_public_key() {
                 if let Some(reward) = response.reward {
                     let coinbase = EntryData::Coinbase(reward);
-                    let entry = TransactionEntry::new(response.data.hash.into_owned(), topoheight, None, None, coinbase);
+                    let entry = TransactionEntry::new(block_hash.clone(), topoheight, None, None, coinbase);
 
                     // New coinbase entry, inform listeners
                     #[cfg(feature = "api_server")]
@@ -161,12 +162,11 @@ impl NetworkHandler {
                     let mut storage = self.wallet.get_storage().write().await;
                     storage.save_transaction(entry.get_hash(), &entry)?;
                 } else {
-                    warn!("No reward for block {} at topoheight {}", response.data.hash, topoheight);
+                    warn!("No reward for block {} at topoheight {}", block_hash, topoheight);
                 }
             }
 
             let (block, txs) = block.split();
-            // TODO check only executed txs in this block
             for (tx_hash, tx) in block.into_owned().take_txs_hashes().into_iter().zip(txs) {
                 let tx = tx.into_owned();
                 let is_owner = *tx.get_owner() == *address.get_public_key();
@@ -210,6 +210,12 @@ impl NetworkHandler {
                 };
 
                 if let Some(entry) = entry {
+                    // New transaction entry that may be linked to us, check if TX was executed
+                    if !self.api.is_tx_executed_in_block(&tx_hash, &block_hash).await? {
+                        debug!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx_hash, block_hash);
+                        continue;
+                    }
+
                     let entry = TransactionEntry::new(tx_hash, topoheight, fee, nonce, entry);
                     let mut storage = self.wallet.get_storage().write().await;
 

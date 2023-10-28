@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use anyhow::{Context, Result};
-use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams, GetNonceResult, GetAssetsParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::{BlockHeader, Block}, asset::AssetWithData};
+use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams, GetNonceResult, GetAssetsParams, IsTxExecutedInBlockParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::{BlockHeader, Block}, asset::AssetWithData};
 
 pub struct DaemonAPI {
     client: JsonRPCClient,
@@ -92,5 +92,13 @@ impl DaemonAPI {
             topoheight: None
         }).await.context(format!("Error while fetching nonce from address {}", address))?;
         Ok(nonce)
+    }
+
+    pub async fn is_tx_executed_in_block(&self, tx_hash: &Hash, block_hash: &Hash) -> Result<bool> {
+        let is_executed = self.client.call_with("is_tx_executed_in_block", &IsTxExecutedInBlockParams {
+            tx_hash: Cow::Borrowed(tx_hash),
+            block_hash: Cow::Borrowed(block_hash)
+        }).await.context(format!("Error while checking if tx {} is executed in block {}", tx_hash, block_hash))?;
+        Ok(is_executed)
     }
 }
