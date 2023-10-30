@@ -16,7 +16,8 @@ use xelis_common::{
 use crate::{
     p2p::{peer::Peer, error::P2pError},
     config::P2P_PING_PEER_LIST_LIMIT,
-    core::{blockchain::Blockchain, storage::Storage}
+    core::{blockchain::Blockchain, storage::Storage},
+    rpc::rpc::get_peer_entry
 };
 use std::{
     fmt::Display,
@@ -76,6 +77,14 @@ impl<'a> Ping<'a> {
 
         peer.set_pruned_topoheight(self.pruned_topoheight);
         peer.set_cumulative_difficulty(self.cumulative_difficulty);
+
+        trace!("Locking RPC Server to notify PeerStateUpdated event");
+        if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
+            if rpc.is_event_tracked(&NotifyEvent::PeerStateUpdated).await {
+                rpc.notify_clients_with(&NotifyEvent::PeerStateUpdated, get_peer_entry(peer).await).await;
+            }
+        }
+        trace!("End locking for PeerStateUpdated event");
 
         if !self.peer_list.is_empty() {
             debug!("Received a peer list ({:?}) for {}", self.peer_list, peer.get_outgoing_address());

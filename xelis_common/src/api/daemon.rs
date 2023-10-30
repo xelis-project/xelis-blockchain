@@ -300,6 +300,8 @@ pub enum NotifyEvent {
     // Peer peerlist updated, its all its connected peers
     // It contains PeerPeerListUpdatedEvent as value
     PeerPeerListUpdated,
+    // Peer has been updated through a ping packet
+    PeerStateUpdated,
     // When a peer of a peer has disconnected
     // and that he notified us
     // It contains PeerPeerDisconnectedEvent as value
