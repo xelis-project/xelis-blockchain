@@ -218,8 +218,8 @@ All theses data are saved in plaintext.
 |         assets        |    Hash    |      Integer      |  Verify if an assets exist and its registration height |
 |         nonces        | Public Key |      Integer      |     Store the highest topoheight of versioned nonce    |
 |   nonces_topoheight   | Public Key |  Versioned Nonce  |      Tree name is composed of prefix + topoheight      |
-|        rewards        |    Hash    |      Integer      |                  Save the block reward                 |
-|         supply        |    Hash    |      Integer      |  Calculated supply (past + block reward) at each block |
+|        rewards        |   Integer  |      Integer      |                  Save the block reward                 |
+|         supply        |   Integer  |      Integer      |  Calculated supply (past + block reward) at each block |
 |       difficulty      |    Hash    |      Integer      |                Difficulty for each block               |
 |       tx_blocks       |    Hash    |   Array of Hash   |      All blocks in which this TX hash is included      |
 |      assets_hash      | Public Key |      Integer      |  Asset hash with last topoheight of versioned balance  |
