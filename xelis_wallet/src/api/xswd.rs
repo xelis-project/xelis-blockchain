@@ -403,55 +403,58 @@ where
     }
 
     async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
-        let mut applications = self.applications.lock().await;
+        let (request, is_subscribe, is_unsubscribe) = {
+            let mut applications = self.applications.lock().await;
 
-        // Application is already registered, verify permission and call the method
-        if let Some(app) = applications.get_mut(session) {
-            let request: RpcRequest = self.handler.parse_request(message)?;
-
-            // Verify first if the method exist (and that its not a built-in one)
-            let is_subscribe = request.method == "subscribe";
-            let is_unsubscribe = request.method == "unsubscribe";
-
-            if !self.handler.has_method(&request.method) && !is_subscribe && !is_unsubscribe {
-                return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
-            }
-
-            // let's check the permission set by user for this method
-            self.verify_permission_for_request(app, &request).await?;
-
-            if is_subscribe || is_unsubscribe {
-                // retrieve the event variant
-                let event = serde_json::from_value(
-                    request.params.ok_or_else(|| RpcResponseError::new(request.id, InternalRpcError::ExpectedParams))?)
-                    .map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e))
-                )?;
-                if is_subscribe {
-                    self.subscribe_session_to_event(session, event, request.id).await.map(|_| None)
-                } else {
-                    self.unsubscribe_session_from_event(session, event, request.id).await.map(|_| None)
+            // Application is already registered, verify permission and call the method
+            if let Some(app) = applications.get_mut(session) {
+                let request: RpcRequest = self.handler.parse_request(message)?;
+    
+                // Verify first if the method exist (and that its not a built-in one)
+                let is_subscribe = request.method == "subscribe";
+                let is_unsubscribe = request.method == "unsubscribe";
+    
+                if !self.handler.has_method(&request.method) && !is_subscribe && !is_unsubscribe {
+                    return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
                 }
+    
+                // let's check the permission set by user for this method
+                self.verify_permission_for_request(app, &request).await?;
+                (request, is_subscribe, is_unsubscribe)
             } else {
-                // Call the method
-                let mut context = Context::default();
-                // Store the session
-                context.store(session.clone());
-                self.handler.execute_method(context, request).await.map(|v| Some(v))
+                // Application is not registered, register it
+                return match self.add_application(&mut applications, session, message).await {
+                    Ok(v) => Ok(Some(v)),
+                    Err(e) => {
+                        // Send error message and then close the session
+                        if let Err(e) = session.send_text(&e.to_json().to_string()).await {
+                            error!("Error while sending error message to session: {}", e);
+                        }
+                        session.get_server().delete_session(&session, None).await;
+    
+                        Ok(None)
+                    }
+                }
+            }
+        };
+
+        if is_subscribe || is_unsubscribe {
+            // retrieve the event variant
+            let event = serde_json::from_value(
+                request.params.ok_or_else(|| RpcResponseError::new(request.id, InternalRpcError::ExpectedParams))?)
+                .map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e))
+            )?;
+            if is_subscribe {
+                self.subscribe_session_to_event(session, event, request.id).await.map(|_| None)
+            } else {
+                self.unsubscribe_session_from_event(session, event, request.id).await.map(|_| None)
             }
         } else {
-            // Application is not registered, register it
-            match self.add_application(&mut applications, session, message).await {
-                Ok(v) => Ok(Some(v)),
-                Err(e) => {
-                    // Send error message and then close the session
-                    if let Err(e) = session.send_text(&e.to_json().to_string()).await {
-                        error!("Error while sending error message to session: {}", e);
-                    }
-                    session.get_server().delete_session(&session, None).await;
-
-                    Ok(None)
-                }
-            }
+            // Call the method
+            let mut context = Context::default();
+            // Store the session
+            context.store(session.clone());
+            self.handler.execute_method(context, request).await.map(|v| Some(v))
         }
     }
 }
