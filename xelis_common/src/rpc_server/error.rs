@@ -7,6 +7,8 @@ use crate::{serializer::ReaderError, rpc_server::JSON_RPC_VERSION};
 
 #[derive(Error, Debug)]
 pub enum InternalRpcError {
+    #[error("Invalid context")]
+    InvalidContext,
     #[error("Invalid body in request")]
     ParseBodyError,
     #[error("Invalid request")]

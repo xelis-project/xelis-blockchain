@@ -5,7 +5,7 @@ use actix_web::{get, web::{Data, Payload, self}, HttpRequest, Responder, HttpSer
 use log::{info, error, debug};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use xelis_common::{rpc_server::{RPCHandler, websocket::{WebSocketHandler, WebSocketSessionShared, WebSocketServer}, RpcRequest, RpcResponseError, InternalRpcError, RpcResponse}, crypto::{key::{Signature, SIGNATURE_LENGTH, PublicKey}, hash::hash}, serializer::{Serializer, ReaderError, Reader, Writer}, api::{wallet::NotifyEvent, EventResult}};
+use xelis_common::{rpc_server::{RPCHandler, websocket::{WebSocketHandler, WebSocketSessionShared, WebSocketServer}, RpcRequest, RpcResponseError, InternalRpcError, RpcResponse, Context}, crypto::{key::{Signature, SIGNATURE_LENGTH, PublicKey}, hash::hash}, serializer::{Serializer, ReaderError, Reader, Writer}, api::{wallet::NotifyEvent, EventResult}};
 use serde::{Deserialize, Serialize};
 use crate::config::XSWD_BIND_ADDRESS;
 
@@ -433,7 +433,10 @@ where
                 }
             } else {
                 // Call the method
-                self.handler.execute_method(request).await.map(|v| Some(v))
+                let mut context = Context::default();
+                // Store the session
+                context.store(session.clone());
+                self.handler.execute_method(context, request).await.map(|v| Some(v))
             }
         } else {
             // Application is not registered, register it

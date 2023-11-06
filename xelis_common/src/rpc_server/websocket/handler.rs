@@ -4,7 +4,7 @@ use log::debug;
 use serde_json::{Value, json};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::Mutex;
-use crate::{rpc_server::{RPCHandler, RpcResponseError, InternalRpcError, RpcRequest, RpcResponse}, api::{SubscribeParams, EventResult}};
+use crate::{rpc_server::{RPCHandler, RpcResponseError, InternalRpcError, RpcRequest, RpcResponse, Context}, api::{SubscribeParams, EventResult}};
 use super::{WebSocketSessionShared, WebSocketHandler};
 
 // generic websocket handler supporting event subscriptions 
@@ -95,9 +95,13 @@ where
                 self.unsubscribe_session_from_event(session, event, request.id).await?;
                 json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(json!(true))))
             },
-            _ => match self.handler.execute_method(request).await {
-                Ok(result) => result,
-                Err(e) => e.to_json(),
+            _ => {
+                let mut context = Context::default();
+                context.store(session.clone());
+                match self.handler.execute_method(context, request).await {
+                    Ok(result) => result,
+                    Err(e) => e.to_json(),
+                }
             }
         };
         Ok(response)
