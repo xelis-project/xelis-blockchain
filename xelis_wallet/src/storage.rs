@@ -44,7 +44,7 @@ pub struct EncryptedStorage {
 impl EncryptedStorage {
     pub fn new(inner: Storage, key: &[u8], salt: [u8; SALT_SIZE], network: Network) -> Result<Self> {
         let cipher = Cipher::new(key, Some(salt))?;
-        let storage = Self {
+        let mut storage = Self {
             transactions: inner.db.open_tree(&cipher.hash_key("transactions"))?,
             balances: inner.db.open_tree(&cipher.hash_key("balances"))?,
             extra: inner.db.open_tree(&cipher.hash_key("extra"))?,
@@ -117,6 +117,39 @@ impl EncryptedStorage {
     fn contains_encrypted_data(&self, tree: &Tree, key: &[u8]) -> Result<bool> {
         let encrypted_key = self.cipher.encrypt_value(key)?;
         Ok(tree.contains_key(encrypted_key)?)
+    }
+
+    // Open the named tree
+    fn get_custom_tree(&self, name: &String) -> Result<Tree> {
+        let hash = self.cipher.hash_key(format!("custom_{}", name));
+        let tree = self.inner.db.open_tree(&hash)?;
+        Ok(tree)
+    }
+
+    // Store a custom serializable data 
+    pub fn set_custom_data<K: Serializer, V: Serializer>(&self, tree: &String, key: &K, value: &V) -> Result<()> {
+        let tree = self.get_custom_tree(tree)?;
+        self.save_to_disk_with_encrypted_key(&tree, &key.to_bytes(), &value.to_bytes())?;
+        Ok(())
+    }
+
+    // Retrieve a custom data in the selected format
+    pub fn get_custom_data<K: Serializer, V: Serializer>(&self, tree: &String, key: &K) -> Result<V> {
+        let tree = self.get_custom_tree(tree)?;
+        self.load_from_disk_with_encrypted_key(&tree, &key.to_bytes())
+    }
+
+    // Get all keys from the custom
+    pub fn get_custom_tree_keys<K: Serializer>(&self, tree: &String) -> Result<Vec<K>> {
+        let tree = self.get_custom_tree(tree)?;
+        let mut keys = Vec::new();
+        for e in tree.iter() {
+            let (key, _) = e?;
+            let k = K::from_bytes(&key)?;
+            keys.push(k);
+        }
+
+        Ok(keys)
     }
 
     // this function is specific because we save the key in encrypted form (and not hashed as others)
@@ -323,7 +356,7 @@ impl EncryptedStorage {
         self.save_to_disk(&self.extra, TOP_BLOCK_HASH_KEY, hash.as_bytes())
     }
 
-    pub fn has_top_block_hash(&mut self) -> Result<bool> {
+    pub fn has_top_block_hash(&self) -> Result<bool> {
         self.contains_data(&self.extra, TOP_BLOCK_HASH_KEY)
     }
 
@@ -343,9 +376,10 @@ impl EncryptedStorage {
         self.load_from_disk(&self.extra, NETWORK)
     }
 
-    fn set_network(&self, network: &Network) -> Result<()> {
+    fn set_network(&mut self, network: &Network) -> Result<()> {
         self.save_to_disk(&self.extra, NETWORK, &network.to_bytes())
     }
+
     fn has_network(&self) -> Result<bool> {
         self.contains_data(&self.extra, NETWORK)
     }

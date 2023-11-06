@@ -2,7 +2,7 @@ use std::{sync::Arc, borrow::Cow};
 
 use anyhow::Context;
 use log::info;
-use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult}, DataHash}, crypto::{hash::Hashable, address::AddressType}};
+use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams, SetCustomDataParams, GetCustomTreeKeysParams}, DataHash, DataElement, DataValue}, crypto::{hash::Hashable, address::AddressType}};
 use serde_json::{Value, json};
 use crate::{wallet::{Wallet, WalletError}, entry::TransactionEntry};
 
@@ -19,6 +19,9 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_transaction", async_handler!(get_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("list_transactions", async_handler!(list_transactions));
+    handler.register_method("get_custom_tree_keys_from_db", async_handler!(get_custom_tree_keys_from_db));
+    handler.register_method("get_custom_data_from_db", async_handler!(get_custom_data_from_db));
+    handler.register_method("set_custom_data_in_db", async_handler!(set_custom_data_in_db));
 }
 
 async fn get_version(_: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
@@ -142,7 +145,31 @@ async fn build_transaction(wallet: Arc<Wallet>, body: Value) -> Result<Value, In
 
 async fn list_transactions(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
     let params: ListTransactionsParams = parse_params(body)?;
-    let wallet = wallet.get_storage().read().await;
-    let txs = wallet.get_filtered_transactions(params.address.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?;
+    let storage = wallet.get_storage().read().await;
+    let txs = storage.get_filtered_transactions(params.address.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?;
     Ok(json!(txs))
+}
+
+async fn get_custom_tree_keys_from_db(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetCustomTreeKeysParams = parse_params(body)?;
+    let storage = wallet.get_storage().read().await;
+    let keys: Vec<DataValue> = storage.get_custom_tree_keys(&params.tree)?;
+
+    Ok(json!(keys))
+}
+
+async fn get_custom_data_from_db(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetCustomDataParams = parse_params(body)?;
+    let storage = wallet.get_storage().read().await;
+    let value: DataElement = storage.get_custom_data(&params.tree, &params.key)?;
+
+    Ok(json!(value))
+}
+
+async fn set_custom_data_in_db(wallet: Arc<Wallet>, body: Value) -> Result<Value, InternalRpcError> {
+    let params: SetCustomDataParams = parse_params(body)?;
+    let storage = wallet.get_storage().read().await;
+    let value: DataElement = storage.get_custom_data(&params.tree, &params.key)?;
+
+    Ok(json!(value))
 }

@@ -94,6 +94,24 @@ pub struct BalanceChanged<'a> {
     pub balance: u64
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct GetCustomDataParams {
+    pub tree: String,
+    pub key: DataValue
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetCustomTreeKeysParams {
+    pub tree: String
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SetCustomDataParams {
+    pub tree: String,
+    pub key: DataValue,
+    pub value: DataElement
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {
     // When a new block is detected by wallet
