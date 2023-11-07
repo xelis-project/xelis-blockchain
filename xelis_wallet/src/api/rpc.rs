@@ -167,7 +167,7 @@ async fn get_tree_name_xswd(context: &Context, tree: &String) -> Result<String, 
     // Retrieve the app data to get its id and to have section of trees between differents dApps
     let session: &WebSocketSessionShared<XSWDWebSocketHandler<Arc<Wallet>>> = context.get()?;
     let xswd = session.get_server().get_handler();
-    let applications = xswd.get_applications().lock().await;
+    let applications = xswd.get_applications().read().await;
     let app = applications.get(session).ok_or_else(|| InternalRpcError::InvalidContext)?;
 
     Ok(format!("{}-{}", app.get_id(), tree))

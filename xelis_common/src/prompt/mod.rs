@@ -13,14 +13,18 @@ use std::num::ParseFloatError;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize, AtomicU16};
+use anyhow::Error;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
 use crossterm::terminal;
 use fern::colors::{ColoredLevelConfig, Color};
 use regex::Regex;
-use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
-use tokio::sync::oneshot;
+use tokio::sync::{
+    mpsc::{self, UnboundedSender, UnboundedReceiver, Sender, Receiver},
+    oneshot,
+    Mutex as AsyncMutex
+};
 use std::sync::{PoisonError, Arc, Mutex};
-use log::{info, error, Level, debug, LevelFilter, warn};
+use log::{info, error, Level, debug, LevelFilter};
 use tokio::time::interval;
 use std::future::Future;
 use std::time::Duration;
@@ -90,9 +94,9 @@ pub enum PromptError {
     IOError(#[from] IOError),
     #[error("Poison Error: {}", _0)]
     PoisonError(String),
-    #[error("Error while starting, already running")]
+    #[error("Prompt is already running")]
     AlreadyRunning,
-    #[error("Error while starting, not running")]
+    #[error("Prompt is not running")]
     NotRunning,
     #[error("No command manager found")]
     NoCommandManager,
@@ -115,7 +119,7 @@ struct State {
     previous_prompt_line: AtomicUsize,
     user_input: Mutex<String>,
     mask_input: AtomicBool,
-    readers: Mutex<Vec<oneshot::Sender<String>>>,
+    prompt_sender: Mutex<Option<oneshot::Sender<String>>>,
     has_exited: AtomicBool,
     ascii_escape_regex: Regex,
 }
@@ -128,7 +132,7 @@ impl State {
             previous_prompt_line: AtomicUsize::new(0),
             user_input: Mutex::new(String::new()),
             mask_input: AtomicBool::new(false),
-            readers: Mutex::new(Vec::new()),
+            prompt_sender: Mutex::new(None),
             has_exited: AtomicBool::new(false),
             ascii_escape_regex: Regex::new("\x1B\\[[0-9;]*[A-Za-z]").unwrap()
         }
@@ -231,20 +235,19 @@ impl State {
                                     self.show_input(&buffer)?;
 
                                     // Save in history & Send the message
-                                    let mut readers = self.readers.lock()?;
-                                    if readers.is_empty() {
+                                    let mut prompt_sender = self.prompt_sender.lock()?;
+                                    if let Some(sender) = prompt_sender.take() {
+                                        if let Err(e) = sender.send(cloned_buffer) {
+                                            error!("Error while sending input to reader: {}", e);
+                                            break;
+                                        }
+                                    } else {
                                         if !cloned_buffer.is_empty() {
                                             history.push_front(cloned_buffer.clone());
                                             if let Err(e) = sender.send(cloned_buffer) {
                                                 error!("Error while sending input to command handler: {}", e);
                                                 break;
                                             }
-                                        }
-                                    } else {
-                                        let reader = readers.remove(0);
-                                        if let Err(e) = reader.send(cloned_buffer) {
-                                            error!("Error while sending input to reader: {}", e);
-                                            break;
                                         }
                                     }
                                 },
@@ -268,13 +271,10 @@ impl State {
         }
 
         info!("ioloop thread is now stopped");
-        let mut readers = self.readers.lock()?;
-        let mut values = Vec::with_capacity(readers.len());
-        std::mem::swap(&mut *readers, &mut values);
-
-        for reader in values {
-            if let Err(e) = reader.send(String::new()) {
-                warn!("Error while sending empty string to reader: {}", e);
+        let mut sender = self.prompt_sender.lock()?;
+        if let Some(sender) = sender.take() {
+            if let Err(e) = sender.send(String::new()) {
+                error!("Error while sending input to reader: {}", e);
             }
         }
 
@@ -309,12 +309,12 @@ impl State {
     }
 
     fn show_with_prompt_and_input(&self, prompt: &String, input: &String) -> Result<(), PromptError> {
-        let lines_count = self.count_lines(&format!("\r{}{}", prompt, input));
-        let count = self.previous_prompt_line.swap(lines_count, Ordering::SeqCst);
+        let current_count = self.count_lines(&format!("\r{}{}", prompt, input));
+        let previous_count = self.previous_prompt_line.swap(current_count, Ordering::SeqCst);
 
         // > 1 because prompt line is already counted 
-        let lines_eraser: String = if count > 1 {
-            format!("\x1B[{}A", count - 1)
+        let lines_eraser: String = if previous_count > 1 {
+            format!("\x1B[{}A", previous_count - 1)
         } else {
             String::new()
         };
@@ -323,11 +323,6 @@ impl State {
             print!("\r\x1B[2K{}{}{}", lines_eraser, prompt, "*".repeat(input.len()));
         } else {
             print!("\r\x1B[2K{}{}{}", lines_eraser, prompt, input);
-        }        
-
-        // Scroll up if we a empty line
-        if lines_count < count {
-            // TODO
         }
 
         stdout().flush()?;
@@ -351,18 +346,24 @@ pub struct Prompt<T> {
     state: Arc<State>,
     exit_channel: Mutex<Option<oneshot::Sender<()>>>,
     input_receiver: Mutex<Option<UnboundedReceiver<String>>>,
-    command_manager: Mutex<Option<CommandManager<T>>>
+    command_manager: Mutex<Option<CommandManager<T>>>,
+    // This following channel is used to cancel the read_input method
+    read_input_sender: Sender<()>,
+    read_input_receiver: AsyncMutex<Receiver<()>>
 }
 
 pub type ShareablePrompt<T> = Arc<Prompt<T>>;
 
 impl<T> Prompt<T> {
     pub fn new(level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<ShareablePrompt<T>, PromptError> {
+        let (read_input_sender, read_input_receiver) = mpsc::channel(1);
         let zelf = Self {
             state: Arc::new(State::new()),
             exit_channel: Mutex::new(None),
             input_receiver: Mutex::new(None),
-            command_manager: Mutex::new(None)
+            command_manager: Mutex::new(None),
+            read_input_receiver: AsyncMutex::new(read_input_receiver),
+            read_input_sender,
         };
         zelf.setup_logger(level, filename_log, disable_file_logging)?;
 
@@ -471,10 +472,9 @@ impl<T> Prompt<T> {
                 }
                 _ = interval.tick() => {
                     {
-                        // verify that we don't have any readers
+                        // verify that we don't have any reader
                         // as they may have changed the prompt
-                        let readers = self.state.readers.lock()?;
-                        if !readers.is_empty() {
+                        if self.state.prompt_sender.lock()?.is_some() {
                             continue;
                         }
                     }
@@ -545,7 +545,8 @@ impl<T> Prompt<T> {
             if valid_values.contains(&input.as_str()) {
                 return Ok(input);
             }
-            prompt = colorize_string(Color::Red, &original_prompt);
+            let escaped_colors = self.state.ascii_escape_regex.replace_all(&original_prompt, "");
+            prompt = colorize_string(Color::Red, &escaped_colors.into_owned());
         }
     }
 
@@ -568,17 +569,26 @@ impl<T> Prompt<T> {
         Ok(Hash::from_hex(hash_hex)?)
     }
 
+    pub async fn cancel_read_input(&self) -> Result<(), Error> {
+        self.read_input_sender.send(()).await?;
+        Ok(())
+    }
+
     // read a message from the user and apply the input mask if necessary
     pub async fn read_input(&self, prompt: String, apply_mask: bool) -> Result<String, PromptError> {
+        // This is also used as a sempahore to have only one call at a time
+        let mut canceler = self.read_input_receiver.lock().await;
+
+        // Verify that during the time it hasn't exited
         if self.state.has_exited.load(Ordering::SeqCst) {
             return Err(PromptError::NotRunning)
         }
 
         // register our reader
         let receiver = {
-            let mut readers = self.state.readers.lock()?;
+            let mut prompt_sender = self.state.prompt_sender.lock()?;
             let (sender, receiver) = oneshot::channel();
-            readers.push(sender);
+            *prompt_sender = Some(sender);
             receiver
         };
 
@@ -597,7 +607,16 @@ impl<T> Prompt<T> {
 
         // update the prompt to the requested one and keep blocking on the receiver
         self.update_prompt(prompt)?;
-        let input = receiver.await.map_err(|_| PromptError::EndOfStream)?;
+        let input = {
+            let input = tokio::select! {
+                Some(()) = canceler.recv() => {
+                    self.state.prompt_sender.lock()?.take();
+                    Err(PromptError::EndOfStream)
+                },
+                res = receiver => res.map_err(|_| PromptError::EndOfStream)
+            };
+            input
+        };
 
         if apply_mask {
             self.set_mask_input(false);
@@ -611,7 +630,7 @@ impl<T> Prompt<T> {
         self.set_prompt(old_prompt)?;
         self.state.show()?;
 
-        Ok(input)
+        input
     }
 
     // should we replace user input by * ?

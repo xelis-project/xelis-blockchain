@@ -1,4 +1,5 @@
 use std::{collections::{HashMap, HashSet}, hash::Hash, borrow::Cow};
+use actix_web::web::Bytes;
 use async_trait::async_trait;
 use log::debug;
 use serde_json::{Value, json};
@@ -82,17 +83,17 @@ where
         Ok(params.notify)
     }
 
-    async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Value, RpcResponseError> {
-        let mut request: RpcRequest = self.handler.parse_request(message)?;
+    async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: Bytes) -> Result<Value, RpcResponseError> {
+        let mut request: RpcRequest = self.handler.parse_request(&message)?;
         let response: Value = match request.method.as_str() {
             "subscribe" => {
                 let event = self.parse_event(&mut request)?;
-                self.subscribe_session_to_event(session, event, request.id).await?;
+                self.subscribe_session_to_event(&session, event, request.id).await?;
                 json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(json!(true))))
             },
             "unsubscribe" => {
                 let event = self.parse_event(&mut request)?;
-                self.unsubscribe_session_from_event(session, event, request.id).await?;
+                self.unsubscribe_session_from_event(&session, event, request.id).await?;
                 json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(json!(true))))
             },
             _ => {
@@ -125,9 +126,9 @@ where
         Ok(())
     }
 
-    async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<(), anyhow::Error> {
+    async fn on_message(&self, session: WebSocketSessionShared<Self>, message: Bytes) -> Result<(), anyhow::Error> {
         debug!("new message received on websocket");
-        let response: Value = match self.on_message_internal(session, message).await {
+        let response: Value = match self.on_message_internal(&session, message).await {
             Ok(result) => result,
             Err(e) => e.to_json(),
         };

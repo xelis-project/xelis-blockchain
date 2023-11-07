@@ -9,7 +9,7 @@ pub use self::{
     rpc_server::{WalletRpcServer, WalletRpcServerShared, AuthConfig},
     xswd::{
         XSWD,
-        ApplicationData,
+        AppStateShared,
         PermissionResult,
         PermissionRequest,
         XSWDPermissionHandler

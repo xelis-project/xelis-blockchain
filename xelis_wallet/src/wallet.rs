@@ -26,6 +26,7 @@ use log::{error, debug};
 
 #[cfg(feature = "api_server")]
 use {
+    fern::colors::Color,
     async_trait::async_trait,
     crate::api::{
         register_rpc_methods,
@@ -33,12 +34,16 @@ use {
         WalletRpcServer,
         AuthConfig,
         APIServer,
-        ApplicationData,
+        AppStateShared,
         PermissionResult,
         PermissionRequest,
         XSWDPermissionHandler
     },
-    xelis_common::prompt::ShareablePrompt,
+    xelis_common::prompt::{
+        ShareablePrompt,
+        colorize_string,
+        colorize_str
+    },
     xelis_common::rpc_server::RPCHandler
 };
 
@@ -120,7 +125,7 @@ pub struct Wallet {
     // Prompt for CLI
     // Only used for requesting permissions through it
     #[cfg(feature = "api_server")]
-    prompt: Mutex<Option<ShareablePrompt<Arc<Wallet>>>>
+    prompt: RwLock<Option<ShareablePrompt<Arc<Wallet>>>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -138,7 +143,7 @@ impl Wallet {
             network,
             #[cfg(feature = "api_server")]
             api_server: Mutex::new(None),
-            prompt: Mutex::new(None)
+            prompt: RwLock::new(None)
         };
 
         Arc::new(zelf)
@@ -243,7 +248,7 @@ impl Wallet {
     #[cfg(feature = "api_server")]
     pub async fn set_prompt(&self, prompt: ShareablePrompt<Arc<Wallet>>) {
         {
-            let mut lock = self.prompt.lock().await;
+            let mut lock = self.prompt.write().await;
             *lock = Some(prompt);
         }
     }
@@ -540,15 +545,15 @@ impl Wallet {
 #[cfg(feature = "api_server")]
 #[async_trait]
 impl XSWDPermissionHandler for Arc<Wallet> {
-    async fn request_permission(&self, app_data: &ApplicationData, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
-        if let Some(prompt) = self.prompt.lock().await.as_ref() {
+    async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
+        if let Some(prompt) = self.prompt.read().await.as_ref() {
             match request {
                 PermissionRequest::Application(signed) => {
-                    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_data.get_name(), app_data.get_id());
+                    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_state.get_name(), app_state.get_id());
                     if signed {
-                        message = "NOTE: Application authorizaion was already approved previously.\r\n".to_string() + &message;
+                        message = colorize_str(Color::BrightYellow, "NOTE: Application authorizaion was already approved previously.\r\n") + &message;
                     }
-                    let accepted = prompt.read_valid_str_value(message, vec!["y", "n"]).await? == "y";
+                    let accepted = prompt.read_valid_str_value(colorize_string(Color::Blue, &message), vec!["y", "n"]).await? == "y";
                     if accepted {
                         Ok(PermissionResult::Allow)
                     } else {
@@ -564,12 +569,12 @@ impl XSWDPermissionHandler for Arc<Wallet> {
 
                     let message = format!(
                         "XSWD: Request from {}: {}\r\nParams: {}\r\nDo you want to allow this request ?\r\n([A]llow / [D]eny / [AA] Always Allow / [AD] Always Deny): ",
-                        app_data.get_name(),
+                        app_state.get_name(),
                         request.method,
                         params
                     );
 
-                    let answer = prompt.read_valid_str_value(message, vec!["a", "d", "aa", "ad"]).await?;
+                    let answer = prompt.read_valid_str_value(colorize_string(Color::Blue, &message), vec!["a", "d", "aa", "ad"]).await?;
                     Ok(match answer.as_str() {
                         "a" => PermissionResult::Allow,
                         "d" => PermissionResult::Deny,
@@ -579,6 +584,17 @@ impl XSWDPermissionHandler for Arc<Wallet> {
                     })
                 }
             }
+        } else {
+            Err(WalletError::NoHandlerAvailable.into())
+        }
+    }
+
+    // there is a lock to acquire so it make it "single threaded"
+    // the one who has the lock is the one who is requesting so we don't need to check and can cancel directly
+    async fn cancel_request_permission(&self, _: &AppStateShared) -> Result<(), Error> {
+        debug!("Cancelling request permission");
+        if let Some(prompt) = self.prompt.read().await.as_ref() {
+            prompt.cancel_read_input().await
         } else {
             Err(WalletError::NoHandlerAvailable.into())
         }

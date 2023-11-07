@@ -2,7 +2,7 @@ mod handler;
 mod http_request;
 
 use std::{sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashSet, hash::{Hash, Hasher}, time::{Duration, Instant}};
-use actix_web::{HttpRequest as ActixHttpRequest, web::Payload, HttpResponse};
+use actix_web::{HttpRequest as ActixHttpRequest, web::{Payload, Bytes}, HttpResponse};
 use actix_ws::{Session, MessageStream, Message, CloseReason, CloseCode};
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -118,7 +118,7 @@ pub trait WebSocketHandler: Sized + Sync + Send {
     }
 
     // called when a new message is received
-    async fn on_message(&self, _: &WebSocketSessionShared<Self>, _: &[u8]) -> Result<(), anyhow::Error> {
+    async fn on_message(&self, _: WebSocketSessionShared<Self>, _: Bytes) -> Result<(), anyhow::Error> {
         Ok(())
     }
 
@@ -179,17 +179,17 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     }
 
     pub async fn delete_session(self: &Arc<Self>, session: &WebSocketSessionShared<H>, reason: Option<CloseReason>) {
-        debug!("deleting session");
+        trace!("deleting session #{}", session.id);
         // close session
         if let Err(e) = session.close(reason).await {
             debug!("Error while closing session: {}", e);
         }
-        debug!("session closed");
+        trace!("session closed");
 
         let mut sessions = self.sessions.lock().await;
-        debug!("sessions locked");
+        trace!("sessions locked");
         if sessions.remove(session) {
-            debug!("deleted session");
+            debug!("deleted session #{}", session.id);
             // call on_close
             let zelf = Arc::clone(self);
             let session = session.clone();
@@ -199,7 +199,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                 }
             });
         }
-        debug!("sessions unlocked");
+        trace!("sessions unlocked");
     }
     
     async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: MessageStream) {
@@ -252,17 +252,20 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                     match msg {
                         Message::Text(text) => {
                             debug!("Received text message for session #{}: {}", session.id, text);
-                            if let Err(e) = self.handler.on_message(&session, text.as_bytes()).await {
-                                debug!("Error while calling on_message: {}", e);
-                                break Some(CloseReason::from(CloseCode::Error));
-                            }
+                            let zelf = Arc::clone(&self);
+                            let session = session.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = zelf.handler.on_message(session, text.into_bytes()).await {
+                                    debug!("Error while calling on_message: {}", e);
+                                }
+                            });
                         },
                         Message::Close(reason) => {
                             debug!("Received close message for session #{}: {:?}", session.id, reason);
                             break reason;
                         },
                         Message::Ping(data) => {
-                            debug!("Received ping message with size {} bytes from session #{}", data.len(), session.id);
+                            trace!("Received ping message with size {} bytes from session #{}", data.len(), session.id);
                             if let Err(e) = session.pong().await {
                                 debug!("Error received while sending pong response to session #{}: {}", session.id, e);
                                 break None;
