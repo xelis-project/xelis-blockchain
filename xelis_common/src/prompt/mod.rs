@@ -86,6 +86,8 @@ impl FromStr for LogLevel {
 
 #[derive(Error, Debug)]
 pub enum PromptError {
+    #[error("Canceled read input")]
+    Canceled,
     #[error("End of stream")]
     EndOfStream,
     #[error(transparent)]
@@ -611,7 +613,7 @@ impl<T> Prompt<T> {
             let input = tokio::select! {
                 Some(()) = canceler.recv() => {
                     self.state.prompt_sender.lock()?.take();
-                    Err(PromptError::EndOfStream)
+                    Err(PromptError::Canceled)
                 },
                 res = receiver => res.map_err(|_| PromptError::EndOfStream)
             };
