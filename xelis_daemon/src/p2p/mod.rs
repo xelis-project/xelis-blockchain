@@ -1326,8 +1326,8 @@ impl<S: Storage> P2pServer<S> {
         debug!("handle chain request for {} with {} blocks", peer, blocks.len());
         let storage = self.blockchain.get_storage().read().await;
         // blocks hashes sent for syncing (topoheight ordered)
-        let mut response_blocks = Vec::new();
-        let mut top_blocks = Vec::new();
+        let mut response_blocks = IndexSet::new();
+        let mut top_blocks = IndexSet::new();
         // common point used to notify peer if he should rewind or not
         let common_point = self.find_common_point(&*storage, blocks).await?;
         if let Some(common_point) = &common_point {
@@ -1352,7 +1352,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
                 trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
-                response_blocks.push(hash);
+                response_blocks.insert(hash);
                 topoheight += 1;
             }
 
@@ -1365,7 +1365,7 @@ impl<S: Storage> P2pServer<S> {
                     for hash in storage.get_blocks_at_height(height).await? {
                         if !response_blocks.contains(&hash) {
                             trace!("Adding top block at height {}: {}", height, hash);
-                            top_blocks.push(hash);
+                            top_blocks.insert(hash);
                         } else {
                             trace!("Top block at height {}: {} was skipped because its already present in response blocks", height, hash);
                         }
