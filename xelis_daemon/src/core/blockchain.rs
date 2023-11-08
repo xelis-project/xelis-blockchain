@@ -2003,8 +2003,8 @@ impl<S: Storage> Blockchain<S> {
                 };
     
                 if *nonce != tx.get_nonce() {
-                    debug!("Tx {} has nonce {} but expected {}", hash, tx.get_nonce(), nonce);
-                    return Err(BlockchainError::InvalidTxNonce(tx.get_nonce(), *nonce, tx.get_owner().clone()))
+                    debug!("Invalid nonce from cache for tx {}", hash);
+                    return Err(BlockchainError::InvalidTxNonce(hash.clone(), tx.get_nonce(), *nonce, tx.get_owner().clone()))
                 }
                 // we increment it in case any new tx for same owner is following
                 *nonce += 1;
@@ -2018,7 +2018,8 @@ impl<S: Storage> Blockchain<S> {
                 };
 
                 if nonce != tx.get_nonce() {
-                    return Err(BlockchainError::InvalidTxNonce(tx.get_nonce(), nonce, tx.get_owner().clone()))
+                    debug!("Invalid nonce in storage for tx {}", hash);
+                    return Err(BlockchainError::InvalidTxNonce(hash.clone(), tx.get_nonce(), nonce, tx.get_owner().clone()))
                 }
             }
         }

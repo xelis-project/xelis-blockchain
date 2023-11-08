@@ -141,8 +141,8 @@ pub enum BlockchainError {
     BlockDeviation,
     #[error("Invalid genesis block hash")]
     InvalidGenesisHash,
-    #[error("Invalid tx nonce (got {} expected {}) for {}", _0, _1, _2)]
-    InvalidTxNonce(u64, u64, PublicKey),
+    #[error("Invalid tx {} nonce (got {} expected {}) for {}", _0, _1, _2, _3)]
+    InvalidTxNonce(Hash, u64, u64, PublicKey),
     #[error("Invalid tx nonce for mempool cache")]
     InvalidTxNonceMempoolCache,
     #[error("Invalid asset ID: {}", _0)]
