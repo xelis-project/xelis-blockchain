@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use actix_web::{get, web::{Data, Payload, self, Bytes}, HttpRequest, Responder, HttpServer, App, dev::ServerHandle, HttpResponse};
 use log::{info, error, debug};
 use serde_json::{Value, json};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 use xelis_common::{rpc_server::{RPCHandler, websocket::{WebSocketHandler, WebSocketSessionShared, WebSocketServer}, RpcRequest, RpcResponseError, InternalRpcError, RpcResponse, Context}, crypto::{key::{Signature, SIGNATURE_LENGTH, PublicKey}, hash::hash}, serializer::{Serializer, ReaderError, Reader, Writer}, api::{wallet::NotifyEvent, EventResult}};
 use serde::{Deserialize, Serialize};
 use crate::config::XSWD_BIND_ADDRESS;
@@ -279,6 +279,8 @@ where
     applications: RwLock<HashMap<WebSocketSessionShared<Self>, AppStateShared>>,
     // Applications listening for events
     listeners: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<NotifyEvent, Option<usize>>>>,
+    // This is used to limit to one at a time a permission request
+    permission_handler_semaphore: Semaphore
 }
 
 impl<W> XSWDWebSocketHandler<W>
@@ -289,7 +291,8 @@ where
         Self {
             handler,
             applications: RwLock::new(HashMap::new()),
-            listeners: Mutex::new(HashMap::new())
+            listeners: Mutex::new(HashMap::new()),
+            permission_handler_semaphore: Semaphore::new(1)
         }
     }
 
@@ -332,7 +335,14 @@ where
     }
 
     async fn verify_permission_for_request(&self, app: &AppStateShared, request: &RpcRequest) -> Result<(), RpcResponseError> {
+        let _permit = self.permission_handler_semaphore.acquire().await.unwrap();
         let mut permissions = app.permissions.lock().await;
+
+        // We acquired the lock, lets check that the app is still registered
+        if !self.has_app_with_id(&app.id).await {
+            return Err(RpcResponseError::new(request.id, InternalRpcError::CustomStr("Application not found")))
+        }
+
         let permission = permissions.get(&request.method).map(|v| *v).unwrap_or(Permission::Ask);
         match permission {
             // Request permission from user
@@ -425,11 +435,20 @@ where
             }
         }
 
+        // Verify that this app ID is not already in use:
+        if self.has_app_with_id(&app_data.id).await {
+            return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application ID already in use")))
+        }
+
         let has_signature = app_data.signature.is_some();
         let state = Arc::new(AppState::new(app_data));
         {
-            self.applications.write().await.insert(session.clone(), state.clone());
+            let mut applications = self.applications.write().await;
+            applications.insert(session.clone(), state.clone());
         }
+
+        // Request permission to user
+        let _permit = self.permission_handler_semaphore.acquire().await.unwrap();
 
         state.set_requesting(true);
         let permission = match wallet.request_permission(&state, PermissionRequest::Application(has_signature)).await {
@@ -482,6 +501,13 @@ where
         }
 
         Ok(())
+    }
+
+    // Verify if an application is already registered
+    // ID must be unique and not used by another application
+    async fn has_app_with_id(&self, id: &String) -> bool {
+        let applications = self.applications.read().await;
+        applications.values().find(|e| e.get_id() == id).is_some()
     }
 
     async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
