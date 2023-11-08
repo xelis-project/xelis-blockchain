@@ -314,17 +314,15 @@ impl State {
         let current_count = self.count_lines(&format!("\r{}{}", prompt, input));
         let previous_count = self.previous_prompt_line.swap(current_count, Ordering::SeqCst);
 
-        // > 1 because prompt line is already counted 
-        let lines_eraser: String = if previous_count > 1 {
-            format!("\x1B[{}A", previous_count - 1)
-        } else {
-            String::new()
-        };
+        // > 1 because prompt line is already counted below
+        if previous_count > 1 {
+            print!("\x1B[{}A\x1B[J", previous_count - 1);
+        }
 
         if self.should_mask_input() {
-            print!("\r\x1B[2K{}{}{}", lines_eraser, prompt, "*".repeat(input.len()));
+            print!("\r\x1B[2K{}{}", prompt, "*".repeat(input.len()));
         } else {
-            print!("\r\x1B[2K{}{}{}", lines_eraser, prompt, input);
+            print!("\r\x1B[2K{}{}", prompt, input);
         }
 
         stdout().flush()?;
@@ -623,7 +621,7 @@ impl<T> Prompt<T> {
         if apply_mask {
             self.set_mask_input(false);
         }
-        
+
         // set the old user input
         {
             let mut user_input = self.state.user_input.lock()?;
