@@ -1444,7 +1444,7 @@ impl<S: Storage> P2pServer<S> {
                                 trace!("Found the transaction {} on disk", tx_hash);
                                 transactions.push(Immutable::Arc(tx));
                             } else { // otherwise, ask it from peer
-                                let response = peer.request_blocking_object(ObjectRequest::Transaction(Hash::max())).await?;
+                                let response = peer.request_blocking_object(ObjectRequest::Transaction(tx_hash.clone())).await?;
                                 if let OwnedObjectResponse::Transaction(tx, _) = response {
                                     trace!("Received transaction {} at block {} from {}", tx_hash, hash, peer);
                                     transactions.push(Immutable::Owned(tx));
