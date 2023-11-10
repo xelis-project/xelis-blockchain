@@ -1258,21 +1258,23 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::PeerDisconnected(packet) => {
                 let addr = packet.to_addr();
+                warn!("RECEIVING PEER DISCONNECTED FOR {} FROM {}", addr, peer.get_outgoing_address());
                 debug!("{} disconnected from {}", addr, peer);
                 let mut peers_received = peer.get_peers(false).lock().await;
-                let peers_sent = peer.get_peers(true).lock().await;
+                let mut peers_sent = peer.get_peers(true).lock().await;
 
                 let received_contains = peers_received.contains(&addr);
                 let sent_contains = peers_sent.contains(&addr);
 
                 // It must be a common peer
                 if !(received_contains && sent_contains) {
-                    debug!("{} disconnected from {} but its not a common peer ? {} {}", addr, peer.get_outgoing_address(), received_contains, sent_contains);
+                    error!("{} disconnected from {} but its not a common peer ? {} {}", addr, peer.get_outgoing_address(), received_contains, sent_contains);
                     return Err(P2pError::UnknownPeerReceived(addr))                    
                 }
 
                 // Delete the peer received
                 peers_received.remove(&addr);
+                peers_sent.remove(&addr);
 
                 trace!("Locking RPC Server to notify PeerDisconnected event");
                 if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
