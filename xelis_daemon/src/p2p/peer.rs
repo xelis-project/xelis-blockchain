@@ -278,9 +278,16 @@ impl Peer {
                 return Err(P2pError::AsyncTimeOut(e));
             }
         };
+
+        // Verify that the object is the one we requested
         let object_hash = object.get_hash();
         if *object_hash != *request.get_hash() {
             return Err(P2pError::InvalidObjectResponse(object_hash.clone()))
+        }
+
+        // Returns error if the object is not found
+        if let OwnedObjectResponse::NotFound(request) = &object {
+            return Err(P2pError::ObjectNotFound(request.clone()));
         }
 
         Ok(object)

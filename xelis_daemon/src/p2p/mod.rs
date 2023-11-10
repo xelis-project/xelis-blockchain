@@ -1147,7 +1147,7 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::ObjectResponse(response) => {
                 trace!("Received a object response from {}", peer);
-                let response = response.to_owned()?;
+                let response = response.to_owned();
                 trace!("Object response received is {}", response.get_hash());
 
                 // check if we requested it from this peer
