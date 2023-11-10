@@ -97,7 +97,7 @@ pub struct P2pServer<S: Storage> {
     peer_list: SharedPeerList, // all peers accepted
     blockchain: Arc<Blockchain<S>>, // reference to the chain to add blocks/txs
     connections_sender: UnboundedSender<MessageChannel>, // this sender allows to create a queue system in one task only
-    syncing: AtomicBool, // used to check if we are already syncing with one peer or not
+    syncing: Mutex<Option<Arc<Peer>>>, // used to check if we are already syncing with one peer or not
     verify_syncing_time_out: AtomicBool, // chain sync timeout check
     last_sync_request_sent: AtomicU64, // used to check if we are already syncing with one peer or not
     object_tracker: SharedObjectTracker, // used to requests objects to peers and avoid requesting the same object to multiple peers
@@ -131,7 +131,7 @@ impl<S: Storage> P2pServer<S> {
             peer_list: PeerList::new(max_peers, format!("peerlist-{}.json", blockchain.get_network().to_string().to_lowercase())),
             blockchain,
             connections_sender,
-            syncing: AtomicBool::new(false),
+            syncing: Mutex::new(None),
             verify_syncing_time_out: AtomicBool::new(false),
             last_sync_request_sent: AtomicU64::new(0),
             object_tracker,
@@ -542,6 +542,7 @@ impl<S: Storage> P2pServer<S> {
                     trace!("No peer found for chain sync");
                 }
             } else if self.verify_syncing_time_out() {
+                // Node is syncing, check time out
                 let last_time = self.last_sync_request_sent.load(Ordering::SeqCst);
                 if last_time > 0 && get_current_time() > last_time + CHAIN_SYNC_TIMEOUT_SECS {
                     debug!("Chain sync timed out");
@@ -1008,8 +1009,7 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::UnrequestedChainResponse)
                 }
                 peer.set_chain_sync_requested(false);
-
-                self.last_sync_request_sent.store(get_current_time(), Ordering::SeqCst);
+                self.set_syncing(true);
 
                 let response_size = response.size();
                 if response.size() > CHAIN_SYNC_RESPONSE_MAX_BLOCKS { // peer is trying to spam us
@@ -1041,8 +1041,6 @@ impl<S: Storage> P2pServer<S> {
 
                     // start a new task to wait on all requested blocks
                     tokio::spawn(async move {
-                        zelf.verify_syncing_time_out.store(false, Ordering::SeqCst);
-                        zelf.set_syncing(true);
                         if let Err(e) = zelf.handle_chain_response(&peer, common_point, response, pop_count).await {
                             error!("Error while handling chain response from {}: {}", peer, e);
                             peer.increment_fail_count();
@@ -1471,8 +1469,8 @@ impl<S: Storage> P2pServer<S> {
             let mut total_requested: usize = 0;
             for hash in blocks { // Request all blocks now
                 if !self.blockchain.has_block(&hash).await? {
-                    trace!("Block {} is not found, asking it to peer", hash);
-                    let response = peer.request_blocking_object(ObjectRequest::Block(hash.clone())).await?;
+                    warn!("Block {} is not found, asking it to peer {}", hash, total_requested);
+                    let response = peer.request_blocking_object(ObjectRequest::Block(hash)).await?;
                     if let OwnedObjectResponse::Block(block, hash) = response {
                         trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
                         self.blockchain.add_new_block(block, false, false).await?;
@@ -1554,12 +1552,13 @@ impl<S: Storage> P2pServer<S> {
         }
     }
 
-    fn set_syncing(&self, value: bool) {
-        self.syncing.store(value, Ordering::SeqCst);
+    async fn set_syncing(&self, peer: Arc<Peer>) {
+        let mut syncing = self.syncing.lock().await;
+        *syncing = Some(peer);
     }
 
-    pub fn is_syncing(&self) -> bool {
-        self.syncing.load(Ordering::SeqCst)
+    pub async fn is_syncing(&self) -> bool {
+        self.syncing.lock().await.is_some()
     }
 
     fn verify_syncing_time_out(&self) -> bool {
@@ -2028,7 +2027,7 @@ impl<S: Storage> P2pServer<S> {
     // we add at the end the genesis block to be sure to be on the same chain as others peers
     // its used to find a common point with the peer to which we ask the chain
     pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
-        debug!("Requesting chain from {}", peer);
+        error!("Requesting chain from {}", peer);
         let storage = self.blockchain.get_storage().read().await;
         let request = ChainRequest::new(self.build_list_of_blocks_id(&*storage).await?);
         trace!("Sending a chain request with {} blocks", request.size());
