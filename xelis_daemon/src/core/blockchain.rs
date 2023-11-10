@@ -943,11 +943,13 @@ impl<S: Storage> Blockchain<S> {
         self.add_tx_to_mempool_with_hash(tx, hash, broadcast).await
     }
 
-
     pub async fn add_tx_to_mempool_with_hash<'a>(&'a self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
-        let tx = Arc::new(tx);
+        let storage = self.storage.read().await;
+        self.add_tx_to_mempool_with_storage_and_hash(&*storage, Arc::new(tx), hash, broadcast).await
+    }
+
+    pub async fn add_tx_to_mempool_with_storage_and_hash<'a>(&'a self, storage: &S, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
         {
-            let storage = self.storage.read().await;
             let mut mempool = self.mempool.write().await;
     
             if mempool.contains_tx(&hash) {
@@ -1853,7 +1855,7 @@ impl<S: Storage> Blockchain<S> {
         {
             for (hash, tx) in txs {
                 debug!("Trying to add TX {} to mempool again", hash);
-                if let Err(e) = self.add_tx_to_mempool_with_hash(tx.as_ref().clone(), hash, false).await {
+                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx, hash, false).await {
                     debug!("TX rewinded is not compatible anymore: {}", e);
                 }
             }
