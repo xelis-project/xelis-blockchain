@@ -2032,7 +2032,7 @@ impl<S: Storage> P2pServer<S> {
     // we add at the end the genesis block to be sure to be on the same chain as others peers
     // its used to find a common point with the peer to which we ask the chain
     pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
-        error!("Requesting chain from {}", peer);
+        trace!("Requesting chain from {}", peer);
         let storage = self.blockchain.get_storage().read().await;
         let request = ChainRequest::new(self.build_list_of_blocks_id(&*storage).await?);
         trace!("Sending a chain request with {} blocks", request.size());
