@@ -198,7 +198,7 @@ impl Serializer for ChainResponse {
         let mut top_blocks: IndexSet<Hash> = IndexSet::with_capacity(len as usize); 
         for _ in 0..len {
             let hash = reader.read_hash()?;
-            if !top_blocks.insert(hash) {
+            if blocks.contains(&hash) || !top_blocks.insert(hash) {
                 debug!("Invalid chain response duplicate top block");
                 return Err(ReaderError::InvalidValue)
             }
