@@ -1305,9 +1305,6 @@ impl Storage for SledStorage {
         self.set_top_topoheight(topoheight)?;
         self.set_top_height(height)?;
 
-        // reverse order of txs so its ascending order
-        txs.reverse();
-
         Ok((height, topoheight, txs))
     }
 
