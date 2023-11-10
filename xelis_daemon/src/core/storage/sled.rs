@@ -902,11 +902,11 @@ impl Storage for SledStorage {
         trace!("get balance {} for {} at exact topoheight {}", asset, key, topoheight);
         // check first that this address has balance, if no returns
         if !self.has_balance_at_exact_topoheight(key, asset, topoheight).await? {
-            return Err(BlockchainError::NoBalanceChanges(key.clone()))
+            return Err(BlockchainError::NoBalanceChanges(key.clone(), topoheight, asset.clone()))
         }
 
         let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
-        self.get_cacheable_data_copiable(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone()))
+        self.get_cacheable_data_copiable(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone(), topoheight, asset.clone()))
     }
 
     // delete the last topoheight registered for this key
@@ -969,7 +969,7 @@ impl Storage for SledStorage {
     async fn delete_balance_at_topoheight(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("delete balance {} for {} at topoheight {}", asset, key, topoheight);
         let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
-        self.delete_cacheable_data(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone()))
+        self.delete_cacheable_data(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone(), topoheight, asset.clone()))
     }
 
     // returns a new versioned balance with already-set previous topoheight
