@@ -1034,6 +1034,9 @@ impl<S: Storage> P2pServer<S> {
                         }
                     };
 
+                    // Stop the time out because its safely handled
+                    self.verify_syncing_time_out.store(false, Ordering::SeqCst);
+
                     let peer = Arc::clone(peer);
                     let zelf = Arc::clone(self);
 

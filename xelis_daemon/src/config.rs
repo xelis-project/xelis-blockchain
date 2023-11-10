@@ -55,7 +55,7 @@ pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq4
 
 // Chain sync config
 pub const CHAIN_SYNC_DELAY: u64 = 5; // minimum X seconds between each chain sync request per peer
-pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = CHAIN_SYNC_DELAY * 2; // wait maximum between each chain sync request to peers
+pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = CHAIN_SYNC_DELAY * 3; // wait maximum between each chain sync request to peers
 pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to X blocks id (hash + height) sent for request
 pub const CHAIN_SYNC_RESPONSE_MAX_BLOCKS: usize = 512; // allows up to X blocks hashes sent for response
 pub const CHAIN_SYNC_TOP_BLOCKS: usize = 10; // send last 10 heights
