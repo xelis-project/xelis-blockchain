@@ -1467,7 +1467,7 @@ impl<S: Storage> P2pServer<S> {
             let mut total_requested: usize = 0;
             for hash in blocks { // Request all blocks now
                 if !self.blockchain.has_block(&hash).await? {
-                    warn!("Block {} is not found, asking it to peer {}", hash, total_requested);
+                    trace!("Block {} is not found, asking it to {} (index = {})", hash, peer.get_outgoing_address(), total_requested);
                     let response = peer.request_blocking_object(ObjectRequest::Block(hash)).await?;
                     if let OwnedObjectResponse::Block(block, hash) = response {
                         trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
