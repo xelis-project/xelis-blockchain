@@ -502,7 +502,7 @@ impl<S: Storage> P2pServer<S> {
         let duration = Duration::from_secs(CHAIN_SYNC_DELAY);
         loop {
             sleep(duration).await;
-            if !self.is_syncing() {
+            if !self.is_syncing().await {
                 // first we have to check if we allow fast sync mode
                 // and then we check if we have a potential peer above us to fast sync
                 // otherwise we sync normally 
@@ -520,7 +520,7 @@ impl<S: Storage> P2pServer<S> {
                 };
 
                 if let Some(peer) = self.select_random_best_peer(fast_sync).await {
-                    self.set_syncing(true);
+                    self.set_syncing(Some(peer.clone())).await;
                     trace!("Selected for chain sync is {}", peer);
                     // check if we can maybe fast sync first
                     // otherwise, fallback on the normal chain sync
@@ -528,11 +528,11 @@ impl<S: Storage> P2pServer<S> {
                         if let Err(e) = self.bootstrap_chain(&peer).await {
                             warn!("Error occured while fast syncing with {}: {}", peer, e);
                         }
-                        self.set_syncing(false);
+                        self.stop_syncing().await;
                     } else {
                         if let Err(e) = self.request_sync_chain_for(&peer).await {
                             debug!("Error occured on chain sync with {}: {}", peer, e);
-                            self.set_syncing(false);
+                            self.stop_syncing().await;
                         } else {
                             self.last_sync_request_sent.store(get_current_time(), Ordering::SeqCst);
                             self.verify_syncing_time_out.store(true, Ordering::SeqCst);
@@ -546,7 +546,7 @@ impl<S: Storage> P2pServer<S> {
                 let last_time = self.last_sync_request_sent.load(Ordering::SeqCst);
                 if last_time > 0 && get_current_time() > last_time + CHAIN_SYNC_TIMEOUT_SECS {
                     debug!("Chain sync timed out");
-                    self.set_syncing(false);
+                    self.stop_syncing().await;
                 }
             }
         }
@@ -994,12 +994,11 @@ impl<S: Storage> P2pServer<S> {
                 let peer = Arc::clone(peer);
                 let blocks = request.get_blocks();
                 tokio::spawn(async move {
-                    zelf.set_syncing(true);
                     if let Err(e) = zelf.handle_chain_request(&peer, blocks).await {
                         error!("Error while handling chain request from {}: {}", peer, e);
                         peer.increment_fail_count();
                     }
-                    zelf.set_syncing(false);
+                    zelf.stop_syncing().await;
                 });
             },
             Packet::ChainResponse(mut response) => {
@@ -1009,7 +1008,6 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::UnrequestedChainResponse)
                 }
                 peer.set_chain_sync_requested(false);
-                self.set_syncing(true);
 
                 let response_size = response.size();
                 if response.size() > CHAIN_SYNC_RESPONSE_MAX_BLOCKS { // peer is trying to spam us
@@ -1045,7 +1043,7 @@ impl<S: Storage> P2pServer<S> {
                             error!("Error while handling chain response from {}: {}", peer, e);
                             peer.increment_fail_count();
                         }
-                        zelf.set_syncing(false);
+                        zelf.stop_syncing().await;
                     });
                 } else {
                     warn!("No common block was found with {}", peer);
@@ -1552,9 +1550,16 @@ impl<S: Storage> P2pServer<S> {
         }
     }
 
-    async fn set_syncing(&self, peer: Arc<Peer>) {
+    async fn set_syncing(&self, peer: Option<Arc<Peer>>) {
         let mut syncing = self.syncing.lock().await;
-        *syncing = Some(peer);
+        *syncing = peer;
+    }
+
+    async fn stop_syncing(&self) {
+        let mut syncing = self.syncing.lock().await;
+        if let Some(peer) = syncing.take() {
+            peer.set_chain_sync_requested(false);
+        }
     }
 
     pub async fn is_syncing(&self) -> bool {
