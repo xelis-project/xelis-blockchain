@@ -1258,7 +1258,6 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::PeerDisconnected(packet) => {
                 let addr = packet.to_addr();
-                warn!("RECEIVING PEER DISCONNECTED FOR {} FROM {}", addr, peer.get_outgoing_address());
                 debug!("{} disconnected from {}", addr, peer);
                 let mut peers_received = peer.get_peers(false).lock().await;
                 let mut peers_sent = peer.get_peers(true).lock().await;

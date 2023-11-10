@@ -110,15 +110,19 @@ impl PeerList {
         let addr = peer.get_outgoing_address();
         let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
         for peer in self.peers.values() {
-            let peers_received = peer.get_peers(false).lock().await;
-            let peers_sent = peer.get_peers(true).lock().await;
+            let mut peers_received = peer.get_peers(false).lock().await;
+            let mut peers_sent = peer.get_peers(true).lock().await;
             // check if it was a common peer (we sent it and we received it)
             // Because its a common peer, we can expect that he will send us the same packet
             if peers_sent.contains(addr) && peers_received.contains(addr) {
-                debug!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
+                trace!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
                 // we send the packet to notify the peer that we don't have it in common anymore
                 if let Err(e) = peer.send_bytes(packet.clone()).await {
                     error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
+                } else {
+                    debug!("Deleting {} from {}", addr, peer);
+                    peers_received.remove(addr);
+                    peers_sent.remove(addr);
                 }
             }
         }
