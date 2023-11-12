@@ -1008,6 +1008,7 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::UnrequestedChainResponse)
                 }
                 peer.set_chain_sync_requested(false);
+                self.last_sync_request_sent.store(get_current_time(), Ordering::SeqCst);
 
                 let response_size = response.size();
                 if response.size() > CHAIN_SYNC_RESPONSE_MAX_BLOCKS { // peer is trying to spam us
@@ -1042,6 +1043,7 @@ impl<S: Storage> P2pServer<S> {
 
                     // start a new task to wait on all requested blocks
                     tokio::spawn(async move {
+                        zelf.verify_syncing_time_out.store(false, Ordering::SeqCst);
                         if let Err(e) = zelf.handle_chain_response(&peer, common_point, response, pop_count).await {
                             error!("Error while handling chain response from {}: {}", peer, e);
                             peer.increment_fail_count();
@@ -1559,6 +1561,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     async fn stop_syncing(&self) {
+        self.verify_syncing_time_out.store(false, Ordering::SeqCst);
         let mut syncing = self.syncing.lock().await;
         if let Some(peer) = syncing.take() {
             peer.set_chain_sync_requested(false);
