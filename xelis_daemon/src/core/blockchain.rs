@@ -262,17 +262,32 @@ impl<S: Storage> Blockchain<S> {
         Ok(arc)
     }
 
+    // Stop all blockchain modules
+    // Each module is stopped in its own context
+    // So no deadlock occurs in case they are linked
     pub async fn stop(&self) {
         info!("Stopping modules...");
-        let mut p2p = self.p2p.write().await;
-        if let Some(p2p) = p2p.take() {
-            p2p.stop().await;
+        {
+            let mut p2p = self.p2p.write().await;
+            if let Some(p2p) = p2p.take() {
+                p2p.stop().await;
+            }
         }
 
-        let mut rpc = self.rpc.write().await;
-        if let Some(rpc) = rpc.take() {
-            rpc.stop().await;
+        {
+            let mut rpc = self.rpc.write().await;
+            if let Some(rpc) = rpc.take() {
+                rpc.stop().await;
+            }
         }
+
+        {
+            let mut storage = self.storage.write().await;
+            if let Err(e) = storage.stop().await {
+                error!("Error while stopping storage: {}", e);
+            }
+        }
+
         info!("All modules are now stopped!");
     }
 

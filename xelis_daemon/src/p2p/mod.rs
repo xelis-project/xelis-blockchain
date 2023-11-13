@@ -526,7 +526,7 @@ impl<S: Storage> P2pServer<S> {
                         }
                     } else {
                         if let Err(e) = self.request_sync_chain_for(&peer).await {
-                            debug!("Error occured on chain sync with {}: {}", peer, e);
+                            warn!("Error occured on chain sync with {}: {}", peer, e);
                         }
                     }
                     self.stop_syncing().await;

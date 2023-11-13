@@ -18,7 +18,7 @@ use std::{
 use tokio::sync::Mutex;
 use lru::LruCache;
 use sled::Tree;
-use log::{debug, trace, error, warn};
+use log::{debug, trace, error, warn, info};
 
 use super::{Tips, Storage, DifficultyProvider};
 
@@ -1523,6 +1523,13 @@ impl Storage for SledStorage {
     async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: Difficulty) -> Result<(), BlockchainError> {
         trace!("set cumulative difficulty for hash {}", hash);
         self.cumulative_difficulty.insert(hash.as_bytes(), cumulative_difficulty.to_bytes())?;
+        Ok(())
+    }
+
+    async fn stop(&mut self) -> Result<(), BlockchainError> {
+        info!("Flushing Sled database");
+        self.db.flush_async().await?;
+        info!("Sled database flushed");
         Ok(())
     }
 }

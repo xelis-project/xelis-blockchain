@@ -145,5 +145,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn get_tips(&self) -> Result<Tips, BlockchainError>;
     fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError>;
 
+    async fn stop(&mut self) -> Result<(), BlockchainError>;
+
     //async fn execute_db_transaction<'a>(&mut self, transaction: DatabaseTransaction<'a, Self>) -> Result<(), BlockchainError>;
 }
