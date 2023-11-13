@@ -1,13 +1,15 @@
 use lru::LruCache;
 use crate::config::{
-    PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT
+    PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS
 };
+use crate::p2p::packet::PacketWrapper;
 use xelis_common::utils::get_current_time;
 use xelis_common::{
     crypto::hash::Hash,
     serializer::Serializer
 };
 use super::packet::bootstrap_chain::{StepRequest, BootstrapChainRequest, StepResponse};
+use super::packet::chain::{ChainRequest, ChainResponse};
 use super::packet::object::{ObjectRequest, OwnedObjectResponse};
 use super::peer_list::SharedPeerList;
 use super::connection::{Connection, ConnectionMessage};
@@ -41,9 +43,8 @@ pub struct Peer {
     last_chain_sync: AtomicU64,
     last_fail_count: AtomicU64, // last time we got a fail
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
-    peer_list: SharedPeerList,
-    chain_requested: AtomicBool,
-    objects_requested: Mutex<RequestedObjects>,
+    peer_list: SharedPeerList, // shared pointer to the peer list in case of disconnection
+    objects_requested: Mutex<RequestedObjects>, // map of requested objects from this peer
     peers_received: Mutex<HashSet<SocketAddr>>, // all peers from this peer
     peers_sent: Mutex<HashSet<SocketAddr>>, // all peers sent to this peer
     last_peer_list: AtomicU64, // last time we received a peerlist from this peer
@@ -58,6 +59,7 @@ pub struct Peer {
     is_pruned: AtomicBool, // cannot be set to false if its already to true (protocol rules)
     // used for await on bootstrap chain packets
     bootstrap_chain: Mutex<Option<Sender<StepResponse>>>,
+    sync_chain: Mutex<Option<Sender<ChainResponse>>>,
     // IP address with local port
     outgoing_address: SocketAddr
 }
@@ -82,7 +84,6 @@ impl Peer {
             fail_count: AtomicU8::new(0),
             last_chain_sync: AtomicU64::new(0),
             peer_list,
-            chain_requested: AtomicBool::new(false),
             objects_requested: Mutex::new(HashMap::new()),
             peers_received: Mutex::new(peers),
             peers_sent: Mutex::new(HashSet::new()),
@@ -97,6 +98,7 @@ impl Peer {
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
             is_pruned: AtomicBool::new(pruned_topoheight.is_some()),
             bootstrap_chain: Mutex::new(None),
+            sync_chain: Mutex::new(None),
             outgoing_address
         }
     }
@@ -234,14 +236,6 @@ impl Peer {
         self.last_chain_sync.store(time, Ordering::Release);
     }
 
-    pub fn chain_sync_requested(&self) -> bool {
-        self.chain_requested.load(Ordering::Acquire)
-    }
-
-    pub fn set_chain_sync_requested(&self, value: bool) {
-        self.chain_requested.store(value, Ordering::Release);
-    }
-
     pub fn get_objects_requested(&self) -> &Mutex<RequestedObjects> {
         &self.objects_requested
     }
@@ -309,7 +303,7 @@ impl Peer {
         let response: StepResponse = match timeout(Duration::from_millis(PEER_TIMEOUT_BOOTSTRAP_STEP), receiver).await {
             Ok(res) => res?,
             Err(e) => {
-                trace!("Requested bootstrap chain step {:?} has timed out", step_kind);
+                debug!("Requested bootstrap chain step {:?} has timed out", step_kind);
                 return Err(P2pError::AsyncTimeOut(e));
             }
         };
@@ -323,8 +317,35 @@ impl Peer {
         Ok(response)
     }
 
+    pub async fn request_sync_chain(&self, request: PacketWrapper<'_, ChainRequest>) -> Result<ChainResponse, P2pError> {
+        debug!("Requesting sync chain");
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        {
+            let mut sender_lock = self.sync_chain.lock().await;
+            *sender_lock = Some(sender);
+        }
+
+        trace!("sending chain request packet");
+        self.send_packet(Packet::ChainRequest(request)).await?;
+
+        trace!("waiting for chain response");
+        let response: ChainResponse = match timeout(Duration::from_secs(CHAIN_SYNC_TIMEOUT_SECS), receiver).await {
+            Ok(res) => res?,
+            Err(e) => {
+                debug!("Requested sync chain step timed out");
+                return Err(P2pError::AsyncTimeOut(e));
+            }
+        };
+
+        Ok(response)
+    }
+
     pub fn get_bootstrap_chain_channel(&self) -> &Mutex<Option<Sender<StepResponse>>> {
         &self.bootstrap_chain
+    }
+
+    pub fn get_sync_chain_channel(&self) -> &Mutex<Option<Sender<ChainResponse>>> {
+        &self.sync_chain
     }
 
     pub fn get_peers(&self, sent: bool) -> &Mutex<HashSet<SocketAddr>> {

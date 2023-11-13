@@ -41,7 +41,7 @@ use crate::{
         NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS,
         P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT,
         CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT,
-        CHAIN_SYNC_TIMEOUT_SECS, P2P_EXTEND_PEERLIST_DELAY, TIPS_LIMIT, PEER_TIMEOUT_INIT_CONNECTION
+        P2P_EXTEND_PEERLIST_DELAY, TIPS_LIMIT, PEER_TIMEOUT_INIT_CONNECTION
     }, rpc::rpc::get_peer_entry
 };
 use self::{
@@ -71,7 +71,7 @@ use std::{
     borrow::Cow,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering, AtomicU64}
+        atomic::{AtomicBool, Ordering}
     },
     collections::HashSet,
     convert::TryInto,
@@ -97,9 +97,7 @@ pub struct P2pServer<S: Storage> {
     peer_list: SharedPeerList, // all peers accepted
     blockchain: Arc<Blockchain<S>>, // reference to the chain to add blocks/txs
     connections_sender: UnboundedSender<MessageChannel>, // this sender allows to create a queue system in one task only
-    syncing: Mutex<Option<Arc<Peer>>>, // used to check if we are already syncing with one peer or not
-    verify_syncing_time_out: AtomicBool, // chain sync timeout check
-    last_sync_request_sent: AtomicU64, // used to check if we are already syncing with one peer or not
+    syncing_peer: Mutex<Option<Arc<Peer>>>, // used to check if we are already syncing with one peer or not
     object_tracker: SharedObjectTracker, // used to requests objects to peers and avoid requesting the same object to multiple peers
     is_running: AtomicBool, // used to check if the server is running or not in tasks
     blocks_propagation_queue: Mutex<LruCache<Hash, ()>>, // Synced cache to prevent concurrent tasks adding the block
@@ -131,9 +129,7 @@ impl<S: Storage> P2pServer<S> {
             peer_list: PeerList::new(max_peers, format!("peerlist-{}.json", blockchain.get_network().to_string().to_lowercase())),
             blockchain,
             connections_sender,
-            syncing: Mutex::new(None),
-            verify_syncing_time_out: AtomicBool::new(false),
-            last_sync_request_sent: AtomicU64::new(0),
+            syncing_peer: Mutex::new(None),
             object_tracker,
             is_running: AtomicBool::new(true),
             blocks_propagation_queue: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
@@ -520,33 +516,22 @@ impl<S: Storage> P2pServer<S> {
                 };
 
                 if let Some(peer) = self.select_random_best_peer(fast_sync).await {
-                    self.set_syncing(Some(peer.clone())).await;
-                    trace!("Selected for chain sync is {}", peer);
+                    self.start_syncing(peer.clone()).await;
+                    debug!("Selected for chain sync is {}", peer);
                     // check if we can maybe fast sync first
                     // otherwise, fallback on the normal chain sync
                     if fast_sync {
                         if let Err(e) = self.bootstrap_chain(&peer).await {
                             warn!("Error occured while fast syncing with {}: {}", peer, e);
                         }
-                        self.stop_syncing().await;
                     } else {
                         if let Err(e) = self.request_sync_chain_for(&peer).await {
                             debug!("Error occured on chain sync with {}: {}", peer, e);
-                            self.stop_syncing().await;
-                        } else {
-                            self.last_sync_request_sent.store(get_current_time(), Ordering::SeqCst);
-                            self.verify_syncing_time_out.store(true, Ordering::SeqCst);
                         }
                     }
+                    self.stop_syncing().await;
                 } else {
                     trace!("No peer found for chain sync");
-                }
-            } else if self.verify_syncing_time_out() {
-                // Node is syncing, check time out
-                let last_time = self.last_sync_request_sent.load(Ordering::SeqCst);
-                if last_time > 0 && get_current_time() > last_time + CHAIN_SYNC_TIMEOUT_SECS {
-                    debug!("Chain sync timed out");
-                    self.stop_syncing().await;
                 }
             }
         }
@@ -1001,61 +986,15 @@ impl<S: Storage> P2pServer<S> {
                     zelf.stop_syncing().await;
                 });
             },
-            Packet::ChainResponse(mut response) => {
+            Packet::ChainResponse(response) => {
                 trace!("Received a chain response from {}", peer);
-                if !peer.chain_sync_requested() {
-                    warn!("{} sent us a chain response but we haven't requested any.", peer);
-                    return Err(P2pError::UnrequestedChainResponse)
-                }
-                peer.set_chain_sync_requested(false);
-                self.last_sync_request_sent.store(get_current_time(), Ordering::SeqCst);
+                let sender = peer.get_sync_chain_channel()
+                    .lock().await
+                    .take()
+                    .ok_or(P2pError::UnrequestedChainResponse)?;
 
-                let response_size = response.size();
-                if response.size() > CHAIN_SYNC_RESPONSE_MAX_BLOCKS { // peer is trying to spam us
-                    warn!("{} is maybe trying to spam us", peer);
-                    return Err(P2pError::MalformedChainResponse(response_size))
-                }
-
-                if let Some(common_point) = response.get_common_point() {
-                    debug!("{} found a common point with block {} at {} for sync, received {} blocks", peer, common_point.get_hash(), common_point.get_topoheight(), response_size);
-                    let pop_count = {
-                        let storage = self.blockchain.get_storage().read().await;
-                        let topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
-                        if topoheight != common_point.get_topoheight() {
-                            error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, topoheight, common_point.get_topoheight());
-                            return Err(P2pError::InvalidCommonPoint(common_point.get_topoheight()))
-                        }
-
-                        let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
-                        // We are under the stable height, rewind is necessary
-                        if block_height <= self.blockchain.get_stable_height() {
-                            self.blockchain.get_topo_height() - topoheight
-                        } else {
-                            0
-                        }
-                    };
-
-                    // Stop the time out because its safely handled
-                    self.verify_syncing_time_out.store(false, Ordering::SeqCst);
-
-                    let peer = Arc::clone(peer);
-                    let zelf = Arc::clone(self);
-
-                    // start a new task to wait on all requested blocks
-                    tokio::spawn(async move {
-                        zelf.verify_syncing_time_out.store(false, Ordering::SeqCst);
-                        if let Err(e) = zelf.handle_chain_response(&peer, common_point, response, pop_count).await {
-                            error!("Error while handling chain response from {}: {}", peer, e);
-                            peer.increment_fail_count();
-                        }
-                        zelf.stop_syncing().await;
-                    });
-                } else {
-                    warn!("No common block was found with {}", peer);
-                    if response.size() > 0 {
-                        warn!("Peer have no common block but send us {} blocks!", response.size());
-                        return Err(P2pError::InvalidPacket)
-                    }
+                if sender.send(response).is_err() {
+                    error!("Error while sending chain response to channel of {}", peer);
                 }
             },
             Packet::Ping(ping) => {
@@ -1386,7 +1325,43 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
-    async fn handle_chain_response(self: &Arc<Self>, peer: &Arc<Peer>, common_point: CommonPoint, response: ChainResponse, pop_count: u64) -> Result<(), BlockchainError> {
+    async fn handle_chain_response(&self, peer: &Arc<Peer>, mut response: ChainResponse) -> Result<(), BlockchainError> {
+        trace!("handle chain response from {}", peer);
+        let response_size = response.size();
+        if response.size() > CHAIN_SYNC_RESPONSE_MAX_BLOCKS { // peer is trying to spam us
+            warn!("{} is maybe trying to spam us", peer);
+            return Err(P2pError::MalformedChainResponse(response_size).into())
+        }
+
+        let Some(common_point) = response.get_common_point() else {
+            warn!("No common block was found with {}", peer);
+            if response.size() > 0 {
+                warn!("Peer have no common block but send us {} blocks!", response.size());
+                return Err(P2pError::InvalidPacket.into())
+            }
+            return Ok(())
+        };
+
+        debug!("{} found a common point with block {} at {} for sync, received {} blocks", peer, common_point.get_hash(), common_point.get_topoheight(), response_size);
+        let pop_count = {
+            let storage = self.blockchain.get_storage().read().await;
+            let topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
+            if topoheight != common_point.get_topoheight() {
+                error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, topoheight, common_point.get_topoheight());
+                return Err(P2pError::InvalidCommonPoint(common_point.get_topoheight()).into())
+            }
+
+            let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
+            // We are under the stable height, rewind is necessary
+            if block_height <= self.blockchain.get_stable_height() {
+                self.blockchain.get_topo_height() - topoheight
+            } else {
+                0
+            }
+        };
+
+        // Packet verification ended, handle the chain response now
+
         let (mut blocks, top_blocks) = response.consume();
         debug!("handling chain response from {}, {} blocks, {} top blocks, pop count {}", peer, blocks.len(), top_blocks.len(), pop_count);
 
@@ -1555,25 +1530,18 @@ impl<S: Storage> P2pServer<S> {
         }
     }
 
-    async fn set_syncing(&self, peer: Option<Arc<Peer>>) {
-        let mut syncing = self.syncing.lock().await;
-        *syncing = peer;
+    async fn start_syncing(&self, peer: Arc<Peer>) {
+        let mut syncing = self.syncing_peer.lock().await;
+        *syncing = Some(peer);
     }
 
-    async fn stop_syncing(&self) {
-        self.verify_syncing_time_out.store(false, Ordering::SeqCst);
-        let mut syncing = self.syncing.lock().await;
-        if let Some(peer) = syncing.take() {
-            peer.set_chain_sync_requested(false);
-        }
+    async fn stop_syncing(&self) -> bool {
+        let mut syncing = self.syncing_peer.lock().await;
+        syncing.take().is_some()
     }
 
     pub async fn is_syncing(&self) -> bool {
-        self.syncing.lock().await.is_some()
-    }
-
-    fn verify_syncing_time_out(&self) -> bool {
-        self.verify_syncing_time_out.load(Ordering::SeqCst)
+        self.syncing_peer.lock().await.is_some()
     }
 
     pub async fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError> {
@@ -2039,12 +2007,15 @@ impl<S: Storage> P2pServer<S> {
     // its used to find a common point with the peer to which we ask the chain
     pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         trace!("Requesting chain from {}", peer);
-        let storage = self.blockchain.get_storage().read().await;
-        let request = ChainRequest::new(self.build_list_of_blocks_id(&*storage).await?);
-        trace!("Sending a chain request with {} blocks", request.size());
-        peer.set_chain_sync_requested(true);
-        let ping = self.build_generic_ping_packet_with_storage(&*storage).await;
-        peer.send_packet(Packet::ChainRequest(PacketWrapper::new(Cow::Owned(request), Cow::Owned(ping)))).await?;
-        Ok(())
+        let packet = {
+            let storage = self.blockchain.get_storage().read().await;
+            let request = ChainRequest::new(self.build_list_of_blocks_id(&*storage).await?);
+            trace!("Built a chain request with {} blocks", request.size());
+            let ping = self.build_generic_ping_packet_with_storage(&*storage).await;
+            PacketWrapper::new(Cow::Owned(request), Cow::Owned(ping))
+        };
+
+        let response = peer.request_sync_chain(packet).await?;
+        self.handle_chain_response(peer, response).await
     }
 }
