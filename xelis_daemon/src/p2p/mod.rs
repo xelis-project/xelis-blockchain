@@ -983,7 +983,6 @@ impl<S: Storage> P2pServer<S> {
                         error!("Error while handling chain request from {}: {}", peer, e);
                         peer.increment_fail_count();
                     }
-                    zelf.stop_syncing().await;
                 });
             },
             Packet::ChainResponse(response) => {
