@@ -30,17 +30,17 @@ use log::{warn, trace, debug};
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
 pub struct Peer {
-    connection: Connection,
-    id: u64,
+    connection: Connection, // Connection of the peer to manage read/write to TCP Stream
+    id: u64, // unique ID of the peer to recognize him
     node_tag: Option<String>, // Node tag if provided
-    local_port: u16,
+    local_port: u16, // port on which the node is listening on its side
     version: String, // daemon version
     out: bool, // True mean we are the client
     priority: bool, // if this node can be trusted (seed node or added manually by user)
     top_hash: Mutex<Hash>, // current block top hash for this peer
     topoheight: AtomicU64, // current highest topo height for this peer
     height: AtomicU64, // current highest block height for this peer
-    last_chain_sync: AtomicU64,
+    last_chain_sync: AtomicU64, // last time we got a chain request
     last_fail_count: AtomicU64, // last time we got a fail
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
     peer_list: SharedPeerList, // shared pointer to the peer list in case of disconnection
@@ -57,11 +57,9 @@ pub struct Peer {
     requested_inventory: AtomicBool, // if we requested this peer to send us an inventory notification
     pruned_topoheight: AtomicU64, // pruned topoheight if its a pruned node
     is_pruned: AtomicBool, // cannot be set to false if its already to true (protocol rules)
-    // used for await on bootstrap chain packets
-    bootstrap_chain: Mutex<Option<Sender<StepResponse>>>,
-    sync_chain: Mutex<Option<Sender<ChainResponse>>>,
-    // IP address with local port
-    outgoing_address: SocketAddr
+    bootstrap_chain: Mutex<Option<Sender<StepResponse>>>, // used for await on bootstrap chain packets
+    sync_chain: Mutex<Option<Sender<ChainResponse>>>, // used to wait on chain response when syncing chain
+    outgoing_address: SocketAddr // IP address with local port
 }
 
 impl Peer {
