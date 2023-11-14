@@ -17,6 +17,8 @@ use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Incompatible direction received")]
+    InvalidDirection,
     #[error("Invalid protocol rules")]
     InvalidProtocolRules,
     #[error("Invalid list size in pagination with a next page")]

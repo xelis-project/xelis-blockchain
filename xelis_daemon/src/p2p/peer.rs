@@ -29,6 +29,39 @@ use log::{warn, trace, debug};
 
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
+// Direction is used for cache to knows from which context it got added
+#[derive(Debug, Clone, Copy)]
+pub enum Direction {
+    // We don't update it because it's In, we won't send back
+    In,
+    // Out can be updated with In to be transformed to Both
+    // Because of desync, we may receive the object while sending it
+    Out,
+    // Cannot be updated
+    Both
+}
+
+impl Direction {
+    pub fn update(&mut self, direction: Direction) -> Result<(), P2pError> {
+        let ok = match self {
+            Self::Out => match direction {
+                Self::In => {
+                    *self = Self::Both;
+                    true
+                },
+                _ => false
+            },
+            _ => false
+        };
+
+        if ok {
+            Ok(())
+        } else {
+            return Err(P2pError::InvalidDirection)
+        }
+    }
+}
+
 pub struct Peer {
     connection: Connection, // Connection of the peer to manage read/write to TCP Stream
     id: u64, // unique ID of the peer to recognize him
@@ -51,8 +84,8 @@ pub struct Peer {
     last_ping: AtomicU64, // last time we got a ping packet from this peer
     last_ping_sent: AtomicU64, // last time we sent a ping packet to this peer
     cumulative_difficulty: AtomicU64, // cumulative difficulty of peer chain
-    txs_cache: Mutex<LruCache<Hash, ()>>, // All transactions propagated to/from this peer
-    blocks_propagation: Mutex<LruCache<Hash, ()>>, // last blocks propagated to/from this peer
+    txs_cache: Mutex<LruCache<Hash, Direction>>, // All transactions propagated from/to this peer
+    blocks_propagation: Mutex<LruCache<Hash, Direction>>, // last blocks propagated to/from this peer
     last_inventory: AtomicU64, // last time we got an inventory packet from this peer
     requested_inventory: AtomicBool, // if we requested this peer to send us an inventory notification
     pruned_topoheight: AtomicU64, // pruned topoheight if its a pruned node
@@ -101,11 +134,11 @@ impl Peer {
         }
     }
 
-    pub fn get_txs_cache(&self) -> &Mutex<LruCache<Hash, ()>> {
+    pub fn get_txs_cache(&self) -> &Mutex<LruCache<Hash, Direction>> {
         &self.txs_cache
     }
 
-    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Hash, ()>> {
+    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Hash, Direction>> {
         &self.blocks_propagation
     }
 

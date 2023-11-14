@@ -35,7 +35,7 @@ use crate::{
             chain::CommonPoint
         },
         tracker::ResponseBlocker,
-        connection::ConnectionMessage,
+        connection::ConnectionMessage, peer::Direction,
     },
     config::{
         NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS,
@@ -870,12 +870,15 @@ impl<S: Storage> P2pServer<S> {
                 debug!("Received tx hash {} from {}", hash, peer.get_outgoing_address());
                 {
                     let mut txs_cache = peer.get_txs_cache().lock().await;
-                    if txs_cache.contains(&hash) {
-                        debug!("{} send us a transaction ({}) already tracked by him", peer, hash);
-                        // TODO Fix common peer detection
-                        return Ok(()) // Err(P2pError::AlreadyTrackedTx(hash))
+
+                    if let Some(direction) = txs_cache.get_mut(&hash) {
+                        if let Err(e) = direction.update(Direction::In) {
+                            debug!("{} send us a transaction ({}) already tracked by him ({:?}): {}", peer, hash, direction, e);
+                            return Err(P2pError::AlreadyTrackedTx(hash))
+                        }
+                    } else {
+                        txs_cache.put(hash.clone(), Direction::In);
                     }
-                    txs_cache.put(hash.clone(), ());
                 }
 
                 // Check that the tx is not in mempool or on disk already
@@ -892,7 +895,8 @@ impl<S: Storage> P2pServer<S> {
                 for common_peer in self.get_common_peers_for(&peer).await {
                     debug!("{} is a common peer with {}, adding TX {} to its cache", common_peer, peer, hash);
                     let mut txs_cache = common_peer.get_txs_cache().lock().await;
-                    txs_cache.put(hash.clone(), ());
+                    // Set it as Out so we don't send it anymore but we can get it one time in case of bad common peer prediction
+                    txs_cache.put(hash.clone(), Direction::Out);
                 }
             },
             Packet::BlockPropagation(packet_wrapper) => {
@@ -917,7 +921,7 @@ impl<S: Storage> P2pServer<S> {
                         return Err(P2pError::AlreadyTrackedBlock(block_hash))
                     }
                     debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
-                    blocks_propagation.put(block_hash.clone(), ());
+                    blocks_propagation.put(block_hash.clone(),  Direction::In);
                 }
 
                 // Avoid sending the same block to a common peer that may have already got it
@@ -925,7 +929,8 @@ impl<S: Storage> P2pServer<S> {
                 for common_peer in self.get_common_peers_for(&peer).await {
                     debug!("{} is a common peer with {}, adding block {} to its propagation cache", common_peer, peer, block_hash);
                     let mut blocks_propagation = common_peer.get_blocks_propagation().lock().await;
-                    blocks_propagation.put(block_hash.clone(), ());
+                    // Out allow to get "In" again, because it's a prediction, don't block it completely
+                    blocks_propagation.put(block_hash.clone(), Direction::Out);
                 }
 
                 // check that we don't have this block in our chain
@@ -1591,7 +1596,8 @@ impl<S: Storage> P2pServer<S> {
                     if let Err(e) = peer.send_bytes(bytes.clone()).await {
                         error!("Error while broadcasting tx hash {} to {}: {}", tx, peer, e);
                     }
-                    txs_cache.put(tx.clone(), ());
+                    // Set it as "In" so we can't get it back as we are the sender of it
+                    txs_cache.put(tx.clone(), Direction::In);
                 } else {
                     trace!("{} have tx hash {} in cache, skipping", peer, tx);
                 }
@@ -1627,7 +1633,7 @@ impl<S: Storage> P2pServer<S> {
                     // we broadcasted to him, add it to the cache
                     // he should not send it back to us
                     if lock {
-                        blocks_propagation.put(hash.clone(), ());
+                        blocks_propagation.put(hash.clone(), Direction::Out);
                     }
 
                     debug!("Broadcast {} to {}", hash, peer);
