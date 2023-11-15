@@ -218,17 +218,18 @@ impl PeerList {
 
     // Returns the median topoheight of all peers
     pub fn get_median_topoheight(&self) -> u64 {
-        let len = self.peers.len();
+        let values = self.peers.values().map(|peer| peer.get_topoheight()).collect::<Vec<u64>>();
+        let len = values.len();
+
+        // No peers, so network median is 0
         if len == 0 {
             return 0;
         }
 
-        let values = self.peers.values().map(|peer| peer.get_topoheight()).collect::<Vec<u64>>();
-
         if len % 2 == 0 {
-            let mid1 = values[len / 2 - 1];
-            let mid2 = values[len / 2];
-            (mid1 + mid2) / 2
+            let left = values[len / 2 - 1];
+            let right = values[len / 2];
+            (left + right) / 2
         } else {
             values[len / 2]
         }
