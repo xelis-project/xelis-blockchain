@@ -271,6 +271,7 @@ impl SledStorage {
     }
 
     fn get_versioned_balance_key(&self, key: &PublicKey, topoheight: u64) -> Hash {
+        trace!("get versioned balance key at {} for {}", topoheight, key);
         let mut bytes = [0; 44];
         bytes[0..4].copy_from_slice(BALANCE_PREFIX);
         bytes[4..12].copy_from_slice(&topoheight.to_be_bytes());
@@ -280,8 +281,8 @@ impl SledStorage {
     }
 
     // constant prefix + topoheight to create a unique key
-    fn generate_versioned_nonce_key(&self, key: &PublicKey, topoheight: u64) -> Hash {
-        trace!("generate versioned nonce key at {}", topoheight);
+    fn get_versioned_nonce_key(&self, key: &PublicKey, topoheight: u64) -> Hash {
+        trace!("get versioned nonce key at {} for {}", topoheight, key);
         let mut bytes = [0u8; 44]; // 4 bytes for prefix, 8 for u64
         bytes[0..4].copy_from_slice(NONCE_PREFIX);
         bytes[4..12].copy_from_slice(&topoheight.to_be_bytes());
@@ -530,7 +531,7 @@ impl Storage for SledStorage {
                 versioned_nonce.set_previous_topoheight(None);
 
                 // save it
-                let key = self.generate_versioned_nonce_key(&key, topoheight);
+                let key = self.get_versioned_nonce_key(&key, topoheight);
                 self.nonces.insert(key.as_bytes(), versioned_nonce.to_bytes())?;
             } else {
                 // find the first VersionedBalance which is under topoheight
@@ -538,7 +539,7 @@ impl Storage for SledStorage {
                     if previous_topoheight < topoheight {
                         versioned_nonce.set_previous_topoheight(None);
                         // save it
-                        let key = self.generate_versioned_nonce_key(&key, topoheight);
+                        let key = self.get_versioned_nonce_key(&key, topoheight);
                         self.nonces.insert(key.as_bytes(), versioned_nonce.to_bytes())?;
                         break;
                     }
@@ -1015,7 +1016,7 @@ impl Storage for SledStorage {
 
     async fn has_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<bool, BlockchainError> {
         trace!("has nonce {} at topoheight {}", key, topoheight);
-        let key = self.generate_versioned_nonce_key(key, topoheight);
+        let key = self.get_versioned_nonce_key(key, topoheight);
         self.contains_data::<Hash, ()>(&self.nonces, &None, &key).await
     }
 
@@ -1032,7 +1033,7 @@ impl Storage for SledStorage {
     async fn get_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<VersionedNonce, BlockchainError> {
         trace!("get nonce at topoheight {} for {}", topoheight, key);
 
-        let key = self.generate_versioned_nonce_key(key, topoheight);
+        let key = self.get_versioned_nonce_key(key, topoheight);
         self.load_from_disk(&self.nonces, key.as_bytes())
     }
 
@@ -1082,7 +1083,7 @@ impl Storage for SledStorage {
         };
 
         let versioned = VersionedNonce::new(nonce, previous_topoheight);
-        let disk_key = self.generate_versioned_nonce_key(key, topoheight);
+        let disk_key = self.get_versioned_nonce_key(key, topoheight);
         self.nonces.insert(disk_key.as_bytes(), versioned.to_bytes())?;
 
         self.set_last_topoheight_for_nonce(key, topoheight)?;
