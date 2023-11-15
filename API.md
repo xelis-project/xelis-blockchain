@@ -748,6 +748,7 @@ No parameters
 	"jsonrpc": "2.0",
 	"result": {
 		"best_topoheight": 23,
+		"median_topoheight": 23,
 		"max_peers": 32,
 		"our_topoheight": 23,
 		"peer_count": 1,

@@ -117,8 +117,8 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
     };
 
     let closure = |_| async {
-        let (peers, best) = match &p2p {
-            Some(p2p) => (p2p.get_peer_count().await, p2p.get_best_topoheight().await),
+        let (peers, median) = match &p2p {
+            Some(p2p) => (p2p.get_peer_count().await, p2p.get_median_topoheight_of_peers().await),
             None => (0, blockchain.get_topo_height())
         };
 
@@ -137,7 +137,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
         Ok(
             build_prompt_message(
                 blockchain.get_topo_height(),
-                best,
+                median,
                 network_hashrate,
                 peers,
                 miners,
@@ -150,12 +150,12 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
     prompt.start(Duration::from_millis(100), &closure).await
 }
 
-fn build_prompt_message(topoheight: u64, best_topoheight: u64, network_hashrate: f64, peers_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
+fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrate: f64, peers_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
     let topoheight_str = format!(
         "{}: {}/{}",
         prompt::colorize_str(Color::Yellow, "TopoHeight"),
         prompt::colorize_string(Color::Green, &format!("{}", topoheight)),
-        prompt::colorize_string(Color::Green, &format!("{}", best_topoheight))
+        prompt::colorize_string(Color::Green, &format!("{}", median_topoheight))
     );
     let network_hashrate_str = format!(
         "{}: {}",

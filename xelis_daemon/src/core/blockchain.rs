@@ -1714,7 +1714,7 @@ impl<S: Storage> Blockchain<S> {
         // Clean all old txs
         mempool.clean_up(nonces).await;
 
-        info!("Processed block {} at height {} in {}ms with {} txs", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count());
+        info!("Processed block {} at height {} in {} ms with {} txs", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count());
 
         if broadcast {
             trace!("Broadcasting block");

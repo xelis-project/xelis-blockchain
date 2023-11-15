@@ -204,7 +204,8 @@ impl PeerList {
         }
     }
 
-    pub fn get_best_topoheight(&self) -> u64 { // TODO: Calculate median of all peers
+    // Returns the highest topoheight of all peers
+    pub fn get_best_topoheight(&self) -> u64 {
         let mut best_height = 0;
         for (_, peer) in self.peers.iter() {
             let height = peer.get_topoheight();
@@ -213,6 +214,24 @@ impl PeerList {
             }
         }
         best_height
+    }
+
+    // Returns the median topoheight of all peers
+    pub fn get_median_topoheight(&self) -> u64 {
+        let len = self.peers.len();
+        if len == 0 {
+            return 0;
+        }
+
+        let values = self.peers.values().map(|peer| peer.get_topoheight()).collect::<Vec<u64>>();
+
+        if len % 2 == 0 {
+            let mid1 = values[len / 2 - 1];
+            let mid2 = values[len / 2];
+            (mid1 + mid2) / 2
+        } else {
+            values[len / 2]
+        }
     }
 
     // get a peer by its address

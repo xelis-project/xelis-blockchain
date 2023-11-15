@@ -471,6 +471,7 @@ async fn p2p_status<S: Storage>(context: Context, body: Value) -> Result<Value, 
             let tag = p2p.get_tag();
             let peer_id = p2p.get_peer_id();
             let best_topoheight = p2p.get_best_topoheight().await;
+            let median_topoheight = p2p.get_median_topoheight_of_peers().await;
             let max_peers = p2p.get_max_peers();
             let our_topoheight = blockchain.get_topo_height();
             let peer_count = p2p.get_peer_count().await;
@@ -481,6 +482,7 @@ async fn p2p_status<S: Storage>(context: Context, body: Value) -> Result<Value, 
                 peer_id,
                 our_topoheight,
                 best_topoheight,
+                median_topoheight,
                 max_peers
             }))
         },

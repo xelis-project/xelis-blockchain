@@ -167,6 +167,7 @@ pub struct P2pStatusResult<'a> {
     pub tag: Cow<'a, Option<String>>,
     pub our_topoheight: u64,
     pub best_topoheight: u64,
+    pub median_topoheight: u64,
     pub peer_id: u64
 }
 

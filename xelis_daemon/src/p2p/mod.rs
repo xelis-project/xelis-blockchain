@@ -1523,15 +1523,16 @@ impl<S: Storage> P2pServer<S> {
         peer_list.size()
     }
 
-    pub async fn get_best_topoheight(&self) -> u64 {
-        let our = self.blockchain.get_topo_height();
+    // Returns the median topoheight based on all peers
+    pub async fn get_median_topoheight_of_peers(&self) -> u64 {
         let peer_list = self.peer_list.read().await;
-        let best = peer_list.get_best_topoheight();
-        if best > our {
-            best
-        } else {
-            our
-        }
+        peer_list.get_median_topoheight()
+    }
+
+    // Returns the best topoheight based on all peers
+    pub async fn get_best_topoheight(&self) -> u64 {
+        let peer_list = self.peer_list.read().await;
+        peer_list.get_best_topoheight()
     }
 
     async fn start_syncing(&self, peer: Arc<Peer>) {
