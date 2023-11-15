@@ -695,7 +695,7 @@ impl Storage for SledStorage {
 
     fn count_accounts(&self) -> Result<u64, BlockchainError> {
         trace!("count accounts");
-        self.load_from_disk(&self.extra, ACCOUNTS_COUNT)
+        Ok(self.load_from_disk(&self.extra, ACCOUNTS_COUNT).unwrap_or(0))
     }
 
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
@@ -749,6 +749,10 @@ impl Storage for SledStorage {
     async fn add_asset(&mut self, asset: &Hash, data: AssetData) -> Result<(), BlockchainError> {
         trace!("add asset {} at topoheight {}", asset, data.get_topoheight());
         self.assets.insert(asset.as_bytes(), data.to_bytes())?;
+
+        let assets_count = self.count_assets()? + 1;
+        self.extra.insert(ASSETS_COUNT, &assets_count.to_be_bytes())?;
+
         if let Some(cache) = &self.assets_cache {
             let mut cache = cache.lock().await;
             cache.put(asset.clone(), ());
@@ -773,7 +777,7 @@ impl Storage for SledStorage {
     // count assets in storage
     fn count_assets(&self) -> Result<u64, BlockchainError> {
         trace!("count assets");
-        self.load_from_disk(&self.extra, ASSETS_COUNT)
+        Ok(self.load_from_disk(&self.extra, ASSETS_COUNT).unwrap_or(0))
     }
 
     fn get_asset_data(&self, asset: &Hash) -> Result<AssetData, BlockchainError> {
@@ -1087,7 +1091,11 @@ impl Storage for SledStorage {
 
     fn set_last_topoheight_for_nonce(&mut self, key: &PublicKey, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("set last topoheight for nonce {} to {}", key, topoheight);
-        self.nonces.insert(&key.as_bytes(), &topoheight.to_be_bytes())?;
+        if self.nonces.insert(&key.as_bytes(), &topoheight.to_be_bytes())?.is_none() {
+            let count = self.count_accounts()? + 1;
+            self.extra.insert(ACCOUNTS_COUNT, &count.to_be_bytes())?;
+        }
+
         Ok(())
     }
 
@@ -1113,21 +1121,27 @@ impl Storage for SledStorage {
 
     fn count_transactions(&self) -> Result<u64, BlockchainError> {
         trace!("count transactions");
-        self.load_from_disk(&self.extra, TXS_COUNT)
+        Ok(self.load_from_disk(&self.extra, TXS_COUNT).unwrap_or(0))
     }
 
     async fn add_new_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError> {
         debug!("Storing new {} with hash: {}, difficulty: {}", block, hash, difficulty);
 
         // Store transactions
+        let mut txs_count = 0;
         for (hash, tx) in block.get_transactions().iter().zip(txs) { // first save all txs, then save block
             if !self.has_transaction(hash).await? {
                 self.transactions.insert(hash.as_bytes(), tx.to_bytes())?;
+                txs_count += 1;
             }
         }
+        let current_txs_count = self.count_transactions()?;
+        self.extra.insert(TXS_COUNT, &(current_txs_count + txs_count).to_be_bytes())?;
 
         // Store block header
         self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
+        let blocks_count = self.count_blocks()? + 1;
+        self.extra.insert(BLOCKS_COUNT, &blocks_count.to_be_bytes())?;
 
         // Store difficulty
         self.difficulty.insert(hash.as_bytes(), &difficulty.to_be_bytes())?;
@@ -1306,7 +1320,7 @@ impl Storage for SledStorage {
 
     fn count_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("count blocks");
-        self.load_from_disk(&self.extra, BLOCKS_COUNT)
+        Ok(self.load_from_disk(&self.extra, BLOCKS_COUNT).unwrap_or(0))
     }
 
     async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
