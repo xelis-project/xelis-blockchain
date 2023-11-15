@@ -22,11 +22,19 @@ use log::{debug, trace, error, warn, info};
 
 use super::{Tips, Storage, DifficultyProvider};
 
+// Constant keys used for extra Tree
 const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
 const TOP_HEIGHT: &[u8; 4] = b"TOPH";
 const NETWORK: &[u8] = b"NET";
 const PRUNED_TOPOHEIGHT: &[u8; 4] = b"PRUN";
+// Counters (prevent to perform a O(n))
+const ACCOUNTS_COUNT: &[u8; 4] = b"CACC";
+const TXS_COUNT: &[u8; 4] = b"CTXS";
+const ASSETS_COUNT: &[u8; 4] = b"CAST";
+const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
+
+// Prefix used for versioned values
 const NONCE_PREFIX: &[u8; 4] = b"NONC";
 const BALANCE_PREFIX: &[u8; 4] = b"BLNC";
 
@@ -685,8 +693,9 @@ impl Storage for SledStorage {
         Ok(balances)
     }
 
-    fn count_accounts(&self) -> usize {
-        self.nonces.len()
+    fn count_accounts(&self) -> Result<u64, BlockchainError> {
+        trace!("count accounts");
+        self.load_from_disk(&self.extra, ACCOUNTS_COUNT)
     }
 
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
@@ -762,8 +771,9 @@ impl Storage for SledStorage {
     }
 
     // count assets in storage
-    fn count_assets(&self) -> usize {
-        self.assets.len()
+    fn count_assets(&self) -> Result<u64, BlockchainError> {
+        trace!("count assets");
+        self.load_from_disk(&self.extra, ASSETS_COUNT)
     }
 
     fn get_asset_data(&self, asset: &Hash) -> Result<AssetData, BlockchainError> {
@@ -1101,9 +1111,9 @@ impl Storage for SledStorage {
         self.contains_data(&self.transactions, &self.transactions_cache, hash).await
     }
 
-    fn count_transactions(&self) -> usize {
+    fn count_transactions(&self) -> Result<u64, BlockchainError> {
         trace!("count transactions");
-        self.transactions.len()
+        self.load_from_disk(&self.extra, TXS_COUNT)
     }
 
     async fn add_new_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError> {
@@ -1294,9 +1304,9 @@ impl Storage for SledStorage {
         !self.blocks.is_empty()
     }
 
-    fn count_blocks(&self) -> usize {
+    fn count_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("count blocks");
-        self.blocks.len()
+        self.load_from_disk(&self.extra, BLOCKS_COUNT)
     }
 
     async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {

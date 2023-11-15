@@ -412,34 +412,34 @@ async fn get_assets<S: Storage>(context: Context, body: Value) -> Result<Value, 
     Ok(json!(assets))
 }
 
-// TODO Rate limiter
 async fn count_assets<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    Ok(json!(storage.count_assets()))
+    let count = storage.count_assets().context("Error while retrieving assets count")?;
+    Ok(json!(count))
 }
 
-// TODO Rate limiter
 async fn count_accounts<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    Ok(json!(storage.count_accounts()))
+    let count = storage.count_accounts().context("Error while retrieving accounts count")?;
+    Ok(json!(count))
 }
 
-// TODO Rate limiter
 async fn count_transactions<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    Ok(json!(storage.count_transactions()))
+    let count = storage.count_transactions().context("Error while retrieving transactions count")?;
+    Ok(json!(count))
 }
 
 async fn submit_transaction<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {

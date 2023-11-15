@@ -51,7 +51,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<bool, BlockchainError>;
 
     async fn get_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<u64>>, BlockchainError>;
-    fn count_accounts(&self) -> usize;
+    fn count_accounts(&self) -> Result<u64, BlockchainError>;
 
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError>;
     fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError>;
@@ -67,7 +67,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn asset_exist(&self, asset: &Hash) -> Result<bool, BlockchainError>;
     async fn add_asset(&mut self, asset: &Hash, data: AssetData) -> Result<(), BlockchainError>;
     async fn get_assets(&self) -> Result<Vec<Hash>, BlockchainError>;
-    fn count_assets(&self) -> usize;
+    fn count_assets(&self) -> Result<u64, BlockchainError>;
 
     fn get_asset_data(&self, asset: &Hash) -> Result<AssetData, BlockchainError>;
 
@@ -104,14 +104,14 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     fn set_block_reward_at_topo_height(&mut self, topoheight: u64, reward: u64) -> Result<(), BlockchainError>;
 
     async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
-    fn count_transactions(&self) -> usize;
+    fn count_transactions(&self) -> Result<u64, BlockchainError>;
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
     async fn add_new_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError>;
     // Count is the number of blocks (topoheight) to rewind
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
     fn has_blocks(&self) -> bool;
-    fn count_blocks(&self) -> usize;
+    fn count_blocks(&self) -> Result<u64, BlockchainError>;
     async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError>;
     async fn has_blocks_at_height(&self, height: u64) -> Result<bool, BlockchainError>;
     async fn get_block_header_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>), BlockchainError>;
