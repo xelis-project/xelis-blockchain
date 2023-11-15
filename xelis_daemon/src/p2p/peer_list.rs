@@ -103,8 +103,11 @@ impl PeerList {
         )
     }
 
-    pub async fn remove_peer(&mut self, peer: &Peer) {
-        self.peers.remove(&peer.get_id());
+    pub async fn remove_peer(&mut self, peer_id: u64) {
+        let Some(peer) = self.peers.remove(&peer_id) else {
+            warn!("Trying to remove an unknown peer: {}", peer_id);
+            return;
+        };
 
         // now remove this peer from all peers that tracked it
         let addr = peer.get_outgoing_address();

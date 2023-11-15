@@ -434,7 +434,7 @@ impl Peer {
     pub async fn close(&self) -> Result<(), P2pError> {
         trace!("Closing connection with {}", self);
         let mut peer_list = self.peer_list.write().await;
-        peer_list.remove_peer(&self).await;
+        peer_list.remove_peer(self.get_id()).await;
         self.get_connection().close().await?;
         trace!("{} has been disconnected", self);
         Ok(())
