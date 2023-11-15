@@ -28,7 +28,7 @@ use xelis_common::{
 use crate::{
     config::{
         DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE,
-        EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
+        EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEES, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
         STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, SIDE_BLOCK_REWARD_PERCENT,
         DEV_PUBLIC_KEY, BLOCK_TIME, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS,
     },
@@ -2077,10 +2077,11 @@ impl<S: Storage> Blockchain<S> {
     // reward block miner and dev fees if any.
     async fn reward_miner<'a>(&self, storage: &S, block: &'a BlockHeader, mut block_reward: u64, total_fees: u64, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, topoheight: u64) -> Result<(), BlockchainError> {
         debug!("reward miner {} at topoheight {} with block reward = {}, total fees = {}", block.get_miner(), topoheight, block_reward, total_fees);
+        let dev_fee_percentage = get_block_dev_fee(block.get_height());
         // if dev fee are enabled, give % from block reward only
-        if DEV_FEE_PERCENT != 0 {
-            let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
-            debug!("adding {}% to dev address for dev fees", DEV_FEE_PERCENT);
+        if dev_fee_percentage != 0 {
+            let dev_fee = block_reward * dev_fee_percentage / 100;
+            debug!("adding {}% to dev address for dev fees", dev_fee_percentage);
             block_reward -= dev_fee;
             self.add_balance(storage, balances, &DEV_PUBLIC_KEY, &XELIS_ASSET, dev_fee, topoheight).await?;
         }
@@ -2171,4 +2172,14 @@ pub fn get_block_reward(supply: u64) -> u64 {
 
     let base_reward = (MAX_SUPPLY - supply) >> EMISSION_SPEED_FACTOR;
     base_reward * BLOCK_TIME / 180
+}
+
+pub fn get_block_dev_fee(height: u64) -> u64 {
+    for fee in DEV_FEES.iter() {
+        if height <= fee.height {
+            return fee.fee_percentage
+        }
+    }
+
+    0
 }

@@ -41,8 +41,29 @@ pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
 pub const TIPS_LIMIT: usize = 3; // maximum 3 previous blocks
 pub const STABLE_LIMIT: u64 = 8; // in how many height we consider the block stable
 
+// Struct to define dev fee threshold
+pub struct DevFeeThreshold {
+    // block height to start dev fee
+    pub height: u64,
+    // percentage of dev fee, example 10 = 10%
+    pub fee_percentage: u64
+}
+
 // Emission rules
-pub const DEV_FEE_PERCENT: u64 = 5; // 5% per block going to dev address
+pub const DEV_FEES: [DevFeeThreshold; 3] = [
+    DevFeeThreshold {
+        height: 0,
+        fee_percentage: 15
+    },
+    DevFeeThreshold {
+        height: 1_250_000, // after ~6 months it's reduced to 10%
+        fee_percentage: 10
+    },
+    DevFeeThreshold {
+        height: 3_000_000, // after ~1 year it's reduced to 5%
+        fee_percentage: 5
+    }
+]; // 15%, 10%, 5% per block going to dev address
 pub const SIDE_BLOCK_REWARD_PERCENT: u64 = 30; // only 30% of reward for side block
 pub const EMISSION_SPEED_FACTOR: u64 = 20;
 pub const MAX_SUPPLY: u64 = 18_400_000 * COIN_VALUE; // 18.4M full coin
