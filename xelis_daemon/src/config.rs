@@ -5,7 +5,8 @@ use xelis_common::{
     crypto::{
         key::PublicKey, address::Address, hash::{Hash, Hashable}
     },
-    serializer::Serializer
+    serializer::Serializer,
+    api::daemon::DevFeeThreshold
 };
 
 // In case of potential forks, have a unique network id to not connect to others compatible chains
@@ -40,14 +41,6 @@ pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
 // BlockDAG rules
 pub const TIPS_LIMIT: usize = 3; // maximum 3 previous blocks
 pub const STABLE_LIMIT: u64 = 8; // in how many height we consider the block stable
-
-// Struct to define dev fee threshold
-pub struct DevFeeThreshold {
-    // block height to start dev fee
-    pub height: u64,
-    // percentage of dev fee, example 10 = 10%
-    pub fee_percentage: u64
-}
 
 // Emission rules
 pub const DEV_FEES: [DevFeeThreshold; 3] = [

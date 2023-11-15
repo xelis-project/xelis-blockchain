@@ -268,6 +268,15 @@ pub struct IsTxExecutedInBlockParams<'a> {
     pub block_hash: Cow<'a, Hash>
 }
 
+// Struct to define dev fee threshold
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct DevFeeThreshold {
+    // block height to start dev fee
+    pub height: u64,
+    // percentage of dev fee, example 10 = 10%
+    pub fee_percentage: u64
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {
     // When a new block is accepted by chain

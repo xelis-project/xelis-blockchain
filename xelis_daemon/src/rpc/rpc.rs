@@ -1,4 +1,4 @@
-use crate::{core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError, mempool::Mempool}, p2p::peer::Peer};
+use crate::{core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError, mempool::Mempool}, p2p::peer::Peer, config::DEV_FEES};
 use super::{InternalRpcError, ApiError};
 use anyhow::Context as AnyContext;
 use serde_json::{json, Value};
@@ -189,6 +189,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_account_assets", async_handler!(get_account_assets::<S>));
     handler.register_method("get_accounts", async_handler!(get_accounts::<S>));
     handler.register_method("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
+    handler.register_method("get_dev_fee_thresholds", async_handler!(get_dev_fee_thresholds::<S>));
 }
 
 async fn version<S: Storage>(_: Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -832,4 +833,13 @@ async fn is_tx_executed_in_block<S: Storage>(context: Context, body: Value) -> R
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     Ok(json!(storage.is_tx_executed_in_block(&params.tx_hash, &params.block_hash).context("Error while checking if tx was executed in block")?))
+}
+
+// Get the configured dev fees
+async fn get_dev_fee_thresholds<S: Storage>(_: Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    Ok(json!(DEV_FEES))
 }

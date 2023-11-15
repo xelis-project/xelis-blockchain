@@ -2175,9 +2175,9 @@ pub fn get_block_reward(supply: u64) -> u64 {
 }
 
 pub fn get_block_dev_fee(height: u64) -> u64 {
-    for fee in DEV_FEES.iter() {
-        if height <= fee.height {
-            return fee.fee_percentage
+    for threshold in DEV_FEES.iter() {
+        if height <= threshold.height {
+            return threshold.fee_percentage
         }
     }
 

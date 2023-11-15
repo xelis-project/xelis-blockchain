@@ -70,6 +70,45 @@ No parameters
 }
 ```
 
+#### Get Dev Fee Thresholds
+Retrieve configured dev fees thresholds
+
+##### Method `get_dev_fee_thresholds`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_dev_fee_thresholds",
+    "id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "fee_percentage": 15,
+            "height": 0
+        },
+        {
+            "fee_percentage": 10,
+            "height": 1250000
+        },
+        {
+            "fee_percentage": 5,
+            "height": 3000000
+        }
+    ]
+}
+```
+
 #### Get Height
 Retrieve current height of the chain
 
