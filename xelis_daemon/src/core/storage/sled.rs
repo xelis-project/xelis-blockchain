@@ -1532,6 +1532,11 @@ impl Storage for SledStorage {
         Ok(())
     }
 
+    // Returns the current size on disk in bytes
+    async fn get_size_on_disk(&self) -> Result<u64, BlockchainError> {
+        Ok(self.db.size_on_disk()?)
+    }
+
     async fn stop(&mut self) -> Result<(), BlockchainError> {
         info!("Flushing Sled database");
         self.db.flush_async().await?;

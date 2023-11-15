@@ -1,6 +1,7 @@
 use crate::{core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError, mempool::Mempool}, p2p::peer::Peer, config::DEV_FEES};
 use super::{InternalRpcError, ApiError};
 use anyhow::Context as AnyContext;
+use human_bytes::human_bytes;
 use serde_json::{json, Value};
 use xelis_common::{
     api::{daemon::{
@@ -36,7 +37,8 @@ use xelis_common::{
         AccountHistoryType,
         GetAccountAssetsParams,
         PeerEntry,
-        IsTxExecutedInBlockParams
+        IsTxExecutedInBlockParams,
+        SizeOnDiskResult
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -190,6 +192,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_accounts", async_handler!(get_accounts::<S>));
     handler.register_method("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
     handler.register_method("get_dev_fee_thresholds", async_handler!(get_dev_fee_thresholds::<S>));
+    handler.register_method("get_size_on_disk", async_handler!(get_size_on_disk::<S>));
 }
 
 async fn version<S: Storage>(_: Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -842,4 +845,20 @@ async fn get_dev_fee_thresholds<S: Storage>(_: Context, body: Value) -> Result<V
     }
 
     Ok(json!(DEV_FEES))
+}
+
+// Get the configured dev fees
+async fn get_size_on_disk<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let size_bytes = storage.get_size_on_disk().await.context("Error while retrieving size on disk")?;
+    let size_formatted = human_bytes(size_bytes as f64);
+
+    Ok(json!(SizeOnDiskResult {
+        size_bytes,
+        size_formatted
+    }))
 }

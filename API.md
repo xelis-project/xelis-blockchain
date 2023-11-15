@@ -109,6 +109,35 @@ No parameters
 }
 ```
 
+#### Get Size On Disk
+Retrieve blockchain size on disk
+
+##### Method `get_size_on_disk`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_size_on_disk",
+    "id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "size_bytes": 94896128,
+        "size_formatted": "90.5 MiB"
+    }
+}
+```
+
 #### Get Height
 Retrieve current height of the chain
 

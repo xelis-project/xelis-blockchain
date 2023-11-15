@@ -277,6 +277,13 @@ pub struct DevFeeThreshold {
     pub fee_percentage: u64
 }
 
+// Struct to returns the size of the blockchain on disk
+#[derive(Serialize, Deserialize)]
+pub struct SizeOnDiskResult {
+    pub size_bytes: u64,
+    pub size_formatted: String
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {
     // When a new block is accepted by chain
