@@ -313,7 +313,6 @@ impl NetworkHandler {
     }
 
     async fn sync_new_blocks(&self, address: &Address<'_>, current_topoheight: u64, network_topoheight: u64) -> Result<(), Error> {
-        // TODO detect new changes in assets
         let mut assets = {
             let storage = self.wallet.get_storage().read().await;
             storage.get_assets()?

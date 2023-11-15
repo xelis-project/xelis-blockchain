@@ -420,7 +420,7 @@ where
         }
 
         let wallet = self.handler.get_data();
-        // verify signature of application data TODO
+        // Verify the signature of the app data to validate permissions previously set
         if let Some(signature) = &app_data.signature {
             let bytes = app_data.to_bytes();
             let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
