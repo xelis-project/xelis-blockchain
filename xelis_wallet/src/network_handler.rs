@@ -306,7 +306,7 @@ impl NetworkHandler {
                 debug!("Saving current topoheight daemon: {}", current_topoheight);
                 let mut storage = self.wallet.get_storage().write().await;
                 storage.set_daemon_topoheight(info.topoheight)?;
-                storage.set_top_block_hash(&info.top_hash)?;
+                storage.set_top_block_hash(&info.top_block_hash)?;
             }
             current_topoheight = info.topoheight;
         }
