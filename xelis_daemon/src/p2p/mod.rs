@@ -1635,10 +1635,8 @@ impl<S: Storage> P2pServer<S> {
                 // check that we don't send the block to the peer that sent it to us
                 if !blocks_propagation.contains(hash) {
                     // we broadcasted to him, add it to the cache
-                    // he should not send it back to us
-                    if lock {
-                        blocks_propagation.put(hash.clone(), Direction::Out);
-                    }
+                    // he should not send it back to us if it's a block found by us
+                    blocks_propagation.put(hash.clone(), if lock { Direction::Both } else { Direction::Out });
 
                     debug!("Broadcast {} to {}", hash, peer);
                     if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
