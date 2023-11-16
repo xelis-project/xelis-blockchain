@@ -116,9 +116,7 @@ impl<S: Storage> P2pServer<S> {
         let addr: SocketAddr = bind_address.parse()?; // parse the bind address
         // create mspc channel for connections to peers
         let (connections_sender, connections_receiver) = mpsc::unbounded_channel();
-
         let (blocks_processer, blocks_processor_receiver) = mpsc::unbounded_channel();
-
         let object_tracker = ObjectTracker::new(blockchain.clone());
 
         let server = Self {
