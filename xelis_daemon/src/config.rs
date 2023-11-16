@@ -59,7 +59,7 @@ pub const DEV_FEES: [DevFeeThreshold; 3] = [
 ]; // 15%, 10%, 5% per block going to dev address
 pub const SIDE_BLOCK_REWARD_PERCENT: u64 = 30; // only 30% of reward for side block
 pub const EMISSION_SPEED_FACTOR: u64 = 20;
-pub const MAX_SUPPLY: u64 = 18_400_000 * COIN_VALUE; // 18.4M full coin
+pub const MAXIMUM_SUPPLY: u64 = 18_400_000 * COIN_VALUE; // 18.4M full coin
 
 // Genesis block to have the same starting point for every nodes
 pub const GENESIS_BLOCK: &str = "0000000000000000000000000000000000000001872f3e0c02000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd"; // Genesis block in hexadecimal format

@@ -59,11 +59,12 @@ No parameters
         "difficulty": 35533666,
         "height": 27552,
         "mempool_size": 0,
-        "native_supply": 24141030101,
+        "circulating_supply": 24141030101,
+		"maximum_supply": 18400000000000,
         "network": "Testnet",
         "pruned_topoheight": null,
         "stableheight": 27544,
-        "top_hash": "00000014adb905b46053363e264975dd32cd0020eaf474fe08c5f492110aa95c",
+        "top_block_hash": "00000014adb905b46053363e264975dd32cd0020eaf474fe08c5f492110aa95c",
         "topoheight": 28032,
         "version": "1.4.0"
     }

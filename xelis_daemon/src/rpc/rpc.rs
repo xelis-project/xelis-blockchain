@@ -1,4 +1,4 @@
-use crate::{core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError, mempool::Mempool}, p2p::peer::Peer, config::DEV_FEES};
+use crate::{core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError, mempool::Mempool}, p2p::peer::Peer, config::{DEV_FEES, MAXIMUM_SUPPLY}};
 use super::{InternalRpcError, ApiError};
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
@@ -304,17 +304,17 @@ async fn get_info<S: Storage>(context: Context, body: Value) -> Result<Value, In
     let height = blockchain.get_height();
     let topoheight = blockchain.get_topo_height();
     let stableheight = blockchain.get_stable_height();
-    let (top_hash, native_supply, pruned_topoheight, average_block_time) = {
+    let (top_block_hash, circulating_supply, pruned_topoheight, average_block_time) = {
         let storage = blockchain.get_storage().read().await;
-        let top_hash = storage.get_hash_at_topo_height(topoheight).await.context("Error while retrieving hash at topo height")?;
+        let top_block_hash = storage.get_hash_at_topo_height(topoheight).await.context("Error while retrieving hash at topo height")?;
         let supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply at topo height")?;
         let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?;
         let average_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
-        (top_hash, supply, pruned_topoheight, average_block_time)
+        (top_block_hash, supply, pruned_topoheight, average_block_time)
     };
     let difficulty = blockchain.get_difficulty();
     let block_time_target = BLOCK_TIME_MILLIS;
-    let block_reward = get_block_reward(native_supply);
+    let block_reward = get_block_reward(circulating_supply);
     let mempool_size = blockchain.get_mempool_size().await;
     let version = VERSION.into();
     let network = *blockchain.get_network();
@@ -324,8 +324,9 @@ async fn get_info<S: Storage>(context: Context, body: Value) -> Result<Value, In
         topoheight,
         stableheight,
         pruned_topoheight,
-        top_hash,
-        native_supply,
+        top_block_hash,
+        circulating_supply,
+        maximum_supply: MAXIMUM_SUPPLY,
         difficulty,
         block_time_target,
         average_block_time,

@@ -28,7 +28,7 @@ use xelis_common::{
 use crate::{
     config::{
         DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE,
-        EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEES, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
+        EMISSION_SPEED_FACTOR, MAXIMUM_SUPPLY, DEV_FEES, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
         STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, SIDE_BLOCK_REWARD_PERCENT,
         DEV_PUBLIC_KEY, BLOCK_TIME, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS,
     },
@@ -2165,12 +2165,12 @@ impl<S: Storage> Blockchain<S> {
 
 pub fn get_block_reward(supply: u64) -> u64 {
     // Prevent any overflow
-    if supply >= MAX_SUPPLY {
+    if supply >= MAXIMUM_SUPPLY {
         // Max supply reached, do we want to generate small fixed amount of coins? 
         return 0
     }
 
-    let base_reward = (MAX_SUPPLY - supply) >> EMISSION_SPEED_FACTOR;
+    let base_reward = (MAXIMUM_SUPPLY - supply) >> EMISSION_SPEED_FACTOR;
     base_reward * BLOCK_TIME / 180
 }
 

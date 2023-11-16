@@ -123,15 +123,23 @@ pub struct GetInfoResult {
     pub topoheight: u64,
     pub stableheight: u64,
     pub pruned_topoheight: Option<u64>,
-    pub top_hash: Hash,
-    pub native_supply: u64,
+    pub top_block_hash: Hash,
+    // Current XELIS circulating supply
+    pub circulating_supply: u64,
+    // Maximum supply of XELIS
+    pub maximum_supply: u64,
+    // Current difficulty at tips
     pub difficulty: Difficulty,
+    // Expected block time
     pub block_time_target: u64,
+    // Average block time of last 50 blocks
     pub average_block_time: u64,
     pub block_reward: u64,
     // count how many transactions are present in mempool
     pub mempool_size: usize,
+    // software version on which the daemon is running
     pub version: String,
+    // Network state (mainnet, testnet, devnet)
     pub network: Network
 }
 
