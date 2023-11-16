@@ -60,7 +60,7 @@ use self::{
 };
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::{mpsc::{self, UnboundedSender, UnboundedReceiver}, Mutex},
+    sync::{mpsc::{self, UnboundedSender, UnboundedReceiver, Sender, Receiver}, Mutex},
     select,
     task::JoinHandle,
     io::AsyncWriteExt,
@@ -101,7 +101,7 @@ pub struct P2pServer<S: Storage> {
     object_tracker: SharedObjectTracker, // used to requests objects to peers and avoid requesting the same object to multiple peers
     is_running: AtomicBool, // used to check if the server is running or not in tasks
     blocks_propagation_queue: Mutex<LruCache<Hash, ()>>, // Synced cache to prevent concurrent tasks adding the block
-    blocks_processor: UnboundedSender<(Arc<Peer>, BlockHeader, Hash)> // Sender for the blocks processing task to have a ordered queue
+    blocks_processor: Sender<(Arc<Peer>, BlockHeader, Hash)> // Sender for the blocks processing task to have a ordered queue
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -116,7 +116,7 @@ impl<S: Storage> P2pServer<S> {
         let addr: SocketAddr = bind_address.parse()?; // parse the bind address
         // create mspc channel for connections to peers
         let (connections_sender, connections_receiver) = mpsc::unbounded_channel();
-        let (blocks_processer, blocks_processor_receiver) = mpsc::unbounded_channel();
+        let (blocks_processor, blocks_processor_receiver) = mpsc::channel(TIPS_LIMIT * STABLE_LIMIT as usize);
         let object_tracker = ObjectTracker::new(blockchain.clone());
 
         let server = Self {
@@ -131,7 +131,7 @@ impl<S: Storage> P2pServer<S> {
             object_tracker,
             is_running: AtomicBool::new(true),
             blocks_propagation_queue: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
-            blocks_processor: blocks_processer
+            blocks_processor
         };
 
         let arc = Arc::new(server);
@@ -646,7 +646,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Task for all blocks propagation
-    async fn blocks_processing_task(self: Arc<Self>, mut receiver: UnboundedReceiver<(Arc<Peer>, BlockHeader, Hash)>) {
+    async fn blocks_processing_task(self: Arc<Self>, mut receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>) {
         debug!("Starting blocks processing task");
         while let Some((peer, header, block_hash)) = receiver.recv().await {
             let mut response_blockers: Vec<ResponseBlocker> = Vec::new();
@@ -953,7 +953,8 @@ impl<S: Storage> P2pServer<S> {
                 let block_height = header.get_height();
                 debug!("Received block at height {} from {}", block_height, peer);
                 let peer = Arc::clone(peer);
-                if let Err(e) = self.blocks_processor.send((peer, header, block_hash)) {
+                // This will block the task if the bounded channel is full
+                if let Err(e) = self.blocks_processor.send((peer, header, block_hash)).await {
                     error!("Error while sending block propagated to blocks processor task: {}", e);
                 }
             },
