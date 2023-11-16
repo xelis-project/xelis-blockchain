@@ -238,3 +238,16 @@ impl<K: Serializer + Eq + StdHash, V: Serializer + Eq + StdHash> Serializer for 
         }
     }
 }
+
+impl<const N: usize> Serializer for [u8; N] {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bytes(self);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let bytes = reader.read_bytes(N)?;
+        Ok(
+            bytes
+        )
+    }
+}
