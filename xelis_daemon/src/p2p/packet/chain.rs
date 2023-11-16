@@ -9,7 +9,13 @@ use xelis_common::{
         Reader
     },
 };
-use crate::config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, TIPS_LIMIT};
+use crate::config::{
+    CHAIN_SYNC_REQUEST_MAX_BLOCKS,
+    CHAIN_SYNC_RESPONSE_MAX_BLOCKS,
+    CHAIN_SYNC_TOP_BLOCKS,
+    TIPS_LIMIT,
+    CHAIN_SYNC_RESPONSE_MIN_BLOCKS
+};
 
 #[derive(Clone, Debug)]
 pub struct BlockId {
@@ -51,13 +57,17 @@ impl Serializer for BlockId {
 
 #[derive(Clone, Debug)]
 pub struct ChainRequest {
-    blocks: Vec<BlockId>
+    blocks: Vec<BlockId>,
+    // Number of maximum block responses allowed
+    // This allow, directly in the protocol, to change the response param based on hardware resources
+    accepted_response_size: u16
 }
 
 impl ChainRequest {
-    pub fn new(blocks: Vec<BlockId>) -> Self {
+    pub fn new(blocks: Vec<BlockId>, accepted_response_size: u16) -> Self {
         Self {
-            blocks
+            blocks,
+            accepted_response_size
         }
     }
 
@@ -67,6 +77,10 @@ impl ChainRequest {
 
     pub fn get_blocks(self) -> Vec<BlockId> {
         self.blocks
+    }
+
+    pub fn get_accepted_response_size(&self) -> u16 {
+        self.accepted_response_size
     }
 }
 
@@ -89,7 +103,15 @@ impl Serializer for ChainRequest {
         for _ in 0..len {
             blocks.push(BlockId::read(reader)?);
         }
-        Ok(Self { blocks })
+
+        let accepted_response_size = reader.read_u16()?;
+        // Verify that the requested response size is in the protocol bounds
+        if accepted_response_size < CHAIN_SYNC_RESPONSE_MIN_BLOCKS as u16 || accepted_response_size > CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u16 {
+            debug!("Invalid accepted response size: {}", accepted_response_size);
+            return Err(ReaderError::InvalidValue)
+        }
+
+        Ok(Self { blocks, accepted_response_size })
     }
 }
 

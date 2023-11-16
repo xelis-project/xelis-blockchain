@@ -40,8 +40,8 @@ use crate::{
     config::{
         NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS,
         P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT,
-        CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT,
-        P2P_EXTEND_PEERLIST_DELAY, TIPS_LIMIT, PEER_TIMEOUT_INIT_CONNECTION
+        CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT, P2P_EXTEND_PEERLIST_DELAY,
+        TIPS_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS
     }, rpc::rpc::get_peer_entry
 };
 use self::{
@@ -494,8 +494,9 @@ impl<S: Storage> P2pServer<S> {
 
     async fn chain_sync_loop(self: Arc<Self>) {
         let duration = Duration::from_secs(CHAIN_SYNC_DELAY);
+        let mut interval = interval(duration);
         loop {
-            sleep(duration).await;
+            interval.tick().await;
             if !self.is_syncing().await {
                 // first we have to check if we allow fast sync mode
                 // and then we check if we have a potential peer above us to fast sync
@@ -981,9 +982,16 @@ impl<S: Storage> P2pServer<S> {
 
                 let zelf = Arc::clone(self);
                 let peer = Arc::clone(peer);
+                let mut accepted_response_size = request.get_accepted_response_size() as usize;
+
+                // This can be configured by node operators
+                if accepted_response_size > CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS {
+                    accepted_response_size = CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS;
+                }
+
                 let blocks = request.get_blocks();
                 tokio::spawn(async move {
-                    if let Err(e) = zelf.handle_chain_request(&peer, blocks).await {
+                    if let Err(e) = zelf.handle_chain_request(&peer, blocks, accepted_response_size).await {
                         error!("Error while handling chain request from {}: {}", peer, e);
                         peer.increment_fail_count();
                     }
@@ -1270,7 +1278,7 @@ impl<S: Storage> P2pServer<S> {
 
     // search a common point between our blockchain and the peer's one
     // when the common point is found, start sending blocks from this point
-    async fn handle_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, blocks: Vec<BlockId>) -> Result<(), BlockchainError> {
+    async fn handle_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, blocks: Vec<BlockId>, accepted_response_size: usize) -> Result<(), BlockchainError> {
         debug!("handle chain request for {} with {} blocks", peer, blocks.len());
         let storage = self.blockchain.get_storage().read().await;
         // blocks hashes sent for syncing (topoheight ordered)
@@ -1286,10 +1294,10 @@ impl<S: Storage> P2pServer<S> {
             // used to detect if we find unstable height for alt tips
             let mut potential_unstable_height = None;
             // check to see if we should search for alt tips (and above unstable height)
-            let should_search_alt_tips = top_topoheight - topoheight < CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u64;
+            let should_search_alt_tips = top_topoheight - topoheight < accepted_response_size as u64;
 
             // complete ChainResponse blocks until we are full or that we reach the top topheight
-            while response_blocks.len() < CHAIN_SYNC_RESPONSE_MAX_BLOCKS && topoheight <= top_topoheight {
+            while response_blocks.len() < accepted_response_size && topoheight <= top_topoheight {
                 trace!("looking for hash at topoheight {}", topoheight);
                 let hash = storage.get_hash_at_topo_height(topoheight).await?;
                 if should_search_alt_tips && potential_unstable_height.is_none() {
@@ -1328,13 +1336,9 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
-    async fn handle_chain_response(&self, peer: &Arc<Peer>, mut response: ChainResponse) -> Result<(), BlockchainError> {
+    async fn handle_chain_response(&self, peer: &Arc<Peer>, mut response: ChainResponse, requested_max_size: usize) -> Result<(), BlockchainError> {
         trace!("handle chain response from {}", peer);
         let response_size = response.size();
-        if response.size() > CHAIN_SYNC_RESPONSE_MAX_BLOCKS { // peer is trying to spam us
-            warn!("{} is maybe trying to spam us", peer);
-            return Err(P2pError::MalformedChainResponse(response_size).into())
-        }
 
         let Some(common_point) = response.get_common_point() else {
             warn!("No common block was found with {}", peer);
@@ -1438,7 +1442,7 @@ impl<S: Storage> P2pServer<S> {
                                 }
                             }
                         }
-    
+
                         let block = Block::new(Immutable::Arc(header), transactions);
                         self.blockchain.add_new_block(block, false, false).await?; // don't broadcast block because it's syncing
                     }
@@ -1470,7 +1474,7 @@ impl<S: Storage> P2pServer<S> {
         let peer_topoheight = peer.get_topoheight();
         // ask inventory of this peer if we sync from too far
         // if we are not further than one sync, request the inventory
-        if peer_topoheight > our_previous_topoheight && blocks_len < CHAIN_SYNC_RESPONSE_MAX_BLOCKS {
+        if peer_topoheight > our_previous_topoheight && blocks_len < requested_max_size {
             let our_topoheight = self.blockchain.get_topo_height();
             // verify that we synced it partially well
             if peer_topoheight >= our_topoheight && peer_topoheight - our_topoheight < STABLE_LIMIT {
@@ -2012,15 +2016,27 @@ impl<S: Storage> P2pServer<S> {
     // its used to find a common point with the peer to which we ask the chain
     pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
         trace!("Requesting chain from {}", peer);
+
+        // This can be configured by the node operator, it will be adjusted between protocol bounds
+        // and based on peer configuration
+        // This will allow to boost-up syncing for those who want and can be used to use low resources for low devices
+        let requested_max_size = CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS;
+
         let packet = {
             let storage = self.blockchain.get_storage().read().await;
-            let request = ChainRequest::new(self.build_list_of_blocks_id(&*storage).await?);
+            let request = ChainRequest::new(self.build_list_of_blocks_id(&*storage).await?, requested_max_size as u16);
             trace!("Built a chain request with {} blocks", request.size());
             let ping = self.build_generic_ping_packet_with_storage(&*storage).await;
             PacketWrapper::new(Cow::Owned(request), Cow::Owned(ping))
         };
 
         let response = peer.request_sync_chain(packet).await?;
-        self.handle_chain_response(peer, response).await
+
+        // Check that the peer followed our requirements
+        if response.size() > CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS {
+            return Err(P2pError::InvaliChainResponseSize(response.size(), CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS).into())
+        }
+
+        self.handle_chain_response(peer, response, requested_max_size).await
     }
 }

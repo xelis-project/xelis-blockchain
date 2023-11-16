@@ -35,10 +35,10 @@ pub enum P2pError {
     MalformedChainRequest(usize),
     #[error("Received a unrequested chain response")]
     UnrequestedChainResponse,
+    #[error("Invalid chain response size, got {} blocks while maximum set was {}", _0, _1)]
+    InvaliChainResponseSize(usize, usize),
     #[error("Received a unrequested bootstrap chain response")]
     UnrequestedBootstrapChainResponse,
-    #[error("Malformed chain response, received {} blocks id", _0)]
-    MalformedChainResponse(usize),
     #[error("Invalid common point at topoheight {}", _0)]
     InvalidCommonPoint(u64),
     #[error("Peer disconnected")]
