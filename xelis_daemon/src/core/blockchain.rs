@@ -1399,7 +1399,7 @@ impl<S: Storage> Blockchain<S> {
         let block = block.to_arc();
         debug!("Saving block {} on disk", block_hash);
         // Add block to chain
-        storage.add_new_block(block.clone(), &txs, difficulty, block_hash.clone()).await?;
+        storage.save_block(block.clone(), &txs, difficulty, block_hash.clone()).await?;
 
         // Compute cumulative difficulty for block
         let cumulative_difficulty = {

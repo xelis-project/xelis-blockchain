@@ -1979,7 +1979,7 @@ impl<S: Storage> P2pServer<S> {
                         storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
 
                         // save the block with its transactions, difficulty
-                        storage.add_new_block(Arc::new(header), &txs, metadata.difficulty, hash).await?;
+                        storage.save_block(Arc::new(header), &txs, metadata.difficulty, hash).await?;
                     }
 
                     let mut storage = self.blockchain.get_storage().write().await;
