@@ -104,6 +104,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     fn set_block_reward_at_topo_height(&mut self, topoheight: u64, reward: u64) -> Result<(), BlockchainError>;
 
     async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
+    async fn get_transaction_size(&self, hash: &Hash) -> Result<usize, BlockchainError>;
     fn count_transactions(&self) -> Result<u64, BlockchainError>;
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 

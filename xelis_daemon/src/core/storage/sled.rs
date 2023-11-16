@@ -1116,6 +1116,11 @@ impl Storage for SledStorage {
         self.get_cacheable_arc_data(&self.transactions, &self.transactions_cache, hash).await
     }
 
+    async fn get_transaction_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
+        let data = self.transactions.get(hash.as_bytes())?;
+        data.map(|data| data.len()).ok_or(BlockchainError::NotFoundOnDisk(DiskContext::LoadData))
+    }
+
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         self.contains_data(&self.transactions, &self.transactions_cache, hash).await
     }

@@ -106,7 +106,11 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
     } else {
         let block = storage.get_block_header_by_hash(&hash).await.context("Error while retrieving full block")?;
 
-        let total_size_in_bytes = block.size();
+        let mut total_size_in_bytes = block.size();
+        for tx_hash in block.get_txs_hashes() {
+            total_size_in_bytes += storage.get_transaction_size(tx_hash).await.context(format!("Error while retrieving transaction {hash} size"))?;
+        }
+
         let data: DataHash<'_, Arc<BlockHeader>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(&block) };
         json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees: None, total_size_in_bytes, data })
     };
