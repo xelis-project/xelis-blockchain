@@ -462,7 +462,7 @@ impl Storage for SledStorage {
                 let (key_bytes, value) = el?;
 
                 // It is not an account and most probably a versioned balance, skipping
-                if key_bytes.len() != 32 {
+                if key_bytes.len() != 32 && value.len() != 8 {
                     continue;
                 }
 
@@ -483,7 +483,7 @@ impl Storage for SledStorage {
 
                     // save it
                     let key = self.get_versioned_balance_key(&key, topoheight);
-                    tree.insert(key.as_bytes(), versioned_balance.to_bytes())?;
+                    tree.insert(key, versioned_balance.to_bytes())?;
                 } else {
                     // find the first VersionedBalance which is under topoheight
                     while let Some(previous_topoheight) = versioned_balance.get_previous_topoheight() {
@@ -491,7 +491,7 @@ impl Storage for SledStorage {
                             versioned_balance.set_previous_topoheight(None);
                             // save it
                             let key = self.get_versioned_balance_key(&key, topoheight);
-                            tree.insert(key.as_bytes(), versioned_balance.to_bytes())?;
+                            tree.insert(key, versioned_balance.to_bytes())?;
                             break;
                         }
 
@@ -511,7 +511,7 @@ impl Storage for SledStorage {
         for el in self.nonces.iter() {
             let (key_bytes, value) = el?;
             // Key is not a public key
-            if key_bytes.len() != 32 {
+            if key_bytes.len() != 32 && value.len() != 8 {
                 continue;
             }
 
@@ -532,7 +532,7 @@ impl Storage for SledStorage {
 
                 // save it
                 let key = self.get_versioned_nonce_key(&key, topoheight);
-                self.nonces.insert(key.as_bytes(), versioned_nonce.to_bytes())?;
+                self.nonces.insert(key, versioned_nonce.to_bytes())?;
             } else {
                 // find the first VersionedBalance which is under topoheight
                 while let Some(previous_topoheight) = versioned_nonce.get_previous_topoheight() {
@@ -540,7 +540,7 @@ impl Storage for SledStorage {
                         versioned_nonce.set_previous_topoheight(None);
                         // save it
                         let key = self.get_versioned_nonce_key(&key, topoheight);
-                        self.nonces.insert(key.as_bytes(), versioned_nonce.to_bytes())?;
+                        self.nonces.insert(key, versioned_nonce.to_bytes())?;
                         break;
                     }
 
@@ -1004,7 +1004,7 @@ impl Storage for SledStorage {
         trace!("set balance {} at topoheight {} for {}", asset, topoheight, key);
         let tree = self.db.open_tree(asset.as_bytes())?;
         let key = self.get_versioned_balance_key(&key, topoheight);
-        tree.insert(key.as_bytes(), balance.to_bytes())?;
+        tree.insert(key, balance.to_bytes())?;
         Ok(())
     }
 
@@ -1084,7 +1084,7 @@ impl Storage for SledStorage {
 
         let versioned = VersionedNonce::new(nonce, previous_topoheight);
         let disk_key = self.get_versioned_nonce_key(key, topoheight);
-        self.nonces.insert(disk_key.as_bytes(), versioned.to_bytes())?;
+        self.nonces.insert(&disk_key, versioned.to_bytes())?;
 
         self.set_last_topoheight_for_nonce(key, topoheight)?;
         Ok(())
@@ -1266,7 +1266,7 @@ impl Storage for SledStorage {
                 let (key, value) = el?;
 
                 // It is not an account and most probably a versioned balance, skipping
-                if key.len() != 32 {
+                if key.len() != 32 && value.len() != 8 {
                     continue;
                 }
 
