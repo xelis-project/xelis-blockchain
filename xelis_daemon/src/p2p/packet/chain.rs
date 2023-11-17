@@ -90,6 +90,8 @@ impl Serializer for ChainRequest {
         for block_id in &self.blocks {
             block_id.write(writer);
         }
+
+        writer.write_u16(self.accepted_response_size);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
