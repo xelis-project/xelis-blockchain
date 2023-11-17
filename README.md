@@ -217,16 +217,18 @@ All theses data are saved in plaintext.
 | cumulative_difficulty |    Hash    |      Integer      |   Save the cumulative difficulty for each block hash   |
 |         assets        |    Hash    |      Integer      |  Verify if an assets exist and its registration height |
 |         nonces        | Public Key |      Integer      |     Store the highest topoheight of versioned nonce    |
-|   nonces_topoheight   | Public Key |  Versioned Nonce  |      Tree name is composed of prefix + topoheight      |
+|   versioned_nonces    |    Hash    |  Versioned Nonce  |  Hash is composed of prefix + public key + topoheight  |
 |        rewards        |   Integer  |      Integer      |                  Save the block reward                 |
 |         supply        |   Integer  |      Integer      |  Calculated supply (past + block reward) at each block |
 |       difficulty      |    Hash    |      Integer      |                Difficulty for each block               |
 |       tx_blocks       |    Hash    |   Array of Hash   |      All blocks in which this TX hash is included      |
 |      assets_hash      | Public Key |      Integer      |  Asset hash with last topoheight of versioned balance  |
-|    assets_balances    | Public Key | Versioned Balance |         Tree name is hash of asset + topoheight        |
+|  versioned_balances   |    Hash    | Versioned Balance |    Key is a hash based on public key and topoheight    |
 
 **NOTE**:
-- Balances and nonces are versioned, which means they are stored each time a change happened on disk.
+- Tree `assets_hash` has the asset hash as name. So each asset has its own list of public keys / balances.
+- Balances and nonces are versioned, which means they are stored each time a change happened in chain.
+- Using a Tree per version is too heavy because of overhead per trees, solution is to hash a generated key based on properties.
 - Assets registered have in value their topoheight at which it was registered.
 - Supply and block rewards are only stored when the block is topologically ordered
 
