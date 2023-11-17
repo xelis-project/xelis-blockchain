@@ -1534,7 +1534,8 @@ impl<S: Storage> P2pServer<S> {
     // Returns the median topoheight based on all peers
     pub async fn get_median_topoheight_of_peers(&self) -> u64 {
         let peer_list = self.peer_list.read().await;
-        peer_list.get_median_topoheight()
+        let topoheight = self.blockchain.get_topo_height();
+        peer_list.get_median_topoheight(Some(topoheight))
     }
 
     // Returns the best topoheight based on all peers
