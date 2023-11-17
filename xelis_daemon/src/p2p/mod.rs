@@ -915,10 +915,15 @@ impl<S: Storage> P2pServer<S> {
                 // verify that this block wasn't already sent by him
                 {
                     let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
-                    if blocks_propagation.contains(&block_hash) {
-                        debug!("{} send us a block ({}) already tracked by him", peer, block_hash);
-                        return Err(P2pError::AlreadyTrackedBlock(block_hash))
+                    if let Some(direction) = blocks_propagation.get_mut(&block_hash) {
+                        if let Err(e) = direction.update(Direction::In) {
+                            debug!("{} send us a block ({}) already tracked by him ({:?}): {}", peer, block_hash, direction, e);
+                            return Err(P2pError::AlreadyTrackedTx(block_hash))
+                        }
+                    } else {
+                        blocks_propagation.put(block_hash.clone(), Direction::In);
                     }
+
                     debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
                     blocks_propagation.put(block_hash.clone(),  Direction::In);
                 }
@@ -1638,7 +1643,7 @@ impl<S: Storage> P2pServer<S> {
                     // he should not send it back to us if it's a block found by us
                     blocks_propagation.put(hash.clone(), if lock { Direction::Both } else { Direction::Out });
 
-                    debug!("Broadcast {} to {}", hash, peer);
+                    debug!("Broadcast {} to {} (lock: {})", hash, peer, lock);
                     if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
                         debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
                     }
