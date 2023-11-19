@@ -1773,7 +1773,7 @@ impl<S: Storage> P2pServer<S> {
         let mut i = 0;
 
         // we add 1 for the genesis block added below
-        while i < topoheight && topoheight - i >= pruned_topoheight && blocks.len() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
+        while i < topoheight && topoheight - i > pruned_topoheight && blocks.len() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
             trace!("Requesting hash at topo {} for building list of blocks id", topoheight - i);
             let hash = storage.get_hash_at_topo_height(topoheight - i).await?;
             blocks.push(BlockId::new(hash, topoheight - i));
