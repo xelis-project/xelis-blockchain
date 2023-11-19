@@ -222,11 +222,11 @@ All theses data are saved in plaintext.
 |         supply        |   Integer  |      Integer      |  Calculated supply (past + block reward) at each block |
 |       difficulty      |    Hash    |      Integer      |                Difficulty for each block               |
 |       tx_blocks       |    Hash    |   Array of Hash   |      All blocks in which this TX hash is included      |
-|      assets_hash      | Public Key |      Integer      |  Asset hash with last topoheight of versioned balance  |
+|       balances        | Public Key |      Integer      |          Last topoheight of versioned balance          |
 |  versioned_balances   |    Hash    | Versioned Balance |    Key is a hash based on public key and topoheight    |
 
 **NOTE**:
-- Tree `assets_hash` has the asset hash as name. So each asset has its own list of public keys / balances.
+- Tree `balances` has a custom key which is composed of 32 bytes of Public Key and 32 bytes of Asset.
 - Balances and nonces are versioned, which means they are stored each time a change happened in chain.
 - Using a Tree per version is too heavy because of overhead per trees, solution is to hash a generated key based on properties.
 - Assets registered have in value their topoheight at which it was registered.
@@ -239,7 +239,15 @@ Current overhead per block is:
 - Trees `topo_by_hash` and `hash_by_topo` saving both Hash (32 bytes) <=> topoheight (8 bytes) pointers. (x2)
 - Tree `difficulty` saving Difficulty value of a block (8 bytes) using Hash (32 bytes) key.
 - Tree `rewards` saving block reward value (8 bytes) using topoheight (8 bytes) key.
-- Tree `supply` saving current circulating supply value (8 bytes) using topoheight (8 bytes) key.  
+- Tree `supply` saving current circulating supply value (8 bytes) using topoheight (8 bytes) key.
+- Tree `versioned_balances` is updated at each block (for miner rewards), and also for each account that had interactions (transactions): 32 bytes for key and 16 bytes for value.
+- Tree `versioned_nonces` is updated for each account that send at least one TX per topoheight: 32 bytes for key and 16 bytes for value
+
+At this moment with current implementation, minimal overhead per new account is 160 bytes for keys and 48 bytes for values:
+- `balances` Public Key (32 bytes) + Asset (32 bytes) => topoheight of last versioned balance (8 bytes)
+- `nonces` Public Key (32 bytes) => topoheight of last versioned nonce (8 bytes)
+- `versioned_balances` Hash of (Public Key + Topoheight) (32 bytes) => Versioned Balance (16 bytes)
+- `versioned_nonces` Hash of (Public Key + Topoheight) (32 bytes) => Versioned Nonce (16 bytes)
 
 ## Wallet
 

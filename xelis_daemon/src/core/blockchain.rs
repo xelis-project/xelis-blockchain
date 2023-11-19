@@ -418,9 +418,8 @@ impl<S: Storage> Blockchain<S> {
         debug!("Located sync topoheight found: {}", located_sync_topoheight);
         
         if located_sync_topoheight > last_pruned_topoheight {
-            let assets = storage.get_assets().await?;
             // create snapshots of balances to located_sync_topoheight
-            storage.create_snapshot_balances_at_topoheight(&assets, located_sync_topoheight).await?;
+            storage.create_snapshot_balances_at_topoheight(located_sync_topoheight).await?;
             storage.create_snapshot_nonces_at_topoheight(located_sync_topoheight).await?;
 
             // delete all blocks until the new topoheight
@@ -430,9 +429,7 @@ impl<S: Storage> Blockchain<S> {
                 let _ = storage.delete_block_at_topoheight(topoheight).await?;
 
                 // delete balances for all assets
-                for asset in &assets {
-                    storage.delete_versioned_balances_for_asset_at_topoheight(asset, topoheight).await?;
-                }
+                storage.delete_versioned_balances_at_topoheight(topoheight).await?;
 
                 // delete nonces versions
                 storage.delete_versioned_nonces_at_topoheight(topoheight).await?;

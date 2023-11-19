@@ -36,13 +36,13 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
     async fn delete_tx(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
     // delete versioned balances at a specific topoheight
-    async fn delete_versioned_balances_for_asset_at_topoheight(&mut self, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
+    async fn delete_versioned_balances_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
     // delete versioned nonces at a specific topoheight
     async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
     // delete all versions of balances under the specified topoheight
     // for those who don't have more recents, set it to the topoheight
     // for those above it, cut the chain by deleting the previous topoheight when it's going under
-    async fn create_snapshot_balances_at_topoheight(&mut self, assets: &Vec<Hash>, topoheight: u64) -> Result<(), BlockchainError>;
+    async fn create_snapshot_balances_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
     // same as above but for nonces
     async fn create_snapshot_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
