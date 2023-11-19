@@ -295,12 +295,12 @@ impl SledStorage {
         Ok(self.balances.contains_key(key)?)
     }
 
-    fn delete_versioned_tree_above_or_at_topoheight(&self, tree: &Tree, topoheight: u64) -> Result<(), BlockchainError> {
+    fn delete_versioned_tree_above_topoheight(&self, tree: &Tree, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("delete versioned nonces above or at topoheight {}", topoheight);
         for el in tree.iter().keys() {
             let key = el?;
             let topo = u64::from_bytes(&key[0..8])?;
-            if topo >= topoheight {
+            if topo > topoheight {
                 tree.remove(&key)?;
             }
         }
@@ -464,14 +464,14 @@ impl Storage for SledStorage {
         self.delete_data(&self.transactions, &self.transactions_cache, hash).await
     }
 
-    async fn delete_versioned_balances_above_or_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned balances above or at topoheight {}!", topoheight);
-        self.delete_versioned_tree_above_or_at_topoheight(&self.versioned_balances, topoheight)
+    async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete versioned balances above topoheight {}!", topoheight);
+        self.delete_versioned_tree_above_topoheight(&self.versioned_balances, topoheight)
     }
 
-    async fn delete_versioned_nonces_above_or_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned nonces above or at topoheight {}", topoheight);
-        self.delete_versioned_tree_above_or_at_topoheight(&self.versioned_nonces, topoheight)
+    async fn delete_versioned_nonces_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete versioned nonces above topoheight {}", topoheight);
+        self.delete_versioned_tree_above_topoheight(&self.versioned_nonces, topoheight)
     }
 
     async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
@@ -1301,8 +1301,8 @@ impl Storage for SledStorage {
         }
 
         // now delete all versioned balances and nonces above the new topoheight
-        self.delete_versioned_balances_above_or_at_topoheight(topoheight).await?;
-        self.delete_versioned_nonces_above_or_at_topoheight(topoheight).await?;
+        self.delete_versioned_balances_above_topoheight(topoheight).await?;
+        self.delete_versioned_nonces_above_topoheight(topoheight).await?;
 
         // Clear all caches to not have old data after rewind
         self.clear_caches().await;

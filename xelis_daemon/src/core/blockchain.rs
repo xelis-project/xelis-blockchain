@@ -408,7 +408,8 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::PruneHeightTooHigh)
         }
 
-        let last_pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
+        // 1 is to not delete the genesis block
+        let last_pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(1);
         if topoheight < last_pruned_topoheight {
             return Err(BlockchainError::PruneLowerThanLastPruned)
         }
@@ -1658,7 +1659,7 @@ impl<S: Storage> Blockchain<S> {
             if let Some(keep_only) = self.auto_prune_keep_n_blocks {
                 // check that the topoheight is greater than the safety limit
                 // and that we can prune the chain using the config while respecting the safety limit
-                if current_topoheight % keep_only == 0 {
+                if current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
                     info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
                     if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, storage).await {
                         warn!("Error while trying to auto prune chain: {}", e);
