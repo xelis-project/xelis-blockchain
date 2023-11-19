@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use indexmap::IndexSet;
-use crate::core::error::{BlockchainError, DiskContext};
+use crate::{
+    core::error::{BlockchainError, DiskContext},
+    config::PRUNE_SAFETY_LIMIT
+};
 use xelis_common::{
     serializer::{Reader, Serializer},
     crypto::{key::PublicKey, hash::Hash},
@@ -1184,9 +1187,10 @@ impl Storage for SledStorage {
         trace!("Lowest topoheight for rewind: {}", lowest_topo);
 
         let pruned_topoheight = self.get_pruned_topoheight()?.unwrap_or(0);
-        if lowest_topo < pruned_topoheight {
-            warn!("Pruned topoheight is {}, lowest topoheight is {}, rewind only until {}", pruned_topoheight, lowest_topo, pruned_topoheight);
-            lowest_topo = pruned_topoheight;
+        let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
+        if lowest_topo <= safety_pruned_topoheight {
+            warn!("Pruned topoheight is {}, lowest topoheight is {}, rewind only until {}", pruned_topoheight, lowest_topo, safety_pruned_topoheight);
+            lowest_topo = safety_pruned_topoheight;
         }
 
         // new TIPS for chain
