@@ -231,7 +231,7 @@ pub enum AccountHistoryType {
     Mining { reward: u64 },
     Burn { amount: u64 },
     // TODO delete those two fields with upcoming privacy layer
-    Outgoing { amount: u64 },
+    Outgoing { amount: u64, to: PublicKey },
     Incoming { amount: u64, from: PublicKey },
 }
 
