@@ -216,14 +216,14 @@ All theses data are saved in plaintext.
 |      hash_by_topo     |   Integer  |        Hash       |      Save a topo height for a specific block hash      |
 | cumulative_difficulty |    Hash    |      Integer      |   Save the cumulative difficulty for each block hash   |
 |         assets        |    Hash    |      Integer      |  Verify if an assets exist and its registration height |
-|         nonces        | Public Key |      Integer      |     Store the highest topoheight of versioned nonce    |
-|   versioned_nonces    |    Hash    |  Versioned Nonce  |  Hash is composed of prefix + public key + topoheight  |
 |        rewards        |   Integer  |      Integer      |                  Save the block reward                 |
 |         supply        |   Integer  |      Integer      |  Calculated supply (past + block reward) at each block |
 |       difficulty      |    Hash    |      Integer      |                Difficulty for each block               |
 |       tx_blocks       |    Hash    |   Array of Hash   |      All blocks in which this TX hash is included      |
-|       balances        | Public Key |      Integer      |          Last topoheight of versioned balance          |
-|  versioned_balances   |    Hash    | Versioned Balance |    Key is a hash based on public key and topoheight    |
+|       balances        |   Custom   |      Integer      |          Last topoheight of versioned balance          |
+|         nonces        | Public Key |      Integer      |     Store the highest topoheight of versioned nonce    |
+|  versioned_balances   |   Custom   | Versioned Balance |       Key is composed of topoheight + public key       |
+|   versioned_nonces    |   Custom   |  Versioned Nonce  |       Key is composed of topoheight + public key       |
 
 **NOTE**:
 - Tree `balances` has a custom key which is composed of 32 bytes of Public Key and 32 bytes of Asset.

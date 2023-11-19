@@ -35,10 +35,14 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
     async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
     async fn delete_tx(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
-    // delete versioned balances at a specific topoheight
-    async fn delete_versioned_balances_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
-    // delete versioned nonces at a specific topoheight
-    async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
+    // delete versioned balances above or at topoheight
+    async fn delete_versioned_balances_above_or_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
+    // delete versioned nonces above or at topoheight
+    async fn delete_versioned_nonces_above_or_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
+    // delete versioned balances below topoheight
+    async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
+    // delete versioned nonces below topoheight
+    async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
     // delete all versions of balances under the specified topoheight
     // for those who don't have more recents, set it to the topoheight
     // for those above it, cut the chain by deleting the previous topoheight when it's going under
