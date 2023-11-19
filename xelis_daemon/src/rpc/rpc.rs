@@ -728,7 +728,10 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
                                     history.push(AccountHistoryEntry {
                                         topoheight: topo,
                                         hash: tx_hash.clone(),
-                                        history_type: AccountHistoryType::Incoming { amount: transfer.amount },
+                                        history_type: AccountHistoryType::Incoming {
+                                            amount: transfer.amount,
+                                            from: tx.get_owner().clone()
+                                        },
                                         block_timestamp: block_header.get_timestamp()
                                     });
                                 }

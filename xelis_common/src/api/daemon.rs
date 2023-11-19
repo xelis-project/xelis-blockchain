@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::HashSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::{hash::Hash, address::Address}, account::{VersionedBalance, VersionedNonce}, network::Network, block::Difficulty, transaction::Transaction};
+use crate::{crypto::{hash::Hash, address::Address, key::PublicKey}, account::{VersionedBalance, VersionedNonce}, network::Network, block::Difficulty, transaction::Transaction};
 
 use super::DataHash;
 
@@ -232,7 +232,7 @@ pub enum AccountHistoryType {
     Burn { amount: u64 },
     // TODO delete those two fields with upcoming privacy layer
     Outgoing { amount: u64 },
-    Incoming { amount: u64 },
+    Incoming { amount: u64, from: PublicKey },
 }
 
 #[derive(Serialize, Deserialize)]
