@@ -51,7 +51,7 @@ pub trait RPCServerHandler<T: Send + Clone> {
 // JSON RPC handler endpoint
 pub async fn json_rpc<T, H>(server: Data<H>, body: web::Bytes) -> Result<impl Responder, RpcResponseError>
 where
-    T: Send + Sync + Clone,
+    T: Send + Sync + Clone + 'static,
     H: RPCServerHandler<T>
 {
     let result = server.get_rpc_handler().handle_request(&body).await?;
