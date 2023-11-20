@@ -465,7 +465,7 @@ impl Wallet {
             network_handler.stop().await?;
             {
                 let mut storage = self.get_storage().write().await;
-                if topoheight >= storage.get_daemon_topoheight()? {
+                if topoheight > storage.get_daemon_topoheight()? {
                     return Err(WalletError::RescanTopoheightTooHigh)
                 }
                 storage.set_daemon_topoheight(topoheight)?;
