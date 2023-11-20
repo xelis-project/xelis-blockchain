@@ -363,7 +363,9 @@ impl<S: Storage> P2pServer<S> {
         // we can save the peer in our peerlist
         let peer_id = peer.get_id(); // keep in memory the peer_id outside connection (because of moved value)
         let peer = {
+            trace!("Locking peer list write mode (add peer)");
             let mut peer_list = self.peer_list.write().await;
+            trace!("End locking peer list write mode (add peer)");
             peer_list.add_peer(peer_id, peer)
         };
 
@@ -632,9 +634,11 @@ impl<S: Storage> P2pServer<S> {
 
             if self.accept_new_connections().await {
                 let peer = {
+                    trace!("Locking peer list write mode (peerlist loop)");
                     let mut  peer_list = self.peer_list.write().await;
                     peer_list.find_peer_to_connect()
                 };
+                trace!("End locking peer list write mode (peerlist loop)");
 
                 if let Some(addr) = peer {
                     debug!("Found peer {}", addr);
