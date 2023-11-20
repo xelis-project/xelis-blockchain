@@ -24,8 +24,8 @@ use tokio::sync::{
     Mutex as AsyncMutex
 };
 use std::sync::{PoisonError, Arc, Mutex};
-use log::{info, error, Level, debug, LevelFilter};
-use tokio::time::interval;
+use log::{info, error, Level, debug, LevelFilter, warn};
+use tokio::time::{interval, timeout};
 use std::future::Future;
 use std::time::Duration;
 use thiserror::Error;
@@ -478,8 +478,15 @@ impl<T> Prompt<T> {
                             continue;
                         }
                     }
-                    let prompt = (fn_message)(self).await?;
-                    self.update_prompt(prompt)?;
+                    match timeout(Duration::from_secs(5), (fn_message)(self)).await {
+                        Ok(res) => {
+                            let prompt = res?;
+                            self.update_prompt(prompt)?;
+                        }
+                        Err(e) => {
+                            warn!("Couldn't update prompt message: {}", e);
+                        }
+                    };
                 }
             }
         }
