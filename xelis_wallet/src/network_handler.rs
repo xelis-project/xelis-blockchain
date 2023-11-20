@@ -99,7 +99,7 @@ impl NetworkHandler {
         self.is_paused.load(Ordering::SeqCst)
     }
 
-    async fn get_versioned_balance_and_topoheight(&self, address: &Address<'_>, asset: &Hash, current_topoheight: Option<u64>) -> Result<Option<(u64, VersionedBalance)>, Error> {
+    async fn get_versioned_balance_and_topoheight(&self, address: &Address, asset: &Hash, current_topoheight: Option<u64>) -> Result<Option<(u64, VersionedBalance)>, Error> {
         let (topoheight, balance) = match &current_topoheight {
             Some(topoheight) => (*topoheight, self.api.get_balance_at_topoheight(address, asset, *topoheight).await?),
             None => { // try to get last balance
@@ -133,7 +133,7 @@ impl NetworkHandler {
         Ok(Some((topoheight, balance)))
     }
 
-    async fn get_balance_and_transactions(&self, address: &Address<'_>, asset: &Hash, min_topoheight: u64, current_topoheight: Option<u64>) -> Result<(), Error> {
+    async fn get_balance_and_transactions(&self, address: &Address, asset: &Hash, min_topoheight: u64, current_topoheight: Option<u64>) -> Result<(), Error> {
         let mut res = self.get_versioned_balance_and_topoheight(address, asset, current_topoheight).await?;
         while let Some((topoheight, balance)) = res.take() {
             // don't sync already synced blocks
@@ -312,7 +312,7 @@ impl NetworkHandler {
         }
     }
 
-    async fn sync_new_blocks(&self, address: &Address<'_>, current_topoheight: u64, network_topoheight: u64) -> Result<(), Error> {
+    async fn sync_new_blocks(&self, address: &Address, current_topoheight: u64, network_topoheight: u64) -> Result<(), Error> {
         let mut assets = {
             let storage = self.wallet.get_storage().read().await;
             storage.get_assets()?

@@ -730,7 +730,7 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
                                         hash: tx_hash.clone(),
                                         history_type: AccountHistoryType::Incoming {
                                             amount: transfer.amount,
-                                            from: tx.get_owner().clone()
+                                            from: tx.get_owner().to_address(blockchain.get_network().is_mainnet())
                                         },
                                         block_timestamp: block_header.get_timestamp()
                                     });
@@ -742,7 +742,7 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
                                         hash: tx_hash.clone(),
                                         history_type: AccountHistoryType::Outgoing {
                                             amount: transfer.amount,
-                                            to: transfer.to.clone()
+                                            to: transfer.to.to_address(blockchain.get_network().is_mainnet())
                                         },
                                         block_timestamp: block_header.get_timestamp()
                                     });

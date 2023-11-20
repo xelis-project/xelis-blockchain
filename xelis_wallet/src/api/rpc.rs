@@ -2,7 +2,7 @@ use std::{sync::Arc, borrow::Cow};
 
 use anyhow::Context as AnyContext;
 use log::info;
-use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params, Context, websocket::WebSocketSessionShared}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams, SetCustomDataParams, GetCustomTreeKeysParams}, DataHash, DataElement, DataValue}, crypto::{hash::Hashable, address::AddressType}};
+use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params, Context, websocket::WebSocketSessionShared}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams, SetCustomDataParams, GetCustomTreeKeysParams}, DataHash, DataElement, DataValue}, crypto::hash::Hashable};
 use serde_json::{Value, json};
 use crate::{wallet::{Wallet, WalletError}, entry::TransactionEntry};
 
@@ -81,14 +81,11 @@ async fn get_address(context: Context, body: Value) -> Result<Value, InternalRpc
 }
 
 async fn split_address(_: Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: SplitAddressParams<'_> = parse_params(body)?;
+    let params: SplitAddressParams = parse_params(body)?;
     let address = params.address;
 
-    let (address, addr_type) = address.split();
-    let integrated_data = match addr_type {
-        AddressType::Data(data) => data,
-        AddressType::Normal => return Err(InternalRpcError::CustomStr("Address is not an integrated address"))
-    };
+    let (data, address) = address.extract_data();
+    let integrated_data = data.ok_or(InternalRpcError::CustomStr("Address is not an integrated address"))?;
 
     Ok(json!(SplitAddressResult {
         address,
@@ -157,9 +154,16 @@ async fn build_transaction(context: Context, body: Value) -> Result<Value, Inter
 
 async fn list_transactions(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: ListTransactionsParams = parse_params(body)?;
+    if let Some(addr) = &params.address {
+        if !addr.is_normal() {
+            return Err(InternalRpcError::CustomStr("Address should be in normal format (not integrated address)"))
+        }
+    }
+
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
-    let txs = storage.get_filtered_transactions(params.address.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?;
+    let opt_key = params.address.map(|addr| addr.to_public_key());
+    let txs = storage.get_filtered_transactions(opt_key.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?;
     Ok(json!(txs))
 }
 

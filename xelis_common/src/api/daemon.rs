@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::HashSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::{hash::Hash, address::Address, key::PublicKey}, account::{VersionedBalance, VersionedNonce}, network::Network, block::Difficulty, transaction::Transaction};
+use crate::{crypto::{hash::Hash, address::Address}, account::{VersionedBalance, VersionedNonce}, network::Network, block::Difficulty, transaction::Transaction};
 
 use super::DataHash;
 
@@ -57,7 +57,7 @@ pub struct GetBlockByHashParams<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBlockTemplateParams<'a> {
-    pub address: Cow<'a, Address<'a>>
+    pub address: Cow<'a, Address>
 }
 
 #[derive(Serialize, Deserialize, PartialEq)]
@@ -74,27 +74,27 @@ pub struct SubmitBlockParams {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBalanceParams<'a> {
-    pub address: Cow<'a, Address<'a>>,
+    pub address: Cow<'a, Address>,
     pub asset: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBalanceAtTopoHeightParams<'a> {
-    pub address: Cow<'a, Address<'a>>,
+    pub address: Cow<'a, Address>,
     pub asset: Cow<'a, Hash>,
     pub topoheight: u64
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetNonceParams<'a> {
-    pub address: Cow<'a, Address<'a>>,
+    pub address: Cow<'a, Address>,
     #[serde(default)]
     pub topoheight: Option<u64>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct HasNonceParams<'a> {
-    pub address: Cow<'a, Address<'a>>,
+    pub address: Cow<'a, Address>,
     #[serde(default)]
     pub topoheight: Option<u64>
 }
@@ -217,8 +217,8 @@ fn default_xelis_asset() -> Hash {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetAccountHistoryParams<'a> {
-    pub address: Address<'a>,
+pub struct GetAccountHistoryParams {
+    pub address: Address,
     #[serde(default = "default_xelis_asset")]
     pub asset: Hash,
     pub minimum_topoheight: Option<u64>,
@@ -231,8 +231,8 @@ pub enum AccountHistoryType {
     Mining { reward: u64 },
     Burn { amount: u64 },
     // TODO delete those two fields with upcoming privacy layer
-    Outgoing { amount: u64, to: PublicKey },
-    Incoming { amount: u64, from: PublicKey },
+    Outgoing { amount: u64, to: Address },
+    Incoming { amount: u64, from: Address },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -245,8 +245,8 @@ pub struct AccountHistoryEntry {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetAccountAssetsParams<'a> {
-    pub address: Address<'a>,
+pub struct GetAccountAssetsParams {
+    pub address: Address
 }
 
 #[derive(Serialize, Deserialize)]

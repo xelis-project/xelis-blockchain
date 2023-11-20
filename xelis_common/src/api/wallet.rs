@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{transaction::{TransactionType, Transaction}, crypto::{key::PublicKey, hash::Hash, address::Address}};
+use crate::{transaction::{TransactionType, Transaction}, crypto::{hash::Hash, address::Address}};
 
 use super::{DataHash, DataElement, DataValue, DataType};
 
@@ -30,7 +30,7 @@ pub struct ListTransactionsParams {
     pub min_topoheight: Option<u64>,
     pub max_topoheight: Option<u64>,
     /// Receiver address for outgoing txs, and owner/sender for incoming
-    pub address: Option<PublicKey>,
+    pub address: Option<Address>,
     #[serde(default = "default_filter_value")]
     pub accept_incoming: bool,
     #[serde(default = "default_filter_value")]
@@ -65,15 +65,15 @@ pub struct GetAddressParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SplitAddressParams<'a> {
+pub struct SplitAddressParams {
     // address which must be in integrated form
-    pub address: Address<'a>
+    pub address: Address
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SplitAddressResult {
     // Normal address
-    pub address: PublicKey,
+    pub address: Address,
     // Encoded data from address
     pub integrated_data: DataElement
 }

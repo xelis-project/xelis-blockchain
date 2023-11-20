@@ -515,11 +515,11 @@ impl Wallet {
         self.keypair.get_public_key()
     }
 
-    pub fn get_address(&self) -> Address<'_> {
+    pub fn get_address(&self) -> Address {
         self.keypair.get_public_key().to_address(self.get_network().is_mainnet())
     }
 
-    pub fn get_address_with(&self, data: DataElement) -> Address<'_> {
+    pub fn get_address_with(&self, data: DataElement) -> Address {
         self.keypair.get_public_key().to_address_with(self.get_network().is_mainnet(), data)
     }
 

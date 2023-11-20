@@ -1,5 +1,4 @@
 use core::fmt;
-use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 
 use crate::api::{DataElement, DataType, DataValue};
@@ -21,14 +20,14 @@ pub enum AddressType {
 }
 
 #[derive(Clone)]
-pub struct Address<'a> {
+pub struct Address {
     mainnet: bool,
     addr_type: AddressType,
-    key: Cow<'a, PublicKey>
+    key: PublicKey
 }
 
-impl<'a> Address<'a> {
-    pub fn new(mainnet: bool, addr_type: AddressType, key: Cow<'a, PublicKey>) -> Self {
+impl Address {
+    pub fn new(mainnet: bool, addr_type: AddressType, key: PublicKey) -> Self {
         Self {
             mainnet,
             addr_type,
@@ -41,7 +40,7 @@ impl<'a> Address<'a> {
     }
 
     pub fn to_public_key(self) -> PublicKey {
-        self.key.into_owned()
+        self.key
     }
 
     pub fn get_type(&self) -> &AddressType {
@@ -49,7 +48,17 @@ impl<'a> Address<'a> {
     }
 
     pub fn split(self) -> (PublicKey, AddressType) {
-        (self.key.into_owned(), self.addr_type)
+        (self.key, self.addr_type)
+    }
+
+    // Recreate a new address struct without the integrated data
+    pub fn extract_data(self) -> (Option<DataElement>, Self) {
+        match self.addr_type {
+            AddressType::Data(data) => {
+                (Some(data), Self::new(self.mainnet, AddressType::Normal, self.key))
+            },
+            AddressType::Normal => (None, self)
+        }
     }
 
     pub fn is_normal(&self) -> bool {
@@ -107,13 +116,13 @@ impl<'a> Address<'a> {
     }
 }
 
-impl Into<PublicKey> for Address<'_> {
+impl Into<PublicKey> for Address {
     fn into(self) -> PublicKey {
         self.to_public_key()
     }
 }
 
-impl Into<AddressType> for Address<'_> {
+impl Into<AddressType> for Address {
     fn into(self) -> AddressType {
         self.addr_type
     }
@@ -151,27 +160,27 @@ impl Serializer for AddressType {
     }
 }
 
-impl<'a> Serializer for Address<'a> {
+impl<'a> Serializer for Address {
     fn write(&self, writer: &mut Writer) {
         writer.write_bool(self.mainnet);
         self.addr_type.write(writer);
         self.key.write(writer);
     }
 
-    fn read(reader: &mut Reader) -> Result<Address<'a>, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<Address, ReaderError> {
         let mainnet = reader.read_bool()?;
         let addr_type = AddressType::read(reader)?;
-        let pub_key = PublicKey::read(reader)?;
+        let key = PublicKey::read(reader)?;
 
         Ok(Address {
             mainnet,
             addr_type,
-            key: Cow::Owned(pub_key)
+            key
         })
     }
 }
 
-impl serde::Serialize for Address<'_> {
+impl serde::Serialize for Address {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -180,7 +189,7 @@ impl serde::Serialize for Address<'_> {
     }
 }
 
-impl<'a> serde::Deserialize<'a> for Address<'_> {
+impl<'a> serde::Deserialize<'a> for Address {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where D: serde::Deserializer<'a> {
         let hex = String::deserialize(deserializer)?;
@@ -188,7 +197,7 @@ impl<'a> serde::Deserialize<'a> for Address<'_> {
     }
 }
 
-impl Display for Address<'_> {
+impl Display for Address {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_string().unwrap())
     }
