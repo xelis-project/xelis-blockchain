@@ -336,7 +336,7 @@ impl NetworkHandler {
                         #[cfg(feature = "api_server")]
                         {
                             if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
-                                api_server.notify_event(&NotifyEvent::NewAsset, asset_data.get_asset()).await;
+                                api_server.notify_event(&NotifyEvent::NewAsset, asset_data).await;
                             }
                         }
 
