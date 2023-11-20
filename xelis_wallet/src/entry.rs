@@ -60,7 +60,6 @@ impl Serializer for Transfer {
         writer.write_hash(&self.asset);
         writer.write_u64(&self.amount);
 
-        writer.write_bool(self.extra_data.is_some());
         self.extra_data.write(writer);
     }
 }
@@ -147,10 +146,12 @@ impl Serializer for EntryData {
 pub struct TransactionEntry {
     hash: Hash,
     topoheight: u64,
+    #[serde(skip_serializing_if="Option::is_none")]
     fee: Option<u64>,
+    #[serde(skip_serializing_if="Option::is_none")]
     nonce: Option<u64>,
     #[serde(flatten)]
-    entry: EntryData
+    entry: EntryData,
 }
 
 impl TransactionEntry {
@@ -160,7 +161,7 @@ impl TransactionEntry {
             topoheight,
             fee,
             nonce,
-            entry
+            entry,
         }
     }
 
@@ -193,20 +194,9 @@ impl Serializer for TransactionEntry {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let hash = reader.read_hash()?;
         let topoheight = reader.read_u64()?;
+        let fee = Option::read(reader)?;
+        let nonce = Option::read(reader)?;
         let entry = EntryData::read(reader)?;
-
-        let fee = if reader.read_bool()? {
-            Some(reader.read_u64()?)
-        } else {
-            None
-        };
-
-        let nonce = if reader.read_bool()? {
-            Some(reader.read_u64()?)
-        } else {
-            None
-        };
-
 
         Ok(Self {
             hash,
@@ -220,17 +210,10 @@ impl Serializer for TransactionEntry {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(&self.hash);
         writer.write_u64(&self.topoheight);
+
+        self.fee.write(writer);
+        self.nonce.write(writer);
         self.entry.write(writer);
-
-        writer.write_bool(self.fee.is_some());
-        if let Some(fee) = self.fee {
-            writer.write_u64(&fee);
-        }
-
-        writer.write_bool(self.nonce.is_some());
-        if let Some(nonce) = self.nonce {
-            writer.write_u64(&nonce);
-        }
     }
 }
 
