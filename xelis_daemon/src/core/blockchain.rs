@@ -30,7 +30,7 @@ use crate::{
         DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE,
         EMISSION_SPEED_FACTOR, MAXIMUM_SUPPLY, DEV_FEES, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
         STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, SIDE_BLOCK_REWARD_PERCENT,
-        DEV_PUBLIC_KEY, BLOCK_TIME, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS,
+        DEV_PUBLIC_KEY, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS, MILLIS_PER_SECOND,
     },
     core::difficulty::calculate_difficulty,
     p2p::P2pServer,
@@ -248,7 +248,7 @@ impl<S: Storage> Blockchain<S> {
             warn!("Simulator mode enabled!");
             let zelf = Arc::clone(&arc);
             tokio::spawn(async move {
-                let mut interval = interval(Duration::from_secs(BLOCK_TIME));
+                let mut interval = interval(Duration::from_millis(BLOCK_TIME_MILLIS));
                 loop {
                     interval.tick().await;
                     info!("Adding new simulated block...");
@@ -2169,7 +2169,7 @@ pub fn get_block_reward(supply: u64) -> u64 {
     }
 
     let base_reward = (MAXIMUM_SUPPLY - supply) >> EMISSION_SPEED_FACTOR;
-    base_reward * BLOCK_TIME / 180
+    base_reward * BLOCK_TIME_MILLIS / MILLIS_PER_SECOND / 180
 }
 
 pub fn get_block_dev_fee(height: u64) -> u64 {

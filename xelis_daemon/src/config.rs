@@ -22,10 +22,10 @@ pub const DEFAULT_RPC_BIND_ADDRESS: &str = "0.0.0.0:8080";
 pub const DEFAULT_CACHE_SIZE: usize = 1024;
 
 // Block rules
-// Block Time in seconds
-pub const BLOCK_TIME: u64 = 15;
+// Millis per second, it is used to prevent having random 1000 values anywhere
+pub const MILLIS_PER_SECOND: u64 = 1000;
 // Block Time in milliseconds
-pub const BLOCK_TIME_MILLIS: u64 = BLOCK_TIME * 1000;
+pub const BLOCK_TIME_MILLIS: u64 = 15 * MILLIS_PER_SECOND; // 15s block time
 // Minimum difficulty (each difficulty point is in H/s)
 // Current: BLOCK TIME in millis * 1000 = 1 MH/s minimum
 pub const MINIMUM_DIFFICULTY: Difficulty = BLOCK_TIME_MILLIS as Difficulty * 1000;
