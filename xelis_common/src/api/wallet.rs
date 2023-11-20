@@ -15,7 +15,8 @@ pub enum FeeBuilder {
 
 #[derive(Serialize, Deserialize)]
 pub struct BuildTransactionParams {
-    pub tx_type: TransactionType,
+    #[serde(flatten)]
+    pub tx_type: TransactionType,    
     pub fee: Option<FeeBuilder>,
     pub broadcast: bool
 }
