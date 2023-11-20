@@ -220,23 +220,22 @@ impl EncryptedStorage {
     // Filter when the data is deserialized to not load all transactions in memory
     pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, key_value: Option<&QuerySearcher>) -> Result<Vec<TransactionEntry>> {
         let mut transactions = Vec::new();
-        for res in self.transactions.iter() {
-            let (_, value) = res?;
-            let raw_value = &self.cipher.decrypt_value(&value)?;
-            let mut e = TransactionEntry::from_bytes(raw_value)?;
+        for el in self.transactions.iter().values() {
+            let value = el?;
+            let mut entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
             if let Some(topoheight) = min_topoheight {
-                if e.get_topoheight() < topoheight {
+                if entry.get_topoheight() < topoheight {
                     continue;
                 }
             }
     
             if let Some(topoheight) = &max_topoheight {
-                if e.get_topoheight() > *topoheight {
+                if entry.get_topoheight() > *topoheight {
                     continue;
                 }
             }
     
-            let (save, mut transfers) = match e.get_mut_entry() {
+            let (save, mut transfers) = match entry.get_mut_entry() {
                 EntryData::Coinbase(_) if accept_coinbase => (true, None),
                 EntryData::Burn { .. } if accept_burn => (true, None),
                 EntryData::Incoming(sender, transfers) if accept_incoming => match address {
@@ -283,11 +282,11 @@ impl EncryptedStorage {
                 match transfers {
                     // Transfers which are not empty
                     Some(transfers) if !transfers.is_empty() => {
-                        transactions.push(e);
+                        transactions.push(entry);
                     },
                     // Something else than outgoing/incoming txs
                     None => {
-                        transactions.push(e);
+                        transactions.push(entry);
                     },
                     // All the left is discarded
                     _ => {}
