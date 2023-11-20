@@ -107,13 +107,17 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
     // set the CommandManager to use
     prompt.set_command_manager(Some(command_manager))?;
 
-    let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().read().await.as_ref() {
-        Some(p2p) => Some(p2p.clone()),
-        None => None
-    };
-    let getwork: Option<SharedGetWorkServer<S>> = match blockchain.get_rpc().read().await.as_ref() {
-        Some(rpc) => rpc.getwork_server().clone(),
-        None => None
+    // Don't keep the lock for ever
+    let (p2p, getwork) = {
+        let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().read().await.as_ref() {
+            Some(p2p) => Some(p2p.clone()),
+            None => None
+        };
+        let getwork: Option<SharedGetWorkServer<S>> = match blockchain.get_rpc().read().await.as_ref() {
+            Some(rpc) => rpc.getwork_server().clone(),
+            None => None
+        };
+        (p2p, getwork)
     };
 
     let closure = |_| async {
