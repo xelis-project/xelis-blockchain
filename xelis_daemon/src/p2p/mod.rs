@@ -922,7 +922,7 @@ impl<S: Storage> P2pServer<S> {
                     if let Some(direction) = blocks_propagation.get_mut(&block_hash) {
                         if let Err(e) = direction.update(Direction::In) {
                             debug!("{} send us a block ({}) already tracked by him ({:?}): {}", peer, block_hash, direction, e);
-                            return Err(P2pError::AlreadyTrackedTx(block_hash))
+                            return Err(P2pError::AlreadyTrackedBlock(block_hash))
                         }
                     } else {
                         blocks_propagation.put(block_hash.clone(), Direction::In);

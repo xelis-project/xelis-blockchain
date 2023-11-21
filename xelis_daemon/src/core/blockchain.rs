@@ -1114,7 +1114,7 @@ impl<S: Storage> Blockchain<S> {
             tips = selected_tips;
         }
 
-        let mut sorted_tips = blockdag::sort_tips(storage, &tips).await.unwrap();
+        let mut sorted_tips = blockdag::sort_tips(storage, &tips).await?;
         if sorted_tips.len() > TIPS_LIMIT {
             let dropped_tips = sorted_tips.drain(TIPS_LIMIT..); // keep only first 3 heavier tips
             for hash in dropped_tips {
