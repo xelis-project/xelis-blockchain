@@ -368,7 +368,9 @@ impl<S: Storage> GetWorkServer<S> {
         }
 
         // now let's send the job to every miner
-        let miners = self.miners.lock().await;
+        let mut miners = self.miners.lock().await;
+        miners.retain(|addr, _| addr.connected());
+
         for (addr, miner) in miners.iter() {
             debug!("Notifying {} for new job", miner);
             let addr = addr.clone();
@@ -377,16 +379,18 @@ impl<S: Storage> GetWorkServer<S> {
             OsRng.fill_bytes(&mut job.extra_nonce);
             let template = job.to_hex();
 
+            // New task for each miner in case a miner is slow
+            // we don't want to wait for him
             tokio::spawn(async move {
                 match addr.send(Response::NewJob(GetBlockTemplateResult { template, height, difficulty })).await {
-                   Ok(request) => {
-                    if let Err(e) = request {
-                        warn!("Error while sending new job to addr {:?}: {}", addr, e);
+                    Ok(request) => {
+                        if let Err(e) = request {
+                            warn!("Error while sending new job to addr {:?}: {}", addr, e);
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Error while notifying new job to addr {:?}: {}", addr, e);
                     }
-                   },
-                   Err(e) => {
-                    warn!("Error while notifying new job to addr {:?}: {}", addr, e);
-                   }
                 }
             });
         }
