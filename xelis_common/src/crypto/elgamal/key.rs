@@ -20,7 +20,7 @@ impl PrivateKey {
     pub fn sign(&self, hash: &Hash) -> Signature {
         let k = Scalar::random(&mut OsRng);
         let r = &RISTRETTO_BASEPOINT_TABLE * &k;
-        let e = hash_and_point_to_scalar(hash, &r);
+        let e = hash_and_point_to_scalar(&self.to_public_key(), hash, &r);
         let s = self.secret * e + k;
         Signature::new(s, e)
     }
