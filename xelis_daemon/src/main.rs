@@ -96,7 +96,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
     command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], CommandHandler::Async(async_handler!(pop_blocks))));
     command_manager.add_command(Command::new("clear_mempool", "Clear all transactions in mempool", CommandHandler::Async(async_handler!(clear_mempool))));
     command_manager.add_command(Command::with_arguments("add_tx", "Add a TX in hex format in mempool", vec![Arg::new("hex", ArgType::String)], vec![Arg::new("broadcast", ArgType::Bool)], CommandHandler::Async(async_handler!(add_tx))));
-    command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified block height", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(prune_chain))));
+    command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified topoheight", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(prune_chain))));
     command_manager.add_command(Command::new("status", "Current daemon status", CommandHandler::Async(async_handler!(status))));
     command_manager.add_command(Command::with_required_arguments("blacklist", "Add a peer address in Blacklist", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(blacklist))));
     command_manager.add_command(Command::with_required_arguments("whitelist", "Add a peer address in Whitelist", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(whitelist))));
