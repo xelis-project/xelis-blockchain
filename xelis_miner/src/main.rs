@@ -303,14 +303,15 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                 Ok(message) => message,
                 Err(e) => {
                     error!("Error on thread #{} while waiting on new job: {}", id, e);
-                    break;
+                    thread::sleep(Duration::from_millis(100));
+                    continue;
                 }
             };
 
             match message {
                 ThreadNotification::WebSocketClosed => {
                     // wait until we receive a new job, check every 100ms
-                    while !job_receiver.is_empty() {
+                    while job_receiver.is_empty() {
                         thread::sleep(Duration::from_millis(100));
                     }
                 }
