@@ -346,7 +346,7 @@ impl PeerList {
 
     pub fn find_peer_to_connect(&mut self) -> Option<SocketAddr> {
         // remove all peers that have a high fail count
-        self.stored_peers.retain(|_, stored_peer| stored_peer.get_fail_count() < PEER_FAIL_LIMIT);
+        self.stored_peers.retain(|_, stored_peer| *stored_peer.get_state() == StoredPeerState::Whitelist || stored_peer.get_fail_count() < PEER_FAIL_LIMIT);
 
         let current_time = get_current_time();
         // first lets check in whitelist
