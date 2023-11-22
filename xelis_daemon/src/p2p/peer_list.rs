@@ -69,7 +69,7 @@ impl PeerList {
         };
 
         // deserialize the content
-        let peers = match serde_json::from_str(&content) {
+        let mut peers: HashMap<IpAddr, StoredPeer> = match serde_json::from_str(&content) {
             Ok(peers) => peers,
             Err(e) => {
                 error!("Error while deserializing peerlist: {}", e);
@@ -82,6 +82,13 @@ impl PeerList {
                 peers
             }
         };
+
+        // reset the fail count of all whitelisted peers
+        for stored_peer in peers.values_mut() {
+            if *stored_peer.get_state() == StoredPeerState::Whitelist {
+                stored_peer.fail_count = 0;
+            }
+        }
 
         Ok(peers)
     }
@@ -264,8 +271,16 @@ impl PeerList {
     }
 
     pub fn is_blacklisted(&self, ip: &IpAddr) -> bool {
+        self.addr_has_state(ip, StoredPeerState::Blacklist)
+    }
+
+    pub fn is_whitelisted(&self, ip: &IpAddr) -> bool {
+        self.addr_has_state(ip, StoredPeerState::Whitelist)
+    }
+
+    fn addr_has_state(&self, ip: &IpAddr, state: StoredPeerState) -> bool {
         if let Some(stored_peer) = self.stored_peers.get(&ip) {
-            return *stored_peer.get_state() == StoredPeerState::Blacklist;
+            return *stored_peer.get_state() == state;
         }
 
         false

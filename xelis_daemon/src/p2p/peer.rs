@@ -15,7 +15,7 @@ use super::peer_list::SharedPeerList;
 use super::connection::{Connection, ConnectionMessage};
 use super::packet::Packet;
 use super::error::P2pError;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, IpAddr};
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicBool, Ordering};
 use std::fmt::{Display, Error, Formatter};
 use std::time::Duration;
@@ -132,6 +132,10 @@ impl Peer {
             sync_chain: Mutex::new(None),
             outgoing_address
         }
+    }
+
+    pub fn get_ip(&self) -> IpAddr {
+        self.connection.get_address().ip()
     }
 
     pub fn get_txs_cache(&self) -> &Mutex<LruCache<Hash, Direction>> {
