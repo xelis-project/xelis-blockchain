@@ -281,7 +281,7 @@ impl PeerList {
         self.set_state_to_address(addr, StoredPeerState::Blacklist);
 
         if let Some(peer) = self.peers.values().find(|peer| *peer.get_connection().get_address() == *addr) {
-            if let Err(e) = peer.get_connection().close().await {
+            if let Err(e) = peer.close().await {
                 error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
             }
         }
