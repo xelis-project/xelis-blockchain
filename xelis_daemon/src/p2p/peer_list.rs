@@ -1,9 +1,9 @@
 use crate::{
     p2p::packet::peer_disconnected::PacketPeerDisconnected,
-    config::{P2P_EXTEND_PEERLIST_DELAY, PEER_FAIL_LIMIT}
+    config::{P2P_EXTEND_PEERLIST_DELAY, PEER_FAIL_LIMIT, DEFAULT_P2P_PORT}
 };
 use super::{peer::Peer, packet::Packet, error::P2pError};
-use std::{collections::HashMap, net::SocketAddr, fs};
+use std::{collections::HashMap, net::{SocketAddr, IpAddr}, fs};
 use serde::{Serialize, Deserialize};
 use tokio::sync::RwLock;
 use xelis_common::{serializer::Serializer, utils::get_current_time};
@@ -18,7 +18,9 @@ pub type SharedPeerList = Arc<RwLock<PeerList>>;
 // using a RwLock so we can have multiple readers at the same time
 pub struct PeerList {
     peers: HashMap<u64, Arc<Peer>>,
-    stored_peers: HashMap<SocketAddr, StoredPeer>,
+    // We only keep one "peer" per address in case the peer changes multiple
+    // times its local port
+    stored_peers: HashMap<IpAddr, StoredPeer>,
     filename: String,
 }
 
@@ -31,15 +33,17 @@ enum StoredPeerState {
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 struct StoredPeer {
+    first_seen: u64,
     last_seen: u64,
     last_connection_try: u64,
     fail_count: u8,
+    local_port: u16,
     state: StoredPeerState
 }
 
 impl PeerList {
     // load all the stored peers from the file
-    fn load_stored_peers(filename: &String) -> Result<HashMap<SocketAddr, StoredPeer>, P2pError> {
+    fn load_stored_peers(filename: &String) -> Result<HashMap<IpAddr, StoredPeer>, P2pError> {
         // check that the file exists
         if fs::metadata(filename).is_err() {
             info!("Peerlist file not found, creating a new one");
@@ -144,14 +148,16 @@ impl PeerList {
 
     fn update_peer(&mut self, peer: &Peer) {
         let addr = peer.get_outgoing_address();
-        if let Some(stored_peer) = self.stored_peers.get_mut(addr) {
+        let ip = addr.ip();
+        if let Some(stored_peer) = self.stored_peers.get_mut(&ip) {
             debug!("Updating {} in stored peerlist", peer);
             // reset the fail count and update the last seen time
             stored_peer.set_fail_count(0);
             stored_peer.set_last_seen(get_current_time());
+            stored_peer.set_local_port(peer.get_local_port());
         } else {
             debug!("Saving {} in stored peerlist", peer);
-            self.stored_peers.insert(*addr, StoredPeer::new(get_current_time(), StoredPeerState::Graylist));
+            self.stored_peers.insert(ip, StoredPeer::new(peer.get_local_port(), StoredPeerState::Graylist));
         }
     }
 
@@ -257,19 +263,19 @@ impl PeerList {
         Self::internal_get_peer_by_addr(&self.peers, peer_addr).is_some()
     }
 
-    pub fn is_blacklisted(&self, addr: &SocketAddr) -> bool {
-        if let Some(stored_peer) = self.stored_peers.get(addr) {
+    pub fn is_blacklisted(&self, ip: &IpAddr) -> bool {
+        if let Some(stored_peer) = self.stored_peers.get(&ip) {
             return *stored_peer.get_state() == StoredPeerState::Blacklist;
         }
 
         false
     }
 
-    fn set_state_to_address(&mut self, addr: &SocketAddr, state: StoredPeerState) {
+    fn set_state_to_address(&mut self, addr: &IpAddr, state: StoredPeerState) {
         if let Some(stored_peer) = self.stored_peers.get_mut(addr) {
             stored_peer.set_state(state);
         } else {
-            self.stored_peers.insert(addr.clone(), StoredPeer::new(get_current_time(), state));
+            self.stored_peers.insert(addr.clone(), StoredPeer::new(DEFAULT_P2P_PORT, state));
         }
     }
 
@@ -277,10 +283,10 @@ impl PeerList {
     // if this peer is already known, change its state to blacklist
     // otherwise create a new StoredPeer with state blacklist
     // disconnect the peer if present in peerlist
-    pub async fn blacklist_address(&mut self, addr: &SocketAddr) {
-        self.set_state_to_address(addr, StoredPeerState::Blacklist);
+    pub async fn blacklist_address(&mut self, ip: &IpAddr) {
+        self.set_state_to_address(ip, StoredPeerState::Blacklist);
 
-        if let Some(peer) = self.peers.values().find(|peer| *peer.get_connection().get_address() == *addr) {
+        if let Some(peer) = self.peers.values().find(|peer| peer.get_connection().get_address().ip() == *ip) {
             if let Err(e) = peer.close().await {
                 error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
             }
@@ -290,8 +296,8 @@ impl PeerList {
     // whitelist a peer address
     // if this peer is already known, change its state to whitelist
     // otherwise create a new StoredPeer with state whitelist
-    pub fn whitelist_address(&mut self, addr: &SocketAddr) {
-        self.set_state_to_address(addr, StoredPeerState::Whitelist);
+    pub fn whitelist_address(&mut self, ip: &IpAddr) {
+        self.set_state_to_address(ip, StoredPeerState::Whitelist);
     }
 
     pub fn find_peer_to_connect(&mut self) -> Option<SocketAddr> {
@@ -315,10 +321,11 @@ impl PeerList {
     // find among stored peers a peer to connect to with the requested StoredPeerState
     // we check that we're not already connected to this peer and that we didn't tried to connect to it recently
     fn find_peer_to_connect_to_with_state(&mut self, current_time: u64, state: StoredPeerState) -> Option<SocketAddr> {
-        for (addr, stored_peer) in &mut self.stored_peers {
-            if *stored_peer.get_state() == state && stored_peer.get_last_connection_try() + (stored_peer.get_fail_count() as u64 * P2P_EXTEND_PEERLIST_DELAY) <= current_time && Self::internal_get_peer_by_addr(&self.peers, addr).is_none() {
+        for (ip, stored_peer) in &mut self.stored_peers {
+            let addr = SocketAddr::new(*ip, stored_peer.local_port);
+            if *stored_peer.get_state() == state && stored_peer.get_last_connection_try() + (stored_peer.get_fail_count() as u64 * P2P_EXTEND_PEERLIST_DELAY) <= current_time && Self::internal_get_peer_by_addr(&self.peers, &addr).is_none() {
                 stored_peer.set_last_connection_try(current_time);
-                return Some(addr.clone());
+                return Some(addr);
             }
         }
 
@@ -326,8 +333,8 @@ impl PeerList {
     }
 
     // increase the fail count of a peer
-    pub fn increase_fail_count_for_saved_peer(&mut self, addr: &SocketAddr) {
-        if let Some(stored_peer) = self.stored_peers.get_mut(addr) {
+    pub fn increase_fail_count_for_saved_peer(&mut self, ip: &IpAddr) {
+        if let Some(stored_peer) = self.stored_peers.get_mut(ip) {
             let fail_count = stored_peer.get_fail_count();
             if fail_count == u8::MAX {
                 // we reached the max value, we can't increase it anymore
@@ -347,11 +354,14 @@ impl PeerList {
 }
 
 impl StoredPeer {
-    fn new(last_seen: u64, state: StoredPeerState) -> Self {
+    fn new(local_port: u16, state: StoredPeerState) -> Self {
+        let current_time = get_current_time();
         Self {
-            last_seen,
+            first_seen: current_time,
+            last_seen: current_time,
             last_connection_try: 0,
             fail_count: 0,
+            local_port,
             state
         }
     }
@@ -386,5 +396,9 @@ impl StoredPeer {
 
     fn set_fail_count(&mut self, fail_count: u8) {
         self.fail_count = fail_count;
+    }
+
+    fn set_local_port(&mut self, local_port: u16) {
+        self.local_port = local_port;
     }
 }

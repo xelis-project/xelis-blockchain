@@ -19,7 +19,7 @@ use crate::{
     },
     config::{BLOCK_TIME_MILLIS, MILLIS_PER_SECOND}
 };
-use std::{sync::Arc, net::SocketAddr};
+use std::{sync::Arc, net::IpAddr};
 use std::time::Duration;
 use clap::Parser;
 use anyhow::{Result, Context};
@@ -403,7 +403,7 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
 
 async fn blacklist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let blockchain: &Arc<Blockchain<S>> = manager.get_data()?;
-    let address: SocketAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+    let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
     match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
             let peer_list = p2p.get_peer_list();
@@ -420,7 +420,7 @@ async fn blacklist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut
 
 async fn whitelist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let blockchain: &Arc<Blockchain<S>> = manager.get_data()?;
-    let address: SocketAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+    let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
     match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
             let peer_list = p2p.get_peer_list();

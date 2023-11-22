@@ -15,6 +15,7 @@ pub const NETWORK_ID: [u8; NETWORK_ID_SIZE] = [0x73, 0x6c, 0x69, 0x78, 0x65, 0x5
 pub const SEED_NODES: [&str; 2] = ["74.208.251.149:2125", "162.19.249.100:2125"];
 
 // bind addresses
+pub const DEFAULT_P2P_PORT: u16 = 2125;
 pub const DEFAULT_P2P_BIND_ADDRESS: &str = "0.0.0.0:2125";
 pub const DEFAULT_RPC_BIND_ADDRESS: &str = "0.0.0.0:8080";
 

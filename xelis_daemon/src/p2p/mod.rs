@@ -250,7 +250,7 @@ impl<S: Storage> P2pServer<S> {
                     } else {
                         // check that this incoming peer isn't blacklisted
                         let peer_list = self.peer_list.read().await;
-                        if peer_list.is_blacklisted(&addr) {
+                        if peer_list.is_blacklisted(&addr.ip()) {
                             debug!("{} is blacklisted, rejecting connection", addr);
                             if let Err(e) = stream.shutdown().await {
                                 debug!("Error while closing & ignoring incoming connection {}: {}", addr, e);
@@ -274,7 +274,7 @@ impl<S: Storage> P2pServer<S> {
                                 trace!("Error while trying to connect to new outgoing peer: {}", e);
                                 // if its a outgoing connection, increase its fail count
                                 let mut peer_list = self.peer_list.write().await;
-                                peer_list.increase_fail_count_for_saved_peer(&addr);
+                                peer_list.increase_fail_count_for_saved_peer(&addr.ip());
                                 continue;
                             }
                         }
@@ -390,7 +390,7 @@ impl<S: Storage> P2pServer<S> {
         {
             let peer_list = self.peer_list.read().await;
             trace!("peer list locked for trying to connect to peer {}", addr);
-            if peer_list.is_blacklisted(&addr) {
+            if peer_list.is_blacklisted(&addr.ip()) {
                 debug!("{} is banned, we can't connect to it", addr);
                 return;
             }
