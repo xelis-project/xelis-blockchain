@@ -407,9 +407,14 @@ async fn blacklist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut
         Some(p2p) => {
             if arguments.has_argument("address") {
                 let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
-                let peer_list = p2p.get_peer_list();
-                peer_list.write().await.blacklist_address(&address).await;
-                manager.message(format!("Peer {} has been blacklisted", address));
+                let mut peer_list = p2p.get_peer_list().write().await;
+                if peer_list.is_blacklisted(&address) {
+                    peer_list.set_graylist_for_peer(&address);
+                    manager.message(format!("Peer {} is not blacklisted anymore", address));
+                } else {
+                    peer_list.blacklist_address(&address).await;
+                    manager.message(format!("Peer {} has been blacklisted", address));
+                }
             } else {
                 let peer_list = p2p.get_peer_list().read().await;
                 let blacklist = peer_list.get_blacklist();
@@ -433,9 +438,14 @@ async fn whitelist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut
         Some(p2p) => {
             if arguments.has_argument("address") {
                 let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
-                let peer_list = p2p.get_peer_list();
-                peer_list.write().await.whitelist_address(&address);
-                manager.message(format!("Peer {} has been whitelisted", address));
+                let mut peer_list = p2p.get_peer_list().write().await;
+                if peer_list.is_whitelisted(&address) {
+                    peer_list.set_graylist_for_peer(&address);
+                    manager.message(format!("Peer {} is not whitelisted anymore", address));
+                } else {
+                    peer_list.whitelist_address(&address);
+                    manager.message(format!("Peer {} has been whitelisted", address));
+                }
             } else {
                 let peer_list = p2p.get_peer_list().read().await;
                 let whitelist = peer_list.get_whitelist();
