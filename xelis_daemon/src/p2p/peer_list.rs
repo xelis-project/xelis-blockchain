@@ -449,6 +449,7 @@ impl StoredPeer {
 
 impl Display for StoredPeer {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "StoredPeer[first seen: {}, last seen: {}]", format_duration(Duration::from_secs(self.first_seen)), format_duration(Duration::from_secs(self.last_seen)))
+        let current_time = get_current_time();
+        write!(f, "StoredPeer[first seen: {} ago, last seen: {} ago]", format_duration(Duration::from_secs(current_time - self.first_seen)), format_duration(Duration::from_secs(current_time - self.last_seen)))
     }
 }
