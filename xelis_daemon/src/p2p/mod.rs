@@ -42,7 +42,8 @@ use crate::{
         P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT,
         CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT, P2P_EXTEND_PEERLIST_DELAY,
         TIPS_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS
-    }, rpc::rpc::get_peer_entry
+    },
+    rpc::rpc::get_peer_entry
 };
 use self::{
     packet::{
@@ -60,7 +61,7 @@ use self::{
 };
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::{mpsc::{self, UnboundedSender, UnboundedReceiver, Sender, Receiver}, Mutex},
+    sync::{mpsc::{self, UnboundedSender, UnboundedReceiver, Sender, Receiver, unbounded_channel}, Mutex},
     select,
     task::JoinHandle,
     io::AsyncWriteExt,
@@ -119,12 +120,15 @@ impl<S: Storage> P2pServer<S> {
         let (blocks_processor, blocks_processor_receiver) = mpsc::channel(TIPS_LIMIT * STABLE_LIMIT as usize);
         let object_tracker = ObjectTracker::new(blockchain.clone());
 
+        let (sender, receiver) = unbounded_channel::<Arc<Peer>>(); 
+        let peer_list = PeerList::new(max_peers, format!("peerlist-{}.json", blockchain.get_network().to_string().to_lowercase()), Some(sender));
+
         let server = Self {
             peer_id,
             tag,
             max_peers,
             bind_address: addr,
-            peer_list: PeerList::new(max_peers, format!("peerlist-{}.json", blockchain.get_network().to_string().to_lowercase())),
+            peer_list,
             blockchain,
             connections_sender,
             syncing_peer: Mutex::new(None),
@@ -148,6 +152,12 @@ impl<S: Storage> P2pServer<S> {
         {
             let zelf = Arc::clone(&arc);
             tokio::spawn(zelf.blocks_processing_task(blocks_processor_receiver));
+        }
+
+        // Start the event loop task to handle peer disconnect events
+        {
+            let zelf = Arc::clone(&arc);
+            tokio::spawn(zelf.event_loop(receiver));
         }
 
         Ok(arc)
@@ -648,6 +658,25 @@ impl<S: Storage> P2pServer<S> {
                 }
             }
         }
+    }
+
+    // This function is used to broadcast PeerDisconnected event to listeners
+    // We use a channel to avoid having to pass the Blockchain<S> to the Peerlist & Peers
+    async fn event_loop(self: Arc<Self>, mut receiver: UnboundedReceiver<Arc<Peer>>) {
+        debug!("Starting event loop task...");
+        while let Some(peer) = receiver.recv().await {
+            if !self.is_running() {
+                break;
+            }
+
+            if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
+                if rpc.is_event_tracked(&NotifyEvent::PeerDisconnected).await {
+                    debug!("Notifying clients with PeerDisconnected event");
+                    rpc.notify_clients_with(&NotifyEvent::PeerDisconnected, get_peer_entry(&peer).await).await;
+                }
+            }
+        }
+        debug!("Event loop task is stopped!");
     }
 
     // Task for all blocks propagation

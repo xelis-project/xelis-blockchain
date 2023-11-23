@@ -6,7 +6,7 @@ use super::{peer::Peer, packet::Packet, error::P2pError};
 use std::{collections::HashMap, net::{SocketAddr, IpAddr}, fs, fmt::{Formatter, self, Display}, time::Duration};
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc::UnboundedSender};
 use xelis_common::{serializer::Serializer, utils::get_current_time};
 use std::sync::Arc;
 use bytes::Bytes;
@@ -23,6 +23,10 @@ pub struct PeerList {
     // times its local port
     stored_peers: HashMap<IpAddr, StoredPeer>,
     filename: String,
+    // used to notify the server that a peer disconnected
+    // this is done through a channel to not have to handle generic types
+    // and to be flexible in the future
+    peer_disconnect_channel: Option<UnboundedSender<Arc<Peer>>>
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
@@ -94,7 +98,7 @@ impl PeerList {
         Ok(peers)
     }
 
-    pub fn new(capacity: usize, filename: String) -> SharedPeerList {
+    pub fn new(capacity: usize, filename: String, peer_disconnect_channel: Option<UnboundedSender<Arc<Peer>>>) -> SharedPeerList {
         let stored_peers = match Self::load_stored_peers(&filename) {
             Ok(peers) => peers,
             Err(e) => {
@@ -109,7 +113,8 @@ impl PeerList {
                 Self {
                     peers: HashMap::with_capacity(capacity),
                     stored_peers,
-                    filename
+                    filename,
+                    peer_disconnect_channel
                 }
             )
         )
@@ -142,6 +147,12 @@ impl PeerList {
         }
 
         info!("Peer disconnected: {}", peer);
+        if let Some(peer_disconnect_channel) = &self.peer_disconnect_channel {
+            debug!("Notifying server that {} disconnected", peer);
+            if let Err(e) = peer_disconnect_channel.send(peer) {
+                error!("Error while sending peer disconnect notification: {}", e);
+            }
+        }
     }
 
     pub fn add_peer(&mut self, id: u64, peer: Peer) -> Arc<Peer> {

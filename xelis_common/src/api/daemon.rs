@@ -319,13 +319,13 @@ pub enum NotifyEvent {
     // It contains PeerEntry struct as value
     PeerConnected,
     // When a peer has disconnected from us
-    // It contains peer id as value
-    // TODO not implemented yet
+    // It contains PeerEntry struct as value
     PeerDisconnected,
     // Peer peerlist updated, its all its connected peers
     // It contains PeerPeerListUpdatedEvent as value
     PeerPeerListUpdated,
     // Peer has been updated through a ping packet
+    // Contains PeerEntry as value
     PeerStateUpdated,
     // When a peer of a peer has disconnected
     // and that he notified us
