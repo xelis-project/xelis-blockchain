@@ -1397,9 +1397,15 @@ impl<S: Storage> P2pServer<S> {
             }
 
             let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
+            trace!("block height: {}, stable height: {}, topoheight: {}, hash: {}", block_height, self.blockchain.get_stable_height(), topoheight, common_point.get_hash());
             // We are under the stable height, rewind is necessary
             if block_height <= self.blockchain.get_stable_height() {
-                self.blockchain.get_topo_height() - topoheight
+                let our_topoheight = self.blockchain.get_topo_height();
+                if our_topoheight > topoheight {
+                    our_topoheight - topoheight
+                } else {
+                    topoheight - our_topoheight
+                }
             } else {
                 0
             }
@@ -1806,27 +1812,17 @@ impl<S: Storage> P2pServer<S> {
         let mut i = 0;
 
         // we add 1 for the genesis block added below
+        trace!("Building list of blocks id for {} blocks, pruned topo: {}", topoheight, pruned_topoheight);
         while i < topoheight && topoheight - i > pruned_topoheight && blocks.len() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
             trace!("Requesting hash at topo {} for building list of blocks id", topoheight - i);
             let hash = storage.get_hash_at_topo_height(topoheight - i).await?;
             blocks.push(BlockId::new(hash, topoheight - i));
-            match blocks.len() {
-                0..=19 => {
-                    i += 1;
-                },
-                20..=39 => {
-                    i += 5;
-                }
-                40..=59 => {
-                    i += 50;
-                },
-                60..=79 => {
-                    i += 500;
-                }
-                _ => {
-                    i = i * 2;
-                }
-            };
+            // This parameter can be tuned based on the chain size
+            if blocks.len() < 30 {
+                i += 1;
+            } else {
+                i = i * 2;
+            }
         }
 
         // add genesis block
