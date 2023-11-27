@@ -1187,10 +1187,12 @@ impl Storage for SledStorage {
         trace!("Lowest topoheight for rewind: {}", lowest_topo);
 
         let pruned_topoheight = self.get_pruned_topoheight()?.unwrap_or(0);
-        let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
-        if lowest_topo <= safety_pruned_topoheight {
-            warn!("Pruned topoheight is {}, lowest topoheight is {}, rewind only until {}", pruned_topoheight, lowest_topo, safety_pruned_topoheight);
-            lowest_topo = safety_pruned_topoheight;
+        if pruned_topoheight != 0 {
+            let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
+            if lowest_topo <= safety_pruned_topoheight {
+                warn!("Pruned topoheight is {}, lowest topoheight is {}, rewind only until {}", pruned_topoheight, lowest_topo, safety_pruned_topoheight);
+                lowest_topo = safety_pruned_topoheight;
+            }
         }
 
         // new TIPS for chain
