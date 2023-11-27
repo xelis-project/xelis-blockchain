@@ -11,7 +11,7 @@ use xelis_common::{
         ip_from_bytes
     },
     block::Difficulty,
-    api::daemon::{NotifyEvent, PeerPeerListUpdatedEvent}
+    api::daemon::{NotifyEvent, PeerPeerListUpdatedEvent, Direction}
 };
 use crate::{
     p2p::{peer::Peer, error::P2pError},
@@ -88,8 +88,8 @@ impl<'a> Ping<'a> {
 
         if !self.peer_list.is_empty() {
             debug!("Received a peer list ({:?}) for {}", self.peer_list, peer.get_outgoing_address());
-            let mut peers_received = peer.get_peers(false).lock().await;
-            debug!("Our peer list is ({:?}) for {}", peers_received, peer.get_outgoing_address());
+            let mut peers = peer.get_peers().lock().await;
+            debug!("Our peer list is ({:?}) for {}", peers, peer.get_outgoing_address());
             let peer_addr = peer.get_connection().get_address();
             let peer_outgoing_addr = peer.get_outgoing_address();
             for addr in &self.peer_list {
@@ -99,10 +99,14 @@ impl<'a> Ping<'a> {
                 }
 
                 debug!("Adding {} for {} in ping packet", addr, peer.get_outgoing_address());
-                if !peers_received.insert(*addr) {
-                    error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", addr, peer.get_outgoing_address());
-                    trace!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, peers_received);
-                    return Err(P2pError::InvalidProtocolRules)
+                if let Some(direction) = peers.get_mut(addr) {
+                    if !direction.update(Direction::In) {
+                        error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", addr, peer.get_outgoing_address());
+                        trace!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, peers);
+                        return Err(P2pError::InvalidProtocolRules)
+                    }
+                } else {
+                    peers.insert(*addr, Direction::In);
                 }
             }
 

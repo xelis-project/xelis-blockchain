@@ -143,7 +143,7 @@ pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, mempool:
 
 pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
     let top_block_hash = peer.get_top_block_hash().lock().await.clone();
-    let peer_peers = peer.get_peers(false).lock().await.clone();
+    let peers = peer.get_peers().lock().await.clone();
     PeerEntry {
         id: peer.get_id(),
         addr: Cow::Borrowed(peer.get_outgoing_address()),
@@ -153,7 +153,7 @@ pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
         topoheight: peer.get_topoheight(),
         height: peer.get_height(),
         last_ping: peer.get_last_ping(),
-        peers: peer_peers,
+        peers,
         pruned_topoheight: peer.get_pruned_topoheight(),
         cumulative_difficulty: peer.get_cumulative_difficulty()
     }

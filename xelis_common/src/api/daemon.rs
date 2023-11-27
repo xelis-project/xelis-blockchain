@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashSet, net::SocketAddr};
+use std::{borrow::Cow, collections::{HashSet, HashMap}, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
@@ -153,6 +153,33 @@ pub struct GetTransactionParams<'a> {
     pub hash: Cow<'a, Hash>
 }
 
+// Direction is used for cache to knows from which context it got added
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Direction {
+    // We don't update it because it's In, we won't send back
+    In,
+    // Out can be updated with In to be transformed to Both
+    // Because of desync, we may receive the object while sending it
+    Out,
+    // Cannot be updated
+    Both
+}
+
+impl Direction {
+    pub fn update(&mut self, direction: Direction) -> bool {
+        match self {
+            Self::Out => match direction {
+                Self::In => {
+                    *self = Self::Both;
+                    true
+                },
+                _ => false
+            },
+            _ => false
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct PeerEntry<'a> {
     pub id: u64,
@@ -164,7 +191,7 @@ pub struct PeerEntry<'a> {
     pub height: u64,
     pub last_ping: u64,
     pub pruned_topoheight: Option<u64>,
-    pub peers: HashSet<SocketAddr>,
+    pub peers: HashMap<SocketAddr, Direction>,
     pub cumulative_difficulty: Difficulty
 }
 

@@ -1,4 +1,5 @@
 use lru::LruCache;
+use xelis_common::api::daemon::Direction;
 use crate::config::{
     PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS
 };
@@ -29,39 +30,6 @@ use log::{warn, trace, debug};
 
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
-// Direction is used for cache to knows from which context it got added
-#[derive(Debug, Clone, Copy)]
-pub enum Direction {
-    // We don't update it because it's In, we won't send back
-    In,
-    // Out can be updated with In to be transformed to Both
-    // Because of desync, we may receive the object while sending it
-    Out,
-    // Cannot be updated
-    Both
-}
-
-impl Direction {
-    pub fn update(&mut self, direction: Direction) -> Result<(), P2pError> {
-        let ok = match self {
-            Self::Out => match direction {
-                Self::In => {
-                    *self = Self::Both;
-                    true
-                },
-                _ => false
-            },
-            _ => false
-        };
-
-        if ok {
-            Ok(())
-        } else {
-            return Err(P2pError::InvalidDirection)
-        }
-    }
-}
-
 pub struct Peer {
     connection: Connection, // Connection of the peer to manage read/write to TCP Stream
     id: u64, // unique ID of the peer to recognize him
@@ -78,8 +46,7 @@ pub struct Peer {
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
     peer_list: SharedPeerList, // shared pointer to the peer list in case of disconnection
     objects_requested: Mutex<RequestedObjects>, // map of requested objects from this peer
-    peers_received: Mutex<HashSet<SocketAddr>>, // all peers from this peer
-    peers_sent: Mutex<HashSet<SocketAddr>>, // all peers sent to this peer
+    peers: Mutex<HashMap<SocketAddr, Direction>>, // all peers sent/received
     last_peer_list: AtomicU64, // last time we received a peerlist from this peer
     last_ping: AtomicU64, // last time we got a ping packet from this peer
     last_ping_sent: AtomicU64, // last time we sent a ping packet to this peer
@@ -96,9 +63,14 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: u64, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: u64, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>) -> Self {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
+
+        let mut peers = HashMap::new();
+        for peer in peers_received {
+            peers.insert(peer, Direction::In);
+        }
 
         Self {
             connection,
@@ -116,8 +88,7 @@ impl Peer {
             last_chain_sync: AtomicU64::new(0),
             peer_list,
             objects_requested: Mutex::new(HashMap::new()),
-            peers_received: Mutex::new(peers),
-            peers_sent: Mutex::new(HashSet::new()),
+            peers: Mutex::new(peers),
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
             last_ping_sent: AtomicU64::new(0),
@@ -383,12 +354,8 @@ impl Peer {
         &self.sync_chain
     }
 
-    pub fn get_peers(&self, sent: bool) -> &Mutex<HashSet<SocketAddr>> {
-        if sent {
-            &self.peers_sent
-        } else {
-            &self.peers_received
-        }
+    pub fn get_peers(&self) -> &Mutex<HashMap<SocketAddr, Direction>> {
+        &self.peers
     }
 
     pub fn get_last_peer_list(&self) -> u64 {
@@ -461,7 +428,7 @@ impl Display for Peer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
         // update fail counter to have up-to-date data to display
         self.update_fail_count_default();
-        let peers_count = if let Ok(peers) = self.get_peers(false).try_lock() {
+        let peers_count = if let Ok(peers) = self.get_peers().try_lock() {
             format!("{}", peers.len())
         } else {
             "Couldn't retrieve data".to_string()

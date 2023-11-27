@@ -15,7 +15,7 @@ use xelis_common::{
     block::{BlockHeader, Block},
     utils::get_current_time,
     immutable::Immutable,
-    api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent}
+    api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent, Direction}
 };
 use crate::{
     core::{
@@ -35,7 +35,7 @@ use crate::{
             chain::CommonPoint
         },
         tracker::ResponseBlocker,
-        connection::ConnectionMessage, peer::Direction,
+        connection::ConnectionMessage,
     },
     config::{
         NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS,
@@ -575,7 +575,7 @@ impl<S: Storage> P2pServer<S> {
                     new_peers.clear();
 
                     // all the peers we already sent to this current peer
-                    let mut peers_sent = peer.get_peers(true).lock().await;
+                    let mut peer_peers = peer.get_peers().lock().await;
 
                     // iterate through our peerlist to determinate which peers we have to send
                     for p in peer_list.get_peers().values() {
@@ -586,10 +586,20 @@ impl<S: Storage> P2pServer<S> {
 
                         // if we haven't send him this peer addr and that he don't have him already, insert it
                         let addr = p.get_outgoing_address();
-                        if !peers_sent.contains(addr) {
+                        let add = if let Some(direction) = peer_peers.get(addr) {
+                            *direction == Direction::In
+                        } else {
+                            true
+                        };
+
+                        if add {
                             // add it in our side to not re send it again
                             trace!("{} didn't received {} yet, adding it to peerlist in ping packet", peer.get_outgoing_address(), addr);
-                            peers_sent.insert(*addr);
+                            if let Some(direction) = peer_peers.get_mut(addr) {
+                                direction.update(Direction::Out);
+                            } else {
+                                peer_peers.insert(*addr, Direction::Out);
+                            }
                             // add it to new list to send it
                             new_peers.push(*addr);
                             if new_peers.len() >= P2P_PING_PEER_LIST_LIMIT {
@@ -855,28 +865,15 @@ impl<S: Storage> P2pServer<S> {
         debug!("get common peers for {}", peer);
         let peer_list = self.peer_list.read().await;
         trace!("locked peer_list, locking peers received (common peers)");
-        let peer_peers = peer.get_peers(false).lock().await;
+        let peer_peers = peer.get_peers().lock().await;
         trace!("locked peers received (common peers)");
 
         let mut common_peers = Vec::new();
-        for common_peer_addr in peer_peers.iter() {
+        for (common_peer_addr, _) in peer_peers.iter().filter(|(_, direction)| **direction == Direction::Both) {
             // if we have a common peer with him
             if let Some(common_peer) = peer_list.get_peer_by_addr(common_peer_addr) {
                 if peer.get_id() != common_peer.get_id() {
-                    trace!("locking common peers received");
-                    let peers_received = common_peer.get_peers(false).lock().await;
-                    trace!("locking common peers sent");
-                    let peers_sent = common_peer.get_peers(true).lock().await;
-                    trace!("lock acquired (common peer)");
-
-                    // verify that we already know that he his connected to it and that we informed him we are connected too to prevent any desync
-                    if peers_received.iter().find(
-                        |addr: &&SocketAddr| *addr == peer.get_outgoing_address()
-                    ).is_some() && peers_sent.iter().find(
-                        |addr: &&SocketAddr| *addr == common_peer.get_outgoing_address()
-                    ).is_some() {
-                        common_peers.push(common_peer.clone());
-                    }
+                    common_peers.push(common_peer.clone());
                 }
             }
         }
@@ -904,8 +901,8 @@ impl<S: Storage> P2pServer<S> {
                     let mut txs_cache = peer.get_txs_cache().lock().await;
 
                     if let Some(direction) = txs_cache.get_mut(&hash) {
-                        if let Err(e) = direction.update(Direction::In) {
-                            debug!("{} send us a transaction ({}) already tracked by him ({:?}): {}", peer, hash, direction, e);
+                        if !direction.update(Direction::In) {
+                            debug!("{} send us a transaction ({}) already tracked by him ({:?})", peer, hash, direction);
                             return Err(P2pError::AlreadyTrackedTx(hash))
                         }
                     } else {
@@ -949,8 +946,8 @@ impl<S: Storage> P2pServer<S> {
                 {
                     let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                     if let Some(direction) = blocks_propagation.get_mut(&block_hash) {
-                        if let Err(e) = direction.update(Direction::In) {
-                            debug!("{} send us a block ({}) already tracked by him ({:?}): {}", peer, block_hash, direction, e);
+                        if !direction.update(Direction::In) {
+                            debug!("{} send us a block ({}) already tracked by him ({:?})", peer, block_hash, direction);
                             return Err(P2pError::AlreadyTrackedBlock(block_hash))
                         }
                     } else {
@@ -1249,23 +1246,27 @@ impl<S: Storage> P2pServer<S> {
                 let addr = packet.to_addr();
                 debug!("{} disconnected from {}", addr, peer);
                 {
-                    let mut peers_received = peer.get_peers(false).lock().await;
-                    let peers_sent = peer.get_peers(true).lock().await;
+                    let mut peers = peer.get_peers().lock().await;
     
-                    let received_contains = peers_received.contains(&addr);
-                    let sent_contains = peers_sent.contains(&addr);
                     // Because it was a common peer and that the peer disconnected from us and him
                     // it would works but if it get only disconnected from one side, that mean
                     // It would only be deleted from one of the two side and create a desync
                     // As we can't delete after sending the packet directly
                     // Current solution is to check only if it was a received one
-                    if !received_contains {
-                        debug!("{} disconnected from {} but its not a common peer ? {} {}", addr, peer.get_outgoing_address(), received_contains, sent_contains);
+                    let delete = if let Some(direction) = peers.get(&addr) {
+                        trace!("Direction for {} is {:?} (peer disconnected)", addr, direction);
+                        *direction == Direction::Both 
+                    } else {
+                        false
+                    };
+
+                    if delete {
+                        // Delete the peer received
+                        peers.remove(&addr);
+                    } else {
+                        debug!("{} disconnected from {} but its not a common peer ?", addr, peer.get_outgoing_address());
                         return Err(P2pError::UnknownPeerReceived(addr))                    
                     }
-    
-                    // Delete the peer received
-                    peers_received.remove(&addr);
                 }
 
                 trace!("Locking RPC Server to notify PeerDisconnected event");
