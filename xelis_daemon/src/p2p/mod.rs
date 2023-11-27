@@ -506,9 +506,8 @@ impl<S: Storage> P2pServer<S> {
 
     async fn chain_sync_loop(self: Arc<Self>) {
         let duration = Duration::from_secs(CHAIN_SYNC_DELAY);
-        let mut interval = interval(duration);
         loop {
-            interval.tick().await;
+            sleep(duration).await;
             if !self.is_syncing().await {
                 // first we have to check if we allow fast sync mode
                 // and then we check if we have a potential peer above us to fast sync
