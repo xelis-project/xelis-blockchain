@@ -585,18 +585,17 @@ impl<S: Storage> P2pServer<S> {
 
                         // if we haven't send him this peer addr and that he don't have him already, insert it
                         let addr = p.get_outgoing_address();
-                        let add = if let Some(direction) = peer_peers.get(addr) {
-                            *direction == Direction::In
+                        let send = if let Some(direction) = peer_peers.get_mut(addr) {
+                            direction.update(Direction::Out)
                         } else {
                             true
                         };
 
-                        if add {
+                        if send {
                             // add it in our side to not re send it again
                             trace!("{} didn't received {} yet, adding it to peerlist in ping packet", peer.get_outgoing_address(), addr);
-                            if let Some(direction) = peer_peers.get_mut(addr) {
-                                direction.update(Direction::Out);
-                            } else {
+
+                            if !peer_peers.contains_key(addr) {
                                 peer_peers.insert(*addr, Direction::Out);
                             }
                             // add it to new list to send it

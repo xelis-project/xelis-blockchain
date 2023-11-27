@@ -100,7 +100,7 @@ impl<'a> Ping<'a> {
 
                 debug!("Adding {} for {} in ping packet", addr, peer.get_outgoing_address());
                 if let Some(direction) = peers.get_mut(addr) {
-                    if !direction.update(Direction::In) {
+                    if !direction.update_allow_in(Direction::In) {
                         error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet", addr, peer.get_outgoing_address());
                         trace!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, peers);
                         return Err(P2pError::InvalidProtocolRules)

@@ -178,6 +178,26 @@ impl Direction {
             _ => false
         }
     }
+
+    pub fn update_allow_in(&mut self, direction: Direction) -> bool {
+        match self {
+            Self::Out => match direction {
+                Self::In => {
+                    *self = Self::Both;
+                    true
+                },
+                _ => false
+            },
+            Self::In => match direction {
+                Self::Out => {
+                    *self = Self::Both;
+                    true
+                },
+                _ => false
+            },
+            _ => false
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
