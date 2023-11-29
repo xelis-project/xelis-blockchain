@@ -2,7 +2,7 @@ use std::{sync::Arc, borrow::Cow};
 
 use anyhow::Context as AnyContext;
 use log::info;
-use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params, Context, websocket::WebSocketSessionShared}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams, SetCustomDataParams, GetCustomTreeKeysParams}, DataHash, DataElement, DataValue}, crypto::hash::Hashable};
+use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params, Context, websocket::WebSocketSessionShared}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams, SetCustomDataParams, GetCustomTreeKeysParams, GetAssetPrecisionParams}, DataHash, DataElement, DataValue}, crypto::hash::Hashable};
 use serde_json::{Value, json};
 use crate::{wallet::{Wallet, WalletError}, entry::TransactionEntry};
 
@@ -18,6 +18,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("split_address", async_handler!(split_address));
     handler.register_method("get_balance", async_handler!(get_balance));
     handler.register_method("get_tracked_assets", async_handler!(get_tracked_assets));
+    handler.register_method("get_asset_precision", async_handler!(get_asset_precision));
     handler.register_method("get_transaction", async_handler!(get_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("list_transactions", async_handler!(list_transactions));
@@ -113,6 +114,15 @@ async fn get_tracked_assets(context: Context, body: Value) -> Result<Value, Inte
     let tracked_assets = storage.get_assets()?;
 
     Ok(json!(tracked_assets))
+}
+
+async fn get_asset_precision(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetAssetPrecisionParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+    let precision = storage.get_asset_decimals(&params.asset)?;
+    Ok(json!(precision))
 }
 
 async fn get_transaction(context: Context, body: Value) -> Result<Value, InternalRpcError> {

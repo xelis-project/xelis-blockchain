@@ -1681,6 +1681,35 @@ No parameters
 }
 ```
 
+#### Get Asset Precision
+Retrieve the decimals precision for the selected asset.
+
+##### Method `get_asset_precision`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_asset_precision",
+	"id": 1,
+	"params": {
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 8
+}
+```
+
 #### Get Transaction
 Get transaction by hash from wallet.
 

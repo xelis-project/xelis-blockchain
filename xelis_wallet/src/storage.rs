@@ -79,24 +79,38 @@ impl EncryptedStorage {
         self.internal_load(tree, &hashed_key)
     }
 
+    // Because we can't predict the nonce used for encryption, we make it determistic
+    fn create_encrypted_key(&self, key: &[u8]) -> Result<Vec<u8>> {
+        // the hashed key is salted so its unique and can't be recover/bruteforced
+        let hashed_key = self.cipher.hash_key(key);
+
+        // Use only the first 24 bytes as nonce
+        let mut nonce = [0u8; Cipher::NONCE_SIZE];
+        nonce.copy_from_slice(&hashed_key[0..Cipher::NONCE_SIZE]);
+
+        let key = self.cipher.encrypt_value_with_nonce(key, &nonce)?;
+        Ok(key)
+    }
+
     // load from disk using an encrypted key, decrypt the value and deserialize it
     fn load_from_disk_with_encrypted_key<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
-        let encrypted_key = self.cipher.encrypt_value(key)?;
+        let encrypted_key = self.create_encrypted_key(key)?;
         self.internal_load(tree, &encrypted_key)
+    }
+
+    // Encrypt key, encrypt data and then save to disk
+    // We encrypt instead of hashing to be able to retrieve the key
+    fn save_to_disk_with_encrypted_key(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
+        let encrypted_key = self.create_encrypted_key(key)?;
+        let encrypted_value = self.cipher.encrypt_value(value)?;
+        tree.insert(encrypted_key, encrypted_value)?;
+        Ok(())
     }
 
     // hash key, encrypt data and then save to disk 
     fn save_to_disk(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
         let hashed_key = self.cipher.hash_key(key);
         tree.insert(hashed_key, self.cipher.encrypt_value(value)?)?;
-        Ok(())
-    }
-
-    // Encrypt key, encrypt data and then save to disk
-    // We encrypt instead of hashing to be able to retrieve the key
-    fn save_to_disk_with_encrypted_key(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
-        let encrypted_key = self.cipher.encrypt_value(key)?;
-        tree.insert(encrypted_key, self.cipher.encrypt_value(value)?)?;
         Ok(())
     }
 
