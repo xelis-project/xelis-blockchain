@@ -129,7 +129,7 @@ impl EncryptedStorage {
 
     // Encrypt instead of hash the key to recover it later
     fn contains_encrypted_data(&self, tree: &Tree, key: &[u8]) -> Result<bool> {
-        let encrypted_key = self.cipher.encrypt_value(key)?;
+        let encrypted_key = self.create_encrypted_key(key)?;
         Ok(tree.contains_key(encrypted_key)?)
     }
 
