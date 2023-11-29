@@ -22,6 +22,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_transaction", async_handler!(get_transaction));
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("list_transactions", async_handler!(list_transactions));
+    handler.register_method("is_online", async_handler!(is_online));
     
     // These functions are restricted to XSWD only
     handler.register_method("get_custom_tree_keys_from_db", async_handler!(get_custom_tree_keys_from_db));
@@ -177,6 +178,16 @@ async fn list_transactions(context: Context, body: Value) -> Result<Value, Inter
     let opt_key = params.address.map(|addr| addr.to_public_key());
     let txs = storage.get_filtered_transactions(opt_key.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?;
     Ok(json!(txs))
+}
+
+async fn is_online(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let is_connected = wallet.is_online().await;
+    Ok(json!(is_connected))
 }
 
 async fn get_tree_name_xswd(context: &Context, tree: &String) -> Result<String, InternalRpcError> {
