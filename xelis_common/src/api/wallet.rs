@@ -60,8 +60,6 @@ pub struct TransactionResponse<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetAssetPrecisionParams<'a> {
-    // Data to use for creating an integrated address
-    // Returned address will contains all the data provided here
     pub asset: Cow<'a, Hash>
 }
 
