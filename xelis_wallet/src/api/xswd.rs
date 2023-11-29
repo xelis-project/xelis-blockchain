@@ -44,7 +44,7 @@ pub trait XSWDPermissionHandler {
 
 #[async_trait]
 pub trait XSWDNodeMethodHandler {
-    async fn call_node_method(&self, request: RpcRequest) -> Result<Value, RpcResponseError>;
+    async fn call_node_with(&self, request: RpcRequest) -> Result<Value, RpcResponseError>;
 }
 
 pub struct AppState {
@@ -529,7 +529,7 @@ where
                 if request.method.starts_with("node.") {
                     // Remove the 5 first chars (node.)
                     request.method = request.method[5..].into();
-                    return self.handler.get_data().call_node_method(request).await.map(|v| Some(v))
+                    return self.handler.get_data().call_node_with(request).await.map(|v| Some(v))
                 }
 
                 // Verify first if the method exist (and that its not a built-in one)

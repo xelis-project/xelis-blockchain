@@ -611,7 +611,7 @@ impl XSWDPermissionHandler for Arc<Wallet> {
 #[cfg(feature = "api_server")]
 #[async_trait]
 impl XSWDNodeMethodHandler for Arc<Wallet> {
-    async fn call_node_method(&self, request: RpcRequest) -> Result<Value, RpcResponseError> {
+    async fn call_node_with(&self, request: RpcRequest) -> Result<Value, RpcResponseError> {
         let network_handler = self.network_handler.lock().await;
         let id = request.id;
         if let Some(network_handler) = network_handler.as_ref() {
