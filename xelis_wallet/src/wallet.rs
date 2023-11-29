@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Error, Context};
+use serde_json::{Value, json};
 use tokio::sync::{Mutex, RwLock};
 use xelis_common::api::DataElement;
 use xelis_common::api::wallet::FeeBuilder;
@@ -9,10 +10,12 @@ use xelis_common::config::{XELIS_ASSET, COIN_DECIMALS};
 use xelis_common::crypto::address::Address;
 use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey};
+use xelis_common::rpc_server::{RpcRequest, InternalRpcError, RpcResponseError};
 use xelis_common::utils::{format_xelis, format_coin};
 use xelis_common::network::Network;
 use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
+use crate::api::XSWDNodeMethodHandler;
 use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
 use crate::mnemonics;
@@ -602,5 +605,20 @@ impl XSWDPermissionHandler for Arc<Wallet> {
 
     async fn get_public_key(&self) -> Result<&PublicKey, Error> {
         Ok((self as &Wallet).get_public_key())
+    }
+}
+
+#[cfg(feature = "api_server")]
+#[async_trait]
+impl XSWDNodeMethodHandler for Arc<Wallet> {
+    async fn call_node_method(&self, request: RpcRequest) -> Result<Value, RpcResponseError> {
+        let network_handler = self.network_handler.lock().await;
+        let id = request.id;
+        if let Some(network_handler) = network_handler.as_ref() {
+            network_handler.get_api().get_client().send(json!(request)).await
+                .map_err(|e| RpcResponseError::new(id, InternalRpcError::Custom(e.to_string())))
+        } else {
+            Err(RpcResponseError::new(id, InternalRpcError::CustomStr("Wallet is not in online mode")))
+        }
     }
 }

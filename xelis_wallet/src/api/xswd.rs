@@ -26,7 +26,7 @@ use crate::config::XSWD_BIND_ADDRESS;
 // but will keep already-configured permissions.
 pub struct XSWD<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
 {
     websocket: Arc<WebSocketServer<XSWDWebSocketHandler<W>>>,
     handle: ServerHandle
@@ -40,6 +40,11 @@ pub trait XSWDPermissionHandler {
     async fn cancel_request_permission(&self, app_state: &AppStateShared) -> Result<(), Error>;
     // Public key to use to verify the signature
     async fn get_public_key(&self) -> Result<&PublicKey, Error>;
+}
+
+#[async_trait]
+pub trait XSWDNodeMethodHandler {
+    async fn call_node_method(&self, request: RpcRequest) -> Result<Value, RpcResponseError>;
 }
 
 pub struct AppState {
@@ -182,7 +187,7 @@ const PERMISSION_DENIED_ERROR: InternalRpcError = InternalRpcError::CustomStr("P
 
 impl<W> XSWD<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
 {
     pub fn new(rpc_handler: RPCHandler<W>) -> Result<Self, anyhow::Error> {
         info!("Starting XSWD Server...");
@@ -271,7 +276,7 @@ impl PermissionResult {
 
 pub struct XSWDWebSocketHandler<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
 {
     // RPC handler for methods
     handler: RPCHandler<W>,
@@ -285,7 +290,7 @@ where
 
 impl<W> XSWDWebSocketHandler<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
 {
     pub fn new(handler: RPCHandler<W>) -> Self {
         Self {
@@ -519,12 +524,17 @@ where
 
             // Application is already registered, verify permission and call the method
             if let Some(app) = app_state {
-                let request: RpcRequest = self.handler.parse_request(message)?;
-    
+                let mut request: RpcRequest = self.handler.parse_request(message)?;
+                // Redirect all node methods to the node method handler
+                if request.method.starts_with("node.") {
+                    // Remove the 5 first chars (node.)
+                    request.method = request.method[5..].into();
+                    return self.handler.get_data().call_node_method(request).await.map(|v| Some(v))
+                }
+
                 // Verify first if the method exist (and that its not a built-in one)
                 let is_subscribe = request.method == "subscribe";
                 let is_unsubscribe = request.method == "unsubscribe";
-    
                 if !self.handler.has_method(&request.method) && !is_subscribe && !is_unsubscribe {
                     return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
                 }
@@ -579,7 +589,7 @@ where
 #[async_trait]
 impl<W> WebSocketHandler for XSWDWebSocketHandler<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
 {
     async fn on_close(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
         let mut applications = self.applications.write().await;
@@ -618,7 +628,7 @@ async fn index() -> Result<impl Responder, actix_web::Error> {
 
 async fn endpoint<W>(server: Data<WebSocketServer<XSWDWebSocketHandler<W>>>, request: HttpRequest, body: Payload) -> Result<impl Responder, actix_web::Error>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
 {
     let response = server.handle_connection(request, body).await?;
     Ok(response)

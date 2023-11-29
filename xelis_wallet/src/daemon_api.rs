@@ -14,6 +14,10 @@ impl DaemonAPI {
         }
     }
 
+    pub fn get_client(&self) -> &JsonRPCClient {
+        &self.client
+    }
+
     pub async fn get_version(&self) -> Result<String> {
         let version = self.client.call("get_version").await.context("Error while retrieving version from daemon")?;
         Ok(version)
