@@ -532,6 +532,12 @@ where
                     return self.handler.get_data().call_node_with(request).await.map(|v| Some(v))
                 }
 
+                // Verify that the method start with "wallet."
+                if !request.method.starts_with("wallet.") {
+                    return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
+                }
+                request.method = request.method[7..].into();
+
                 // Verify first if the method exist (and that its not a built-in one)
                 let is_subscribe = request.method == "subscribe";
                 let is_unsubscribe = request.method == "unsubscribe";
