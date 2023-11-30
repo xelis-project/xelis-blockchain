@@ -1,10 +1,22 @@
 # XELIS Blockchain
 All rights reserved.
 
-XELIS is a blockchain made in Rust and powered by Tokio, using account model.
-It allows deploy custom assets working exactly like the native coin in transactions and wallet.
+A from scratch blockchain made in Rust and powered by Tokio, using account model. XELIS is based on an event-driven system combined with the native async/await and works with a unique and from scratch p2p system. This allow to be notified on any events happening on the network and to be able to react to them instead of checking periodically for updates.
 
-This project is based on an event-driven system combined with the native async/await and works with a unique and from scratch p2p system.
+BlockDAG is enabled to improve the scalability and the security of the network. Homomorphic Encryption using ElGamal is used to provide privacy on transactions (transfered amounts) and balances.
+
+ElGamal cryptosystem was choosen because it's a well known and studied encryption algorithm which has homomorphism features. ElGamal is fast and is used in combination with Ristretto255 curve to provide a good level of security (~128 bits of security). Homomorphic operations available using ElGamal are addition/subtraction between ciphertexts and/or plaintext and multiplication against plaintext value.
+
+Account Model allows to have a more flexible system than UTXO model and to have a better privacy because there is no need to link inputs and outputs, which provide real fungibility. It allows also the fast-sync feature to only download the last state of the blockchain instead of downloading all the history.
+
+Pruning system is also available to reduce the size of the blockchain by removing old blocks and transactions.
+
+We also aims to enabled Smart Contracts support in the future.
+
+We provide differents built-in network:
+- Mainnet: Not released yet
+- Testnet: Running
+- Devnet: this network is used for local development purpose where you want to create your own local chain. It has no peers
 
 ### Objectives
 
