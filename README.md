@@ -355,6 +355,10 @@ XSWD stay open but request a manual action from user to accept the connection of
 When accepted, the dApp can requests JSON-RPC methods easily and the user can set/configure a permission for each method.
 If no permission is found for a request method, it will be prompted/asked to the user for manual verification.
 
+XSWD also have the ability to sends JSON-RPC requests to the daemon directly.
+For this, set the prefix `node.` in front of daemon requests, it will not be requested to the user as it's public on-chain data.
+For wallets RPC methods, set the prefix `wallet.` which will requests/use the permission set by the user.
+
 DApp can also request to sign the `ApplicationData` to persist the configured permissions on its side and then provide it when user would reconnect later.
 
 First JSON message from the dApp must be in following format to identify the application:
