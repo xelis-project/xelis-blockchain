@@ -8,7 +8,7 @@ use serde::{Serialize, Deserialize};
 use tokio::{sync::{broadcast, mpsc, Mutex}, select, time::Instant};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use xelis_common::{
-    block::{BlockMiner, BLOCK_WORK_SIZE},
+    block::{BlockMiner, BLOCK_WORK_SIZE, Difficulty},
     serializer::Serializer,
     difficulty::check_difficulty,
     config::VERSION,
@@ -55,7 +55,7 @@ pub struct MinerConfig {
 
 #[derive(Clone)]
 enum ThreadNotification<'a> {
-    NewJob(BlockMiner<'a>, u64, u64), // block work, difficulty, height
+    NewJob(BlockMiner<'a>, Difficulty, u64), // block work, difficulty, height
     WebSocketClosed, // WebSocket connection has been closed
     Exit // all threads must stop
 }
