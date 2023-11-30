@@ -139,7 +139,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError>;
     fn set_supply_at_topo_height(&mut self, topoheight: u64, supply: u64) -> Result<(), BlockchainError>;
 
-    async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: u64) -> Result<(), BlockchainError>;
+    async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: Difficulty) -> Result<(), BlockchainError>;
 
     fn get_top_topoheight(&self) -> Result<u64, BlockchainError>;
     fn set_top_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;

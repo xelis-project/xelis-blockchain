@@ -12,7 +12,7 @@ use xelis_common::{
     config::VERSION,
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
-    block::{BlockHeader, Block},
+    block::{BlockHeader, Block, Difficulty},
     utils::get_current_time,
     immutable::Immutable,
     api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent, Direction}
@@ -1654,7 +1654,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: u64, our_topoheight: u64, our_height: u64, pruned_topoheight: Option<u64>, hash: &Hash, lock: bool) {
+    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: Difficulty, our_topoheight: u64, our_height: u64, pruned_topoheight: Option<u64>, hash: &Hash, lock: bool) {
         debug!("Broadcasting block {} at height {}", hash, block.get_height());
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock

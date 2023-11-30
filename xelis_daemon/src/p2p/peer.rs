@@ -1,5 +1,6 @@
 use lru::LruCache;
 use xelis_common::api::daemon::Direction;
+use xelis_common::block::Difficulty;
 use crate::config::{
     PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS
 };
@@ -63,7 +64,7 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: u64, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: Difficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>) -> Self {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
 
@@ -182,11 +183,11 @@ impl Peer {
         &self.top_hash
     }
 
-    pub fn get_cumulative_difficulty(&self) -> u64 {
+    pub fn get_cumulative_difficulty(&self) -> Difficulty {
         self.cumulative_difficulty.load(Ordering::Acquire)
     }
 
-    pub fn set_cumulative_difficulty(&self, cumulative_difficulty: u64) {
+    pub fn set_cumulative_difficulty(&self, cumulative_difficulty: Difficulty) {
         self.cumulative_difficulty.store(cumulative_difficulty, Ordering::Release)
     }
 

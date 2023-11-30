@@ -919,6 +919,7 @@ impl<S: Storage> Blockchain<S> {
         Ok(difficulty)
     }
 
+    // Get the current difficulty target for the next block
     pub fn get_difficulty(&self) -> Difficulty {
         self.difficulty.load(Ordering::SeqCst)
     }
@@ -926,7 +927,7 @@ impl<S: Storage> Blockchain<S> {
     // pass in params the already computed block hash and its tips
     // check the difficulty calculated at tips
     // if the difficulty is valid, returns it (prevent to re-compute it)
-    pub async fn verify_proof_of_work<D: DifficultyProvider>(&self, provider: &D, hash: &Hash, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
+    pub async fn verify_proof_of_work<D: DifficultyProvider>(&self, provider: &D, hash: &Hash, tips: &Vec<Hash>) -> Result<Difficulty, BlockchainError> {
         let difficulty = self.get_difficulty_at_tips(provider, tips).await?;
         if self.simulator || check_difficulty(hash, difficulty)? {
             Ok(difficulty)

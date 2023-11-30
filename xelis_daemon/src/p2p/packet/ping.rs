@@ -39,7 +39,7 @@ pub struct Ping<'a> {
 }
 
 impl<'a> Ping<'a> {
-    pub fn new(top_hash: Cow<'a, Hash>, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, cumulative_difficulty: u64, peer_list: Vec<SocketAddr>) -> Self {
+    pub fn new(top_hash: Cow<'a, Hash>, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, cumulative_difficulty: Difficulty, peer_list: Vec<SocketAddr>) -> Self {
         Self {
             top_hash,
             topoheight,
@@ -149,7 +149,7 @@ impl Serializer for Ping<'_> {
         writer.write_u64(&self.topoheight);
         writer.write_u64(&self.height);
         self.pruned_topoheight.write(writer);
-        writer.write_u64(&self.cumulative_difficulty);
+        self.cumulative_difficulty.write(writer);
         writer.write_u8(self.peer_list.len() as u8);
         for peer in &self.peer_list {
             writer.write_bytes(&ip_to_bytes(peer));
@@ -167,7 +167,7 @@ impl Serializer for Ping<'_> {
                 return Err(ReaderError::InvalidValue)
             }
         }
-        let cumulative_difficulty = reader.read_u64()?;
+        let cumulative_difficulty = Difficulty::read(reader)?;
         let peers_len = reader.read_u8()? as usize;
         if peers_len > P2P_PING_PEER_LIST_LIMIT {
             debug!("Too much peers sent in this ping packet: received {} while max is {}", peers_len, P2P_PING_PEER_LIST_LIMIT);
