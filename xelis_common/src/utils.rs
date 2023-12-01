@@ -78,6 +78,9 @@ pub fn ip_from_bytes(reader: &mut Reader) -> Result<SocketAddr, ReaderError> {
     Ok(SocketAddr::new(ip, port))
 }
 
+// return the fee for a transaction based on its size in bytes
+// the fee is calculated in atomic units for XEL
+// This is a really simple function, plan to improve it later based on caracteristics of the transaction
 pub fn calculate_tx_fee(tx_size: usize) -> u64 {
     let mut size_in_kb = tx_size as u64 / 1024;
 
@@ -90,6 +93,7 @@ pub fn calculate_tx_fee(tx_size: usize) -> u64 {
 
 const HASHRATE_FORMATS: [&str; 5] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s"];
 
+// Format a hashrate in human-readable format
 pub fn format_hashrate(mut hashrate: f64) -> String {
     let max = HASHRATE_FORMATS.len() - 1;
     let mut count = 0;
@@ -103,6 +107,7 @@ pub fn format_hashrate(mut hashrate: f64) -> String {
 
 const DIFFICULTY_FORMATS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
 
+// Format a difficulty in a human-readable format
 pub fn format_difficulty(mut difficulty: Difficulty) -> String {
     let max = HASHRATE_FORMATS.len() - 1;
     let mut count = 0;
