@@ -1,10 +1,12 @@
 use curve25519_dalek::{ristretto::{RistrettoPoint, CompressedRistretto}, scalar::Scalar};
 use core::ops::{Add, Neg, Mul, Sub};
+use std::ops::{AddAssign, SubAssign};
 
 use crate::serializer::{Serializer, Writer, ReaderError, Reader};
 
 // Each ciphertext has a size of 64 bytes in compressed form.
 // Homomorphic properties can be used to add, subtract, and multiply ciphertexts.
+#[derive(Clone)]
 pub struct Ciphertext {
     left: RistrettoPoint,
     right: RistrettoPoint,
@@ -75,6 +77,34 @@ impl Add<Ciphertext> for &Ciphertext {
         other.left += self.left;
         other.right += self.right;
         other
+    }
+}
+
+impl AddAssign<Ciphertext> for Ciphertext {
+    fn add_assign(&mut self, rhs: Ciphertext) {
+        self.left += rhs.left;
+        self.right += rhs.right;
+    }
+}
+
+impl AddAssign<&Ciphertext> for Ciphertext {
+    fn add_assign(&mut self, rhs: &Ciphertext) {
+        self.left += rhs.left;
+        self.right += rhs.right;
+    }
+}
+
+impl SubAssign<Ciphertext> for Ciphertext {
+    fn sub_assign(&mut self, rhs: Ciphertext) {
+        self.left -= rhs.left;
+        self.right -= rhs.right;
+    }
+}
+
+impl SubAssign<&Ciphertext> for Ciphertext {
+    fn sub_assign(&mut self, rhs: &Ciphertext) {
+        self.left -= rhs.left;
+        self.right -= rhs.right;
     }
 }
 
