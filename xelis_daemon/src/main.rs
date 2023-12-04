@@ -248,6 +248,8 @@ async fn verify_chain<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, 
 
     if total_balances != expected_supply {
         manager.error(format!("Total balances is not equal to expected supply! Balances: {}, Supply: {}", total_balances, expected_supply));
+    } else {
+        manager.message("Balances are equal to verified supply");
     }
 
     Ok(())
