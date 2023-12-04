@@ -976,9 +976,15 @@ impl Storage for SledStorage {
     }
 
     // returns a new versioned balance with already-set previous topoheight
+    // Topoheight is the new topoheight for the versioned balance,
+    // We create a new versioned balance by taking the previous version and setting it as previous topoheight
     async fn get_new_versioned_balance(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("get new versioned balance {} for {} at {}", asset, key, topoheight);
-        let version = match self.get_balance_at_maximum_topoheight(key, asset, topoheight).await? {
+        if topoheight == 0 {
+            return Ok(VersionedBalance::new(0, None))
+        }
+
+        let version = match self.get_balance_at_maximum_topoheight(key, asset, topoheight - 1).await? {
             Some((topo, mut version)) => {
                 trace!("new versioned balance (balance at maximum topoheight) topo: {}, previous: {:?}", topo, version.get_previous_topoheight());
                 // if its not at exact topoheight, then we set it as "previous topoheight"
