@@ -1515,7 +1515,6 @@ impl<S: Storage> Blockchain<S> {
                 };
 
                 let block_reward = self.get_block_reward(storage, &hash, past_supply).await?;
-                info!("Block reward is {} for {}", block_reward, highest_topo);
 
                 trace!("set block reward to {} at {}", block_reward, highest_topo);
                 storage.set_block_reward_at_topo_height(highest_topo, block_reward)?;
