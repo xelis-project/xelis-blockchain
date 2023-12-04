@@ -100,6 +100,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
     command_manager.add_command(Command::new("status", "Current daemon status", CommandHandler::Async(async_handler!(status))));
     command_manager.add_command(Command::with_optional_arguments("blacklist", "View blacklist or add a peer address in it", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(blacklist))));
     command_manager.add_command(Command::with_optional_arguments("whitelist", "View whitelist or add a peer address in it", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(whitelist))));
+    command_manager.add_command(Command::new("verify_chain", "Check chain supply/balances", CommandHandler::Async(async_handler!(verify_chain))));
 
     // Register the prompt in CommandManager in case we need it
     command_manager.set_prompt(Some(prompt.clone()));
@@ -201,6 +202,55 @@ fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrat
         network_str,
         prompt::colorize_str(Color::BrightBlack, ">>")
     )
+}
+
+async fn verify_chain<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let blockchain = manager.get_data()?;
+    let storage = blockchain.get_storage().read().await;
+    let mut expected_supply = 0;
+    for topo in 0..=blockchain.get_topo_height() {
+        let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
+        let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply).await.context("Error while calculating block reward")?;
+        // Verify the saved block reward
+        if block_reward != storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward")? {
+            manager.error(format!("Block reward saved is incorrect for {} at topoheight {}", hash_at_topo, topo));
+            return Ok(())
+        }
+
+        expected_supply += block_reward;
+        let supply = storage.get_supply_at_topo_height(topo).await.context("Error while retrieving supply at topoheight")?;
+
+        // Verify the supply at block
+        if supply != expected_supply {
+            manager.error(format!("Error for block {} at topoheight {}, expected {} found {}", hash_at_topo, topo, expected_supply, supply));
+            return Ok(())
+        }
+    }
+    manager.message("Supply is valid");
+
+    // Now let's check balances
+    let topoheight = blockchain.get_topo_height();
+    let chunk_size = 1024;
+    let mut skip = 0;
+    let mut total_balances = 0;
+    loop {
+        let keys = storage.get_partial_keys(chunk_size, skip, 0, topoheight).await.context("Error on get_partial_keys")?;
+        if keys.len() == 0 {
+            break;
+        }
+
+        for key in keys {
+            let (_, balance) = storage.get_last_balance(&key, &XELIS_ASSET).await.context("Error while retrieving balance")?;
+            total_balances += balance.get_balance();
+        }
+        skip += chunk_size;
+    }
+
+    if total_balances != expected_supply {
+        manager.error(format!("Total balances is not equal to expected supply! Balances: {}, Supply: {}", total_balances, expected_supply));
+    }
+
+    Ok(())
 }
 
 async fn list_peers<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {

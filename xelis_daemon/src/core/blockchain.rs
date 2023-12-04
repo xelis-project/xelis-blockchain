@@ -1514,13 +1514,8 @@ impl<S: Storage> Blockchain<S> {
                     storage.get_supply_at_topo_height(highest_topo - 1).await?
                 };
 
-                let block_reward = if self.is_side_block(storage, &hash).await? {
-                    trace!("Block {} at topoheight {} is a side block", hash, highest_topo);
-                    let reward = get_block_reward(past_supply);
-                    reward * SIDE_BLOCK_REWARD_PERCENT / 100
-                } else {
-                    get_block_reward(past_supply)
-                };
+                let block_reward = self.get_block_reward(storage, &hash, past_supply).await?;
+                info!("Block reward is {} for {}", block_reward, highest_topo);
 
                 trace!("set block reward to {} at {}", block_reward, highest_topo);
                 storage.set_block_reward_at_topo_height(highest_topo, block_reward)?;
@@ -1614,7 +1609,6 @@ impl<S: Storage> Blockchain<S> {
                     events.entry(NotifyEvent::BlockOrdered).or_insert_with(Vec::new).push(value);
                 }
             }
-
         }
 
         let best_height = storage.get_height_for_block_hash(best_tip).await?;
@@ -1767,6 +1761,19 @@ impl<S: Storage> Blockchain<S> {
         }
 
         Ok(())
+    }
+
+    // Get block reward based on the type of the block
+    // Block shouldn't be orphaned
+    pub async fn get_block_reward(&self, storage: &S, hash: &Hash, past_supply: u64) -> Result<u64, BlockchainError> {
+        let block_reward = if self.is_side_block(storage, &hash).await? {
+            trace!("Block {} is a side block", hash);
+            let reward = get_block_reward(past_supply);
+            reward * SIDE_BLOCK_REWARD_PERCENT / 100
+        } else {
+            get_block_reward(past_supply)
+        };
+        Ok(block_reward)
     }
 
     // retrieve all txs hashes until height or until genesis block
