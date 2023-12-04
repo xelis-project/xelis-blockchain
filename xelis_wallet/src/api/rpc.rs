@@ -2,7 +2,7 @@ use std::{sync::Arc, borrow::Cow};
 
 use anyhow::Context as AnyContext;
 use log::info;
-use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params, Context, websocket::WebSocketSessionShared}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams, SetCustomDataParams, GetCustomTreeKeysParams, GetAssetPrecisionParams}, DataHash, DataElement, DataValue}, crypto::hash::Hashable};
+use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params, Context, websocket::WebSocketSessionShared}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams, SetCustomDataParams, GetCustomTreeKeysParams, GetAssetPrecisionParams}, DataHash, DataElement, DataValue}, crypto::hash::Hashable, serializer::Serializer};
 use serde_json::{Value, json};
 use crate::{wallet::{Wallet, WalletError}, entry::TransactionEntry};
 
@@ -158,6 +158,11 @@ async fn build_transaction(context: Context, body: Value) -> Result<Value, Inter
 
     // returns the created TX and its hash
     Ok(json!(TransactionResponse {
+        tx_as_hex: if params.tx_as_hex {
+            Some(hex::encode(tx.to_bytes()))
+        } else {
+            None
+        },
         inner: DataHash {
             hash: Cow::Owned(tx.hash()),
             data: Cow::Owned(tx)

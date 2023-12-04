@@ -16,13 +16,21 @@ pub enum FeeBuilder {
 #[derive(Serialize, Deserialize)]
 pub struct BuildTransactionParams {
     #[serde(flatten)]
-    pub tx_type: TransactionType,    
+    pub tx_type: TransactionType,
     pub fee: Option<FeeBuilder>,
-    pub broadcast: bool
+    // Cannot be broadcasted if set to false
+    pub broadcast: bool,
+    // Returns the TX in HEX format also
+    #[serde(default = "default_false_value")]
+    pub tx_as_hex: bool
 }
 
 // :(
-fn default_filter_value() -> bool {
+fn default_true_value() -> bool {
+    true
+}
+
+fn default_false_value() -> bool {
     true
 }
 
@@ -32,13 +40,13 @@ pub struct ListTransactionsParams {
     pub max_topoheight: Option<u64>,
     /// Receiver address for outgoing txs, and owner/sender for incoming
     pub address: Option<Address>,
-    #[serde(default = "default_filter_value")]
+    #[serde(default = "default_true_value")]
     pub accept_incoming: bool,
-    #[serde(default = "default_filter_value")]
+    #[serde(default = "default_true_value")]
     pub accept_outgoing: bool,
-    #[serde(default = "default_filter_value")]
+    #[serde(default = "default_true_value")]
     pub accept_coinbase: bool,
-    #[serde(default = "default_filter_value")]
+    #[serde(default = "default_true_value")]
     pub accept_burn: bool,
     // Filter by extra data
     pub query: Option<QuerySearcher>
@@ -56,6 +64,8 @@ pub enum QuerySearcher {
 pub struct TransactionResponse<'a> {
     #[serde(flatten)]
     pub inner: DataHash<'a, Transaction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_as_hex: Option<String>
 }
 
 #[derive(Serialize, Deserialize)]
