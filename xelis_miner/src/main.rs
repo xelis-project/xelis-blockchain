@@ -364,7 +364,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
     Ok(())
 }
 
-async fn run_prompt(prompt: ShareablePrompt<()>) -> Result<()> {
+async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
     let command_manager: CommandManager<()> = CommandManager::default();
     let closure = |_| async {
         let height_str = format!(
@@ -411,8 +411,6 @@ async fn run_prompt(prompt: ShareablePrompt<()>) -> Result<()> {
         )
     };
 
-    prompt.set_command_manager(Some(command_manager))?;
-
-    prompt.start(Duration::from_millis(100), &closure).await?;
+    prompt.start(Duration::from_millis(100), &closure, Some(command_manager)).await?;
     Ok(())
 }

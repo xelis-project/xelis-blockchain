@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blockchain: Arc<Blockchain<S>>, network: Network) -> Result<(), PromptError> {
+async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockchain<S>>, network: Network) -> Result<(), PromptError> {
     let mut command_manager: CommandManager<Arc<Blockchain<S>>> = CommandManager::default();
     // Set the data to use
     command_manager.set_data(Some(blockchain.clone()));
@@ -104,9 +104,6 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
     // Register the prompt in CommandManager in case we need it
     command_manager.set_prompt(Some(prompt.clone()));
 
-    // set the CommandManager to use
-    prompt.set_command_manager(Some(command_manager))?;
-
     // Don't keep the lock for ever
     let (p2p, getwork) = {
         let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().read().await.as_ref() {
@@ -120,7 +117,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
         (p2p, getwork)
     };
 
-    let closure = |_| async {
+    let closure = || async {
         let (peers, median) = match &p2p {
             Some(p2p) => (p2p.get_peer_count().await, p2p.get_median_topoheight_of_peers().await),
             None => (0, blockchain.get_topo_height())
@@ -151,7 +148,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
         )
     };
 
-    prompt.start(Duration::from_millis(100), &closure).await
+    prompt.start(Duration::from_millis(100), closure, Some(command_manager)).await
 }
 
 fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrate: f64, peers_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
@@ -260,6 +257,11 @@ async fn show_balance<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, 
     let key = address.to_public_key();
     let blockchain = manager.get_data()?;
     let storage = blockchain.get_storage().read().await;
+    if !storage.has_balance_for(&key, &asset).await.context("Error while checking if address has balance")? {
+        manager.message("No balance found for address");
+        return Ok(());
+    }
+
     let asset_data = storage.get_asset_data(&asset).context("Error while retrieving asset data")?;
     let (mut topo, mut version) = storage.get_last_balance(&key, &asset).await.context("Error while retrieving last balance")?;
     loop {

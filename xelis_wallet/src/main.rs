@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    if let Some(name) = config.name {
+    let command_manager = if let Some(name) = config.name {
         let dir = format!("{}{}", DIR_PATH, name);
 
         // read password from option or ask him
@@ -122,6 +122,7 @@ async fn main() -> Result<()> {
 
         apply_config(&wallet).await;
         setup_wallet_command_manager(wallet, prompt.clone()).await;
+        None
     } else {
         let mut command_manager = CommandManager::default();
         command_manager.add_command(Command::new("open", "Open a wallet", CommandHandler::Async(async_handler!(open_wallet))));
@@ -129,11 +130,11 @@ async fn main() -> Result<()> {
         command_manager.add_command(Command::new("recover", "Recover a wallet using a seed", CommandHandler::Async(async_handler!(recover_wallet))));
 
         command_manager.set_prompt(Some(prompt.clone()));
-        prompt.set_command_manager(Some(command_manager))?;
-        prompt.display_commands()?;
+        command_manager.display_commands();
+        Some(command_manager)
     };
 
-    if let Err(e) = prompt.start(Duration::from_millis(100), &prompt_message_builder).await {
+    if let Err(e) = prompt.start(Duration::from_millis(100), &prompt_message_builder, command_manager).await {
         error!("Error while running prompt: {}", e);
     }
 
@@ -184,7 +185,7 @@ async fn apply_config(wallet: &Arc<Wallet>) {
 }
 
 // Function to build the CommandManager when a wallet is open
-async fn setup_wallet_command_manager(wallet: Arc<Wallet>, prompt: ShareablePrompt<Arc<Wallet>>) {
+async fn setup_wallet_command_manager(wallet: Arc<Wallet>, prompt: ShareablePrompt) {
     let mut command_manager: CommandManager<Arc<Wallet>> = CommandManager::default();
 
     command_manager.add_command(Command::new("change_password", "Set a new password to open your wallet", CommandHandler::Async(async_handler!(change_password))));
@@ -219,20 +220,12 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, prompt: ShareableProm
     command_manager.set_data(Some(wallet));
     command_manager.set_prompt(Some(prompt.clone()));
 
-    if let Err(e) = prompt.set_command_manager(Some(command_manager)) {
-        error!("Error while setting new CommandManager: {}", e);
-        return;
-    }
-
-    if let Err(e) = prompt.display_commands() {
-        error!("Error while displaying commands: {}", e);
-    }
+    command_manager.display_commands();
 }
 
 // Function passed as param to prompt to build the prompt message shown
-async fn prompt_message_builder(prompt: &Prompt<Arc<Wallet>>) -> Result<String, PromptError> {
-    let command_manager = prompt.get_command_manager().lock()?;
-    if let Some(manager) = command_manager.as_ref() {
+async fn prompt_message_builder(command_manager: &Option<CommandManager<Arc<Wallet>>>) -> Result<String, PromptError> {
+    if let Some(manager) = command_manager {
         if let Some(wallet) = manager.get_optional_data() {
             let network = wallet.get_network();
 
