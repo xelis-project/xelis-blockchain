@@ -485,11 +485,7 @@ impl Wallet {
                 if topoheight == 0 {
                     storage.delete_transactions()?;
                 } else {
-                    for tx in storage.get_transactions()? {
-                        if tx.get_topoheight() > topoheight {
-                            storage.delete_transaction(tx.get_hash())?;
-                        }
-                    }
+                    storage.delete_transactions_above_topoheight(topoheight)?;
                 }
             }
             network_handler.start().await.context("Error while restarting network handler")?;

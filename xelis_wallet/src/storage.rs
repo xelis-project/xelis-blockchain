@@ -231,6 +231,20 @@ impl EncryptedStorage {
         self.get_filtered_transactions(None, None, None, true, true, true, true, None)
     }
 
+    // delete all transactions above the specified topoheight
+    // This will go through each transaction, deserialize it, check topoheight, and delete it if required
+    pub fn delete_transactions_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
+        for el in self.transactions.iter().values() {
+            let value = el?;
+            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
+            if entry.get_topoheight() > topoheight {
+                self.delete_transaction(&entry.get_hash())?;
+            }
+        }
+
+        Ok(())
+    }
+
     // Filter when the data is deserialized to not load all transactions in memory
     pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, key_value: Option<&QuerySearcher>) -> Result<Vec<TransactionEntry>> {
         let mut transactions = Vec::new();
