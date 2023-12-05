@@ -133,7 +133,7 @@ impl<T> Command<T> {
 pub struct CommandManager<T> {
     commands: Vec<Command<T>>,
     data: Option<T>,
-    prompt: Option<ShareablePrompt<T>>,
+    prompt: Option<ShareablePrompt>,
     running_since: Instant
 }
 
@@ -167,11 +167,11 @@ impl<T> CommandManager<T> {
         &self.data
     }
 
-    pub fn set_prompt(&mut self, prompt: Option<ShareablePrompt<T>>) {
+    pub fn set_prompt(&mut self, prompt: Option<ShareablePrompt>) {
         self.prompt = prompt;
     }
 
-    pub fn get_prompt<'a>(&'a self) -> Result<&'a ShareablePrompt<T>, CommandError> {
+    pub fn get_prompt<'a>(&'a self) -> Result<&'a ShareablePrompt, CommandError> {
         self.prompt.as_ref().ok_or(CommandError::NoPrompt)
     }
 
@@ -211,6 +211,12 @@ impl<T> CommandManager<T> {
         }
 
         command.execute(self, ArgumentManager::new(arguments)).await
+    }
+
+    pub fn display_commands(&self) {
+        for cmd in self.get_commands() {
+            self.message(format!("- {}: {}", cmd.get_name(), cmd.get_description()));
+        }
     }
 
     pub fn message<D: Display>(&self, message: D) {

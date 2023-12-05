@@ -128,7 +128,7 @@ pub struct Wallet {
     // Prompt for CLI
     // Only used for requesting permissions through it
     #[cfg(feature = "api_server")]
-    prompt: RwLock<Option<ShareablePrompt<Arc<Wallet>>>>
+    prompt: RwLock<Option<ShareablePrompt>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -249,7 +249,7 @@ impl Wallet {
     }
 
     #[cfg(feature = "api_server")]
-    pub async fn set_prompt(&self, prompt: ShareablePrompt<Arc<Wallet>>) {
+    pub async fn set_prompt(&self, prompt: ShareablePrompt) {
         {
             let mut lock = self.prompt.write().await;
             *lock = Some(prompt);

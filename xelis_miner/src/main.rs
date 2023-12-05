@@ -14,7 +14,7 @@ use xelis_common::{
     config::VERSION,
     utils::{get_current_timestamp, format_hashrate, format_difficulty},
     crypto::{hash::{Hashable, Hash, hash}, address::Address},
-    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel, ShareablePrompt, self},
+    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel, ShareablePrompt, self}, async_handler,
 };
 use clap::Parser;
 use log::{error, info, debug, warn};
@@ -364,9 +364,9 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
     Ok(())
 }
 
-async fn run_prompt(prompt: ShareablePrompt<()>) -> Result<()> {
+async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
     let command_manager: CommandManager<()> = CommandManager::default();
-    let closure = |_| async {
+    let closure = |_: &_, _: &_| async {
         let height_str = format!(
             "{}: {}",
             prompt::colorize_str(Color::Yellow, "Height"),
@@ -411,8 +411,6 @@ async fn run_prompt(prompt: ShareablePrompt<()>) -> Result<()> {
         )
     };
 
-    prompt.set_command_manager(Some(command_manager))?;
-
-    prompt.start(Duration::from_millis(100), &closure).await?;
+    prompt.start(Duration::from_millis(100), Box::new(async_handler!(closure)), &Some(command_manager)).await?;
     Ok(())
 }

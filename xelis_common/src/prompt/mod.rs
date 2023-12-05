@@ -4,13 +4,14 @@ pub mod argument;
 use crate::crypto::hash::Hash;
 use crate::serializer::{Serializer, ReaderError};
 
-use self::command::{CommandManager, CommandError};
+use self::command::{CommandError, CommandManager};
 use std::collections::VecDeque;
 use std::fmt::{Display, Formatter, self};
 use std::fs::create_dir;
 use std::io::{Write, stdout, Error as IOError};
 use std::num::ParseFloatError;
 use std::path::Path;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize, AtomicU16};
 use anyhow::Error;
@@ -26,8 +27,8 @@ use tokio::sync::{
 use std::sync::{PoisonError, Arc, Mutex};
 use log::{info, error, Level, debug, LevelFilter, warn};
 use tokio::time::{interval, timeout};
-use std::future::Future;
 use std::time::Duration;
+use std::future::Future;
 use thiserror::Error;
 
 // used for launch param
@@ -342,26 +343,27 @@ impl State {
     }
 }
 
-pub struct Prompt<T> {
+pub struct Prompt {
     state: Arc<State>,
     exit_channel: Mutex<Option<oneshot::Sender<()>>>,
     input_receiver: Mutex<Option<UnboundedReceiver<String>>>,
-    command_manager: Mutex<Option<CommandManager<T>>>,
     // This following channel is used to cancel the read_input method
     read_input_sender: Sender<()>,
     read_input_receiver: AsyncMutex<Receiver<()>>
 }
 
-pub type ShareablePrompt<T> = Arc<Prompt<T>>;
+pub type ShareablePrompt = Arc<Prompt>;
 
-impl<T> Prompt<T> {
-    pub fn new(level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<ShareablePrompt<T>, PromptError> {
+type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, &'a T2) -> LocalBoxFuture<'a, R> + 'a>;
+
+impl Prompt {
+    pub fn new(level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<ShareablePrompt, PromptError> {
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
         let zelf = Self {
             state: Arc::new(State::new()),
             exit_channel: Mutex::new(None),
             input_receiver: Mutex::new(None),
-            command_manager: Mutex::new(None),
             read_input_receiver: AsyncMutex::new(read_input_receiver),
             read_input_sender,
         };
@@ -386,37 +388,9 @@ impl<T> Prompt<T> {
         Ok(Arc::new(zelf))
     }
 
-    // Set a new commander manager
-    pub fn set_command_manager(&self, command_manager: Option<CommandManager<T>>) -> Result<(), PromptError> {
-        let mut lock = self.command_manager.lock()?;
-        *lock = command_manager;
-
-        Ok(())
-    }
-
-    // get a mutable (if necessary) reference of CommandManager
-    pub fn get_command_manager(&self) -> &Mutex<Option<CommandManager<T>>> {
-        &self.command_manager
-    }
-
-    // Display all available commands if CommandManager is available
-    pub fn display_commands(&self) -> Result<(), PromptError> {
-        let command_manager = self.command_manager.lock()?;
-        if let Some(manager) = command_manager.as_ref() {
-            for cmd in manager.get_commands() {
-                manager.message(format!("- {}: {}", cmd.get_name(), cmd.get_description()));
-            }
-
-            Ok(())
-        } else {
-            Err(PromptError::NoCommandManager)
-        }
-    }
-
     // Start the thread to read stdin and handle events
     // Execute commands if a commande manager is present
-    pub async fn start<'a, Fut>(&'a self, update_every: Duration, fn_message: &'a dyn Fn(&'a Self) -> Fut) -> Result<(), PromptError>
-        where Fut: Future<Output = Result<String, PromptError>> + 'a
+    pub async fn start<'a, T>(&'a self, update_every: Duration, fn_message: AsyncF<'a, Self, Option<CommandManager<T>>, Result<String, PromptError>>, command_manager: &'a Option<CommandManager<T>>) -> Result<(), PromptError>
     {
         // setup the exit channel
         let mut exit_receiver = {
@@ -452,7 +426,7 @@ impl<T> Prompt<T> {
                 res = input_receiver.recv() => {
                     match res {
                         Some(input) => {
-                            if let Some(command_manager) = self.command_manager.lock()?.as_ref() {
+                            if let Some(command_manager) = command_manager.as_ref() {
                                 match command_manager.handle_command(input).await {
                                     Err(CommandError::Exit) => break,
                                     Err(e) => {
@@ -478,7 +452,7 @@ impl<T> Prompt<T> {
                             continue;
                         }
                     }
-                    match timeout(Duration::from_secs(5), (fn_message)(self)).await {
+                    match timeout(Duration::from_secs(5), (*fn_message)(&self, command_manager)).await {
                         Ok(res) => {
                             let prompt = res?;
                             self.update_prompt(prompt)?;
@@ -724,7 +698,7 @@ impl<T> Prompt<T> {
     }
 }
 
-impl<T> Drop for Prompt<T> {
+impl Drop for Prompt {
     fn drop(&mut self) {
         if let Ok(true) = terminal::is_raw_mode_enabled() {
             if let Err(e) = terminal::disable_raw_mode() {
