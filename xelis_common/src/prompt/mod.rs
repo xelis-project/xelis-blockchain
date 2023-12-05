@@ -106,7 +106,9 @@ pub enum PromptError {
     #[error(transparent)]
     ParseFloatError(#[from] ParseFloatError),
     #[error(transparent)]
-    ReaderError(#[from] ReaderError)
+    ReaderError(#[from] ReaderError),
+    #[error(transparent)]
+    CommandError(#[from] CommandError)
 }
 
 impl<T> From<PoisonError<T>> for PromptError {

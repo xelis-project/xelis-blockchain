@@ -1,6 +1,6 @@
-use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display, time::{Instant, Duration}};
+use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display, time::{Instant, Duration}, sync::{Mutex, PoisonError}, rc::Rc};
 
-use crate::config::VERSION;
+use crate::{config::VERSION, async_handler};
 
 use super::{argument::*, ShareablePrompt};
 use anyhow::Error;
@@ -28,7 +28,15 @@ pub enum CommandError {
     #[error("No prompt was set in command manager")]
     NoPrompt,
     #[error(transparent)]
-    Any(#[from] Error)
+    Any(#[from] Error),
+    #[error("Poison Error: {}", _0)]
+    PoisonError(String)
+}
+
+impl<T> From<PoisonError<T>> for CommandError {
+    fn from(err: PoisonError<T>) -> Self {
+        Self::PoisonError(format!("{}", err))
+    }
 }
 
 pub type SyncCommandCallback<T> = fn(&CommandManager<T>, ArgumentManager) -> Result<(), CommandError>;
@@ -130,67 +138,62 @@ impl<T> Command<T> {
     }
 }
 
+// We use Mutex from std instead of tokio so we can use it in sync code too
 pub struct CommandManager<T> {
-    commands: Vec<Command<T>>,
-    data: Option<T>,
-    prompt: Option<ShareablePrompt>,
+    commands: Mutex<Vec<Rc<Command<T>>>>,
+    data: Mutex<Option<T>>,
+    prompt: ShareablePrompt,
     running_since: Instant
 }
 
 impl<T> CommandManager<T> {
-    pub fn new(data: Option<T>) -> Self {
+    pub fn new(data: Option<T>, prompt: ShareablePrompt) -> Self {
         Self {
-            commands: Vec::new(),
-            data,
-            prompt: None,
+            commands: Mutex::new(Vec::new()),
+            data: Mutex::new(data),
+            prompt,
             running_since: Instant::now()
         }
     }
 
-    pub fn default() -> Self {
-        let mut zelf = CommandManager::new(None);
-        zelf.add_command(Command::with_optional_arguments("help", "Show this help", vec![Arg::new("command", ArgType::String)], CommandHandler::Sync(help)));
-        zelf.add_command(Command::new("version", "Show the current version", CommandHandler::Sync(version)));
-        zelf.add_command(Command::new("exit", "Shutdown the daemon", CommandHandler::Sync(exit)));
-        zelf
+    pub fn default(prompt: ShareablePrompt) -> Result<Self, CommandError> {
+        let zelf = CommandManager::new(None, prompt);
+        zelf.add_command(Command::with_optional_arguments("help", "Show this help", vec![Arg::new("command", ArgType::String)], CommandHandler::Async(async_handler!(help))))?;
+        zelf.add_command(Command::new("version", "Show the current version", CommandHandler::Sync(version)))?;
+        zelf.add_command(Command::new("exit", "Shutdown the daemon", CommandHandler::Sync(exit)))?;
+        Ok(zelf)
     }
 
-    pub fn set_data(&mut self, data: Option<T>) {
-        self.data = data;
+    pub fn set_data(&self, data: Option<T>) -> Result<(), CommandError> {
+        *self.data.lock()? = data;
+        Ok(())
     }
 
-    pub fn get_data<'a>(&'a self) -> Result<&'a T, CommandError> {
-        self.data.as_ref().ok_or(CommandError::NoData)
-    }
-
-    pub fn get_optional_data(&self) -> &Option<T> {
+    pub fn get_data<'a>(&'a self) -> &Mutex<Option<T>> {
         &self.data
     }
 
-    pub fn set_prompt(&mut self, prompt: Option<ShareablePrompt>) {
-        self.prompt = prompt;
+    pub fn get_prompt<'a>(&'a self) -> &ShareablePrompt {
+        &self.prompt
     }
 
-    pub fn get_prompt<'a>(&'a self) -> Result<&'a ShareablePrompt, CommandError> {
-        self.prompt.as_ref().ok_or(CommandError::NoPrompt)
+    pub fn add_command(&self, command: Command<T>) -> Result<(), CommandError> {
+        let mut commands = self.commands.lock()?;
+        commands.push(Rc::new(command));
+        Ok(())
     }
 
-    pub fn add_command(&mut self, command: Command<T>) {
-        self.commands.push(command);
-    }
-
-    pub fn get_commands(&self) -> &Vec<Command<T>> {
+    pub fn get_commands(&self) -> &Mutex<Vec<Rc<Command<T>>>> {
         &self.commands
-    }
-
-    pub fn get_command(&self, name: &str) -> Option<&Command<T>> {
-        self.commands.iter().find(|command| *command.get_name() == *name)
     }
 
     pub async fn handle_command(&self, value: String) -> Result<(), CommandError> {
         let mut command_split = value.split_whitespace();
         let command_name = command_split.next().ok_or(CommandError::ExpectedCommandName)?;
-        let command = self.get_command(command_name).ok_or(CommandError::CommandNotFound)?;
+        let command = {
+            let commands = self.commands.lock()?;
+            commands.iter().find(|command| *command.get_name() == *command_name).cloned().ok_or(CommandError::CommandNotFound)?
+        };
         let mut arguments: HashMap<String, ArgValue> = HashMap::new();
         for arg in command.get_required_args() {
             let arg_value = command_split.next().ok_or_else(|| CommandError::ExpectedRequiredArg(arg.get_name().to_owned()))?;
@@ -213,10 +216,13 @@ impl<T> CommandManager<T> {
         command.execute(self, ArgumentManager::new(arguments)).await
     }
 
-    pub fn display_commands(&self) {
-        for cmd in self.get_commands() {
+    pub fn display_commands(&self) -> Result<(), CommandError> {
+        let commands = self.commands.lock()?;
+        self.message("Available commands:");
+        for cmd in commands.iter() {
             self.message(format!("- {}: {}", cmd.get_name(), cmd.get_description()));
         }
+        Ok(())
     }
 
     pub fn message<D: Display>(&self, message: D) {
@@ -236,16 +242,14 @@ impl<T> CommandManager<T> {
     }
 }
 
-fn help<T>(manager: &CommandManager<T>, mut args: ArgumentManager) -> Result<(), CommandError> {
+async fn help<T>(manager: &CommandManager<T>, mut args: ArgumentManager) -> Result<(), CommandError> {
     if args.has_argument("command") {
         let arg_value = args.get_value("command")?.to_string_value()?;
-        let cmd = manager.get_command(&arg_value).ok_or(CommandError::CommandNotFound)?;
+        let commands = manager.get_commands().lock()?;
+        let cmd = commands.iter().find(|command| *command.get_name() == *arg_value).ok_or(CommandError::CommandNotFound)?;
         manager.message(&format!("Usage: {}", cmd.get_usage()));
     } else {
-        manager.message("Available commands:");
-        for cmd in manager.get_commands() {
-            manager.message(format!("- {}: {}", cmd.get_name(), cmd.get_description()));
-        }
+        manager.display_commands()?;
         manager.message("See how to use a command using /help <command>");
     }
     Ok(())
