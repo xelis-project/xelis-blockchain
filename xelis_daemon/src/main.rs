@@ -117,7 +117,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         (p2p, getwork)
     };
 
-    let closure = || async {
+    let closure = |_: &_, _: &_| async {
         let (peers, median) = match &p2p {
             Some(p2p) => (p2p.get_peer_count().await, p2p.get_median_topoheight_of_peers().await),
             None => (0, blockchain.get_topo_height())
@@ -148,7 +148,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         )
     };
 
-    prompt.start(Duration::from_millis(100), closure, Some(command_manager)).await
+    prompt.start(Duration::from_millis(100), Box::new(async_handler!(closure)), &Some(command_manager)).await
 }
 
 fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrate: f64, peers_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {

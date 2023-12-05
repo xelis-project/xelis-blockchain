@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
         Some(command_manager)
     };
 
-    if let Err(e) = prompt.start(Duration::from_millis(100), &prompt_message_builder, command_manager).await {
+    if let Err(e) = prompt.start(Duration::from_millis(100), Box::new(async_handler!(prompt_message_builder)), &command_manager).await {
         error!("Error while running prompt: {}", e);
     }
 
@@ -224,7 +224,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, prompt: ShareableProm
 }
 
 // Function passed as param to prompt to build the prompt message shown
-async fn prompt_message_builder(command_manager: &Option<CommandManager<Arc<Wallet>>>) -> Result<String, PromptError> {
+async fn prompt_message_builder(_: &Prompt, command_manager: &Option<CommandManager<Arc<Wallet>>>) -> Result<String, PromptError> {
     if let Some(manager) = command_manager {
         if let Some(wallet) = manager.get_optional_data() {
             let network = wallet.get_network();

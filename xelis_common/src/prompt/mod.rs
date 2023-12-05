@@ -11,6 +11,7 @@ use std::fs::create_dir;
 use std::io::{Write, stdout, Error as IOError};
 use std::num::ParseFloatError;
 use std::path::Path;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize, AtomicU16};
 use anyhow::Error;
@@ -353,6 +354,9 @@ pub struct Prompt {
 
 pub type ShareablePrompt = Arc<Prompt>;
 
+type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, &'a T2) -> LocalBoxFuture<'a, R> + 'a>;
+
 impl Prompt {
     pub fn new(level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<ShareablePrompt, PromptError> {
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
@@ -386,8 +390,7 @@ impl Prompt {
 
     // Start the thread to read stdin and handle events
     // Execute commands if a commande manager is present
-    pub async fn start<'a, T, Fut>(&'a self, update_every: Duration, fn_message: &'a dyn Fn(&Option<CommandManager<T>>) -> Fut, command_manager: Option<CommandManager<T>>,) -> Result<(), PromptError>
-        where Fut: Future<Output = Result<String, PromptError>> + 'a
+    pub async fn start<'a, T>(&'a self, update_every: Duration, fn_message: AsyncF<'a, Self, Option<CommandManager<T>>, Result<String, PromptError>>, command_manager: &'a Option<CommandManager<T>>) -> Result<(), PromptError>
     {
         // setup the exit channel
         let mut exit_receiver = {
@@ -449,7 +452,7 @@ impl Prompt {
                             continue;
                         }
                     }
-                    match timeout(Duration::from_secs(5), (fn_message)(&command_manager)).await {
+                    match timeout(Duration::from_secs(5), (*fn_message)(&self, command_manager)).await {
                         Ok(res) => {
                             let prompt = res?;
                             self.update_prompt(prompt)?;
