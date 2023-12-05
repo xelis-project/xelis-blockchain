@@ -586,7 +586,7 @@ impl<S: Storage> P2pServer<S> {
                         // if we haven't send him this peer addr and that he don't have him already, insert it
                         let addr = p.get_outgoing_address();
                         let send = if let Some(direction) = peer_peers.get_mut(addr) {
-                            direction.update(Direction::Out)
+                            direction.update_allow_in(Direction::Out)
                         } else {
                             true
                         };
