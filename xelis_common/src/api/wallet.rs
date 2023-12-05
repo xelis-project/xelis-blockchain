@@ -95,6 +95,11 @@ pub struct SplitAddressResult {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct RescanParams {
+    pub until_topoheight: Option<u64>
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetBalanceParams {
     pub asset: Option<Hash>
 }

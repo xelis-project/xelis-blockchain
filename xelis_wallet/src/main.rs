@@ -208,7 +208,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         command_manager.add_command(Command::new("start_xswd", "Start the XSWD Server",  CommandHandler::Async(async_handler!(start_xswd))))?;
 
         // Stop API Server (RPC or XSWD)
-        command_manager.add_command(Command::new("stop_api_server", "Stop the API Server", CommandHandler::Async(async_handler!(stop_api_server))))?;
+        command_manager.add_command(Command::new("stop_api_server", "Stop the API (XSWD/RPC) Server", CommandHandler::Async(async_handler!(stop_api_server))))?;
 
         // Save prompt in wallet
         wallet.set_prompt(prompt.clone()).await;

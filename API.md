@@ -1625,6 +1625,38 @@ TODO
 }
 ```
 
+#### Rescan
+Request the wallet to rescan balances and transactions history until the specified topoheight.
+When no topoheight is set, it rescan until 0.
+
+**WARNING**: All balances and transactions will be deleted from wallet storage to be up-to-date with the chain of the node connected to.
+
+##### Method `rescan`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "rescan",
+	"id": 1,
+	"params": {
+		"topoheight": 1337
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
 #### Get Balance
 Get asset balance from wallet.
 When no parameter is set, default asset is XELIS.

@@ -2,7 +2,7 @@ use std::{sync::Arc, borrow::Cow};
 
 use anyhow::Context as AnyContext;
 use log::info;
-use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params, Context, websocket::WebSocketSessionShared}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams, SetCustomDataParams, GetCustomTreeKeysParams, GetAssetPrecisionParams}, DataHash, DataElement, DataValue}, crypto::hash::Hashable, serializer::Serializer};
+use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params, Context, websocket::WebSocketSessionShared}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams, SetCustomDataParams, GetCustomTreeKeysParams, GetAssetPrecisionParams, RescanParams}, DataHash, DataElement, DataValue}, crypto::hash::Hashable, serializer::Serializer};
 use serde_json::{Value, json};
 use crate::{wallet::{Wallet, WalletError}, entry::TransactionEntry};
 
@@ -16,6 +16,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_topoheight", async_handler!(get_topoheight));
     handler.register_method("get_address", async_handler!(get_address));
     handler.register_method("split_address", async_handler!(split_address));
+    handler.register_method("rescan", async_handler!(rescan));
     handler.register_method("get_balance", async_handler!(get_balance));
     handler.register_method("get_tracked_assets", async_handler!(get_tracked_assets));
     handler.register_method("get_asset_precision", async_handler!(get_asset_precision));
@@ -93,6 +94,13 @@ async fn split_address(_: Context, body: Value) -> Result<Value, InternalRpcErro
         address,
         integrated_data
     }))
+}
+
+async fn rescan(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: RescanParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    wallet.rescan(params.until_topoheight.unwrap_or(0)).await.context("Error while rescanning wallet")?;
+    Ok(json!(true))
 }
 
 async fn get_balance(context: Context, body: Value) -> Result<Value, InternalRpcError> {
