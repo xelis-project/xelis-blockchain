@@ -203,7 +203,12 @@ async fn is_online(context: Context, body: Value) -> Result<Value, InternalRpcEr
     Ok(json!(is_connected))
 }
 
-async fn get_tree_name_xswd(context: &Context, tree: &String) -> Result<String, InternalRpcError> {
+async fn get_tree_name(context: &Context, tree: String) -> Result<String, InternalRpcError> {
+    // If the API is not used through XSWD, we don't need to prefix the tree name with the app id
+    if context.has::<&WebSocketSessionShared<XSWDWebSocketHandler<Arc<Wallet>>>>() {
+        return Ok(tree)
+    }
+
     // Retrieve the app data to get its id and to have section of trees between differents dApps
     let session: &WebSocketSessionShared<XSWDWebSocketHandler<Arc<Wallet>>> = context.get()?;
     let xswd = session.get_server().get_handler();
@@ -216,7 +221,7 @@ async fn get_tree_name_xswd(context: &Context, tree: &String) -> Result<String, 
 async fn get_custom_tree_keys_from_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetCustomTreeKeysParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    let tree = get_tree_name_xswd(&context, &params.tree).await?;
+    let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;
     let keys: Vec<DataValue> = storage.get_custom_tree_keys(&tree)?;
 
@@ -226,7 +231,7 @@ async fn get_custom_tree_keys_from_db(context: Context, body: Value) -> Result<V
 async fn get_custom_data_from_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetCustomDataParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    let tree = get_tree_name_xswd(&context, &params.tree).await?;
+    let tree = get_tree_name(&context, params.tree).await?;
 
     let storage = wallet.get_storage().read().await;
     let value: DataElement = storage.get_custom_data(&tree, &params.key)?;
@@ -237,7 +242,7 @@ async fn get_custom_data_from_db(context: Context, body: Value) -> Result<Value,
 async fn set_custom_data_in_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SetCustomDataParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    let tree = get_tree_name_xswd(&context, &params.tree).await?;
+    let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;
     let value: DataElement = storage.get_custom_data(&tree, &params.key)?;
 

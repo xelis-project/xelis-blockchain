@@ -36,6 +36,10 @@ impl Context {
         self.values.insert(TypeId::of::<T>(), Box::new(data));
     }
 
+    pub fn has<T: 'static>(&self) -> bool {
+        self.values.contains_key(&TypeId::of::<T>())
+    }
+
     pub fn get<T: 'static>(&self) -> Result<&T, InternalRpcError> {
         self.values.get(&TypeId::of::<T>()).and_then(|b| b.downcast_ref()).ok_or_else(|| InternalRpcError::InvalidContext)
     }
