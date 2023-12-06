@@ -163,7 +163,7 @@ impl EncryptedStorage {
             if let Some(query) = query_key.as_ref() {
                 let decrypted = self.cipher.decrypt_value(&k)?;
                 let k = DataValue::from_bytes(&decrypted)?;
-                if !query.verify_query(&k) {
+                if !query.verify_value(&k) {
                     continue;
                 }
                 key = Some(k);
@@ -211,7 +211,7 @@ impl EncryptedStorage {
             let decrypted = self.cipher.decrypt_value(&key)?;
             let k = DataValue::from_bytes(&decrypted)?;
             if let Some(query) = query {
-                if !query.verify_query(&k) {
+                if !query.verify_value(&k) {
                     continue;
                 }
             }

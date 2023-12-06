@@ -9,7 +9,7 @@ pub mod wallet;
 pub mod daemon;
 
 // All types availables
-#[derive(Serialize, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
 pub enum DataType {
     Bool,
     String,
@@ -52,7 +52,7 @@ impl DataType {
 }
 
 // This enum allows complex structures with multi depth if necessary
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum DataElement {
     // Value can be Optional to represent null in JSON
@@ -163,7 +163,7 @@ impl Serializer for DataElement {
     }
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
 #[serde(untagged)]
 pub enum DataValue {
     // represent a null value
@@ -260,13 +260,9 @@ impl Serializer for DataValue {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub enum QueryValue {
-    // ==
-    Equal(DataValue),
-    // Regex pattern on DataValue only
-    #[serde(with = "serde_regex")]
-    Pattern(Regex),
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryNumber {
     // >
     Above(usize),
     // >=
@@ -277,11 +273,9 @@ pub enum QueryValue {
     BelowOrEqual(usize),
 }
 
-impl QueryValue {
+impl QueryNumber {
     pub fn verify(&self, v: &DataValue) -> bool {
         match self {
-            Self::Equal(expected) => *v == *expected,
-            Self::Pattern(pattern) => pattern.is_match(&v.to_string()),
             Self::Above(value) => match v {
                 DataValue::U128(v) => *v > *value as u128,
                 DataValue::U64(v) => *v > *value as u64,
@@ -318,18 +312,50 @@ impl QueryValue {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryValue {
+    // ==
+    Equal(DataValue),
+    // Following are transformed to string and compared
+    StartsWith(DataValue),
+    EndsWith(DataValue),
+    ContainsValue(DataValue),
+    // Regex pattern on DataValue only
+    #[serde(with = "serde_regex")]
+    Pattern(Regex),
+    #[serde(untagged)]
+    NumberOp(QueryNumber)
+}
+
+impl QueryValue {
+    pub fn verify(&self, v: &DataValue) -> bool {
+        match self {
+            Self::Equal(expected) => *v == *expected,
+            Self::StartsWith(value) => v.to_string().starts_with(&value.to_string()),
+            Self::EndsWith(value) => v.to_string().starts_with(&value.to_string()),
+            Self::ContainsValue(value) => v.to_string().contains(&value.to_string()),
+            Self::Pattern(pattern) => pattern.is_match(&v.to_string()),
+            Self::NumberOp(query) => query.verify(v)
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Query {
-    Element(QueryElement),
-    Value(QueryValue),
     // !
     Not(Box<Query>),
     // &&
-    And(Box<Query>, Box<Query>),
+    And(Vec<Box<Query>>),
     // ||
-    Or(Box<Query>, Box<Query>),
+    Or(Vec<Box<Query>>),
     // Check value type
     Type(DataType),
+    #[serde(untagged)]
+    Element(QueryElement),
+    #[serde(untagged)]
+    Value(QueryValue)
 }
 
 impl Query {
@@ -342,19 +368,47 @@ impl Query {
                 false
             },
             Self::Not(op) => !op.verify_element(element),
-            Self::Or(left, right) => left.verify_element(element) || right.verify_element(element),
-            Self::And(left, right) => left.verify_element(element) && right.verify_element(element),
+            Self::Or(operations) => {
+                for op in operations {
+                    if op.verify_element(element) {
+                        return true
+                    }
+                }
+                false
+            }
+            Self::And(operations) => {
+                for op in operations {
+                    if !op.verify_element(element) {
+                        return false
+                    }
+                }
+                true
+            },
             Self::Type(expected) => element.kind() == *expected,
         }
     }
 
-    pub fn verify_query(&self, value: &DataValue) -> bool {
+    pub fn verify_value(&self, value: &DataValue) -> bool {
         match self {
             Self::Element(_) => false,
             Self::Value(query) => query.verify(value),
-            Self::Not(op) => !op.verify_query(value),
-            Self::Or(left, right) => left.verify_query(value) || right.verify_query(value),
-            Self::And(left, right) => left.verify_query(value) && right.verify_query(value),
+            Self::Not(op) => !op.verify_value(value),
+            Self::Or(operations) => {
+                for op in operations {
+                    if op.verify_value(value) {
+                        return true
+                    }
+                }
+                false
+            }
+            Self::And(operations) => {
+                for op in operations {
+                    if !op.verify_value(value) {
+                        return false
+                    }
+                }
+                true
+            },
             Self::Type(expected) => value.kind() == *expected,
         }
     }
@@ -368,27 +422,39 @@ impl Query {
 }
 
 // This is used to do query in daemon (in future for Smart Contracts) and wallet
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")] 
 pub enum QueryElement {
     // Check if DataElement::Fields has key and optional check on value
     HasKey { key: DataValue, value: Option<Box<Query>> },
+    // check the array
+    ArrayLen(QueryNumber),
+    // Only array supported
+    ContainsElement(DataElement)
 }
 
 impl QueryElement {
     pub fn verify(&self, data: &DataElement) -> bool {
         match self {
-            Self::HasKey { key, value } => {
-                if let DataElement::Fields(fields) = data {
-                    fields.get(key).map(|v|
-                        if let Some(query) = value {
-                            query.verify_element(v)
-                        } else {
-                            false
-                        }
-                    ).unwrap_or(false)
-                } else {
-                    false
-                }
+            Self::HasKey { key, value } => if let DataElement::Fields(fields) = data {
+                fields.get(key).map(|v|
+                    if let Some(query) = value {
+                        query.verify_element(v)
+                    } else {
+                        false
+                    }
+                ).unwrap_or(false)
+            } else {
+                false
+            },
+            Self::ArrayLen(query) => if let DataElement::Array(array) = data {
+                query.verify(&DataValue::U64(array.len() as u64))
+            } else {
+                false
+            },
+            Self::ContainsElement(query) => match data {
+                DataElement::Array(array) => array.contains(query),
+                _ => false
             }
         }
     }
