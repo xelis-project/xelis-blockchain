@@ -183,6 +183,16 @@ impl<T> CommandManager<T> {
         Ok(())
     }
 
+    pub fn remove_command(&self, command_name: &str) -> Result<bool, CommandError> {
+        let mut commands = self.commands.lock()?;
+        if let Some(index) = commands.iter().position(|cmd| cmd.get_name() == command_name) {
+            commands.remove(index);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     pub fn get_commands(&self) -> &Mutex<Vec<Rc<Command<T>>>> {
         &self.commands
     }

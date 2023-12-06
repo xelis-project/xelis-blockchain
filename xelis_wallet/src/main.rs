@@ -184,6 +184,12 @@ async fn apply_config(wallet: &Arc<Wallet>) {
 
 // Function to build the CommandManager when a wallet is open
 async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &CommandManager<Arc<Wallet>>, prompt: &ShareablePrompt) -> Result<(), CommandError> {
+    // Delete commands for opening a wallet
+    command_manager.remove_command("open")?;
+    command_manager.remove_command("recover")?;
+    command_manager.remove_command("create")?;
+
+    // Add wallet commands
     command_manager.add_command(Command::new("change_password", "Set a new password to open your wallet", CommandHandler::Async(async_handler!(change_password))))?;
     command_manager.add_command(Command::with_optional_arguments("transfer", "Send asset to a specified address", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(transfer))))?;
     command_manager.add_command(Command::with_required_arguments("burn", "Burn amount of asset", vec![Arg::new("asset", ArgType::Hash), Arg::new("amount", ArgType::Number)], CommandHandler::Async(async_handler!(burn))))?;
