@@ -206,7 +206,7 @@ async fn is_online(context: Context, body: Value) -> Result<Value, InternalRpcEr
 async fn get_tree_name(context: &Context, tree: String) -> Result<String, InternalRpcError> {
     // If the API is not used through XSWD, we don't need to prefix the tree name with the app id
     if context.has::<&WebSocketSessionShared<XSWDWebSocketHandler<Arc<Wallet>>>>() {
-        return Ok(tree)
+        return Ok(format!("custom-{}", tree))
     }
 
     // Retrieve the app data to get its id and to have section of trees between differents dApps
@@ -215,7 +215,7 @@ async fn get_tree_name(context: &Context, tree: String) -> Result<String, Intern
     let applications = xswd.get_applications().read().await;
     let app = applications.get(session).ok_or_else(|| InternalRpcError::InvalidContext)?;
 
-    Ok(format!("{}-{}", app.get_id(), tree))
+    Ok(format!("custom-{}-{}", app.get_id(), tree))
 }
 
 async fn get_custom_tree_keys_from_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
