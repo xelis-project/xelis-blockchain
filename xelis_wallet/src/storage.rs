@@ -5,7 +5,7 @@ use xelis_common::{
     crypto::{hash::Hash, key::{KeyPair, PublicKey}},
     serializer::{Reader, Serializer},
     network::Network,
-    api::{QueryElement, DataValue, DataElement, QueryResult},
+    api::{DataValue, DataElement, QueryResult, Query},
 };
 use anyhow::{Context, Result, anyhow};
 use crate::{config::SALT_SIZE, cipher::Cipher, wallet::WalletError, entry::{TransactionEntry, EntryData}};
@@ -153,7 +153,7 @@ impl EncryptedStorage {
         self.load_from_disk_with_encrypted_key(&tree, &key.to_bytes())
     }
 
-    pub fn query_db(&self, tree: &String, query_key: Option<QueryElement>, query_value: Option<QueryElement>) -> Result<QueryResult> {
+    pub fn query_db(&self, tree: &String, query_key: Option<Query>, query_value: Option<Query>) -> Result<QueryResult> {
         let tree = self.get_custom_tree(tree)?;
         let mut entries: IndexMap<DataValue, DataElement> = IndexMap::new();
         for res in tree.iter() {
@@ -163,7 +163,7 @@ impl EncryptedStorage {
             if let Some(query) = query_key.as_ref() {
                 let decrypted = self.cipher.decrypt_value(&k)?;
                 let k = DataValue::from_bytes(&decrypted)?;
-                if !query.verify(&DataElement::Value(Some(k.clone()))) {
+                if !query.verify_query(&k) {
                     continue;
                 }
                 key = Some(k);
@@ -172,7 +172,7 @@ impl EncryptedStorage {
             if let Some(query) = query_value.as_ref() {
                 let decrypted = self.cipher.decrypt_value(&k)?;
                 let v = DataElement::from_bytes(&decrypted)?;
-                if !query.verify(&v) {
+                if !query.verify_element(&v) {
                     continue;
                 }
                 value = Some(v);
@@ -203,12 +203,18 @@ impl EncryptedStorage {
     }
 
     // Get all keys from the custom
-    pub fn get_custom_tree_keys(&self, tree: &String) -> Result<Vec<DataValue>> {
+    pub fn get_custom_tree_keys(&self, tree: &String, query: &Option<Query>) -> Result<Vec<DataValue>> {
         let tree = self.get_custom_tree(tree)?;
         let mut keys = Vec::new();
         for e in tree.iter() {
             let (key, _) = e?;
-            let k = DataValue::from_bytes(&key)?;
+            let decrypted = self.cipher.decrypt_value(&key)?;
+            let k = DataValue::from_bytes(&decrypted)?;
+            if let Some(query) = query {
+                if !query.verify_query(&k) {
+                    continue;
+                }
+            }
             keys.push(k);
         }
 
@@ -295,7 +301,7 @@ impl EncryptedStorage {
     }
 
     // Filter when the data is deserialized to not load all transactions in memory
-    pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, query: Option<&QueryElement>) -> Result<Vec<TransactionEntry>> {
+    pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, query: Option<&Query>) -> Result<Vec<TransactionEntry>> {
         let mut transactions = Vec::new();
         for el in self.transactions.iter().values() {
             let value = el?;
@@ -334,7 +340,7 @@ impl EncryptedStorage {
                     if let Some(transfers) = transfers.as_mut() {
                         transfers.retain(|transfer| {
                             if let Some(element) = transfer.get_extra_data() {
-                                query.verify(element)
+                                query.verify_element(element)
                             } else {
                                 false
                             }

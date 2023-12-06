@@ -260,13 +260,13 @@ impl Serializer for DataValue {
     }
 }
 
-// This is used to do query in daemon (in future for Smart Contracts) and wallet
 #[derive(Serialize, Deserialize)]
-pub enum QueryElement {
+pub enum QueryValue {
     // ==
     Equal(DataValue),
     // Regex pattern on DataValue only
-    Pattern(String),
+    #[serde(with = "serde_regex")]
+    Pattern(Regex),
     // >
     Above(usize),
     // >=
@@ -275,111 +275,113 @@ pub enum QueryElement {
     Below(usize),
     // <=
     BelowOrEqual(usize),
+}
+
+impl QueryValue {
+    pub fn verify(&self, v: &DataValue) -> bool {
+        match self {
+            Self::Equal(expected) => *v == *expected,
+            Self::Pattern(pattern) => pattern.is_match(&v.to_string()),
+            Self::Above(value) => match v {
+                DataValue::U128(v) => *v > *value as u128,
+                DataValue::U64(v) => *v > *value as u64,
+                DataValue::U32(v) => *v > *value as u32,
+                DataValue::U16(v) => *v > *value as u16,
+                DataValue::U8(v) => *v > *value as u8,
+                _ => false
+            },
+            Self::AboveOrEqual(value) => match v {
+                DataValue::U128(v) => *v >= *value as u128,
+                DataValue::U64(v) => *v >= *value as u64,
+                DataValue::U32(v) => *v >= *value as u32,
+                DataValue::U16(v) => *v >= *value as u16,
+                DataValue::U8(v) => *v >= *value as u8,
+                _ => false
+            },
+            Self::Below(value) => match v {
+                DataValue::U128(v) => *v < *value as u128,
+                DataValue::U64(v) => *v < *value as u64,
+                DataValue::U32(v) => *v < *value as u32,
+                DataValue::U16(v) => *v < *value as u16,
+                DataValue::U8(v) => *v < *value as u8,
+                _ => false
+            },
+            Self::BelowOrEqual(value) => match v {
+                DataValue::U128(v) => *v <= *value as u128,
+                DataValue::U64(v) => *v <= *value as u64,
+                DataValue::U32(v) => *v <= *value as u32,
+                DataValue::U16(v) => *v <= *value as u16,
+                DataValue::U8(v) => *v <= *value as u8,
+                _ => false
+            }
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum Query {
+    Element(QueryElement),
+    Value(QueryValue),
     // !
-    Not(Box<QueryElement>),
+    Not(Box<Query>),
     // &&
-    And(Box<QueryElement>, Box<QueryElement>),
+    And(Box<Query>, Box<Query>),
     // ||
-    Or(Box<QueryElement>, Box<QueryElement>),
+    Or(Box<Query>, Box<Query>),
     // Check value type
     Type(DataType),
+}
+
+impl Query {
+    pub fn verify_element(&self, element: &DataElement) -> bool {
+        match self {
+            Self::Element(query) => query.verify(element),
+            Self::Value(query) => if let DataElement::Value(Some(value)) = element {
+                query.verify(value)
+            } else {
+                false
+            },
+            Self::Not(op) => !op.verify_element(element),
+            Self::Or(left, right) => left.verify_element(element) || right.verify_element(element),
+            Self::And(left, right) => left.verify_element(element) && right.verify_element(element),
+            Self::Type(expected) => element.kind() == *expected,
+        }
+    }
+
+    pub fn verify_query(&self, value: &DataValue) -> bool {
+        match self {
+            Self::Element(_) => false,
+            Self::Value(query) => query.verify(value),
+            Self::Not(op) => !op.verify_query(value),
+            Self::Or(left, right) => left.verify_query(value) || right.verify_query(value),
+            Self::And(left, right) => left.verify_query(value) && right.verify_query(value),
+            Self::Type(expected) => value.kind() == *expected,
+        }
+    }
+
+    pub fn is_for_element(&self) -> bool {
+        match self {
+            Self::Element(_) => true,
+            _ => false
+        }
+    }
+}
+
+// This is used to do query in daemon (in future for Smart Contracts) and wallet
+#[derive(Serialize, Deserialize)]
+pub enum QueryElement {
     // Check if DataElement::Fields has key and optional check on value
-    HasKey { key: DataValue, value: Option<Box<QueryElement>> },
+    HasKey { key: DataValue, value: Option<Box<Query>> },
 }
 
 impl QueryElement {
     pub fn verify(&self, data: &DataElement) -> bool {
         match self {
-            Self::Equal(expected) => {
-                if let DataElement::Value(Some(value)) = data {
-                    *value == *expected
-                } else {
-                    false
-                }
-            },
-            Self::Pattern(pattern) => {
-                match data {
-                    DataElement::Value(Some(v)) => {
-                        // TODO Handle invalid regex error
-                        let regex = Regex::new(&pattern).unwrap();
-                        regex.is_match(&v.to_string())
-                    },
-                    _ => false
-                }
-            },
-            Self::Above(value) => {
-                if let DataElement::Value(Some(v)) = data {
-                    match v {
-                        DataValue::U128(v) => *v > *value as u128,
-                        DataValue::U64(v) => *v > *value as u64,
-                        DataValue::U32(v) => *v > *value as u32,
-                        DataValue::U16(v) => *v > *value as u16,
-                        DataValue::U8(v) => *v > *value as u8,
-                        _ => false
-                    }
-                } else {
-                    false
-                }
-            },
-            Self::AboveOrEqual(value) => {
-                if let DataElement::Value(Some(v)) = data {
-                    match v {
-                        DataValue::U128(v) => *v >= *value as u128,
-                        DataValue::U64(v) => *v >= *value as u64,
-                        DataValue::U32(v) => *v >= *value as u32,
-                        DataValue::U16(v) => *v >= *value as u16,
-                        DataValue::U8(v) => *v >= *value as u8,
-                        _ => false
-                    }
-                } else {
-                    false
-                }
-            },
-            Self::Below(value) => {
-                if let DataElement::Value(Some(v)) = data {
-                    match v {
-                        DataValue::U128(v) => *v < *value as u128,
-                        DataValue::U64(v) => *v < *value as u64,
-                        DataValue::U32(v) => *v < *value as u32,
-                        DataValue::U16(v) => *v < *value as u16,
-                        DataValue::U8(v) => *v < *value as u8,
-                        _ => false
-                    }
-                } else {
-                    false
-                }
-            },
-            Self::BelowOrEqual(value) => {
-                if let DataElement::Value(Some(v)) = data {
-                    match v {
-                        DataValue::U128(v) => *v <= *value as u128,
-                        DataValue::U64(v) => *v <= *value as u64,
-                        DataValue::U32(v) => *v <= *value as u32,
-                        DataValue::U16(v) => *v <= *value as u16,
-                        DataValue::U8(v) => *v <= *value as u8,
-                        _ => false
-                    }
-                } else {
-                    false
-                }
-            },
-            Self::Not(op) => {
-                !op.verify(data)
-            },
-            Self::Or(left, right) => {
-                left.verify(data) || right.verify(data)
-            },
-            Self::And(left, right) => {
-                left.verify(data) && right.verify(data)
-            },
-            Self::Type(expected) => {
-                data.kind() == *expected
-            },
             Self::HasKey { key, value } => {
                 if let DataElement::Fields(fields) = data {
                     fields.get(key).map(|v|
                         if let Some(query) = value {
-                            query.verify(v)
+                            query.verify_element(v)
                         } else {
                             false
                         }

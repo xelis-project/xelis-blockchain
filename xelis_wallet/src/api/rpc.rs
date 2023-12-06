@@ -226,7 +226,7 @@ async fn is_online(context: Context, body: Value) -> Result<Value, InternalRpcEr
 // In EncryptedStorage, custom trees are already prefixed
 async fn get_tree_name(context: &Context, tree: String) -> Result<String, InternalRpcError> {
     // If the API is not used through XSWD, we don't need to prefix the tree name with the app id
-    if context.has::<&WebSocketSessionShared<XSWDWebSocketHandler<Arc<Wallet>>>>() {
+    if !context.has::<&WebSocketSessionShared<XSWDWebSocketHandler<Arc<Wallet>>>>() {
         return Ok(tree)
     }
 
@@ -241,10 +241,16 @@ async fn get_tree_name(context: &Context, tree: String) -> Result<String, Intern
 
 async fn get_keys_from_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetCustomTreeKeysParams = parse_params(body)?;
+    if let Some(query) = &params.query {
+        if query.is_for_element() {
+            return Err(InternalRpcError::CustomStr("Invalid key query, should be a QueryValue"))
+        }
+    }
+
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;
-    let keys = storage.get_custom_tree_keys(&tree)?;
+    let keys = storage.get_custom_tree_keys(&tree, &params.query)?;
 
     Ok(json!(keys))
 }
@@ -265,13 +271,18 @@ async fn set_value_in_db(context: Context, body: Value) -> Result<Value, Interna
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;
-    let value = storage.get_custom_data(&tree, &params.key)?;
-
-    Ok(json!(value))
+    storage.set_custom_data(&tree, &params.key, &params.value)?;
+    Ok(json!(true))
 }
 
 async fn query_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: QueryDBParams = parse_params(body)?;
+    if let Some(query) = &params.key {
+        if query.is_for_element() {
+            return Err(InternalRpcError::CustomStr("Invalid key query, should be a QueryValue"))
+        }
+    }
+
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;

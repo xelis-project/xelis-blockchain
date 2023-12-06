@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{transaction::{TransactionType, Transaction}, crypto::{hash::Hash, address::Address}};
 
-use super::{DataHash, DataElement, DataValue, QueryElement};
+use super::{DataHash, DataElement, DataValue, Query};
 
 
 #[derive(Serialize, Deserialize)]
@@ -49,7 +49,7 @@ pub struct ListTransactionsParams {
     #[serde(default = "default_true_value")]
     pub accept_burn: bool,
     // Filter by extra data
-    pub query: Option<QueryElement>
+    pub query: Option<Query>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -115,7 +115,8 @@ pub struct GetCustomDataParams {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetCustomTreeKeysParams {
-    pub tree: String
+    pub tree: String,
+    pub query: Option<Query>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -128,8 +129,8 @@ pub struct SetCustomDataParams {
 #[derive(Serialize, Deserialize)]
 pub struct QueryDBParams {
     pub tree: String,
-    pub key: Option<QueryElement>,
-    pub value: Option<QueryElement>
+    pub key: Option<Query>,
+    pub value: Option<Query>
 }
 
 
