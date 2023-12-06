@@ -1,4 +1,6 @@
 use std::{collections::HashMap, borrow::Cow};
+use indexmap::IndexMap;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use crate::{serializer::{Serializer, Reader, ReaderError, Writer}, crypto::hash::Hash};
@@ -17,6 +19,36 @@ pub enum DataType {
     U64,
     U128,
     Hash,
+    Array,
+    Fields,
+    Undefined
+}
+
+impl DataType {
+    pub fn is_data(&self) -> bool {
+        match self {
+            Self::Bool |
+            Self::String |
+            Self::Hash |
+            Self::U128 |
+            Self::U64 |
+            Self::U32 |
+            Self::U16 |
+            Self::U8 => true,
+            _ => false
+        }
+    }
+
+    pub fn is_number(&self) -> bool {
+        match self {
+            Self::U128 |
+            Self::U64 |
+            Self::U32 |
+            Self::U16 |
+            Self::U8 => true,
+            _ => false
+        }
+    }
 }
 
 // This enum allows complex structures with multi depth if necessary
@@ -63,6 +95,17 @@ impl DataElement {
 
     pub fn get_value_by_string_key(&self, name: String, data_type: DataType) -> Option<&DataValue> {
         self.get_value_by_key(&DataValue::String(name), Some(data_type))
+    }
+
+    pub fn kind(&self) -> DataType {
+        match self {
+            Self::Array(_) => DataType::Array,
+            Self::Fields(_) => DataType::Fields,
+            Self::Value(value) => match value {
+                Some(v) => v.kind(),
+                None => DataType::Undefined
+            }
+        }
     }
 } 
 
@@ -149,6 +192,21 @@ impl DataValue {
     }
 }
 
+impl ToString for DataValue {
+    fn to_string(&self) -> String {
+        match self {
+            Self::Bool(v) => format!("{}", v),
+            Self::String(v) => format!("{}", v),
+            Self::U8(v) => format!("{}", v),
+            Self::U16(v) => format!("{}", v),
+            Self::U32(v) => format!("{}", v),
+            Self::U64(v) => format!("{}", v),
+            Self::U128(v) => format!("{}", v),
+            Self::Hash(v) => format!("{}", v)
+        }
+    }
+}
+
 impl Serializer for DataValue {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(match reader.read_u8()? {
@@ -200,6 +258,144 @@ impl Serializer for DataValue {
             }
         };
     }
+}
+
+// This is used to do query in daemon (in future for Smart Contracts) and wallet
+#[derive(Serialize, Deserialize)]
+pub enum QueryElement {
+    // ==
+    Equal(DataValue),
+    // Regex pattern on DataValue only
+    Pattern(String),
+    // >
+    Above(usize),
+    // >=
+    AboveOrEqual(usize),
+    // <
+    Below(usize),
+    // <=
+    BelowOrEqual(usize),
+    // !
+    Not(Box<QueryElement>),
+    // &&
+    And(Box<QueryElement>, Box<QueryElement>),
+    // ||
+    Or(Box<QueryElement>, Box<QueryElement>),
+    // Check value type
+    Type(DataType),
+    // Check if DataElement::Fields has key and optional check on value
+    HasKey { key: DataValue, value: Option<Box<QueryElement>> },
+}
+
+impl QueryElement {
+    pub fn verify(&self, data: &DataElement) -> bool {
+        match self {
+            Self::Equal(expected) => {
+                if let DataElement::Value(Some(value)) = data {
+                    *value == *expected
+                } else {
+                    false
+                }
+            },
+            Self::Pattern(pattern) => {
+                match data {
+                    DataElement::Value(Some(v)) => {
+                        // TODO Handle invalid regex error
+                        let regex = Regex::new(&pattern).unwrap();
+                        regex.is_match(&v.to_string())
+                    },
+                    _ => false
+                }
+            },
+            Self::Above(value) => {
+                if let DataElement::Value(Some(v)) = data {
+                    match v {
+                        DataValue::U128(v) => *v > *value as u128,
+                        DataValue::U64(v) => *v > *value as u64,
+                        DataValue::U32(v) => *v > *value as u32,
+                        DataValue::U16(v) => *v > *value as u16,
+                        DataValue::U8(v) => *v > *value as u8,
+                        _ => false
+                    }
+                } else {
+                    false
+                }
+            },
+            Self::AboveOrEqual(value) => {
+                if let DataElement::Value(Some(v)) = data {
+                    match v {
+                        DataValue::U128(v) => *v >= *value as u128,
+                        DataValue::U64(v) => *v >= *value as u64,
+                        DataValue::U32(v) => *v >= *value as u32,
+                        DataValue::U16(v) => *v >= *value as u16,
+                        DataValue::U8(v) => *v >= *value as u8,
+                        _ => false
+                    }
+                } else {
+                    false
+                }
+            },
+            Self::Below(value) => {
+                if let DataElement::Value(Some(v)) = data {
+                    match v {
+                        DataValue::U128(v) => *v < *value as u128,
+                        DataValue::U64(v) => *v < *value as u64,
+                        DataValue::U32(v) => *v < *value as u32,
+                        DataValue::U16(v) => *v < *value as u16,
+                        DataValue::U8(v) => *v < *value as u8,
+                        _ => false
+                    }
+                } else {
+                    false
+                }
+            },
+            Self::BelowOrEqual(value) => {
+                if let DataElement::Value(Some(v)) = data {
+                    match v {
+                        DataValue::U128(v) => *v <= *value as u128,
+                        DataValue::U64(v) => *v <= *value as u64,
+                        DataValue::U32(v) => *v <= *value as u32,
+                        DataValue::U16(v) => *v <= *value as u16,
+                        DataValue::U8(v) => *v <= *value as u8,
+                        _ => false
+                    }
+                } else {
+                    false
+                }
+            },
+            Self::Not(op) => {
+                !op.verify(data)
+            },
+            Self::Or(left, right) => {
+                left.verify(data) || right.verify(data)
+            },
+            Self::And(left, right) => {
+                left.verify(data) && right.verify(data)
+            },
+            Self::Type(expected) => {
+                data.kind() == *expected
+            },
+            Self::HasKey { key, value } => {
+                if let DataElement::Fields(fields) = data {
+                    fields.get(key).map(|v|
+                        if let Some(query) = value {
+                            query.verify(v)
+                        } else {
+                            false
+                        }
+                    ).unwrap_or(false)
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct QueryResult {
+    pub entries: IndexMap<DataValue, DataElement>,
+    pub next: Option<usize>
 }
 
 #[derive(Serialize, Deserialize)]

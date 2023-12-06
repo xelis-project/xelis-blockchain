@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{transaction::{TransactionType, Transaction}, crypto::{hash::Hash, address::Address}};
 
-use super::{DataHash, DataElement, DataValue, DataType};
+use super::{DataHash, DataElement, DataValue, QueryElement};
 
 
 #[derive(Serialize, Deserialize)]
@@ -49,15 +49,7 @@ pub struct ListTransactionsParams {
     #[serde(default = "default_true_value")]
     pub accept_burn: bool,
     // Filter by extra data
-    pub query: Option<QuerySearcher>
-}
-
-// Structure to allow for searching a precise key/value pair in extra data
-// Value is nullable to allow for searching only by key also
-#[derive(Serialize, Deserialize)]
-pub enum QuerySearcher {
-    KeyValue { key: DataValue, value: Option<DataValue> },
-    KeyType { key: DataValue, kind: DataType }
+    pub query: Option<QueryElement>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -132,6 +124,14 @@ pub struct SetCustomDataParams {
     pub key: DataValue,
     pub value: DataElement
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct QueryDBParams {
+    pub tree: String,
+    pub key: Option<QueryElement>,
+    pub value: Option<QueryElement>
+}
+
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {

@@ -1,11 +1,11 @@
 use std::collections::HashSet;
-
+use indexmap::IndexMap;
 use sled::{Tree, Db};
 use xelis_common::{
     crypto::{hash::Hash, key::{KeyPair, PublicKey}},
     serializer::{Reader, Serializer},
     network::Network,
-    api::wallet::QuerySearcher,
+    api::{QueryElement, DataValue, DataElement, QueryResult},
 };
 use anyhow::{Context, Result, anyhow};
 use crate::{config::SALT_SIZE, cipher::Cipher, wallet::WalletError, entry::{TransactionEntry, EntryData}};
@@ -141,25 +141,74 @@ impl EncryptedStorage {
     }
 
     // Store a custom serializable data 
-    pub fn set_custom_data<K: Serializer, V: Serializer>(&self, tree: &String, key: &K, value: &V) -> Result<()> {
+    pub fn set_custom_data(&self, tree: &String, key: &DataValue, value: &DataElement) -> Result<()> {
         let tree = self.get_custom_tree(tree)?;
         self.save_to_disk_with_encrypted_key(&tree, &key.to_bytes(), &value.to_bytes())?;
         Ok(())
     }
 
     // Retrieve a custom data in the selected format
-    pub fn get_custom_data<K: Serializer, V: Serializer>(&self, tree: &String, key: &K) -> Result<V> {
+    pub fn get_custom_data(&self, tree: &String, key: &DataValue) -> Result<DataElement> {
         let tree = self.get_custom_tree(tree)?;
         self.load_from_disk_with_encrypted_key(&tree, &key.to_bytes())
     }
 
+    pub fn query_db(&self, tree: &String, query_key: Option<QueryElement>, query_value: Option<QueryElement>) -> Result<QueryResult> {
+        let tree = self.get_custom_tree(tree)?;
+        let mut entries: IndexMap<DataValue, DataElement> = IndexMap::new();
+        for res in tree.iter() {
+            let (k, v) = res?;
+            let mut key = None;
+            let mut value = None;
+            if let Some(query) = query_key.as_ref() {
+                let decrypted = self.cipher.decrypt_value(&k)?;
+                let k = DataValue::from_bytes(&decrypted)?;
+                if !query.verify(&DataElement::Value(Some(k.clone()))) {
+                    continue;
+                }
+                key = Some(k);
+            }
+
+            if let Some(query) = query_value.as_ref() {
+                let decrypted = self.cipher.decrypt_value(&k)?;
+                let v = DataElement::from_bytes(&decrypted)?;
+                if !query.verify(&v) {
+                    continue;
+                }
+                value = Some(v);
+            }
+
+            // Both query are accepted
+            let key = if let Some(key) = key {
+                key
+            } else {
+                let decrypted = self.cipher.decrypt_value(&k)?;
+                DataValue::from_bytes(&decrypted)?
+            };
+
+            let value = if let Some(value) = value {
+                value
+            } else {
+                let decrypted = self.cipher.decrypt_value(&v)?;
+                DataElement::from_bytes(&decrypted)?
+            };
+
+            entries.insert(key, value);
+        }
+
+        Ok(QueryResult {
+            entries,
+            next: None
+        })
+    }
+
     // Get all keys from the custom
-    pub fn get_custom_tree_keys<K: Serializer>(&self, tree: &String) -> Result<Vec<K>> {
+    pub fn get_custom_tree_keys(&self, tree: &String) -> Result<Vec<DataValue>> {
         let tree = self.get_custom_tree(tree)?;
         let mut keys = Vec::new();
         for e in tree.iter() {
             let (key, _) = e?;
-            let k = K::from_bytes(&key)?;
+            let k = DataValue::from_bytes(&key)?;
             keys.push(k);
         }
 
@@ -246,7 +295,7 @@ impl EncryptedStorage {
     }
 
     // Filter when the data is deserialized to not load all transactions in memory
-    pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, key_value: Option<&QuerySearcher>) -> Result<Vec<TransactionEntry>> {
+    pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, query: Option<&QueryElement>) -> Result<Vec<TransactionEntry>> {
         let mut transactions = Vec::new();
         for el in self.transactions.iter().values() {
             let value = el?;
@@ -281,21 +330,11 @@ impl EncryptedStorage {
 
             if save {
                 // Check if it has requested extra data
-                if let Some(key_value) = key_value {
+                if let Some(query) = query {
                     if let Some(transfers) = transfers.as_mut() {
                         transfers.retain(|transfer| {
                             if let Some(element) = transfer.get_extra_data() {
-                                match key_value {
-                                    QuerySearcher::KeyValue { key, value: Some(v) } => {
-                                        element.get_value_by_key(key, Some(v.kind())) == Some(v)
-                                    },
-                                    QuerySearcher::KeyValue { key, value: None } => {
-                                        element.has_key(key)
-                                    },
-                                    QuerySearcher::KeyType { key, kind } => {
-                                        element.get_value_by_key(key, Some(*kind)) != None
-                                    }
-                                }
+                                query.verify(element)
                             } else {
                                 false
                             }

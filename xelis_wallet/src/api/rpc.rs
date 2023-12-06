@@ -2,7 +2,23 @@ use std::{sync::Arc, borrow::Cow};
 
 use anyhow::Context as AnyContext;
 use log::info;
-use xelis_common::{rpc_server::{RPCHandler, InternalRpcError, parse_params, Context, websocket::WebSocketSessionShared}, config::{VERSION, XELIS_ASSET}, async_handler, api::{wallet::{BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams, GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams, SetCustomDataParams, GetCustomTreeKeysParams, GetAssetPrecisionParams, RescanParams}, DataHash, DataElement, DataValue}, crypto::hash::Hashable, serializer::Serializer};
+use xelis_common::{
+    rpc_server::{
+        RPCHandler, InternalRpcError, parse_params, Context, websocket::WebSocketSessionShared
+    },
+    config::{VERSION, XELIS_ASSET},
+    async_handler,
+    api::{
+        wallet::{
+            BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams,
+            GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams,
+            SetCustomDataParams, GetCustomTreeKeysParams, GetAssetPrecisionParams, RescanParams, QueryDBParams
+        },
+        DataHash
+    },
+    crypto::hash::Hashable,
+    serializer::Serializer
+};
 use serde_json::{Value, json};
 use crate::{wallet::{Wallet, WalletError}, entry::TransactionEntry};
 
@@ -24,11 +40,15 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("list_transactions", async_handler!(list_transactions));
     handler.register_method("is_online", async_handler!(is_online));
-    
-    // These functions are restricted to XSWD only
-    handler.register_method("get_custom_tree_keys_from_db", async_handler!(get_custom_tree_keys_from_db));
-    handler.register_method("get_custom_data_from_db", async_handler!(get_custom_data_from_db));
-    handler.register_method("set_custom_data_in_db", async_handler!(set_custom_data_in_db));
+
+    // These functions allow to have an encrypted DB directly in the wallet storage
+    // You can retrieve keys, values, have differents trees, and store values
+    // It is restricted in XSWD context, and open to everything in RPC
+    // Keys and values can be anything
+    handler.register_method("get_keys_from_db", async_handler!(get_keys_from_db));
+    handler.register_method("get_value_from_db", async_handler!(get_value_from_db));
+    handler.register_method("set_value_in_db", async_handler!(set_value_in_db));
+    handler.register_method("query_db", async_handler!(query_db));
 }
 
 async fn get_version(_: Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -203,10 +223,11 @@ async fn is_online(context: Context, body: Value) -> Result<Value, InternalRpcEr
     Ok(json!(is_connected))
 }
 
+// In EncryptedStorage, custom trees are already prefixed
 async fn get_tree_name(context: &Context, tree: String) -> Result<String, InternalRpcError> {
     // If the API is not used through XSWD, we don't need to prefix the tree name with the app id
     if context.has::<&WebSocketSessionShared<XSWDWebSocketHandler<Arc<Wallet>>>>() {
-        return Ok(format!("custom-{}", tree))
+        return Ok(tree)
     }
 
     // Retrieve the app data to get its id and to have section of trees between differents dApps
@@ -215,36 +236,45 @@ async fn get_tree_name(context: &Context, tree: String) -> Result<String, Intern
     let applications = xswd.get_applications().read().await;
     let app = applications.get(session).ok_or_else(|| InternalRpcError::InvalidContext)?;
 
-    Ok(format!("custom-{}-{}", app.get_id(), tree))
+    Ok(format!("{}-{}", app.get_id(), tree))
 }
 
-async fn get_custom_tree_keys_from_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_keys_from_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetCustomTreeKeysParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;
-    let keys: Vec<DataValue> = storage.get_custom_tree_keys(&tree)?;
+    let keys = storage.get_custom_tree_keys(&tree)?;
 
     Ok(json!(keys))
 }
 
-async fn get_custom_data_from_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_value_from_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetCustomDataParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
 
     let storage = wallet.get_storage().read().await;
-    let value: DataElement = storage.get_custom_data(&tree, &params.key)?;
+    let value = storage.get_custom_data(&tree, &params.key)?;
 
     Ok(json!(value))
 }
 
-async fn set_custom_data_in_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn set_value_in_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SetCustomDataParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;
-    let value: DataElement = storage.get_custom_data(&tree, &params.key)?;
+    let value = storage.get_custom_data(&tree, &params.key)?;
 
     Ok(json!(value))
+}
+
+async fn query_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: QueryDBParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let tree = get_tree_name(&context, params.tree).await?;
+    let storage = wallet.get_storage().read().await;
+    let result = storage.query_db(&tree, params.key, params.value)?;
+    Ok(json!(result))
 }

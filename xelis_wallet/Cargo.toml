@@ -19,6 +19,7 @@ actix-web = "4"
 hex = "0.4.3"
 
 # common dependencies
+indexmap = { version = "2.0.0", features = ["serde"] }
 log = "0.4"
 rand = "0.8.4"
 thiserror = "1.0.30"

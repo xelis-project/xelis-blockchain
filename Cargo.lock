@@ -2734,6 +2734,7 @@ dependencies = [
  "crc32fast",
  "fern",
  "hex",
+ "indexmap 2.0.0",
  "lazy_static",
  "log",
  "rand 0.8.5",
