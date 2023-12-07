@@ -249,9 +249,9 @@ impl NetworkHandler {
     // at first time only, retrieve the saved nonce of this account (or when a tx out is detected)
     async fn start_syncing(self: Arc<Self>) -> Result<(), Error> {
         let address = self.wallet.get_address();
-        let mut current_topoheight = {
+        let (mut current_topoheight, mut top_block_hash) = {
             let storage = self.wallet.get_storage().read().await;
-            storage.get_daemon_topoheight().unwrap_or(0)
+            (storage.get_daemon_topoheight().unwrap_or(0), storage.get_top_block_hash().unwrap_or(Hash::zero()))
         };
         let mut interval = interval(Duration::from_secs(5));
         loop {
@@ -285,7 +285,13 @@ impl NetworkHandler {
 
             debug!("current topoheight: {}, info topoheight: {}", info.topoheight, current_topoheight);
             if info.topoheight == current_topoheight {
-                continue;
+                if current_topoheight != 0 && info.top_block_hash != top_block_hash {
+                    // Looks like we are on a fork, we need to resync from the top
+                    let mut storage = self.wallet.get_storage().write().await;
+                    storage.delete_transactions_above_topoheight(current_topoheight - 1)?;
+                } else {
+                    continue;
+                }
             }
             debug!("New height detected for chain: {}", info.topoheight);
 
@@ -296,6 +302,7 @@ impl NetworkHandler {
                     api_server.notify_event(&NotifyEvent::NewChainInfo, &info).await;
                 }
             }
+            top_block_hash = info.top_block_hash;
 
             if let Err(e) = self.sync_new_blocks(&address, current_topoheight, info.topoheight).await {
                 error!("Error while syncing new blocks: {}", e);
@@ -306,7 +313,7 @@ impl NetworkHandler {
                 debug!("Saving current topoheight daemon: {}", current_topoheight);
                 let mut storage = self.wallet.get_storage().write().await;
                 storage.set_daemon_topoheight(info.topoheight)?;
-                storage.set_top_block_hash(&info.top_block_hash)?;
+                storage.set_top_block_hash(&top_block_hash)?;
             }
             current_topoheight = info.topoheight;
         }
