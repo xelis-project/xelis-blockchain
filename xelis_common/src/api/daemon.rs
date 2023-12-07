@@ -212,7 +212,8 @@ pub struct PeerEntry<'a> {
     pub last_ping: u64,
     pub pruned_topoheight: Option<u64>,
     pub peers: HashMap<SocketAddr, Direction>,
-    pub cumulative_difficulty: Difficulty
+    pub cumulative_difficulty: Difficulty,
+    pub connected_on: u64
 }
 
 #[derive(Serialize, Deserialize)]

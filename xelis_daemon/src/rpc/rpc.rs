@@ -155,7 +155,8 @@ pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
         last_ping: peer.get_last_ping(),
         peers,
         pruned_topoheight: peer.get_pruned_topoheight(),
-        cumulative_difficulty: peer.get_cumulative_difficulty()
+        cumulative_difficulty: peer.get_cumulative_difficulty(),
+        connected_on: peer.get_connection().connected_on()
     }
 }
 
