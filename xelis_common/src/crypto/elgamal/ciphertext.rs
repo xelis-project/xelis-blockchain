@@ -1,6 +1,6 @@
 use curve25519_dalek::{ristretto::{RistrettoPoint, CompressedRistretto}, scalar::Scalar};
 use core::ops::{Add, Neg, Mul, Sub};
-use std::ops::{AddAssign, SubAssign};
+use std::{ops::{AddAssign, SubAssign}, fmt::{Formatter, Display}};
 
 use crate::serializer::{Serializer, Writer, ReaderError, Reader};
 
@@ -255,5 +255,24 @@ impl Mul<&Scalar> for &Ciphertext {
 
     fn mul(self, other: &Scalar) -> Self::Output {
         Ciphertext::new(self.left * other, self.right * other)
+    }
+}
+
+impl serde::Serialize for Ciphertext {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
+        serializer.serialize_bytes(&self.to_bytes())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Ciphertext {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::Deserializer<'de> {
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        Ok(Self::from_bytes(&bytes).map_err(|_| serde::de::Error::custom("Invalid ciphertext bytes"))?)
+    }
+}
+
+impl Display for Ciphertext {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Ciphertext({})", self.to_hex())
     }
 }
