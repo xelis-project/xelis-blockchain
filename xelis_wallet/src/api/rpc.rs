@@ -4,7 +4,7 @@ use anyhow::Context as AnyContext;
 use log::info;
 use xelis_common::{
     rpc_server::{
-        RPCHandler, InternalRpcError, parse_params, Context, websocket::WebSocketSessionShared
+        RPCHandler, InternalRpcError, parse_params, websocket::WebSocketSessionShared
     },
     config::{VERSION, XELIS_ASSET},
     async_handler,
@@ -17,7 +17,7 @@ use xelis_common::{
         DataHash
     },
     crypto::hash::Hashable,
-    serializer::Serializer
+    serializer::Serializer, context::Context
 };
 use serde_json::{Value, json};
 use crate::{wallet::{Wallet, WalletError}, entry::TransactionEntry};
@@ -171,6 +171,10 @@ async fn build_transaction(context: Context, body: Value) -> Result<Value, Inter
     // request ask to broadcast the TX but wallet is not connected to any daemon
     if !wallet.is_online().await && params.broadcast {
         return Err(WalletError::NotOnlineMode).context("Cannot broadcast TX")?
+    }
+
+    if !params.broadcast && !params.tx_as_hex {
+        return Err(InternalRpcError::CustomStr("Invalid params, should either be broadcasted, or returned in hex format"))
     }
 
     // create the TX

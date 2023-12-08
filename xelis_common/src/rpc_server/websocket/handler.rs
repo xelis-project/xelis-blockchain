@@ -5,7 +5,7 @@ use log::debug;
 use serde_json::{Value, json};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::Mutex;
-use crate::{rpc_server::{RPCHandler, RpcResponseError, InternalRpcError, RpcRequest, RpcResponse, Context}, api::{SubscribeParams, EventResult}};
+use crate::{rpc_server::{RPCHandler, RpcResponseError, InternalRpcError, RpcRequest, RpcResponse}, api::{SubscribeParams, EventResult}, context::Context};
 use super::{WebSocketSessionShared, WebSocketHandler};
 
 // generic websocket handler supporting event subscriptions 

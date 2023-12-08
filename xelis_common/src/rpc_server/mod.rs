@@ -1,13 +1,11 @@
 pub mod websocket;
 mod error;
 mod rpc_handler;
-mod context;
 
 use std::borrow::Cow;
 
 pub use error::{RpcResponseError, InternalRpcError};
 pub use rpc_handler::{RPCHandler, Handler};
-pub use context::Context;
 pub use rpc_handler::parse_params;
 
 use actix_web::{HttpResponse, web::{self, Data, Payload}, Responder, HttpRequest};

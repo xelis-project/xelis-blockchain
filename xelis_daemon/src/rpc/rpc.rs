@@ -47,7 +47,8 @@ use xelis_common::{
     block::{BlockHeader, Block},
     config::{XELIS_ASSET, VERSION},
     immutable::Immutable,
-    rpc_server::{RPCHandler, parse_params, Context},
+    rpc_server::{RPCHandler, parse_params},
+    context::Context
 };
 use crate::config::BLOCK_TIME_MILLIS;
 use std::{sync::Arc, borrow::Cow};

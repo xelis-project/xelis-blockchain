@@ -1,7 +1,9 @@
 use std::{collections::HashMap, pin::Pin, future::Future};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use super::{InternalRpcError, RpcResponseError, RpcRequest, JSON_RPC_VERSION, Context};
+use crate::context::Context;
+
+use super::{InternalRpcError, RpcResponseError, RpcRequest, JSON_RPC_VERSION};
 use log::{error, trace};
 
 pub type Handler = fn(Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send>>;

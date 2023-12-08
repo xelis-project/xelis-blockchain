@@ -1,7 +1,6 @@
 use std::{hash::{Hasher, BuildHasherDefault}, any::{TypeId, Any}, collections::HashMap};
 
-use super::InternalRpcError;
-
+use anyhow::{Result, Context as AnyContext};
 
 // A hasher for `TypeId`s that takes advantage of its known characteristics.
 #[derive(Debug, Default)]
@@ -40,8 +39,12 @@ impl Context {
         self.values.contains_key(&TypeId::of::<T>())
     }
 
-    pub fn get<T: 'static>(&self) -> Result<&T, InternalRpcError> {
-        self.values.get(&TypeId::of::<T>()).and_then(|b| b.downcast_ref()).ok_or_else(|| InternalRpcError::InvalidContext)
+    pub fn get_optional<T: 'static>(&self) -> Option<&T> {
+        self.values.get(&TypeId::of::<T>()).and_then(|b| b.downcast_ref())
+    }
+
+    pub fn get<T: 'static>(&self) -> Result<&T> {
+        self.values.get(&TypeId::of::<T>()).and_then(|b| b.downcast_ref()).context("Requested type not found")
     }
 }
 
