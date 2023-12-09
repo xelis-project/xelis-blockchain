@@ -34,7 +34,7 @@ pub struct Handshake {
 impl Handshake {
     pub const MAX_LEN: usize = 16;
 
-    pub fn new(version: String, network: Network, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, top_hash: Hash, genesis_hash: Hash, cumulative_difficulty: u64) -> Self {
+    pub fn new(version: String, network: Network, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, top_hash: Hash, genesis_hash: Hash, cumulative_difficulty: Difficulty) -> Self {
         debug_assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN); // version cannot be greater than 16 chars
         if let Some(node_tag) = &node_tag {
             debug_assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN); // node tag cannot be greater than 16 chars
@@ -128,7 +128,7 @@ impl Serializer for Handshake {
         self.pruned_topoheight.write(writer); // Pruned Topo Height
         writer.write_hash(&self.top_hash); // Block Top Hash (32 bytes)
         writer.write_hash(&self.genesis_hash); // Genesis Hash
-        writer.write_u64(&self.cumulative_difficulty);
+        self.cumulative_difficulty.write(writer); // Cumulative Difficulty
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -168,7 +168,7 @@ impl Serializer for Handshake {
         }
         let top_hash = reader.read_hash()?;
         let genesis_hash = reader.read_hash()?;
-        let cumulative_difficulty = reader.read_u64()?;
+        let cumulative_difficulty = Difficulty::read(reader)?;
 
         Ok(Handshake::new(version, network, node_tag, network_id, peer_id, local_port, utc_time, topoheight, height, pruned_topoheight, top_hash, genesis_hash, cumulative_difficulty))
     }

@@ -16,7 +16,7 @@ use self::websocket::{WebSocketServerShared, WebSocketHandler};
 
 pub const JSON_RPC_VERSION: &str = "2.0";
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct RpcRequest {
     pub jsonrpc: String,
     pub id: Option<usize>,
@@ -42,14 +42,14 @@ impl<'a> RpcResponse<'a> {
 }
 
 // trait to retrieve easily a JSON RPC handler for registered route
-pub trait RPCServerHandler<T: Clone> {
+pub trait RPCServerHandler<T: Send + Clone> {
     fn get_rpc_handler(&self) -> &RPCHandler<T>;
 }
 
 // JSON RPC handler endpoint
 pub async fn json_rpc<T, H>(server: Data<H>, body: web::Bytes) -> Result<impl Responder, RpcResponseError>
 where
-    T: Clone,
+    T: Send + Sync + Clone + 'static,
     H: RPCServerHandler<T>
 {
     let result = server.get_rpc_handler().handle_request(&body).await?;

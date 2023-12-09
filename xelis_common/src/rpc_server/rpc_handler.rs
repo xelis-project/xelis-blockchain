@@ -1,19 +1,21 @@
 use std::{collections::HashMap, pin::Pin, future::Future};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use crate::context::Context;
+
 use super::{InternalRpcError, RpcResponseError, RpcRequest, JSON_RPC_VERSION};
 use log::{error, trace};
 
-pub type Handler<T> = fn(T, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send>>;
+pub type Handler = fn(Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send>>;
 
-pub struct RPCHandler<T: Clone> {
-    methods: HashMap<String, Handler<T>>, // all RPC methods registered
+pub struct RPCHandler<T: Send + Clone + 'static> {
+    methods: HashMap<String, Handler>, // all RPC methods registered
     data: T
 }
 
 impl<T> RPCHandler<T>
 where
-    T: Clone
+    T: Send + Sync + Clone + 'static
 {
     pub fn new(data: T) -> Self {
         Self {
@@ -23,8 +25,12 @@ where
     }
 
     pub async fn handle_request(&self, body: &[u8]) -> Result<Value, RpcResponseError> {
+        self.handle_request_with_context(Context::default(), body).await
+    }
+
+    pub async fn handle_request_with_context(&self, context: Context, body: &[u8]) -> Result<Value, RpcResponseError> {
         let request = self.parse_request(body)?;
-        self.execute_method(request).await
+        self.execute_method(context, request).await
     }
 
     pub fn parse_request(&self, body: &[u8]) -> Result<RpcRequest, RpcResponseError> {
@@ -39,14 +45,16 @@ where
         self.methods.contains_key(method_name)
     }
 
-    pub async fn execute_method(&self, mut request: RpcRequest) -> Result<Value, RpcResponseError> {
+    pub async fn execute_method(&self, mut context: Context, mut request: RpcRequest) -> Result<Value, RpcResponseError> {
         let handler = match self.methods.get(&request.method) {
             Some(handler) => handler,
             None => return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
         };
         trace!("executing '{}' RPC method", request.method);
         let params = request.params.take().unwrap_or(Value::Null);
-        let result = handler(self.get_data().clone(), params).await.map_err(|err| RpcResponseError::new(request.id, err))?;
+        // Add the data
+        context.store(self.get_data().clone());
+        let result = handler(context, params).await.map_err(|err| RpcResponseError::new(request.id, err))?;
         Ok(json!({
             "jsonrpc": JSON_RPC_VERSION,
             "id": request.id,
@@ -55,7 +63,7 @@ where
     }
 
     // register a new RPC method handler
-    pub fn register_method(&mut self, name: &str, handler: Handler<T>) {
+    pub fn register_method(&mut self, name: &str, handler: Handler) {
         if self.methods.insert(name.into(), handler).is_some() {
             error!("The method '{}' was already registered !", name);
         }

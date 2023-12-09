@@ -141,8 +141,8 @@ pub enum BlockchainError {
     BlockDeviation,
     #[error("Invalid genesis block hash")]
     InvalidGenesisHash,
-    #[error("Invalid tx nonce (got {} expected {}) for {}", _0, _1, _2)]
-    InvalidTxNonce(u64, u64, PublicKey),
+    #[error("Invalid tx {} nonce (got {} expected {}) for {}", _0, _1, _2, _3)]
+    InvalidTxNonce(Hash, u64, u64, PublicKey),
     #[error("Invalid tx nonce for mempool cache")]
     InvalidTxNonceMempoolCache,
     #[error("Invalid asset ID: {}", _0)]
@@ -151,8 +151,8 @@ pub enum BlockchainError {
     DifficultyError(#[from] DifficultyError),
     #[error("No balance found on disk for {}", _0)]
     NoBalance(PublicKey),
-    #[error("No balance changes for {} at specific topoheight and asset", _0)]
-    NoBalanceChanges(PublicKey),
+    #[error("No balance changes for {} at topoheight {} and asset {}", _0, _1, _2)]
+    NoBalanceChanges(PublicKey, u64, Hash),
     #[error("No nonce found on disk for {}", _0)]
     NoNonce(PublicKey),
     #[error("No nonce changes for {} at specific topoheight", _0)]

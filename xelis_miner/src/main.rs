@@ -8,13 +8,13 @@ use serde::{Serialize, Deserialize};
 use tokio::{sync::{broadcast, mpsc, Mutex}, select, time::Instant};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use xelis_common::{
-    block::{BlockMiner, BLOCK_WORK_SIZE},
+    block::{BlockMiner, BLOCK_WORK_SIZE, Difficulty},
     serializer::Serializer,
     difficulty::check_difficulty,
     config::VERSION,
     utils::{get_current_timestamp, format_hashrate, format_difficulty},
     crypto::{hash::{Hashable, Hash, hash}, address::Address},
-    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel, ShareablePrompt, self},
+    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel, ShareablePrompt, self}, async_handler,
 };
 use clap::Parser;
 use log::{error, info, debug, warn};
@@ -55,7 +55,7 @@ pub struct MinerConfig {
 
 #[derive(Clone)]
 enum ThreadNotification<'a> {
-    NewJob(BlockMiner<'a>, u64, u64), // block work, difficulty, height
+    NewJob(BlockMiner<'a>, Difficulty, u64), // block work, difficulty, height
     WebSocketClosed, // WebSocket connection has been closed
     Exit // all threads must stop
 }
@@ -174,7 +174,7 @@ fn benchmark(threads: usize, iterations: usize) {
 // It maintains a WebSocket connection with the daemon and notify all threads when it receive a new job.
 // Its also the task who have the job to send directly the new block found by one of the threads.
 // This allow mining threads to only focus on mining and receiving jobs through memory channels.
-async fn communication_task(mut daemon_address: String, job_sender: broadcast::Sender<ThreadNotification<'_>>, mut block_receiver: mpsc::Receiver<BlockMiner<'_>>, address: Address<'_>, worker: String) {
+async fn communication_task(mut daemon_address: String, job_sender: broadcast::Sender<ThreadNotification<'_>>, mut block_receiver: mpsc::Receiver<BlockMiner<'_>>, address: Address, worker: String) {
     info!("Starting communication task");
     'main: loop {
         if !daemon_address.starts_with("ws://") && !daemon_address.starts_with("wss://") {
@@ -303,14 +303,15 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                 Ok(message) => message,
                 Err(e) => {
                     error!("Error on thread #{} while waiting on new job: {}", id, e);
-                    break;
+                    thread::sleep(Duration::from_millis(100));
+                    continue;
                 }
             };
 
             match message {
                 ThreadNotification::WebSocketClosed => {
                     // wait until we receive a new job, check every 100ms
-                    while !job_receiver.is_empty() {
+                    while job_receiver.is_empty() {
                         thread::sleep(Duration::from_millis(100));
                     }
                 }
@@ -363,9 +364,9 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
     Ok(())
 }
 
-async fn run_prompt(prompt: ShareablePrompt<()>) -> Result<()> {
-    let command_manager: CommandManager<()> = CommandManager::default();
-    let closure = |_| async {
+async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
+    let command_manager: CommandManager<()> = CommandManager::default(prompt.clone())?;
+    let closure = |_: &_, _: &_| async {
         let height_str = format!(
             "{}: {}",
             prompt::colorize_str(Color::Yellow, "Height"),
@@ -410,8 +411,6 @@ async fn run_prompt(prompt: ShareablePrompt<()>) -> Result<()> {
         )
     };
 
-    prompt.set_command_manager(Some(command_manager))?;
-
-    prompt.start(Duration::from_millis(100), &closure).await?;
+    prompt.start(Duration::from_millis(100), Box::new(async_handler!(closure)), &Some(command_manager)).await?;
     Ok(())
 }

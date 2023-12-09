@@ -1,9 +1,12 @@
 use async_trait::async_trait;
 use indexmap::IndexSet;
-use crate::core::error::{BlockchainError, DiskContext};
+use crate::{
+    core::error::{BlockchainError, DiskContext},
+    config::PRUNE_SAFETY_LIMIT
+};
 use xelis_common::{
     serializer::{Reader, Serializer},
-    crypto::{key::PublicKey, hash::{Hash, hash}},
+    crypto::{key::PublicKey, hash::Hash},
     immutable::Immutable,
     transaction::Transaction,
     block::{BlockHeader, Block, Difficulty},
@@ -18,16 +21,21 @@ use std::{
 use tokio::sync::Mutex;
 use lru::LruCache;
 use sled::Tree;
-use log::{debug, trace, error, warn};
+use log::{debug, trace, error, warn, info};
 
 use super::{Tips, Storage, DifficultyProvider};
 
+// Constant keys used for extra Tree
 const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
 const TOP_HEIGHT: &[u8; 4] = b"TOPH";
 const NETWORK: &[u8] = b"NET";
 const PRUNED_TOPOHEIGHT: &[u8; 4] = b"PRUN";
-const NONCE_PREFIX: &[u8; 4] = b"NONC";
+// Counters (prevent to perform a O(n))
+const ACCOUNTS_COUNT: &[u8; 4] = b"CACC";
+const TXS_COUNT: &[u8; 4] = b"CTXS";
+const ASSETS_COUNT: &[u8; 4] = b"CAST";
+const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
 
 pub struct SledStorage {
     transactions: Tree, // all txs stored on disk
@@ -44,6 +52,9 @@ pub struct SledStorage {
     supply: Tree, // supply for each block topoheight
     difficulty: Tree, // difficulty for each block hash
     tx_blocks: Tree, // tree to store all blocks hashes where a tx was included in 
+    versioned_nonces: Tree, // Tree that store all versioned nonces using hashed keys
+    balances: Tree, // Tree that store all balances with prefixed keys
+    versioned_balances: Tree, // Tree that store all versioned balances using hashed keys
     db: sled::Db, // opened DB used for assets to create dynamic assets
     // cached in memory
     transactions_cache: Option<Mutex<LruCache<Hash, Arc<Transaction>>>>,
@@ -87,6 +98,9 @@ impl SledStorage {
             supply: sled.open_tree("supply")?,
             difficulty: sled.open_tree("difficulty")?,
             tx_blocks: sled.open_tree("tx_blocks")?,
+            versioned_nonces: sled.open_tree("versioned_nonces")?,
+            balances: sled.open_tree("balances")?,
+            versioned_balances: sled.open_tree("versioned_balances")?,
             db: sled,
             transactions_cache: init_cache!(cache_size),
             blocks_cache: init_cache!(cache_size),
@@ -261,67 +275,51 @@ impl SledStorage {
         Ok(tree.contains_key(&key.to_bytes())?)
     }
 
-    // hash asset + topoheight to create a unique key
-    fn generate_versioned_balance_key(&self, asset: &Hash, topoheight: u64) -> Result<Hash, BlockchainError> {
-        trace!("generate versioned balance key for {} at {}", asset, topoheight);
-        let mut bytes = asset.to_bytes();
-        bytes.extend_from_slice(&topoheight.to_be_bytes());
-        let key = hash(&bytes);
-        Ok(key)
+    fn get_balance_key_for(&self, key: &PublicKey, asset: &Hash) -> [u8; 64] {
+        let mut bytes = [0; 64];
+        bytes[0..32].copy_from_slice(key.as_bytes());
+        bytes[32..64].copy_from_slice(asset.as_bytes());
+        bytes
     }
 
-    // returns the Tree from cache or insert it and returns it
-    // if no cache, compute the key each time this function is called.
-    async fn get_versioned_balance_tree(&self, asset: &Hash, topoheight: u64) -> Result<Tree, BlockchainError> {
-        trace!("get versioned balance tree for {} at {}", asset, topoheight);
-        let tree = if let Some(cache) = &self.balances_trees_cache {
-            let mut balances = cache.lock().await;
-            let cache_key = (asset.clone(), topoheight);
-            if let Some(tree) = balances.get(&cache_key) {
-                tree.clone()
-            } else { // not found in cache, compute it and insert it
-                let key = self.generate_versioned_balance_key(asset, topoheight)?;
-                let tree = self.db.open_tree(key.as_bytes())?;
-                balances.put(cache_key, tree.clone());
-                tree
+    // Versioned key is a 40 bytes key with topoheight as first bytes and the key as last bytes
+    fn get_versioned_key(&self, key: &PublicKey, topoheight: u64) -> [u8; 40] {
+        trace!("get versioned balance key at {} for {}", topoheight, key);
+        let mut bytes = [0; 40];
+        bytes[0..8].copy_from_slice(&topoheight.to_be_bytes());
+        bytes[8..40].copy_from_slice(key.as_bytes());
+
+        bytes
+    }
+
+
+    async fn has_balance_internal(&self, key: &[u8; 64]) -> Result<bool, BlockchainError> {
+        trace!("has balance internal");
+        Ok(self.balances.contains_key(key)?)
+    }
+
+    fn delete_versioned_tree_above_topoheight(&self, tree: &Tree, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete versioned nonces above or at topoheight {}", topoheight);
+        for el in tree.iter().keys() {
+            let key = el?;
+            let topo = u64::from_bytes(&key[0..8])?;
+            if topo > topoheight {
+                tree.remove(&key)?;
             }
-        } else { // no cache found, we have to compute it ourself
-            let key = self.generate_versioned_balance_key(asset, topoheight)?;
-            self.db.open_tree(key.as_bytes())?
-        };
-
-        Ok(tree)
+        }
+        Ok(())
     }
 
-    // constant prefix + topoheight to create a unique key
-    fn generate_versioned_nonce_key(&self, topoheight: u64) -> Result<[u8; 12], BlockchainError> {
-        trace!("generate versioned nonce key at {}", topoheight);
-        let mut bytes = [0u8; 12]; // 4 bytes for prefix, 8 for u64
-        bytes[0..4].copy_from_slice(NONCE_PREFIX);
-        bytes[4..12].copy_from_slice(&topoheight.to_be_bytes());
-        Ok(bytes)
-    }
-
-    // returns the Tree from cache or insert it and returns it
-    // if no cache, compute the key each time this function is called.
-    async fn get_versioned_nonce_tree(&self, topoheight: u64) -> Result<Tree, BlockchainError> {
-        trace!("get versioned nonce tree at {}", topoheight);
-        let tree = if let Some(cache) = &self.nonces_trees_cache {
-            let mut nonces = cache.lock().await;
-            if let Some(tree) = nonces.get(&topoheight) {
-                tree.clone()
-            } else { // not found in cache, compute it and insert it
-                let key = self.generate_versioned_nonce_key(topoheight)?;
-                let tree = self.db.open_tree(key)?;
-                nonces.put(topoheight, tree.clone());
-                tree
+    fn delete_versioned_tree_below_topoheight(&self, tree: &Tree, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete versioned nonces above or at topoheight {}", topoheight);
+        for el in tree.iter().keys() {
+            let key = el?;
+            let topo = u64::from_bytes(&key[0..8])?;
+            if topo < topoheight {
+                tree.remove(&key)?;
             }
-        } else { // no cache found, we have to compute it ourself
-            let key = self.generate_versioned_nonce_key(topoheight)?;
-            self.db.open_tree(key)?
-        };
-
-        Ok(tree)
+        }
+        Ok(())
     }
 }
 
@@ -469,56 +467,62 @@ impl Storage for SledStorage {
         self.delete_data(&self.transactions, &self.transactions_cache, hash).await
     }
 
-    async fn delete_versioned_balances_for_asset_at_topoheight(&mut self, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
-        let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
-        self.db.drop_tree(tree.name())?;
-        Ok(())
+    async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete versioned balances above topoheight {}!", topoheight);
+        self.delete_versioned_tree_above_topoheight(&self.versioned_balances, topoheight)
     }
 
-    async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        let tree = self.get_versioned_nonce_tree(topoheight).await?;
-        self.db.drop_tree(tree.name())?;
-        Ok(())
+    async fn delete_versioned_nonces_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete versioned nonces above topoheight {}", topoheight);
+        self.delete_versioned_tree_above_topoheight(&self.versioned_nonces, topoheight)
     }
 
-    async fn create_snapshot_balances_at_topoheight(&mut self, assets: &Vec<Hash>, topoheight: u64) -> Result<(), BlockchainError> {
-        for asset in assets {
-            // tree where VersionedBalance are stored
-            let versioned_tree = self.get_versioned_balance_tree(asset, topoheight).await?;
-            // asset tree where PublicKey are stored with the highest balance topoheight in it
-            let tree = self.db.open_tree(asset.as_bytes())?;
-            for el in tree.iter() {
-                let (key_bytes, value) = el?;
-                let key = PublicKey::from_bytes(&key_bytes)?;
-                let highest_balance_topoheight = u64::from_bytes(&value)?;
+    async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete versioned balances below topoheight {}!", topoheight);
+        self.delete_versioned_tree_below_topoheight(&self.versioned_balances, topoheight)
+    }
 
-                // retrieve the highest versioned balance
-                let mut versioned_balance = self.get_balance_at_exact_topoheight(&key, asset, highest_balance_topoheight).await?;
+    async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete versioned nonces below topoheight {}", topoheight);
+        self.delete_versioned_tree_below_topoheight(&self.versioned_nonces, topoheight)
+    }
 
-                // if the highest topoheight for this account is less than the snapshot topoheight
-                // update it to the topoheight
-                // otherwise, delete the previous topoheight in VersionedBalance which is under topoheight
-                if highest_balance_topoheight < topoheight {
-                    // save the new highest topoheight
-                    tree.insert(&key_bytes, &topoheight.to_be_bytes())?;
-                    // remove the previous topoheight
-                    versioned_balance.set_previous_topoheight(None);
+    async fn create_snapshot_balances_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        // asset tree where PublicKey are stored with the highest balance topoheight in it
+        for el in self.balances.iter() {
+            let (key_bytes, value) = el?;
+            let key = PublicKey::from_bytes(&key_bytes[0..32])?;
+            let asset = Hash::from_bytes(&key_bytes[32..64])?;
+            let highest_balance_topoheight = u64::from_bytes(&value)?;
 
-                    // save it
-                    versioned_tree.insert(key_bytes, versioned_balance.to_bytes())?;
-                } else {
-                    // find the first VersionedBalance which is under topoheight
-                    while let Some(previous_topoheight) = versioned_balance.get_previous_topoheight() {
-                        if previous_topoheight < topoheight {
-                            versioned_balance.set_previous_topoheight(None);
-                            // save it
-                            versioned_tree.insert(key_bytes, versioned_balance.to_bytes())?;
-                            break;
-                        }
+            // retrieve the highest versioned balance
+            let mut versioned_balance = self.get_balance_at_exact_topoheight(&key, &asset, highest_balance_topoheight).await?;
 
-                        // keep searching
-                        versioned_balance = self.get_balance_at_exact_topoheight(&key, asset, previous_topoheight).await?;
+            // if the highest topoheight for this account is less than the snapshot topoheight
+            // update it to the topoheight
+            // otherwise, delete the previous topoheight in VersionedBalance which is under topoheight
+            if highest_balance_topoheight < topoheight {
+                // save the new highest topoheight
+                self.balances.insert(&key_bytes, &topoheight.to_be_bytes())?;
+                // remove the previous topoheight
+                versioned_balance.set_previous_topoheight(None);
+
+                // save it
+                let key = self.get_versioned_key(&key, topoheight);
+                self.versioned_balances.insert(key, versioned_balance.to_bytes())?;
+            } else {
+                // find the first VersionedBalance which is under topoheight
+                while let Some(previous_topoheight) = versioned_balance.get_previous_topoheight() {
+                    if previous_topoheight < topoheight {
+                        versioned_balance.set_previous_topoheight(None);
+                        // save it
+                        let key = self.get_versioned_key(&key, topoheight);
+                        self.versioned_balances.insert(key, versioned_balance.to_bytes())?;
+                        break;
                     }
+
+                    // keep searching
+                    versioned_balance = self.get_balance_at_exact_topoheight(&key, &asset, previous_topoheight).await?;
                 }
             }
         }
@@ -528,7 +532,6 @@ impl Storage for SledStorage {
 
     async fn create_snapshot_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
         // tree where VersionedNonce are stored
-        let versioned_tree = self.get_versioned_nonce_tree(topoheight).await?;
         // tree where PublicKey are stored with the highest noce topoheight in it
         for el in self.nonces.iter() {
             let (key_bytes, value) = el?;
@@ -548,14 +551,16 @@ impl Storage for SledStorage {
                 versioned_nonce.set_previous_topoheight(None);
 
                 // save it
-                versioned_tree.insert(key_bytes, versioned_nonce.to_bytes())?;
+                let key = self.get_versioned_key(&key, topoheight);
+                self.versioned_nonces.insert(key, versioned_nonce.to_bytes())?;
             } else {
                 // find the first VersionedBalance which is under topoheight
                 while let Some(previous_topoheight) = versioned_nonce.get_previous_topoheight() {
                     if previous_topoheight < topoheight {
                         versioned_nonce.set_previous_topoheight(None);
                         // save it
-                        versioned_tree.insert(key_bytes, versioned_nonce.to_bytes())?;
+                        let key = self.get_versioned_key(&key, topoheight);
+                        self.versioned_nonces.insert(key, versioned_nonce.to_bytes())?;
                         break;
                     }
 
@@ -593,6 +598,8 @@ impl Storage for SledStorage {
 
     // Get all keys that got a changes in their balances/nonces in the range given
     async fn get_partial_keys(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<PublicKey>, BlockchainError> {
+        trace!("get partial keys, maximum: {}, skip: {}, minimum_topoheight: {}, maximum_topoheight: {}", maximum, skip, minimum_topoheight, maximum_topoheight);
+
         let mut keys: IndexSet<PublicKey> = IndexSet::new();
         let mut skip_count = 0;
         for el in self.nonces.iter().keys() {
@@ -626,13 +633,6 @@ impl Storage for SledStorage {
         // fast path check the latest nonce
         let (topo, mut version) = self.get_last_nonce(key).await?;
         trace!("Last version of nonce for {} is at topoheight {}", key, topo);
-        
-        // TODO Should we keep it ? We have to checks incoming txs too!
-        // if its last nonce is under minimum topoheight, we can stop
-        // if topo < minimum_topoheight {
-        //     trace!("Last version nonce (invalid) found at {} (minimum topoheight = {})", topo, minimum_topoheight);
-        //     return Ok(false)
-        // }
 
         // if it's the latest and its under the maximum topoheight and above minimum topoheight
         if topo >= minimum_topoheight && topo <= maximum_topoheight {
@@ -716,8 +716,9 @@ impl Storage for SledStorage {
         Ok(balances)
     }
 
-    fn count_accounts(&self) -> usize {
-        self.nonces.len()
+    fn count_accounts(&self) -> Result<u64, BlockchainError> {
+        trace!("count accounts");
+        Ok(self.load_from_disk(&self.extra, ACCOUNTS_COUNT).unwrap_or(0))
     }
 
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
@@ -771,6 +772,10 @@ impl Storage for SledStorage {
     async fn add_asset(&mut self, asset: &Hash, data: AssetData) -> Result<(), BlockchainError> {
         trace!("add asset {} at topoheight {}", asset, data.get_topoheight());
         self.assets.insert(asset.as_bytes(), data.to_bytes())?;
+
+        let assets_count = self.count_assets()? + 1;
+        self.extra.insert(ASSETS_COUNT, &assets_count.to_be_bytes())?;
+
         if let Some(cache) = &self.assets_cache {
             let mut cache = cache.lock().await;
             cache.put(asset.clone(), ());
@@ -793,8 +798,9 @@ impl Storage for SledStorage {
     }
 
     // count assets in storage
-    fn count_assets(&self) -> usize {
-        self.assets.len()
+    fn count_assets(&self) -> Result<u64, BlockchainError> {
+        trace!("count assets");
+        Ok(self.load_from_disk(&self.extra, ASSETS_COUNT).unwrap_or(0))
     }
 
     fn get_asset_data(&self, asset: &Hash) -> Result<AssetData, BlockchainError> {
@@ -846,20 +852,17 @@ impl Storage for SledStorage {
             return Err(BlockchainError::AssetNotFound(asset.clone()))
         }
 
-        let tree = self.db.open_tree(asset.as_bytes())?;
-        Ok(tree.contains_key(key.as_bytes())?)
+        self.has_balance_internal(&self.get_balance_key_for(key, asset)).await
     }
 
     // Returns all balances that the key has
     async fn get_assets_for(&self, key: &PublicKey) -> Result<Vec<Hash>, BlockchainError> {
         let mut assets = Vec::new();
-        for el in self.assets.iter().keys() {
+        // Keys are stored like this: [public key (32 bytes)][asset hash (32 bytes)]
+        for el in self.assets.scan_prefix(key.as_bytes()).keys() {
             let bytes = el?;
-            let tree = self.db.open_tree(&bytes)?;
-            if tree.contains_key(key.as_bytes())? {
-                let hash = Hash::from_bytes(&bytes)?;
-                assets.push(hash);
-            }
+            let hash = Hash::from_bytes(&bytes[32..64])?;
+            assets.push(hash);
         }
         Ok(assets)
     }
@@ -867,19 +870,19 @@ impl Storage for SledStorage {
     // returns the highest topoheight where a balance changes happened
     async fn get_last_topoheight_for_balance(&self, key: &PublicKey, asset: &Hash) -> Result<u64, BlockchainError> {
         trace!("get last topoheight for balance {} for {}", asset, key);
-        if !self.has_balance_for(key, asset).await? {
+        let key = self.get_balance_key_for(key, asset);
+        if !self.has_balance_internal(&key).await? {
             return Ok(0)
         }
 
-        let tree = self.db.open_tree(asset.as_bytes())?;
-        self.get_cacheable_data_copiable(&tree, &None, key).await
+        self.get_cacheable_data_copiable(&self.balances, &None, &key).await
     }
 
     // set in storage the new top topoheight (the most up-to-date versioned balance)
     fn set_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("set last topoheight to {} for balance {} for {}", topoheight, asset, key);
-        let tree = self.db.open_tree(asset.as_bytes())?;
-        tree.insert(&key.as_bytes(), &topoheight.to_be_bytes())?;
+        let key = self.get_balance_key_for(key, asset);
+        self.balances.insert(&key, &topoheight.to_be_bytes())?;
         Ok(())
     }
 
@@ -892,8 +895,8 @@ impl Storage for SledStorage {
             return Ok(false)
         }
 
-        let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
-        self.contains_data::<PublicKey, ()>(&tree, &None, key).await
+        let key = self.get_versioned_key(&key, topoheight);
+        self.contains_data::<_, ()>(&self.versioned_balances, &None, &key).await
     }
 
     // get the balance at a specific topoheight
@@ -902,11 +905,11 @@ impl Storage for SledStorage {
         trace!("get balance {} for {} at exact topoheight {}", asset, key, topoheight);
         // check first that this address has balance, if no returns
         if !self.has_balance_at_exact_topoheight(key, asset, topoheight).await? {
-            return Err(BlockchainError::NoBalanceChanges(key.clone()))
+            return Err(BlockchainError::NoBalanceChanges(key.clone(), topoheight, asset.clone()))
         }
 
-        let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
-        self.get_cacheable_data_copiable(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone()))
+        let disk_key = self.get_versioned_key(&key, topoheight);
+        self.get_cacheable_data_copiable(&self.versioned_balances, &None, &disk_key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone(), topoheight, asset.clone()))
     }
 
     // delete the last topoheight registered for this key
@@ -914,8 +917,8 @@ impl Storage for SledStorage {
     // because all versioned balances got deleted
     fn delete_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash) -> Result<(), BlockchainError> {
         trace!("delete last topoheight balance {} for {}", asset, key);
-        let tree = self.db.open_tree(asset.as_bytes())?;
-        tree.remove(&key.as_bytes())?;
+        let key = self.get_balance_key_for(key, asset);
+        self.balances.remove(&key)?;
         Ok(())
     }
 
@@ -968,14 +971,20 @@ impl Storage for SledStorage {
     // delete versioned balances for this topoheight
     async fn delete_balance_at_topoheight(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("delete balance {} for {} at topoheight {}", asset, key, topoheight);
-        let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
-        self.delete_cacheable_data(&tree, &None, key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone()))
+        let disk_key = self.get_versioned_key(&key, topoheight);
+        self.delete_cacheable_data(&self.versioned_balances, &None, &disk_key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone(), topoheight, asset.clone()))
     }
 
     // returns a new versioned balance with already-set previous topoheight
+    // Topoheight is the new topoheight for the versioned balance,
+    // We create a new versioned balance by taking the previous version and setting it as previous topoheight
     async fn get_new_versioned_balance(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("get new versioned balance {} for {} at {}", asset, key, topoheight);
-        let version = match self.get_balance_at_maximum_topoheight(key, asset, topoheight).await? {
+        if topoheight == 0 {
+            return Ok(VersionedBalance::new(0, None))
+        }
+
+        let version = match self.get_balance_at_maximum_topoheight(key, asset, topoheight - 1).await? {
             Some((topo, mut version)) => {
                 trace!("new versioned balance (balance at maximum topoheight) topo: {}, previous: {:?}", topo, version.get_previous_topoheight());
                 // if its not at exact topoheight, then we set it as "previous topoheight"
@@ -1006,8 +1015,7 @@ impl Storage for SledStorage {
             return Err(BlockchainError::NoBalance(key.clone()))
         }
 
-        let tree = self.db.open_tree(asset.as_bytes())?;
-        let topoheight = self.get_cacheable_data_copiable(&tree, &None, key).await?;
+        let topoheight = self.get_cacheable_data_copiable(&self.balances, &None, &self.get_balance_key_for(key, asset)).await?;
         let version = self.get_balance_at_exact_topoheight(key, asset, topoheight).await?;
         Ok((topoheight, version))
     }
@@ -1015,8 +1023,8 @@ impl Storage for SledStorage {
     // save the asset balance at specific topoheight
     async fn set_balance_at_topoheight(&mut self, asset: &Hash, topoheight: u64, key: &PublicKey, balance: &VersionedBalance) -> Result<(), BlockchainError> {
         trace!("set balance {} at topoheight {} for {}", asset, topoheight, key);
-        let tree = self.get_versioned_balance_tree(asset, topoheight).await?;
-        tree.insert(&key.to_bytes(), balance.to_bytes())?;
+        let key = self.get_versioned_key(&key, topoheight);
+        self.versioned_balances.insert(key, balance.to_bytes())?;
         Ok(())
     }
 
@@ -1028,8 +1036,8 @@ impl Storage for SledStorage {
 
     async fn has_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<bool, BlockchainError> {
         trace!("has nonce {} at topoheight {}", key, topoheight);
-        let contains = self.get_versioned_nonce_tree(topoheight).await?.contains_key(key.as_bytes())?;
-        Ok(contains)
+        let key = self.get_versioned_key(key, topoheight);
+        self.contains_data::<_, ()>(&self.versioned_nonces, &None, &key).await
     }
 
     async fn get_last_nonce(&self, key: &PublicKey) -> Result<(u64, VersionedNonce), BlockchainError> {
@@ -1044,8 +1052,9 @@ impl Storage for SledStorage {
 
     async fn get_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<VersionedNonce, BlockchainError> {
         trace!("get nonce at topoheight {} for {}", topoheight, key);
-        let tree = &self.get_versioned_nonce_tree(topoheight).await?;
-        self.load_from_disk(tree, &key.to_bytes())
+
+        let key = self.get_versioned_key(key, topoheight);
+        self.load_from_disk(&self.versioned_nonces, &key)
     }
 
     // topoheight is inclusive bounds
@@ -1094,15 +1103,20 @@ impl Storage for SledStorage {
         };
 
         let versioned = VersionedNonce::new(nonce, previous_topoheight);
-        let tree = self.get_versioned_nonce_tree(topoheight).await?;
-        tree.insert(&key.as_bytes(), versioned.to_bytes())?;
+        let disk_key = self.get_versioned_key(key, topoheight);
+        self.versioned_nonces.insert(&disk_key, versioned.to_bytes())?;
+
         self.set_last_topoheight_for_nonce(key, topoheight)?;
         Ok(())
     }
 
     fn set_last_topoheight_for_nonce(&mut self, key: &PublicKey, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("set last topoheight for nonce {} to {}", key, topoheight);
-        self.nonces.insert(&key.as_bytes(), &topoheight.to_be_bytes())?;
+        if self.nonces.insert(&key.as_bytes(), &topoheight.to_be_bytes())?.is_none() {
+            let count = self.count_accounts()? + 1;
+            self.extra.insert(ACCOUNTS_COUNT, &count.to_be_bytes())?;
+        }
+
         Ok(())
     }
 
@@ -1122,27 +1136,38 @@ impl Storage for SledStorage {
         self.get_cacheable_arc_data(&self.transactions, &self.transactions_cache, hash).await
     }
 
+    async fn get_transaction_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
+        let data = self.transactions.get(hash.as_bytes())?;
+        data.map(|data| data.len()).ok_or(BlockchainError::NotFoundOnDisk(DiskContext::LoadData))
+    }
+
     async fn has_transaction(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         self.contains_data(&self.transactions, &self.transactions_cache, hash).await
     }
 
-    fn count_transactions(&self) -> usize {
+    fn count_transactions(&self) -> Result<u64, BlockchainError> {
         trace!("count transactions");
-        self.transactions.len()
+        Ok(self.load_from_disk(&self.extra, TXS_COUNT).unwrap_or(0))
     }
 
-    async fn add_new_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError> {
+    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError> {
         debug!("Storing new {} with hash: {}, difficulty: {}", block, hash, difficulty);
 
         // Store transactions
+        let mut txs_count = 0;
         for (hash, tx) in block.get_transactions().iter().zip(txs) { // first save all txs, then save block
             if !self.has_transaction(hash).await? {
                 self.transactions.insert(hash.as_bytes(), tx.to_bytes())?;
+                txs_count += 1;
             }
         }
+        let current_txs_count = self.count_transactions()?;
+        self.extra.insert(TXS_COUNT, &(current_txs_count + txs_count).to_be_bytes())?;
 
         // Store block header
         self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
+        let blocks_count = self.count_blocks()? + 1;
+        self.extra.insert(BLOCKS_COUNT, &blocks_count.to_be_bytes())?;
 
         // Store difficulty
         self.difficulty.insert(hash.as_bytes(), &difficulty.to_be_bytes())?;
@@ -1157,7 +1182,6 @@ impl Storage for SledStorage {
     }
 
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
-        let current_topoheight = topoheight;
         trace!("pop blocks from height: {}, topoheight: {}, count: {}", height, topoheight, count);
         if height < count as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
@@ -1169,9 +1193,12 @@ impl Storage for SledStorage {
         trace!("Lowest topoheight for rewind: {}", lowest_topo);
 
         let pruned_topoheight = self.get_pruned_topoheight()?.unwrap_or(0);
-        if lowest_topo < pruned_topoheight {
-            warn!("Pruned topoheight is {}, lowest topoheight is {}, rewind only until {}", pruned_topoheight, lowest_topo, pruned_topoheight);
-            lowest_topo = pruned_topoheight;
+        if pruned_topoheight != 0 {
+            let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
+            if lowest_topo <= safety_pruned_topoheight {
+                warn!("Pruned topoheight is {}, lowest topoheight is {}, rewind only until {}", pruned_topoheight, lowest_topo, safety_pruned_topoheight);
+                lowest_topo = safety_pruned_topoheight;
+            }
         }
 
         // new TIPS for chain
@@ -1255,47 +1282,39 @@ impl Storage for SledStorage {
         }
 
         // do balances too
-        for asset in &assets {
-            let tree = self.db.open_tree(asset.as_bytes())?;
-            for el in tree.iter() {
-                let (key, value) = el?;
-                let highest_topoheight = u64::from_bytes(&value)?;
-                if highest_topoheight > topoheight {
-                    // find the first version which is under topoheight
-                    let pkey = PublicKey::from_bytes(&key)?;
-                    let mut delete = true;
-                    let mut version = self.get_balance_at_exact_topoheight(&pkey, asset, highest_topoheight).await?;
-                    while let Some(previous_topoheight) = version.get_previous_topoheight() {
-                        if previous_topoheight < topoheight {
-                            // we find the new highest version which is under new topoheight
-                            trace!("New highest version balance for {} is at topoheight {} with asset {}", pkey, previous_topoheight, asset);
-                            tree.insert(&key, &previous_topoheight.to_be_bytes())?;
-                            delete = false;
-                            break;
-                        }
-    
-                        // keep searching
-                        version = self.get_balance_at_exact_topoheight(&pkey, asset, previous_topoheight).await?;
+        for el in self.balances.iter() {
+            let (key, value) = el?;
+            let highest_topoheight = u64::from_bytes(&value)?;
+            if highest_topoheight > topoheight {
+                // find the first version which is under topoheight
+                let pkey = PublicKey::from_bytes(&key[0..32])?;
+                let asset = Hash::from_bytes(&key[32..64])?;
+                let mut delete = true;
+                let mut version = self.get_balance_at_exact_topoheight(&pkey, &asset, highest_topoheight).await?;
+                while let Some(previous_topoheight) = version.get_previous_topoheight() {
+                    if previous_topoheight < topoheight {
+                        // we find the new highest version which is under new topoheight
+                        trace!("New highest version balance for {} is at topoheight {} with asset {}", pkey, previous_topoheight, asset);
+                        self.balances.insert(&key, &previous_topoheight.to_be_bytes())?;
+                        delete = false;
+                        break;
                     }
 
-                    if delete {
-                        tree.remove(&key)?;
-                    }
-                } else {
-                    // nothing to do as its under the rewinded topoheight
+                    // keep searching
+                    version = self.get_balance_at_exact_topoheight(&pkey, &asset, previous_topoheight).await?;
                 }
+
+                if delete {
+                    self.balances.remove(&key)?;
+                }
+            } else {
+                // nothing to do as its under the rewinded topoheight
             }
         }
 
-        // now delete all versioned trees for assets and nonces
-        for topoheight in topoheight..=current_topoheight {
-            // delete all versioned balances for assets (deleted assets and existing assets)
-            for asset in deleted_assets.iter().chain(&assets) {
-                self.delete_versioned_balances_for_asset_at_topoheight(asset, topoheight).await?;
-            }
-
-            self.delete_versioned_nonces_at_topoheight(topoheight).await?;
-        }
+        // now delete all versioned balances and nonces above the new topoheight
+        self.delete_versioned_balances_above_topoheight(topoheight).await?;
+        self.delete_versioned_nonces_above_topoheight(topoheight).await?;
 
         // Clear all caches to not have old data after rewind
         self.clear_caches().await;
@@ -1305,9 +1324,6 @@ impl Storage for SledStorage {
         self.set_top_topoheight(topoheight)?;
         self.set_top_height(height)?;
 
-        // reverse order of txs so its ascending order
-        txs.reverse();
-
         Ok((height, topoheight, txs))
     }
 
@@ -1316,9 +1332,9 @@ impl Storage for SledStorage {
         !self.blocks.is_empty()
     }
 
-    fn count_blocks(&self) -> usize {
+    fn count_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("count blocks");
-        self.blocks.len()
+        Ok(self.load_from_disk(&self.extra, BLOCKS_COUNT).unwrap_or(0))
     }
 
     async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
@@ -1526,6 +1542,18 @@ impl Storage for SledStorage {
     async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: Difficulty) -> Result<(), BlockchainError> {
         trace!("set cumulative difficulty for hash {}", hash);
         self.cumulative_difficulty.insert(hash.as_bytes(), cumulative_difficulty.to_bytes())?;
+        Ok(())
+    }
+
+    // Returns the current size on disk in bytes
+    async fn get_size_on_disk(&self) -> Result<u64, BlockchainError> {
+        Ok(self.db.size_on_disk()?)
+    }
+
+    async fn stop(&mut self) -> Result<(), BlockchainError> {
+        info!("Flushing Sled database");
+        self.db.flush_async().await?;
+        info!("Sled database flushed");
         Ok(())
     }
 }

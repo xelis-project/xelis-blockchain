@@ -2,9 +2,9 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{transaction::{TransactionType, Transaction}, crypto::{key::PublicKey, hash::Hash, address::Address}};
+use crate::{transaction::{TransactionType, Transaction}, crypto::{hash::Hash, address::Address}};
 
-use super::{DataHash, DataElement, DataValue, DataType};
+use super::{DataHash, DataElement, DataValue, Query};
 
 
 #[derive(Serialize, Deserialize)]
@@ -15,13 +15,22 @@ pub enum FeeBuilder {
 
 #[derive(Serialize, Deserialize)]
 pub struct BuildTransactionParams {
+    #[serde(flatten)]
     pub tx_type: TransactionType,
     pub fee: Option<FeeBuilder>,
-    pub broadcast: bool
+    // Cannot be broadcasted if set to false
+    pub broadcast: bool,
+    // Returns the TX in HEX format also
+    #[serde(default = "default_false_value")]
+    pub tx_as_hex: bool
 }
 
 // :(
-fn default_filter_value() -> bool {
+fn default_true_value() -> bool {
+    true
+}
+
+fn default_false_value() -> bool {
     true
 }
 
@@ -30,31 +39,30 @@ pub struct ListTransactionsParams {
     pub min_topoheight: Option<u64>,
     pub max_topoheight: Option<u64>,
     /// Receiver address for outgoing txs, and owner/sender for incoming
-    pub address: Option<PublicKey>,
-    #[serde(default = "default_filter_value")]
+    pub address: Option<Address>,
+    #[serde(default = "default_true_value")]
     pub accept_incoming: bool,
-    #[serde(default = "default_filter_value")]
+    #[serde(default = "default_true_value")]
     pub accept_outgoing: bool,
-    #[serde(default = "default_filter_value")]
+    #[serde(default = "default_true_value")]
     pub accept_coinbase: bool,
-    #[serde(default = "default_filter_value")]
+    #[serde(default = "default_true_value")]
     pub accept_burn: bool,
     // Filter by extra data
-    pub query: Option<QuerySearcher>
-}
-
-// Structure to allow for searching a precise key/value pair in extra data
-// Value is nullable to allow for searching only by key also
-#[derive(Serialize, Deserialize)]
-pub enum QuerySearcher {
-    KeyValue { key: DataValue, value: Option<DataValue> },
-    KeyType { key: DataValue, kind: DataType }
+    pub query: Option<Query>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct TransactionResponse<'a> {
     #[serde(flatten)]
     pub inner: DataHash<'a, Transaction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_as_hex: Option<String>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetAssetPrecisionParams<'a> {
+    pub asset: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -65,17 +73,22 @@ pub struct GetAddressParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SplitAddressParams<'a> {
+pub struct SplitAddressParams {
     // address which must be in integrated form
-    pub address: Address<'a>
+    pub address: Address
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SplitAddressResult {
     // Normal address
-    pub address: PublicKey,
+    pub address: Address,
     // Encoded data from address
     pub integrated_data: DataElement
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RescanParams {
+    pub until_topoheight: Option<u64>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -93,6 +106,33 @@ pub struct BalanceChanged<'a> {
     pub asset: Cow<'a, Hash>,
     pub balance: u64
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct GetCustomDataParams {
+    pub tree: String,
+    pub key: DataValue
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetCustomTreeKeysParams {
+    pub tree: String,
+    pub query: Option<Query>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SetCustomDataParams {
+    pub tree: String,
+    pub key: DataValue,
+    pub value: DataElement
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct QueryDBParams {
+    pub tree: String,
+    pub key: Option<Query>,
+    pub value: Option<Query>
+}
+
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NotifyEvent {

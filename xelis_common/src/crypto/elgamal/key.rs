@@ -1,7 +1,9 @@
 use curve25519_dalek::{ristretto::RistrettoPoint, scalar::Scalar, constants::RISTRETTO_BASEPOINT_TABLE};
 use rand::rngs::OsRng;
 
-use super::Ciphertext;
+use crate::crypto::hash::Hash;
+
+use super::{Ciphertext, signature::{hash_and_point_to_scalar, Signature}};
 
 pub struct PrivateKey {
     secret: Scalar
@@ -12,6 +14,15 @@ impl PrivateKey {
         Self {
             secret
         }
+    }
+
+    // Sign a hash
+    pub fn sign(&self, hash: &Hash) -> Signature {
+        let k = Scalar::random(&mut OsRng);
+        let r = &RISTRETTO_BASEPOINT_TABLE * &k;
+        let e = hash_and_point_to_scalar(&self.to_public_key(), hash, &r);
+        let s = self.secret * e + k;
+        Signature::new(s, e)
     }
 
     pub fn to_public_key(&self) -> PublicKey {
@@ -42,8 +53,7 @@ impl PublicKey {
     // Generate a random Scalar to be used as blinding factor for encryption
     pub fn generate_random_r(&self) -> Scalar {
         // Create a random number generator
-        let mut rng = OsRng;
-        let r = Scalar::random(&mut rng);
+        let r = Scalar::random(&mut OsRng);
         r
     }
 

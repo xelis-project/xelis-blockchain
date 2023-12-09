@@ -50,23 +50,92 @@ No parameters
 ##### Response
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": {
-        "average_block_time": 11812,
-        "block_reward": 865869,
-        "block_time_target": 15000,
-        "difficulty": 35533666,
-        "height": 27552,
-        "mempool_size": 0,
-        "native_supply": 24141030101,
-        "network": "Testnet",
-        "pruned_topoheight": null,
-        "stableheight": 27544,
-        "top_hash": "00000014adb905b46053363e264975dd32cd0020eaf474fe08c5f492110aa95c",
-        "topoheight": 28032,
-        "version": "1.4.0"
-    }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"average_block_time": 11812,
+		"block_reward": 865869,
+		"block_time_target": 15000,
+		"difficulty": 35533666,
+		"height": 27552,
+		"mempool_size": 0,
+		"circulating_supply": 24141030101,
+		"maximum_supply": 18400000000000,
+		"network": "Testnet",
+		"pruned_topoheight": null,
+		"stableheight": 27544,
+		"top_block_hash": "00000014adb905b46053363e264975dd32cd0020eaf474fe08c5f492110aa95c",
+		"topoheight": 28032,
+		"version": "1.4.0"
+	}
+}
+```
+
+#### Get Dev Fee Thresholds
+Retrieve configured dev fees thresholds
+
+##### Method `get_dev_fee_thresholds`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_dev_fee_thresholds",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": [
+		{
+			"fee_percentage": 15,
+			"height": 0
+		},
+		{
+			"fee_percentage": 10,
+			"height": 1250000
+		},
+		{
+			"fee_percentage": 5,
+			"height": 3000000
+		}
+	]
+}
+```
+
+#### Get Size On Disk
+Retrieve blockchain size on disk
+
+##### Method `get_size_on_disk`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_size_on_disk",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"size_bytes": 94896128,
+		"size_formatted": "90.5 MiB"
+	}
 }
 ```
 
@@ -425,11 +494,11 @@ Each nonce represents how many TX has been made by this address and prevent repl
 {
 	"id": 1,
 	"jsonrpc": "2.0",
-    "result": {
-        "nonce": 6216,
-        "previous_topoheight": 454254,
-        "topoheight": 454352
-    }
+	"result": {
+		"nonce": 6216,
+		"previous_topoheight": 454254,
+		"topoheight": 454352
+	}
 }
 ```
 
@@ -459,11 +528,11 @@ Verify if address has a nonce on-chain registered.
 ##### Response
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": {
-        "exist": true
-    }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"exist": true
+	}
 }
 ```
 
@@ -572,15 +641,15 @@ Get all assets available on network with its registered topoheight and necessary
 ##### Response
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": [
-        {
-            "asset": "0000000000000000000000000000000000000000000000000000000000000000",
-            "decimals": 5,
-            "topoheight": 0
-        }
-    ]
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": [
+		{
+			"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+			"decimals": 5,
+			"topoheight": 0
+		}
+	]
 }
 ```
 
@@ -597,24 +666,24 @@ Get registered topoheight and decimals data from a specific asset.
 ##### Request
 ```json
 {
-    "jsonrpc": "2.0",
-    "method": "get_asset",
-    "id": 1,
-    "params": {
-        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
-    }
+	"jsonrpc": "2.0",
+	"method": "get_asset",
+	"id": 1,
+	"params": {
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000"
+	}
 }
 ```
 
 ##### Response
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": {
-        "decimals": 5,
-        "topoheight": 0
-    }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"decimals": 5,
+		"topoheight": 0
+	}
 }
 ```
 
@@ -748,6 +817,7 @@ No parameters
 	"jsonrpc": "2.0",
 	"result": {
 		"best_topoheight": 23,
+		"median_topoheight": 23,
 		"max_peers": 32,
 		"our_topoheight": 23,
 		"peer_count": 1,
@@ -777,34 +847,34 @@ No parameters
 ##### Response
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": [
-        {
-            "addr": "255.255.255.255:2125",
-            "cumulative_difficulty": 15429361306853,
-            "height": 488400,
-            "id": 8185485348476293826,
-            "last_ping": 1697559833,
-            "pruned_topoheight": 488000,
-            "tag": null,
-            "top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
-            "topoheight": 489291,
-            "version": "1.5.0"
-        },
-        {
-            "addr": "192.168.55.43:2125",
-            "cumulative_difficulty": 15429361306853,
-            "height": 488400,
-            "id": 2491091954271682078,
-            "last_ping": 1697559834,
-            "pruned_topoheight": 489200,
-            "tag": null,
-            "top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
-            "topoheight": 489291,
-            "version": "1.5.0"
-        }
-    ]
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": [
+		{
+			"addr": "255.255.255.255:2125",
+			"cumulative_difficulty": 15429361306853,
+			"height": 488400,
+			"id": 8185485348476293826,
+			"last_ping": 1697559833,
+			"pruned_topoheight": 488000,
+			"tag": null,
+			"top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
+			"topoheight": 489291,
+			"version": "1.5.0"
+		},
+		{
+			"addr": "192.168.55.43:2125",
+			"cumulative_difficulty": 15429361306853,
+			"height": 488400,
+			"id": 2491091954271682078,
+			"last_ping": 1697559834,
+			"pruned_topoheight": 489200,
+			"tag": null,
+			"top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
+			"topoheight": 489291,
+			"version": "1.5.0"
+		}
+	]
 }
 ```
 NOTE: Addresses displayed in this example are not real one and were replaced for privacy reasons.
@@ -1058,37 +1128,37 @@ Fetch up to 20 history events for an account on a specific asset
 ##### Request
 ```json
 {
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "get_account_history",
-    "params": {
-        "address": "xet1qqqyvh9vgkcurtj2la0e4jspnfsq7vkaqm863zcfdnej92xg4mpzz3suf96k4"
-    }
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_account_history",
+	"params": {
+		"address": "xet1qqqyvh9vgkcurtj2la0e4jspnfsq7vkaqm863zcfdnej92xg4mpzz3suf96k4"
+	}
 }
 ```
 
 ##### Response
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": [
-        {
-            "block_timestamp": 1697492997128,
-            "hash": "0000006f160df7d7aaa5d519f341136ae95fce1324280546070fecd8efe93751",
-            "mining": {
-                "reward": 117059
-            },
-            "topoheight": 485818
-        },
-        {
-            "block_timestamp": 1697492967931,
-            "hash": "0000001f62cc170349de2475a7f2338513f5340481c73af9e94c35aa2805d9cf",
-            "mining": {
-                "reward": 117059
-            },
-            "topoheight": 485817
-        }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": [
+		{
+			"block_timestamp": 1697492997128,
+			"hash": "0000006f160df7d7aaa5d519f341136ae95fce1324280546070fecd8efe93751",
+			"mining": {
+				"reward": 117059
+			},
+			"topoheight": 485818
+		},
+		{
+			"block_timestamp": 1697492967931,
+			"hash": "0000001f62cc170349de2475a7f2338513f5340481c73af9e94c35aa2805d9cf",
+			"mining": {
+				"reward": 117059
+			},
+			"topoheight": 485817
+		}
 	]
 }
 ```
@@ -1106,11 +1176,11 @@ Retrieve all assets for an account
 ##### Request
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": [
-        "0000000000000000000000000000000000000000000000000000000000000000"
-    ]
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": [
+		"0000000000000000000000000000000000000000000000000000000000000000"
+	]
 }
 ```
 
@@ -1376,6 +1446,456 @@ The topoheight range in parameters search for all accounts having a on-chain int
 		"xet1qqqvltq9dsmvdsvapr6y0742sv477766g9vpvp2expe5v7x7fadvftc9h2vyw",
 		"xet1qqqd9ur03xahtts6q00t8z8ya2gxm39qx43ljz32vmv8p7j9ccxn6zccrfnxp",
 		"xet1qqqd2jtz9f2u3z6uznpx8mqdkh6llt3yn3eg3a5tpsfn8jcsthufg5qmwwl2j"
+	]
+}
+```
+
+## Wallet
+
+### JSON-RPC methods
+
+#### Get Version
+Retrieve current daemon version
+
+##### Method `get_version`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_version",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": "1.7.0"
+}
+```
+
+
+#### Get Network
+Retrieve network used by the wallet
+
+##### Method `get_network`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_network",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": "Testnet"
+}
+```
+
+#### Get Nonce
+Retrieve account nonce saved in wallet
+
+##### Method `get_nonce`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_nonce",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 1
+}
+```
+
+#### Get TopoHeight
+Retrieve daemon topoheight until which the wallet scanned transactions/balances.
+
+##### Method `get_topoheight`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_topoheight",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 69817
+}
+```
+
+#### Get Address
+Retrieve wallet address with or without integrated data in it.
+Without parameters set, it returns the normal wallet address.
+
+##### Method `get_address`
+
+##### Parameters
+TODO integrated_data
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_address",
+	"id": 1,
+	"params": {
+		"integrated_data": {
+			"hello": "world"
+		}
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": "xet1qqqsyqgpq45x2mrvduqqzqg9wahhymrysrd48fdl3js2ss2hsu7d6w8rnuymz33fkyc5eth20dxv67g2a66s832qvr"
+}
+```
+
+#### Split Address
+Split address and integrated data in two differents fields.
+
+##### Method `split_address`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "split_address",
+	"id": 1,
+	"params": {
+		"address": "xet1qqqsyqgpq45x2mrvduqqzqg9wahhymrysrd48fdl3js2ss2hsu7d6w8rnuymz33fkyc5eth20dxv67g2a66s832qvr"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"address": "xet1qqqgpk6n5klceg9gg9tcw0xa8r3e7zd3gc5mzv2v4m48knxd0y9wadg3mdp9t",
+		"integrated_data": {
+			"hello": "world"
+		}
+	}
+}
+```
+
+#### Rescan
+Request the wallet to rescan balances and transactions history until the specified topoheight.
+When no topoheight is set, it rescan until 0.
+
+**WARNING**: All balances and transactions will be deleted from wallet storage to be up-to-date with the chain of the node connected to.
+
+##### Method `rescan`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "rescan",
+	"id": 1,
+	"params": {
+		"topoheight": 1337
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+#### Get Balance
+Get asset balance from wallet.
+When no parameter is set, default asset is XELIS.
+
+##### Method `get_balance`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_balance",
+	"id": 1,
+	"params": {}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 8660741
+}
+```
+
+#### Get Tracked Assets
+Retrieve all assets that are tracked by the wallet.
+
+##### Method `get_tracked_assets`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_tracked_assets",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": [
+		"0000000000000000000000000000000000000000000000000000000000000000"
+	]
+}
+```
+
+#### Get Asset Precision
+Retrieve the decimals precision for the selected asset.
+
+##### Method `get_asset_precision`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_asset_precision",
+	"id": 1,
+	"params": {
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 8
+}
+```
+
+#### Get Transaction
+Get transaction by hash from wallet.
+
+##### Method `get_transaction`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_transaction",
+	"id": 1,
+	"params": {
+		"hash": "c3ea4ce5c78d9c4f00c10cd43ce1f9886e28d23839a356c0f98a6bf107a4c040"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"fee": 1000,
+		"hash": "c3ea4ce5c78d9c4f00c10cd43ce1f9886e28d23839a356c0f98a6bf107a4c040",
+		"nonce": 0,
+		"outgoing": [
+			{
+				"amount": 100000,
+				"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+				"extra_data": null,
+				"key": "xet1qqq8ar5gagvjhznhj59l3r4lqhe7edutendy6vd4y7jd59exl6u7xschfuhym"
+			}
+		],
+		"topoheight": 69752
+	}
+}
+```
+
+#### Build Transaction
+Build a transaction to be send by the wallet.
+It can be broadcasted or not to the network.
+
+**NOTE**: Amount set are in atomic units, for XELIS it would `100000` to represents 1 XELIS because of 5 decimals precision.
+
+##### Method `build_transaction`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "build_transaction",
+	"id": 1,
+	"params": {
+		"transfers": [
+			{
+				"amount": 1000,
+				"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+				"to": "xet1qqq8ar5gagvjhznhj59l3r4lqhe7edutendy6vd4y7jd59exl6u7xschfuhym"
+			}
+		],
+		"broadcast": false
+	}
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "data": {
+            "transfers": [
+                {
+                    "amount": 1000,
+                    "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "extra_data": null,
+                    "to": "xet1qqq8ar5gagvjhznhj59l3r4lqhe7edutendy6vd4y7jd59exl6u7xschfuhym"
+                }
+            ]
+        },
+        "fee": 1000,
+        "hash": "6872c06e853fe35a3d936fc7281abc51018706ed36a54135e0dbbbb79a07fc25",
+        "nonce": 1,
+        "owner": "xet1qqqgpk6n5klceg9gg9tcw0xa8r3e7zd3gc5mzv2v4m48knxd0y9wadg3mdp9t",
+        "signature": "3c05e13f43283b75bb2ebae4d513d1a36bb1d86083164a50b03422ce2e8ed6c8446c34f12868df61335fb76e136be9068cb1940abf92690d513553079e6f770d",
+        "version": 0
+    }
+}
+```
+
+#### List Transactions
+Search transactions based on various parameters.
+By default it accepts every TXs.
+
+##### Method `get_version`
+
+##### Parameters
+|       Name      |   Type  | Required |           Note           |
+|:---------------:|:-------:|:--------:|:------------------------:|
+|  min_topoheight | Integer | Optional | Start from specific topo |
+|  max_topoheight | Integer | Optional |   End at specific topo   |
+|     address     |  String | Optional |    Filter with address   |
+| accept_incoming | Boolean | Optional |      Filter incoming     |
+| accept_outgoing | Boolean | Optional |      Filter outgoing     |
+| accept_coinbase | Boolean | Optional |      Filter coinbase     |
+|   accept_burn   | Boolean | Optional |        Filter burn       |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "list_transactions",
+	"id": 1,
+	"params": {
+		"accept_coinbase": true,
+		"accept_outgoing": true,
+		"accept_incoming": false
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": [
+		{
+			"coinbase": 146175,
+			"hash": "000000077f636b4fc259c41b9ab04a52ceb4b6b0acfb7f5aaf7c6184f2144fcd",
+			"topoheight": 4741
+		},
+		{
+			"fee": 1000,
+			"hash": "c3ea4ce5c78d9c4f00c10cd43ce1f9886e28d23839a356c0f98a6bf107a4c040",
+			"nonce": 0,
+			"outgoing": [
+				{
+					"amount": 100000,
+					"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+					"extra_data": null,
+					"key": "xet1qqq8ar5gagvjhznhj59l3r4lqhe7edutendy6vd4y7jd59exl6u7xschfuhym"
+				}
+			],
+			"topoheight": 69752
+		}
 	]
 }
 ```

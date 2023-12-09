@@ -1963,6 +1963,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_regex"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8136f1a4ea815d7eac4101cfd0b16dc0cb5e1fe1b8609dfd728058656b7badf"
+dependencies = [
+ "regex",
+ "serde",
+]
+
+[[package]]
 name = "serde_urlencoded"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2641,7 +2651,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_common"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "actix-rt",
  "actix-web",
@@ -2665,6 +2675,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serde_regex",
  "sha3",
  "thiserror",
  "tokio",
@@ -2672,7 +2683,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_daemon"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "actix",
  "actix-web",
@@ -2702,7 +2713,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_miner"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2721,7 +2732,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_wallet"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "actix",
  "actix-web",
@@ -2734,6 +2745,7 @@ dependencies = [
  "crc32fast",
  "fern",
  "hex",
+ "indexmap 2.0.0",
  "lazy_static",
  "log",
  "rand 0.8.5",

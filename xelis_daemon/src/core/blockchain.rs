@@ -28,9 +28,9 @@ use xelis_common::{
 use crate::{
     config::{
         DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE,
-        EMISSION_SPEED_FACTOR, MAX_SUPPLY, DEV_FEE_PERCENT, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
+        EMISSION_SPEED_FACTOR, MAXIMUM_SUPPLY, DEV_FEES, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
         STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, SIDE_BLOCK_REWARD_PERCENT,
-        DEV_PUBLIC_KEY, BLOCK_TIME, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS,
+        DEV_PUBLIC_KEY, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS, MILLIS_PER_SECOND,
     },
     core::difficulty::calculate_difficulty,
     p2p::P2pServer,
@@ -110,8 +110,8 @@ pub struct Blockchain<S: Storage> {
     stable_height: AtomicU64, // current stable height
     mempool: RwLock<Mempool>, // mempool to retrieve/add all txs
     storage: RwLock<S>, // storage to retrieve/add blocks
-    p2p: Mutex<Option<Arc<P2pServer<S>>>>, // P2p module
-    rpc: Mutex<Option<SharedDaemonRpcServer<S>>>, // Rpc module
+    p2p: RwLock<Option<Arc<P2pServer<S>>>>, // P2p module
+    rpc: RwLock<Option<SharedDaemonRpcServer<S>>>, // Rpc module
     // current difficulty at tips
     // its used as cache to display current network hashrate
     difficulty: AtomicU64,
@@ -162,8 +162,8 @@ impl<S: Storage> Blockchain<S> {
             stable_height: AtomicU64::new(0),
             mempool: RwLock::new(Mempool::new()),
             storage: RwLock::new(storage),
-            p2p: Mutex::new(None),
-            rpc: Mutex::new(None),
+            p2p: RwLock::new(None),
+            rpc: RwLock::new(None),
             difficulty: AtomicU64::new(GENESIS_BLOCK_DIFFICULTY),
             simulator: config.simulator,
             network,
@@ -229,7 +229,7 @@ impl<S: Storage> Blockchain<S> {
                         info!("Trying to connect to priority node: {}", addr);
                         p2p.try_to_connect_to_peer(addr, true).await;
                     }
-                    *arc.p2p.lock().await = Some(p2p);
+                    *arc.p2p.write().await = Some(p2p);
                 },
                 Err(e) => error!("Error while starting P2p server: {}", e)
             };
@@ -239,7 +239,7 @@ impl<S: Storage> Blockchain<S> {
         {
             info!("Starting RPC server...");
             match DaemonRpcServer::new(config.rpc_bind_address, Arc::clone(&arc), config.disable_getwork_server).await {
-                Ok(server) => *arc.rpc.lock().await = Some(server),
+                Ok(server) => *arc.rpc.write().await = Some(server),
                 Err(e) => error!("Error while starting RPC server: {}", e)
             };
         }
@@ -248,7 +248,7 @@ impl<S: Storage> Blockchain<S> {
             warn!("Simulator mode enabled!");
             let zelf = Arc::clone(&arc);
             tokio::spawn(async move {
-                let mut interval = interval(Duration::from_secs(BLOCK_TIME));
+                let mut interval = interval(Duration::from_millis(BLOCK_TIME_MILLIS));
                 loop {
                     interval.tick().await;
                     info!("Adding new simulated block...");
@@ -262,17 +262,32 @@ impl<S: Storage> Blockchain<S> {
         Ok(arc)
     }
 
+    // Stop all blockchain modules
+    // Each module is stopped in its own context
+    // So no deadlock occurs in case they are linked
     pub async fn stop(&self) {
         info!("Stopping modules...");
-        let mut p2p = self.p2p.lock().await;
-        if let Some(p2p) = p2p.take() {
-            p2p.stop().await;
+        {
+            let mut p2p = self.p2p.write().await;
+            if let Some(p2p) = p2p.take() {
+                p2p.stop().await;
+            }
         }
 
-        let mut rpc = self.rpc.lock().await;
-        if let Some(rpc) = rpc.take() {
-            rpc.stop().await;
+        {
+            let mut rpc = self.rpc.write().await;
+            if let Some(rpc) = rpc.take() {
+                rpc.stop().await;
+            }
         }
+
+        {
+            let mut storage = self.storage.write().await;
+            if let Err(e) = storage.stop().await {
+                error!("Error while stopping storage: {}", e);
+            }
+        }
+
         info!("All modules are now stopped!");
     }
 
@@ -393,8 +408,9 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::PruneHeightTooHigh)
         }
 
-        let last_pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
-        if topoheight <= last_pruned_topoheight {
+        // 1 is to not delete the genesis block
+        let last_pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(1);
+        if topoheight < last_pruned_topoheight {
             return Err(BlockchainError::PruneLowerThanLastPruned)
         }
 
@@ -403,9 +419,8 @@ impl<S: Storage> Blockchain<S> {
         debug!("Located sync topoheight found: {}", located_sync_topoheight);
         
         if located_sync_topoheight > last_pruned_topoheight {
-            let assets = storage.get_assets().await?;
             // create snapshots of balances to located_sync_topoheight
-            storage.create_snapshot_balances_at_topoheight(&assets, located_sync_topoheight).await?;
+            storage.create_snapshot_balances_at_topoheight(located_sync_topoheight).await?;
             storage.create_snapshot_nonces_at_topoheight(located_sync_topoheight).await?;
 
             // delete all blocks until the new topoheight
@@ -413,15 +428,13 @@ impl<S: Storage> Blockchain<S> {
                 trace!("Pruning block at topoheight {}", topoheight);
                 // delete block
                 let _ = storage.delete_block_at_topoheight(topoheight).await?;
-
-                // delete balances for all assets
-                for asset in &assets {
-                    storage.delete_versioned_balances_for_asset_at_topoheight(asset, topoheight).await?;
-                }
-
-                // delete nonces versions
-                storage.delete_versioned_nonces_at_topoheight(topoheight).await?;
             }
+
+            // delete balances for all assets
+            storage.delete_versioned_balances_below_topoheight(located_sync_topoheight).await?;
+            // delete nonces versions
+            storage.delete_versioned_nonces_below_topoheight(located_sync_topoheight).await?;
+
             storage.set_pruned_topoheight(located_sync_topoheight)?;
             Ok(located_sync_topoheight)
         } else {
@@ -906,6 +919,7 @@ impl<S: Storage> Blockchain<S> {
         Ok(difficulty)
     }
 
+    // Get the current difficulty target for the next block
     pub fn get_difficulty(&self) -> Difficulty {
         self.difficulty.load(Ordering::SeqCst)
     }
@@ -913,7 +927,7 @@ impl<S: Storage> Blockchain<S> {
     // pass in params the already computed block hash and its tips
     // check the difficulty calculated at tips
     // if the difficulty is valid, returns it (prevent to re-compute it)
-    pub async fn verify_proof_of_work<D: DifficultyProvider>(&self, provider: &D, hash: &Hash, tips: &Vec<Hash>) -> Result<u64, BlockchainError> {
+    pub async fn verify_proof_of_work<D: DifficultyProvider>(&self, provider: &D, hash: &Hash, tips: &Vec<Hash>) -> Result<Difficulty, BlockchainError> {
         let difficulty = self.get_difficulty_at_tips(provider, tips).await?;
         if self.simulator || check_difficulty(hash, difficulty)? {
             Ok(difficulty)
@@ -922,11 +936,11 @@ impl<S: Storage> Blockchain<S> {
         }
     }
 
-    pub fn get_p2p(&self) -> &Mutex<Option<Arc<P2pServer<S>>>> {
+    pub fn get_p2p(&self) -> &RwLock<Option<Arc<P2pServer<S>>>> {
         &self.p2p
     }
 
-    pub fn get_rpc(&self) -> &Mutex<Option<SharedDaemonRpcServer<S>>> {
+    pub fn get_rpc(&self) -> &RwLock<Option<SharedDaemonRpcServer<S>>> {
         &self.rpc
     }
 
@@ -940,26 +954,27 @@ impl<S: Storage> Blockchain<S> {
 
     pub async fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
-        self.add_tx_with_hash_to_mempool(tx, hash, broadcast).await
+        self.add_tx_to_mempool_with_hash(tx, hash, broadcast).await
     }
 
-    pub async fn add_tx_with_hash_to_mempool(&self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
+    pub async fn add_tx_to_mempool_with_hash<'a>(&'a self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
         let storage = self.storage.read().await;
-        let mut mempool = self.mempool.write().await;
-        self.add_tx_for_mempool(&storage, &mut mempool, tx, hash, broadcast).await
+        self.add_tx_to_mempool_with_storage_and_hash(&*storage, Arc::new(tx), hash, broadcast).await
     }
 
-    async fn add_tx_for_mempool<'a>(&'a self, storage: &S, mempool: &mut Mempool, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
-        if mempool.contains_tx(&hash) {
-            return Err(BlockchainError::TxAlreadyInMempool(hash))
-        }
-
-        // check that the TX is not already in blockchain
-        if storage.is_tx_executed_in_a_block(&hash)? {
-            return Err(BlockchainError::TxAlreadyInBlockchain(hash))
-        }
-
+    pub async fn add_tx_to_mempool_with_storage_and_hash<'a>(&'a self, storage: &S, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
         {
+            let mut mempool = self.mempool.write().await;
+    
+            if mempool.contains_tx(&hash) {
+                return Err(BlockchainError::TxAlreadyInMempool(hash))
+            }
+    
+            // check that the TX is not already in blockchain
+            if storage.is_tx_executed_in_a_block(&hash)? {
+                return Err(BlockchainError::TxAlreadyInBlockchain(hash))
+            }
+    
             // get the highest nonce for this owner
             let owner = tx.get_owner();
             // get the highest nonce available
@@ -988,50 +1003,42 @@ impl<S: Storage> Blockchain<S> {
 
                 // Verify original TX
                 // We may have double spending in balances, but it is ok because miner check that all txs included are valid
-                self.verify_transaction_with_hash(storage, &tx, &hash, &mut balances, Some(&mut nonces), false).await?;
+                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, Some(&mut nonces), false).await?;
             } else {
                 let mut balances = HashMap::new();
                 self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false).await?;
             }
+
+            mempool.add_tx(hash.clone(), tx.clone())?;
         }
 
-        let tx = Arc::new(tx);
-        mempool.add_tx(hash.clone(), tx.clone())?;
-
-        //
         if broadcast {
             // P2p broadcast to others peers
-            if let Some(p2p) = self.p2p.lock().await.as_ref() {
-                p2p.broadcast_tx_hash(&storage, hash.clone()).await;
+            if let Some(p2p) = self.p2p.read().await.as_ref() {
+                p2p.broadcast_tx_hash(hash.clone()).await;
             }
 
             // broadcast to websocket this tx
-            if let Some(rpc) = self.rpc.lock().await.as_ref() {
+            if let Some(rpc) = self.rpc.read().await.as_ref() {
                 // Notify miners if getwork is enabled
                 if let Some(getwork) = rpc.getwork_server() {
-                    let getwork = getwork.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = getwork.notify_new_job_rate_limited().await {
-                            debug!("Error while notifying miners for new tx: {}", e);
-                        };
-                    });
+                    if let Err(e) = getwork.notify_new_job_rate_limited().await {
+                        debug!("Error while notifying miners for new tx: {}", e);
+                    }
                 }
 
                 if rpc.is_event_tracked(&NotifyEvent::TransactionAddedInMempool).await {
-                    let rpc = rpc.clone();
-                    tokio::spawn(async move {
-                        let data: TransactionResponse<'_, Arc<Transaction>> = TransactionResponse {
-                            blocks: None,
-                            executed_in_block: None,
-                            in_mempool: true,
-                            first_seen: Some(get_current_time()),
-                            data: DataHash { hash: Cow::Owned(hash), data: Cow::Owned(tx) }
-                        };
+                    let data: TransactionResponse<'_, Arc<Transaction>> = TransactionResponse {
+                        blocks: None,
+                        executed_in_block: None,
+                        in_mempool: true,
+                        first_seen: Some(get_current_time()),
+                        data: DataHash { hash: Cow::Owned(hash), data: Cow::Borrowed(&tx) }
+                    };
 
-                        if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
-                            debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
-                        }
-                    });
+                    if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
+                        debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
+                    }
                 }
             }
         }
@@ -1067,10 +1074,13 @@ impl<S: Storage> Blockchain<S> {
 
     // retrieve the TX based on its hash by searching in mempool then on disk
     pub async fn get_tx(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
+        trace!("get tx {} from blockchain", hash);
         // check in mempool first
         // if its present, returns it
         {
+            trace!("Locking mempool for get tx {}", hash);
             let mempool = self.mempool.read().await;
+            trace!("Mempool locked for get tx {}", hash);
             if let Ok(tx) = mempool.get_tx(hash) {
                 return Ok(tx)
             } 
@@ -1105,7 +1115,7 @@ impl<S: Storage> Blockchain<S> {
             tips = selected_tips;
         }
 
-        let mut sorted_tips = blockdag::sort_tips(storage, &tips).await.unwrap();
+        let mut sorted_tips = blockdag::sort_tips(storage, &tips).await?;
         if sorted_tips.len() > TIPS_LIMIT {
             let dropped_tips = sorted_tips.drain(TIPS_LIMIT..); // keep only first 3 heavier tips
             for hash in dropped_tips {
@@ -1116,7 +1126,9 @@ impl<S: Storage> Blockchain<S> {
         let height = blockdag::calculate_height_at_tips(storage, &sorted_tips).await?;
         let mut block = BlockHeader::new(self.get_version_at_height(height), height, get_current_timestamp(), sorted_tips, extra_nonce, address, Vec::new());
 
+        trace!("Locking mempool for building block template");
         let mempool = self.mempool.read().await;
+        trace!("Mempool locked for building block template");
 
         // get all availables txs and sort them by fee per size
         let mut txs = mempool.get_txs()
@@ -1127,7 +1139,11 @@ impl<S: Storage> Blockchain<S> {
             // If its the same sender, check the nonce
             if a_tx.get_owner() == b_tx.get_owner() {
                 // Increasing nonces (lower first)
-                return a_tx.get_nonce().cmp(&b_tx.get_nonce())
+                let cmp = a_tx.get_nonce().cmp(&b_tx.get_nonce());
+                // If its not equal nonce, returns it
+                if cmp != std::cmp::Ordering::Equal {
+                    return cmp
+                }
             }
 
             let a = a_fee * *a_size as u64;
@@ -1147,6 +1163,7 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 // Check if the TX is valid for this potential block
+                trace!("Checking TX {} with nonce {}", hash, tx.get_nonce());
                 if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false).await {
                     warn!("TX {} is not valid for mining: {}", hash, e);
                 } else {
@@ -1165,7 +1182,9 @@ impl<S: Storage> Blockchain<S> {
         trace!("Searching TXs for block at height {}", header.get_height());
         let mut transactions: Vec<Immutable<Transaction>> = Vec::with_capacity(header.get_txs_count());
         let storage = self.storage.read().await;
+        trace!("Locking mempool for building block from header");
         let mempool = self.mempool.read().await;
+        trace!("Mempool lock acquired for building block from header");
         for hash in header.get_txs_hashes() {
             trace!("Searching TX {} for building block", hash);
             // at this point, we don't want to lose/remove any tx, we clone it only
@@ -1379,7 +1398,7 @@ impl<S: Storage> Blockchain<S> {
         let block = block.to_arc();
         debug!("Saving block {} on disk", block_hash);
         // Add block to chain
-        storage.add_new_block(block.clone(), &txs, difficulty, block_hash.clone()).await?;
+        storage.save_block(block.clone(), &txs, difficulty, block_hash.clone()).await?;
 
         // Compute cumulative difficulty for block
         let cumulative_difficulty = {
@@ -1416,7 +1435,7 @@ impl<S: Storage> Blockchain<S> {
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
 
         // rpc server lock
-        let rpc_server = self.rpc.lock().await;
+        let rpc_server = self.rpc.read().await;
         let should_track_events = if let Some(rpc) = rpc_server.as_ref() {
             rpc.get_tracked_events().await
         } else {
@@ -1461,10 +1480,12 @@ impl<S: Storage> Blockchain<S> {
 
                     let block = storage.get_block_header_by_hash(&hash_at_topo).await?;
 
-                    // mark txs as unexecuted
+                    // mark txs as unexecuted if it was executed in this block
                     for tx_hash in block.get_txs_hashes() {
-                        trace!("Removing execution of {}", tx_hash);
-                        storage.remove_tx_executed(&tx_hash)?;
+                        if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo)? {
+                            trace!("Removing execution of {}", tx_hash);
+                            storage.remove_tx_executed(&tx_hash)?;
+                        }
                     }
 
                     topoheight += 1;
@@ -1493,13 +1514,7 @@ impl<S: Storage> Blockchain<S> {
                     storage.get_supply_at_topo_height(highest_topo - 1).await?
                 };
 
-                let block_reward = if self.is_side_block(storage, &hash).await? {
-                    trace!("Block {} at topoheight {} is a side block", hash, highest_topo);
-                    let reward = get_block_reward(past_supply);
-                    reward * SIDE_BLOCK_REWARD_PERCENT / 100
-                } else {
-                    get_block_reward(past_supply)
-                };
+                let block_reward = self.get_block_reward(storage, &hash, past_supply).await?;
 
                 trace!("set block reward to {} at {}", block_reward, highest_topo);
                 storage.set_block_reward_at_topo_height(highest_topo, block_reward)?;
@@ -1593,7 +1608,6 @@ impl<S: Storage> Blockchain<S> {
                     events.entry(NotifyEvent::BlockOrdered).or_insert_with(Vec::new).push(value);
                 }
             }
-
         }
 
         let best_height = storage.get_height_for_block_hash(best_tip).await?;
@@ -1639,7 +1653,7 @@ impl<S: Storage> Blockchain<S> {
             if let Some(keep_only) = self.auto_prune_keep_n_blocks {
                 // check that the topoheight is greater than the safety limit
                 // and that we can prune the chain using the config while respecting the safety limit
-                if current_topoheight % keep_only == 0 {
+                if current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
                     info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
                     if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, storage).await {
                         warn!("Error while trying to auto prune chain: {}", e);
@@ -1688,15 +1702,20 @@ impl<S: Storage> Blockchain<S> {
             let difficulty = self.get_difficulty_at_tips(storage, &tips_vec).await?;
             self.difficulty.store(difficulty, Ordering::SeqCst);
         }
-        debug!("Processed block {} in {}ms", block_hash, start.elapsed().as_millis());
+
+        // Clean all old txs
+        mempool.clean_up(nonces).await;
+
+        info!("Processed block {} at height {} in {} ms with {} txs", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count());
 
         if broadcast {
-            if let Some(p2p) = self.p2p.lock().await.as_ref() {
+            trace!("Broadcasting block");
+            if let Some(p2p) = self.p2p.read().await.as_ref() {
+                trace!("P2p locked, broadcasting in new task");
                 let p2p = p2p.clone();
                 let pruned_topoheight = storage.get_pruned_topoheight()?;
                 let block_hash = block_hash.clone();
                 tokio::spawn(async move {
-                    debug!("broadcast block to peers");
                     p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, pruned_topoheight, &block_hash, mining).await;
                 });
             }
@@ -1740,10 +1759,20 @@ impl<S: Storage> Blockchain<S> {
             });
         }
 
-        // Clean all old txs
-        mempool.clean_up(nonces).await;
-
         Ok(())
+    }
+
+    // Get block reward based on the type of the block
+    // Block shouldn't be orphaned
+    pub async fn get_block_reward(&self, storage: &S, hash: &Hash, past_supply: u64) -> Result<u64, BlockchainError> {
+        let block_reward = if self.is_side_block(storage, &hash).await? {
+            trace!("Block {} is a side block", hash);
+            let reward = get_block_reward(past_supply);
+            reward * SIDE_BLOCK_REWARD_PERCENT / 100
+        } else {
+            get_block_reward(past_supply)
+        };
+        Ok(block_reward)
     }
 
     // retrieve all txs hashes until height or until genesis block
@@ -1843,11 +1872,9 @@ impl<S: Storage> Blockchain<S> {
         debug!("New topoheight: {} (diff: {})", new_topoheight, current_topoheight - new_topoheight);
 
         {
-            debug!("Locking mempool");
-            let mut mempool = self.mempool.write().await;
             for (hash, tx) in txs {
                 debug!("Trying to add TX {} to mempool again", hash);
-                if let Err(e) = self.add_tx_for_mempool(&storage, &mut mempool, tx.as_ref().clone(), hash, false).await {
+                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx, hash, false).await {
                     debug!("TX rewinded is not compatible anymore: {}", e);
                 }
             }
@@ -1861,7 +1888,7 @@ impl<S: Storage> Blockchain<S> {
             let (_, height) = self.find_common_base(&storage, &tips).await?;
 
             // if we have a RPC server, propagate the StableHeightChanged if necessary
-            if let Some(rpc) = self.rpc.lock().await.as_ref() {
+            if let Some(rpc) = self.rpc.read().await.as_ref() {
                 let previous_stable_height = self.get_stable_height();
                 if height != previous_stable_height {
                     if rpc.is_event_tracked(&NotifyEvent::StableHeightChanged).await {
@@ -1997,8 +2024,8 @@ impl<S: Storage> Blockchain<S> {
                 };
     
                 if *nonce != tx.get_nonce() {
-                    debug!("Tx {} has nonce {} but expected {}", hash, tx.get_nonce(), nonce);
-                    return Err(BlockchainError::InvalidTxNonce(tx.get_nonce(), *nonce, tx.get_owner().clone()))
+                    debug!("Invalid nonce from cache for tx {}", hash);
+                    return Err(BlockchainError::InvalidTxNonce(hash.clone(), tx.get_nonce(), *nonce, tx.get_owner().clone()))
                 }
                 // we increment it in case any new tx for same owner is following
                 *nonce += 1;
@@ -2012,7 +2039,8 @@ impl<S: Storage> Blockchain<S> {
                 };
 
                 if nonce != tx.get_nonce() {
-                    return Err(BlockchainError::InvalidTxNonce(tx.get_nonce(), nonce, tx.get_owner().clone()))
+                    debug!("Invalid nonce in storage for tx {}", hash);
+                    return Err(BlockchainError::InvalidTxNonce(hash.clone(), tx.get_nonce(), nonce, tx.get_owner().clone()))
                 }
             }
         }
@@ -2054,10 +2082,11 @@ impl<S: Storage> Blockchain<S> {
     // reward block miner and dev fees if any.
     async fn reward_miner<'a>(&self, storage: &S, block: &'a BlockHeader, mut block_reward: u64, total_fees: u64, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, topoheight: u64) -> Result<(), BlockchainError> {
         debug!("reward miner {} at topoheight {} with block reward = {}, total fees = {}", block.get_miner(), topoheight, block_reward, total_fees);
+        let dev_fee_percentage = get_block_dev_fee(block.get_height());
         // if dev fee are enabled, give % from block reward only
-        if DEV_FEE_PERCENT != 0 {
-            let dev_fee = block_reward * DEV_FEE_PERCENT / 100;
-            debug!("adding {}% to dev address for dev fees", DEV_FEE_PERCENT);
+        if dev_fee_percentage != 0 {
+            let dev_fee = block_reward * dev_fee_percentage / 100;
+            debug!("adding {}% to dev address for dev fees", dev_fee_percentage);
             block_reward -= dev_fee;
             self.add_balance(storage, balances, &DEV_PUBLIC_KEY, &XELIS_ASSET, dev_fee, topoheight).await?;
         }
@@ -2141,11 +2170,21 @@ impl<S: Storage> Blockchain<S> {
 
 pub fn get_block_reward(supply: u64) -> u64 {
     // Prevent any overflow
-    if supply >= MAX_SUPPLY {
+    if supply >= MAXIMUM_SUPPLY {
         // Max supply reached, do we want to generate small fixed amount of coins? 
         return 0
     }
 
-    let base_reward = (MAX_SUPPLY - supply) >> EMISSION_SPEED_FACTOR;
-    base_reward * BLOCK_TIME / 180
+    let base_reward = (MAXIMUM_SUPPLY - supply) >> EMISSION_SPEED_FACTOR;
+    base_reward * BLOCK_TIME_MILLIS / MILLIS_PER_SECOND / 180
+}
+
+pub fn get_block_dev_fee(height: u64) -> u64 {
+    for threshold in DEV_FEES.iter() {
+        if height <= threshold.height {
+            return threshold.fee_percentage
+        }
+    }
+
+    0
 }

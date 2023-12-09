@@ -34,8 +34,8 @@ impl Serializer for BlockMetadata {
         let hash = reader.read_hash()?;
         let supply = reader.read_u64()?;
         let reward = reader.read_u64()?;
-        let difficulty = reader.read_u64()?;
-        let cumulative_difficulty = reader.read_u64()?;
+        let difficulty = Difficulty::read(reader)?;
+        let cumulative_difficulty = Difficulty::read(reader)?;
 
         Ok(Self {
             hash,
@@ -50,8 +50,8 @@ impl Serializer for BlockMetadata {
         writer.write_hash(&self.hash);
         writer.write_u64(&self.supply);
         writer.write_u64(&self.reward);
-        writer.write_u64(&self.difficulty);
-        writer.write_u64(&self.cumulative_difficulty);
+        self.difficulty.write(writer);
+        self.cumulative_difficulty.write(writer);
     }
 }
 

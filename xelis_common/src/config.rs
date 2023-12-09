@@ -1,6 +1,6 @@
 use crate::crypto::hash::Hash;
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const VERSION: &str = env!("BUILD_VERSION");
 pub const XELIS_ASSET: Hash = Hash::zero();
 // 0.01000 XEL per KB
 pub const FEE_PER_KB: u64 = 1000;

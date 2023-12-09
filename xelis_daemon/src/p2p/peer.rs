@@ -1,19 +1,23 @@
 use lru::LruCache;
+use xelis_common::api::daemon::Direction;
+use xelis_common::block::Difficulty;
 use crate::config::{
-    PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT
+    PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS
 };
+use crate::p2p::packet::PacketWrapper;
 use xelis_common::utils::get_current_time;
 use xelis_common::{
     crypto::hash::Hash,
     serializer::Serializer
 };
 use super::packet::bootstrap_chain::{StepRequest, BootstrapChainRequest, StepResponse};
+use super::packet::chain::{ChainRequest, ChainResponse};
 use super::packet::object::{ObjectRequest, OwnedObjectResponse};
 use super::peer_list::SharedPeerList;
 use super::connection::{Connection, ConnectionMessage};
 use super::packet::Packet;
 use super::error::P2pError;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, IpAddr};
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicBool, Ordering};
 use std::fmt::{Display, Error, Formatter};
 use std::time::Duration;
@@ -28,43 +32,46 @@ use log::{warn, trace, debug};
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
 pub struct Peer {
-    connection: Connection,
-    id: u64,
+    connection: Connection, // Connection of the peer to manage read/write to TCP Stream
+    id: u64, // unique ID of the peer to recognize him
     node_tag: Option<String>, // Node tag if provided
-    local_port: u16,
+    local_port: u16, // port on which the node is listening on its side
     version: String, // daemon version
     out: bool, // True mean we are the client
     priority: bool, // if this node can be trusted (seed node or added manually by user)
     top_hash: Mutex<Hash>, // current block top hash for this peer
     topoheight: AtomicU64, // current highest topo height for this peer
     height: AtomicU64, // current highest block height for this peer
-    last_chain_sync: AtomicU64,
+    last_chain_sync: AtomicU64, // last time we got a chain request
     last_fail_count: AtomicU64, // last time we got a fail
     fail_count: AtomicU8, // fail count: if greater than 20, we should close this connection
-    peer_list: SharedPeerList,
-    chain_requested: AtomicBool,
-    objects_requested: Mutex<RequestedObjects>,
-    peers_received: Mutex<HashSet<SocketAddr>>, // all peers from this peer
-    peers_sent: Mutex<HashSet<SocketAddr>>, // all peers sent to this peer
+    peer_list: SharedPeerList, // shared pointer to the peer list in case of disconnection
+    objects_requested: Mutex<RequestedObjects>, // map of requested objects from this peer
+    peers: Mutex<HashMap<SocketAddr, Direction>>, // all peers sent/received
     last_peer_list: AtomicU64, // last time we received a peerlist from this peer
     last_ping: AtomicU64, // last time we got a ping packet from this peer
+    last_ping_sent: AtomicU64, // last time we sent a ping packet to this peer
     cumulative_difficulty: AtomicU64, // cumulative difficulty of peer chain
-    txs_cache: Mutex<LruCache<Hash, ()>>, // All transactions propagated to/from this peer
-    blocks_propagation: Mutex<LruCache<Hash, ()>>, // last blocks propagated to/from this peer
+    txs_cache: Mutex<LruCache<Hash, Direction>>, // All transactions propagated from/to this peer
+    blocks_propagation: Mutex<LruCache<Hash, Direction>>, // last blocks propagated to/from this peer
     last_inventory: AtomicU64, // last time we got an inventory packet from this peer
     requested_inventory: AtomicBool, // if we requested this peer to send us an inventory notification
     pruned_topoheight: AtomicU64, // pruned topoheight if its a pruned node
     is_pruned: AtomicBool, // cannot be set to false if its already to true (protocol rules)
-    // used for await on bootstrap chain packets
-    bootstrap_chain: Mutex<Option<Sender<StepResponse>>>,
-    // IP address with local port
-    outgoing_address: SocketAddr
+    bootstrap_chain: Mutex<Option<Sender<StepResponse>>>, // used for await on bootstrap chain packets
+    sync_chain: Mutex<Option<Sender<ChainResponse>>>, // used to wait on chain response when syncing chain
+    outgoing_address: SocketAddr // IP address with local port
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: u64, peer_list: SharedPeerList, peers: HashSet<SocketAddr>) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: Difficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>) -> Self {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
+
+        let mut peers = HashMap::new();
+        for peer in peers_received {
+            peers.insert(peer, Direction::In);
+        }
 
         Self {
             connection,
@@ -81,12 +88,11 @@ impl Peer {
             fail_count: AtomicU8::new(0),
             last_chain_sync: AtomicU64::new(0),
             peer_list,
-            chain_requested: AtomicBool::new(false),
             objects_requested: Mutex::new(HashMap::new()),
-            peers_received: Mutex::new(peers),
-            peers_sent: Mutex::new(HashSet::new()),
+            peers: Mutex::new(peers),
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
+            last_ping_sent: AtomicU64::new(0),
             cumulative_difficulty: AtomicU64::new(cumulative_difficulty),
             txs_cache: Mutex::new(LruCache::new(128)),
             blocks_propagation: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
@@ -95,15 +101,20 @@ impl Peer {
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
             is_pruned: AtomicBool::new(pruned_topoheight.is_some()),
             bootstrap_chain: Mutex::new(None),
+            sync_chain: Mutex::new(None),
             outgoing_address
         }
     }
 
-    pub fn get_txs_cache(&self) -> &Mutex<LruCache<Hash, ()>> {
+    pub fn get_ip(&self) -> IpAddr {
+        self.connection.get_address().ip()
+    }
+
+    pub fn get_txs_cache(&self) -> &Mutex<LruCache<Hash, Direction>> {
         &self.txs_cache
     }
 
-    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Hash, ()>> {
+    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Hash, Direction>> {
         &self.blocks_propagation
     }
 
@@ -172,11 +183,11 @@ impl Peer {
         &self.top_hash
     }
 
-    pub fn get_cumulative_difficulty(&self) -> u64 {
+    pub fn get_cumulative_difficulty(&self) -> Difficulty {
         self.cumulative_difficulty.load(Ordering::Acquire)
     }
 
-    pub fn set_cumulative_difficulty(&self, cumulative_difficulty: u64) {
+    pub fn set_cumulative_difficulty(&self, cumulative_difficulty: Difficulty) {
         self.cumulative_difficulty.store(cumulative_difficulty, Ordering::Release)
     }
 
@@ -232,14 +243,6 @@ impl Peer {
         self.last_chain_sync.store(time, Ordering::Release);
     }
 
-    pub fn chain_sync_requested(&self) -> bool {
-        self.chain_requested.load(Ordering::Acquire)
-    }
-
-    pub fn set_chain_sync_requested(&self, value: bool) {
-        self.chain_requested.store(value, Ordering::Release);
-    }
-
     pub fn get_objects_requested(&self) -> &Mutex<RequestedObjects> {
         &self.objects_requested
     }
@@ -276,9 +279,16 @@ impl Peer {
                 return Err(P2pError::AsyncTimeOut(e));
             }
         };
+
+        // Verify that the object is the one we requested
         let object_hash = object.get_hash();
         if *object_hash != *request.get_hash() {
             return Err(P2pError::InvalidObjectResponse(object_hash.clone()))
+        }
+
+        // Returns error if the object is not found
+        if let OwnedObjectResponse::NotFound(request) = &object {
+            return Err(P2pError::ObjectNotFound(request.clone()));
         }
 
         Ok(object)
@@ -300,7 +310,7 @@ impl Peer {
         let response: StepResponse = match timeout(Duration::from_millis(PEER_TIMEOUT_BOOTSTRAP_STEP), receiver).await {
             Ok(res) => res?,
             Err(e) => {
-                trace!("Requested bootstrap chain step {:?} has timed out", step_kind);
+                debug!("Requested bootstrap chain step {:?} has timed out", step_kind);
                 return Err(P2pError::AsyncTimeOut(e));
             }
         };
@@ -314,16 +324,39 @@ impl Peer {
         Ok(response)
     }
 
+    pub async fn request_sync_chain(&self, request: PacketWrapper<'_, ChainRequest>) -> Result<ChainResponse, P2pError> {
+        debug!("Requesting sync chain");
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        {
+            let mut sender_lock = self.sync_chain.lock().await;
+            *sender_lock = Some(sender);
+        }
+
+        trace!("sending chain request packet");
+        self.send_packet(Packet::ChainRequest(request)).await?;
+
+        trace!("waiting for chain response");
+        let response: ChainResponse = match timeout(Duration::from_secs(CHAIN_SYNC_TIMEOUT_SECS), receiver).await {
+            Ok(res) => res?,
+            Err(e) => {
+                debug!("Requested sync chain step timed out");
+                return Err(P2pError::AsyncTimeOut(e));
+            }
+        };
+
+        Ok(response)
+    }
+
     pub fn get_bootstrap_chain_channel(&self) -> &Mutex<Option<Sender<StepResponse>>> {
         &self.bootstrap_chain
     }
 
-    pub fn get_peers(&self, sent: bool) -> &Mutex<HashSet<SocketAddr>> {
-        if sent {
-            &self.peers_sent
-        } else {
-            &self.peers_received
-        }
+    pub fn get_sync_chain_channel(&self) -> &Mutex<Option<Sender<ChainResponse>>> {
+        &self.sync_chain
+    }
+
+    pub fn get_peers(&self) -> &Mutex<HashMap<SocketAddr, Direction>> {
+        &self.peers
     }
 
     pub fn get_last_peer_list(&self) -> u64 {
@@ -339,6 +372,14 @@ impl Peer {
     }
 
     pub fn set_last_ping(&self, value: u64) {
+        self.last_ping.store(value, Ordering::Release)
+    }
+
+    pub fn get_last_ping_sent(&self) -> u64 {
+        self.last_ping_sent.load(Ordering::Acquire)
+    }
+
+    pub fn set_last_ping_sent(&self, value: u64) {
         self.last_ping.store(value, Ordering::Release)
     }
 
@@ -365,7 +406,7 @@ impl Peer {
     pub async fn close(&self) -> Result<(), P2pError> {
         trace!("Closing connection with {}", self);
         let mut peer_list = self.peer_list.write().await;
-        peer_list.remove_peer(&self).await;
+        peer_list.remove_peer(self.get_id()).await;
         self.get_connection().close().await?;
         trace!("{} has been disconnected", self);
         Ok(())
@@ -376,7 +417,9 @@ impl Peer {
     }
 
     pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), P2pError> {
+        trace!("Sending {} bytes to {}", bytes.len(), self.get_outgoing_address());
         let tx = self.connection.get_tx().lock().await;
+        trace!("Lock acquired, Sending packet");
         tx.send(ConnectionMessage::Packet(bytes))?;
         Ok(())
     }
@@ -386,7 +429,7 @@ impl Display for Peer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
         // update fail counter to have up-to-date data to display
         self.update_fail_count_default();
-        let peers_count = if let Ok(peers) = self.get_peers(false).try_lock() {
+        let peers_count = if let Ok(peers) = self.get_peers().try_lock() {
             format!("{}", peers.len())
         } else {
             "Couldn't retrieve data".to_string()

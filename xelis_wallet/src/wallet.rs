@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Error, Context};
+use serde_json::{Value, json};
 use tokio::sync::{Mutex, RwLock};
 use xelis_common::api::DataElement;
 use xelis_common::api::wallet::FeeBuilder;
@@ -9,10 +10,12 @@ use xelis_common::config::{XELIS_ASSET, COIN_DECIMALS};
 use xelis_common::crypto::address::Address;
 use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey};
+use xelis_common::rpc_server::{RpcRequest, InternalRpcError, RpcResponseError};
 use xelis_common::utils::{format_xelis, format_coin};
 use xelis_common::network::Network;
 use xelis_common::serializer::{Serializer, Writer};
 use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
+use crate::api::XSWDNodeMethodHandler;
 use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
 use crate::mnemonics;
@@ -26,6 +29,7 @@ use log::{error, debug};
 
 #[cfg(feature = "api_server")]
 use {
+    fern::colors::Color,
     async_trait::async_trait,
     crate::api::{
         register_rpc_methods,
@@ -33,12 +37,16 @@ use {
         WalletRpcServer,
         AuthConfig,
         APIServer,
-        ApplicationData,
+        AppStateShared,
         PermissionResult,
         PermissionRequest,
         XSWDPermissionHandler
     },
-    xelis_common::prompt::ShareablePrompt,
+    xelis_common::prompt::{
+        ShareablePrompt,
+        colorize_string,
+        colorize_str
+    },
     xelis_common::rpc_server::RPCHandler
 };
 
@@ -120,7 +128,7 @@ pub struct Wallet {
     // Prompt for CLI
     // Only used for requesting permissions through it
     #[cfg(feature = "api_server")]
-    prompt: Mutex<Option<ShareablePrompt<Arc<Wallet>>>>
+    prompt: RwLock<Option<ShareablePrompt>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -138,7 +146,7 @@ impl Wallet {
             network,
             #[cfg(feature = "api_server")]
             api_server: Mutex::new(None),
-            prompt: Mutex::new(None)
+            prompt: RwLock::new(None)
         };
 
         Arc::new(zelf)
@@ -241,9 +249,9 @@ impl Wallet {
     }
 
     #[cfg(feature = "api_server")]
-    pub async fn set_prompt(&self, prompt: ShareablePrompt<Arc<Wallet>>) {
+    pub async fn set_prompt(&self, prompt: ShareablePrompt) {
         {
-            let mut lock = self.prompt.lock().await;
+            let mut lock = self.prompt.write().await;
             *lock = Some(prompt);
         }
     }
@@ -460,7 +468,7 @@ impl Wallet {
             network_handler.stop().await?;
             {
                 let mut storage = self.get_storage().write().await;
-                if topoheight >= storage.get_daemon_topoheight()? {
+                if topoheight > storage.get_daemon_topoheight()? {
                     return Err(WalletError::RescanTopoheightTooHigh)
                 }
                 storage.set_daemon_topoheight(topoheight)?;
@@ -477,11 +485,7 @@ impl Wallet {
                 if topoheight == 0 {
                     storage.delete_transactions()?;
                 } else {
-                    for tx in storage.get_transactions()? {
-                        if tx.get_topoheight() > topoheight {
-                            storage.delete_transaction(tx.get_hash())?;
-                        }
-                    }
+                    storage.delete_transactions_above_topoheight(topoheight)?;
                 }
             }
             network_handler.start().await.context("Error while restarting network handler")?;
@@ -510,11 +514,11 @@ impl Wallet {
         self.keypair.get_public_key()
     }
 
-    pub fn get_address(&self) -> Address<'_> {
+    pub fn get_address(&self) -> Address {
         self.keypair.get_public_key().to_address(self.get_network().is_mainnet())
     }
 
-    pub fn get_address_with(&self, data: DataElement) -> Address<'_> {
+    pub fn get_address_with(&self, data: DataElement) -> Address {
         self.keypair.get_public_key().to_address_with(self.get_network().is_mainnet(), data)
     }
 
@@ -540,15 +544,15 @@ impl Wallet {
 #[cfg(feature = "api_server")]
 #[async_trait]
 impl XSWDPermissionHandler for Arc<Wallet> {
-    async fn request_permission(&self, app_data: &ApplicationData, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
-        if let Some(prompt) = self.prompt.lock().await.as_ref() {
+    async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
+        if let Some(prompt) = self.prompt.read().await.as_ref() {
             match request {
                 PermissionRequest::Application(signed) => {
-                    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_data.get_name(), app_data.get_id());
+                    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_state.get_name(), app_state.get_id());
                     if signed {
-                        message = "NOTE: Application authorizaion was already approved previously.\r\n".to_string() + &message;
+                        message = colorize_str(Color::BrightYellow, "NOTE: Application authorizaion was already approved previously.\r\n") + &message;
                     }
-                    let accepted = prompt.read_valid_str_value(message, vec!["y", "n"]).await? == "y";
+                    let accepted = prompt.read_valid_str_value(colorize_string(Color::Blue, &message), vec!["y", "n"]).await? == "y";
                     if accepted {
                         Ok(PermissionResult::Allow)
                     } else {
@@ -564,12 +568,12 @@ impl XSWDPermissionHandler for Arc<Wallet> {
 
                     let message = format!(
                         "XSWD: Request from {}: {}\r\nParams: {}\r\nDo you want to allow this request ?\r\n([A]llow / [D]eny / [AA] Always Allow / [AD] Always Deny): ",
-                        app_data.get_name(),
+                        app_state.get_name(),
                         request.method,
                         params
                     );
 
-                    let answer = prompt.read_valid_str_value(message, vec!["a", "d", "aa", "ad"]).await?;
+                    let answer = prompt.read_valid_str_value(colorize_string(Color::Blue, &message), vec!["a", "d", "aa", "ad"]).await?;
                     Ok(match answer.as_str() {
                         "a" => PermissionResult::Allow,
                         "d" => PermissionResult::Deny,
@@ -584,7 +588,33 @@ impl XSWDPermissionHandler for Arc<Wallet> {
         }
     }
 
+    // there is a lock to acquire so it make it "single threaded"
+    // the one who has the lock is the one who is requesting so we don't need to check and can cancel directly
+    async fn cancel_request_permission(&self, _: &AppStateShared) -> Result<(), Error> {
+        debug!("Cancelling request permission");
+        if let Some(prompt) = self.prompt.read().await.as_ref() {
+            prompt.cancel_read_input().await
+        } else {
+            Err(WalletError::NoHandlerAvailable.into())
+        }
+    }
+
     async fn get_public_key(&self) -> Result<&PublicKey, Error> {
         Ok((self as &Wallet).get_public_key())
+    }
+}
+
+#[cfg(feature = "api_server")]
+#[async_trait]
+impl XSWDNodeMethodHandler for Arc<Wallet> {
+    async fn call_node_with(&self, request: RpcRequest) -> Result<Value, RpcResponseError> {
+        let network_handler = self.network_handler.lock().await;
+        let id = request.id;
+        if let Some(network_handler) = network_handler.as_ref() {
+            network_handler.get_api().get_client().send(json!(request)).await
+                .map_err(|e| RpcResponseError::new(id, InternalRpcError::Custom(e.to_string())))
+        } else {
+            Err(RpcResponseError::new(id, InternalRpcError::CustomStr("Wallet is not in online mode")))
+        }
     }
 }

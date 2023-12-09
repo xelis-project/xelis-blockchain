@@ -3,7 +3,6 @@ use crate::utils::get_network;
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 use super::address::{Address, AddressType};
 use super::hash::Hash;
-use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt::{Display, Error, Formatter};
 use rand::{rngs::OsRng, RngCore};
@@ -35,11 +34,11 @@ impl PublicKey {
     }
 
     pub fn to_address(&self, mainnet: bool) -> Address {
-        Address::new(mainnet, AddressType::Normal, Cow::Borrowed(self))
+        Address::new(mainnet, AddressType::Normal, self.clone())
     }
 
     pub fn to_address_with(&self, mainnet: bool, data: DataElement) -> Address {
-        Address::new(mainnet, AddressType::Data(data), Cow::Borrowed(self))
+        Address::new(mainnet, AddressType::Data(data), self.clone())
     }
 }
 

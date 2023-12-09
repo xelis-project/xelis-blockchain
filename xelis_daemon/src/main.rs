@@ -10,16 +10,16 @@ use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
     prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel, self, ShareablePrompt},
-    config::{VERSION, XELIS_ASSET}, utils::{format_hashrate, set_network_to, format_xelis, format_coin}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer
+    config::{VERSION, XELIS_ASSET}, utils::{format_hashrate, set_network_to, format_xelis, format_coin, format_difficulty}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer, block::Difficulty
 };
 use crate::{
     core::{
         blockchain::{Config, Blockchain, get_block_reward},
         storage::{Storage, SledStorage}
     },
-    config::BLOCK_TIME
+    config::{BLOCK_TIME_MILLIS, MILLIS_PER_SECOND}
 };
-use std::{sync::Arc, net::SocketAddr};
+use std::{sync::Arc, net::IpAddr};
 use std::time::Duration;
 use clap::Parser;
 use anyhow::{Result, Context};
@@ -82,43 +82,42 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blockchain: Arc<Blockchain<S>>, network: Network) -> Result<(), PromptError> {
-    let mut command_manager: CommandManager<Arc<Blockchain<S>>> = CommandManager::default();
+async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockchain<S>>, network: Network) -> Result<(), PromptError> {
+    let command_manager: CommandManager<Arc<Blockchain<S>>> = CommandManager::default(prompt.clone())?;
     // Set the data to use
-    command_manager.set_data(Some(blockchain.clone()));
+    command_manager.set_data(Some(blockchain.clone()))?;
 
     // Register all our commands
-    command_manager.add_command(Command::new("list_peers", "List all peers connected", CommandHandler::Async(async_handler!(list_peers))));
-    command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", CommandHandler::Async(async_handler!(list_assets))));
-    command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance))));
-    command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(print_block))));
-    command_manager.add_command(Command::new("top_block", "Print top block", CommandHandler::Async(async_handler!(top_block))));
-    command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], CommandHandler::Async(async_handler!(pop_blocks))));
-    command_manager.add_command(Command::new("clear_mempool", "Clear all transactions in mempool", CommandHandler::Async(async_handler!(clear_mempool))));
-    command_manager.add_command(Command::with_arguments("add_tx", "Add a TX in hex format in mempool", vec![Arg::new("hex", ArgType::String)], vec![Arg::new("broadcast", ArgType::Bool)], CommandHandler::Async(async_handler!(add_tx))));
-    command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified block height", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(prune_chain))));
-    command_manager.add_command(Command::new("status", "Current daemon status", CommandHandler::Async(async_handler!(status))));
-    command_manager.add_command(Command::with_required_arguments("blacklist", "Add a peer address in Blacklist", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(blacklist))));
-    command_manager.add_command(Command::with_required_arguments("whitelist", "Add a peer address in Whitelist", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(whitelist))));
+    command_manager.add_command(Command::new("list_peers", "List all peers connected", CommandHandler::Async(async_handler!(list_peers))))?;
+    command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", CommandHandler::Async(async_handler!(list_assets))))?;
+    command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance))))?;
+    command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(print_block))))?;
+    command_manager.add_command(Command::new("top_block", "Print top block", CommandHandler::Async(async_handler!(top_block))))?;
+    command_manager.add_command(Command::with_required_arguments("pop_blocks", "Delete last N blocks", vec![Arg::new("amount", ArgType::Number)], CommandHandler::Async(async_handler!(pop_blocks))))?;
+    command_manager.add_command(Command::new("clear_mempool", "Clear all transactions in mempool", CommandHandler::Async(async_handler!(clear_mempool))))?;
+    command_manager.add_command(Command::with_arguments("add_tx", "Add a TX in hex format in mempool", vec![Arg::new("hex", ArgType::String)], vec![Arg::new("broadcast", ArgType::Bool)], CommandHandler::Async(async_handler!(add_tx))))?;
+    command_manager.add_command(Command::with_required_arguments("prune_chain", "Prune the chain until the specified topoheight", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(prune_chain))))?;
+    command_manager.add_command(Command::new("status", "Current daemon status", CommandHandler::Async(async_handler!(status))))?;
+    command_manager.add_command(Command::with_optional_arguments("blacklist", "View blacklist or add a peer address in it", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(blacklist))))?;
+    command_manager.add_command(Command::with_optional_arguments("whitelist", "View whitelist or add a peer address in it", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(whitelist))))?;
+    command_manager.add_command(Command::new("verify_chain", "Check chain supply/balances", CommandHandler::Async(async_handler!(verify_chain))))?;
 
-    // Register the prompt in CommandManager in case we need it
-    command_manager.set_prompt(Some(prompt.clone()));
-
-    // set the CommandManager to use
-    prompt.set_command_manager(Some(command_manager))?;
-
-    let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().lock().await.as_ref() {
-        Some(p2p) => Some(p2p.clone()),
-        None => None
+    // Don't keep the lock for ever
+    let (p2p, getwork) = {
+        let p2p: Option<Arc<P2pServer<S>>> = match blockchain.get_p2p().read().await.as_ref() {
+            Some(p2p) => Some(p2p.clone()),
+            None => None
+        };
+        let getwork: Option<SharedGetWorkServer<S>> = match blockchain.get_rpc().read().await.as_ref() {
+            Some(rpc) => rpc.getwork_server().clone(),
+            None => None
+        };
+        (p2p, getwork)
     };
-    let getwork: Option<SharedGetWorkServer<S>> = match blockchain.get_rpc().lock().await.as_ref() {
-        Some(rpc) => rpc.getwork_server().clone(),
-        None => None
-    };
 
-    let closure = |_| async {
-        let (peers, best) = match &p2p {
-            Some(p2p) => (p2p.get_peer_count().await, p2p.get_best_topoheight().await),
+    let closure = |_: &_, _: &_| async {
+        let (peers, median) = match &p2p {
+            Some(p2p) => (p2p.get_peer_count().await, p2p.get_median_topoheight_of_peers().await),
             None => (0, blockchain.get_topo_height())
         };
 
@@ -132,12 +131,12 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
             mempool.size()
         };
 
-        let network_hashrate = (blockchain.get_difficulty() / BLOCK_TIME) as f64;
+        let network_hashrate = (blockchain.get_difficulty() / (BLOCK_TIME_MILLIS / MILLIS_PER_SECOND) as Difficulty) as f64;
 
         Ok(
             build_prompt_message(
                 blockchain.get_topo_height(),
-                best,
+                median,
                 network_hashrate,
                 peers,
                 miners,
@@ -147,15 +146,15 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt<Arc<Blockchain<S>>>, blo
         )
     };
 
-    prompt.start(Duration::from_millis(100), &closure).await
+    prompt.start(Duration::from_millis(100), Box::new(async_handler!(closure)), &Some(command_manager)).await
 }
 
-fn build_prompt_message(topoheight: u64, best_topoheight: u64, network_hashrate: f64, peers_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
+fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrate: f64, peers_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
     let topoheight_str = format!(
         "{}: {}/{}",
         prompt::colorize_str(Color::Yellow, "TopoHeight"),
         prompt::colorize_string(Color::Green, &format!("{}", topoheight)),
-        prompt::colorize_string(Color::Green, &format!("{}", best_topoheight))
+        prompt::colorize_string(Color::Green, &format!("{}", median_topoheight))
     );
     let network_hashrate_str = format!(
         "{}: {}",
@@ -199,9 +198,63 @@ fn build_prompt_message(topoheight: u64, best_topoheight: u64, network_hashrate:
     )
 }
 
+async fn verify_chain<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
+
+    let storage = blockchain.get_storage().read().await;
+    let mut expected_supply = 0;
+    for topo in 0..=blockchain.get_topo_height() {
+        let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
+        let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply).await.context("Error while calculating block reward")?;
+        // Verify the saved block reward
+        if block_reward != storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward")? {
+            manager.error(format!("Block reward saved is incorrect for {} at topoheight {}", hash_at_topo, topo));
+            return Ok(())
+        }
+
+        expected_supply += block_reward;
+        let supply = storage.get_supply_at_topo_height(topo).await.context("Error while retrieving supply at topoheight")?;
+
+        // Verify the supply at block
+        if supply != expected_supply {
+            manager.error(format!("Error for block {} at topoheight {}, expected {} found {}", hash_at_topo, topo, expected_supply, supply));
+            return Ok(())
+        }
+    }
+    manager.message("Supply is valid");
+
+    // Now let's check balances
+    let topoheight = blockchain.get_topo_height();
+    let chunk_size = 1024;
+    let mut skip = 0;
+    let mut total_balances = 0;
+    loop {
+        let keys = storage.get_partial_keys(chunk_size, skip, 0, topoheight).await.context("Error on get_partial_keys")?;
+        if keys.len() == 0 {
+            break;
+        }
+
+        for key in keys {
+            let (_, balance) = storage.get_last_balance(&key, &XELIS_ASSET).await.context("Error while retrieving balance")?;
+            total_balances += balance.get_balance();
+        }
+        skip += chunk_size;
+    }
+
+    if total_balances != expected_supply {
+        manager.error(format!("Total balances is not equal to expected supply! Balances: {}, Supply: {}", total_balances, expected_supply));
+    } else {
+        manager.message("Balances are equal to verified supply");
+    }
+
+    Ok(())
+}
+
 async fn list_peers<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let blockchain = manager.get_data()?;
-    match blockchain.get_p2p().lock().await.as_ref() {
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
+    match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
             let peer_list = p2p.get_peer_list().read().await;
             for peer in peer_list.get_peers().values() {
@@ -217,7 +270,8 @@ async fn list_peers<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _:
 }
 
 async fn list_assets<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let blockchain = manager.get_data()?;
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
     let storage = blockchain.get_storage().read().await;
     let assets = storage.get_assets().await.context("Error while retrieving assets")?;
     manager.message(format!("Registered assets ({}):", assets.len()));
@@ -228,7 +282,7 @@ async fn list_assets<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _
 }
 
 async fn show_balance<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let prompt = manager.get_prompt()?;
+    let prompt = manager.get_prompt();
     // read address
     let str_address = prompt.read_input(
         prompt::colorize_str(Color::Green, "Address: "),
@@ -254,8 +308,14 @@ async fn show_balance<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, 
     };
 
     let key = address.to_public_key();
-    let blockchain = manager.get_data()?;
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
     let storage = blockchain.get_storage().read().await;
+    if !storage.has_balance_for(&key, &asset).await.context("Error while checking if address has balance")? {
+        manager.message("No balance found for address");
+        return Ok(());
+    }
+
     let asset_data = storage.get_asset_data(&asset).context("Error while retrieving asset data")?;
     let (mut topo, mut version) = storage.get_last_balance(&key, &asset).await.context("Error while retrieving last balance")?;
     loop {
@@ -278,7 +338,8 @@ async fn show_balance<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, 
 }
 
 async fn print_block<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let blockchain = manager.get_data()?;
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
     let storage = blockchain.get_storage().read().await;
     let hash = arguments.get_value("hash")?.to_hash()?;
     let response = get_block_response_for_hash(blockchain, &storage, hash, false).await.context("Error while building block response")?;
@@ -288,7 +349,8 @@ async fn print_block<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, m
 }
 
 async fn top_block<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let blockchain = manager.get_data()?;
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
     let storage = blockchain.get_storage().read().await;
     let hash = blockchain.get_top_block_hash().await.context("Error on top block hash")?;
     let response = get_block_response_for_hash(blockchain, &storage, hash, false).await.context("Error while building block response")?;
@@ -299,7 +361,8 @@ async fn top_block<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: 
 
 async fn pop_blocks<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let amount = arguments.get_value("amount")?.to_number()?;
-    let blockchain = manager.get_data()?;
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
     if amount == 0 || amount >= blockchain.get_height() {
         return Err(anyhow::anyhow!("Invalid amount of blocks to pop").into());
     }
@@ -312,7 +375,8 @@ async fn pop_blocks<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mu
 }
 
 async fn clear_mempool<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let blockchain = manager.get_data()?;
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
     info!("Clearing mempool...");
     let mut mempool = blockchain.get_mempool().write().await;
     mempool.clear();
@@ -334,15 +398,17 @@ async fn add_tx<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut ar
     let hash = tx.hash();
     manager.message(format!("Adding TX {} to mempool...", hash));
 
-    let blockchain = manager.get_data()?;
-    blockchain.add_tx_with_hash_to_mempool(tx, hash, broadcast).await.context("Error while adding TX to mempool")?;
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
+    blockchain.add_tx_to_mempool_with_hash(tx, hash, broadcast).await.context("Error while adding TX to mempool")?;
     manager.message("TX has been added to mempool");
     Ok(())
 }
 
 async fn prune_chain<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let topoheight = arguments.get_value("topoheight")?.to_number()?;
-    let blockchain = manager.get_data()?;
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
     manager.message(format!("Pruning chain until maximum topoheight {}", topoheight));
     let pruned_topoheight = match blockchain.prune_until_topoheight(topoheight).await {
         Ok(topoheight) => topoheight,
@@ -356,7 +422,8 @@ async fn prune_chain<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, m
 }
 
 async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let blockchain = manager.get_data()?;
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
     let storage = blockchain.get_storage().read().await;
 
     let height = blockchain.get_height();
@@ -371,11 +438,11 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
     manager.message(format!("Topo Height: {}", topoheight));
-    manager.message(format!("Difficulty: {}", difficulty));
-    manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / BLOCK_TIME) as f64)));
+    manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
+    manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / (BLOCK_TIME_MILLIS / MILLIS_PER_SECOND) as Difficulty) as f64)));
     manager.message(format!("Top block hash: {}", top_block_hash));
-    manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / 1000f64));
-    manager.message(format!("Target Block Time: {:.2}s", BLOCK_TIME as f64));
+    manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
+    manager.message(format!("Target Block Time: {:.2}s", BLOCK_TIME_MILLIS as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Current Supply: {} XELIS", format_xelis(supply)));
     manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(supply))));
 
@@ -398,13 +465,28 @@ async fn status<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, _: Arg
 }
 
 async fn blacklist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let blockchain: &Arc<Blockchain<S>> = manager.get_data()?;
-    let address: SocketAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
-    match blockchain.get_p2p().lock().await.as_ref() {
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
+    match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
-            let peer_list = p2p.get_peer_list();
-            peer_list.write().await.blacklist_address(&address).await;
-            manager.message(format!("Peer {} has been blacklisted", address));
+            if arguments.has_argument("address") {
+                let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+                let mut peer_list = p2p.get_peer_list().write().await;
+                if peer_list.is_blacklisted(&address) {
+                    peer_list.set_graylist_for_peer(&address);
+                    manager.message(format!("Peer {} is not blacklisted anymore", address));
+                } else {
+                    peer_list.blacklist_address(&address).await;
+                    manager.message(format!("Peer {} has been blacklisted", address));
+                }
+            } else {
+                let peer_list = p2p.get_peer_list().read().await;
+                let blacklist = peer_list.get_blacklist();
+                manager.message(format!("Current blacklist ({}):", blacklist.len()));
+                for (ip, peer) in blacklist {
+                    manager.message(format!("- {}: {}", ip, peer));
+                }
+            }
         },
         None => {
             manager.error("P2P is not enabled");
@@ -415,13 +497,28 @@ async fn blacklist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut
 }
 
 async fn whitelist<S: Storage>(manager: &CommandManager<Arc<Blockchain<S>>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let blockchain: &Arc<Blockchain<S>> = manager.get_data()?;
-    let address: SocketAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
-    match blockchain.get_p2p().lock().await.as_ref() {
+    let lock = manager.get_data().lock()?;
+    let blockchain = lock.as_ref().ok_or(CommandError::NoData)?;
+    match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
-            let peer_list = p2p.get_peer_list();
-            peer_list.write().await.whitelist_address(&address);
-            manager.message(format!("Peer {} has been whitelisted", address));
+            if arguments.has_argument("address") {
+                let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+                let mut peer_list = p2p.get_peer_list().write().await;
+                if peer_list.is_whitelisted(&address) {
+                    peer_list.set_graylist_for_peer(&address);
+                    manager.message(format!("Peer {} is not whitelisted anymore", address));
+                } else {
+                    peer_list.whitelist_address(&address);
+                    manager.message(format!("Peer {} has been whitelisted", address));
+                }
+            } else {
+                let peer_list = p2p.get_peer_list().read().await;
+                let whitelist = peer_list.get_whitelist();
+                manager.message(format!("Current whitelist ({}):", whitelist.len()));
+                for (ip, peer) in whitelist {
+                    manager.message(format!("- {}: {}", ip, peer));
+                }
+            }
         },
         None => {
             manager.error("P2P is not enabled");

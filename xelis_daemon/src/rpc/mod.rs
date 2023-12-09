@@ -152,7 +152,7 @@ async fn getwork_endpoint<S: Storage>(server: Data<DaemonRpcServer<S>>, request:
                 return Ok(HttpResponse::BadRequest().body("Worker name must be less or equal to 32 chars"))
             }
 
-            let address: Address<'_> = match Address::from_string(&addr) {
+            let address: Address = match Address::from_string(&addr) {
                 Ok(address) => address,
                 Err(e) => {
                     debug!("Invalid miner address for getwork server: {}", e);

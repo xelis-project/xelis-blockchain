@@ -1,11 +1,11 @@
 use std::collections::HashSet;
-
+use indexmap::IndexMap;
 use sled::{Tree, Db};
 use xelis_common::{
     crypto::{hash::Hash, key::{KeyPair, PublicKey}},
     serializer::{Reader, Serializer},
     network::Network,
-    api::wallet::QuerySearcher,
+    api::{DataValue, DataElement, QueryResult, Query},
 };
 use anyhow::{Context, Result, anyhow};
 use crate::{config::SALT_SIZE, cipher::Cipher, wallet::WalletError, entry::{TransactionEntry, EntryData}};
@@ -44,7 +44,7 @@ pub struct EncryptedStorage {
 impl EncryptedStorage {
     pub fn new(inner: Storage, key: &[u8], salt: [u8; SALT_SIZE], network: Network) -> Result<Self> {
         let cipher = Cipher::new(key, Some(salt))?;
-        let storage = Self {
+        let mut storage = Self {
             transactions: inner.db.open_tree(&cipher.hash_key("transactions"))?,
             balances: inner.db.open_tree(&cipher.hash_key("balances"))?,
             extra: inner.db.open_tree(&cipher.hash_key("extra"))?,
@@ -79,24 +79,38 @@ impl EncryptedStorage {
         self.internal_load(tree, &hashed_key)
     }
 
+    // Because we can't predict the nonce used for encryption, we make it determistic
+    fn create_encrypted_key(&self, key: &[u8]) -> Result<Vec<u8>> {
+        // the hashed key is salted so its unique and can't be recover/bruteforced
+        let hashed_key = self.cipher.hash_key(key);
+
+        // Use only the first 24 bytes as nonce
+        let mut nonce = [0u8; Cipher::NONCE_SIZE];
+        nonce.copy_from_slice(&hashed_key[0..Cipher::NONCE_SIZE]);
+
+        let key = self.cipher.encrypt_value_with_nonce(key, &nonce)?;
+        Ok(key)
+    }
+
     // load from disk using an encrypted key, decrypt the value and deserialize it
     fn load_from_disk_with_encrypted_key<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
-        let encrypted_key = self.cipher.encrypt_value(key)?;
+        let encrypted_key = self.create_encrypted_key(key)?;
         self.internal_load(tree, &encrypted_key)
+    }
+
+    // Encrypt key, encrypt data and then save to disk
+    // We encrypt instead of hashing to be able to retrieve the key
+    fn save_to_disk_with_encrypted_key(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
+        let encrypted_key = self.create_encrypted_key(key)?;
+        let encrypted_value = self.cipher.encrypt_value(value)?;
+        tree.insert(encrypted_key, encrypted_value)?;
+        Ok(())
     }
 
     // hash key, encrypt data and then save to disk 
     fn save_to_disk(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
         let hashed_key = self.cipher.hash_key(key);
         tree.insert(hashed_key, self.cipher.encrypt_value(value)?)?;
-        Ok(())
-    }
-
-    // Encrypt key, encrypt data and then save to disk
-    // We encrypt instead of hashing to be able to retrieve the key
-    fn save_to_disk_with_encrypted_key(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
-        let encrypted_key = self.cipher.encrypt_value(key)?;
-        tree.insert(encrypted_key, self.cipher.encrypt_value(value)?)?;
         Ok(())
     }
 
@@ -115,8 +129,96 @@ impl EncryptedStorage {
 
     // Encrypt instead of hash the key to recover it later
     fn contains_encrypted_data(&self, tree: &Tree, key: &[u8]) -> Result<bool> {
-        let encrypted_key = self.cipher.encrypt_value(key)?;
+        let encrypted_key = self.create_encrypted_key(key)?;
         Ok(tree.contains_key(encrypted_key)?)
+    }
+
+    // Open the named tree
+    fn get_custom_tree(&self, name: &String) -> Result<Tree> {
+        let hash = self.cipher.hash_key(format!("custom_{}", name));
+        let tree = self.inner.db.open_tree(&hash)?;
+        Ok(tree)
+    }
+
+    // Store a custom serializable data 
+    pub fn set_custom_data(&self, tree: &String, key: &DataValue, value: &DataElement) -> Result<()> {
+        let tree = self.get_custom_tree(tree)?;
+        self.save_to_disk_with_encrypted_key(&tree, &key.to_bytes(), &value.to_bytes())?;
+        Ok(())
+    }
+
+    // Retrieve a custom data in the selected format
+    pub fn get_custom_data(&self, tree: &String, key: &DataValue) -> Result<DataElement> {
+        let tree = self.get_custom_tree(tree)?;
+        self.load_from_disk_with_encrypted_key(&tree, &key.to_bytes())
+    }
+
+    pub fn query_db(&self, tree: &String, query_key: Option<Query>, query_value: Option<Query>) -> Result<QueryResult> {
+        let tree = self.get_custom_tree(tree)?;
+        let mut entries: IndexMap<DataValue, DataElement> = IndexMap::new();
+        for res in tree.iter() {
+            let (k, v) = res?;
+            let mut key = None;
+            let mut value = None;
+            if let Some(query) = query_key.as_ref() {
+                let decrypted = self.cipher.decrypt_value(&k)?;
+                let k = DataValue::from_bytes(&decrypted)?;
+                if !query.verify_value(&k) {
+                    continue;
+                }
+                key = Some(k);
+            }
+
+            if let Some(query) = query_value.as_ref() {
+                let decrypted = self.cipher.decrypt_value(&k)?;
+                let v = DataElement::from_bytes(&decrypted)?;
+                if !query.verify_element(&v) {
+                    continue;
+                }
+                value = Some(v);
+            }
+
+            // Both query are accepted
+            let key = if let Some(key) = key {
+                key
+            } else {
+                let decrypted = self.cipher.decrypt_value(&k)?;
+                DataValue::from_bytes(&decrypted)?
+            };
+
+            let value = if let Some(value) = value {
+                value
+            } else {
+                let decrypted = self.cipher.decrypt_value(&v)?;
+                DataElement::from_bytes(&decrypted)?
+            };
+
+            entries.insert(key, value);
+        }
+
+        Ok(QueryResult {
+            entries,
+            next: None
+        })
+    }
+
+    // Get all keys from the custom
+    pub fn get_custom_tree_keys(&self, tree: &String, query: &Option<Query>) -> Result<Vec<DataValue>> {
+        let tree = self.get_custom_tree(tree)?;
+        let mut keys = Vec::new();
+        for e in tree.iter() {
+            let (key, _) = e?;
+            let decrypted = self.cipher.decrypt_value(&key)?;
+            let k = DataValue::from_bytes(&decrypted)?;
+            if let Some(query) = query {
+                if !query.verify_value(&k) {
+                    continue;
+                }
+            }
+            keys.push(k);
+        }
+
+        Ok(keys)
     }
 
     // this function is specific because we save the key in encrypted form (and not hashed as others)
@@ -184,26 +286,39 @@ impl EncryptedStorage {
         self.get_filtered_transactions(None, None, None, true, true, true, true, None)
     }
 
+    // delete all transactions above the specified topoheight
+    // This will go through each transaction, deserialize it, check topoheight, and delete it if required
+    pub fn delete_transactions_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
+        for el in self.transactions.iter().values() {
+            let value = el?;
+            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
+            if entry.get_topoheight() > topoheight {
+                self.delete_transaction(&entry.get_hash())?;
+            }
+        }
+
+        Ok(())
+    }
+
     // Filter when the data is deserialized to not load all transactions in memory
-    pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, key_value: Option<&QuerySearcher>) -> Result<Vec<TransactionEntry>> {
+    pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, query: Option<&Query>) -> Result<Vec<TransactionEntry>> {
         let mut transactions = Vec::new();
-        for res in self.transactions.iter() {
-            let (_, value) = res?;
-            let raw_value = &self.cipher.decrypt_value(&value)?;
-            let mut e = TransactionEntry::from_bytes(raw_value)?;
+        for el in self.transactions.iter().values() {
+            let value = el?;
+            let mut entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
             if let Some(topoheight) = min_topoheight {
-                if e.get_topoheight() < topoheight {
+                if entry.get_topoheight() < topoheight {
                     continue;
                 }
             }
     
             if let Some(topoheight) = &max_topoheight {
-                if e.get_topoheight() > *topoheight {
+                if entry.get_topoheight() > *topoheight {
                     continue;
                 }
             }
     
-            let (save, mut transfers) = match e.get_mut_entry() {
+            let (save, mut transfers) = match entry.get_mut_entry() {
                 EntryData::Coinbase(_) if accept_coinbase => (true, None),
                 EntryData::Burn { .. } if accept_burn => (true, None),
                 EntryData::Incoming(sender, transfers) if accept_incoming => match address {
@@ -221,21 +336,11 @@ impl EncryptedStorage {
 
             if save {
                 // Check if it has requested extra data
-                if let Some(key_value) = key_value {
+                if let Some(query) = query {
                     if let Some(transfers) = transfers.as_mut() {
                         transfers.retain(|transfer| {
                             if let Some(element) = transfer.get_extra_data() {
-                                match key_value {
-                                    QuerySearcher::KeyValue { key, value: Some(v) } => {
-                                        element.get_value_by_key(key, Some(v.kind())) == Some(v)
-                                    },
-                                    QuerySearcher::KeyValue { key, value: None } => {
-                                        element.has_key(key)
-                                    },
-                                    QuerySearcher::KeyType { key, kind } => {
-                                        element.get_value_by_key(key, Some(*kind)) != None
-                                    }
-                                }
+                                query.verify_element(element)
                             } else {
                                 false
                             }
@@ -250,11 +355,11 @@ impl EncryptedStorage {
                 match transfers {
                     // Transfers which are not empty
                     Some(transfers) if !transfers.is_empty() => {
-                        transactions.push(e);
+                        transactions.push(entry);
                     },
                     // Something else than outgoing/incoming txs
                     None => {
-                        transactions.push(e);
+                        transactions.push(entry);
                     },
                     // All the left is discarded
                     _ => {}
@@ -323,7 +428,7 @@ impl EncryptedStorage {
         self.save_to_disk(&self.extra, TOP_BLOCK_HASH_KEY, hash.as_bytes())
     }
 
-    pub fn has_top_block_hash(&mut self) -> Result<bool> {
+    pub fn has_top_block_hash(&self) -> Result<bool> {
         self.contains_data(&self.extra, TOP_BLOCK_HASH_KEY)
     }
 
@@ -343,9 +448,10 @@ impl EncryptedStorage {
         self.load_from_disk(&self.extra, NETWORK)
     }
 
-    fn set_network(&self, network: &Network) -> Result<()> {
+    fn set_network(&mut self, network: &Network) -> Result<()> {
         self.save_to_disk(&self.extra, NETWORK, &network.to_bytes())
     }
+
     fn has_network(&self) -> Result<bool> {
         self.contains_data(&self.extra, NETWORK)
     }

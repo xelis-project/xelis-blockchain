@@ -1,11 +1,32 @@
-use std::{sync::Arc, collections::{HashMap, HashSet}, borrow::Cow};
+use std::{sync::{Arc, atomic::{AtomicBool, Ordering}}, collections::{HashMap, HashSet}, borrow::Cow};
 use anyhow::Error;
 use async_trait::async_trait;
-use actix_web::{get, web::{Data, Payload, self}, HttpRequest, Responder, HttpServer, App, dev::ServerHandle, HttpResponse};
+use actix_web::{get, web::{Data, Payload, self, Bytes}, HttpRequest, Responder, HttpServer, App, dev::ServerHandle, HttpResponse};
 use log::{info, error, debug};
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
-use xelis_common::{rpc_server::{RPCHandler, websocket::{WebSocketHandler, WebSocketSessionShared, WebSocketServer}, RpcRequest, RpcResponseError, InternalRpcError, RpcResponse}, crypto::{key::{Signature, SIGNATURE_LENGTH, PublicKey}, hash::hash}, serializer::{Serializer, ReaderError, Reader, Writer}, api::{wallet::NotifyEvent, EventResult}};
+use tokio::sync::{Mutex, RwLock, Semaphore};
+use xelis_common::{
+    rpc_server::{
+        RPCHandler,
+        websocket::{
+            WebSocketHandler, WebSocketSessionShared, WebSocketServer
+        },
+        RpcRequest, RpcResponseError, InternalRpcError, RpcResponse
+    },
+    crypto::{
+        key::{
+            Signature, SIGNATURE_LENGTH, PublicKey
+        },
+        hash::hash
+    },
+    serializer::{
+        Serializer, ReaderError, Reader, Writer
+    },
+    api::{
+        wallet::NotifyEvent,
+        EventResult
+    }, context::Context
+};
 use serde::{Deserialize, Serialize};
 use crate::config::XSWD_BIND_ADDRESS;
 
@@ -26,7 +47,7 @@ use crate::config::XSWD_BIND_ADDRESS;
 // but will keep already-configured permissions.
 pub struct XSWD<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
 {
     websocket: Arc<WebSocketServer<XSWDWebSocketHandler<W>>>,
     handle: ServerHandle
@@ -35,9 +56,73 @@ where
 #[async_trait]
 pub trait XSWDPermissionHandler {
     // Handler function to request permission to user
-    async fn request_permission(&self, app_data: &ApplicationData, request: PermissionRequest<'_>) -> Result<PermissionResult, Error>;
+    async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error>;
+    // Handler function to cancel the request permission from app (app has disconnected)
+    async fn cancel_request_permission(&self, app_state: &AppStateShared) -> Result<(), Error>;
     // Public key to use to verify the signature
     async fn get_public_key(&self) -> Result<&PublicKey, Error>;
+}
+
+#[async_trait]
+pub trait XSWDNodeMethodHandler {
+    async fn call_node_with(&self, request: RpcRequest) -> Result<Value, RpcResponseError>;
+}
+
+pub struct AppState {
+    // Application ID in hexadecimal format
+    id: String,
+    // Name of the app
+    name: String,
+    // Small description of the app
+    description: String,
+    // URL of the app if exists
+    url: Option<String>,
+    // All permissions for each method
+    permissions: Mutex<HashMap<String, Permission>>,
+    is_requesting: AtomicBool
+}
+
+pub type AppStateShared = Arc<AppState>;
+
+impl AppState {
+    pub fn new(data: ApplicationData) -> Self {
+        Self {
+            id: data.id,
+            name: data.name,
+            description: data.description,
+            url: data.url,
+            permissions: Mutex::new(data.permissions),
+            is_requesting: AtomicBool::new(false)
+        }
+    }
+
+    pub fn get_id(&self) -> &String {
+        &self.id
+    }
+
+    pub fn get_name(&self) -> &String {
+        &self.name
+    }
+
+    pub fn get_description(&self) -> &String {
+        &self.description
+    }
+
+    pub fn get_url(&self) -> &Option<String> {
+        &self.url
+    }
+
+    pub fn get_permissions(&self) -> &Mutex<HashMap<String, Permission>> {
+        &self.permissions
+    }
+
+    pub fn is_requesting(&self) -> bool {
+        self.is_requesting.load(Ordering::SeqCst)
+    }
+
+    pub fn set_requesting(&self, value: bool) {
+        self.is_requesting.store(value, Ordering::SeqCst);
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -53,7 +138,7 @@ pub struct ApplicationData {
     // All permissions for each method
     permissions: HashMap<String, Permission>,
     // signature of all data
-    signature: Option<Signature>
+    signature: Option<Signature>,
 }
 
 impl ApplicationData {
@@ -123,7 +208,7 @@ const PERMISSION_DENIED_ERROR: InternalRpcError = InternalRpcError::CustomStr("P
 
 impl<W> XSWD<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
 {
     pub fn new(rpc_handler: RPCHandler<W>) -> Result<Self, anyhow::Error> {
         info!("Starting XSWD Server...");
@@ -212,31 +297,34 @@ impl PermissionResult {
 
 pub struct XSWDWebSocketHandler<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
 {
     // RPC handler for methods
     handler: RPCHandler<W>,
     // All applications connected to the wallet
-    applications: Mutex<HashMap<WebSocketSessionShared<Self>, ApplicationData>>,
+    applications: RwLock<HashMap<WebSocketSessionShared<Self>, AppStateShared>>,
     // Applications listening for events
     listeners: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<NotifyEvent, Option<usize>>>>,
+    // This is used to limit to one at a time a permission request
+    permission_handler_semaphore: Semaphore
 }
 
 impl<W> XSWDWebSocketHandler<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
 {
     pub fn new(handler: RPCHandler<W>) -> Self {
         Self {
             handler,
-            applications: Mutex::new(HashMap::new()),
-            listeners: Mutex::new(HashMap::new())
+            applications: RwLock::new(HashMap::new()),
+            listeners: Mutex::new(HashMap::new()),
+            permission_handler_semaphore: Semaphore::new(1)
         }
     }
 
     // This method is used to get the applications HashMap
     // be careful by using it, and if you delete a session, please disconnect it
-    pub fn get_applications(&self) -> &Mutex<HashMap<WebSocketSessionShared<Self>, ApplicationData>> {
+    pub fn get_applications(&self) -> &RwLock<HashMap<WebSocketSessionShared<Self>, AppStateShared>> {
         &self.applications
     }
 
@@ -272,8 +360,16 @@ where
         }
     }
 
-    async fn verify_permission_for_request(&self, app: &mut ApplicationData, request: &RpcRequest) -> Result<(), RpcResponseError> {
-        let permission = app.permissions.get(&request.method).map(|v| *v).unwrap_or(Permission::Ask);
+    async fn verify_permission_for_request(&self, app: &AppStateShared, request: &RpcRequest) -> Result<(), RpcResponseError> {
+        let _permit = self.permission_handler_semaphore.acquire().await.unwrap();
+        let mut permissions = app.permissions.lock().await;
+
+        // We acquired the lock, lets check that the app is still registered
+        if !self.has_app_with_id(&app.id).await {
+            return Err(RpcResponseError::new(request.id, InternalRpcError::CustomStr("Application not found")))
+        }
+
+        let permission = permissions.get(&request.method).map(|v| *v).unwrap_or(Permission::Ask);
         match permission {
             // Request permission from user
             Permission::Ask => {
@@ -285,11 +381,11 @@ where
                     PermissionResult::Allow => Ok(()),
                     PermissionResult::Deny => Err(RpcResponseError::new(request.id, PERMISSION_DENIED_ERROR)),
                     PermissionResult::AlwaysAllow => {
-                        app.permissions.insert(request.method.clone(), Permission::AcceptAlways);
+                        permissions.insert(request.method.clone(), Permission::AcceptAlways);
                         Ok(())
                     },
                     PermissionResult::AlwaysDeny => {
-                        app.permissions.insert(request.method.clone(), Permission::AcceptAlways);
+                        permissions.insert(request.method.clone(), Permission::AcceptAlways);
                         Err(RpcResponseError::new(request.id, PERMISSION_DENIED_ERROR))
                     }   
                 }
@@ -301,7 +397,7 @@ where
         }
     }
 
-    async fn add_application(&self, applications: &mut HashMap<WebSocketSessionShared<Self>, ApplicationData>, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Value, RpcResponseError> {
+    async fn add_application(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Value, RpcResponseError> {
         // Application is not registered, register it
         let app_data: ApplicationData = serde_json::from_slice::<ApplicationData>(&message)
             .map_err(|_| RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid JSON format for application data")))?;
@@ -326,6 +422,18 @@ where
                 if url.len() > 255 {
                     return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application URL is too long")))
                 }
+
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid URL format")))
+                }
+
+                // Check if we have a header origin
+                if let Some(origin) = session.get_request().headers().get("Origin") {
+                    // We have a header origin, check that its equal to the url passed in param
+                    if origin != url {
+                        return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Origin header is not equal to the URL")))
+                    }
+                }
             }
 
             if app_data.permissions.len() != 0 && app_data.signature.is_none() {
@@ -338,7 +446,7 @@ where
         }
 
         let wallet = self.handler.get_data();
-        // verify signature of application data TODO
+        // Verify the signature of the app data to validate permissions previously set
         if let Some(signature) = &app_data.signature {
             let bytes = app_data.to_bytes();
             let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
@@ -353,19 +461,38 @@ where
             }
         }
 
-        let permission = match wallet.request_permission(&app_data, PermissionRequest::Application(app_data.signature.is_some())).await {
+        // Verify that this app ID is not already in use:
+        if self.has_app_with_id(&app_data.id).await {
+            return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application ID already in use")))
+        }
+
+        let has_signature = app_data.signature.is_some();
+        let state = Arc::new(AppState::new(app_data));
+        {
+            let mut applications = self.applications.write().await;
+            applications.insert(session.clone(), state.clone());
+        }
+
+        // Request permission to user
+        let _permit = self.permission_handler_semaphore.acquire().await.unwrap();
+
+        state.set_requesting(true);
+        let permission = match wallet.request_permission(&state, PermissionRequest::Application(has_signature)).await {
             Ok(v) => v,
             Err(e) => {
-                error!("Error while requesting permission: {}", e);
+                debug!("Error while requesting permission: {}", e);
                 PermissionResult::Deny
             }
         };
+        state.set_requesting(false);
 
         if !permission.is_positive() {
+            let mut applications = self.applications.write().await;
+            applications.remove(session)
+                .ok_or_else(|| RpcResponseError::new(None, InternalRpcError::CustomStr("Application not found")))?;
             return Err(RpcResponseError::new(None, PERMISSION_DENIED_ERROR))
         }
 
-        applications.insert(session.clone(), app_data);
         Ok(json!({
             "jsonrpc": "2.0",
             "id": Value::Null,
@@ -402,53 +529,86 @@ where
         Ok(())
     }
 
+    // Verify if an application is already registered
+    // ID must be unique and not used by another application
+    async fn has_app_with_id(&self, id: &String) -> bool {
+        let applications = self.applications.read().await;
+        applications.values().find(|e| e.get_id() == id).is_some()
+    }
+
     async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
-        let mut applications = self.applications.lock().await;
+        let (request, is_subscribe, is_unsubscribe) = {
+            let app_state = {
+                let applications = self.applications.read().await;
+                applications.get(session).cloned()
+            };
 
-        // Application is already registered, verify permission and call the method
-        if let Some(app) = applications.get_mut(session) {
-            let request: RpcRequest = self.handler.parse_request(message)?;
-
-            // Verify first if the method exist (and that its not a built-in one)
-            let is_subscribe = request.method == "subscribe";
-            let is_unsubscribe = request.method == "unsubscribe";
-
-            if !self.handler.has_method(&request.method) && !is_subscribe && !is_unsubscribe {
-                return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
-            }
-
-            // let's check the permission set by user for this method
-            self.verify_permission_for_request(app, &request).await?;
-
-            if is_subscribe || is_unsubscribe {
-                // retrieve the event variant
-                let event = serde_json::from_value(
-                    request.params.ok_or_else(|| RpcResponseError::new(request.id, InternalRpcError::ExpectedParams))?)
-                    .map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e))
-                )?;
-                if is_subscribe {
-                    self.subscribe_session_to_event(session, event, request.id).await.map(|_| None)
-                } else {
-                    self.unsubscribe_session_from_event(session, event, request.id).await.map(|_| None)
+            // Application is already registered, verify permission and call the method
+            if let Some(app) = app_state {
+                let mut request: RpcRequest = self.handler.parse_request(message)?;
+                // Redirect all node methods to the node method handler
+                if request.method.starts_with("node.") {
+                    // Remove the 5 first chars (node.)
+                    request.method = request.method[5..].into();
+                    return self.handler.get_data().call_node_with(request).await.map(|v| Some(v))
                 }
+
+                // Verify that the method start with "wallet."
+                if !request.method.starts_with("wallet.") {
+                    return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
+                }
+                request.method = request.method[7..].into();
+
+                // Verify first if the method exist (and that its not a built-in one)
+                let is_subscribe = request.method == "subscribe";
+                let is_unsubscribe = request.method == "unsubscribe";
+                if !self.handler.has_method(&request.method) && !is_subscribe && !is_unsubscribe {
+                    return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
+                }
+    
+                // let's check the permission set by user for this method
+                app.set_requesting(true);
+                self.verify_permission_for_request(&app, &request).await?;
+                app.set_requesting(false);
+
+                (request, is_subscribe, is_unsubscribe)
             } else {
-                // Call the method
-                self.handler.execute_method(request).await.map(|v| Some(v))
+                // Application is not registered, register it
+                return match self.add_application(session, message).await {
+                    Ok(v) => Ok(Some(v)),
+                    Err(e) => {
+                        if !session.is_closed().await {
+                            // Send error message and then close the session
+                            if let Err(e) = session.send_text(&e.to_json().to_string()).await {
+                                error!("Error while sending error message to session: {}", e);
+                            }
+                        }
+
+                        session.get_server().delete_session(&session, None).await;
+    
+                        Ok(None)
+                    }
+                }
+            }
+        };
+
+        if is_subscribe || is_unsubscribe {
+            // retrieve the event variant
+            let event = serde_json::from_value(
+                request.params.ok_or_else(|| RpcResponseError::new(request.id, InternalRpcError::ExpectedParams))?)
+                .map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e))
+            )?;
+            if is_subscribe {
+                self.subscribe_session_to_event(session, event, request.id).await.map(|_| None)
+            } else {
+                self.unsubscribe_session_from_event(session, event, request.id).await.map(|_| None)
             }
         } else {
-            // Application is not registered, register it
-            match self.add_application(&mut applications, session, message).await {
-                Ok(v) => Ok(Some(v)),
-                Err(e) => {
-                    // Send error message and then close the session
-                    if let Err(e) = session.send_text(&e.to_json().to_string()).await {
-                        error!("Error while sending error message to session: {}", e);
-                    }
-                    session.get_server().delete_session(&session, None).await;
-
-                    Ok(None)
-                }
-            }
+            // Call the method
+            let mut context = Context::default();
+            // Store the session
+            context.store(session.clone());
+            self.handler.execute_method(context, request).await.map(|v| Some(v))
         }
     }
 }
@@ -456,12 +616,16 @@ where
 #[async_trait]
 impl<W> WebSocketHandler for XSWDWebSocketHandler<W>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
 {
     async fn on_close(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
-        let mut applications = self.applications.lock().await;
+        let mut applications = self.applications.write().await;
         if let Some(app) = applications.remove(session) {            
             info!("Application {} has disconnected", app.name);
+            if app.is_requesting() {
+                debug!("Application {} is requesting a permission, aborting...", app.name);
+                self.handler.get_data().cancel_request_permission(&app).await?;
+            }
         }
 
         let mut listeners = self.listeners.lock().await;
@@ -470,8 +634,8 @@ where
         Ok(())
     }
 
-    async fn on_message(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<(), anyhow::Error> {
-        let response: Value = match self.on_message_internal(session, message).await {
+    async fn on_message(&self, session: WebSocketSessionShared<Self>, message: Bytes) -> Result<(), anyhow::Error> {
+        let response: Value = match self.on_message_internal(&session, &message).await {
             Ok(result) => match result {
                 Some(v) => v,
                 None => return Ok(()),
@@ -491,7 +655,7 @@ async fn index() -> Result<impl Responder, actix_web::Error> {
 
 async fn endpoint<W>(server: Data<WebSocketServer<XSWDWebSocketHandler<W>>>, request: HttpRequest, body: Payload) -> Result<impl Responder, actix_web::Error>
 where
-    W: Clone + Send + Sync + XSWDPermissionHandler + 'static
+    W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
 {
     let response = server.handle_connection(request, body).await?;
     Ok(response)

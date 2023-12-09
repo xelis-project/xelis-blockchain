@@ -1,3 +1,4 @@
+use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{
     crypto::hash::Hash,
@@ -8,7 +9,13 @@ use xelis_common::{
         Reader
     },
 };
-use crate::config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, TIPS_LIMIT};
+use crate::config::{
+    CHAIN_SYNC_REQUEST_MAX_BLOCKS,
+    CHAIN_SYNC_RESPONSE_MAX_BLOCKS,
+    CHAIN_SYNC_TOP_BLOCKS,
+    TIPS_LIMIT,
+    CHAIN_SYNC_RESPONSE_MIN_BLOCKS
+};
 
 #[derive(Clone, Debug)]
 pub struct BlockId {
@@ -50,13 +57,17 @@ impl Serializer for BlockId {
 
 #[derive(Clone, Debug)]
 pub struct ChainRequest {
-    blocks: Vec<BlockId>
+    blocks: Vec<BlockId>,
+    // Number of maximum block responses allowed
+    // This allow, directly in the protocol, to change the response param based on hardware resources
+    accepted_response_size: u16
 }
 
 impl ChainRequest {
-    pub fn new(blocks: Vec<BlockId>) -> Self {
+    pub fn new(blocks: Vec<BlockId>, accepted_response_size: u16) -> Self {
         Self {
-            blocks
+            blocks,
+            accepted_response_size
         }
     }
 
@@ -67,6 +78,10 @@ impl ChainRequest {
     pub fn get_blocks(self) -> Vec<BlockId> {
         self.blocks
     }
+
+    pub fn get_accepted_response_size(&self) -> u16 {
+        self.accepted_response_size
+    }
 }
 
 impl Serializer for ChainRequest {
@@ -75,6 +90,8 @@ impl Serializer for ChainRequest {
         for block_id in &self.blocks {
             block_id.write(writer);
         }
+
+        writer.write_u16(self.accepted_response_size);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -88,7 +105,15 @@ impl Serializer for ChainRequest {
         for _ in 0..len {
             blocks.push(BlockId::read(reader)?);
         }
-        Ok(Self { blocks })
+
+        let accepted_response_size = reader.read_u16()?;
+        // Verify that the requested response size is in the protocol bounds
+        if accepted_response_size < CHAIN_SYNC_RESPONSE_MIN_BLOCKS as u16 || accepted_response_size > CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u16 {
+            debug!("Invalid accepted response size: {}", accepted_response_size);
+            return Err(ReaderError::InvalidValue)
+        }
+
+        Ok(Self { blocks, accepted_response_size })
     }
 }
 
@@ -131,12 +156,12 @@ impl Serializer for CommonPoint {
 #[derive(Debug)]
 pub struct ChainResponse {
     common_point: Option<CommonPoint>,
-    blocks: Vec<Hash>,
-    top_blocks: Vec<Hash>
+    blocks: IndexSet<Hash>,
+    top_blocks: IndexSet<Hash>
 }
 
 impl ChainResponse {
-    pub fn new(common_point: Option<CommonPoint>, blocks: Vec<Hash>, top_blocks:Vec<Hash>) -> Self {
+    pub fn new(common_point: Option<CommonPoint>, blocks: IndexSet<Hash>, top_blocks: IndexSet<Hash>) -> Self {
         Self {
             common_point,
             blocks,
@@ -152,7 +177,7 @@ impl ChainResponse {
         self.blocks.len()
     }
 
-    pub fn consume(self) -> (Vec<Hash>, Vec<Hash>) {
+    pub fn consume(self) -> (IndexSet<Hash>, IndexSet<Hash>) {
         (self.blocks, self.top_blocks)
     }
 }
@@ -179,10 +204,13 @@ impl Serializer for ChainResponse {
             return Err(ReaderError::InvalidValue)
         }
 
-        let mut blocks: Vec<Hash> = Vec::with_capacity(len as usize); 
+        let mut blocks: IndexSet<Hash> = IndexSet::with_capacity(len as usize); 
         for _ in 0..len {
             let hash = reader.read_hash()?;
-            blocks.push(hash);
+            if !blocks.insert(hash) {
+                debug!("Invalid chain response duplicate block");
+                return Err(ReaderError::InvalidValue)
+            }
         }
 
         let len = reader.read_u8()?;
@@ -191,10 +219,13 @@ impl Serializer for ChainResponse {
             return Err(ReaderError::InvalidValue)
         }
 
-        let mut top_blocks: Vec<Hash> = Vec::with_capacity(len as usize); 
+        let mut top_blocks: IndexSet<Hash> = IndexSet::with_capacity(len as usize); 
         for _ in 0..len {
             let hash = reader.read_hash()?;
-            top_blocks.push(hash);
+            if blocks.contains(&hash) || !top_blocks.insert(hash) {
+                debug!("Invalid chain response duplicate top block");
+                return Err(ReaderError::InvalidValue)
+            }
         }
 
         Ok(Self::new(common_point, blocks, top_blocks))

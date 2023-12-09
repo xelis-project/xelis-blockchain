@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashSet, net::SocketAddr};
+use std::{borrow::Cow, collections::{HashSet, HashMap}, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
@@ -57,7 +57,7 @@ pub struct GetBlockByHashParams<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBlockTemplateParams<'a> {
-    pub address: Cow<'a, Address<'a>>
+    pub address: Cow<'a, Address>
 }
 
 #[derive(Serialize, Deserialize, PartialEq)]
@@ -74,27 +74,27 @@ pub struct SubmitBlockParams {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBalanceParams<'a> {
-    pub address: Cow<'a, Address<'a>>,
+    pub address: Cow<'a, Address>,
     pub asset: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBalanceAtTopoHeightParams<'a> {
-    pub address: Cow<'a, Address<'a>>,
+    pub address: Cow<'a, Address>,
     pub asset: Cow<'a, Hash>,
     pub topoheight: u64
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetNonceParams<'a> {
-    pub address: Cow<'a, Address<'a>>,
+    pub address: Cow<'a, Address>,
     #[serde(default)]
     pub topoheight: Option<u64>
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct HasNonceParams<'a> {
-    pub address: Cow<'a, Address<'a>>,
+    pub address: Cow<'a, Address>,
     #[serde(default)]
     pub topoheight: Option<u64>
 }
@@ -123,15 +123,23 @@ pub struct GetInfoResult {
     pub topoheight: u64,
     pub stableheight: u64,
     pub pruned_topoheight: Option<u64>,
-    pub top_hash: Hash,
-    pub native_supply: u64,
+    pub top_block_hash: Hash,
+    // Current XELIS circulating supply
+    pub circulating_supply: u64,
+    // Maximum supply of XELIS
+    pub maximum_supply: u64,
+    // Current difficulty at tips
     pub difficulty: Difficulty,
+    // Expected block time
     pub block_time_target: u64,
+    // Average block time of last 50 blocks
     pub average_block_time: u64,
     pub block_reward: u64,
     // count how many transactions are present in mempool
     pub mempool_size: usize,
+    // software version on which the daemon is running
     pub version: String,
+    // Network state (mainnet, testnet, devnet)
     pub network: Network
 }
 
@@ -145,6 +153,53 @@ pub struct GetTransactionParams<'a> {
     pub hash: Cow<'a, Hash>
 }
 
+// Direction is used for cache to knows from which context it got added
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Direction {
+    // We don't update it because it's In, we won't send back
+    In,
+    // Out can be updated with In to be transformed to Both
+    // Because of desync, we may receive the object while sending it
+    Out,
+    // Cannot be updated
+    Both
+}
+
+impl Direction {
+    pub fn update(&mut self, direction: Direction) -> bool {
+        match self {
+            Self::Out => match direction {
+                Self::In => {
+                    *self = Self::Both;
+                    true
+                },
+                _ => false
+            },
+            _ => false
+        }
+    }
+
+    pub fn update_allow_in(&mut self, direction: Direction) -> bool {
+        match self {
+            Self::Out => match direction {
+                Self::In => {
+                    *self = Self::Both;
+                    true
+                },
+                _ => false
+            },
+            Self::In => match direction {
+                Self::Out => {
+                    *self = Self::Both;
+                    true
+                },
+                _ => false
+            },
+            _ => false
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct PeerEntry<'a> {
     pub id: u64,
@@ -156,8 +211,9 @@ pub struct PeerEntry<'a> {
     pub height: u64,
     pub last_ping: u64,
     pub pruned_topoheight: Option<u64>,
-    pub peers: HashSet<SocketAddr>,
-    pub cumulative_difficulty: Difficulty
+    pub peers: HashMap<SocketAddr, Direction>,
+    pub cumulative_difficulty: Difficulty,
+    pub connected_on: u64
 }
 
 #[derive(Serialize, Deserialize)]
@@ -167,6 +223,7 @@ pub struct P2pStatusResult<'a> {
     pub tag: Cow<'a, Option<String>>,
     pub our_topoheight: u64,
     pub best_topoheight: u64,
+    pub median_topoheight: u64,
     pub peer_id: u64
 }
 
@@ -208,8 +265,8 @@ fn default_xelis_asset() -> Hash {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetAccountHistoryParams<'a> {
-    pub address: Address<'a>,
+pub struct GetAccountHistoryParams {
+    pub address: Address,
     #[serde(default = "default_xelis_asset")]
     pub asset: Hash,
     pub minimum_topoheight: Option<u64>,
@@ -222,8 +279,8 @@ pub enum AccountHistoryType {
     Mining { reward: u64 },
     Burn { amount: u64 },
     // TODO delete those two fields with upcoming privacy layer
-    Outgoing { amount: u64 },
-    Incoming { amount: u64 },
+    Outgoing { amount: u64, to: Address },
+    Incoming { amount: u64, from: Address },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -236,8 +293,8 @@ pub struct AccountHistoryEntry {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetAccountAssetsParams<'a> {
-    pub address: Address<'a>,
+pub struct GetAccountAssetsParams {
+    pub address: Address
 }
 
 #[derive(Serialize, Deserialize)]
@@ -259,6 +316,28 @@ pub struct GetAccountsParams {
     pub maximum: Option<usize>,
     pub minimum_topoheight: Option<u64>,
     pub maximum_topoheight: Option<u64>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct IsTxExecutedInBlockParams<'a> {
+    pub tx_hash: Cow<'a, Hash>,
+    pub block_hash: Cow<'a, Hash>
+}
+
+// Struct to define dev fee threshold
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct DevFeeThreshold {
+    // block height to start dev fee
+    pub height: u64,
+    // percentage of dev fee, example 10 = 10%
+    pub fee_percentage: u64
+}
+
+// Struct to returns the size of the blockchain on disk
+#[derive(Serialize, Deserialize)]
+pub struct SizeOnDiskResult {
+    pub size_bytes: u64,
+    pub size_formatted: String
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -288,12 +367,14 @@ pub enum NotifyEvent {
     // It contains PeerEntry struct as value
     PeerConnected,
     // When a peer has disconnected from us
-    // It contains peer id as value
-    // TODO not implemented yet
+    // It contains PeerEntry struct as value
     PeerDisconnected,
     // Peer peerlist updated, its all its connected peers
     // It contains PeerPeerListUpdatedEvent as value
     PeerPeerListUpdated,
+    // Peer has been updated through a ping packet
+    // Contains PeerEntry as value
+    PeerStateUpdated,
     // When a peer of a peer has disconnected
     // and that he notified us
     // It contains PeerPeerDisconnectedEvent as value

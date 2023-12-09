@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use anyhow::{Context, Result};
-use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams, GetNonceResult, GetAssetsParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::{BlockHeader, Block}, asset::AssetWithData};
+use xelis_common::{json_rpc::JsonRPCClient, api::daemon::{GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams, GetInfoResult, SubmitTransactionParams, BlockResponse, GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams, GetNonceResult, GetAssetsParams, IsTxExecutedInBlockParams}, account::VersionedBalance, crypto::{address::Address, hash::Hash}, transaction::Transaction, serializer::Serializer, block::{BlockHeader, Block}, asset::AssetWithData};
 
 pub struct DaemonAPI {
     client: JsonRPCClient,
@@ -12,6 +12,10 @@ impl DaemonAPI {
         Self {
             client: JsonRPCClient::new(daemon_address)
         }
+    }
+
+    pub fn get_client(&self) -> &JsonRPCClient {
+        &self.client
     }
 
     pub async fn get_version(&self) -> Result<String> {
@@ -39,7 +43,7 @@ impl DaemonAPI {
         Ok(assets)
     }
 
-    pub async fn get_last_balance(&self, address: &Address<'_>, asset: &Hash) -> Result<GetLastBalanceResult> {
+    pub async fn get_last_balance(&self, address: &Address, asset: &Hash) -> Result<GetLastBalanceResult> {
         let balance = self.client.call_with("get_last_balance", &GetBalanceParams {
             address: Cow::Borrowed(address),
             asset: Cow::Borrowed(asset),
@@ -47,7 +51,7 @@ impl DaemonAPI {
         Ok(balance)
     }
 
-    pub async fn get_balance_at_topoheight(&self, address: &Address<'_>, asset: &Hash, topoheight: u64) -> Result<VersionedBalance> {
+    pub async fn get_balance_at_topoheight(&self, address: &Address, asset: &Hash, topoheight: u64) -> Result<VersionedBalance> {
         let balance = self.client.call_with("get_balance_at_topoheight", &GetBalanceAtTopoHeightParams {
             topoheight,
             asset: Cow::Borrowed(asset),
@@ -86,11 +90,19 @@ impl DaemonAPI {
         Ok(())
     }
 
-    pub async fn get_last_nonce(&self, address: &Address<'_>) -> Result<GetNonceResult> {
+    pub async fn get_last_nonce(&self, address: &Address) -> Result<GetNonceResult> {
         let nonce = self.client.call_with("get_nonce", &GetNonceParams {
             address: Cow::Borrowed(address),
             topoheight: None
         }).await.context(format!("Error while fetching nonce from address {}", address))?;
         Ok(nonce)
+    }
+
+    pub async fn is_tx_executed_in_block(&self, tx_hash: &Hash, block_hash: &Hash) -> Result<bool> {
+        let is_executed = self.client.call_with("is_tx_executed_in_block", &IsTxExecutedInBlockParams {
+            tx_hash: Cow::Borrowed(tx_hash),
+            block_hash: Cow::Borrowed(block_hash)
+        }).await.context(format!("Error while checking if tx {} is executed in block {}", tx_hash, block_hash))?;
+        Ok(is_executed)
     }
 }

@@ -95,3 +95,9 @@ pub fn hash(value: &[u8]) -> Hash {
     let result: [u8; HASH_SIZE] = Keccak256::digest(value)[..].try_into().unwrap();
     Hash(result)
 }
+
+impl AsRef<[u8]> for Hash {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}

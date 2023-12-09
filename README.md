@@ -1,10 +1,22 @@
 # XELIS Blockchain
 All rights reserved.
 
-XELIS is a blockchain made in Rust and powered by Tokio, using account model.
-It allows deploy custom assets working exactly like the native coin in transactions and wallet.
+A from scratch blockchain made in Rust and powered by Tokio, using account model. XELIS is based on an event-driven system combined with the native async/await and works with a unique and from scratch p2p system. This allow to be notified on any events happening on the network and to be able to react to them instead of checking periodically for updates.
 
-This project is based on an event-driven system combined with the native async/await and works with a unique and from scratch p2p system.
+BlockDAG is enabled to improve the scalability and the security of the network. Homomorphic Encryption using ElGamal is used to provide privacy on transactions (transfered amounts) and balances.
+
+ElGamal cryptosystem was choosen because it's a well known and studied encryption algorithm which has homomorphism features. ElGamal is fast and is used in combination with Ristretto255 curve to provide a good level of security (~128 bits of security). Homomorphic operations available using ElGamal are addition/subtraction between ciphertexts and/or plaintext and multiplication against plaintext value.
+
+Account Model allows to have a more flexible system than UTXO model and to have a better privacy because there is no need to link inputs and outputs, which provide real fungibility. It allows also the fast-sync feature to only download the last state of the blockchain instead of downloading all the history.
+
+Pruning system is also available to reduce the size of the blockchain by removing old blocks and transactions.
+
+We also aims to enabled Smart Contracts support in the future.
+
+We provide differents built-in network:
+- Mainnet: Not released yet
+- Testnet: Running
+- Devnet: this network is used for local development purpose where you want to create your own local chain. It has no peers
 
 ### Objectives
 
@@ -216,21 +228,38 @@ All theses data are saved in plaintext.
 |      hash_by_topo     |   Integer  |        Hash       |      Save a topo height for a specific block hash      |
 | cumulative_difficulty |    Hash    |      Integer      |   Save the cumulative difficulty for each block hash   |
 |         assets        |    Hash    |      Integer      |  Verify if an assets exist and its registration height |
-|         nonces        | Public Key |      Integer      |     Store the highest topoheight of versioned nonce    |
-|   nonces_topoheight   | Public Key |  Versioned Nonce  |      Tree name is composed of prefix + topoheight      |
-|        rewards        |    Hash    |      Integer      |                  Save the block reward                 |
-|         supply        |    Hash    |      Integer      |  Calculated supply (past + block reward) at each block |
+|        rewards        |   Integer  |      Integer      |                  Save the block reward                 |
+|         supply        |   Integer  |      Integer      |  Calculated supply (past + block reward) at each block |
 |       difficulty      |    Hash    |      Integer      |                Difficulty for each block               |
 |       tx_blocks       |    Hash    |   Array of Hash   |      All blocks in which this TX hash is included      |
-|      assets_hash      | Public Key |      Integer      |  Asset hash with last topoheight of versioned balance  |
-|    assets_balances    | Public Key | Versioned Balance |         Tree name is hash of asset + topoheight        |
+|       balances        |   Custom   |      Integer      |          Last topoheight of versioned balance          |
+|         nonces        | Public Key |      Integer      |     Store the highest topoheight of versioned nonce    |
+|  versioned_balances   |   Custom   | Versioned Balance |       Key is composed of topoheight + public key       |
+|   versioned_nonces    |   Custom   |  Versioned Nonce  |       Key is composed of topoheight + public key       |
 
 **NOTE**:
-- Balances and nonces are versioned, which means they are stored each time a change happened on disk.
+- Tree `balances` has a custom key which is composed of 32 bytes of Public Key and 32 bytes of Asset.
+- Balances and nonces are versioned, which means they are stored each time a change happened in chain.
+- Using a Tree per version is too heavy because of overhead per trees, solution is to hash a generated key based on properties.
 - Assets registered have in value their topoheight at which it was registered.
 - Supply and block rewards are only stored when the block is topologically ordered
 
 The database engine used is sled. It may changes in future.
+
+Current overhead per block is:
+- Tree `blocks` saving Block header (132 bytes with no TXs) value using Hash (32 bytes) key.
+- Trees `topo_by_hash` and `hash_by_topo` saving both Hash (32 bytes) <=> topoheight (8 bytes) pointers. (x2)
+- Tree `difficulty` saving Difficulty value of a block (8 bytes) using Hash (32 bytes) key.
+- Tree `rewards` saving block reward value (8 bytes) using topoheight (8 bytes) key.
+- Tree `supply` saving current circulating supply value (8 bytes) using topoheight (8 bytes) key.
+- Tree `versioned_balances` is updated at each block (for miner rewards), and also for each account that had interactions (transactions): 32 bytes for key and 16 bytes for value.
+- Tree `versioned_nonces` is updated for each account that send at least one TX per topoheight: 32 bytes for key and 16 bytes for value
+
+At this moment with current implementation, minimal overhead per new account is 160 bytes for keys and 48 bytes for values:
+- `balances` Public Key (32 bytes) + Asset (32 bytes) => topoheight of last versioned balance (8 bytes)
+- `nonces` Public Key (32 bytes) => topoheight of last versioned nonce (8 bytes)
+- `versioned_balances` Hash of (Public Key + Topoheight) (32 bytes) => Versioned Balance (16 bytes)
+- `versioned_nonces` Hash of (Public Key + Topoheight) (32 bytes) => Versioned Nonce (16 bytes)
 
 ## Wallet
 
@@ -337,6 +366,10 @@ On a traditional RPC-Server, if authentication is enabled, you must provide a us
 XSWD stay open but request a manual action from user to accept the connection of the dApp on the XSWD Server.
 When accepted, the dApp can requests JSON-RPC methods easily and the user can set/configure a permission for each method.
 If no permission is found for a request method, it will be prompted/asked to the user for manual verification.
+
+XSWD also have the ability to sends JSON-RPC requests to the daemon directly.
+For this, set the prefix `node.` in front of daemon requests, it will not be requested to the user as it's public on-chain data.
+For wallets RPC methods, set the prefix `wallet.` which will requests/use the permission set by the user.
 
 DApp can also request to sign the `ApplicationData` to persist the configured permissions on its side and then provide it when user would reconnect later.
 

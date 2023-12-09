@@ -12,7 +12,6 @@ use xelis_common::{
         Writer
     },
 };
-use crate::p2p::error::P2pError;
 use std::{borrow::Cow, fmt::{Display, Formatter, self}};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -74,7 +73,8 @@ impl Display for ObjectRequest {
 pub enum OwnedObjectResponse {
     Block(Block, Hash),
     BlockHeader(BlockHeader, Hash),
-    Transaction(Transaction, Hash)
+    Transaction(Transaction, Hash),
+    NotFound(ObjectRequest)
 }
 
 impl OwnedObjectResponse {
@@ -82,7 +82,8 @@ impl OwnedObjectResponse {
         match self {
             Self::Block(_, hash) => hash,
             Self::BlockHeader(_, hash) => hash,
-            Self::Transaction(_, hash) => hash
+            Self::Transaction(_, hash) => hash,
+            Self::NotFound(request) => request.get_hash(),
         }
     }
 
@@ -91,6 +92,7 @@ impl OwnedObjectResponse {
             Self::Block(_, hash) => ObjectRequest::Block(hash.clone()),
             Self::BlockHeader(_, hash) => ObjectRequest::BlockHeader(hash.clone()),
             Self::Transaction(_, hash) => ObjectRequest::Transaction(hash.clone()),
+            Self::NotFound(request) => request.clone(),
         }
     }
 }
@@ -113,8 +115,8 @@ impl ObjectResponse<'_> {
         }
     }
 
-    pub fn to_owned(self) -> Result<OwnedObjectResponse, P2pError> {
-        Ok(match self {
+    pub fn to_owned(self) -> OwnedObjectResponse {
+        match self {
             Self::Block(block) => {
                 let block = block.into_owned();
                 let hash = block.hash();
@@ -129,8 +131,8 @@ impl ObjectResponse<'_> {
                 let hash = tx.hash();
                 OwnedObjectResponse::Transaction(tx, hash)
             },
-            ObjectResponse::NotFound(request) => return Err(P2pError::ObjectNotFound(request))
-        })
+            ObjectResponse::NotFound(request) => OwnedObjectResponse::NotFound(request)
+        }
     }
 }
 

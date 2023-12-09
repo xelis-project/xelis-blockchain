@@ -1,6 +1,6 @@
 use crate::crypto::hash::Hash;
 use super::{Serializer, Writer, Reader, ReaderError};
-use std::{collections::{HashSet, BTreeSet}, borrow::Cow};
+use std::{collections::{HashSet, BTreeSet, HashMap}, borrow::Cow, hash::Hash as StdHash};
 use indexmap::IndexSet;
 use log::{error, warn};
 
@@ -35,7 +35,18 @@ impl Serializer for HashSet<Hash> {
     }
 }
 
-// Implement Serializer for u64
+// Implement Serializer for all unsigned numbers
+
+impl Serializer for u128 {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u128(self);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(reader.read_u128()?)
+    }
+}
+
 impl Serializer for u64 {
     fn write(&self, writer: &mut Writer) {
         writer.write_u64(self);
@@ -43,6 +54,26 @@ impl Serializer for u64 {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(reader.read_u64()?)
+    }
+}
+
+impl Serializer for u32 {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u32(self);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(reader.read_u32()?)
+    }
+}
+
+impl Serializer for u16 {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u16(*self);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(reader.read_u16()?)
     }
 }
 
@@ -161,5 +192,62 @@ impl<T: Serializer> Serializer for Vec<T> {
         for el in self {
             el.write(writer);
         }
+    }
+}
+
+impl Serializer for String {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        reader.read_string()
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        writer.write_string(self);
+    }
+}
+
+impl Serializer for bool {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        reader.read_bool()
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bool(*self);
+    }
+}
+
+
+// Supports up to 2^16 elements
+impl<K: Serializer + Eq + StdHash, V: Serializer + Eq + StdHash> Serializer for HashMap<K, V> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let size = reader.read_u16()?;
+        let mut map = HashMap::with_capacity(size as usize);
+        for _ in 0..size {
+            let k = K::read(reader)?;
+            let v = V::read(reader)?;
+            map.insert(k, v);
+        }
+
+        Ok(map)
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u16(self.len() as u16);
+        for (key, value) in self.iter() {
+            key.write(writer);
+            value.write(writer);
+        }
+    }
+}
+
+impl<const N: usize> Serializer for [u8; N] {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bytes(self);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let bytes = reader.read_bytes(N)?;
+        Ok(
+            bytes
+        )
     }
 }
