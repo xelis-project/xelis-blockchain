@@ -12,7 +12,7 @@ use xelis_common::{
         wallet::{
             BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams,
             GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams,
-            SetCustomDataParams, GetCustomTreeKeysParams, GetAssetPrecisionParams, RescanParams, QueryDBParams
+            SetCustomDataParams, GetCustomTreeKeysParams, GetAssetPrecisionParams, RescanParams, QueryDBParams, SignDataParams
         },
         DataHash
     },
@@ -40,6 +40,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("list_transactions", async_handler!(list_transactions));
     handler.register_method("is_online", async_handler!(is_online));
+    handler.register_method("sign_data", async_handler!(sign_data));
 
     // These functions allow to have an encrypted DB directly in the wallet storage
     // You can retrieve keys, values, have differents trees, and store values
@@ -225,6 +226,14 @@ async fn is_online(context: Context, body: Value) -> Result<Value, InternalRpcEr
     let wallet: &Arc<Wallet> = context.get()?;
     let is_connected = wallet.is_online().await;
     Ok(json!(is_connected))
+}
+
+async fn sign_data(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: SignDataParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    let signature = wallet.sign_data(&params.data.to_bytes());
+    Ok(json!(signature))
 }
 
 // In EncryptedStorage, custom trees are already prefixed

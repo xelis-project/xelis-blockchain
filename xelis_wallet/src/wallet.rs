@@ -9,7 +9,7 @@ use xelis_common::api::wallet::FeeBuilder;
 use xelis_common::config::{XELIS_ASSET, COIN_DECIMALS};
 use xelis_common::crypto::address::Address;
 use xelis_common::crypto::hash::Hash;
-use xelis_common::crypto::key::{KeyPair, PublicKey};
+use xelis_common::crypto::key::{KeyPair, PublicKey, Signature};
 use xelis_common::rpc_server::{RpcRequest, InternalRpcError, RpcResponseError};
 use xelis_common::utils::{format_xelis, format_coin};
 use xelis_common::network::Network;
@@ -416,7 +416,8 @@ impl Wallet {
     }
 
     // submit a transaction to the network through the connection to daemon
-    // returns error if the wallet is in offline mode
+    // It will increase the local nonce by 1 if the TX is accepted by the daemon
+    // returns error if the wallet is in offline mode or if the TX is rejected
     pub async fn submit_transaction(&self, transaction: &Transaction) -> Result<(), WalletError> {
         let network_handler = self.network_handler.lock().await;
         if let Some(network_handler) = network_handler.as_ref() {
@@ -457,6 +458,9 @@ impl Wallet {
         Ok(())
     }
 
+    // rescan the wallet from the given topoheight
+    // that will delete all transactions above the given topoheight and all balances
+    // then it will re-fetch all transactions and balances from daemon
     pub async fn rescan(&self, topoheight: u64) -> Result<(), WalletError> {
         if !self.is_online().await {
             // user have to set it online
@@ -496,6 +500,7 @@ impl Wallet {
         Ok(())
     }
 
+    // Check if the wallet is in online mode
     pub async fn is_online(&self) -> bool {
         if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
             network_handler.is_running().await
@@ -508,6 +513,10 @@ impl Wallet {
     // but want to pause / resume the syncing task through start/stop functions from it
     pub async fn get_network_handler(&self) -> &Mutex<Option<Arc<NetworkHandler>>> {
         &self.network_handler
+    }
+
+    pub fn sign_data(&self, data: &[u8]) -> Signature {
+        self.keypair.sign(data)
     }
 
     pub fn get_public_key(&self) -> &PublicKey {

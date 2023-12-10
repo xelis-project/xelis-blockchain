@@ -102,6 +102,12 @@ pub struct GetTransactionParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct SignDataParams {
+    #[serde(flatten)]
+    pub data: DataElement,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct BalanceChanged<'a> {
     pub asset: Cow<'a, Hash>,
     pub balance: u64
