@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{transaction::{TransactionType, Transaction}, crypto::{hash::Hash, address::Address}};
 
-use super::{DataHash, DataElement, DataValue, Query};
+use super::{DataHash, DataElement, DataValue, query::Query};
 
 
 #[derive(Serialize, Deserialize)]

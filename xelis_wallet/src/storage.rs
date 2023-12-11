@@ -5,7 +5,7 @@ use xelis_common::{
     crypto::{hash::Hash, key::{KeyPair, PublicKey}},
     serializer::{Reader, Serializer},
     network::Network,
-    api::{DataValue, DataElement, QueryResult, Query},
+    api::{DataValue, DataElement, query::{QueryResult, Query}},
 };
 use anyhow::{Context, Result, anyhow};
 use crate::{config::SALT_SIZE, cipher::Cipher, wallet::WalletError, entry::{TransactionEntry, EntryData}};
