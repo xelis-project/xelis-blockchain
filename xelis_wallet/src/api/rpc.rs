@@ -12,7 +12,7 @@ use xelis_common::{
         wallet::{
             BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams,
             GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetValueFromKeyParams,
-            StoreParams, GetMatchingKeysParams, GetAssetPrecisionParams, RescanParams, QueryDBParams, HasKeyParams
+            StoreParams, GetMatchingKeysParams, GetAssetPrecisionParams, RescanParams, QueryDBParams, HasKeyParams, DeleteParams
         },
         DataHash, DataElement
     },
@@ -49,6 +49,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("get_matching_keys", async_handler!(get_matching_keys));
     handler.register_method("get_value_from_key", async_handler!(get_value_from_key));
     handler.register_method("store", async_handler!(store));
+    handler.register_method("delete", async_handler!(delete));
     handler.register_method("has_key", async_handler!(has_key));
     handler.register_method("query_db", async_handler!(query_db));
 }
@@ -288,8 +289,18 @@ async fn store(context: Context, body: Value) -> Result<Value, InternalRpcError>
     let params: StoreParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
-    let storage = wallet.get_storage().read().await;
+    let mut storage = wallet.get_storage().write().await;
     storage.set_custom_data(&tree, &params.key, &params.value)?;
+    Ok(json!(true))
+}
+
+// Delete data in the requested tree with the key set
+async fn delete(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: DeleteParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let tree = get_tree_name(&context, params.tree).await?;
+    let mut storage = wallet.get_storage().write().await;
+    storage.delete_custom_data(&tree, &params.key)?;
     Ok(json!(true))
 }
 

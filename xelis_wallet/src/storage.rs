@@ -121,6 +121,13 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // hash key, encrypt data and then save to disk 
+    fn delete_from_disk_with_encrypted_key(&self, tree: &Tree, key: &[u8]) -> Result<()> {
+        let encrypted_key = self.create_encrypted_key(key)?;
+        tree.remove(encrypted_key)?;
+        Ok(())
+    }
+
     // Search if the data is present in the tree using hashed key
     fn contains_data(&self, tree: &Tree, key: &[u8]) -> Result<bool> {
         let hashed_key = self.cipher.hash_key(key);
@@ -141,9 +148,16 @@ impl EncryptedStorage {
     }
 
     // Store a custom serializable data 
-    pub fn set_custom_data(&self, tree: &String, key: &DataValue, value: &DataElement) -> Result<()> {
+    pub fn set_custom_data(&mut self, tree: &String, key: &DataValue, value: &DataElement) -> Result<()> {
         let tree = self.get_custom_tree(tree)?;
         self.save_to_disk_with_encrypted_key(&tree, &key.to_bytes(), &value.to_bytes())?;
+        Ok(())
+    }
+
+    // Delete a custom data using its key 
+    pub fn delete_custom_data(&mut self, tree: &String, key: &DataValue) -> Result<()> {
+        let tree = self.get_custom_tree(tree)?;
+        self.delete_from_disk_with_encrypted_key(&tree, &key.to_bytes())?;
         Ok(())
     }
 

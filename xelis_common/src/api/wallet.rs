@@ -133,6 +133,12 @@ pub struct StoreParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct DeleteParams {
+    pub tree: String,
+    pub key: DataValue
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct QueryDBParams {
     pub tree: String,
     pub key: Option<Query>,
