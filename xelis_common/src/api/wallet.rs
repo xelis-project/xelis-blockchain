@@ -136,7 +136,9 @@ pub struct SetCustomDataParams {
 pub struct QueryDBParams {
     pub tree: String,
     pub key: Option<Query>,
-    pub value: Option<Query>
+    pub value: Option<Query>,
+    #[serde(default = "default_false_value")]
+    pub return_on_first: bool
 }
 
 

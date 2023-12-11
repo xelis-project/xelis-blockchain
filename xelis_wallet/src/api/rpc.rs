@@ -44,7 +44,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
 
     // These functions allow to have an encrypted DB directly in the wallet storage
     // You can retrieve keys, values, have differents trees, and store values
-    // It is restricted in XSWD context, and open to everything in RPC
+    // It is restricted in XSWD context (each app access to their own trees), and open to everything in RPC
     // Keys and values can be anything
     handler.register_method("get_keys_from_db", async_handler!(get_keys_from_db));
     handler.register_method("get_value_from_db", async_handler!(get_value_from_db));
@@ -299,6 +299,6 @@ async fn query_db(context: Context, body: Value) -> Result<Value, InternalRpcErr
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;
-    let result = storage.query_db(&tree, params.key, params.value)?;
+    let result = storage.query_db(&tree, params.key, params.value, params.return_on_first)?;
     Ok(json!(result))
 }
