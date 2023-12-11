@@ -11,10 +11,10 @@ use xelis_common::{
     api::{
         wallet::{
             BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams,
-            GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetCustomDataParams,
-            SetCustomDataParams, GetCustomTreeKeysParams, GetAssetPrecisionParams, RescanParams, QueryDBParams, SignDataParams
+            GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetValueFromKeyParams,
+            StoreParams, GetMatchingKeysParams, GetAssetPrecisionParams, RescanParams, QueryDBParams, HasKeyParams
         },
-        DataHash
+        DataHash, DataElement
     },
     crypto::hash::Hashable,
     serializer::Serializer, context::Context
@@ -46,9 +46,10 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     // You can retrieve keys, values, have differents trees, and store values
     // It is restricted in XSWD context (each app access to their own trees), and open to everything in RPC
     // Keys and values can be anything
-    handler.register_method("get_keys_from_db", async_handler!(get_keys_from_db));
-    handler.register_method("get_value_from_db", async_handler!(get_value_from_db));
-    handler.register_method("set_value_in_db", async_handler!(set_value_in_db));
+    handler.register_method("get_matching_keys", async_handler!(get_matching_keys));
+    handler.register_method("get_value_from_key", async_handler!(get_value_from_key));
+    handler.register_method("store", async_handler!(store));
+    handler.register_method("has_key", async_handler!(has_key));
     handler.register_method("query_db", async_handler!(query_db));
 }
 
@@ -228,11 +229,12 @@ async fn is_online(context: Context, body: Value) -> Result<Value, InternalRpcEr
     Ok(json!(is_connected))
 }
 
+// Sign any data converted in bytes format
 async fn sign_data(context: Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: SignDataParams = parse_params(body)?;
+    let params: DataElement = parse_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
-    let signature = wallet.sign_data(&params.data.to_bytes());
+    let signature = wallet.sign_data(&params.to_bytes());
     Ok(json!(signature))
 }
 
@@ -252,8 +254,9 @@ async fn get_tree_name(context: &Context, tree: String) -> Result<String, Intern
     Ok(format!("{}-{}", app.get_id(), tree))
 }
 
-async fn get_keys_from_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetCustomTreeKeysParams = parse_params(body)?;
+// Returns all keys available in the selected tree using the Query filter
+async fn get_matching_keys(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetMatchingKeysParams = parse_params(body)?;
     if let Some(query) = &params.query {
         if query.is_for_element() {
             return Err(InternalRpcError::CustomStr("Invalid key query, should be a QueryValue"))
@@ -268,8 +271,9 @@ async fn get_keys_from_db(context: Context, body: Value) -> Result<Value, Intern
     Ok(json!(keys))
 }
 
-async fn get_value_from_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: GetCustomDataParams = parse_params(body)?;
+// Retrieve the data from the encrypted storage using its key and tree
+async fn get_value_from_key(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetValueFromKeyParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
 
@@ -279,13 +283,24 @@ async fn get_value_from_db(context: Context, body: Value) -> Result<Value, Inter
     Ok(json!(value))
 }
 
-async fn set_value_in_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: SetCustomDataParams = parse_params(body)?;
+// Store data in the requested tree with the key set
+async fn store(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: StoreParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
     let storage = wallet.get_storage().read().await;
     storage.set_custom_data(&tree, &params.key, &params.value)?;
     Ok(json!(true))
+}
+
+// Verify if the key is present in the requested tree
+async fn has_key(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: HasKeyParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let tree = get_tree_name(&context, params.tree).await?;
+
+    let storage = wallet.get_storage().read().await;
+    Ok(json!(storage.has_custom_data(&tree, &params.key)?))
 }
 
 async fn query_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {

@@ -102,31 +102,31 @@ pub struct GetTransactionParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SignDataParams {
-    #[serde(flatten)]
-    pub data: DataElement,
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct BalanceChanged<'a> {
     pub asset: Cow<'a, Hash>,
     pub balance: u64
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetCustomDataParams {
+pub struct GetValueFromKeyParams {
     pub tree: String,
     pub key: DataValue
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetCustomTreeKeysParams {
+pub struct HasKeyParams {
+    pub tree: String,
+    pub key: DataValue
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMatchingKeysParams {
     pub tree: String,
     pub query: Option<Query>
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SetCustomDataParams {
+pub struct StoreParams {
     pub tree: String,
     pub key: DataValue,
     pub value: DataElement
