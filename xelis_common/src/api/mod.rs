@@ -1,11 +1,27 @@
 use std::{collections::HashMap, borrow::Cow};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use thiserror::Error;
 use crate::{serializer::{Serializer, Reader, ReaderError, Writer}, crypto::hash::Hash};
 
 pub mod wallet;
 pub mod daemon;
 pub mod query;
+
+#[derive(Debug, Error)]
+pub enum DataConversionError {
+    #[error("Expected a value")]
+    ExpectedValue,
+    #[error("Expected an array")]
+    ExpectedArray,
+    #[error("Expected an element")]
+    ExpectedElement,
+    #[error("Expected a map")]
+    ExpectedMap,
+    #[error("Unexpected value type {:?}", _0)]
+    UnexpectedValue(DataType),
+}
 
 // All types availables
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
@@ -106,6 +122,34 @@ impl DataElement {
             }
         }
     }
+
+    pub fn is_null(self) -> bool {
+        match self {
+            Self::Value(None) => true,
+            _ => false
+        }
+    }
+
+    pub fn to_value(self) -> Result<DataValue, DataConversionError> {
+        match self {
+            Self::Value(Some(v)) => Ok(v),
+            _ => Err(DataConversionError::ExpectedValue)
+        }
+    }
+
+    pub fn to_array(self) -> Result<Vec<DataElement>, DataConversionError> {
+        match self {
+            Self::Array(v) => Ok(v),
+            _ => Err(DataConversionError::ExpectedArray)
+        }
+    }
+
+    pub fn to_map(self) -> Result<HashMap<DataValue, DataElement>, DataConversionError> {
+        match self {
+            Self::Fields(v) => Ok(v),
+            _ => Err(DataConversionError::ExpectedMap)
+        }
+    }
 } 
 
 impl Serializer for DataElement {
@@ -187,6 +231,62 @@ impl DataValue {
             Self::U64(_) => DataType::U64,
             Self::U128(_) => DataType::U128,
             Self::Hash(_) => DataType::Hash
+        }
+    }
+
+    pub fn to_bool(self) -> Result<bool, DataConversionError> {
+        match self {
+            Self::Bool(v) => Ok(v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn to_string(self) -> Result<String, DataConversionError> {
+        match self {
+            Self::String(v) => Ok(v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn to_u8(self) -> Result<u8, DataConversionError> {
+        match self {
+            Self::U8(v) => Ok(v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn to_u16(self) -> Result<u16, DataConversionError> {
+        match self {
+            Self::U16(v) => Ok(v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn to_u32(self) -> Result<u32, DataConversionError> {
+        match self {
+            Self::U32(v) => Ok(v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn to_u64(self) -> Result<u64, DataConversionError> {
+        match self {
+            Self::U64(v) => Ok(v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn to_u128(self) -> Result<u128, DataConversionError> {
+        match self {
+            Self::U128(v) => Ok(v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn to_hash(self) -> Result<Hash, DataConversionError> {
+        match self {
+            Self::Hash(v) => Ok(v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
         }
     }
 }
