@@ -860,7 +860,7 @@ async fn get_dev_fee_thresholds<S: Storage>(_: Context, body: Value) -> Result<V
     Ok(json!(DEV_FEES))
 }
 
-// Get the configured dev fees
+// Get size on disk of the chain database
 async fn get_size_on_disk<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
