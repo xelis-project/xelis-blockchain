@@ -183,7 +183,7 @@ async fn apply_config(wallet: &Arc<Wallet>) {
 }
 
 // Function to build the CommandManager when a wallet is open
-async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &CommandManager<Arc<Wallet>>, prompt: &ShareablePrompt) -> Result<(), CommandError> {
+async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &CommandManager, prompt: &ShareablePrompt) -> Result<(), CommandError> {
     // Delete commands for opening a wallet
     command_manager.remove_command("open")?;
     command_manager.remove_command("recover")?;
@@ -220,14 +220,17 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         wallet.set_prompt(prompt.clone()).await;
     }
 
-    command_manager.set_data(Some(wallet))?;
+    let mut context = command_manager.get_context().lock()?;
+    context.store(wallet);
+
     command_manager.display_commands()
 }
 
 // Function passed as param to prompt to build the prompt message shown
-async fn prompt_message_builder(_: &Prompt, command_manager: &Option<CommandManager<Arc<Wallet>>>) -> Result<String, PromptError> {
+async fn prompt_message_builder(_: &Prompt, command_manager: &Option<CommandManager>) -> Result<String, PromptError> {
     if let Some(manager) = command_manager {
-        if let Some(wallet) = manager.get_data().lock()?.as_ref() {
+        let context = manager.get_context().lock()?;
+        if let Ok(wallet) = context.get::<Arc<Wallet>>() {
             let network = wallet.get_network();
 
             let addr_str = {
@@ -283,7 +286,7 @@ async fn prompt_message_builder(_: &Prompt, command_manager: &Option<CommandMana
 }
 
 // Open a wallet based on the wallet name and its password
-async fn open_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
     let name = prompt.read_input("Wallet name: ".into(), false)
         .await.context("Error while reading wallet name")?;
@@ -312,7 +315,7 @@ async fn open_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) 
 }
 
 // Create a wallet by requesting name, password
-async fn create_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
 
     let name = prompt.read_input("Wallet name: ".into(), false)
@@ -358,7 +361,7 @@ async fn create_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager
 }
 
 // Recover a wallet by requesting its seed, name and password
-async fn recover_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
 
     let seed = prompt.read_input("Seed: ".into(), false)
@@ -400,9 +403,9 @@ async fn recover_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManage
 }
 
 // Change wallet password
-async fn change_password(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn change_password(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
 
     let prompt = manager.get_prompt();
 
@@ -421,10 +424,10 @@ async fn change_password(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManag
 }
 
 // Create a new transfer to a specified address
-async fn transfer(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
 
     // read address
     let str_address = prompt.read_input(
@@ -477,11 +480,11 @@ async fn transfer(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> 
     Ok(())
 }
 
-async fn burn(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+async fn burn(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let amount = arguments.get_value("amount")?.to_number()?;
     let asset = arguments.get_value("asset")?.to_hash()?;
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let tx = {
         let storage = wallet.get_storage().read().await;
         let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
@@ -495,17 +498,17 @@ async fn burn(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentMana
 }
 
 // Show current wallet address
-async fn display_address(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn display_address(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     manager.message(format!("Wallet address: {}", wallet.get_address()));
     Ok(())
 }
 
 // Show current balance for specified asset or list all non-zero balances
-async fn balance(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
 
     if arguments.has_argument("asset") {
@@ -527,7 +530,7 @@ async fn balance(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentM
 
 // Show all transactions
 const TXS_PER_PAGE: usize = 10;
-async fn history(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let page = if arguments.has_argument("page") {
         arguments.get_value("page")?.to_number()? as usize
     } else {
@@ -538,8 +541,8 @@ async fn history(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentM
         return Err(CommandError::InvalidArgument("Page must be greater than 0".to_string()));
     }
 
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
     let mut transactions = storage.get_transactions()?;
 
@@ -569,9 +572,9 @@ async fn history(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentM
 }
 
 // Set your wallet in online mode
-async fn online_mode(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn online_mode(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     if wallet.is_online().await {
         manager.error("Wallet is already online");
     } else {
@@ -588,9 +591,9 @@ async fn online_mode(manager: &CommandManager<Arc<Wallet>>, mut arguments: Argum
 }
 
 // Set your wallet in offline mode
-async fn offline_mode(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn offline_mode(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     if !wallet.is_online().await {
         manager.error("Wallet is already offline");
     } else {
@@ -601,9 +604,9 @@ async fn offline_mode(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager)
 }
 
 // Show current wallet address
-async fn rescan(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn rescan(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let topoheight = if arguments.has_argument("topoheight") {
         arguments.get_value("topoheight")?.to_number()?
     } else {
@@ -615,9 +618,9 @@ async fn rescan(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentMa
     Ok(())
 }
 
-async fn seed(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn seed(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let prompt =  manager.get_prompt();
 
     let password = prompt.read_input("Password: ".into(), true)
@@ -639,27 +642,27 @@ async fn seed(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentMana
     Ok(())
 }
 
-async fn nonce(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let nonce = wallet.get_nonce().await;
     manager.message(format!("Nonce: {}", nonce));
     Ok(())
 }
 
 #[cfg(feature = "api_server")]
-async fn stop_api_server(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn stop_api_server(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     wallet.stop_api_server().await.context("Error while stopping API Server")?;
     manager.message("API Server has been stopped");
     Ok(())
 }
 
 #[cfg(feature = "api_server")]
-async fn start_rpc_server(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn start_rpc_server(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let bind_address = arguments.get_value("bind_address")?.to_string_value()?;
     let username = arguments.get_value("username")?.to_string_value()?;
     let password = arguments.get_value("password")?.to_string_value()?;
@@ -675,9 +678,9 @@ async fn start_rpc_server(manager: &CommandManager<Arc<Wallet>>, mut arguments: 
 }
 
 #[cfg(feature = "api_server")]
-async fn start_xswd(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn start_xswd(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     if let Err(e) = wallet.enable_xswd().await {
         manager.error(format!("Error while enabling XSWD Server: {}", e));
     } else {
@@ -688,7 +691,8 @@ async fn start_xswd(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -
 }
 
 // broadcast tx if possible
-async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager<Arc<Wallet>>, tx: Transaction) {
+// submit_transaction increase the local nonce in storage in case of success
+async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager, tx: Transaction) {
     let tx_hash = tx.hash();
     manager.message(format!("Transaction hash: {}", tx_hash));
 

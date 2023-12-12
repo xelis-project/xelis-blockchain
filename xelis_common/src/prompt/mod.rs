@@ -392,7 +392,7 @@ impl Prompt {
 
     // Start the thread to read stdin and handle events
     // Execute commands if a commande manager is present
-    pub async fn start<'a, T>(&'a self, update_every: Duration, fn_message: AsyncF<'a, Self, Option<CommandManager<T>>, Result<String, PromptError>>, command_manager: &'a Option<CommandManager<T>>) -> Result<(), PromptError>
+    pub async fn start<'a>(&'a self, update_every: Duration, fn_message: AsyncF<'a, Self, Option<CommandManager>, Result<String, PromptError>>, command_manager: &'a Option<CommandManager>) -> Result<(), PromptError>
     {
         // setup the exit channel
         let mut exit_receiver = {

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display, time::{Instant, Duration}, sync::{Mutex, PoisonError}, rc::Rc};
 
-use crate::{config::VERSION, async_handler};
+use crate::{config::VERSION, async_handler, context::Context};
 
 use super::{argument::*, ShareablePrompt};
 use anyhow::Error;
@@ -39,24 +39,24 @@ impl<T> From<PoisonError<T>> for CommandError {
     }
 }
 
-pub type SyncCommandCallback<T> = fn(&CommandManager<T>, ArgumentManager) -> Result<(), CommandError>;
-pub type AsyncCommandCallback<T> = fn(&'_ CommandManager<T>, ArgumentManager) -> Pin<Box<dyn Future<Output = Result<(), CommandError>> + '_>>;
+pub type SyncCommandCallback = fn(&CommandManager, ArgumentManager) -> Result<(), CommandError>;
+pub type AsyncCommandCallback = fn(&'_ CommandManager, ArgumentManager) -> Pin<Box<dyn Future<Output = Result<(), CommandError>> + '_>>;
 
-pub enum CommandHandler<T> {
-    Sync(SyncCommandCallback<T>),
-    Async(AsyncCommandCallback<T>)
+pub enum CommandHandler {
+    Sync(SyncCommandCallback),
+    Async(AsyncCommandCallback)
 }
 
-pub struct Command<T> {
+pub struct Command {
     name: String,
     description: String,
     required_args: Vec<Arg>,
     optional_args: Vec<Arg>,
-    callback: CommandHandler<T>
+    callback: CommandHandler
 }
 
-impl<T> Command<T> {
-    pub fn new(name: &str, description: &str, callback: CommandHandler<T>) -> Self {
+impl Command {
+    pub fn new(name: &str, description: &str, callback: CommandHandler) -> Self {
         Self {
             name: name.to_owned(),
             description: description.to_owned(),
@@ -66,7 +66,7 @@ impl<T> Command<T> {
         }
     }
 
-    pub fn with_optional_arguments(name: &str, description: &str, optional_args: Vec<Arg>, callback: CommandHandler<T>) -> Self {
+    pub fn with_optional_arguments(name: &str, description: &str, optional_args: Vec<Arg>, callback: CommandHandler) -> Self {
         Self {
             name: name.to_owned(),
             description: description.to_owned(),
@@ -76,7 +76,7 @@ impl<T> Command<T> {
         }
     }
 
-    pub fn with_required_arguments(name: &str, description: &str, required_args: Vec<Arg>, callback: CommandHandler<T>) -> Self {
+    pub fn with_required_arguments(name: &str, description: &str, required_args: Vec<Arg>, callback: CommandHandler) -> Self {
         Self {
             name: name.to_owned(),
             description: description.to_owned(),
@@ -86,7 +86,7 @@ impl<T> Command<T> {
         }
     }
 
-    pub fn with_arguments(name: &str, description: &str, required_args: Vec<Arg>, optional_args: Vec<Arg>, callback: CommandHandler<T>) -> Self {
+    pub fn with_arguments(name: &str, description: &str, required_args: Vec<Arg>, optional_args: Vec<Arg>, callback: CommandHandler) -> Self {
         Self {
             name: name.to_owned(),
             description: description.to_owned(),
@@ -96,7 +96,7 @@ impl<T> Command<T> {
         }
     }
 
-    pub async fn execute(&self, manager: &CommandManager<T>, values: ArgumentManager) -> Result<(), CommandError> {
+    pub async fn execute(&self, manager: &CommandManager, values: ArgumentManager) -> Result<(), CommandError> {
         match &self.callback {
             CommandHandler::Sync(handler) => {
                 handler(manager, values)
@@ -139,45 +139,44 @@ impl<T> Command<T> {
 }
 
 // We use Mutex from std instead of tokio so we can use it in sync code too
-pub struct CommandManager<T> {
-    commands: Mutex<Vec<Rc<Command<T>>>>,
-    data: Mutex<Option<T>>,
+pub struct CommandManager {
+    commands: Mutex<Vec<Rc<Command>>>,
+    context: Mutex<Context>,
     prompt: ShareablePrompt,
     running_since: Instant
 }
 
-impl<T> CommandManager<T> {
-    pub fn new(data: Option<T>, prompt: ShareablePrompt) -> Self {
+impl CommandManager {
+    pub fn with_context(context: Context, prompt: ShareablePrompt) -> Self {
         Self {
             commands: Mutex::new(Vec::new()),
-            data: Mutex::new(data),
+            context: Mutex::new(context),
             prompt,
             running_since: Instant::now()
         }
     }
 
+    pub fn new(prompt: ShareablePrompt) -> Self {
+        Self::with_context(Context::new(), prompt)
+    }
+
     pub fn default(prompt: ShareablePrompt) -> Result<Self, CommandError> {
-        let zelf = CommandManager::new(None, prompt);
+        let zelf = CommandManager::new(prompt);
         zelf.add_command(Command::with_optional_arguments("help", "Show this help", vec![Arg::new("command", ArgType::String)], CommandHandler::Async(async_handler!(help))))?;
         zelf.add_command(Command::new("version", "Show the current version", CommandHandler::Sync(version)))?;
         zelf.add_command(Command::new("exit", "Shutdown the daemon", CommandHandler::Sync(exit)))?;
         Ok(zelf)
     }
 
-    pub fn set_data(&self, data: Option<T>) -> Result<(), CommandError> {
-        *self.data.lock()? = data;
-        Ok(())
-    }
-
-    pub fn get_data<'a>(&'a self) -> &Mutex<Option<T>> {
-        &self.data
+    pub fn get_context(&self) -> &Mutex<Context> {
+        &self.context
     }
 
     pub fn get_prompt<'a>(&'a self) -> &ShareablePrompt {
         &self.prompt
     }
 
-    pub fn add_command(&self, command: Command<T>) -> Result<(), CommandError> {
+    pub fn add_command(&self, command: Command) -> Result<(), CommandError> {
         let mut commands = self.commands.lock()?;
         commands.push(Rc::new(command));
         Ok(())
@@ -193,7 +192,7 @@ impl<T> CommandManager<T> {
         }
     }
 
-    pub fn get_commands(&self) -> &Mutex<Vec<Rc<Command<T>>>> {
+    pub fn get_commands(&self) -> &Mutex<Vec<Rc<Command>>> {
         &self.commands
     }
 
@@ -252,7 +251,7 @@ impl<T> CommandManager<T> {
     }
 }
 
-async fn help<T>(manager: &CommandManager<T>, mut args: ArgumentManager) -> Result<(), CommandError> {
+async fn help(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     if args.has_argument("command") {
         let arg_value = args.get_value("command")?.to_string_value()?;
         let commands = manager.get_commands().lock()?;
@@ -265,12 +264,12 @@ async fn help<T>(manager: &CommandManager<T>, mut args: ArgumentManager) -> Resu
     Ok(())
 }
 
-fn exit<T>(manager: &CommandManager<T>, _: ArgumentManager) -> Result<(), CommandError> {
+fn exit(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     manager.message("Stopping...");
     Err(CommandError::Exit)
 }
 
-fn version<T>(manager: &CommandManager<T>, _: ArgumentManager) -> Result<(), CommandError> {
+fn version(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     manager.message(format!("Version: {}", VERSION));
     Ok(())
 }
