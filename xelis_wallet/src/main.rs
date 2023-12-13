@@ -7,7 +7,7 @@ use log::{error, info};
 use clap::Parser;
 use xelis_common::{config::{
     VERSION, XELIS_ASSET, COIN_DECIMALS
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel, self, ShareablePrompt, PromptError}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, utils::{format_xelis, set_network_to, get_network, format_coin}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel, self, ShareablePrompt, PromptError}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, utils::{format_xelis, set_network_to, format_coin}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
 use xelis_wallet::{
     wallet::Wallet,
     config::DEFAULT_DAEMON_ADDRESS
@@ -103,6 +103,8 @@ async fn main() -> Result<()> {
     }
 
     let command_manager = CommandManager::new(prompt.clone());
+    command_manager.store_in_context(config.network)?;
+
     command_manager.register_default_commands()?;
 
     if let Some(name) = config.name {
@@ -307,7 +309,12 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
     let password = prompt.read_input("Password: ".into(), true)
         .await.context("Error while reading wallet password")?;
 
-    let wallet = Wallet::open(dir, password, get_network())?;
+    let wallet = {
+        let context = manager.get_context().lock()?;
+        let network = context.get::<Network>()?;
+        Wallet::open(dir, password, *network)?
+    };
+
     manager.message("Wallet sucessfully opened");
     apply_config(&wallet).await;
 
@@ -346,7 +353,12 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
         return Ok(())
     }
 
-    let wallet = Wallet::create(dir, password, None, get_network())?;
+    let wallet = {
+        let context = manager.get_context().lock()?;
+        let network = context.get::<Network>()?;
+        Wallet::create(dir, password, None, *network)?
+    };
+ 
     manager.message("Wallet sucessfully created");
     apply_config(&wallet).await;
 
@@ -395,7 +407,13 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
         return Ok(())
     }
 
-    let wallet = Wallet::create(dir, password, Some(seed), get_network())?;
+
+    let wallet = {
+        let context = manager.get_context().lock()?;
+        let network = context.get::<Network>()?;
+        Wallet::create(dir, password, Some(seed), *network)?
+    };
+
     manager.message("Wallet sucessfully recovered");
     apply_config(&wallet).await;
 

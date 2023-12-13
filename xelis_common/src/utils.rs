@@ -128,6 +128,7 @@ pub fn get_network() -> Network {
 }
 
 // it should never be called later, only at launch!!
+// TODO Deprecated
 pub fn set_network_to(network: Network) {
     // its already mainnet by default
     if network != Network::Mainnet {

@@ -172,6 +172,12 @@ impl CommandManager {
         Ok(())
     }
 
+    pub fn store_in_context<T: Send + Sync + 'static>(&self, data: T) -> Result<(), CommandError> {
+        let mut context = self.context.lock()?;
+        context.store(data);
+        Ok(())
+    }
+
     pub fn get_context(&self) -> &Mutex<Context> {
         &self.context
     }
