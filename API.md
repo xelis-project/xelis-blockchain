@@ -1844,7 +1844,7 @@ TODO
 Search transactions based on various parameters.
 By default it accepts every TXs.
 
-##### Method `get_version`
+##### Method `list_transactions`
 
 ##### Parameters
 |       Name      |   Type  | Required |           Note           |
@@ -1897,5 +1897,34 @@ By default it accepts every TXs.
 			"topoheight": 69752
 		}
 	]
+}
+```
+
+#### Sign Data
+Generate a signature for the input data using your wallet key pair.
+
+##### Method `sign_data`
+
+##### Parameters
+Paramater value can be anything (object, value, array...)
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "sign_data",
+	"id": 1,
+	"params": {
+		"hello": "world"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": "5bb7a1f33c3c89e968be9f1c343aa15393ec98905976e38087d53595a3411bd0130f9414b7e5fe4e3bcdcad03e0c6d2cbee01c10514289ad3b2b5e3b2fe8fd03"
 }
 ```
