@@ -26,7 +26,7 @@ use lazy_static::lazy_static;
 pub struct MinerConfig {
     /// Wallet address to mine and receive block rewards on
     #[clap(short, long)]
-    miner_address: String,
+    miner_address: Address,
     /// Daemon address to connect to for mining
     #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String,
@@ -84,13 +84,8 @@ const UPDATE_EVERY_NONCE: u64 = 1_000;
 async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
     let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
-    let address = match Address::from_string(&config.miner_address) {
-        Ok(address) => address,
-        Err(e) => {
-            error!("Invalid miner address specified: {}", e);
-            return Ok(())
-        }
-    };
+    let address = config.miner_address;
+
     let threads_count = num_cpus::get();
     let mut threads = config.num_threads;
     if threads_count > u8::MAX as usize {

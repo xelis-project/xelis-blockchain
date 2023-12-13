@@ -1,5 +1,6 @@
 use core::fmt;
 use std::fmt::{Display, Formatter};
+use std::str::FromStr;
 
 use crate::api::{DataElement, DataType, DataValue};
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
@@ -113,6 +114,13 @@ impl Address {
         }
 
         Ok(addr)
+    }
+}
+
+impl FromStr for Address {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Address::from_string(&s.to_owned())
     }
 }
 
