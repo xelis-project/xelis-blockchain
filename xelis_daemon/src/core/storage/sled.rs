@@ -859,7 +859,8 @@ impl Storage for SledStorage {
     async fn get_assets_for(&self, key: &PublicKey) -> Result<Vec<Hash>, BlockchainError> {
         let mut assets = Vec::new();
         // Keys are stored like this: [public key (32 bytes)][asset hash (32 bytes)]
-        for el in self.assets.scan_prefix(key.as_bytes()).keys() {
+        // See Self::get_balance_key_for
+        for el in self.balances.scan_prefix(key.as_bytes()).keys() {
             let bytes = el?;
             let hash = Hash::from_bytes(&bytes[32..64])?;
             assets.push(hash);
