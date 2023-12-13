@@ -365,7 +365,9 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
 }
 
 async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
-    let command_manager = CommandManager::default(prompt.clone())?;
+    let command_manager = CommandManager::new(prompt.clone());
+    command_manager.register_default_commands()?;
+
     let closure = |_: &_, _: &_| async {
         let height_str = format!(
             "{}: {}",

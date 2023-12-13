@@ -160,12 +160,16 @@ impl CommandManager {
         Self::with_context(Context::new(), prompt)
     }
 
-    pub fn default(prompt: ShareablePrompt) -> Result<Self, CommandError> {
-        let zelf = CommandManager::new(prompt);
-        zelf.add_command(Command::with_optional_arguments("help", "Show this help", vec![Arg::new("command", ArgType::String)], CommandHandler::Async(async_handler!(help))))?;
-        zelf.add_command(Command::new("version", "Show the current version", CommandHandler::Sync(version)))?;
-        zelf.add_command(Command::new("exit", "Shutdown the daemon", CommandHandler::Sync(exit)))?;
-        Ok(zelf)
+    // Register default commands:
+    // - help
+    // - version
+    // - exit
+    pub fn register_default_commands(&self) -> Result<(), CommandError> {
+        self.add_command(Command::with_optional_arguments("help", "Show this help", vec![Arg::new("command", ArgType::String)], CommandHandler::Async(async_handler!(help))))?;
+        self.add_command(Command::new("version", "Show the current version", CommandHandler::Sync(version)))?;
+        self.add_command(Command::new("exit", "Shutdown the daemon", CommandHandler::Sync(exit)))?;
+
+        Ok(())
     }
 
     pub fn get_context(&self) -> &Mutex<Context> {

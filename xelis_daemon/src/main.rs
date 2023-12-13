@@ -88,6 +88,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     context.store(blockchain.clone());
 
     let command_manager = CommandManager::with_context(context, prompt.clone());
+    command_manager.register_default_commands()?;
 
     // Register all our commands
     command_manager.add_command(Command::new("list_peers", "List all peers connected", CommandHandler::Async(async_handler!(list_peers::<S>))))?;

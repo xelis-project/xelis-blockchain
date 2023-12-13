@@ -102,7 +102,9 @@ async fn main() -> Result<()> {
         }
     }
 
-    let command_manager = CommandManager::default(prompt.clone())?;
+    let command_manager = CommandManager::new(prompt.clone());
+    command_manager.register_default_commands()?;
+
     if let Some(name) = config.name {
         let dir = format!("{}{}", DIR_PATH, name);
 
