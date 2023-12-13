@@ -3,6 +3,7 @@ pub mod p2p;
 pub mod core;
 pub mod config;
 
+use config::STABLE_LIMIT;
 use fern::colors::Color;
 use humantime::format_duration;
 use log::{info, error, warn};
@@ -204,18 +205,33 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, _: ArgumentManager) 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let storage = blockchain.get_storage().read().await;
-    let mut expected_supply = 0;
-    for topo in 0..=blockchain.get_topo_height() {
-        let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
-        let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply).await.context("Error while calculating block reward")?;
-        // Verify the saved block reward
-        if block_reward != storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward")? {
-            manager.error(format!("Block reward saved is incorrect for {} at topoheight {}", hash_at_topo, topo));
-            return Ok(())
-        }
+    let mut pruned_topoheight = storage.get_pruned_topoheight().context("Error on pruned topoheight")?.unwrap_or(0);
+    let mut expected_supply = if pruned_topoheight > 0 {
+        let supply = storage.get_supply_at_topo_height(pruned_topoheight).await.context("Error while retrieving starting expected supply")?;
+        pruned_topoheight += 1;
+        supply
+    } else {
+        0
+    };
 
-        expected_supply += block_reward;
+    for topo in pruned_topoheight..=blockchain.get_topo_height() {
+        let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
+        let block_reward = if pruned_topoheight == 0 || topo - pruned_topoheight > STABLE_LIMIT {
+            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply).await.context("Error while calculating block reward")?;
+            // Verify the saved block reward
+            if block_reward != storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward")? {
+                manager.error(format!("Block reward saved is incorrect for {} at topoheight {}", hash_at_topo, topo));
+                return Ok(())
+            }
+            block_reward
+        } else {
+            // We are too near from the pruned topoheight, as we don't know previous blocks we can't verify if block was side block or not for rewards
+            // Let's trust its stored reward
+            storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward for pruned topo")?
+        };
+
         let supply = storage.get_supply_at_topo_height(topo).await.context("Error while retrieving supply at topoheight")?;
+        expected_supply += block_reward;
 
         // Verify the supply at block
         if supply != expected_supply {
