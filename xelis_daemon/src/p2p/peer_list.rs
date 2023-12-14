@@ -7,7 +7,7 @@ use std::{collections::HashMap, net::{SocketAddr, IpAddr}, fs, fmt::{Formatter, 
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
 use tokio::sync::{RwLock, mpsc::UnboundedSender};
-use xelis_common::{serializer::Serializer, utils::get_current_time, api::daemon::Direction};
+use xelis_common::{serializer::Serializer, utils::get_current_time_in_seconds, api::daemon::Direction};
 use std::sync::Arc;
 use bytes::Bytes;
 use log::{info, debug, trace, error, warn};
@@ -173,7 +173,7 @@ impl PeerList {
             debug!("Updating {} in stored peerlist", peer);
             // reset the fail count and update the last seen time
             stored_peer.set_fail_count(0);
-            stored_peer.set_last_seen(get_current_time());
+            stored_peer.set_last_seen(get_current_time_in_seconds());
             stored_peer.set_local_port(peer.get_local_port());
         } else {
             debug!("Saving {} in stored peerlist", peer);
@@ -360,7 +360,7 @@ impl PeerList {
         // remove all peers that have a high fail count
         self.stored_peers.retain(|_, stored_peer| *stored_peer.get_state() == StoredPeerState::Whitelist || stored_peer.get_fail_count() < PEER_FAIL_LIMIT);
 
-        let current_time = get_current_time();
+        let current_time = get_current_time_in_seconds();
         // first lets check in whitelist
         if let Some(addr) = self.find_peer_to_connect_to_with_state(current_time, StoredPeerState::Whitelist) {
             return Some(addr);
@@ -411,7 +411,7 @@ impl PeerList {
 
 impl StoredPeer {
     fn new(local_port: u16, state: StoredPeerState) -> Self {
-        let current_time = get_current_time();
+        let current_time = get_current_time_in_seconds();
         Self {
             first_seen: current_time,
             last_seen: current_time,
@@ -461,7 +461,7 @@ impl StoredPeer {
 
 impl Display for StoredPeer {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let current_time = get_current_time();
+        let current_time = get_current_time_in_seconds();
         write!(f, "StoredPeer[first seen: {} ago, last seen: {} ago]", format_duration(Duration::from_secs(current_time - self.first_seen)), format_duration(Duration::from_secs(current_time - self.last_seen)))
     }
 }

@@ -5,7 +5,7 @@ use crate::config::{
     PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS
 };
 use crate::p2p::packet::PacketWrapper;
-use xelis_common::utils::get_current_time;
+use xelis_common::utils::get_current_time_in_seconds;
 use xelis_common::{
     crypto::hash::Hash,
     serializer::Serializer
@@ -212,7 +212,7 @@ impl Peer {
     }
 
     fn update_fail_count_default(&self) -> bool {
-        self.update_fail_count(get_current_time(), 0)
+        self.update_fail_count(get_current_time_in_seconds(), 0)
     }
 
     fn update_fail_count(&self, current_time: u64, to_store: u8) -> bool {
@@ -226,7 +226,7 @@ impl Peer {
     }
 
     pub fn increment_fail_count(&self) {
-        let current_time = get_current_time();
+        let current_time = get_current_time_in_seconds();
         // if its long time we didn't get a fail, reset the fail count to 1 (because of current fail)
         // otherwise, add 1
         if !self.update_fail_count(current_time, 1) {

@@ -6,7 +6,7 @@ use xelis_common::{
     crypto::{key::PublicKey, hash::{Hashable, Hash, HASH_SIZE}},
     difficulty::check_difficulty,
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
-    utils::{get_current_timestamp, format_xelis, get_current_time},
+    utils::{get_current_in_millis, format_xelis, get_current_time_in_seconds},
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE, Difficulty},
     immutable::Immutable,
     serializer::Serializer,
@@ -341,7 +341,7 @@ impl<S: Storage> Blockchain<S> {
         } else {
             error!("No genesis block found!");
             info!("Generating a new genesis block...");
-            let header = BlockHeader::new(0, 0, get_current_timestamp(), Vec::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), Vec::new());
+            let header = BlockHeader::new(0, 0, get_current_in_millis(), Vec::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), Vec::new());
             let block = Block::new(Immutable::Owned(header), Vec::new());
             info!("Genesis generated: {}", block.to_hex());
             block
@@ -372,7 +372,7 @@ impl<S: Storage> Blockchain<S> {
                 header = self.get_block_template(key.clone()).await?;
             }
             header.nonce += 1;
-            header.timestamp = get_current_timestamp();
+            header.timestamp = get_current_in_millis();
             hash = header.hash();
         }
 
@@ -1032,7 +1032,7 @@ impl<S: Storage> Blockchain<S> {
                         blocks: None,
                         executed_in_block: None,
                         in_mempool: true,
-                        first_seen: Some(get_current_time()),
+                        first_seen: Some(get_current_time_in_seconds()),
                         data: DataHash { hash: Cow::Owned(hash), data: Cow::Borrowed(&tx) }
                     };
 
@@ -1124,7 +1124,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let height = blockdag::calculate_height_at_tips(storage, &sorted_tips).await?;
-        let mut block = BlockHeader::new(self.get_version_at_height(height), height, get_current_timestamp(), sorted_tips, extra_nonce, address, Vec::new());
+        let mut block = BlockHeader::new(self.get_version_at_height(height), height, get_current_in_millis(), sorted_tips, extra_nonce, address, Vec::new());
 
         trace!("Locking mempool for building block template");
         let mempool = self.mempool.read().await;
@@ -1214,9 +1214,9 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::AlreadyInChain)
         }
 
-        if block.get_timestamp() > get_current_timestamp() + TIMESTAMP_IN_FUTURE_LIMIT { // accept 2s in future
+        if block.get_timestamp() > get_current_in_millis() + TIMESTAMP_IN_FUTURE_LIMIT { // accept 2s in future
             error!("Block timestamp is too much in future!");
-            return Err(BlockchainError::TimestampIsInFuture(get_current_timestamp(), block.get_timestamp()));
+            return Err(BlockchainError::TimestampIsInFuture(get_current_in_millis(), block.get_timestamp()));
         }
 
         let tips_count = block.get_tips().len();

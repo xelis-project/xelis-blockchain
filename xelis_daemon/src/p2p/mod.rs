@@ -13,7 +13,7 @@ use xelis_common::{
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::{BlockHeader, Block, Difficulty},
-    utils::get_current_time,
+    utils::get_current_time_in_seconds,
     immutable::Immutable,
     api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent, Direction}
 };
@@ -346,7 +346,7 @@ impl<S: Storage> P2pServer<S> {
         let topoheight = self.blockchain.get_topo_height();
         let pruned_topoheight = storage.get_pruned_topoheight()?;
         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_hash).await.unwrap_or(0);
-        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time(), topoheight, block.get_height(), pruned_topoheight, top_hash, GENESIS_BLOCK_HASH.clone(), cumulative_difficulty))
+        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, top_hash, GENESIS_BLOCK_HASH.clone(), cumulative_difficulty))
     }
 
     // this function handle all new connections
@@ -552,7 +552,7 @@ impl<S: Storage> P2pServer<S> {
     async fn ping_loop(self: Arc<Self>) {
         debug!("Starting ping loop...");
 
-        let mut last_peerlist_update = get_current_time();
+        let mut last_peerlist_update = get_current_time_in_seconds();
         let duration = Duration::from_secs(P2P_PING_DELAY);
         loop {
             trace!("Waiting for ping delay...");
@@ -561,7 +561,7 @@ impl<S: Storage> P2pServer<S> {
             let mut ping = self.build_generic_ping_packet().await;
             trace!("generic ping packet finished");
 
-            let current_time = get_current_time();
+            let current_time = get_current_time_in_seconds();
             // check if its time to send our peerlist
             if current_time > last_peerlist_update + P2P_PING_PEER_LIST_DELAY {
                 trace!("Sending ping packet with peerlist...");
@@ -612,7 +612,7 @@ impl<S: Storage> P2pServer<S> {
                     if let Err(e) = peer.send_packet(Packet::Ping(Cow::Borrowed(&ping))).await {
                         debug!("Error sending specific ping packet to {}: {}", peer, e);
                     } else {
-                        peer.set_last_ping_sent(get_current_time());
+                        peer.set_last_ping_sent(get_current_time_in_seconds());
                     }
                 }
             } else {
@@ -623,7 +623,7 @@ impl<S: Storage> P2pServer<S> {
                 let peerlist = self.peer_list.read().await;
                 trace!("End locking peerlist... (generic ping)");
                 // broadcast directly the ping packet asap to all peers
-                let current_time = get_current_time();
+                let current_time = get_current_time_in_seconds();
                 for peer in peerlist.get_peers().values() {
                     trace!("broadcast generic ping packet to {}", peer);
                     if current_time - peer.get_last_ping_sent() > P2P_PING_DELAY {
@@ -998,7 +998,7 @@ impl<S: Storage> P2pServer<S> {
                 ping.into_owned().update_peer(peer, &self.blockchain).await?;
                 let request = request.into_owned();
                 let last_request = peer.get_last_chain_sync();
-                let time = get_current_time();
+                let time = get_current_time_in_seconds();
                 // Node is trying to ask too fast our chain
                 if  last_request + CHAIN_SYNC_DELAY > time {
                     debug!("{} requested sync chain too fast!", peer);
@@ -1043,7 +1043,7 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::Ping(ping) => {
                 trace!("Received a ping packet from {}", peer);
-                let current_time = get_current_time();
+                let current_time = get_current_time_in_seconds();
                 let empty_peer_list = ping.get_peers().is_empty();
                 // verify the respect of the coutdown to prevent massive packet incoming
                 // if he send 4x faster than rules, throw error (because of connection latency / packets being queued)
@@ -1189,7 +1189,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // we received the inventory
                 peer.set_requested_inventory(false);
-                peer.set_last_inventory(get_current_time());
+                peer.set_last_inventory(get_current_time_in_seconds());
 
                 let next_page = inventory.next();
                 {
@@ -1692,7 +1692,7 @@ impl<S: Storage> P2pServer<S> {
                     if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
                         debug!("Error on sending ping for notifying that we accepted the block {} to {}: {}", hash, peer, e);
                     } else {
-                        peer.set_last_ping_sent(get_current_time());
+                        peer.set_last_ping_sent(get_current_time_in_seconds());
                     }
                 }
             } else {

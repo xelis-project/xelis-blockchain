@@ -3,7 +3,7 @@ use crate::network::Network;
 use crate::serializer::{Reader, ReaderError};
 use crate::config::{FEE_PER_KB, COIN_DECIMALS};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use std::net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr};
 
 #[macro_export]
@@ -15,24 +15,29 @@ macro_rules! async_handler {
     };
 }
 
-// return timestamp in seconds
-pub fn get_current_time() -> u64 {
+#[inline]
+pub fn get_current_time() -> Duration {
     let start = SystemTime::now();
     let time = start.duration_since(UNIX_EPOCH).expect("Incorrect time returned from get_current_time");
-    time.as_secs()
+    time
+}
+
+// return timestamp in seconds
+pub fn get_current_time_in_seconds() -> u64 {
+    get_current_time().as_secs()
 }
 
 // return timestamp in milliseconds
-pub fn get_current_timestamp() -> u128 {
-    let start = SystemTime::now();
-    let time = start.duration_since(UNIX_EPOCH).expect("Incorrect time returned from get_current_timestamp");
-    time.as_millis()
+pub fn get_current_in_millis() -> u128 {
+    get_current_time().as_millis()
 }
 
+// Format any coin value using the requested decimals count
 pub fn format_coin(value: u64, decimals: u8) -> String {
     format!("{:.1$}", value as f64 / 10usize.pow(decimals as u32) as f64, decimals as usize)
 }
 
+// Format value using XELIS decimals
 pub fn format_xelis(value: u64) -> String {
     format_coin(value, COIN_DECIMALS)
 }

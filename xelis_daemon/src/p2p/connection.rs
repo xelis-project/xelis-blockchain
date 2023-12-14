@@ -8,7 +8,7 @@ use humantime::format_duration;
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedWriteHalf, OwnedReadHalf};
 use xelis_common::{
-    utils::get_current_time,
+    utils::get_current_time_in_seconds,
     serializer::{Reader, Serializer},
 };
 use std::fmt::{Display, Error, Formatter};
@@ -58,7 +58,7 @@ impl Connection {
             addr,
             tx: Mutex::new(tx),
             rx: Mutex::new(rx),
-            connected_on: get_current_time(),
+            connected_on: get_current_time_in_seconds(),
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
             closed: AtomicBool::new(false)
@@ -182,7 +182,7 @@ impl Connection {
     }
 
     pub fn get_human_uptime(&self) -> String {
-        let elapsed_seconds = get_current_time() - self.connected_on();
+        let elapsed_seconds = get_current_time_in_seconds() - self.connected_on();
         format_duration(Duration::from_secs(elapsed_seconds)).to_string()
     }
 

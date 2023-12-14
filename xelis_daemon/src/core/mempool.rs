@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use indexmap::IndexSet;
 use log::{trace, debug, warn};
-use xelis_common::utils::get_current_time;
+use xelis_common::utils::get_current_time_in_seconds;
 use xelis_common::{
     crypto::{
         hash::Hash,
@@ -89,7 +89,7 @@ impl Mempool {
 
         let sorted_tx = SortedTx {
             size: tx.size(),
-            first_seen: get_current_time(),
+            first_seen: get_current_time_in_seconds(),
             tx
         };
 
