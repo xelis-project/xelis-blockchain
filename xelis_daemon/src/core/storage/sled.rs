@@ -1029,6 +1029,13 @@ impl Storage for SledStorage {
         Ok(())
     }
 
+    async fn set_last_nonce_to(&mut self, key: &PublicKey, topoheight: u64, nonce: u64) -> Result<(), BlockchainError> {
+        trace!("set last nonce {} for {} at topoheight {}", nonce, key, topoheight);
+        self.set_nonce_at_topoheight(key, nonce, topoheight).await?;
+        self.set_last_topoheight_for_nonce(key, topoheight)?;
+        Ok(())
+    }
+
     async fn has_nonce(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
         trace!("has nonce {}", key);
         let contains = self.nonces.contains_key(key.as_bytes())?;
@@ -1106,8 +1113,6 @@ impl Storage for SledStorage {
         let versioned = VersionedNonce::new(nonce, previous_topoheight);
         let disk_key = self.get_versioned_key(key, topoheight);
         self.versioned_nonces.insert(&disk_key, versioned.to_bytes())?;
-
-        self.set_last_topoheight_for_nonce(key, topoheight)?;
         Ok(())
     }
 

@@ -975,6 +975,7 @@ impl<S: Storage> Blockchain<S> {
                 return Err(BlockchainError::TxAlreadyInBlockchain(hash))
             }
     
+            let current_topoheight = self.get_topo_height();
             // get the highest nonce for this owner
             let owner = tx.get_owner();
             // get the highest nonce available
@@ -1003,10 +1004,10 @@ impl<S: Storage> Blockchain<S> {
 
                 // Verify original TX
                 // We may have double spending in balances, but it is ok because miner check that all txs included are valid
-                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, Some(&mut nonces), false).await?;
+                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, Some(&mut nonces), false, current_topoheight).await?;
             } else {
                 let mut balances = HashMap::new();
-                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false).await?;
+                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false, current_topoheight).await?;
             }
 
             mempool.add_tx(hash.clone(), tx.clone())?;
@@ -1152,6 +1153,7 @@ impl<S: Storage> Blockchain<S> {
             b.cmp(&a)
         });
 
+        let topoheight = self.get_topo_height();
         let mut total_txs_size = 0;
         let mut nonces: HashMap<&PublicKey, u64> = HashMap::new();
         let mut block_size = block.size();
@@ -1164,7 +1166,7 @@ impl<S: Storage> Blockchain<S> {
 
                 // Check if the TX is valid for this potential block
                 trace!("Checking TX {} with nonce {}", hash, tx.get_nonce());
-                if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false).await {
+                if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false, topoheight).await {
                     warn!("TX {} is not valid for mining: {}", hash, e);
                 } else {
                     trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(fee));
@@ -1309,6 +1311,7 @@ impl<S: Storage> Blockchain<S> {
         let difficulty = self.verify_proof_of_work(storage, &pow_hash, block.get_tips()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
+        let mut current_topoheight = self.get_topo_height();
         { // Transaction verification
             let hashes_len = block.get_txs_hashes().len();
             let txs_len = block.get_transactions().len();
@@ -1381,7 +1384,7 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                self.verify_transaction_with_hash(storage, tx, &tx_hash, &mut balances, Some(&mut cache_account), false).await?;
+                self.verify_transaction_with_hash(storage, tx, &tx_hash, &mut balances, Some(&mut cache_account), false, current_topoheight).await?;
 
                 // add tx hash in cache
                 cache_tx.insert(tx_hash, true);
@@ -1447,7 +1450,6 @@ impl<S: Storage> Blockchain<S> {
         // track all events to notify websocket
         let mut events: HashMap<NotifyEvent, Vec<Value>> = HashMap::new();
 
-        let mut current_topoheight = self.get_topo_height();
         // order the DAG (up to TOP_HEIGHT - STABLE_LIMIT)
         let mut highest_topo = 0;
         {
@@ -1576,7 +1578,7 @@ impl<S: Storage> Blockchain<S> {
                 for (key, assets) in balances {
                     for (asset, balance) in assets {
                         trace!("Saving balance {} for {} at topo {}, previous: {:?}", asset, key, highest_topo, balance.get_previous_topoheight());
-                        // Save the balance as the latest one
+                        // Save the balance for this topoheight
                         storage.set_last_balance_to(key, asset, highest_topo, &balance).await?;
                     }
 
@@ -1585,7 +1587,7 @@ impl<S: Storage> Blockchain<S> {
                         // Check if its a known account, otherwise set nonce to 0
                         if !storage.has_nonce(key).await? {
                             // This public key is new, register it by setting 0
-                            storage.set_nonce_at_topoheight(key, 0, highest_topo).await?;
+                            storage.set_last_nonce_to(key, 0, highest_topo).await?;
                         }
                     }
                 }
@@ -1593,7 +1595,7 @@ impl<S: Storage> Blockchain<S> {
                 // save nonces for each pubkey for new topoheight
                 for (key, nonce) in local_nonces {
                     trace!("Saving nonce {} for {} at topoheight {}", nonce, key, highest_topo);
-                    storage.set_nonce_at_topoheight(&key, nonce, highest_topo).await?;
+                    storage.set_last_nonce_to(&key, nonce, highest_topo).await?;
 
                     // insert in "global" nonces map for easier mempool cleaning
                     nonces.insert(key, nonce);
@@ -1915,7 +1917,7 @@ impl<S: Storage> Blockchain<S> {
     // verify the transaction and returns fees available
     // nonces allow us to support multiples tx from same owner in the same block
     // txs must be sorted in ascending order based on account nonce
-    async fn verify_transaction_with_hash<'a>(&self, storage: &S, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool) -> Result<(), BlockchainError> {
+    async fn verify_transaction_with_hash<'a>(&self, storage: &S, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("Verify transaction with hash {}", hash);
 
         if !tx.verify_signature() {
@@ -1926,7 +1928,7 @@ impl<S: Storage> Blockchain<S> {
         {
             let balance = match owner_balances.entry(&XELIS_ASSET) {
                 Entry::Vacant(entry) => {
-                    let (_, balance) = storage.get_last_balance(tx.get_owner(), &XELIS_ASSET).await?;
+                    let (_, balance) = storage.get_balance_at_maximum_topoheight(tx.get_owner(), &XELIS_ASSET, topoheight).await?.ok_or_else(|| BlockchainError::AccountNotFound(tx.get_owner().clone()))?;
                     entry.insert(balance.get_balance())
                 },
                 Entry::Occupied(entry) => entry.into_mut(),
@@ -1963,11 +1965,12 @@ impl<S: Storage> Blockchain<S> {
 
                     let balance = match owner_balances.entry(&output.asset) {
                         Entry::Vacant(entry) => {
-                            let (_, balance) = storage.get_last_balance(tx.get_owner(), &XELIS_ASSET).await?;
+                            let (_, balance) = storage.get_balance_at_maximum_topoheight(tx.get_owner(), &output.asset, topoheight).await?.ok_or_else(|| BlockchainError::AccountNotFound(tx.get_owner().clone()))?;
                             entry.insert(balance.get_balance())
                         },
                         Entry::Occupied(entry) => entry.into_mut(),
                     };
+
                     if let Some(value) = balance.checked_sub(output.amount) {
                         *balance = value;
                     } else {
@@ -1988,7 +1991,7 @@ impl<S: Storage> Blockchain<S> {
 
                 let balance = match owner_balances.entry(asset) {
                     Entry::Vacant(entry) => {
-                        let (_, balance) = storage.get_last_balance(tx.get_owner(), asset).await?;
+                        let balance = storage.get_new_versioned_balance(tx.get_owner(), asset, topoheight).await?;
                         entry.insert(balance.get_balance())
                     },
                     Entry::Occupied(entry) => entry.into_mut(),
@@ -2012,8 +2015,7 @@ impl<S: Storage> Blockchain<S> {
                 // check that we don't have nonce from cache and that it exists in storage, otherwise set 0
                 let nonce = match nonces.entry(tx.get_owner()) {
                     Entry::Vacant(entry) => {
-                        let nonce = if storage.has_nonce(tx.get_owner()).await? {
-                            let (_, version) = storage.get_last_nonce(tx.get_owner()).await?;
+                        let nonce = if let Some((_, version)) =  storage.get_nonce_at_maximum_topoheight(tx.get_owner(), topoheight).await? {
                             version.get_nonce()
                         } else {
                             0
@@ -2031,8 +2033,7 @@ impl<S: Storage> Blockchain<S> {
                 *nonce += 1;
             } else { // We don't have any cache, compute using chain data
                 // it is possible that a miner has balance but no nonces, so we need to check it
-                let nonce = if storage.has_nonce(tx.get_owner()).await? {
-                    let (_, version) = storage.get_last_nonce(tx.get_owner()).await?;
+                let nonce = if let Some((_, version)) =  storage.get_nonce_at_maximum_topoheight(tx.get_owner(), topoheight).await? {
                     version.get_nonce()
                 } else {
                     0 // no nonce, so we start at 0

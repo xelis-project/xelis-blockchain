@@ -98,6 +98,8 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn has_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<bool, BlockchainError>;
     // returns its topoheight and its VersionedNonce
     async fn get_last_nonce(&self, key: &PublicKey) -> Result<(u64, VersionedNonce), BlockchainError>;
+    async fn set_last_nonce_to(&mut self, key: &PublicKey, topoheight: u64, nonce: u64) -> Result<(), BlockchainError>;
+
     async fn get_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<VersionedNonce, BlockchainError>;
     async fn get_nonce_at_maximum_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<Option<(u64, VersionedNonce)>, BlockchainError>;
     // set the new highest topoheight for account
