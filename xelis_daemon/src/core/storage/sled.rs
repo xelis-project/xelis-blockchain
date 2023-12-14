@@ -1002,7 +1002,7 @@ impl Storage for SledStorage {
     }
 
     // save a new versioned balance in storage and update the pointer
-    async fn set_balance_to(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64, version: &VersionedBalance) -> Result<(), BlockchainError> {
+    async fn set_last_balance_to(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64, version: &VersionedBalance) -> Result<(), BlockchainError> {
         trace!("set balance {} for {} to topoheight {}", asset, key, topoheight);
         self.set_balance_at_topoheight(asset, topoheight, key, &version).await?;
         self.set_last_topoheight_for_balance(key, asset, topoheight)?;

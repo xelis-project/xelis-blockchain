@@ -1577,7 +1577,7 @@ impl<S: Storage> Blockchain<S> {
                     for (asset, balance) in assets {
                         trace!("Saving balance {} for {} at topo {}, previous: {:?}", asset, key, highest_topo, balance.get_previous_topoheight());
                         // Save the balance as the latest one
-                        storage.set_balance_to(key, asset, highest_topo, &balance).await?;
+                        storage.set_last_balance_to(key, asset, highest_topo, &balance).await?;
                     }
 
                     // No nonce update for this key

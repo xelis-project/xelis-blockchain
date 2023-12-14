@@ -1952,8 +1952,7 @@ impl<S: Storage> P2pServer<S> {
                                 debug!("Saving balance {} for key {} at topoheight {}", balance, key, stable_topoheight);
                                 let mut versioned_balance = storage.get_new_versioned_balance(key, &asset, stable_topoheight).await?;
                                 versioned_balance.set_balance(balance);
-                                storage.set_balance_to(key, &asset, stable_topoheight, &versioned_balance).await?;
-                                storage.set_last_topoheight_for_balance(key, &asset, stable_topoheight)?;
+                                storage.set_last_balance_to(key, &asset, stable_topoheight, &versioned_balance).await?;
                             }
                         }
                     }
