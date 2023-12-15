@@ -102,11 +102,18 @@ pub struct P2pServer<S: Storage> {
     object_tracker: SharedObjectTracker, // used to requests objects to peers and avoid requesting the same object to multiple peers
     is_running: AtomicBool, // used to check if the server is running or not in tasks
     blocks_propagation_queue: Mutex<LruCache<Hash, ()>>, // Synced cache to prevent concurrent tasks adding the block
-    blocks_processor: Sender<(Arc<Peer>, BlockHeader, Hash)> // Sender for the blocks processing task to have a ordered queue
+    blocks_processor: Sender<(Arc<Peer>, BlockHeader, Hash)>, // Sender for the blocks processing task to have a ordered queue
+    // allow fast syncing (only balances / assets / Smart Contracts changes)
+    // without syncing the history
+    allow_fast_sync_mode: bool,
+    // This is marked as "unsecure" because if a block is not added by chain,
+    // all next blocks will fail and being keep requested which can lead to DDoS
+    // This can be used safely from a trusted node
+    allow_unsecure_boost_sync_mode: bool
 }
 
 impl<S: Storage> P2pServer<S> {
-    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>) -> Result<Arc<Self>, P2pError> {
+    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_unsecure_boost_sync_mode: bool) -> Result<Arc<Self>, P2pError> {
         if let Some(tag) = &tag {
             debug_assert!(tag.len() > 0 && tag.len() <= 16);
         }
@@ -135,7 +142,9 @@ impl<S: Storage> P2pServer<S> {
             object_tracker,
             is_running: AtomicBool::new(true),
             blocks_propagation_queue: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
-            blocks_processor
+            blocks_processor,
+            allow_fast_sync_mode,
+            allow_unsecure_boost_sync_mode
         };
 
         let arc = Arc::new(server);
@@ -504,6 +513,14 @@ impl<S: Storage> P2pServer<S> {
         Some(Arc::clone(peer))
     }
 
+    pub fn allow_fast_sync(&self) -> bool {
+        self.allow_fast_sync_mode
+    }
+
+    pub fn allow_unsecure_boost_sync(&self) -> bool {
+        self.allow_unsecure_boost_sync_mode
+    }
+
     async fn chain_sync_loop(self: Arc<Self>) {
         let duration = Duration::from_secs(CHAIN_SYNC_DELAY);
         loop {
@@ -512,7 +529,7 @@ impl<S: Storage> P2pServer<S> {
                 // first we have to check if we allow fast sync mode
                 // and then we check if we have a potential peer above us to fast sync
                 // otherwise we sync normally 
-                let fast_sync = if self.blockchain.is_fast_sync_mode_allowed() {
+                let fast_sync = if self.allow_fast_sync() {
                     trace!("locking peer list for fast sync check");
                     let peerlist = self.peer_list.read().await;
                     trace!("peer list locked for fast sync check");
@@ -1498,13 +1515,17 @@ impl<S: Storage> P2pServer<S> {
             for hash in blocks { // Request all blocks now
                 if !self.blockchain.has_block(&hash).await? {
                     trace!("Block {} is not found, asking it to {} (index = {})", hash, peer.get_outgoing_address(), total_requested);
-                    let response = peer.request_blocking_object(ObjectRequest::Block(hash)).await?;
-                    if let OwnedObjectResponse::Block(block, hash) = response {
-                        trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
-                        self.blockchain.add_new_block(block, false, false).await?;
+                    if self.allow_unsecure_boost_sync() {
+                        self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Block(hash.clone()), false).await?;
                     } else {
-                        error!("{} sent us an invalid block response", peer);
-                        return Err(P2pError::ExpectedBlock.into())
+                        let response = peer.request_blocking_object(ObjectRequest::Block(hash)).await?;
+                        if let OwnedObjectResponse::Block(block, hash) = response {
+                            trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
+                            self.blockchain.add_new_block(block, false, false).await?;
+                        } else {
+                            error!("{} sent us an invalid block response", peer);
+                            return Err(P2pError::ExpectedBlock.into())
+                        }
                     }
                     total_requested += 1;
                 } else {

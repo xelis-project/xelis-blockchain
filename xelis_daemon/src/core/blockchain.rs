@@ -101,7 +101,13 @@ pub struct Config {
     /// It will not store any blocks / TXs and will not verify the history locally.
     /// Use it with extreme cautions and trusted nodes to have a valid bootstrapped chain
     #[clap(long)]
-    pub allow_fast_sync: bool
+    pub allow_fast_sync: bool,
+    /// Allow boost chain sync mode
+    /// This will request in parallel all blocks instead of sequentially
+    /// It is marked as unsecure because it can lead to a DDoS attack as next blocks after
+    /// failed one will be requested in parallel
+    #[clap(long)]
+    pub allow_unsecure_boost_sync_mode: bool
 }
 
 pub struct Blockchain<S: Storage> {
@@ -126,10 +132,7 @@ pub struct Blockchain<S: Storage> {
     tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, Difficulty)>>,
     full_order_cache: Mutex<LruCache<(Hash, Hash, u64), Vec<Hash>>>,
     // auto prune mode if enabled, will delete all blocks every N and keep only N top blocks (topoheight based)
-    auto_prune_keep_n_blocks: Option<u64>,
-    // allow fast syncing (only balances / assets / Smart Contracts changes)
-    // without syncing the history
-    allow_fast_sync_mode: bool
+    auto_prune_keep_n_blocks: Option<u64>
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -170,8 +173,7 @@ impl<S: Storage> Blockchain<S> {
             tip_base_cache: Mutex::new(LruCache::new(1024)),
             tip_work_score_cache: Mutex::new(LruCache::new(1024)),
             full_order_cache: Mutex::new(LruCache::new(1024)),
-            auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
-            allow_fast_sync_mode: config.allow_fast_sync
+            auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks
         };
 
         // include genesis block
@@ -215,7 +217,7 @@ impl<S: Storage> Blockchain<S> {
                 };
                 exclusive_nodes.push(addr);
             }
-            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes) {
+            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_unsecure_boost_sync_mode) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
@@ -382,11 +384,6 @@ impl<S: Storage> Blockchain<S> {
         zelf.add_new_block(block, true, true).await?;
         info!("Mined a new block {} at height {}", hash, block_height);
         Ok(())
-    }
-
-    // check if user has accepted to do fast sync mode
-    pub fn is_fast_sync_mode_allowed(&self) -> bool {
-        self.allow_fast_sync_mode
     }
 
     pub async fn prune_until_topoheight(&self, topoheight: u64) -> Result<u64, BlockchainError> {
