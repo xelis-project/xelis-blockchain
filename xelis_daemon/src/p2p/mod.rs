@@ -1930,7 +1930,7 @@ impl<S: Storage> P2pServer<S> {
                         // save all nonces
                         for (key, nonce) in keys.iter().zip(nonces) {
                             debug!("Saving nonce {} for {}", nonce, key);
-                            storage.set_nonce_at_topoheight(key, nonce, stable_topoheight).await?;
+                            storage.set_last_nonce_to(key, stable_topoheight, nonce).await?;
                         }
                     }
 

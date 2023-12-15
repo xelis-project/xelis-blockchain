@@ -1577,7 +1577,7 @@ impl<S: Storage> Blockchain<S> {
                 // save balances for each topoheight
                 for (key, assets) in balances {
                     for (asset, balance) in assets {
-                        trace!("Saving balance {} for {} at topo {}, previous: {:?}", asset, key, highest_topo, balance.get_previous_topoheight());
+                        trace!("Saving balance {} for {} at topo {}, previous: {:?}", balance.get_balance(), key, highest_topo, balance.get_previous_topoheight());
                         // Save the balance for this topoheight
                         storage.set_last_balance_to(key, asset, highest_topo, &balance).await?;
                     }
@@ -1587,15 +1587,16 @@ impl<S: Storage> Blockchain<S> {
                         // Check if its a known account, otherwise set nonce to 0
                         if !storage.has_nonce(key).await? {
                             // This public key is new, register it by setting 0
-                            storage.set_last_nonce_to(key, 0, highest_topo).await?;
+                            trace!("{} has a now balance but without any nonce registered, set default (0) nonce", key);
+                            storage.set_last_nonce_to(key, highest_topo, 0).await?;
                         }
                     }
                 }
 
                 // save nonces for each pubkey for new topoheight
                 for (key, nonce) in local_nonces {
-                    trace!("Saving nonce {} for {} at topoheight {}", nonce, key, highest_topo);
-                    storage.set_last_nonce_to(&key, nonce, highest_topo).await?;
+                    warn!("Saving nonce {} for {} at topoheight {}", nonce, key, highest_topo);
+                    storage.set_last_nonce_to(&key, highest_topo, nonce).await?;
 
                     // insert in "global" nonces map for easier mempool cleaning
                     nonces.insert(key, nonce);
