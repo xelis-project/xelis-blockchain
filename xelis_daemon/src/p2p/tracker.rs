@@ -1,7 +1,7 @@
 use std::{borrow::Cow, time::{Duration, Instant}, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 use bytes::Bytes;
 use indexmap::IndexMap;
-use tokio::sync::{mpsc::{Sender, Receiver}, RwLock};
+use tokio::{sync::{mpsc::{Sender, Receiver}, RwLock}, select};
 use xelis_common::{crypto::hash::Hash, serializer::Serializer};
 use crate::{core::{blockchain::Blockchain, storage::Storage}, config::PEER_TIMEOUT_REQUEST_OBJECT};
 use log::{error, debug, trace, warn};
@@ -185,22 +185,39 @@ impl ObjectTracker {
 
     async fn handler_loop<S: Storage>(&self, blockchain: Arc<Blockchain<S>>, mut handler_receiver: Receiver<OwnedObjectResponse>) {
         debug!("Starting handler loop...");
-        while let Some(response) = handler_receiver.recv().await {
-            trace!("Received object response: {}", response.get_hash());
-            let object = response.get_hash();
-            let mut queue = self.queue.write().await;
-            if let Some(request) = queue.get_mut(object) {
-                request.set_response(response);
+        // Interval timer is necessary in case we don't receive any response from peer but we don't want to block the queue
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            select! {
+                biased;
+                response = handler_receiver.recv() => {
+                    if let Some(response) = response {
+                        trace!("Received object response: {}", response.get_hash());
+                        let object = response.get_hash();
+                        let mut queue = self.queue.write().await;
+                        if let Some(request) = queue.get_mut(object) {
+                            request.set_response(response);
+                        }
+                    } else {
+                        // channel closed
+                        break;
+                    }
+                },
+                _ = interval.tick() => {
+                    // Check if we have timed out requests
+                    trace!("Checking for timed out requests...");
+                }
             }
-
+    
             // Loop through the queue in a ordered way to handle correctly the responses
             // For this, we need to check if the first element has a response and so on
             // If we don't have a response during too much time, we remove the request from the queue as it is probably timed out
-            let mut failed_group = None;
+            let mut queue = self.queue.write().await;
+            let mut failed_group: Option<u64> = None;
             while let Some((_, request)) = queue.get_index_mut(0) {
                 // Delete all from the same group if one of them failed
-                if let (Some(request_group), Some(failed_group)) = (request.get_group_id(), failed_group) {
-                    if request_group == failed_group {
+                if let (Some(request_group), Some(group)) = (request.get_group_id(), &failed_group) {
+                    if request_group == *group {
                         queue.shift_remove_index(0).unwrap();
                         continue;
                     }
@@ -219,9 +236,7 @@ impl ObjectTracker {
                             if requested_at.elapsed() > Duration::from_secs(PEER_TIMEOUT_REQUEST_OBJECT) {
                                 failed_group = request.get_group_id();
                                 warn!("Request timed out: {} (group: {:?}", request.get_hash(), failed_group);
-                                let listener = request.to_listener();
                                 queue.shift_remove_index(0).unwrap();
-                                listener.notify();
                             } else {
                                 // Give a chance to get the response on above loop
                                 break;
