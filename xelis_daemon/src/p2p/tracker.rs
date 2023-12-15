@@ -315,13 +315,19 @@ impl ObjectTracker {
     }
 
     // Request the object from the peer and returns the response blocker
-    pub async fn request_object_from_peer_with_blocker(&self, peer: Arc<Peer>, request: ObjectRequest, group_id: Option<u64>, broadcast: bool) -> Result<Option<ResponseBlocker>, P2pError> {
+    pub async fn request_object_from_peer_with(&self, peer: Arc<Peer>, request: ObjectRequest, group_id: Option<u64>, blocker: bool, broadcast: bool) -> Result<Option<ResponseBlocker>, P2pError> {
         trace!("Requesting object {} from {}", request.get_hash(), peer);
         let (listener, hash) = {
             let mut queue = self.queue.write().await;
             let hash = request.get_hash().clone();
             let mut req = Request::new(request, peer, group_id, broadcast);
-            let listener = req.get_response_blocker();
+            
+            let listener = if blocker {
+                Some(req.get_response_blocker())
+            } else {
+                None
+            };
+
             if queue.insert(hash.clone(), req).is_some() {
                 debug!("Object already requested in ObjectTracker: {}", hash);
                 return Ok(None)
@@ -331,7 +337,7 @@ impl ObjectTracker {
 
         trace!("Transfering object request {} to task", hash);
         self.request_sender.send(Message::Request(hash)).await?;
-        Ok(Some(listener))
+        Ok(listener)
     }
 
     async fn request_object_from_peer_internal(&self, request_hash: &Hash) {

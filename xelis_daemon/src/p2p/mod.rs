@@ -1523,7 +1523,14 @@ impl<S: Storage> P2pServer<S> {
                 None
             };
 
-            for hash in blocks { // Request all blocks now
+            // Peekable is here to help to know if we are at the last element
+            // so we create only one channel for the last blocker
+            let mut blocks_iter = blocks.into_iter().peekable();
+            loop {
+                let Some(hash) = blocks_iter.next() else {
+                    break;
+                };
+
                 if !self.blockchain.has_block(&hash).await? {
                     trace!("Block {} is not found, asking it to {} (index = {})", hash, peer.get_outgoing_address(), total_requested);
                     // if it's allowed by the user, request all blocks in parallel
@@ -1533,7 +1540,7 @@ impl<S: Storage> P2pServer<S> {
                             break;
                         }
 
-                        if let Some(blocker) = self.object_tracker.request_object_from_peer_with_blocker(Arc::clone(peer), ObjectRequest::Block(hash.clone()), group_id, false).await? {
+                        if let Some(blocker) = self.object_tracker.request_object_from_peer_with(Arc::clone(peer), ObjectRequest::Block(hash.clone()), group_id, blocks_iter.peek().is_none(), false).await? {
                             final_blocker = Some(blocker);
                         }
                     } else {
