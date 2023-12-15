@@ -343,6 +343,7 @@ impl ObjectTracker {
     async fn request_object_from_peer_internal(&self, request_hash: &Hash) {
         debug!("Requesting object with hash {}", request_hash);
         let mut delete = false;
+        let mut failed_group = None;
         {
             let mut queue = self.queue.write().await;
             if let Some(request) = queue.get_mut(request_hash) {
@@ -352,6 +353,7 @@ impl ObjectTracker {
                 if let Err(e) = request.get_peer().send_bytes(packet).await {
                     error!("Error while requesting object {} using Object Tracker: {}", request_hash, e);
                     request.get_peer().increment_fail_count();
+                    failed_group = request.get_group_id();
                     delete = true;
                 }
             } else {
@@ -363,6 +365,18 @@ impl ObjectTracker {
             trace!("Deleting requested object with hash {}", request_hash);
             let mut queue = self.queue.write().await;
             queue.remove(request_hash);
+
+            // Delete all from the same group if one of them failed
+            if let Some(group) = failed_group {
+                queue.retain(|_, request| {
+                    if let Some(request_group) = request.get_group_id() {
+                        if request_group == group {
+                            return false;
+                        }
+                    }
+                    true
+                });
+            }
         }
     }
 }
