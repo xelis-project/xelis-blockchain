@@ -183,7 +183,10 @@ impl ObjectTracker {
                 request.set_response(response);
             }
 
-            'inner: while !queue.is_empty() {
+            // Loop through the queue in a ordered way to handle correctly the responses
+            // For this, we need to check if the first element has a response and so on
+            // If we don't have a response during too much time, we remove the request from the queue as it is probably timed out
+            while !queue.is_empty() {
                 trace!("queue size: {}", queue.len());
                 let handle = if let Some((_, request)) = queue.get_index(0) {
                     request.has_response()
@@ -197,22 +200,24 @@ impl ObjectTracker {
                             if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast()).await {
                                 error!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
                             }
-                            continue;
                         }
                     }
                 } else {
                     // Maybe it timed out
                     if let Some((_, request)) = queue.get_index(0) {
                         if let Some(requested_at) = request.get_requested() {
+                            // Check if it timed out
                             if requested_at.elapsed() > Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT) {
-                                if queue.shift_remove_index(0).is_some() {
-                                    continue;
-                                }
+                                warn!("Object request timed out in Tracker: {}", request.get_hash());
+                                // Remove the request from the queue
+                                queue.shift_remove_index(0);
+                            } else {
+                                // Let's give a chance to the upper loop to handle the response
+                                break;
                             }
                         }
                     }
                 }
-                break 'inner;
             }
         }
     }
