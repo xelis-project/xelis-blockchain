@@ -143,6 +143,9 @@ impl PeerList {
                         trace!("Deleting {} from {}", addr, peer);
                         peers.remove(addr);
                     }
+                } else {
+                    trace!("Deleting {} from {}", addr, peer);
+                    peers.remove(addr);
                 }
             }
         }
