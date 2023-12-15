@@ -244,6 +244,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, _: ArgumentManager) 
 
     // Now let's check balances
     let topoheight = blockchain.get_topo_height();
+    manager.message(format!("Checking balances at topoheight {}", topoheight));
     let chunk_size = 1024;
     let mut skip = 0;
     let mut total_balances = 0;
@@ -254,8 +255,9 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, _: ArgumentManager) 
         }
 
         for key in keys {
-            let (_, balance) = storage.get_last_balance(&key, &XELIS_ASSET).await.context("Error while retrieving balance")?;
-            total_balances += balance.get_balance();
+            if let Some((_, balance)) = storage.get_balance_at_maximum_topoheight(&key, &XELIS_ASSET, topoheight).await.context("Error while retrieving balance")? {
+                total_balances += balance.get_balance();
+            }
         }
         skip += chunk_size;
     }

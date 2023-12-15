@@ -1,16 +1,13 @@
 use std::{borrow::Cow, time::{Duration, Instant}, sync::Arc};
-
 use bytes::Bytes;
 use indexmap::IndexMap;
-use tokio::sync::{mpsc::{UnboundedSender, UnboundedReceiver, Sender, Receiver}, RwLock};
+use tokio::sync::{mpsc::{Sender, Receiver}, RwLock};
 use xelis_common::{crypto::hash::Hash, serializer::Serializer};
 use crate::{core::{blockchain::Blockchain, storage::Storage}, config::PEER_TIMEOUT_REQUEST_OBJECT};
 use log::{error, debug, trace, warn};
-
 use super::{packet::{object::{ObjectRequest, OwnedObjectResponse}, Packet}, error::P2pError, peer::Peer};
 
 pub type SharedObjectTracker = Arc<ObjectTracker>;
-
 pub type ResponseBlocker = tokio::sync::broadcast::Receiver<()>;
 
 struct Listener {
@@ -114,9 +111,9 @@ impl Drop for Request {
 // this ObjectTracker is a unique sender allows to create a queue system in one task only
 // currently used to fetch in order all txs propagated by the network
 pub struct ObjectTracker {
-    request_sender: UnboundedSender<Message>,
+    request_sender: Sender<Message>,
     handler_sender: Sender<OwnedObjectResponse>,
-    queue: RwLock<IndexMap<Hash, Request>>
+    queue: RwLock<IndexMap<Hash, Request>>,
 }
 
 enum Message {
@@ -124,10 +121,12 @@ enum Message {
     Exit
 }
 
+const CHANNEL_BUFFER: usize = 1024;
+
 impl ObjectTracker {
     pub fn new<S: Storage>(blockchain: Arc<Blockchain<S>>) -> SharedObjectTracker {
-        let (request_sender, request_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (handler_sender, handler_receiver) = tokio::sync::mpsc::channel(128);
+        let (request_sender, request_receiver) = tokio::sync::mpsc::channel(CHANNEL_BUFFER);
+        let (handler_sender, handler_receiver) = tokio::sync::mpsc::channel(CHANNEL_BUFFER);
 
         let zelf: Arc<ObjectTracker> = Arc::new(Self {
             request_sender,
@@ -152,9 +151,9 @@ impl ObjectTracker {
         zelf
     }
 
-    pub fn stop(&self) {
+    pub async fn stop(&self) {
         debug!("Stopping ObjectTracker...");
-        if self.request_sender.send(Message::Exit).is_err() {
+        if self.request_sender.send(Message::Exit).await.is_err() {
             error!("Error while sending exit message to ObjectTracker");
         }
     }
@@ -177,6 +176,7 @@ impl ObjectTracker {
     async fn handler_loop<S: Storage>(&self, blockchain: Arc<Blockchain<S>>, mut handler_receiver: Receiver<OwnedObjectResponse>) {
         debug!("Starting handler loop...");
         while let Some(response) = handler_receiver.recv().await {
+            trace!("Received object response: {}", response.get_hash());
             let object = response.get_hash();
             let mut queue = self.queue.write().await;
             if let Some(request) = queue.get_mut(object) {
@@ -184,6 +184,7 @@ impl ObjectTracker {
             }
 
             'inner: while !queue.is_empty() {
+                trace!("queue size: {}", queue.len());
                 let handle = if let Some((_, request)) = queue.get_index(0) {
                     request.has_response()
                 } else {
@@ -216,7 +217,7 @@ impl ObjectTracker {
         }
     }
 
-    async fn requester_loop(&self, mut request_receiver: UnboundedReceiver<Message>) {
+    async fn requester_loop(&self, mut request_receiver: Receiver<Message>) {
         debug!("Starting requester loop...");
         while let Some(msg) = request_receiver.recv().await {
             match msg {
@@ -228,11 +229,13 @@ impl ObjectTracker {
         }
     }
 
+    // Check if the object is already requested
     pub async fn has_requested_object(&self, object_hash: &Hash) -> bool {
         let queue = self.queue.read().await;
         queue.contains_key(object_hash)
     }
 
+    // Get the response blocker for the requested object
     pub async fn get_response_blocker_for_requested_object(&self, object_hash: &Hash) -> Option<ResponseBlocker> {
         let mut queue = self.queue.write().await;
         let request = queue.get_mut(object_hash)?;
@@ -267,15 +270,37 @@ impl ObjectTracker {
         let hash = {
             let mut queue = self.queue.write().await;
             let hash = request.get_hash().clone();
-            if queue.insert(hash.clone(), Request::new(request, peer, broadcast)).is_some() {
+            let req = Request::new(request, peer, broadcast);
+            if queue.insert(hash.clone(), req).is_some() {
+                debug!("Object already requested in ObjectTracker: {}", hash);
                 return Ok(false)
             }
             hash
         };
 
         trace!("Transfering object request {} to task", hash);
-        self.request_sender.send(Message::Request(hash))?;
+        self.request_sender.send(Message::Request(hash)).await?;
         Ok(true)
+    }
+
+    // Request the object from the peer and returns the response blocker
+    pub async fn request_object_from_peer_with_blocker(&self, peer: Arc<Peer>, request: ObjectRequest, broadcast: bool) -> Result<Option<ResponseBlocker>, P2pError> {
+        trace!("Requesting object {} from {}", request.get_hash(), peer);
+        let (listener, hash) = {
+            let mut queue = self.queue.write().await;
+            let hash = request.get_hash().clone();
+            let mut req = Request::new(request, peer, broadcast);
+            let listener = req.get_response_blocker();
+            if queue.insert(hash.clone(), req).is_some() {
+                debug!("Object already requested in ObjectTracker: {}", hash);
+                return Ok(None)
+            }
+            (listener, hash)
+        };
+
+        trace!("Transfering object request {} to task", hash);
+        self.request_sender.send(Message::Request(hash)).await?;
+        Ok(Some(listener))
     }
 
     async fn request_object_from_peer_internal(&self, request_hash: &Hash) {

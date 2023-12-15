@@ -186,7 +186,7 @@ impl<S: Storage> P2pServer<S> {
         info!("Stopping P2p Server...");
         self.is_running.store(false, Ordering::Release);
 
-        self.object_tracker.stop();
+        self.object_tracker.stop().await;
         if let Err(e) = self.connections_sender.send(MessageChannel::Exit) {
             error!("Error while sending Exit message to stop accepting new connections: {}", e);
         }
@@ -1516,12 +1516,15 @@ impl<S: Storage> P2pServer<S> {
             // no rewind are needed, process normally
             // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
             let mut total_requested: usize = 0;
+            let mut final_blocker = None;
             for hash in blocks { // Request all blocks now
                 if !self.blockchain.has_block(&hash).await? {
                     trace!("Block {} is not found, asking it to {} (index = {})", hash, peer.get_outgoing_address(), total_requested);
                     // if it's allowed by the user, request all blocks in parallel
                     if self.allow_unsecure_boost_sync() {
-                        self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Block(hash.clone()), false).await?;
+                        if let Some(blocker) = self.object_tracker.request_object_from_peer_with_blocker(Arc::clone(peer), ObjectRequest::Block(hash.clone()), false).await? {
+                            final_blocker = Some(blocker);
+                        }
                     } else {
                         // Otherwise, request them one by one and wait for the response
                         let response = peer.request_blocking_object(ObjectRequest::Block(hash)).await?;
@@ -1536,6 +1539,15 @@ impl<S: Storage> P2pServer<S> {
                     total_requested += 1;
                 } else {
                     trace!("Block {} is already in chain, skipping it", hash);
+                }
+            }
+
+            if let Some(mut blocker) = final_blocker {
+                debug!("Waiting for final blocker to finish...");
+                if let Err(e) = blocker.recv().await {
+                    error!("Error while waiting for final blocker: {}", e);
+                } else {
+                    debug!("Final blocker finished");
                 }
             }
             debug!("we've synced {} on {} blocks and {} top blocks from {}", total_requested, blocks_len, top_len, peer);
