@@ -204,6 +204,7 @@ impl Direction {
 pub struct PeerEntry<'a> {
     pub id: u64,
     pub addr: Cow<'a, SocketAddr>,
+    pub local_port: u16,
     pub tag: Cow<'a, Option<String>>,
     pub version: Cow<'a, String>,
     pub top_block_hash: Hash,

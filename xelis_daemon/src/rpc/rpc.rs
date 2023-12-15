@@ -147,7 +147,8 @@ pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
     let peers = peer.get_peers().lock().await.clone();
     PeerEntry {
         id: peer.get_id(),
-        addr: Cow::Borrowed(peer.get_outgoing_address()),
+        addr: Cow::Borrowed(peer.get_connection().get_address()),
+        local_port: peer.get_local_port(),
         tag: Cow::Borrowed(peer.get_node_tag()),
         version: Cow::Borrowed(peer.get_version()),
         top_block_hash,
