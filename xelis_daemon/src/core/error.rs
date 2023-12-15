@@ -131,6 +131,8 @@ pub enum BlockchainError {
     DatabaseError(#[from] sled::Error),
     #[error("Data not found on disk: {}", _0)]
     NotFoundOnDisk(DiskContext),
+    #[error("Invalid paramater: max chain response size isn't in range")]
+    ConfigMaxChainResponseSize,
     #[error("Expected at least one tips")]
     ExpectedTips,
     #[error("Block has invalid tips")]

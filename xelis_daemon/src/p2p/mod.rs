@@ -41,7 +41,7 @@ use crate::{
         NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS,
         P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT,
         CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT, P2P_EXTEND_PEERLIST_DELAY,
-        TIPS_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS
+        TIPS_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS
     },
     rpc::rpc::get_peer_entry
 };
@@ -109,13 +109,22 @@ pub struct P2pServer<S: Storage> {
     // This is marked as "unsecure" because if a block is not added by chain,
     // all next blocks will fail and being keep requested which can lead to DDoS
     // This can be used safely from a trusted node
-    allow_unsecure_boost_sync_mode: bool
+    allow_unsecure_boost_sync_mode: bool,
+    // max size of the chain response
+    // this is a configurable paramater for nodes to manage their resources
+    // Can be reduced for low devices, and increased for high end devices
+    // You may sync faster or slower depending on this value
+    max_chain_response_size: usize
 }
 
 impl<S: Storage> P2pServer<S> {
-    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_unsecure_boost_sync_mode: bool) -> Result<Arc<Self>, P2pError> {
+    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_unsecure_boost_sync_mode: bool, max_chain_response_size: Option<usize>) -> Result<Arc<Self>, P2pError> {
         if let Some(tag) = &tag {
             debug_assert!(tag.len() > 0 && tag.len() <= 16);
+        }
+
+        if let Some(max_chain_response_size) = max_chain_response_size {
+            debug_assert!(max_chain_response_size >= CHAIN_SYNC_RESPONSE_MIN_BLOCKS && max_chain_response_size <= CHAIN_SYNC_REQUEST_MAX_BLOCKS);
         }
 
         // set channel to communicate with listener thread
@@ -144,7 +153,8 @@ impl<S: Storage> P2pServer<S> {
             blocks_propagation_queue: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
             blocks_processor,
             allow_fast_sync_mode,
-            allow_unsecure_boost_sync_mode
+            allow_unsecure_boost_sync_mode,
+            max_chain_response_size: max_chain_response_size.unwrap_or(CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS)
         };
 
         let arc = Arc::new(server);
@@ -1030,22 +1040,16 @@ impl<S: Storage> P2pServer<S> {
                     return Err(P2pError::MalformedChainRequest(request_size))
                 }
 
-                let zelf = Arc::clone(self);
-                let peer = Arc::clone(peer);
                 let mut accepted_response_size = request.get_accepted_response_size() as usize;
 
                 // This can be configured by node operators
-                if accepted_response_size > CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS {
-                    accepted_response_size = CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS;
+                // Verify that the requested size is not bigger than our limit
+                if accepted_response_size > self.max_chain_response_size {
+                    accepted_response_size = self.max_chain_response_size;
                 }
 
                 let blocks = request.get_blocks();
-                tokio::spawn(async move {
-                    if let Err(e) = zelf.handle_chain_request(&peer, blocks, accepted_response_size).await {
-                        error!("Error while handling chain request from {}: {}", peer, e);
-                        peer.increment_fail_count();
-                    }
-                });
+                self.handle_chain_request(&peer, blocks, accepted_response_size).await?;
             },
             Packet::ChainResponse(response) => {
                 trace!("Received a chain response from {}", peer);
@@ -1515,9 +1519,11 @@ impl<S: Storage> P2pServer<S> {
             for hash in blocks { // Request all blocks now
                 if !self.blockchain.has_block(&hash).await? {
                     trace!("Block {} is not found, asking it to {} (index = {})", hash, peer.get_outgoing_address(), total_requested);
+                    // if it's allowed by the user, request all blocks in parallel
                     if self.allow_unsecure_boost_sync() {
                         self.object_tracker.request_object_from_peer(Arc::clone(peer), ObjectRequest::Block(hash.clone()), false).await?;
                     } else {
+                        // Otherwise, request them one by one and wait for the response
                         let response = peer.request_blocking_object(ObjectRequest::Block(hash)).await?;
                         if let OwnedObjectResponse::Block(block, hash) = response {
                             trace!("Received block {} at height {} from {}", hash, block.get_height(), peer);
@@ -2072,7 +2078,7 @@ impl<S: Storage> P2pServer<S> {
         // This can be configured by the node operator, it will be adjusted between protocol bounds
         // and based on peer configuration
         // This will allow to boost-up syncing for those who want and can be used to use low resources for low devices
-        let requested_max_size = CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS;
+        let requested_max_size = self.max_chain_response_size;
 
         let packet = {
             let storage = self.blockchain.get_storage().read().await;
@@ -2085,8 +2091,8 @@ impl<S: Storage> P2pServer<S> {
         let response = peer.request_sync_chain(packet).await?;
 
         // Check that the peer followed our requirements
-        if response.size() > CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS {
-            return Err(P2pError::InvaliChainResponseSize(response.size(), CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS).into())
+        if response.size() > requested_max_size {
+            return Err(P2pError::InvaliChainResponseSize(response.size(), requested_max_size).into())
         }
 
         self.handle_chain_response(peer, response, requested_max_size).await

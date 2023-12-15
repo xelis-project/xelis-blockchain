@@ -30,7 +30,7 @@ use crate::{
         DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE,
         EMISSION_SPEED_FACTOR, MAXIMUM_SUPPLY, DEV_FEES, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
         STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, SIDE_BLOCK_REWARD_PERCENT,
-        DEV_PUBLIC_KEY, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS, MILLIS_PER_SECOND,
+        DEV_PUBLIC_KEY, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS, MILLIS_PER_SECOND, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS,
     },
     core::difficulty::calculate_difficulty,
     p2p::P2pServer,
@@ -107,7 +107,12 @@ pub struct Config {
     /// It is marked as unsecure because it can lead to a DDoS attack as next blocks after
     /// failed one will be requested in parallel
     #[clap(long)]
-    pub allow_unsecure_boost_sync_mode: bool
+    pub allow_unsecure_boost_sync_mode: bool,
+    /// Configure the maximum chain response size
+    /// This is useful for low devices who want to reduce resources usage
+    /// And for high-end devices who want to (or help others to) sync faster
+    #[clap(long)]
+    pub max_chain_response_size: Option<usize>
 }
 
 pub struct Blockchain<S: Storage> {
@@ -137,15 +142,25 @@ pub struct Blockchain<S: Storage> {
 
 impl<S: Storage> Blockchain<S> {
     pub async fn new(config: Config, network: Network, storage: S) -> Result<Arc<Self>, Error> {
-        if config.simulator && network != Network::Dev {
-            error!("Impossible to enable simulator mode except in dev network!");
-            return Err(BlockchainError::InvalidNetwork.into())
-        }
+        // Do some checks on config params
+        {
+            if config.simulator && network != Network::Dev {
+                error!("Impossible to enable simulator mode except in dev network!");
+                return Err(BlockchainError::InvalidNetwork.into())
+            }
+    
+            if let Some(keep_only) = config.auto_prune_keep_n_blocks {
+                if keep_only < PRUNE_SAFETY_LIMIT {
+                    error!("Auto prune mode should keep at least 80 blocks");
+                    return Err(BlockchainError::AutoPruneMode.into())
+                }
+            }
 
-        if let Some(keep_only) = config.auto_prune_keep_n_blocks {
-            if keep_only < PRUNE_SAFETY_LIMIT {
-                error!("Auto prune mode should keep at least 80 blocks");
-                return Err(BlockchainError::AutoPruneMode.into())
+            if let Some(size) = config.max_chain_response_size {
+                if size < CHAIN_SYNC_RESPONSE_MIN_BLOCKS || size > CHAIN_SYNC_RESPONSE_MAX_BLOCKS {
+                    error!("Max chain response size should be in inclusive range of [{}-{}]", CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS);
+                    return Err(BlockchainError::ConfigMaxChainResponseSize.into())
+                }
             }
         }
 
@@ -217,7 +232,8 @@ impl<S: Storage> Blockchain<S> {
                 };
                 exclusive_nodes.push(addr);
             }
-            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_unsecure_boost_sync_mode) {
+
+            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_unsecure_boost_sync_mode, config.max_chain_response_size) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
