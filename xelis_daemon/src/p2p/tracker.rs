@@ -1,4 +1,4 @@
-use std::{borrow::Cow, time::{Duration, Instant}, sync::Arc};
+use std::{borrow::Cow, time::{Duration, Instant}, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 use bytes::Bytes;
 use indexmap::IndexMap;
 use tokio::sync::{mpsc::{Sender, Receiver}, RwLock};
@@ -36,17 +36,19 @@ struct Request {
     sender: Option<tokio::sync::broadcast::Sender<()>>,
     response: Option<OwnedObjectResponse>,
     requested_at: Option<Instant>,
+    group_id: Option<u64>,
     broadcast: bool
 }
 
 impl Request {
-    pub fn new(request: ObjectRequest, peer: Arc<Peer>, broadcast: bool) -> Self {
+    pub fn new(request: ObjectRequest, peer: Arc<Peer>, group_id: Option<u64>, broadcast: bool) -> Self {
         Self {
             request,
             peer,
             sender: None,
             response: None,
             requested_at: None,
+            group_id,
             broadcast
         }
     }
@@ -63,12 +65,12 @@ impl Request {
         self.response = Some(response);
     }
 
-    pub fn has_response(&self) -> bool {
-        self.response.is_some()
-    }
-
     pub fn take_response(&mut self) -> Option<OwnedObjectResponse> {
         self.response.take()
+    }
+
+    pub fn get_group_id(&self) -> Option<u64> {
+        self.group_id
     }
 
     pub fn set_requested(&mut self) {
@@ -113,7 +115,10 @@ impl Drop for Request {
 pub struct ObjectTracker {
     request_sender: Sender<Message>,
     handler_sender: Sender<OwnedObjectResponse>,
+    // queue of requests with preserved order
     queue: RwLock<IndexMap<Hash, Request>>,
+    // This is used to have unique id for each group of requests
+    group_id: AtomicU64
 }
 
 enum Message {
@@ -131,7 +136,8 @@ impl ObjectTracker {
         let zelf: Arc<ObjectTracker> = Arc::new(Self {
             request_sender,
             handler_sender,
-            queue: RwLock::new(IndexMap::new())
+            queue: RwLock::new(IndexMap::new()),
+            group_id: AtomicU64::new(0)
         });
 
         { // start the loop
@@ -156,6 +162,10 @@ impl ObjectTracker {
         if self.request_sender.send(Message::Exit).await.is_err() {
             error!("Error while sending exit message to ObjectTracker");
         }
+    }
+
+    pub fn next_group_id(&self) -> u64 {
+        self.group_id.fetch_add(1, Ordering::SeqCst)
     }
 
     async fn handle_object_response_internal<S: Storage>(&self, blockchain: &Arc<Blockchain<S>>, response: OwnedObjectResponse, broadcast: bool) -> Result<(), P2pError> {
@@ -186,33 +196,34 @@ impl ObjectTracker {
             // Loop through the queue in a ordered way to handle correctly the responses
             // For this, we need to check if the first element has a response and so on
             // If we don't have a response during too much time, we remove the request from the queue as it is probably timed out
-            while !queue.is_empty() {
-                trace!("queue size: {}", queue.len());
-                let handle = if let Some((_, request)) = queue.get_index(0) {
-                    request.has_response()
-                } else {
-                    false
-                };
-
-                if handle {
-                    if let Some((_, mut request)) = queue.shift_remove_index(0) {
-                        if let Some(response) = request.take_response() {
-                            if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast()).await {
-                                error!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
-                            }
-                        }
+            let mut failed_group = None;
+            while let Some((_, request)) = queue.get_index_mut(0) {
+                // Delete all from the same group if one of them failed
+                if let (Some(request_group), Some(failed_group)) = (request.get_group_id(), failed_group) {
+                    if request_group == failed_group {
+                        queue.shift_remove_index(0).unwrap();
+                        continue;
                     }
-                } else {
-                    // Maybe it timed out
-                    if let Some((_, request)) = queue.get_index(0) {
+                }
+
+                match request.take_response() {
+                    Some(response) => {
+                        let (_, request) = queue.shift_remove_index(0).unwrap();
+                        if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast()).await {
+                            error!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
+                        }
+                    },
+                    None => {
                         if let Some(requested_at) = request.get_requested() {
-                            // Check if it timed out
-                            if requested_at.elapsed() > Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT) {
-                                warn!("Object request timed out in Tracker: {}", request.get_hash());
-                                // Remove the request from the queue
-                                queue.shift_remove_index(0);
+                            // check if the request is timed out
+                            if requested_at.elapsed() > Duration::from_secs(PEER_TIMEOUT_REQUEST_OBJECT) {
+                                failed_group = request.get_group_id();
+                                warn!("Request timed out: {} (group: {:?}", request.get_hash(), failed_group);
+                                let listener = request.to_listener();
+                                queue.shift_remove_index(0).unwrap();
+                                listener.notify();
                             } else {
-                                // Let's give a chance to the upper loop to handle the response
+                                // Give a chance to get the response on above loop
                                 break;
                             }
                         }
@@ -275,7 +286,7 @@ impl ObjectTracker {
         let hash = {
             let mut queue = self.queue.write().await;
             let hash = request.get_hash().clone();
-            let req = Request::new(request, peer, broadcast);
+            let req = Request::new(request, peer, None, broadcast);
             if queue.insert(hash.clone(), req).is_some() {
                 debug!("Object already requested in ObjectTracker: {}", hash);
                 return Ok(false)
@@ -289,12 +300,12 @@ impl ObjectTracker {
     }
 
     // Request the object from the peer and returns the response blocker
-    pub async fn request_object_from_peer_with_blocker(&self, peer: Arc<Peer>, request: ObjectRequest, broadcast: bool) -> Result<Option<ResponseBlocker>, P2pError> {
+    pub async fn request_object_from_peer_with_blocker(&self, peer: Arc<Peer>, request: ObjectRequest, group_id: Option<u64>, broadcast: bool) -> Result<Option<ResponseBlocker>, P2pError> {
         trace!("Requesting object {} from {}", request.get_hash(), peer);
         let (listener, hash) = {
             let mut queue = self.queue.write().await;
             let hash = request.get_hash().clone();
-            let mut req = Request::new(request, peer, broadcast);
+            let mut req = Request::new(request, peer, group_id, broadcast);
             let listener = req.get_response_blocker();
             if queue.insert(hash.clone(), req).is_some() {
                 debug!("Object already requested in ObjectTracker: {}", hash);
@@ -322,6 +333,8 @@ impl ObjectTracker {
                     request.get_peer().increment_fail_count();
                     delete = true;
                 }
+            } else {
+                // it got aborted
             }
         }
 

@@ -1517,12 +1517,23 @@ impl<S: Storage> P2pServer<S> {
             // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
             let mut total_requested: usize = 0;
             let mut final_blocker = None;
+            let group_id = if self.allow_unsecure_boost_sync() {
+                Some(self.object_tracker.next_group_id())
+            } else {
+                None
+            };
+
             for hash in blocks { // Request all blocks now
                 if !self.blockchain.has_block(&hash).await? {
                     trace!("Block {} is not found, asking it to {} (index = {})", hash, peer.get_outgoing_address(), total_requested);
                     // if it's allowed by the user, request all blocks in parallel
                     if self.allow_unsecure_boost_sync() {
-                        if let Some(blocker) = self.object_tracker.request_object_from_peer_with_blocker(Arc::clone(peer), ObjectRequest::Block(hash.clone()), false).await? {
+                        if peer.get_connection().is_closed() {
+                            warn!("Peer {} is disconnected, stopping sync", peer);
+                            break;
+                        }
+
+                        if let Some(blocker) = self.object_tracker.request_object_from_peer_with_blocker(Arc::clone(peer), ObjectRequest::Block(hash.clone()), group_id, false).await? {
                             final_blocker = Some(blocker);
                         }
                     } else {
