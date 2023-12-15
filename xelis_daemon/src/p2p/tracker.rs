@@ -121,7 +121,7 @@ enum Message {
     Exit
 }
 
-const CHANNEL_BUFFER: usize = 1024;
+const CHANNEL_BUFFER: usize = 128;
 
 impl ObjectTracker {
     pub fn new<S: Storage>(blockchain: Arc<Blockchain<S>>) -> SharedObjectTracker {
