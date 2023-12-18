@@ -104,10 +104,9 @@ pub struct Config {
     pub allow_fast_sync: bool,
     /// Allow boost chain sync mode
     /// This will request in parallel all blocks instead of sequentially
-    /// It is marked as unsecure because it can lead to a DDoS attack as next blocks after
-    /// failed one will be requested in parallel
+    /// It is not enabled by default because it will requests several blocks before validating each previous
     #[clap(long)]
-    pub allow_unsecure_boost_sync_mode: bool,
+    pub allow_boost_sync_mode: bool,
     /// Configure the maximum chain response size
     /// This is useful for low devices who want to reduce resources usage
     /// And for high-end devices who want to (or help others to) sync faster
@@ -233,7 +232,7 @@ impl<S: Storage> Blockchain<S> {
                 exclusive_nodes.push(addr);
             }
 
-            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_unsecure_boost_sync_mode, config.max_chain_response_size) {
+            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync_mode, config.max_chain_response_size) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
@@ -1476,7 +1475,7 @@ impl<S: Storage> Blockchain<S> {
                     let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await?;
                     trace!("Cleaning txs at topoheight {} ({})", topoheight, hash_at_topo);
                     if !is_written {
-                        if let Some(order) = full_order.get(0) {
+                        if let Some(order) = full_order.first() {
                             // Verify that the block is still at the same topoheight
                             if storage.is_block_topological_ordered(order).await && *order == hash_at_topo {
                                 trace!("Hash {} at topo {} stay the same, skipping cleaning", hash_at_topo, topoheight);

@@ -106,10 +106,9 @@ pub struct P2pServer<S: Storage> {
     // allow fast syncing (only balances / assets / Smart Contracts changes)
     // without syncing the history
     allow_fast_sync_mode: bool,
-    // This is marked as "unsecure" because if a block is not added by chain,
-    // all next blocks will fail and being keep requested which can lead to DDoS
     // This can be used safely from a trusted node
-    allow_unsecure_boost_sync_mode: bool,
+    // to boost the sync speed by allowing to request several blocks at same time
+    allow_boost_sync_mode: bool,
     // max size of the chain response
     // this is a configurable paramater for nodes to manage their resources
     // Can be reduced for low devices, and increased for high end devices
@@ -118,7 +117,7 @@ pub struct P2pServer<S: Storage> {
 }
 
 impl<S: Storage> P2pServer<S> {
-    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_unsecure_boost_sync_mode: bool, max_chain_response_size: Option<usize>) -> Result<Arc<Self>, P2pError> {
+    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>) -> Result<Arc<Self>, P2pError> {
         if let Some(tag) = &tag {
             debug_assert!(tag.len() > 0 && tag.len() <= 16);
         }
@@ -153,7 +152,7 @@ impl<S: Storage> P2pServer<S> {
             blocks_propagation_queue: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
             blocks_processor,
             allow_fast_sync_mode,
-            allow_unsecure_boost_sync_mode,
+            allow_boost_sync_mode,
             max_chain_response_size: max_chain_response_size.unwrap_or(CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS)
         };
 
@@ -527,8 +526,8 @@ impl<S: Storage> P2pServer<S> {
         self.allow_fast_sync_mode
     }
 
-    pub fn allow_unsecure_boost_sync(&self) -> bool {
-        self.allow_unsecure_boost_sync_mode
+    pub fn allow_boost_sync(&self) -> bool {
+        self.allow_boost_sync_mode
     }
 
     async fn chain_sync_loop(self: Arc<Self>) {
@@ -1517,7 +1516,7 @@ impl<S: Storage> P2pServer<S> {
             // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
             let mut total_requested: usize = 0;
             let mut final_blocker = None;
-            let group_id = if self.allow_unsecure_boost_sync() {
+            let group_id = if self.allow_boost_sync() {
                 Some(self.object_tracker.next_group_id())
             } else {
                 None
@@ -1534,7 +1533,7 @@ impl<S: Storage> P2pServer<S> {
                 if !self.blockchain.has_block(&hash).await? {
                     trace!("Block {} is not found, asking it to {} (index = {})", hash, peer.get_outgoing_address(), total_requested);
                     // if it's allowed by the user, request all blocks in parallel
-                    if self.allow_unsecure_boost_sync() {
+                    if self.allow_boost_sync() {
                         if peer.get_connection().is_closed() {
                             warn!("Peer {} is disconnected, stopping sync", peer);
                             break;
