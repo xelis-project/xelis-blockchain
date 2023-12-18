@@ -141,41 +141,41 @@ impl EncryptedStorage {
     }
 
     // Open the named tree
-    fn get_custom_tree(&self, name: &String) -> Result<Tree> {
-        let hash = self.cipher.hash_key(format!("custom_{}", name));
+    fn get_custom_tree(&self, name: impl Into<String>) -> Result<Tree> {
+        let hash = self.cipher.hash_key(format!("custom_{}", name.into()));
         let tree = self.inner.db.open_tree(&hash)?;
         Ok(tree)
     }
 
     // Store a custom serializable data 
-    pub fn set_custom_data(&mut self, tree: &String, key: &DataValue, value: &DataElement) -> Result<()> {
+    pub fn set_custom_data(&mut self, tree: impl Into<String>, key: &DataValue, value: &DataElement) -> Result<()> {
         let tree = self.get_custom_tree(tree)?;
         self.save_to_disk_with_encrypted_key(&tree, &key.to_bytes(), &value.to_bytes())?;
         Ok(())
     }
 
     // Delete a custom data using its key 
-    pub fn delete_custom_data(&mut self, tree: &String, key: &DataValue) -> Result<()> {
+    pub fn delete_custom_data(&mut self, tree: impl Into<String>, key: &DataValue) -> Result<()> {
         let tree = self.get_custom_tree(tree)?;
         self.delete_from_disk_with_encrypted_key(&tree, &key.to_bytes())?;
         Ok(())
     }
 
     // Retrieve a custom data in the selected format
-    pub fn get_custom_data(&self, tree: &String, key: &DataValue) -> Result<DataElement> {
+    pub fn get_custom_data(&self, tree: impl Into<String>, key: &DataValue) -> Result<DataElement> {
         let tree = self.get_custom_tree(tree)?;
         self.load_from_disk_with_encrypted_key(&tree, &key.to_bytes())
     }
 
     // Verify if the key is present in the DB
-    pub fn has_custom_data(&self, tree: &String, key: &DataValue) -> Result<bool> {
+    pub fn has_custom_data(&self, tree: impl Into<String>, key: &DataValue) -> Result<bool> {
         let tree = self.get_custom_tree(tree)?;
         self.contains_encrypted_data(&tree, &key.to_bytes())
     }
 
     // Search all entries with requested query_key/query_value
     // It has to go through the whole tree elements, decrypt each key/value and verify them against the query filter set
-    pub fn query_db(&self, tree: &String, query_key: Option<Query>, query_value: Option<Query>, return_on_first: bool) -> Result<QueryResult> {
+    pub fn query_db(&self, tree: impl Into<String>, query_key: Option<Query>, query_value: Option<Query>, return_on_first: bool) -> Result<QueryResult> {
         let tree = self.get_custom_tree(tree)?;
         let mut entries: IndexMap<DataValue, DataElement> = IndexMap::new();
         for res in tree.iter() {
