@@ -1,7 +1,7 @@
-use std::{borrow::Cow, time::{Duration, Instant}, sync::{Arc, atomic::{AtomicU64, Ordering}}};
+use std::{borrow::Cow, time::{Duration, Instant}, sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashMap};
 use bytes::Bytes;
 use indexmap::IndexMap;
-use tokio::{sync::{mpsc::{Sender, Receiver}, RwLock}, select};
+use tokio::{sync::{mpsc::{Sender, Receiver}, RwLock, oneshot, Mutex}, select};
 use xelis_common::{crypto::hash::Hash, serializer::Serializer};
 use crate::{core::{blockchain::Blockchain, storage::Storage}, config::PEER_TIMEOUT_REQUEST_OBJECT};
 use log::{error, debug, trace, warn};
@@ -110,6 +110,12 @@ impl Drop for Request {
     }
 }
 
+#[derive(Debug)]
+pub enum GroupError {
+    SendFailure,
+    Timeout,
+}
+
 // this ObjectTracker is a unique sender allows to create a queue system in one task only
 // currently used to fetch in order all txs propagated by the network
 pub struct ObjectTracker {
@@ -118,7 +124,8 @@ pub struct ObjectTracker {
     // queue of requests with preserved order
     queue: RwLock<IndexMap<Hash, Request>>,
     // This is used to have unique id for each group of requests
-    group_id: AtomicU64
+    group_id: AtomicU64,
+    groups: Mutex<HashMap<u64, oneshot::Sender<GroupError>>>
 }
 
 enum Message {
@@ -137,7 +144,8 @@ impl ObjectTracker {
             request_sender,
             handler_sender,
             queue: RwLock::new(IndexMap::new()),
-            group_id: AtomicU64::new(0)
+            group_id: AtomicU64::new(0),
+            groups: Mutex::new(HashMap::new())
         });
 
         { // start the loop
@@ -164,8 +172,17 @@ impl ObjectTracker {
         }
     }
 
-    pub fn next_group_id(&self) -> u64 {
-        self.group_id.fetch_add(1, Ordering::SeqCst)
+    pub async fn next_group_id(&self) -> (u64, oneshot::Receiver<GroupError>) {
+        let mut groups = self.groups.lock().await;
+        let id = self.group_id.fetch_add(1, Ordering::SeqCst);
+        let (sender, receiver) = oneshot::channel();
+        groups.insert(id, sender);
+        (id, receiver)
+    }
+
+    pub async fn unregister_group(&self, group_id: u64) {
+        let mut groups = self.groups.lock().await;
+        groups.remove(&group_id);
     }
 
     async fn handle_object_response_internal<S: Storage>(&self, blockchain: &Arc<Blockchain<S>>, response: OwnedObjectResponse, broadcast: bool) -> Result<(), P2pError> {
@@ -233,9 +250,19 @@ impl ObjectTracker {
                     None => {
                         if let Some(requested_at) = request.get_requested() {
                             // check if the request is timed out
-                            if requested_at.elapsed() > Duration::from_secs(PEER_TIMEOUT_REQUEST_OBJECT) {
+                            if requested_at.elapsed() > Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT) || request.get_peer().get_connection().is_closed() {
                                 failed_group = request.get_group_id();
-                                warn!("Request timed out: {} (group: {:?}", request.get_hash(), failed_group);
+                                warn!("Request timed out: {} (group: {:?})", request.get_hash(), failed_group);
+                                {
+                                    let mut groups = self.groups.lock().await;
+                                    if let Some(group) = request.get_group_id() {
+                                        if let Some(sender) = groups.remove(&group) {
+                                            if sender.send(GroupError::Timeout).is_err() {
+                                                warn!("Error while sending group error");
+                                            }
+                                        }
+                                    }
+                                }
                                 queue.shift_remove_index(0).unwrap();
                             } else {
                                 // Give a chance to get the response on above loop
@@ -351,35 +378,42 @@ impl ObjectTracker {
                 let packet = Bytes::from(Packet::ObjectRequest(Cow::Borrowed(request.get_object())).to_bytes());
                 // send the packet to the Peer
                 if let Err(e) = request.get_peer().send_bytes(packet).await {
-                    error!("Error while requesting object {} using Object Tracker: {}", request_hash, e);
+                    debug!("Error while requesting object {} using Object Tracker: {}", request_hash, e);
                     request.get_peer().increment_fail_count();
                     failed_group = request.get_group_id();
                     failed_peer = Some(request.get_peer().clone());
                 }
             } else {
-                // it got aborted
+                trace!("Object {} not requested anymore", request_hash);
             }
-        }
 
-        if let Some(peer) = failed_peer {
-            trace!("Deleting requested object with hash {} from {}", request_hash, peer);
-            let mut queue = self.queue.write().await;
-            queue.remove(request_hash);
+            if let Some(peer) = failed_peer {
+                trace!("Deleting requested object with hash {} from {}", request_hash, peer);
+                queue.remove(request_hash);
 
-            // Delete all from the same group if one of them failed
-            if let Some(group) = failed_group {
-                queue.retain(|_, request| {
-                    if request.get_peer().get_id() == peer.get_id() || request.get_peer().get_connection().is_closed() {
-                        return false;
-                    }
-
-                    if let Some(request_group) = request.get_group_id() {
-                        if request_group == group {
+                // Delete all from the same group if one of them failed
+                if let Some(group) = failed_group {
+                    debug!("Group {} failed", group);
+                    queue.retain(|_, request| {
+                        if request.get_peer().get_id() == peer.get_id() || request.get_peer().get_connection().is_closed() {
                             return false;
                         }
+
+                        if let Some(request_group) = request.get_group_id() {
+                            if request_group == group {
+                                return false;
+                            }
+                        }
+                        true
+                    });
+
+                    let mut groups = self.groups.lock().await;
+                    if let Some(sender) = groups.remove(&group) {
+                        if sender.send(GroupError::SendFailure).is_err() {
+                            warn!("Error while sending group result");
+                        }
                     }
-                    true
-                });
+                }
             }
         }
     }

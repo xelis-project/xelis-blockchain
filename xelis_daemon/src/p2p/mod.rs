@@ -1516,10 +1516,13 @@ impl<S: Storage> P2pServer<S> {
             // it will first add blocks to sync, and then all alt-tips blocks if any (top blocks)
             let mut total_requested: usize = 0;
             let mut final_blocker = None;
-            let group_id = if self.allow_boost_sync() {
-                Some(self.object_tracker.next_group_id())
+            // If boost sync is allowed, we can request all blocks in parallel,
+            // Create a new group in Object Tracker to be notified of a failure
+            let (group_id, mut notifier) = if self.allow_boost_sync() {
+                let (group_id, notifier) = self.object_tracker.next_group_id().await;
+                (Some(group_id), Some(notifier))
             } else {
-                None
+                (None, None)
             };
 
             // Peekable is here to help to know if we are at the last element
@@ -1534,9 +1537,12 @@ impl<S: Storage> P2pServer<S> {
                     trace!("Block {} is not found, asking it to {} (index = {})", hash, peer.get_outgoing_address(), total_requested);
                     // if it's allowed by the user, request all blocks in parallel
                     if self.allow_boost_sync() {
-                        if peer.get_connection().is_closed() {
-                            warn!("Peer {} is disconnected, stopping sync", peer);
-                            break;
+                        if let Some(notifier) = &mut notifier {
+                            // Check if we don't have any error pending
+                            if let Ok(error) = notifier.try_recv() {
+                                debug!("An error has occured while requesting chain in boost mode: {:?}", error);
+                                return Err(P2pError::BoostSyncModeError.into());
+                            }
                         }
 
                         if let Some(blocker) = self.object_tracker.request_object_from_peer_with(Arc::clone(peer), ObjectRequest::Block(hash.clone()), group_id, blocks_iter.peek().is_none(), false).await? {
@@ -1559,12 +1565,23 @@ impl<S: Storage> P2pServer<S> {
                 }
             }
 
-            if let Some(mut blocker) = final_blocker {
+            if let (Some(mut notifier), Some(mut blocker)) = (notifier, final_blocker) {
                 debug!("Waiting for final blocker to finish...");
-                if let Err(e) = blocker.recv().await {
-                    error!("Error while waiting for final blocker: {}", e);
-                } else {
-                    debug!("Final blocker finished");
+                select! {
+                    _ = &mut notifier => {
+                        debug!("An error has occured while requesting chain in boost mode");
+                        return Err(P2pError::BoostSyncModeError.into());
+                    },
+                    res = blocker.recv() => match res {
+                        Ok(()) => {
+                            debug!("Final blocker finished");
+                            self.object_tracker.unregister_group(group_id.unwrap()).await;
+                        },
+                        Err(e) => {
+                            error!("Error while waiting for final blocker: {}", e);
+                            return Err(P2pError::BoostSyncModeError.into());
+                        }
+                    }
                 }
             }
             debug!("we've synced {} on {} blocks and {} top blocks from {}", total_requested, blocks_len, top_len, peer);

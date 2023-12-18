@@ -99,6 +99,8 @@ pub enum P2pError {
     InvalidObjectResponseType,
     #[error(transparent)]
     ObjectRequestError(#[from] RecvError),
+    #[error("Error while sending object request in boost sync mode")]
+    BoostSyncModeError,
     #[error("Expected a block type")]
     ExpectedBlock,
     #[error("Expected a transaction type")]
