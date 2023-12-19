@@ -5,7 +5,7 @@ use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
 use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, asset::AssetWithData, serializer::Serializer};
 
-use crate::{daemon_api::DaemonAPI, wallet::Wallet, entry::{EntryData, Transfer, TransactionEntry}};
+use crate::{daemon_api::DaemonAPI, wallet::{Wallet, Event}, entry::{EntryData, Transfer, TransactionEntry}};
 
 #[cfg(feature = "api_server")]
 use {
@@ -227,8 +227,12 @@ impl NetworkHandler {
                                 api_server.notify_event(&NotifyEvent::NewTransaction, &entry).await;
                             }
                         }
-    
+
                         storage.save_transaction(entry.get_hash(), &entry)?;
+
+                        if let Err(e) = self.wallet.propagate_event(Event::NewTransaction(entry)).await {
+                            error!("Error while propagating new transaction: {}", e);
+                        }
                     }
                 }
             }

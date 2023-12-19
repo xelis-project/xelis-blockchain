@@ -3,7 +3,7 @@ use std::fmt::{self, Display, Formatter};
 use serde::Serialize;
 use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, utils::format_xelis, api::DataElement};
 
-#[derive(Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Transfer {
     key: PublicKey,
     asset: Hash,
@@ -65,7 +65,7 @@ impl Serializer for Transfer {
 }
 
 // TODO support SC call / SC Deploy
-#[derive(Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub enum EntryData {
     #[serde(rename = "coinbase")]
     Coinbase(u64), // Coinbase is only XELIS_ASSET
@@ -142,7 +142,7 @@ impl Serializer for EntryData {
     }
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct TransactionEntry {
     hash: Hash,
     topoheight: u64,

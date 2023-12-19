@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Error, Context};
 use serde_json::{Value, json};
+use tokio::sync::broadcast::{Sender, Receiver};
 use tokio::sync::{Mutex, RwLock};
 use xelis_common::api::DataElement;
 use xelis_common::api::wallet::FeeBuilder;
@@ -18,6 +19,7 @@ use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DA
 use crate::api::XSWDNodeMethodHandler;
 use crate::cipher::Cipher;
 use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
+use crate::entry::TransactionEntry;
 use crate::mnemonics;
 use crate::network_handler::{NetworkHandler, SharedNetworkHandler, NetworkError};
 use crate::storage::{EncryptedStorage, Storage};
@@ -113,6 +115,12 @@ pub enum WalletError {
     NetworkError(#[from] NetworkError),
 }
 
+#[derive(Clone, Debug)]
+pub enum Event {
+    // When a TX is detected from daemon
+    NewTransaction(TransactionEntry)
+}
+
 pub struct Wallet {
     // Encrypted Wallet Storage
     storage: RwLock<EncryptedStorage>,
@@ -128,7 +136,9 @@ pub struct Wallet {
     // Prompt for CLI
     // Only used for requesting permissions through it
     #[cfg(feature = "api_server")]
-    prompt: RwLock<Option<ShareablePrompt>>
+    prompt: RwLock<Option<ShareablePrompt>>,
+    // Event broadcaster
+    event_broadcaster: Mutex<Sender<Event>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -146,7 +156,11 @@ impl Wallet {
             network,
             #[cfg(feature = "api_server")]
             api_server: Mutex::new(None),
-            prompt: RwLock::new(None)
+            prompt: RwLock::new(None),
+            event_broadcaster: {
+                let (sender, _) = tokio::sync::broadcast::channel(16);
+                Mutex::new(sender)
+            }
         };
 
         Arc::new(zelf)
@@ -246,6 +260,19 @@ impl Wallet {
         let keypair =  storage.get_keypair()?;
 
         Ok(Self::new(storage, keypair, network))
+    }
+
+    // Propagate a new event to registered listeners
+    pub async fn propagate_event(&self, event: Event) -> Result<(), Error> {
+        let broadcaster = self.event_broadcaster.lock().await;
+        broadcaster.send(event)?;
+        Ok(())
+    }
+
+    // Subscribe to events
+    pub async fn subscribe_events(&self) -> Result<Receiver<Event>, Error> {
+        let broadcaster = self.event_broadcaster.lock().await;
+        Ok(broadcaster.subscribe())
     }
 
     #[cfg(feature = "api_server")]
