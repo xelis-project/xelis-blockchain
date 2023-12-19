@@ -226,9 +226,8 @@ impl NetworkHandler {
 
                         storage.save_transaction(entry.get_hash(), &entry)?;
 
-                        if let Err(e) = self.wallet.propagate_event(Event::NewTransaction(entry)).await {
-                            error!("Error while propagating new transaction: {}", e);
-                        }
+                        // Propagate the event to the wallet
+                        self.wallet.propagate_event(Event::NewTransaction(entry)).await;
                     }
                 }
             }

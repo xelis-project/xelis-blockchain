@@ -118,7 +118,7 @@ pub enum WalletError {
 #[derive(Clone, Debug)]
 pub enum Event {
     // When a TX is detected from daemon
-    NewTransaction(TransactionEntry)
+    NewTransaction(TransactionEntry),
 }
 
 pub struct Wallet {
@@ -260,12 +260,14 @@ impl Wallet {
     }
 
     // Propagate a new event to registered listeners
-    pub async fn propagate_event(&self, event: Event) -> Result<(), Error> {
-        if let Some(broadcaster) = self.event_broadcaster.lock().await.as_ref() {
-            broadcaster.send(event)?;
+    pub async fn propagate_event(&self, event: Event) {
+        let mut lock = self.event_broadcaster.lock().await;
+        if let Some(broadcaster) = lock.as_ref() {
+            // if the receiver is closed, we remove it
+            if broadcaster.send(event).is_err() {
+                lock.take();
+            }
         }
-
-        Ok(())
     }
 
     // Subscribe to events
