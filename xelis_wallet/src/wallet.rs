@@ -138,7 +138,7 @@ pub struct Wallet {
     #[cfg(feature = "api_server")]
     prompt: RwLock<Option<ShareablePrompt>>,
     // Event broadcaster
-    event_broadcaster: Mutex<Sender<Event>>
+    event_broadcaster: Mutex<Option<Sender<Event>>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -157,10 +157,7 @@ impl Wallet {
             #[cfg(feature = "api_server")]
             api_server: Mutex::new(None),
             prompt: RwLock::new(None),
-            event_broadcaster: {
-                let (sender, _) = tokio::sync::broadcast::channel(16);
-                Mutex::new(sender)
-            }
+            event_broadcaster: Mutex::new(None)
         };
 
         Arc::new(zelf)
@@ -264,15 +261,24 @@ impl Wallet {
 
     // Propagate a new event to registered listeners
     pub async fn propagate_event(&self, event: Event) -> Result<(), Error> {
-        let broadcaster = self.event_broadcaster.lock().await;
-        broadcaster.send(event)?;
+        if let Some(broadcaster) = self.event_broadcaster.lock().await.as_ref() {
+            broadcaster.send(event)?;
+        }
+
         Ok(())
     }
 
     // Subscribe to events
-    pub async fn subscribe_events(&self) -> Result<Receiver<Event>, Error> {
-        let broadcaster = self.event_broadcaster.lock().await;
-        Ok(broadcaster.subscribe())
+    pub async fn subscribe_events(&self) -> Receiver<Event> {
+        let mut broadcaster = self.event_broadcaster.lock().await;
+        match broadcaster.as_ref() {
+            Some(broadcaster) => broadcaster.subscribe(),
+            None => {
+                let (sender, receiver) = tokio::sync::broadcast::channel(10);
+                *broadcaster = Some(sender);
+                receiver
+            }
+        }
     }
 
     #[cfg(feature = "api_server")]
