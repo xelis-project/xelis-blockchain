@@ -7,7 +7,7 @@ use tokio::sync::{Mutex, RwLock};
 use xelis_common::api::DataElement;
 use xelis_common::api::wallet::FeeBuilder;
 use xelis_common::config::{XELIS_ASSET, COIN_DECIMALS};
-use xelis_common::crypto::address::Address;
+use xelis_common::crypto::address::{Address, AddressType};
 use xelis_common::crypto::hash::Hash;
 use xelis_common::crypto::key::{KeyPair, PublicKey, Signature};
 use xelis_common::rpc_server::{RpcRequest, InternalRpcError, RpcResponseError};
@@ -347,6 +347,24 @@ impl Wallet {
         storage.set_encrypted_storage_salt(&encrypted_storage_salt)?;
 
         Ok(())
+    }
+
+    // Simple function to make a transfer to the given address by including (if necessary) extra data from it
+    pub fn send_to(&self, storage: &EncryptedStorage, asset: Hash, address: Address, amount: u64) -> Result<Transaction, Error> {
+        // Verify that we are on the same network as address
+        if address.is_mainnet() != self.network.is_mainnet() {
+            return Err(WalletError::InvalidAddressParams.into())
+        }
+
+        let (key, data) = address.split();
+        let extra_data = match data {
+            AddressType::Data(data) => Some(data),
+            _ => None
+        };
+
+        let transfer = self.create_transfer(storage, asset, key, extra_data, amount)?;
+        let transaction = self.create_transaction(storage, TransactionType::Transfer(vec![transfer]), FeeBuilder::default())?;
+        Ok(transaction)
     }
 
     // create a transfer from the wallet to the given address to send the given amount of the given asset

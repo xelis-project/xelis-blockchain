@@ -13,6 +13,12 @@ pub enum FeeBuilder {
     Value(u64) // set a direct value of how much fees you want to pay
 }
 
+impl Default for FeeBuilder {
+    fn default() -> Self {
+        FeeBuilder::Multiplier(1f64)
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct BuildTransactionParams {
     #[serde(flatten)]

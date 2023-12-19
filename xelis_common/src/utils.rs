@@ -42,6 +42,25 @@ pub fn format_xelis(value: u64) -> String {
     format_coin(value, COIN_DECIMALS)
 }
 
+// Convert a XELIS amount from string to a u64
+pub fn from_xelis(value: impl Into<String>) -> Option<u64> {
+    let value = value.into();
+    let mut split = value.split('.');
+    let xelis: u64 = split.next()?.parse::<u64>().ok()?;
+    let decimals = split.next().unwrap_or("0");
+    if decimals.len() > COIN_DECIMALS as usize {
+        return None;
+    }
+
+    let mut decimals = decimals.parse::<u64>().ok()?;
+    while decimals > 0 && decimals % 10 == 0 {
+        decimals /= 10;
+    }
+
+    Some(xelis * 10u64.pow(COIN_DECIMALS as u32) + decimals)
+}
+
+
 // format a IP:port to byte format
 pub fn ip_to_bytes(ip: &SocketAddr) -> Vec<u8> {
     let mut bytes = Vec::new();
