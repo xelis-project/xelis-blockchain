@@ -123,7 +123,7 @@ impl DataElement {
         }
     }
 
-    pub fn is_null(self) -> bool {
+    pub fn is_null(&self) -> bool {
         match self {
             Self::Value(None) => true,
             _ => false
@@ -145,6 +145,27 @@ impl DataElement {
     }
 
     pub fn to_map(self) -> Result<HashMap<DataValue, DataElement>, DataConversionError> {
+        match self {
+            Self::Fields(v) => Ok(v),
+            _ => Err(DataConversionError::ExpectedMap)
+        }
+    }
+
+    pub fn as_value(&self) -> Result<&DataValue, DataConversionError> {
+        match self {
+            Self::Value(Some(v)) => Ok(v),
+            _ => Err(DataConversionError::ExpectedValue)
+        }
+    }
+
+    pub fn as_array(&self) -> Result<&Vec<DataElement>, DataConversionError> {
+        match self {
+            Self::Array(v) => Ok(v),
+            _ => Err(DataConversionError::ExpectedArray)
+        }
+    }
+
+    pub fn as_map(&self) -> Result<&HashMap<DataValue, DataElement>, DataConversionError> {
         match self {
             Self::Fields(v) => Ok(v),
             _ => Err(DataConversionError::ExpectedMap)
@@ -209,7 +230,6 @@ impl Serializer for DataElement {
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
 #[serde(untagged)]
 pub enum DataValue {
-    // represent a null value
     Bool(bool),
     String(String),
     U8(u8),
@@ -284,6 +304,62 @@ impl DataValue {
     }
 
     pub fn to_hash(self) -> Result<Hash, DataConversionError> {
+        match self {
+            Self::Hash(v) => Ok(v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn as_bool(&self) -> Result<bool, DataConversionError> {
+        match self {
+            Self::Bool(v) => Ok(*v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn as_string(&self) -> Result<&String, DataConversionError> {
+        match self {
+            Self::String(v) => Ok(v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn as_u8(&self) -> Result<u8, DataConversionError> {
+        match self {
+            Self::U8(v) => Ok(*v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn as_u16(&self) -> Result<u16, DataConversionError> {
+        match self {
+            Self::U16(v) => Ok(*v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn as_u32(&self) -> Result<u32, DataConversionError> {
+        match self {
+            Self::U32(v) => Ok(*v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn as_u64(&self) -> Result<u64, DataConversionError> {
+        match self {
+            Self::U64(v) => Ok(*v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn as_u128(&self) -> Result<u128, DataConversionError> {
+        match self {
+            Self::U128(v) => Ok(*v),
+            _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+        }
+    }
+
+    pub fn as_hash(&self) -> Result<&Hash, DataConversionError> {
         match self {
             Self::Hash(v) => Ok(v),
             _ => Err(DataConversionError::UnexpectedValue(self.kind()))
