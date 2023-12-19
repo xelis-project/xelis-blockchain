@@ -3,7 +3,7 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, asset::AssetWithData, serializer::Serializer};
+use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, asset::AssetWithData, serializer::Serializer, api::DataElement};
 
 use crate::{daemon_api::DaemonAPI, wallet::{Wallet, Event}, entry::{EntryData, Transfer, TransactionEntry}};
 
@@ -185,11 +185,7 @@ impl NetworkHandler {
                         let mut transfers: Vec<Transfer> = Vec::new();
                         for tx in txs {
                             if is_owner || tx.to == *address.get_public_key() {
-                                let extra_data = if let Some(bytes) = tx.extra_data {
-                                    Option::from_bytes(&bytes)?
-                                } else {
-                                    None
-                                };
+                                let extra_data = tx.extra_data.and_then(|bytes| DataElement::from_bytes(&bytes).ok());
                                 let transfer = Transfer::new(tx.to, tx.asset, tx.amount, extra_data);
                                 transfers.push(transfer);
                             }
@@ -297,7 +293,7 @@ impl NetworkHandler {
                     continue;
                 }
             }
-            debug!("New height detected for chain: {}", info.topoheight);
+            debug!("New topoheight detected for chain: {}", info.topoheight);
 
             // New get_info with different topoheight, inform listeners
             #[cfg(feature = "api_server")]
