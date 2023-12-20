@@ -1,21 +1,22 @@
 use std::{borrow::Cow, time::{Duration, Instant}, sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashMap};
 use bytes::Bytes;
 use indexmap::IndexMap;
-use tokio::{sync::{mpsc::{Sender, Receiver}, RwLock, oneshot, Mutex}, select};
+use tokio::{sync::{mpsc::{Sender, Receiver}, RwLock, oneshot, Mutex, broadcast}, select};
 use xelis_common::{crypto::hash::Hash, serializer::Serializer};
 use crate::{core::{blockchain::Blockchain, storage::Storage}, config::PEER_TIMEOUT_REQUEST_OBJECT};
 use log::{error, debug, trace, warn};
 use super::{packet::{object::{ObjectRequest, OwnedObjectResponse}, Packet}, error::P2pError, peer::Peer};
 
 pub type SharedObjectTracker = Arc<ObjectTracker>;
-pub type ResponseBlocker = tokio::sync::broadcast::Receiver<()>;
+pub type ResponseBlocker = broadcast::Receiver<()>;
 
+// This is used to take out the sender from Request if it exists
 struct Listener {
-    sender: Option<tokio::sync::broadcast::Sender<()>>
+    sender: Option<broadcast::Sender<()>>
 }
 
 impl Listener {
-    pub fn new(sender: Option<tokio::sync::broadcast::Sender<()>>) -> Self {
+    pub fn new(sender: Option<broadcast::Sender<()>>) -> Self {
         Self {
             sender
         }
@@ -30,13 +31,21 @@ impl Listener {
     }
 }
 
+// Element of the queue for this Object Tracker
 struct Request {
+    // The object requested
     request: ObjectRequest,
+    // The peer from which it has to be requested
     peer: Arc<Peer>,
-    sender: Option<tokio::sync::broadcast::Sender<()>>,
+    // Channel sender to be notified of success/timeout
+    sender: Option<broadcast::Sender<()>>,
+    // Response received from the peer
     response: Option<OwnedObjectResponse>,
+    // Timestamp when it got requested
     requested_at: Option<Instant>,
+    // If it linked to a group
     group_id: Option<u64>,
+    // If it has to be broadcast on handling or not
     broadcast: bool
 }
 
@@ -89,7 +98,7 @@ impl Request {
         if let Some(sender) = &self.sender {
             sender.subscribe()
         } else {
-            let (sender, receiver) = tokio::sync::broadcast::channel(1);
+            let (sender, receiver) = broadcast::channel(1);
             self.sender = Some(sender);
             receiver
         }
@@ -119,7 +128,7 @@ pub enum GroupError {
 // this ObjectTracker is a unique sender allows to create a queue system in one task only
 // currently used to fetch in order all txs propagated by the network
 pub struct ObjectTracker {
-    request_sender: Sender<Message>,
+    request_sender: Sender<Hash>,
     handler_sender: Sender<OwnedObjectResponse>,
     // queue of requests with preserved order
     queue: RwLock<IndexMap<Hash, Request>>,
@@ -128,17 +137,13 @@ pub struct ObjectTracker {
     groups: Mutex<HashMap<u64, oneshot::Sender<GroupError>>>
 }
 
-enum Message {
-    Request(Hash),
-    Exit
-}
-
-const CHANNEL_BUFFER: usize = 128;
+const REQUESTER_CHANNEL_BUFFER: usize = 16;
+const HANDLER_CHANNEL_BUFFER: usize = 1;
 
 impl ObjectTracker {
     pub fn new<S: Storage>(blockchain: Arc<Blockchain<S>>) -> SharedObjectTracker {
-        let (request_sender, request_receiver) = tokio::sync::mpsc::channel(CHANNEL_BUFFER);
-        let (handler_sender, handler_receiver) = tokio::sync::mpsc::channel(CHANNEL_BUFFER);
+        let (request_sender, request_receiver) = tokio::sync::mpsc::channel(REQUESTER_CHANNEL_BUFFER);
+        let (handler_sender, handler_receiver) = tokio::sync::mpsc::channel(HANDLER_CHANNEL_BUFFER);
 
         let zelf: Arc<ObjectTracker> = Arc::new(Self {
             request_sender,
@@ -147,14 +152,16 @@ impl ObjectTracker {
             group_id: AtomicU64::new(0),
             groups: Mutex::new(HashMap::new())
         });
-
-        { // start the loop
+        
+        // start the requester task loop which send requests to peers
+        {
             let zelf = zelf.clone();
             tokio::spawn(async move {
                 zelf.requester_loop(request_receiver).await;
             });
         }
 
+        // start the handler task loop which handle the responses based on request queue order
         {
             let zelf = zelf.clone();
             tokio::spawn(async move {
@@ -165,13 +172,7 @@ impl ObjectTracker {
         zelf
     }
 
-    pub async fn stop(&self) {
-        debug!("Stopping ObjectTracker...");
-        if self.request_sender.send(Message::Exit).await.is_err() {
-            error!("Error while sending exit message to ObjectTracker");
-        }
-    }
-
+    // Generate a new group id
     pub async fn next_group_id(&self) -> (u64, oneshot::Receiver<GroupError>) {
         let mut groups = self.groups.lock().await;
         let id = self.group_id.fetch_add(1, Ordering::SeqCst);
@@ -180,11 +181,13 @@ impl ObjectTracker {
         (id, receiver)
     }
 
+    // Unregister an existing group id by removing it
     pub async fn unregister_group(&self, group_id: u64) {
         let mut groups = self.groups.lock().await;
         groups.remove(&group_id);
     }
 
+    // Handle the object response and returns the error if any
     async fn handle_object_response_internal<S: Storage>(&self, blockchain: &Arc<Blockchain<S>>, response: OwnedObjectResponse, broadcast: bool) -> Result<(), P2pError> {
         match response {
             OwnedObjectResponse::Transaction(tx, hash) => {
@@ -200,6 +203,7 @@ impl ObjectTracker {
         Ok(())
     }
 
+    // Task loop to handle requests
     async fn handler_loop<S: Storage>(&self, blockchain: Arc<Blockchain<S>>, mut handler_receiver: Receiver<OwnedObjectResponse>) {
         debug!("Starting handler loop...");
         // Interval timer is necessary in case we don't receive any response from peer but we don't want to block the queue
@@ -275,15 +279,10 @@ impl ObjectTracker {
         }
     }
 
-    async fn requester_loop(&self, mut request_receiver: Receiver<Message>) {
+    async fn requester_loop(&self, mut request_receiver: Receiver<Hash>) {
         debug!("Starting requester loop...");
-        while let Some(msg) = request_receiver.recv().await {
-            match msg {
-                Message::Request(object) => {
-                    self.request_object_from_peer_internal(&object).await;
-                },
-                Message::Exit => break
-            }
+        while let Some(hash) = request_receiver.recv().await {
+            self.request_object_from_peer_internal(hash).await
         }
     }
 
@@ -337,7 +336,7 @@ impl ObjectTracker {
         };
 
         trace!("Transfering object request {} to task", hash);
-        self.request_sender.send(Message::Request(hash)).await?;
+        self.request_sender.send(hash).await?;
         Ok(true)
     }
 
@@ -363,17 +362,17 @@ impl ObjectTracker {
         };
 
         trace!("Transfering object request {} to task", hash);
-        self.request_sender.send(Message::Request(hash)).await?;
+        self.request_sender.send(hash).await?;
         Ok(listener)
     }
 
-    async fn request_object_from_peer_internal(&self, request_hash: &Hash) {
+    async fn request_object_from_peer_internal(&self, request_hash: Hash) {
         debug!("Requesting object with hash {}", request_hash);
         let mut failed_peer = None;
         let mut failed_group = None;
         {
             let mut queue = self.queue.write().await;
-            if let Some(request) = queue.get_mut(request_hash) {
+            if let Some(request) = queue.get_mut(&request_hash) {
                 request.set_requested();
                 let packet = Bytes::from(Packet::ObjectRequest(Cow::Borrowed(request.get_object())).to_bytes());
                 // send the packet to the Peer
@@ -389,7 +388,7 @@ impl ObjectTracker {
 
             if let Some(peer) = failed_peer {
                 trace!("Deleting requested object with hash {} from {}", request_hash, peer);
-                queue.remove(request_hash);
+                queue.remove(&request_hash);
 
                 // Delete all from the same group if one of them failed
                 if let Some(group) = failed_group {

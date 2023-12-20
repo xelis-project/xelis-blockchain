@@ -185,7 +185,6 @@ impl<S: Storage> P2pServer<S> {
         info!("Stopping P2p Server...");
         self.is_running.store(false, Ordering::Release);
 
-        self.object_tracker.stop().await;
         if let Err(e) = self.connections_sender.send(MessageChannel::Exit) {
             error!("Error while sending Exit message to stop accepting new connections: {}", e);
         }
