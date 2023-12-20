@@ -12,6 +12,7 @@ pub mod difficulty;
 pub mod network;
 pub mod asset;
 pub mod context;
+pub mod queue;
 
 #[cfg(feature = "json_rpc")]
 pub mod json_rpc;
