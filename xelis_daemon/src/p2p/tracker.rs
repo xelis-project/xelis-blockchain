@@ -128,7 +128,10 @@ pub enum GroupError {
 // this ObjectTracker is a unique sender allows to create a queue system in one task only
 // currently used to fetch in order all txs propagated by the network
 pub struct ObjectTracker {
+    // This is used to send the request to the requester task loop
+    // it is a bounded channel, so if the queue is full, it will block the sender
     request_sender: Sender<Hash>,
+    // This is used to send the response to the handler task loop
     handler_sender: Sender<OwnedObjectResponse>,
     // queue of requests with preserved order
     queue: RwLock<IndexMap<Hash, Request>>,
@@ -137,7 +140,10 @@ pub struct ObjectTracker {
     groups: Mutex<HashMap<u64, oneshot::Sender<GroupError>>>
 }
 
-const REQUESTER_CHANNEL_BUFFER: usize = 16;
+// How many requests can be queued in the channel
+const REQUESTER_CHANNEL_BUFFER: usize = 128;
+// How many responses can be queued in the channel
+// It is set to 1 by default to not be spammed by the peer
 const HANDLER_CHANNEL_BUFFER: usize = 1;
 
 impl ObjectTracker {
@@ -203,7 +209,7 @@ impl ObjectTracker {
         Ok(())
     }
 
-    // Task loop to handle requests
+    // Task loop to handle all responses in order
     async fn handler_loop<S: Storage>(&self, blockchain: Arc<Blockchain<S>>, mut handler_receiver: Receiver<OwnedObjectResponse>) {
         debug!("Starting handler loop...");
         // Interval timer is necessary in case we don't receive any response from peer but we don't want to block the queue
@@ -299,6 +305,8 @@ impl ObjectTracker {
         Some(request.get_response_blocker())
     }
 
+    // This function is called from P2p Server when a peer sends an object response that we requested
+    // It will pass the response to the handler task loop
     pub async fn handle_object_response(&self, response: OwnedObjectResponse) -> Result<(), P2pError> {
         {
             let queue = self.queue.read().await;
@@ -323,20 +331,7 @@ impl ObjectTracker {
 
     // Request the object from the peer or return false if it is already requested
     pub async fn request_object_from_peer(&self, peer: Arc<Peer>, request: ObjectRequest, broadcast: bool) -> Result<bool, P2pError> {
-        trace!("Requesting object {} from {}", request.get_hash(), peer);
-        let hash = {
-            let mut queue = self.queue.write().await;
-            let hash = request.get_hash().clone();
-            let req = Request::new(request, peer, None, broadcast);
-            if queue.insert(hash.clone(), req).is_some() {
-                debug!("Object already requested in ObjectTracker: {}", hash);
-                return Ok(false)
-            }
-            hash
-        };
-
-        trace!("Transfering object request {} to task", hash);
-        self.request_sender.send(hash).await?;
+        self.request_object_from_peer_with(peer, request, None, false, broadcast).await?;
         Ok(true)
     }
 
@@ -366,6 +361,8 @@ impl ObjectTracker {
         Ok(listener)
     }
 
+    // Request the object from the peer
+    // This is called from the requester task loop
     async fn request_object_from_peer_internal(&self, request_hash: Hash) {
         debug!("Requesting object with hash {}", request_hash);
         let mut failed_peer = None;
