@@ -152,6 +152,7 @@ impl GroupManager {
         groups.remove(&group_id);
     }
 
+    // Notify the requester about the failure
     pub async fn notify_group(&self, group_id: u64) {
         let mut groups = self.groups.lock().await;
         if let Some(sender) = groups.remove(&group_id) {
@@ -456,7 +457,7 @@ impl ObjectTracker {
 
         // Delete all from the same group if one of them failed
         if let Some(group) = group {
-            debug!("Group {} failed", group);
+            warn!("Group {} failed", group);
             self.group.notify_group(group).await;
         }
 
@@ -478,8 +479,7 @@ impl ObjectTracker {
             // send the packet to the Peer
             let peer = request.get_peer();
             if let Err(e) = peer.send_bytes(packet).await {
-                debug!("Error while requesting object {} using Object Tracker: {}", request_hash, e);
-                peer.increment_fail_count();
+                warn!("Error while requesting object {} using Object Tracker: {}", request_hash, e);
                 Some((peer.get_id(), request.get_group_id()))
             } else {
                 None
@@ -490,6 +490,7 @@ impl ObjectTracker {
         };
 
         if let Some((peer_id, group)) = fail {
+            warn!("cleaning queue because of failure");
             self.clean_queue(&mut queue, peer_id, group).await;
         }
     }
