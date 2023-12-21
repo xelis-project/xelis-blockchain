@@ -1165,6 +1165,8 @@ impl<S: Storage> P2pServer<S> {
                 } else if self.object_tracker.has_requested_object(request.get_hash()).await {
                     trace!("Object Tracker requested it, handling it");
                     self.object_tracker.handle_object_response(response).await?;
+                } else if self.object_tracker.is_ignored_request_hash(request.get_hash()).await {
+                    debug!("Object {} was ignored by Object Tracker, ignoring response", request.get_hash());
                 } else {
                     return Err(P2pError::ObjectNotRequested(request))
                 }
@@ -1518,7 +1520,7 @@ impl<S: Storage> P2pServer<S> {
             // If boost sync is allowed, we can request all blocks in parallel,
             // Create a new group in Object Tracker to be notified of a failure
             let (group_id, mut notifier) = if self.allow_boost_sync() {
-                let (group_id, notifier) = self.object_tracker.next_group_id().await;
+                let (group_id, notifier) = self.object_tracker.get_group_manager().next_group_id().await;
                 (Some(group_id), Some(notifier))
             } else {
                 (None, None)
@@ -1537,9 +1539,9 @@ impl<S: Storage> P2pServer<S> {
                     // if it's allowed by the user, request all blocks in parallel
                     if self.allow_boost_sync() {
                         if let Some(notifier) = &mut notifier {
-                            // Check if we don't have any error pending
-                            if let Ok(error) = notifier.try_recv() {
-                                debug!("An error has occured while requesting chain in boost mode: {:?}", error);
+                            // Check if we don't have any message pending in the channel
+                            if notifier.try_recv().is_ok() {
+                                error!("An error has occured in batch while requesting chain in boost mode");
                                 return Err(P2pError::BoostSyncModeError.into());
                             }
                         }
@@ -1574,7 +1576,7 @@ impl<S: Storage> P2pServer<S> {
                     res = blocker.recv() => match res {
                         Ok(()) => {
                             debug!("Final blocker finished");
-                            self.object_tracker.unregister_group(group_id.unwrap()).await;
+                            self.object_tracker.get_group_manager().unregister_group(group_id.unwrap()).await;
                         },
                         Err(e) => {
                             error!("Error while waiting for final blocker: {}", e);

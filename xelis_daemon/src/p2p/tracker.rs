@@ -1,8 +1,7 @@
 use std::{borrow::Cow, time::{Duration, Instant}, sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashMap};
 use bytes::Bytes;
-use indexmap::IndexMap;
-use tokio::{sync::{mpsc::{Sender, Receiver}, RwLock, oneshot, Mutex, broadcast}, select};
-use xelis_common::{crypto::hash::Hash, serializer::Serializer};
+use tokio::{sync::{mpsc::{Sender, Receiver, self}, RwLock, oneshot, Mutex, broadcast}, select, time::interval};
+use xelis_common::{crypto::hash::Hash, serializer::Serializer, queue::Queue};
 use crate::{core::{blockchain::Blockchain, storage::Storage}, config::PEER_TIMEOUT_REQUEST_OBJECT};
 use log::{error, debug, trace, warn};
 use super::{packet::{object::{ObjectRequest, OwnedObjectResponse}, Packet}, error::P2pError, peer::Peer};
@@ -90,6 +89,10 @@ impl Request {
         &self.requested_at
     }
 
+    pub fn is_requested(&self) -> bool {
+        self.requested_at.is_some()
+    }
+
     pub fn get_hash(&self) -> &Hash {
         self.request.get_hash()
     }
@@ -119,10 +122,73 @@ impl Drop for Request {
     }
 }
 
-#[derive(Debug)]
-pub enum GroupError {
-    SendFailure,
-    Timeout,
+pub struct GroupManager {
+    // This is used to have unique id for each group of requests
+    group_id: AtomicU64,
+    groups: Mutex<HashMap<u64, oneshot::Sender<()>>>
+}
+
+impl GroupManager {
+    pub fn new() -> Self {
+        Self {
+            group_id: AtomicU64::new(0),
+            groups: Mutex::new(HashMap::new())
+        }
+    }
+
+    // Generate a new group id
+    pub async fn next_group_id(&self) -> (u64, oneshot::Receiver<()>) {
+        let mut groups = self.groups.lock().await;
+        let id = self.group_id.fetch_add(1, Ordering::SeqCst);
+
+        let (sender, receiver) = oneshot::channel();
+        groups.insert(id, sender);
+        (id, receiver)
+    }
+
+    // Unregister an existing group id by removing it
+    pub async fn unregister_group(&self, group_id: u64) {
+        let mut groups = self.groups.lock().await;
+        groups.remove(&group_id);
+    }
+
+    pub async fn notify_group(&self, group_id: u64) {
+        let mut groups = self.groups.lock().await;
+        if let Some(sender) = groups.remove(&group_id) {
+            if sender.send(()).is_err() {
+                warn!("Error while sending group error");
+            }
+        }
+    }
+}
+
+struct ExpirableCache {
+    cache: Mutex<HashMap<Hash, Instant>>
+}
+
+impl ExpirableCache {
+    pub fn new() -> Self {
+        Self {
+            cache: Mutex::new(HashMap::new())
+        }
+    }
+
+    pub async fn insert(&self, hash: Hash) {
+        let mut cache = self.cache.lock().await;
+        cache.insert(hash, Instant::now());
+    }
+
+    pub async fn remove(&self, hash: &Hash) -> bool {
+        let mut cache = self.cache.lock().await;
+        cache.remove(hash).is_some()
+    }
+
+    pub async fn clean(&self, timeout: Duration) {
+        let mut cache = self.cache.lock().await;
+        cache.retain(|_, v| {
+            v.elapsed() < timeout
+        });
+    }
 }
 
 // this ObjectTracker is a unique sender allows to create a queue system in one task only
@@ -134,29 +200,35 @@ pub struct ObjectTracker {
     // This is used to send the response to the handler task loop
     handler_sender: Sender<OwnedObjectResponse>,
     // queue of requests with preserved order
-    queue: RwLock<IndexMap<Hash, Request>>,
-    // This is used to have unique id for each group of requests
-    group_id: AtomicU64,
-    groups: Mutex<HashMap<u64, oneshot::Sender<GroupError>>>
+    queue: RwLock<Queue<Hash, Request>>,
+    // Group Manager for batched requests
+    // If one fail, all the group is removed
+    group: GroupManager,
+    // Requests that should be ignored
+    // They got canceled but already requested
+    cache: ExpirableCache
 }
 
 // How many requests can be queued in the channel
 const REQUESTER_CHANNEL_BUFFER: usize = 128;
 // How many responses can be queued in the channel
 // It is set to 1 by default to not be spammed by the peer
-const HANDLER_CHANNEL_BUFFER: usize = 1;
+const HANDLER_CHANNEL_BUFFER: usize = 16;
+
+// Duration constant for timeout instead of building it at each iteration
+const TIME_OUT: Duration = Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT);
 
 impl ObjectTracker {
     pub fn new<S: Storage>(blockchain: Arc<Blockchain<S>>) -> SharedObjectTracker {
-        let (request_sender, request_receiver) = tokio::sync::mpsc::channel(REQUESTER_CHANNEL_BUFFER);
-        let (handler_sender, handler_receiver) = tokio::sync::mpsc::channel(HANDLER_CHANNEL_BUFFER);
+        let (request_sender, request_receiver) = mpsc::channel(REQUESTER_CHANNEL_BUFFER);
+        let (handler_sender, handler_receiver) = mpsc::channel(HANDLER_CHANNEL_BUFFER);
 
         let zelf: Arc<ObjectTracker> = Arc::new(Self {
             request_sender,
             handler_sender,
-            queue: RwLock::new(IndexMap::new()),
-            group_id: AtomicU64::new(0),
-            groups: Mutex::new(HashMap::new())
+            queue: RwLock::new(Queue::new()),
+            group: GroupManager::new(),
+            cache: ExpirableCache::new()
         });
         
         // start the requester task loop which send requests to peers
@@ -175,22 +247,32 @@ impl ObjectTracker {
             });
         }
 
+        {
+            let zelf = zelf.clone();
+            tokio::spawn(async move {
+                zelf.task_clean_cache().await;
+            });
+        }
+
         zelf
     }
 
-    // Generate a new group id
-    pub async fn next_group_id(&self) -> (u64, oneshot::Receiver<GroupError>) {
-        let mut groups = self.groups.lock().await;
-        let id = self.group_id.fetch_add(1, Ordering::SeqCst);
-        let (sender, receiver) = oneshot::channel();
-        groups.insert(id, sender);
-        (id, receiver)
+    // Task to clean the expired cache
+    async fn task_clean_cache(&self) {
+        let mut interval = interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            self.cache.clean(TIME_OUT).await;
+        }
     }
 
-    // Unregister an existing group id by removing it
-    pub async fn unregister_group(&self, group_id: u64) {
-        let mut groups = self.groups.lock().await;
-        groups.remove(&group_id);
+    pub async fn is_ignored_request_hash(&self, hash: &Hash) -> bool {
+        self.cache.remove(hash).await
+    }
+
+    // Returns the group manager used
+    pub fn get_group_manager(&self) -> &GroupManager {
+        &self.group
     }
 
     // Handle the object response and returns the error if any
@@ -240,42 +322,23 @@ impl ObjectTracker {
             // For this, we need to check if the first element has a response and so on
             // If we don't have a response during too much time, we remove the request from the queue as it is probably timed out
             let mut queue = self.queue.write().await;
-            let mut failed_group: Option<u64> = None;
-            while let Some((_, request)) = queue.get_index_mut(0) {
-                // Delete all from the same group if one of them failed
-                if let (Some(request_group), Some(group)) = (request.get_group_id(), &failed_group) {
-                    if request_group == *group {
-                        queue.shift_remove_index(0).unwrap();
-                        continue;
-                    }
-                }
-
+            while let Some((_, request)) = queue.peek_mut() {
                 match request.take_response() {
                     Some(response) => {
-                        let (_, request) = queue.shift_remove_index(0).unwrap();
+                        let (_, request) = queue.pop().unwrap();
                         if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast()).await {
                             error!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
+                            self.clean_queue(&mut queue, request.get_peer().get_id(), request.get_group_id()).await;
                         }
                     },
                     None => {
                         if let Some(requested_at) = request.get_requested() {
                             // check if the request is timed out
-                            if requested_at.elapsed() > Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT) || request.get_peer().get_connection().is_closed() {
-                                failed_group = request.get_group_id();
-                                warn!("Request timed out: {} (group: {:?})", request.get_hash(), failed_group);
-                                {
-                                    let mut groups = self.groups.lock().await;
-                                    if let Some(group) = request.get_group_id() {
-                                        if let Some(sender) = groups.remove(&group) {
-                                            if sender.send(GroupError::Timeout).is_err() {
-                                                warn!("Error while sending group error");
-                                            }
-                                        }
-                                    }
-                                }
-                                queue.shift_remove_index(0).unwrap();
+                            if requested_at.elapsed() > TIME_OUT {
+                                warn!("Request timed out for object {}", request.get_hash());
+                                let (_, request) = queue.pop().unwrap();
+                                self.clean_queue(&mut queue, request.get_peer().get_id(), request.get_group_id()).await;
                             } else {
-                                // Give a chance to get the response on above loop
                                 break;
                             }
                         }
@@ -285,6 +348,7 @@ impl ObjectTracker {
         }
     }
 
+    // Task loop to request all objects in order
     async fn requester_loop(&self, mut request_receiver: Receiver<Hash>) {
         debug!("Starting requester loop...");
         while let Some(hash) = request_receiver.recv().await {
@@ -295,7 +359,7 @@ impl ObjectTracker {
     // Check if the object is already requested
     pub async fn has_requested_object(&self, object_hash: &Hash) -> bool {
         let queue = self.queue.read().await;
-        queue.contains_key(object_hash)
+        queue.has(object_hash)
     }
 
     // Get the response blocker for the requested object
@@ -342,14 +406,14 @@ impl ObjectTracker {
             let mut queue = self.queue.write().await;
             let hash = request.get_hash().clone();
             let mut req = Request::new(request, peer, group_id, broadcast);
-            
+
             let listener = if blocker {
                 Some(req.get_response_blocker())
             } else {
                 None
             };
 
-            if queue.insert(hash.clone(), req).is_some() {
+            if !queue.push(hash.clone(), req) {
                 debug!("Object already requested in ObjectTracker: {}", hash);
                 return Ok(None)
             }
@@ -361,56 +425,72 @@ impl ObjectTracker {
         Ok(listener)
     }
 
+    // Clean the queue from all requests from the given peer or from the group if it is specified
+    async fn clean_queue(&self, queue: &mut Queue<Hash, Request>, peer_id: u64, group: Option<u64>) {
+        let iter = queue.extract_if(|(_, request)| {
+            if let (Some(failed_group), Some(request_group)) = (group.as_ref(), request.get_group_id()) {
+                if *failed_group == request_group {
+                    return true;
+                }
+            }
+
+            let peer = request.get_peer();
+            if peer.get_id() == peer_id || peer.get_connection().is_closed() {
+                return true;
+            }
+
+            if let Some(requested_at) = request.get_requested() {
+                if requested_at.elapsed() > TIME_OUT {
+                    return true;
+                }
+            }
+
+            false
+        }).filter_map(|(hash, request)| {
+            if request.is_requested() {
+                Some(Arc::try_unwrap(hash).unwrap())
+            } else {
+                None
+            }
+        });
+
+        // Delete all from the same group if one of them failed
+        if let Some(group) = group {
+            debug!("Group {} failed", group);
+            self.group.notify_group(group).await;
+        }
+
+        for hash in iter {
+            debug!("Adding requested object with hash {} in expirable cache", hash);
+            self.cache.insert(hash).await;
+        }
+    }
+
     // Request the object from the peer
     // This is called from the requester task loop
     async fn request_object_from_peer_internal(&self, request_hash: Hash) {
         debug!("Requesting object with hash {}", request_hash);
-        let mut failed_peer = None;
-        let mut failed_group = None;
-        {
-            let mut queue = self.queue.write().await;
-            if let Some(request) = queue.get_mut(&request_hash) {
-                request.set_requested();
-                let packet = Bytes::from(Packet::ObjectRequest(Cow::Borrowed(request.get_object())).to_bytes());
-                // send the packet to the Peer
-                if let Err(e) = request.get_peer().send_bytes(packet).await {
-                    debug!("Error while requesting object {} using Object Tracker: {}", request_hash, e);
-                    request.get_peer().increment_fail_count();
-                    failed_group = request.get_group_id();
-                    failed_peer = Some(request.get_peer().clone());
-                }
+        let mut queue = self.queue.write().await;
+
+        let fail = if let Some(request) = queue.get_mut(&request_hash) {
+            request.set_requested();
+            let packet = Bytes::from(Packet::ObjectRequest(Cow::Borrowed(request.get_object())).to_bytes());
+            // send the packet to the Peer
+            let peer = request.get_peer();
+            if let Err(e) = peer.send_bytes(packet).await {
+                debug!("Error while requesting object {} using Object Tracker: {}", request_hash, e);
+                peer.increment_fail_count();
+                Some((peer.get_id(), request.get_group_id()))
             } else {
-                trace!("Object {} not requested anymore", request_hash);
+                None
             }
+        } else {
+            trace!("Object {} not requested anymore", request_hash);
+            None
+        };
 
-            if let Some(peer) = failed_peer {
-                trace!("Deleting requested object with hash {} from {}", request_hash, peer);
-                queue.remove(&request_hash);
-
-                // Delete all from the same group if one of them failed
-                if let Some(group) = failed_group {
-                    debug!("Group {} failed", group);
-                    queue.retain(|_, request| {
-                        if request.get_peer().get_id() == peer.get_id() || request.get_peer().get_connection().is_closed() {
-                            return false;
-                        }
-
-                        if let Some(request_group) = request.get_group_id() {
-                            if request_group == group {
-                                return false;
-                            }
-                        }
-                        true
-                    });
-
-                    let mut groups = self.groups.lock().await;
-                    if let Some(sender) = groups.remove(&group) {
-                        if sender.send(GroupError::SendFailure).is_err() {
-                            warn!("Error while sending group result");
-                        }
-                    }
-                }
-            }
+        if let Some((peer_id, group)) = fail {
+            self.clean_queue(&mut queue, peer_id, group).await;
         }
     }
 }
