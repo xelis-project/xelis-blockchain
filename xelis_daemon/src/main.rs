@@ -103,7 +103,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("status", "Current daemon status", CommandHandler::Async(async_handler!(status::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("blacklist", "View blacklist or add a peer address in it", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(blacklist::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("whitelist", "View whitelist or add a peer address in it", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(whitelist::<S>))))?;
-    command_manager.add_command(Command::new("verify_chain", "Check chain supply/balances", CommandHandler::Async(async_handler!(verify_chain::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("verify_chain", "Check chain supply/balances", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(verify_chain::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -201,7 +201,7 @@ fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrat
     )
 }
 
-async fn verify_chain<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
@@ -215,7 +215,13 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, _: ArgumentManager) 
         0
     };
 
-    for topo in pruned_topoheight..=blockchain.get_topo_height() {
+    let topoheight = if args.has_argument("topoheight") {
+        args.get_value("topoheight")?.to_number()?
+    } else {
+        blockchain.get_topo_height()
+    };
+
+    for topo in pruned_topoheight..=topoheight {
         let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
         let block_reward = if pruned_topoheight == 0 || topo - pruned_topoheight > STABLE_LIMIT {
             let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply).await.context("Error while calculating block reward")?;
@@ -243,7 +249,6 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, _: ArgumentManager) 
     manager.message("Supply is valid");
 
     // Now let's check balances
-    let topoheight = blockchain.get_topo_height();
     manager.message(format!("Checking balances at topoheight {}", topoheight));
     let chunk_size = 1024;
     let mut skip = 0;
