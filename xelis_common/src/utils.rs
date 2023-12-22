@@ -28,7 +28,7 @@ pub fn get_current_time_in_seconds() -> u64 {
 }
 
 // return timestamp in milliseconds
-pub fn get_current_in_millis() -> u128 {
+pub fn get_current_time_in_millis() -> u128 {
     get_current_time().as_millis()
 }
 

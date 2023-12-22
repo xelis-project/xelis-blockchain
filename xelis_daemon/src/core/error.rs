@@ -2,6 +2,7 @@ use crate::p2p::error::P2pError;
 use std::sync::PoisonError;
 use thiserror::Error;
 use xelis_common::{crypto::{hash::Hash, key::PublicKey, bech32::Bech32Error}, serializer::ReaderError, prompt::PromptError, difficulty::DifficultyError};
+use human_bytes::human_bytes;
 
 #[derive(Error, Debug)]
 pub enum DiskContext {
@@ -21,6 +22,8 @@ pub enum DiskContext {
 
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("Transaction size is {} while limit is {}", human_bytes(*_0 as f64), human_bytes(*_1 as f64))]
+    TxTooBig(usize, usize),
     #[error("Timestamp {} is less than parent", _0)]
     TimestampIsLessThanParent(u128),
     #[error("Timestamp {} is greater than current time {}", _0, _1)]

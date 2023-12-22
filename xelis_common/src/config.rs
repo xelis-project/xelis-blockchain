@@ -14,3 +14,6 @@ pub const COIN_VALUE: u64 = 10u64.pow(COIN_DECIMALS as u32);
 pub const PREFIX_ADDRESS: &str = "xel";
 // testnet prefix address
 pub const TESTNET_PREFIX_ADDRESS: &str = "xet";
+
+// Max transaction size in bytes
+pub const MAX_TRANSACTION_SIZE: usize = 1024 * 1024; // 1 MB

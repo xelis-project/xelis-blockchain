@@ -1,6 +1,7 @@
 use std::{collections::{HashMap, HashSet}, sync::Arc};
 use async_trait::async_trait;
-use xelis_common::{crypto::hash::Hash, block::{BlockHeader, Difficulty}};
+use indexmap::IndexSet;
+use xelis_common::{crypto::hash::Hash, block::{BlockHeader, Difficulty}, immutable::Immutable};
 use crate::{
     core::{
         error::BlockchainError,
@@ -74,7 +75,7 @@ impl<S: Storage> ChainValidator<S> {
 
         let pow_hash = header.get_pow_hash();
         trace!("POW hash: {}", pow_hash);
-        let difficulty = self.blockchain.verify_proof_of_work(self, &pow_hash, &tips).await?;
+        let difficulty = self.blockchain.verify_proof_of_work(self, &pow_hash, tips.iter()).await?;
         let cumulative_difficulty = 0;
 
         let hash = Arc::new(hash);
@@ -135,10 +136,9 @@ impl<S: Storage> DifficultyProvider for ChainValidator<S> {
         Ok(storage.get_cumulative_difficulty_for_block_hash(hash).await?)
     }
 
-    async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
+    async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Immutable<IndexSet<Hash>>, BlockchainError> {
         if let Some(data) = self.blocks.get(hash) {
-            // Dirty pls help me
-            return Ok(Arc::new(data.header.get_tips().clone()))
+            return Ok(Immutable::Owned(data.header.get_tips().clone()))
         }
 
         let storage = self.blockchain.get_storage().read().await;

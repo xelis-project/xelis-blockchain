@@ -1,12 +1,13 @@
 use anyhow::Error;
+use indexmap::IndexSet;
 use lru::LruCache;
 use serde_json::{Value, json};
 use xelis_common::{
-    config::{XELIS_ASSET, COIN_DECIMALS},
+    config::{XELIS_ASSET, COIN_DECIMALS, MAX_TRANSACTION_SIZE},
     crypto::{key::PublicKey, hash::{Hashable, Hash, HASH_SIZE}},
     difficulty::check_difficulty,
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
-    utils::{get_current_in_millis, format_xelis, get_current_time_in_seconds},
+    utils::{get_current_time_in_millis, format_xelis, get_current_time_in_seconds},
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE, Difficulty},
     immutable::Immutable,
     serializer::Serializer,
@@ -196,13 +197,8 @@ impl<S: Storage> Blockchain<S> {
         } else {
             debug!("Retrieving tips for computing current difficulty");
             let storage = blockchain.get_storage().read().await;
-            let tips_set = storage.get_tips().await?;
-            let mut tips = Vec::with_capacity(tips_set.len());
-            for hash in tips_set {
-                tips.push(hash);
-            }
-    
-            let difficulty = blockchain.get_difficulty_at_tips(&*storage, &tips).await?;
+            let tips_set = storage.get_tips().await?;    
+            let difficulty = blockchain.get_difficulty_at_tips(&*storage, tips_set.iter()).await?;
             blockchain.difficulty.store(difficulty, Ordering::SeqCst);
         }
 
@@ -320,7 +316,7 @@ impl<S: Storage> Blockchain<S> {
         let (_, stable_height) = self.find_common_base(&*storage, &tips).await?;
         self.stable_height.store(stable_height, Ordering::SeqCst);
 
-        let difficulty = self.get_difficulty_at_tips(&*storage, &tips.into_iter().collect()).await?;
+        let difficulty = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
         self.difficulty.store(difficulty, Ordering::SeqCst);
 
         // TXs in mempool may be outdated, clear them as they will be asked later again
@@ -358,7 +354,7 @@ impl<S: Storage> Blockchain<S> {
         } else {
             error!("No genesis block found!");
             info!("Generating a new genesis block...");
-            let header = BlockHeader::new(0, 0, get_current_in_millis(), Vec::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), Vec::new());
+            let header = BlockHeader::new(0, 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
             let block = Block::new(Immutable::Owned(header), Vec::new());
             info!("Genesis generated: {}", block.to_hex());
             block
@@ -378,7 +374,7 @@ impl<S: Storage> Blockchain<S> {
         let (mut header, difficulty) = {
             let storage = self.storage.read().await;
             let block = self.get_block_template_for_storage(&storage, key.clone()).await?;
-            let difficulty = self.get_difficulty_at_tips(&*storage, &block.get_tips()).await?;
+            let difficulty = self.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await?;
             (block, difficulty)
         };
         let mut hash = header.hash();
@@ -389,7 +385,7 @@ impl<S: Storage> Blockchain<S> {
                 header = self.get_block_template(key.clone()).await?;
             }
             header.nonce += 1;
-            header.timestamp = get_current_in_millis();
+            header.timestamp = get_current_time_in_millis();
             hash = header.hash();
         }
 
@@ -908,23 +904,27 @@ impl<S: Storage> Blockchain<S> {
         Ok(best_difficulty * 91 / 100 < block_difficulty)
     }
 
-    // TODO generic tips type
-    pub async fn get_difficulty_at_tips<D: DifficultyProvider>(&self, provider: &D, tips: &Vec<Hash>) -> Result<Difficulty, BlockchainError> {
+    pub async fn get_difficulty_at_tips<'a, D, I>(&self, provider: &D, tips: I) -> Result<Difficulty, BlockchainError>
+    where
+        D: DifficultyProvider,
+        I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
+        I::IntoIter: ExactSizeIterator
+    {
         if tips.len() == 0 { // Genesis difficulty
             return Ok(GENESIS_BLOCK_DIFFICULTY)
         }
 
-        let height = blockdag::calculate_height_at_tips(provider, tips).await?;
+        let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
         if height < 3 {
             return Ok(MINIMUM_DIFFICULTY)
         }
 
-        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, tips).await?;
+        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, tips.clone().into_iter()).await?;
         let biggest_difficulty = provider.get_difficulty_for_block_hash(best_tip).await?;
         let best_tip_timestamp = provider.get_timestamp_for_block_hash(best_tip).await?;
 
         let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
-        let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, &parent_tips).await?;
+        let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, parent_tips.iter()).await?;
         let parent_best_tip_timestamp = provider.get_timestamp_for_block_hash(parent_best_tip).await?;
  
         let difficulty = calculate_difficulty(parent_best_tip_timestamp, best_tip_timestamp, biggest_difficulty);
@@ -939,7 +939,12 @@ impl<S: Storage> Blockchain<S> {
     // pass in params the already computed block hash and its tips
     // check the difficulty calculated at tips
     // if the difficulty is valid, returns it (prevent to re-compute it)
-    pub async fn verify_proof_of_work<D: DifficultyProvider>(&self, provider: &D, hash: &Hash, tips: &Vec<Hash>) -> Result<Difficulty, BlockchainError> {
+    pub async fn verify_proof_of_work<'a, D, I>(&self, provider: &D, hash: &Hash, tips: I) -> Result<Difficulty, BlockchainError>
+    where
+        D: DifficultyProvider,
+        I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
+        I::IntoIter: ExactSizeIterator
+    {
         let difficulty = self.get_difficulty_at_tips(provider, tips).await?;
         if self.simulator || check_difficulty(hash, difficulty)? {
             Ok(difficulty)
@@ -975,6 +980,11 @@ impl<S: Storage> Blockchain<S> {
     }
 
     pub async fn add_tx_to_mempool_with_storage_and_hash<'a>(&'a self, storage: &S, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
+        let tx_size = tx.size();
+        if tx_size > MAX_TRANSACTION_SIZE {
+            return Err(BlockchainError::TxTooBig(tx_size, MAX_TRANSACTION_SIZE))
+        }
+
         {
             let mut mempool = self.mempool.write().await;
     
@@ -986,7 +996,7 @@ impl<S: Storage> Blockchain<S> {
             if storage.is_tx_executed_in_a_block(&hash)? {
                 return Err(BlockchainError::TxAlreadyInBlockchain(hash))
             }
-    
+
             let current_topoheight = self.get_topo_height();
             // get the highest nonce for this owner
             let owner = tx.get_owner();
@@ -1022,7 +1032,7 @@ impl<S: Storage> Blockchain<S> {
                 self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false, current_topoheight).await?;
             }
 
-            mempool.add_tx(hash.clone(), tx.clone())?;
+            mempool.add_tx(hash.clone(), tx.clone(), tx_size)?;
         }
 
         if broadcast {
@@ -1113,7 +1123,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         if tips.len() > 1 {
-            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &tips).await?.clone();
+            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, tips.iter()).await?.clone();
             debug!("Best tip selected for this block template is {}", best_tip);
             let mut selected_tips = Vec::with_capacity(tips.len());
             for hash in tips {
@@ -1128,7 +1138,7 @@ impl<S: Storage> Blockchain<S> {
             tips = selected_tips;
         }
 
-        let mut sorted_tips = blockdag::sort_tips(storage, &tips).await?;
+        let mut sorted_tips = blockdag::sort_tips(storage, tips.into_iter()).await?;
         if sorted_tips.len() > TIPS_LIMIT {
             let dropped_tips = sorted_tips.drain(TIPS_LIMIT..); // keep only first 3 heavier tips
             for hash in dropped_tips {
@@ -1136,8 +1146,8 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        let height = blockdag::calculate_height_at_tips(storage, &sorted_tips).await?;
-        let mut block = BlockHeader::new(self.get_version_at_height(height), height, get_current_in_millis(), sorted_tips, extra_nonce, address, Vec::new());
+        let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
+        let mut block = BlockHeader::new(self.get_version_at_height(height), height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
 
         trace!("Locking mempool for building block template");
         let mempool = self.mempool.read().await;
@@ -1183,7 +1193,7 @@ impl<S: Storage> Blockchain<S> {
                 } else {
                     trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(fee));
                     // TODO no clone
-                    block.txs_hashes.push(hash.as_ref().clone());
+                    block.txs_hashes.insert(hash.as_ref().clone());
                     block_size += HASH_SIZE; // add the hash size
                     total_txs_size += size;
                 }
@@ -1228,9 +1238,9 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::AlreadyInChain)
         }
 
-        if block.get_timestamp() > get_current_in_millis() + TIMESTAMP_IN_FUTURE_LIMIT { // accept 2s in future
+        if block.get_timestamp() > get_current_time_in_millis() + TIMESTAMP_IN_FUTURE_LIMIT { // accept 2s in future
             error!("Block timestamp is too much in future!");
-            return Err(BlockchainError::TimestampIsInFuture(get_current_in_millis(), block.get_timestamp()));
+            return Err(BlockchainError::TimestampIsInFuture(get_current_time_in_millis(), block.get_timestamp()));
         }
 
         let tips_count = block.get_tips().len();
@@ -1252,23 +1262,14 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidBlockSize(MAX_BLOCK_SIZE, block.size()));
         }
 
-        {
-            let mut cache = HashSet::with_capacity(tips_count);
-            for tip in block.get_tips() {
-                if !storage.has_block(tip).await? {
-                    error!("This block ({}) has a TIP ({}) which is not present in chain", block_hash, tip);
-                    return Err(BlockchainError::InvalidTips)
-                }
-
-                if cache.contains(tip) {
-                    error!("This block ({}) has a TIP ({}) which is duplicated", block_hash, tip);
-                    return Err(BlockchainError::InvalidTips)
-                }
-                cache.insert(tip);
+        for tip in block.get_tips() {
+            if !storage.has_block(tip).await? {
+                error!("This block ({}) has a TIP ({}) which is not present in chain", block_hash, tip);
+                return Err(BlockchainError::InvalidTips)
             }
         }
 
-        let block_height_by_tips = blockdag::calculate_height_at_tips(storage, block.get_tips()).await?;
+        let block_height_by_tips = blockdag::calculate_height_at_tips(storage, block.get_tips().iter()).await?;
         if block_height_by_tips != block.get_height() {
             error!("Invalid block height {}, expected {} for this block {}", block.get_height(), block_height_by_tips, block_hash);
             return Err(BlockchainError::InvalidBlockHeight(block_height_by_tips, block.get_height()))
@@ -1305,7 +1306,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         if tips_count > 1 {
-            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, block.get_tips()).await?;
+            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, block.get_tips().iter()).await?;
             debug!("Best tip selected for this new block is {}", best_tip);
             for hash in block.get_tips() {
                 if best_tip != hash {
@@ -1320,7 +1321,7 @@ impl<S: Storage> Blockchain<S> {
         // verify PoW and get difficulty for this block based on tips
         let pow_hash = block.get_pow_hash();
         debug!("POW hash: {}", pow_hash);
-        let difficulty = self.verify_proof_of_work(storage, &pow_hash, block.get_tips()).await?;
+        let difficulty = self.verify_proof_of_work(storage, &pow_hash, block.get_tips().iter()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
         let mut current_topoheight = self.get_topo_height();
@@ -1337,6 +1338,11 @@ impl<S: Storage> Blockchain<S> {
             let mut balances = HashMap::new();
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
+                let tx_size = tx.size();
+                if tx_size > MAX_TRANSACTION_SIZE {
+                    return Err(BlockchainError::TxTooBig(tx_size, MAX_TRANSACTION_SIZE))
+                }
+        
                 // verification that the real TX Hash is the same as in block header (and also check the correct order)
                 let tx_hash = tx.hash();
                 if tx_hash != *hash {
@@ -1367,7 +1373,7 @@ impl<S: Storage> Blockchain<S> {
                         // because that mean the miner was aware of the TX execution and still include it
                         if all_parents_txs.is_none() {
                             // load it only one time
-                            all_parents_txs = Some(self.get_all_txs_until_height(storage, stable_height, block.get_tips()).await?);
+                            all_parents_txs = Some(self.get_all_txs_until_height(storage, stable_height, block.get_tips().iter().map(Hash::clone)).await?);
                         }
 
                         // if its the case, we should reject the block
@@ -1501,7 +1507,6 @@ impl<S: Storage> Blockchain<S> {
                             storage.remove_tx_executed(&tx_hash)?;
                         }
                     }
-
                     topoheight += 1;
                 }
             }
@@ -1640,7 +1645,7 @@ impl<S: Storage> Blockchain<S> {
 
         tips = HashSet::new();
         debug!("find best tip by cumulative difficulty");
-        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, &new_tips).await?.clone();
+        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, new_tips.iter()).await?.clone();
         for hash in new_tips {
             if best_tip != hash {
                 if !self.validate_tips(&storage, &best_tip, &hash).await? {
@@ -1710,11 +1715,7 @@ impl<S: Storage> Blockchain<S> {
             self.stable_height.store(height, Ordering::SeqCst);
 
             trace!("update difficulty in cache");
-            let mut tips_vec = Vec::with_capacity(tips.len());
-            for hash in tips {
-                tips_vec.push(hash);
-            }
-            let difficulty = self.get_difficulty_at_tips(storage, &tips_vec).await?;
+            let difficulty = self.get_difficulty_at_tips(storage, tips.iter()).await?;
             self.difficulty.store(difficulty, Ordering::SeqCst);
         }
 
@@ -1792,19 +1793,14 @@ impl<S: Storage> Blockchain<S> {
 
     // retrieve all txs hashes until height or until genesis block
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
-    async fn get_all_txs_until_height(&self, storage: &S, until_height: u64, tips: &Vec<Hash>) -> Result<HashSet<Hash>, BlockchainError> {
+    async fn get_all_txs_until_height(&self, storage: &S, until_height: u64, tips: impl Iterator<Item = Hash>) -> Result<HashSet<Hash>, BlockchainError> {
         let mut hashes = HashSet::new();
-        let mut blocks_processed: HashSet<Hash> = HashSet::new();
-        let mut queue: Vec<Hash> = Vec::new();
-        queue.extend_from_slice(tips);
+        let mut queue: IndexSet<Hash> = IndexSet::new();
+        queue.extend(tips);
 
-        while !queue.is_empty() {
-            // get last element from queue (order doesn't matter and its faster than moving all elements)
-            let hash = queue.remove(queue.len() - 1);
+        // get last element from queue (order doesn't matter and its faster than moving all elements)
+        while let Some(hash) = queue.pop() {
             let block = storage.get_block_header_by_hash(&hash).await?;
-
-            // add it in cache to not re-process it again
-            blocks_processed.insert(hash);
 
             // check that the block height is higher than the height passed in param
             if until_height < block.get_height() {
@@ -1815,8 +1811,8 @@ impl<S: Storage> Blockchain<S> {
 
                 // add all tips from block (but check that we didn't already added it)
                 for tip in block.get_tips() {
-                    if !blocks_processed.contains(tip) {
-                        queue.push(tip.clone());
+                    if !queue.contains(tip) {
+                        queue.insert(tip.clone());
                     }
                 }
             }

@@ -10,7 +10,7 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use xelis_common::{
     crypto::{key::PublicKey, hash::Hash},
-    utils::get_current_in_millis,
+    utils::get_current_time_in_millis,
     api::daemon::{GetBlockTemplateResult, SubmitBlockParams},
     serializer::Serializer,
     block::{BlockHeader, BlockMiner, Difficulty},
@@ -45,7 +45,7 @@ pub struct Miner {
 impl Miner {
     pub fn new(key: PublicKey, name: String) -> Self {
         Self {
-            first_seen: get_current_in_millis(),
+            first_seen: get_current_time_in_millis(),
             key,
             name,
             blocks_found: 0
@@ -186,16 +186,16 @@ impl<S: Storage> GetWorkServer<S> {
                     error!("No mining job found! How is it possible ?");
                     InternalRpcError::InvalidRequest
                 })?;
-                job = BlockMiner::new(header.get_work_hash(), get_current_in_millis());
+                job = BlockMiner::new(header.get_work_hash(), get_current_time_in_millis());
                 height = header.height;
                 difficulty = *diff;
             } else {
                 // generate a mining job
                 let storage = self.blockchain.get_storage().read().await;
                 let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await.context("Error while retrieving block template")?;
-                difficulty = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips()).await.context("Error while retrieving difficulty at tips")?;
+                difficulty = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
 
-                job = BlockMiner::new(header.get_work_hash(), get_current_in_millis());
+                job = BlockMiner::new(header.get_work_hash(), get_current_time_in_millis());
                 height = header.height;
 
                 // save the mining job, and set it as last job
@@ -323,7 +323,7 @@ impl<S: Storage> GetWorkServer<S> {
     // each miner have his own task so nobody wait on other
     pub async fn notify_new_job_rate_limited(&self) -> Result<(), InternalRpcError> {
         {
-            let now = get_current_in_millis();
+            let now = get_current_time_in_millis();
             let mut last_notify = self.last_notify.lock().await;
             if now - *last_notify < self.notify_rate_limit_ms {
                 debug!("Rate limit reached, not notifying miners");
@@ -352,7 +352,7 @@ impl<S: Storage> GetWorkServer<S> {
         let (header, difficulty) = {
             let storage = self.blockchain.get_storage().read().await;
             let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await.context("Error while retrieving block template when notifying new job")?;
-            let difficulty = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips()).await.context("Error while retrieving difficulty at tips when notifying new job")?;
+            let difficulty = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips when notifying new job")?;
             (header, difficulty)
         };
 

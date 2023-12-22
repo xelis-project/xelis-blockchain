@@ -45,7 +45,7 @@ use xelis_common::{
     transaction::{Transaction, TransactionType},
     crypto::hash::Hash,
     block::{BlockHeader, Block},
-    config::{XELIS_ASSET, VERSION},
+    config::{XELIS_ASSET, VERSION, MAX_TRANSACTION_SIZE},
     immutable::Immutable,
     rpc_server::{RPCHandler, parse_params},
     context::Context
@@ -269,7 +269,7 @@ async fn get_block_template<S: Storage>(context: Context, body: Value) -> Result
 
     let storage = blockchain.get_storage().read().await;
     let block = blockchain.get_block_template_for_storage(&storage, params.address.into_owned().to_public_key()).await.context("Error while retrieving block template")?;
-    let difficulty = blockchain.get_difficulty_at_tips(&*storage, block.get_tips()).await.context("Error while retrieving difficulty at tips")?;
+    let difficulty = blockchain.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
     let height = block.height;
     Ok(json!(GetBlockTemplateResult { template: block.to_hex(), height, difficulty }))
 }
@@ -456,6 +456,11 @@ async fn count_transactions<S: Storage>(context: Context, body: Value) -> Result
 
 async fn submit_transaction<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SubmitTransactionParams = parse_params(body)?;
+    // x2 because of hex encoding
+    if params.data.len() > MAX_TRANSACTION_SIZE * 2 {
+        return Err(InternalRpcError::InvalidRequest).context(format!("Transaction size cannot be greater than {}", human_bytes(MAX_TRANSACTION_SIZE as f64)))?
+    }
+
     let transaction = Transaction::from_hex(params.data)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     blockchain.add_tx_to_mempool(transaction, true).await.map_err(|e| InternalRpcError::AnyError(e.into()))?;

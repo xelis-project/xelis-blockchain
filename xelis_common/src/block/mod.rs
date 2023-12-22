@@ -1,5 +1,7 @@
 mod miner;
 
+use indexmap::IndexSet;
+use log::debug;
 pub use miner::BlockMiner;
 
 use serde::Deserialize;
@@ -42,7 +44,7 @@ pub fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(deserializer: D) 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct BlockHeader {
     pub version: u8,
-    pub tips: Vec<Hash>,
+    pub tips: IndexSet<Hash>,
     #[serde(serialize_with = "serialize_timestamp")]
     #[serde(deserialize_with = "deserialize_timestamp")]
     pub timestamp: u128,
@@ -52,7 +54,7 @@ pub struct BlockHeader {
     #[serde(deserialize_with = "deserialize_extra_nonce")]
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE],
     pub miner: PublicKey,
-    pub txs_hashes: Vec<Hash>
+    pub txs_hashes: IndexSet<Hash>
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -63,7 +65,7 @@ pub struct Block {
 }
 
 impl BlockHeader {
-    pub fn new(version: u8, height: u64, timestamp: u128, tips: Vec<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: Vec<Hash>) -> Self {
+    pub fn new(version: u8, height: u64, timestamp: u128, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: IndexSet<Hash>) -> Self {
         BlockHeader {
             version,
             height,
@@ -96,7 +98,7 @@ impl BlockHeader {
         self.timestamp
     }
 
-    pub fn get_tips(&self) -> &Vec<Hash> {
+    pub fn get_tips(&self) -> &IndexSet<Hash> {
         &self.tips
     }
 
@@ -122,11 +124,11 @@ impl BlockHeader {
         &self.extra_nonce
     }
 
-    pub fn get_txs_hashes(&self) -> &Vec<Hash> {
+    pub fn get_txs_hashes(&self) -> &IndexSet<Hash> {
         &self.txs_hashes
     }
 
-    pub fn take_txs_hashes(self) -> Vec<Hash> {
+    pub fn take_txs_hashes(self) -> IndexSet<Hash> {
         self.txs_hashes
     }
 
@@ -184,7 +186,7 @@ impl BlockHeader {
         hash(&self.get_serialized_header())
     }
 
-    pub fn get_transactions(&self) -> &Vec<Hash> {
+    pub fn get_transactions(&self) -> &IndexSet<Hash> {
         &self.txs_hashes
     }
 }
@@ -245,15 +247,21 @@ impl Serializer for BlockHeader {
         let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
 
         let tips_count = reader.read_u8()?;
-        let mut tips = Vec::with_capacity(tips_count as usize);
+        let mut tips = IndexSet::with_capacity(tips_count as usize);
         for _ in 0..tips_count {
-            tips.push(reader.read_hash()?);
+            if !tips.insert(reader.read_hash()?) {
+                debug!("Error, duplicate tip found in block header");
+                return Err(ReaderError::InvalidValue)
+            }
         }
 
         let txs_count = reader.read_u16()?;
-        let mut txs_hashes = Vec::with_capacity(txs_count as usize);
+        let mut txs_hashes = IndexSet::with_capacity(txs_count as usize);
         for _ in 0..txs_count {
-            txs_hashes.push(reader.read_hash()?);
+            if !txs_hashes.insert(reader.read_hash()?) {
+                debug!("Error, duplicate tx hash found in block header");
+                return Err(ReaderError::InvalidValue)
+            }
         }
 
         let miner = PublicKey::read(reader)?;

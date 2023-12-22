@@ -59,7 +59,7 @@ pub struct SledStorage {
     // cached in memory
     transactions_cache: Option<Mutex<LruCache<Hash, Arc<Transaction>>>>,
     blocks_cache: Option<Mutex<LruCache<Hash, Arc<BlockHeader>>>>,
-    past_blocks_cache: Option<Mutex<LruCache<Hash, Arc<Vec<Hash>>>>>, // previous blocks saved at each new block
+    past_blocks_cache: Option<Mutex<LruCache<Hash, Arc<IndexSet<Hash>>>>>, // previous blocks saved at each new block
     topo_by_hash_cache: Option<Mutex<LruCache<Hash, u64>>>,
     hash_at_topo_cache: Option<Mutex<LruCache<u64, Hash>>>,
     cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, Difficulty>>>,
@@ -349,30 +349,22 @@ impl DifficultyProvider for SledStorage {
         self.get_cacheable_data_copiable(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash).await
     }
 
-    async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Arc<Vec<Hash>>, BlockchainError> {
+    async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Immutable<IndexSet<Hash>>, BlockchainError> {
         trace!("get past blocks of {}", hash);
         let tips = if let Some(cache) = &self.past_blocks_cache {
             let mut cache = cache.lock().await;
             if let Some(tips) = cache.get(hash) {
-                return Ok(tips.clone())
+                return Ok(Immutable::Arc(tips.clone()))
             }
     
             let block = self.get_block_header_by_hash(hash).await?;
-            let mut tips = Vec::with_capacity(block.get_tips().len());
-            for hash in block.get_tips() {
-                tips.push(hash.clone());
-            }
-    
-            let tips = Arc::new(tips);
+        
+            let tips = Arc::new(block.get_tips().clone());
             cache.put(hash.clone(), tips.clone());
-            tips
+            Immutable::Arc(tips)
         } else {
             let block = self.get_block_header_by_hash(hash).await?;
-            let mut tips = Vec::with_capacity(block.get_tips().len());
-            for hash in block.get_tips() {
-                tips.push(hash.clone());
-            }
-            Arc::new(tips)
+            Immutable::Owned(block.get_tips().clone())
         };
 
         Ok(tips)

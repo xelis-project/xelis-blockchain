@@ -12,7 +12,7 @@ use xelis_common::{
     serializer::Serializer,
     difficulty::check_difficulty,
     config::VERSION,
-    utils::{get_current_in_millis, format_hashrate, format_difficulty},
+    utils::{get_current_time_in_millis, format_hashrate, format_difficulty},
     crypto::{hash::{Hashable, Hash, hash}, address::Address},
     api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel, ShareablePrompt, self}, async_handler,
 };
@@ -340,7 +340,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
 
                         job.nonce += 1;
                         hash = job.get_pow_hash();
-                        job.timestamp = get_current_in_millis();
+                        job.timestamp = get_current_time_in_millis();
                         HASHRATE_COUNTER.fetch_add(1, Ordering::Relaxed);
                     }
 

@@ -54,6 +54,12 @@ impl std::hash::Hash for Hash {
     }
 }
 
+impl AsRef<Hash> for Hash {
+    fn as_ref(&self) -> &Hash {
+        self
+    }
+}
+
 impl Display for Hash {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         write!(f, "{}", &self.to_hex())

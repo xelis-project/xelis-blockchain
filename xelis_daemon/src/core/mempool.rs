@@ -9,8 +9,7 @@ use xelis_common::{
         hash::Hash,
         key::PublicKey
     },
-    transaction::Transaction,
-    serializer::Serializer
+    transaction::Transaction
 };
 
 #[derive(serde::Serialize)]
@@ -45,7 +44,7 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub fn add_tx(&mut self, hash: Hash, tx: Arc<Transaction>) -> Result<(), BlockchainError> {
+    pub fn add_tx(&mut self, hash: Hash, tx: Arc<Transaction>, size: usize) -> Result<(), BlockchainError> {
         let hash = Arc::new(hash);
         let nonce = tx.get_nonce();
         // update the cache for this owner
@@ -88,7 +87,7 @@ impl Mempool {
         }
 
         let sorted_tx = SortedTx {
-            size: tx.size(),
+            size,
             first_seen: get_current_time_in_seconds(),
             tx
         };
