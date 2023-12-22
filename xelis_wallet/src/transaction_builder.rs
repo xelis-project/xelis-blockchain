@@ -94,6 +94,7 @@ impl TransactionBuilder {
         self.estimate_fees_internal(&writer)
     }
 
+    // Build the transaction and sign it with the provided keypair
     pub fn build(self, keypair: &KeyPair) -> Result<Transaction, WalletError> {
         if *keypair.get_public_key() != self.owner {
             return Err(WalletError::InvalidKeyPair)
@@ -115,6 +116,7 @@ impl TransactionBuilder {
             }
         }
 
+        // Total extra data size must not exceed EXTRA_DATA_LIMIT_SIZE
         let extra_data_size = self.total_extra_data_size();
         if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
             return Err(WalletError::ExtraDataTooBig(EXTRA_DATA_LIMIT_SIZE, extra_data_size))

@@ -405,12 +405,12 @@ impl Wallet {
     // create a transfer from the wallet to the given address to send the given amount of the given asset
     // and include extra data if present
     // TODO encrypt all the extra data for the receiver
-    pub fn create_transfer(&self, storage: &EncryptedStorage, asset: Hash, key: PublicKey, extra_data: Option<DataElement>, amount: u64) -> Result<Transfer, Error> {
+    pub fn create_transfer(&self, storage: &EncryptedStorage, asset: Hash, key: PublicKey, extra_data: Option<DataElement>, amount: u64) -> Result<Transfer, WalletError> {
         let balance = storage.get_balance_for(&asset).unwrap_or(0);
         // check if we have enough funds for this asset
         if amount > balance {
             let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
-            return Err(WalletError::NotEnoughFunds(balance, amount, decimals, asset).into())
+            return Err(WalletError::NotEnoughFunds(balance, amount, decimals, asset))
         }
         
         // include all extra data in the TX
@@ -423,8 +423,9 @@ impl Wallet {
             // this allow us to prevent saving nonce in it and save space
             // NOTE: We must be sure to have a different key each time
 
+            // Verify the size of the extra data
             if writer.total_write() > EXTRA_DATA_LIMIT_SIZE {
-                return Err(WalletError::ExtraDataTooBig(EXTRA_DATA_LIMIT_SIZE, writer.total_write()).into())
+                return Err(WalletError::ExtraDataTooBig(EXTRA_DATA_LIMIT_SIZE, writer.total_write()))
             }
 
             Some(writer.bytes())
@@ -443,7 +444,7 @@ impl Wallet {
 
     // create the final transaction with calculated fees and signature
     // also check that we have enough funds for the transaction
-    pub fn create_transaction(&self, storage: &EncryptedStorage, transaction_type: TransactionType, fee: FeeBuilder) -> Result<Transaction, Error> {
+    pub fn create_transaction(&self, storage: &EncryptedStorage, transaction_type: TransactionType, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         let nonce = storage.get_nonce().unwrap_or(0);
         let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), transaction_type, nonce, fee);
         let assets_spent: HashMap<&Hash, u64> = builder.total_spent();
@@ -454,7 +455,7 @@ impl Wallet {
             let balance = storage.get_balance_for(asset).unwrap_or(0);
             if balance < *amount {
                 let decimals = storage.get_asset_decimals(asset).unwrap_or(COIN_DECIMALS);
-                return Err(WalletError::NotEnoughFunds(balance, *amount, decimals, asset.clone()).into())
+                return Err(WalletError::NotEnoughFunds(balance, *amount, decimals, asset.clone()))
             }
         }
 
@@ -462,7 +463,7 @@ impl Wallet {
         let total_native_spent = assets_spent.get(&XELIS_ASSET).unwrap_or(&0) +  builder.estimate_fees();
         let native_balance = storage.get_balance_for(&XELIS_ASSET).unwrap_or(0);
         if total_native_spent > native_balance {
-            return Err(WalletError::NotEnoughFundsForFee(native_balance, total_native_spent).into())
+            return Err(WalletError::NotEnoughFundsForFee(native_balance, total_native_spent))
         }
 
         Ok(builder.build(&self.keypair)?)
@@ -484,10 +485,10 @@ impl Wallet {
     }
 
     // set wallet in online mode: start a communication task which will keep the wallet synced
-    pub async fn set_online_mode(self: &Arc<Self>, daemon_address: &String) -> Result<(), Error> {
+    pub async fn set_online_mode(self: &Arc<Self>, daemon_address: &String) -> Result<(), WalletError> {
         if self.is_online().await {
             // user have to set in offline mode himself first
-            return Err(WalletError::AlreadyOnlineMode.into())
+            return Err(WalletError::AlreadyOnlineMode)
         }
 
         // create the network handler
@@ -568,36 +569,45 @@ impl Wallet {
         &self.network_handler
     }
 
+    // Create a signature of the given data
     pub fn sign_data(&self, data: &[u8]) -> Signature {
         self.keypair.sign(data)
     }
 
+    // Get the public key of the wallet
     pub fn get_public_key(&self) -> &PublicKey {
         self.keypair.get_public_key()
     }
 
+    // Get the address of the wallet using its network used
     pub fn get_address(&self) -> Address {
         self.keypair.get_public_key().to_address(self.get_network().is_mainnet())
     }
 
+    // Get the address with integrated data and using its network used
     pub fn get_address_with(&self, data: DataElement) -> Address {
         self.keypair.get_public_key().to_address_with(self.get_network().is_mainnet(), data)
     }
 
+    // Returns the seed using the language index provided
     pub fn get_seed(&self, language_index: usize) -> Result<String, Error> {
         let words = mnemonics::key_to_words(self.keypair.get_private_key(), language_index)?;
         Ok(words.join(" "))
     }
 
+    // Current account nonce for transactions
+    // Nonce is used against replay attacks on-chain
     pub async fn get_nonce(&self) -> u64 {
         let storage = self.storage.read().await;
         storage.get_nonce().unwrap_or(0)
     }
 
+    // Encrypted storage of the wallet
     pub fn get_storage(&self) -> &RwLock<EncryptedStorage> {
         &self.storage
     }
 
+    // Network that the wallet is using
     pub fn get_network(&self) -> &Network {
         &self.network
     }
