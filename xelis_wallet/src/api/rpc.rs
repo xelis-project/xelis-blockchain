@@ -183,7 +183,7 @@ async fn build_transaction(context: Context, body: Value) -> Result<Value, Inter
     // create the TX
     let tx = {
         let storage = wallet.get_storage().read().await;
-        wallet.create_transaction(&storage, params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64)))?
+        wallet.create_transaction(&storage, params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64))).context("Error while creating transaction")?
     };
 
     // if requested, broadcast the TX ourself
