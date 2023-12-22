@@ -304,6 +304,8 @@ impl<S: Storage> Blockchain<S> {
         info!("All modules are now stopped!");
     }
 
+    // Reload the storage and update all cache values
+    // Clear the mempool also in case of not being up-to-date
     pub async fn reload_from_disk(&self) -> Result<(), BlockchainError> {
         trace!("Reloading chain from disk");
         let storage = self.storage.read().await;
@@ -397,6 +399,8 @@ impl<S: Storage> Blockchain<S> {
         Ok(())
     }
 
+    // Prune the chain until topoheight
+    // This will delete all blocks / versioned balances / txs until topoheight in param
     pub async fn prune_until_topoheight(&self, topoheight: u64) -> Result<u64, BlockchainError> {
         let mut storage = self.storage.write().await;
         self.prune_until_topoheight_for_storage(topoheight, &mut storage).await
@@ -2187,6 +2191,7 @@ impl<S: Storage> Blockchain<S> {
     }
 }
 
+// Calculate the block reward based on the current supply
 pub fn get_block_reward(supply: u64) -> u64 {
     // Prevent any overflow
     if supply >= MAXIMUM_SUPPLY {
@@ -2198,6 +2203,7 @@ pub fn get_block_reward(supply: u64) -> u64 {
     base_reward * BLOCK_TIME_MILLIS / MILLIS_PER_SECOND / 180
 }
 
+// Returns the fee percentage for a block at a given height
 pub fn get_block_dev_fee(height: u64) -> u64 {
     for threshold in DEV_FEES.iter() {
         if height <= threshold.height {
