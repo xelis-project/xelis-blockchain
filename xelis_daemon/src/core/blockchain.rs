@@ -1202,6 +1202,7 @@ impl<S: Storage> Blockchain<S> {
         Ok(block)
     }
 
+    // Build a block using the header and search for TXs in mempool and storage
     pub async fn build_block_from_header(&self, header: Immutable<BlockHeader>) -> Result<Block, BlockchainError> {
         trace!("Searching TXs for block at height {}", header.get_height());
         let mut transactions: Vec<Immutable<Transaction>> = Vec::with_capacity(header.get_txs_count());
@@ -1224,11 +1225,13 @@ impl<S: Storage> Blockchain<S> {
         Ok(block)
     }
 
+    // Add a new block in chain
     pub async fn add_new_block(&self, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         let mut storage = self.storage.write().await;
         self.add_new_block_for_storage(&mut storage, block, broadcast, mining).await
     }
 
+    // Add a new block in chain using the requested storage
     pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         let start = Instant::now();
         let block_hash = block.hash();
@@ -1869,11 +1872,13 @@ impl<S: Storage> Blockchain<S> {
         Ok(false)
     }
 
+    // Rewind the chain by removing N blocks from the top
     pub async fn rewind_chain(&self, count: u64) -> Result<u64, BlockchainError> {
         let mut storage = self.storage.write().await;
         self.rewind_chain_for_storage(&mut storage, count).await
     }
 
+    // Rewind the chain by removing N blocks from the top
     pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64) -> Result<u64, BlockchainError> {
         trace!("rewind chain with count = {}", count);
         let current_height = self.get_height();
@@ -1882,6 +1887,8 @@ impl<S: Storage> Blockchain<S> {
         let (new_height, new_topoheight, txs) = storage.pop_blocks(current_height, current_topoheight, count).await?;
         debug!("New topoheight: {} (diff: {})", new_topoheight, current_topoheight - new_topoheight);
 
+        // Try to add all txs back to mempool if possible
+        // We try to prevent lost/to be orphaned
         {
             for (hash, tx) in txs {
                 debug!("Trying to add TX {} to mempool again", hash);
@@ -1929,6 +1936,7 @@ impl<S: Storage> Blockchain<S> {
     async fn verify_transaction_with_hash<'a>(&self, storage: &S, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("Verify transaction with hash {}", hash);
 
+        // Verify that the TX has a valid signature
         if !tx.verify_signature() {
             return Err(BlockchainError::InvalidTransactionSignature)
         }
@@ -1988,6 +1996,7 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
+                // Total extra data size must maximum 1KB
                 if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
                     return Err(BlockchainError::InvalidTransactionExtraDataTooBig(EXTRA_DATA_LIMIT_SIZE, extra_data_size))   
                 }
