@@ -492,8 +492,8 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
 
     let tx = {
         let storage = wallet.get_storage().read().await;
-        let transfer = wallet.create_transfer(&storage, asset, key, extra_data, amount)?;
-        wallet.create_transaction(&storage, TransactionType::Transfer(vec![transfer]), FeeBuilder::default())?
+        let transfer = wallet.create_transfer(&storage, asset, key, extra_data, amount).context("Error while creating transfer")?;
+        wallet.create_transaction(&storage, TransactionType::Transfer(vec![transfer]), FeeBuilder::default()).context("Error while creating transaction")?
     };
 
     broadcast_tx(wallet, manager, tx).await;
@@ -510,7 +510,7 @@ async fn burn(manager: &CommandManager, mut arguments: ArgumentManager) -> Resul
         let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
 
         manager.message(format!("Burning {} of {}", format_coin(amount, decimals), asset));
-        wallet.create_transaction(&storage, TransactionType::Burn { asset, amount }, FeeBuilder::Multiplier(1f64))?
+        wallet.create_transaction(&storage, TransactionType::Burn { asset, amount }, FeeBuilder::Multiplier(1f64)).context("Error while creating transaction")?
     };
 
     broadcast_tx(wallet, manager, tx).await;
