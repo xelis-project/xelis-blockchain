@@ -3,7 +3,7 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, asset::AssetWithData, serializer::Serializer, api::DataElement};
+use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, asset::AssetWithData, serializer::Serializer, api::DataElement, config::XELIS_ASSET};
 
 use crate::{daemon_api::DaemonAPI, wallet::{Wallet, Event}, entry::{EntryData, Transfer, TransactionEntry}};
 
@@ -123,6 +123,8 @@ impl NetworkHandler {
                     }
                 }
 
+                self.wallet.propagate_event(Event::BalanceChanged(asset.clone(), balance.get_balance())).await;
+
                 // lets write the final balance
                 let mut storage = self.wallet.get_storage().write().await;
                 storage.set_balance_for(asset, balance.get_balance())?;
@@ -145,8 +147,8 @@ impl NetworkHandler {
             let block: Block = response.data.data.into_owned();
             let block_hash = response.data.hash.into_owned();
 
-            // create Coinbase entry
-            if *block.get_miner() == *address.get_public_key() {
+            // create Coinbase entry if its our address and we're looking for XELIS asset
+            if *asset == XELIS_ASSET && *block.get_miner() == *address.get_public_key() {
                 if let Some(reward) = response.reward {
                     let coinbase = EntryData::Coinbase(reward);
                     let entry = TransactionEntry::new(block_hash.clone(), topoheight, None, None, coinbase);
@@ -161,6 +163,8 @@ impl NetworkHandler {
 
                     let mut storage = self.wallet.get_storage().write().await;
                     storage.save_transaction(entry.get_hash(), &entry)?;
+
+                    self.wallet.propagate_event(Event::NewTransaction(entry)).await;
                 } else {
                     warn!("No reward for block {} at topoheight {}", block_hash, topoheight);
                 }
@@ -301,6 +305,8 @@ impl NetworkHandler {
                     api_server.notify_event(&NotifyEvent::NewChainInfo, &info).await;
                 }
             }
+
+            self.wallet.propagate_event(Event::NewTopoHeight(info.topoheight)).await;
             top_block_hash = info.top_block_hash;
 
             if let Err(e) = self.sync_new_blocks(&address, current_topoheight, info.topoheight).await {

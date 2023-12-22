@@ -119,6 +119,10 @@ pub enum WalletError {
 pub enum Event {
     // When a TX is detected from daemon
     NewTransaction(TransactionEntry),
+    // When a new block is detected from daemon
+    NewTopoHeight(u64),
+    // When a balance change is detected from daemon
+    BalanceChanged(Hash, u64),
 }
 
 pub struct Wallet {
