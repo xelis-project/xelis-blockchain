@@ -1159,13 +1159,18 @@ impl Storage for SledStorage {
                 txs_count += 1;
             }
         }
-        let current_txs_count = self.count_transactions()?;
-        self.extra.insert(TXS_COUNT, &(current_txs_count + txs_count).to_be_bytes())?;
 
-        // Store block header
-        self.blocks.insert(hash.as_bytes(), block.to_bytes())?;
-        let blocks_count = self.count_blocks()? + 1;
-        self.extra.insert(BLOCKS_COUNT, &blocks_count.to_be_bytes())?;
+        // Increase only if necessary
+        if txs_count > 0 {
+            let current_txs_count = self.count_transactions()?;
+            self.extra.insert(TXS_COUNT, &(current_txs_count + txs_count).to_be_bytes())?;
+        }
+
+        // Store block header and increase blocks count if it's a new block
+        if self.blocks.insert(hash.as_bytes(), block.to_bytes())?.is_none() {
+            let blocks_count = self.count_blocks()? + 1;
+            self.extra.insert(BLOCKS_COUNT, &blocks_count.to_be_bytes())?;
+        }
 
         // Store difficulty
         self.difficulty.insert(hash.as_bytes(), &difficulty.to_be_bytes())?;
@@ -1173,7 +1178,8 @@ impl Storage for SledStorage {
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
 
         if let Some(cache) = &self.blocks_cache {
-            cache.lock().await.put(hash, block);
+            let mut cache = cache.lock().await;
+            cache.put(hash, block);
         }
 
         Ok(())
@@ -1321,6 +1327,10 @@ impl Storage for SledStorage {
         self.store_tips(&tips)?;
         self.set_top_topoheight(topoheight)?;
         self.set_top_height(height)?;
+
+        // Reduce the count of blocks stored
+        let count = self.count_blocks()? - done;
+        self.extra.insert(BLOCKS_COUNT, &count.to_be_bytes())?;
 
         Ok((height, topoheight, txs))
     }
