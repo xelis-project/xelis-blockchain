@@ -24,19 +24,28 @@ pub struct KeyPair {
 }
 
 impl PublicKey {
+    // Generate a random public key
+    pub fn random() -> Self {
+        KeyPair::new().public_key
+    }
+
+    // Verify the signature of the hash with the public key
     pub fn verify_signature(&self, hash: &Hash, signature: &Signature) -> bool {
         use ed25519_dalek::Verifier;
         self.0.verify(hash.as_bytes(), &signature.0).is_ok()
     }
 
+    // Returns the bytes representig the public key
     pub fn as_bytes(&self) -> &[u8; KEY_LENGTH] {
         self.0.as_bytes()
     }
 
+    // Convert the public key to human readable address with selected network
     pub fn to_address(&self, mainnet: bool) -> Address {
         Address::new(mainnet, AddressType::Normal, self.clone())
     }
 
+    // Convert the public key to human readable address with selected network and data
     pub fn to_address_with(&self, mainnet: bool, data: DataElement) -> Address {
         Address::new(mainnet, AddressType::Data(data), self.clone())
     }

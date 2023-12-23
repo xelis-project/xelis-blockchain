@@ -50,7 +50,7 @@ use tokio::{time::interval, sync::{Mutex, RwLock}};
 use log::{info, error, debug, warn, trace};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use rand::Rng;
+use rand::{Rng, rngs::OsRng};
 
 use super::blockdag;
 use super::error::BlockchainError;
@@ -261,18 +261,51 @@ impl<S: Storage> Blockchain<S> {
             warn!("Simulator mode enabled!");
             let zelf = Arc::clone(&arc);
             tokio::spawn(async move {
-                let mut interval = interval(Duration::from_millis(BLOCK_TIME_MILLIS));
-                loop {
-                    interval.tick().await;
-                    info!("Adding new simulated block...");
-                    if let Err(e) = zelf.mine_block(&DEV_PUBLIC_KEY).await {
-                        error!("Simulator error: {}", e);
-                    }
-                }
+                zelf.simulator_task(true).await;
             });
         }
 
         Ok(arc)
+    }
+
+    async fn simulator_task(&self, blockdag: bool) {
+        let mut interval = interval(Duration::from_millis(BLOCK_TIME_MILLIS));
+        let mut rng = OsRng;
+        let mut keys = Vec::new();
+
+        // Generate 10 random keys for mining
+        for _ in 0..10 {
+            keys.push(PublicKey::random());
+        }
+
+        'main: loop {
+            interval.tick().await;
+            info!("Adding new simulated block...");
+            // Number of blocks to generate
+            let blocks_count = if blockdag { rng.gen_range(1..5) } else { 1 };
+
+            let mut blocks = Vec::new();
+            for _ in 0..blocks_count {
+                let index = rng.gen_range(0..keys.len());
+                let selected_key = &keys[index];
+                match self.mine_block(&selected_key).await {
+                    Ok(block) => {
+                        blocks.push(block);
+                    },
+                    Err(e) => error!("Error while mining block: {}", e)
+                }
+            }
+
+            for block in blocks {
+                match self.add_new_block(block, false, false).await {
+                    Ok(_) => {},
+                    Err(e) => {
+                        error!("Error while adding block: {}", e);
+                        break 'main;
+                    }
+                }
+            }
+        }
     }
 
     // Stop all blockchain modules
@@ -372,7 +405,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // mine a block for current difficulty
-    pub async fn mine_block(self: &Arc<Self>, key: &PublicKey) -> Result<(), BlockchainError> {
+    pub async fn mine_block(&self, key: &PublicKey) -> Result<Block, BlockchainError> {
         let (mut header, difficulty) = {
             let storage = self.storage.read().await;
             let block = self.get_block_template_for_storage(&storage, key.clone()).await?;
@@ -392,11 +425,9 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let block = self.build_block_from_header(Immutable::Owned(header)).await?;
-        let zelf = Arc::clone(self);
         let block_height = block.get_height();
-        zelf.add_new_block(block, true, true).await?;
         info!("Mined a new block {} at height {}", hash, block_height);
-        Ok(())
+        Ok(block)
     }
 
     // Prune the chain until topoheight
@@ -1118,6 +1149,9 @@ impl<S: Storage> Blockchain<S> {
         storage.get_transaction(hash).await
     }
 
+    // Get the mining block template for miners
+    // This function is called when a miner request a new block template
+    // We create a block candidate with selected TXs from mempool
     pub async fn get_block_template_for_storage(&self, storage: &S, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
         let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>(); // generate random bytes
         let tips_set = storage.get_tips().await?;
@@ -1514,6 +1548,10 @@ impl<S: Storage> Blockchain<S> {
                             storage.remove_tx_executed(&tx_hash)?;
                         }
                     }
+
+                    storage.delete_versioned_balances_at_topoheight(topoheight).await?;
+                    storage.delete_versioned_nonces_at_topoheight(topoheight).await?;
+
                     topoheight += 1;
                 }
             }

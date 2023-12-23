@@ -35,6 +35,10 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
     async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
     async fn delete_tx(&mut self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError>;
+    // delete versioned balances at topoheight
+    async fn delete_versioned_balances_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
+    // delete versioned nonces at topoheight
+    async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
     // delete versioned balances above or at topoheight
     async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
     // delete versioned nonces above or at topoheight
@@ -94,6 +98,10 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn get_last_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(u64, VersionedBalance), BlockchainError>;
     async fn set_balance_at_topoheight(&mut self, asset: &Hash, topoheight: u64, key: &PublicKey, balance: &VersionedBalance) -> Result<(), BlockchainError>;
 
+    // Nonces
+    fn set_last_topoheight_for_nonce(&mut self, key: &PublicKey, topoheight: u64) -> Result<(), BlockchainError>;
+    fn delete_last_topoheight_for_nonce(&mut self, key: &PublicKey) -> Result<(), BlockchainError>;
+    async fn get_last_topoheight_for_nonce(&self, key: &PublicKey) -> Result<u64, BlockchainError>;
     async fn has_nonce(&self, key: &PublicKey) -> Result<bool, BlockchainError>;
     async fn has_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<bool, BlockchainError>;
     // returns its topoheight and its VersionedNonce
@@ -103,7 +111,6 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn get_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<VersionedNonce, BlockchainError>;
     async fn get_nonce_at_maximum_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<Option<(u64, VersionedNonce)>, BlockchainError>;
     // set the new highest topoheight for account
-    fn set_last_topoheight_for_nonce(&mut self, key: &PublicKey, topoheight: u64) -> Result<(), BlockchainError>;
     async fn set_nonce_at_topoheight(&mut self, key: &PublicKey, nonce: u64, topoheight: u64) -> Result<(), BlockchainError>;
 
     fn get_block_reward_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError>;
