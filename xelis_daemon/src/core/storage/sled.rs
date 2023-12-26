@@ -470,6 +470,7 @@ impl Storage for SledStorage {
     }
 
     async fn delete_versioned_balances_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete versioned balances at topoheight {}!", topoheight);
         for el in self.versioned_balances.scan_prefix(&topoheight.to_be_bytes()) {
             let (key, value) = el?;
             // Delete this version from DB
@@ -500,6 +501,7 @@ impl Storage for SledStorage {
     }
 
     async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete versioned nonces at topoheight {}", topoheight);
         for el in self.versioned_nonces.scan_prefix(&topoheight.to_be_bytes()) {
             let (key, value) = el?;
             // Delete this version from DB
@@ -512,7 +514,6 @@ impl Storage for SledStorage {
             if last_topoheight >= topoheight {
                 // Deserialize value, it is needed to get the previous topoheight
                 let version = VersionedNonce::from_bytes(&value)?;
-    
                 // Now records changes
                 if let Some(previous_topoheight) = version.get_previous_topoheight() {
                     self.set_last_topoheight_for_nonce(&key, previous_topoheight)?;

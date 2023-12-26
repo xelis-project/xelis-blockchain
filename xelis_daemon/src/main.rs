@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
     info!("XELIS Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
 
-    if config.nested.simulator && config.network != Network::Dev {
+    if config.nested.simulator.is_some() && config.network != Network::Dev {
         config.network = Network::Dev;
         warn!("Switching automatically to network {} because of simulator enabled", config.network);
     }

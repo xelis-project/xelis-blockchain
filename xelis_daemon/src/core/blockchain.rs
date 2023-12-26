@@ -42,7 +42,7 @@ use crate::{
         DaemonRpcServer, SharedDaemonRpcServer
     }
 };
-use super::storage::{Storage, DifficultyProvider};
+use super::{storage::{Storage, DifficultyProvider}, simulator::Simulator};
 use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::{Duration, Instant}, borrow::Cow};
 use std::collections::{HashMap, HashSet};
 use async_recursion::async_recursion;
@@ -89,7 +89,7 @@ pub struct Config {
     pub disable_getwork_server: bool,
     /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME)
     #[clap(long)]
-    pub simulator: bool,
+    pub simulator: Option<Simulator>,
     /// Disable the p2p connections
     #[clap(long)]
     pub disable_p2p_server: bool,
@@ -127,7 +127,7 @@ pub struct Blockchain<S: Storage> {
     // its used as cache to display current network hashrate
     difficulty: AtomicU64,
     // used to skip PoW verification
-    simulator: bool,
+    simulator: Option<Simulator>,
     // current network type on which one we're using/connected to
     network: Network,
     // this cache is used to avoid to recompute the common base for each block and is mandatory
@@ -144,7 +144,7 @@ impl<S: Storage> Blockchain<S> {
     pub async fn new(config: Config, network: Network, storage: S) -> Result<Arc<Self>, Error> {
         // Do some checks on config params
         {
-            if config.simulator && network != Network::Dev {
+            if config.simulator.is_some() && network != Network::Dev {
                 error!("Impossible to enable simulator mode except in dev network!");
                 return Err(BlockchainError::InvalidNetwork.into())
             }
@@ -257,18 +257,21 @@ impl<S: Storage> Blockchain<S> {
             };
         }
 
-        if arc.simulator {
-            warn!("Simulator mode enabled!");
+        // Start the simulator task if necessary
+        if let Some(simulator) = arc.simulator {
+            warn!("Simulator {} mode enabled!", simulator);
             let zelf = Arc::clone(&arc);
             tokio::spawn(async move {
-                zelf.simulator_task(true).await;
+                zelf.simulator_task(simulator).await;
             });
         }
 
         Ok(arc)
     }
 
-    async fn simulator_task(&self, blockdag: bool) {
+    // Start the Simulator mode to generate new blocks automatically
+    // It generates random miner keys and mine blocks with them
+    async fn simulator_task(&self, simulator: Simulator) {
         let mut interval = interval(Duration::from_millis(BLOCK_TIME_MILLIS));
         let mut rng = OsRng;
         let mut keys = Vec::new();
@@ -282,9 +285,13 @@ impl<S: Storage> Blockchain<S> {
             interval.tick().await;
             info!("Adding new simulated block...");
             // Number of blocks to generate
-            let blocks_count = if blockdag { rng.gen_range(1..5) } else { 1 };
+            let blocks_count = if simulator == Simulator::BlockDag {
+                rng.gen_range(1..5)
+            } else {
+                1
+            };
 
-            let mut blocks = Vec::new();
+            let mut blocks = Vec::with_capacity(blocks_count);
             for _ in 0..blocks_count {
                 let index = rng.gen_range(0..keys.len());
                 let selected_key = &keys[index];
@@ -306,6 +313,11 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
         }
+    }
+
+    // Detect if the simulator task has been started
+    pub fn is_simulator_enabled(&self) -> bool {
+        self.simulator.is_some()
     }
 
     // Stop all blockchain modules
@@ -414,7 +426,7 @@ impl<S: Storage> Blockchain<S> {
         };
         let mut hash = header.hash();
         let mut current_height = self.get_height();
-        while !self.simulator && !check_difficulty(&hash, difficulty)? {
+        while !self.is_simulator_enabled() && !check_difficulty(&hash, difficulty)? {
             if self.get_height() != current_height {
                 current_height = self.get_height();
                 header = self.get_block_template(key.clone()).await?;
@@ -848,6 +860,8 @@ impl<S: Storage> Blockchain<S> {
         Ok((set, score))
     }
 
+    // find the best tip (highest cumulative difficulty)
+    // We get their cumulative difficulty and sort them then take the first one
     async fn find_best_tip<'a>(&self, storage: &S, tips: &'a HashSet<Hash>, base: &Hash, base_height: u64) -> Result<&'a Hash, BlockchainError> {
         if tips.len() == 0 {
             return Err(BlockchainError::ExpectedTips)
@@ -939,6 +953,10 @@ impl<S: Storage> Blockchain<S> {
         Ok(best_difficulty * 91 / 100 < block_difficulty)
     }
 
+    // Get difficulty at tips
+    // If tips is empty, returns genesis difficulty
+    // Find the best tip (highest cumulative difficulty), then its difficulty, timestamp and its own tips
+    // Same for its parent, then calculate the difficulty between the two timestamps
     pub async fn get_difficulty_at_tips<'a, D, I>(&self, provider: &D, tips: I) -> Result<Difficulty, BlockchainError>
     where
         D: DifficultyProvider,
@@ -981,39 +999,47 @@ impl<S: Storage> Blockchain<S> {
         I::IntoIter: ExactSizeIterator
     {
         let difficulty = self.get_difficulty_at_tips(provider, tips).await?;
-        if self.simulator || check_difficulty(hash, difficulty)? {
+        if self.is_simulator_enabled() || check_difficulty(hash, difficulty)? {
             Ok(difficulty)
         } else {
             Err(BlockchainError::InvalidDifficulty)
         }
     }
 
+    // Returns the P2p module used for blockchain if enabled
     pub fn get_p2p(&self) -> &RwLock<Option<Arc<P2pServer<S>>>> {
         &self.p2p
     }
 
+    // Returns the RPC server used for blockchain if enabled
     pub fn get_rpc(&self) -> &RwLock<Option<SharedDaemonRpcServer<S>>> {
         &self.rpc
     }
 
+    // Returns the storage used for blockchain
     pub fn get_storage(&self) -> &RwLock<S> {
         &self.storage
     }
 
+    // Returns the blockchain mempool used
     pub fn get_mempool(&self) -> &RwLock<Mempool> {
         &self.mempool
     }
 
+    // Add a tx to the mempool, its hash will be computed
     pub async fn add_tx_to_mempool(&self, tx: Transaction, broadcast: bool) -> Result<(), BlockchainError> {
         let hash = tx.hash();
         self.add_tx_to_mempool_with_hash(tx, hash, broadcast).await
     }
 
+    // Add a tx to the mempool with the given hash, it is not computed and the TX is transformed into an Arc
     pub async fn add_tx_to_mempool_with_hash<'a>(&'a self, tx: Transaction, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
         let storage = self.storage.read().await;
         self.add_tx_to_mempool_with_storage_and_hash(&*storage, Arc::new(tx), hash, broadcast).await
     }
 
+    // Add a tx to the mempool with the given hash, it will verify the TX and check that it is not already in mempool or in blockchain
+    // and its validity (nonce, balance, etc...)
     pub async fn add_tx_to_mempool_with_storage_and_hash<'a>(&'a self, storage: &S, tx: Arc<Transaction>, hash: Hash, broadcast: bool) -> Result<(), BlockchainError> {
         let tx_size = tx.size();
         if tx_size > MAX_TRANSACTION_SIZE {
@@ -1109,6 +1135,7 @@ impl<S: Storage> Blockchain<S> {
         0
     }
 
+    // Get a block template for the new block work (mining)
     pub async fn get_block_template(&self, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
         let storage = self.storage.read().await;
         self.get_block_template_for_storage(&storage, address).await
@@ -2156,6 +2183,8 @@ impl<S: Storage> Blockchain<S> {
         self.add_balance(storage, balances, block.get_miner(), &XELIS_ASSET, block_reward + total_fees, topoheight).await
     }
 
+    // Execute the transaction by applying all its changes in the Storage
+    // nonces and balances parameters are caches for faster execution (reduce IO operations)
     async fn execute_transaction<'a>(&self, storage: &mut S, transaction: &'a Transaction, nonces: &mut HashMap<PublicKey, u64>, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, topoheight: u64) -> Result<(), BlockchainError> {
         let mut total_deducted: HashMap<&'a Hash, u64> = HashMap::new();
         total_deducted.insert(&XELIS_ASSET, transaction.get_fee());
@@ -2196,6 +2225,10 @@ impl<S: Storage> Blockchain<S> {
         Ok(())
     }
 
+    // Calculate the average block time on the last 50 blocks
+    // It will return the target block time if we don't have enough blocks
+    // We calculate it by taking the timestamp of the block at topoheight - 50 and the timestamp of the block at topoheight
+    // It is the same as computing the average time between the last 50 blocks but much faster
     pub async fn get_average_block_time_for_storage(&self, storage: &S) -> Result<u64, BlockchainError> {
         // current topoheight
         let topoheight = self.get_topo_height();
