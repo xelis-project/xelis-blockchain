@@ -158,8 +158,6 @@ For example, you can integrate in it a unique identifier that will be integrated
 Maximum data allowed is 1KB (same as transaction payload).
 
 Every data is integrated in the transaction payload when using an integrated address.
-Some exceptions are used to execute actions in wallet side directly:
-- TODO
 
 ## P2p
 
@@ -189,7 +187,7 @@ Except at beginning, this packet should never be sent again.
 ### Ping
 
 Ping packet is sent at an regular interval and inform peers of the our blockchain state.
-Every 15 minutes, the packet can up to `MAX_LEN` sockets addresses (IPv4 or IPv6) to help others nodes to extends theirs peers list.
+Every 15 minutes, the packet can contains up to `MAX_LEN` sockets addresses (IPv4 or IPv6) to help others nodes to extends theirs peers list.
 
 ### Chain Sync
 
@@ -234,7 +232,7 @@ All theses data are saved in plaintext.
 |       tx_blocks       |    Hash    |   Array of Hash   |      All blocks in which this TX hash is included      |
 |       balances        |   Custom   |      Integer      |          Last topoheight of versioned balance          |
 |         nonces        | Public Key |      Integer      |     Store the highest topoheight of versioned nonce    |
-|  versioned_balances   |   Custom   | Versioned Balance |       Key is composed of topoheight + public key       |
+|  versioned_balances   |   Custom   | Versioned Balance |   Key is composed of topoheight + asset + public key   |
 |   versioned_nonces    |   Custom   |  Versioned Nonce  |       Key is composed of topoheight + public key       |
 
 **NOTE**:
@@ -260,6 +258,10 @@ At this moment with current implementation, minimal overhead per new account is 
 - `nonces` Public Key (32 bytes) => topoheight of last versioned nonce (8 bytes)
 - `versioned_balances` Hash of (Public Key + Topoheight) (32 bytes) => Versioned Balance (16 bytes)
 - `versioned_nonces` Hash of (Public Key + Topoheight) (32 bytes) => Versioned Nonce (16 bytes)
+
+An optimized version could be done to reduce further the disk usage by creating pointers.
+Instead of saving multiple times the whole Public Key (32 bytes), we create a pointer table to which a u64 value is assigned.
+And we store this u64 id instead of the whole Public Key, asset..
 
 ## Wallet
 
