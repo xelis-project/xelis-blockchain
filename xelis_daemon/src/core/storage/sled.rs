@@ -505,7 +505,7 @@ impl Storage for SledStorage {
         for el in self.versioned_nonces.scan_prefix(&topoheight.to_be_bytes()) {
             let (key, value) = el?;
             // Delete this version from DB
-            self.versioned_balances.remove(&key)?;
+            self.versioned_nonces.remove(&key)?;
 
             // Deserialize keys part
             let key = PublicKey::from_bytes(&key[8..40])?;
