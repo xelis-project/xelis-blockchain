@@ -470,6 +470,11 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Target Block Time: {:.2}s", BLOCK_TIME_MILLIS as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Current Supply: {} XELIS", format_xelis(supply)));
     manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(supply))));
+    let accounts_count = storage.count_accounts().context("Error while counting accounts")?;
+    let transactions_count = storage.count_transactions().context("Error while counting transactions")?;
+    let blocks_count = storage.count_blocks().context("Error while counting blocks")?;
+    let assets = storage.count_assets().context("Error while counting assets")?;
+    manager.message(format!("Stored accounts/transactions/blocks/assets: {}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets));
 
     manager.message(format!("Tips ({}):", tips.len()));
     for hash in tips {
