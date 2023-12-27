@@ -39,7 +39,6 @@ pub const TIMESTAMP_IN_FUTURE_LIMIT: u128 = 2 * 1000;
 pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
 
 // BlockDAG rules
-pub const TIPS_LIMIT: usize = 3; // maximum 3 previous blocks
 pub const STABLE_LIMIT: u64 = 8; // in how many height we consider the block stable
 
 // Emission rules

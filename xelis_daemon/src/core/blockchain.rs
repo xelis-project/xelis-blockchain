@@ -3,7 +3,7 @@ use indexmap::IndexSet;
 use lru::LruCache;
 use serde_json::{Value, json};
 use xelis_common::{
-    config::{XELIS_ASSET, COIN_DECIMALS, MAX_TRANSACTION_SIZE},
+    config::{XELIS_ASSET, COIN_DECIMALS, MAX_TRANSACTION_SIZE, TIPS_LIMIT},
     crypto::{key::PublicKey, hash::{Hashable, Hash, HASH_SIZE}},
     difficulty::check_difficulty,
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
@@ -29,7 +29,7 @@ use xelis_common::{
 use crate::{
     config::{
         DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE,
-        EMISSION_SPEED_FACTOR, MAXIMUM_SUPPLY, DEV_FEES, GENESIS_BLOCK, TIPS_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
+        EMISSION_SPEED_FACTOR, MAXIMUM_SUPPLY, DEV_FEES, GENESIS_BLOCK, TIMESTAMP_IN_FUTURE_LIMIT,
         STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, SIDE_BLOCK_REWARD_PERCENT,
         DEV_PUBLIC_KEY, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS, MILLIS_PER_SECOND, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS,
     },
@@ -43,14 +43,14 @@ use crate::{
     }
 };
 use super::{storage::{Storage, DifficultyProvider}, simulator::Simulator};
-use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::{Duration, Instant}, borrow::Cow};
+use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::Instant, borrow::Cow};
 use std::collections::{HashMap, HashSet};
 use async_recursion::async_recursion;
-use tokio::{time::interval, sync::{Mutex, RwLock}};
+use tokio::sync::{Mutex, RwLock};
 use log::{info, error, debug, warn, trace};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use rand::{Rng, rngs::OsRng};
+use rand::Rng;
 
 use super::blockdag;
 use super::error::BlockchainError;
@@ -260,59 +260,13 @@ impl<S: Storage> Blockchain<S> {
         // Start the simulator task if necessary
         if let Some(simulator) = arc.simulator {
             warn!("Simulator {} mode enabled!", simulator);
-            let zelf = Arc::clone(&arc);
+            let blockchain = Arc::clone(&arc);
             tokio::spawn(async move {
-                zelf.simulator_task(simulator).await;
+                simulator.start(blockchain).await;
             });
         }
 
         Ok(arc)
-    }
-
-    // Start the Simulator mode to generate new blocks automatically
-    // It generates random miner keys and mine blocks with them
-    async fn simulator_task(&self, simulator: Simulator) {
-        let mut interval = interval(Duration::from_millis(BLOCK_TIME_MILLIS));
-        let mut rng = OsRng;
-        let mut keys = Vec::new();
-
-        // Generate 10 random keys for mining
-        for _ in 0..10 {
-            keys.push(PublicKey::random());
-        }
-
-        'main: loop {
-            interval.tick().await;
-            info!("Adding new simulated block...");
-            // Number of blocks to generate
-            let blocks_count = if simulator == Simulator::BlockDag {
-                rng.gen_range(1..5)
-            } else {
-                1
-            };
-
-            let mut blocks = Vec::with_capacity(blocks_count);
-            for _ in 0..blocks_count {
-                let index = rng.gen_range(0..keys.len());
-                let selected_key = &keys[index];
-                match self.mine_block(&selected_key).await {
-                    Ok(block) => {
-                        blocks.push(block);
-                    },
-                    Err(e) => error!("Error while mining block: {}", e)
-                }
-            }
-
-            for block in blocks {
-                match self.add_new_block(block, false, false).await {
-                    Ok(_) => {},
-                    Err(e) => {
-                        error!("Error while adding block: {}", e);
-                        break 'main;
-                    }
-                }
-            }
-        }
     }
 
     // Detect if the simulator task has been started
@@ -2006,7 +1960,7 @@ impl<S: Storage> Blockchain<S> {
         trace!("Verify transaction with hash {}", hash);
 
         // Verify that the TX has a valid signature
-        if !tx.verify_signature() {
+        if !self.is_simulator_enabled() && !tx.verify_signature() {
             return Err(BlockchainError::InvalidTransactionSignature)
         }
 
