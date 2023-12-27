@@ -16,7 +16,7 @@ use xelis_common::{
 use std::{
     collections::HashSet,
     hash::Hash as StdHash,
-    sync::Arc
+    sync::{Arc, atomic::{AtomicU64, Ordering}}
 };
 use tokio::sync::Mutex;
 use lru::LruCache;
@@ -67,7 +67,12 @@ pub struct SledStorage {
     balances_trees_cache: Option<Mutex<LruCache<(Hash, u64), Tree>>>, // versioned balances tree keep in cache to prevent hash recompute
     nonces_trees_cache: Option<Mutex<LruCache<u64, Tree>>>, // versioned nonces tree keep in cache to prevent hash recompute
     tips_cache: Tips,
-    pruned_topoheight: Option<u64>
+    pruned_topoheight: Option<u64>,
+    // Atomic counters
+    assets_count: AtomicU64,
+    accounts_count: AtomicU64,
+    transactions_count: AtomicU64,
+    blocks_count: AtomicU64
 }
 
 macro_rules! init_cache {
@@ -112,7 +117,11 @@ impl SledStorage {
             balances_trees_cache: init_cache!(cache_size),
             nonces_trees_cache: init_cache!(cache_size),
             tips_cache: HashSet::new(),
-            pruned_topoheight: None
+            pruned_topoheight: None,
+            assets_count: AtomicU64::new(0),
+            accounts_count: AtomicU64::new(0),
+            transactions_count: AtomicU64::new(0),
+            blocks_count: AtomicU64::new(0)
         };
 
         if storage.has_network()? {
@@ -132,6 +141,26 @@ impl SledStorage {
         if let Ok(pruned_topoheight) = storage.load_from_disk::<u64>(&storage.extra, PRUNED_TOPOHEIGHT) {
             debug!("Found pruned topoheight: {}", pruned_topoheight);
             storage.pruned_topoheight = Some(pruned_topoheight);
+        }
+
+        if let Ok(assets_count) = storage.load_from_disk::<u64>(&storage.extra, ASSETS_COUNT) {
+            debug!("Found assets count: {}", assets_count);
+            storage.assets_count.store(assets_count, Ordering::SeqCst);
+        }
+
+        if let Ok(txs_count) = storage.load_from_disk::<u64>(&storage.extra, TXS_COUNT) {
+            debug!("Found txs count: {}", txs_count);
+            storage.transactions_count.store(txs_count, Ordering::SeqCst);
+        }
+
+        if let Ok(blocks_count) = storage.load_from_disk::<u64>(&storage.extra, BLOCKS_COUNT) {
+            debug!("Found blocks count: {}", blocks_count);
+            storage.blocks_count.store(blocks_count, Ordering::SeqCst);
+        }
+
+        if let Ok(accounts_count) = storage.load_from_disk::<u64>(&storage.extra, ACCOUNTS_COUNT) {
+            debug!("Found accounts count: {}", accounts_count);
+            storage.accounts_count.store(accounts_count, Ordering::SeqCst);
         }
 
         Ok(storage)
@@ -275,6 +304,35 @@ impl SledStorage {
         Ok(tree.contains_key(&key.to_bytes())?)
     }
 
+    // Update the accounts count and store it on disk
+    fn store_accounts_count(&self, count: u64) -> Result<(), BlockchainError> {
+        self.accounts_count.store(count, Ordering::SeqCst);
+        self.extra.insert(ACCOUNTS_COUNT, &count.to_be_bytes())?;
+        Ok(())
+    }
+
+    // Update the txs count and store it on disk
+    fn store_transactions_count(&self, count: u64) -> Result<(), BlockchainError> {
+        self.transactions_count.store(count, Ordering::SeqCst);
+        self.extra.insert(TXS_COUNT, &count.to_be_bytes())?;
+        Ok(())
+    }
+
+    // Update the blocks count and store it on disk
+    fn store_blocks_count(&self, count: u64) -> Result<(), BlockchainError> {
+        self.blocks_count.store(count, Ordering::SeqCst);
+        self.extra.insert(BLOCKS_COUNT, &count.to_be_bytes())?;
+        Ok(())
+    }
+
+    // Update the assets count and store it on disk
+    fn store_assets_count(&self, count: u64) -> Result<(), BlockchainError> {
+        self.assets_count.store(count, Ordering::SeqCst);
+        self.extra.insert(ASSETS_COUNT, &count.to_be_bytes())?;
+        Ok(())
+    }
+    // Generate a key including the key and its asset
+    // It is used to store/retrieve the highest topoheight version available
     fn get_balance_key_for(&self, key: &PublicKey, asset: &Hash) -> [u8; 64] {
         let mut bytes = [0; 64];
         bytes[0..32].copy_from_slice(key.as_bytes());
@@ -470,7 +528,7 @@ impl Storage for SledStorage {
     }
 
     async fn delete_versioned_balances_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("delete versioned balances at topoheight {}!", topoheight);
+        trace!("delete versioned balances at topoheight {}", topoheight);
         for el in self.versioned_balances.scan_prefix(&topoheight.to_be_bytes()) {
             let (key, value) = el?;
             // Delete this version from DB
@@ -510,21 +568,24 @@ impl Storage for SledStorage {
             // Deserialize keys part
             let key = PublicKey::from_bytes(&key[8..40])?;
 
-            let last_topoheight = self.get_last_topoheight_for_nonce(&key).await?;
-            if last_topoheight >= topoheight {
-                // Deserialize value, it is needed to get the previous topoheight
-                let version = VersionedNonce::from_bytes(&value)?;
-                // Now records changes
-                if let Some(previous_topoheight) = version.get_previous_topoheight() {
-                    self.set_last_topoheight_for_nonce(&key, previous_topoheight)?;
-                } else {
-                    // if there is no previous topoheight, it means that this is the first version
-                    // so we can delete the balance
-                    self.delete_last_topoheight_for_nonce(&key)?;
+            // Because of chain reorg, it may have been already deleted
+            if let Ok(last_topoheight) = self.get_last_topoheight_for_nonce(&key).await {
+                if last_topoheight >= topoheight {
+                    // Deserialize value, it is needed to get the previous topoheight
+                    let version = VersionedNonce::from_bytes(&value)?;
+                    // Now records changes
+                    if let Some(previous_topoheight) = version.get_previous_topoheight() {
+                        self.set_last_topoheight_for_nonce(&key, previous_topoheight)?;
+                    } else {
+                        // if there is no previous topoheight, it means that this is the first version
+                        // so we can delete the balance
+                        self.delete_last_topoheight_for_nonce(&key)?;
+                    }
                 }
             }
         }
 
+        trace!("delete versioned nonces at topoheight {} done!", topoheight);
         Ok(())
     }
 
@@ -779,7 +840,7 @@ impl Storage for SledStorage {
 
     fn count_accounts(&self) -> Result<u64, BlockchainError> {
         trace!("count accounts");
-        Ok(self.load_from_disk(&self.extra, ACCOUNTS_COUNT).unwrap_or(0))
+        Ok(self.accounts_count.load(Ordering::SeqCst))
     }
 
     fn get_block_executer_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
@@ -834,8 +895,8 @@ impl Storage for SledStorage {
         trace!("add asset {} at topoheight {}", asset, data.get_topoheight());
         self.assets.insert(asset.as_bytes(), data.to_bytes())?;
 
-        let assets_count = self.count_assets()? + 1;
-        self.extra.insert(ASSETS_COUNT, &assets_count.to_be_bytes())?;
+        // Update counter
+        self.store_assets_count(self.count_assets()? + 1)?;
 
         if let Some(cache) = &self.assets_cache {
             let mut cache = cache.lock().await;
@@ -861,7 +922,7 @@ impl Storage for SledStorage {
     // count assets in storage
     fn count_assets(&self) -> Result<u64, BlockchainError> {
         trace!("count assets");
-        Ok(self.load_from_disk(&self.extra, ASSETS_COUNT).unwrap_or(0))
+        Ok(self.assets_count.load(Ordering::SeqCst))
     }
 
     fn get_asset_data(&self, asset: &Hash) -> Result<AssetData, BlockchainError> {
@@ -1099,7 +1160,9 @@ impl Storage for SledStorage {
 
     fn delete_last_topoheight_for_nonce(&mut self, key: &PublicKey) -> Result<(), BlockchainError> {
         trace!("delete last topoheight for nonce {}", key);
-        self.nonces.remove(key.as_bytes())?;
+        if self.nonces.remove(key.as_bytes())?.is_some() {
+            self.store_accounts_count(self.count_accounts()? - 1)?;
+        }
         Ok(())
     }
 
@@ -1191,8 +1254,7 @@ impl Storage for SledStorage {
     fn set_last_topoheight_for_nonce(&mut self, key: &PublicKey, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("set last topoheight for nonce {} to {}", key, topoheight);
         if self.nonces.insert(&key.as_bytes(), &topoheight.to_be_bytes())?.is_none() {
-            let count = self.count_accounts()? + 1;
-            self.extra.insert(ACCOUNTS_COUNT, &count.to_be_bytes())?;
+            self.store_accounts_count(self.count_accounts()? + 1)?;
         }
 
         Ok(())
@@ -1225,7 +1287,7 @@ impl Storage for SledStorage {
 
     fn count_transactions(&self) -> Result<u64, BlockchainError> {
         trace!("count transactions");
-        Ok(self.load_from_disk(&self.extra, TXS_COUNT).unwrap_or(0))
+        Ok(self.transactions_count.load(Ordering::SeqCst))
     }
 
     async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError> {
@@ -1242,14 +1304,12 @@ impl Storage for SledStorage {
 
         // Increase only if necessary
         if txs_count > 0 {
-            let current_txs_count = self.count_transactions()?;
-            self.extra.insert(TXS_COUNT, &(current_txs_count + txs_count).to_be_bytes())?;
+            self.store_transactions_count(self.count_transactions()? + txs_count)?;
         }
 
         // Store block header and increase blocks count if it's a new block
         if self.blocks.insert(hash.as_bytes(), block.to_bytes())?.is_none() {
-            let blocks_count = self.count_blocks()? + 1;
-            self.extra.insert(BLOCKS_COUNT, &blocks_count.to_be_bytes())?;
+            self.store_blocks_count(self.count_blocks()? + 1)?;
         }
 
         // Store difficulty
@@ -1345,7 +1405,10 @@ impl Storage for SledStorage {
             let (key, value) = el?;
             let highest_topoheight = u64::from_bytes(&value)?;
             if highest_topoheight > topoheight {
-                self.nonces.remove(&key)?;
+                if self.nonces.remove(&key)?.is_some() {
+                    self.store_accounts_count(self.count_accounts()? - 1)?;
+                }
+
                 // find the first version which is under topoheight
                 let pkey = PublicKey::from_bytes(&key)?;
                 let mut version = self.get_nonce_at_exact_topoheight(&pkey, highest_topoheight).await?;
@@ -1353,7 +1416,9 @@ impl Storage for SledStorage {
                     if previous_topoheight < topoheight {
                         // we find the new highest version which is under new topoheight
                         trace!("New highest version nonce for {} is at topoheight {}", pkey, previous_topoheight);
-                        self.nonces.insert(&key, &previous_topoheight.to_be_bytes())?;
+                        if self.nonces.insert(&key, &previous_topoheight.to_be_bytes())?.is_none() {
+                            self.store_accounts_count(self.count_accounts()? + 1)?;
+                        }
                         break;
                     }
 
@@ -1422,7 +1487,7 @@ impl Storage for SledStorage {
 
     fn count_blocks(&self) -> Result<u64, BlockchainError> {
         trace!("count blocks");
-        Ok(self.load_from_disk(&self.extra, BLOCKS_COUNT).unwrap_or(0))
+        Ok(self.blocks_count.load(Ordering::SeqCst))
     }
 
     async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
