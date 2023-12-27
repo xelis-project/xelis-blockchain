@@ -6,6 +6,7 @@ pub use miner::BlockMiner;
 
 use serde::Deserialize;
 
+use crate::config::TIPS_LIMIT;
 use crate::crypto::hash::{Hash, Hashable, hash};
 use crate::crypto::key::PublicKey;
 use crate::immutable::Immutable;
@@ -247,6 +248,11 @@ impl Serializer for BlockHeader {
         let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
 
         let tips_count = reader.read_u8()?;
+        if tips_count as usize > TIPS_LIMIT {
+            debug!("Error, too many tips in block header");
+            return Err(ReaderError::InvalidValue)
+        }
+        
         let mut tips = IndexSet::with_capacity(tips_count as usize);
         for _ in 0..tips_count {
             if !tips.insert(reader.read_hash()?) {
