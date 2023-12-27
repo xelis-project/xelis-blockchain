@@ -1173,25 +1173,29 @@ impl<S: Storage> Blockchain<S> {
         trace!("Mempool locked for building block template");
 
         // get all availables txs and sort them by fee per size
-        let mut txs = mempool.get_txs()
+        let mut txs: Vec<(u64, usize, &Arc<Hash>, &Arc<Transaction>)> = mempool.get_txs()
             .iter()
             .map(|(hash, tx)| (tx.get_fee(), tx.get_size(), hash, tx.get_tx()))
             .collect::<Vec<_>>();
-        txs.sort_by(|(a_fee, a_size, _, a_tx), (b_fee, b_size, _, b_tx)| {
-            // If its the same sender, check the nonce
-            if a_tx.get_owner() == b_tx.get_owner() {
-                // Increasing nonces (lower first)
-                let cmp = a_tx.get_nonce().cmp(&b_tx.get_nonce());
-                // If its not equal nonce, returns it
-                if cmp != std::cmp::Ordering::Equal {
-                    return cmp
-                }
-            }
 
+        txs.sort_by(|(a_fee, a_size, _, a_tx), (b_fee, b_size, _, b_tx)| {
+            // Descending fees (higher first)
             let a = a_fee * *a_size as u64;
             let b = b_fee * *b_size as u64;
-            // Decreasing fees (higher first)
-            b.cmp(&a)
+            let fees = b.cmp(&a);
+            // If its not the same group, fees matters
+            if a_tx.get_owner() != b_tx.get_owner() && fees != std::cmp::Ordering::Equal {
+                return fees
+            }
+
+            // Ascending order
+            let nonce = a_tx.get_nonce().cmp(&b_tx.get_nonce());
+            // We have the same owner, differents fees, but same nonce, fees matters
+            if a_tx.get_owner() == b_tx.get_owner() && fees != std::cmp::Ordering::Equal && nonce == std::cmp::Ordering::Equal {
+                return fees
+            }
+
+            nonce
         });
 
         let topoheight = self.get_topo_height();
@@ -1206,9 +1210,10 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 // Check if the TX is valid for this potential block
-                trace!("Checking TX {} with nonce {}", hash, tx.get_nonce());
+                trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_owner());
+                let owner = tx.get_owner();
                 if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false, topoheight).await {
-                    warn!("TX {} is not valid for mining: {}", hash, e);
+                    warn!("TX {} ({}) is not valid for mining: {}", owner, hash, e);
                 } else {
                     trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(fee));
                     // TODO no clone

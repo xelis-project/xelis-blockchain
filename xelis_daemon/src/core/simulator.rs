@@ -1,9 +1,9 @@
 use std::{str::FromStr, fmt::{Display, Formatter}, sync::Arc, time::Duration, collections::{HashMap, hash_map::Entry}};
 
-use log::{info, error};
+use log::{info, error, debug};
 use rand::{rngs::OsRng, Rng};
 use tokio::time::interval;
-use xelis_common::{crypto::key::KeyPair, transaction::{Transaction, TransactionType, Transfer}, config::{FEE_PER_KB, XELIS_ASSET}};
+use xelis_common::{crypto::{key::KeyPair, hash::Hashable}, transaction::{Transaction, TransactionType, Transfer}, config::{FEE_PER_KB, XELIS_ASSET}};
 
 use crate::config::{BLOCK_TIME_MILLIS, DEV_PUBLIC_KEY};
 
@@ -85,7 +85,8 @@ impl Simulator {
             }
 
             // Generate new transactions for mempool
-            let n = rng.gen_range(0..100);
+            info!("Adding simulated TXs in mempool");
+            let n = rng.gen_range(0..keys.len());
             let mut local_nonces = HashMap::new();
             for _ in 0..n {
                 let index = rng.gen_range(0..keys.len());
@@ -115,13 +116,16 @@ impl Simulator {
                             nonce
                         }
                     };
+                    debug!("Simulated tx nonce: {}, key: {}", nonce, keypair.get_public_key());
 
                     let key = keypair.get_public_key().clone();
                     // We create a fake signature because it is skipped in simulator mode
                     let signature = keypair.sign(b"invalid");
                     let tx = Transaction::new(key, data, FEE_PER_KB, nonce, signature);
-                    if let Err(e) = blockchain.add_tx_to_mempool(tx, false).await {
-                        error!("Error while adding simulated tx to mempool: {}", e);
+                    let hash = tx.hash();
+                    debug!("Simulated tx: {}, key: {}, nonce: {}, fee: {}", hash, tx.get_owner(), tx.get_nonce(), tx.get_fee());
+                    if let Err(e) = blockchain.add_tx_to_mempool_with_hash(tx, hash, false).await {
+                        error!("Error while adding simulated tx to mempool: {}, key: {}", e, keypair.get_public_key());
                     }
                 }
             }
