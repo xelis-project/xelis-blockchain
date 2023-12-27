@@ -1,8 +1,9 @@
 use lru::LruCache;
 use xelis_common::api::daemon::Direction;
 use xelis_common::block::Difficulty;
+use xelis_common::config::TIPS_LIMIT;
 use crate::config::{
-    PEER_FAIL_TIME_RESET, STABLE_LIMIT, TIPS_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS
+    PEER_FAIL_TIME_RESET, STABLE_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS
 };
 use crate::p2p::packet::PacketWrapper;
 use xelis_common::utils::get_current_time_in_seconds;

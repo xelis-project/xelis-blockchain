@@ -9,7 +9,7 @@ mod tracker;
 use indexmap::IndexSet;
 use lru::LruCache;
 use xelis_common::{
-    config::VERSION,
+    config::{VERSION, TIPS_LIMIT},
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::{BlockHeader, Block, Difficulty},
@@ -41,7 +41,7 @@ use crate::{
         NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS,
         P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT,
         CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT, P2P_EXTEND_PEERLIST_DELAY,
-        TIPS_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS
+        PEER_TIMEOUT_INIT_CONNECTION, CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS
     },
     rpc::rpc::get_peer_entry
 };

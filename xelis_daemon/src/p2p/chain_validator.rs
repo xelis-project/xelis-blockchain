@@ -1,14 +1,11 @@
 use std::{collections::{HashMap, HashSet}, sync::Arc};
 use async_trait::async_trait;
 use indexmap::IndexSet;
-use xelis_common::{crypto::hash::Hash, block::{BlockHeader, Difficulty}, immutable::Immutable};
-use crate::{
-    core::{
-        error::BlockchainError,
-        blockchain::Blockchain,
-        storage::{DifficultyProvider, Storage}
-    },
-    config::TIPS_LIMIT
+use xelis_common::{crypto::hash::Hash, block::{BlockHeader, Difficulty}, immutable::Immutable, config::TIPS_LIMIT};
+use crate::core::{
+    error::BlockchainError,
+    blockchain::Blockchain,
+    storage::{DifficultyProvider, Storage}
 };
 use log::{error, trace};
 

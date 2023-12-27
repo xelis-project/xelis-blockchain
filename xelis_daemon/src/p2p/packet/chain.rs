@@ -7,13 +7,12 @@ use xelis_common::{
         Writer,
         ReaderError,
         Reader
-    },
+    }, config::TIPS_LIMIT,
 };
 use crate::config::{
     CHAIN_SYNC_REQUEST_MAX_BLOCKS,
     CHAIN_SYNC_RESPONSE_MAX_BLOCKS,
     CHAIN_SYNC_TOP_BLOCKS,
-    TIPS_LIMIT,
     CHAIN_SYNC_RESPONSE_MIN_BLOCKS
 };
 
