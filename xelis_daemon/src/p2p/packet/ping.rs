@@ -6,10 +6,6 @@ use xelis_common::{
         ReaderError,
         Reader
     },
-    utils::{
-        ip_to_bytes,
-        ip_from_bytes
-    },
     block::Difficulty,
     api::daemon::{NotifyEvent, PeerPeerListUpdatedEvent, Direction}
 };
@@ -152,7 +148,7 @@ impl Serializer for Ping<'_> {
         self.cumulative_difficulty.write(writer);
         writer.write_u8(self.peer_list.len() as u8);
         for peer in &self.peer_list {
-            writer.write_bytes(&ip_to_bytes(peer));
+            peer.write(writer);
         }
     }
 
@@ -176,7 +172,7 @@ impl Serializer for Ping<'_> {
 
         let mut peer_list = Vec::with_capacity(peers_len);
         for _ in 0..peers_len {
-            let peer = ip_from_bytes(reader)?;
+            let peer = SocketAddr::read(reader)?;
             peer_list.push(peer);
         }
 
