@@ -13,7 +13,7 @@ use xelis_common::{
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
     block::{BlockHeader, Block, Difficulty},
-    utils::get_current_time_in_seconds,
+    utils::{get_current_time_in_seconds, get_current_time_in_millis},
     immutable::Immutable,
     api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent, Direction}
 };
@@ -41,7 +41,7 @@ use crate::{
         NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS,
         P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT,
         CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT, P2P_EXTEND_PEERLIST_DELAY,
-        PEER_TIMEOUT_INIT_CONNECTION, CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS
+        PEER_TIMEOUT_INIT_CONNECTION, CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, MILLIS_PER_SECOND
     },
     rpc::rpc::get_peer_entry
 };
@@ -113,7 +113,7 @@ pub struct P2pServer<S: Storage> {
     // this is a configurable paramater for nodes to manage their resources
     // Can be reduced for low devices, and increased for high end devices
     // You may sync faster or slower depending on this value
-    max_chain_response_size: usize
+    max_chain_response_size: usize,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -530,9 +530,19 @@ impl<S: Storage> P2pServer<S> {
     }
 
     async fn chain_sync_loop(self: Arc<Self>) {
-        let duration = Duration::from_secs(CHAIN_SYNC_DELAY);
+        // used to detect how much time we have to wait before next request
+        let mut last_chain_sync: u128 = get_current_time_in_millis();
         loop {
-            sleep(duration).await;
+            // Detect exact time needed before next chain sync
+            if last_chain_sync != 0 {
+                let diff = (get_current_time_in_millis() - last_chain_sync) as u64;
+                if  diff < CHAIN_SYNC_DELAY * MILLIS_PER_SECOND {
+                    let wait = CHAIN_SYNC_DELAY * MILLIS_PER_SECOND - diff;
+                    debug!("Waiting {} ms for chain sync delay...", wait);
+                    sleep(Duration::from_millis(wait)).await;
+                }
+            }
+
             if !self.is_syncing().await {
                 // first we have to check if we allow fast sync mode
                 // and then we check if we have a potential peer above us to fast sync
@@ -560,13 +570,13 @@ impl<S: Storage> P2pServer<S> {
                             warn!("Error occured while fast syncing with {}: {}", peer, e);
                         }
                     } else {
-                        if let Err(e) = self.request_sync_chain_for(&peer).await {
+                        if let Err(e) = self.request_sync_chain_for(&peer, &mut last_chain_sync).await {
                             warn!("Error occured on chain sync with {}: {}", peer, e);
                         }
                     }
                     self.stop_syncing().await;
                 } else {
-                    trace!("No peer found for chain sync");
+                    trace!("No peer found for chain sync, waiting before next check");
                 }
             }
         }
@@ -2119,7 +2129,7 @@ impl<S: Storage> P2pServer<S> {
     // we send up to CHAIN_SYNC_REQUEST_MAX_BLOCKS blocks id (combinaison of block hash and topoheight)
     // we add at the end the genesis block to be sure to be on the same chain as others peers
     // its used to find a common point with the peer to which we ask the chain
-    pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
+    pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>, last_chain_sync: &mut u128) -> Result<(), BlockchainError> {
         trace!("Requesting chain from {}", peer);
 
         // This can be configured by the node operator, it will be adjusted between protocol bounds
@@ -2141,6 +2151,9 @@ impl<S: Storage> P2pServer<S> {
         if response.size() > requested_max_size {
             return Err(P2pError::InvaliChainResponseSize(response.size(), requested_max_size).into())
         }
+
+        // Update last chain sync time
+        *last_chain_sync = get_current_time_in_millis();
 
         self.handle_chain_response(peer, response, requested_max_size).await
     }
