@@ -96,7 +96,7 @@ impl<'a> Serializer for Packet<'a> {
     fn read(reader: &mut Reader) -> Result<Packet<'a>, ReaderError> {
         let id = reader.read_u8()?;
         trace!("Packet ID received: {}, size: {}", id, reader.total_size());
-        Ok(match id {
+        let packet = match id {
             HANDSHAKE_ID => Packet::Handshake(Cow::Owned(Handshake::read(reader)?)),
             TX_PROPAGATION_ID => Packet::TransactionPropagation(PacketWrapper::read(reader)?),
             BLOCK_PROPAGATION_ID => Packet::BlockPropagation(PacketWrapper::read(reader)?),
@@ -114,7 +114,13 @@ impl<'a> Serializer for Packet<'a> {
                 error!("invalid packet id received: {}", id);
                 return Err(ReaderError::InvalidValue)
             }
-        })
+        };
+
+        if reader.total_read() != reader.total_size() {
+            error!("Packet: {:?}", packet);
+        }
+
+        Ok(packet)
     }
 
     fn write(&self, writer: &mut Writer) {
