@@ -342,6 +342,9 @@ impl ObjectTracker {
                             } else {
                                 break;
                             }
+                        } else {
+                            // It wasn't yet requested
+                            break;
                         }
                     }
                 }
