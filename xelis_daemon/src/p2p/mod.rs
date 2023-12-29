@@ -534,13 +534,14 @@ impl<S: Storage> P2pServer<S> {
         let mut last_chain_sync: u128 = get_current_time_in_millis();
         loop {
             // Detect exact time needed before next chain sync
-            if last_chain_sync != 0 {
-                let diff = (get_current_time_in_millis() - last_chain_sync) as u64;
-                if  diff < CHAIN_SYNC_DELAY * MILLIS_PER_SECOND {
-                    let wait = CHAIN_SYNC_DELAY * MILLIS_PER_SECOND - diff;
-                    debug!("Waiting {} ms for chain sync delay...", wait);
-                    sleep(Duration::from_millis(wait)).await;
-                }
+            let current = get_current_time_in_millis();
+            let diff = (current - last_chain_sync) as u64;
+            if  diff < CHAIN_SYNC_DELAY * MILLIS_PER_SECOND {
+                let wait = CHAIN_SYNC_DELAY * MILLIS_PER_SECOND - diff;
+                info!("Waiting {} ms for chain sync delay...", wait);
+                sleep(Duration::from_millis(wait)).await;
+            } else {
+                last_chain_sync = current;
             }
 
             if !self.is_syncing().await {
