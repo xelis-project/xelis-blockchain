@@ -1270,15 +1270,15 @@ impl<S: Storage> P2pServer<S> {
                 let addr = packet.to_addr();
                 debug!("{} disconnected from {}", addr, peer);
                 {
-                    let mut peers = peer.get_peers().lock().await;
+                    let mut shared_peers = peer.get_peers().lock().await;
     
                     // Because it was a common peer and that the peer disconnected from us and him
                     // it would works but if it get only disconnected from one side, that mean
                     // It would only be deleted from one of the two side and create a desync
                     // As we can't delete after sending the packet directly
                     // Current solution is to check only if it was a received one
-                    let delete = if let Some(direction) = peers.get(&addr) {
-                        debug!("Direction for {} is {:?} (peer disconnected)", addr, direction);
+                    let delete = if let Some(direction) = shared_peers.get(&addr) {
+                        debug!("Direction for {} is {:?} (peer disconnected from {})", addr, direction, peer);
                         *direction == Direction::Both 
                     } else {
                         false
@@ -1286,11 +1286,10 @@ impl<S: Storage> P2pServer<S> {
 
                     if delete {
                         // Delete the peer received
-                        peers.remove(&addr);
+                        shared_peers.remove(&addr);
                     } else {
                         error!("{} disconnected from {} but its not a common peer ?", addr, peer.get_outgoing_address());
-                        // TODO
-                        return Ok(())
+                        return Err(P2pError::UnknownPeerReceived(addr, *peer.get_outgoing_address()))
                     }
                 }
 

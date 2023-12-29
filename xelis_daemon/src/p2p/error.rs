@@ -23,8 +23,8 @@ pub enum P2pError {
     InvalidProtocolRules,
     #[error("Invalid list size in pagination with a next page")]
     InvalidInventoryPagination,
-    #[error("unknown common peer {} received: not found in list", _0)]
-    UnknownPeerReceived(SocketAddr),
+    #[error("unknown peer {} disconnected from {}", _0, _1)]
+    UnknownPeerReceived(SocketAddr, SocketAddr),
     #[error("Block {} at height {} propagated is under our stable height", _0, _1)]
     BlockPropagatedUnderStableHeight(Hash, u64),
     #[error("Block {} propagated is already tracked", _0)]
