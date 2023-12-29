@@ -134,14 +134,12 @@ impl PeerList {
             // check if it was a common peer (we sent it and we received it)
             // Because its a common peer, we can expect that he will send us the same packet
             if let Some(direction) = peers.get(addr) {
+                // If its both direction, don't delete as we expect a packet from him
                 if *direction == Direction::Both {
                     trace!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
                     // we send the packet to notify the peer that we don't have it in common anymore
                     if let Err(e) = peer.send_bytes(packet.clone()).await {
                         error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
-                    } else {
-                        trace!("Deleting {} from {}", addr, peer);
-                        peers.remove(addr);
                     }
                 } else {
                     trace!("Deleting {} from {}", addr, peer);
