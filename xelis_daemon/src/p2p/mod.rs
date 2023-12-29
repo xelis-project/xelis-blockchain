@@ -616,19 +616,18 @@ impl<S: Storage> P2pServer<S> {
 
                         // if we haven't send him this peer addr and that he don't have him already, insert it
                         let addr = p.get_outgoing_address();
-                        let send = shared_peers.get_mut(addr)
-                            // Check if its possible to send it (that we never send it already)
-                            .map(|direction| direction.update_allow_in(Direction::Out))
-                            // If not found, we can send it
-                            .unwrap_or(true);
+                        let send = match shared_peers.entry(*addr) {
+                            std::collections::hash_map::Entry::Occupied(mut e) => e.get_mut().update_allow_in(Direction::Out),
+                            std::collections::hash_map::Entry::Vacant(e) => {
+                                e.insert(Direction::Out);
+                                true
+                            }
+                        };
 
                         if send {
                             // add it in our side to not re send it again
                             trace!("{} didn't received {} yet, adding it to peerlist in ping packet", peer.get_outgoing_address(), addr);
 
-                            if !shared_peers.contains_key(addr) {
-                                shared_peers.insert(*addr, Direction::Out);
-                            }
                             // add it to new list to send it
                             new_peers.push(*addr);
                             if new_peers.len() >= P2P_PING_PEER_LIST_LIMIT {
@@ -1289,8 +1288,9 @@ impl<S: Storage> P2pServer<S> {
                         // Delete the peer received
                         peers.remove(&addr);
                     } else {
-                        debug!("{} disconnected from {} but its not a common peer ?", addr, peer.get_outgoing_address());
-                        return Err(P2pError::UnknownPeerReceived(addr))                    
+                        error!("{} disconnected from {} but its not a common peer ?", addr, peer.get_outgoing_address());
+                        // TODO
+                        return Ok(())
                     }
                 }
 
