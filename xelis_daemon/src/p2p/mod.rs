@@ -587,7 +587,7 @@ impl<S: Storage> P2pServer<S> {
         let duration = Duration::from_secs(P2P_PING_DELAY);
         loop {
             trace!("Waiting for ping delay...");
-           sleep(duration).await;
+            sleep(duration).await;
 
             let mut ping = self.build_generic_ping_packet().await;
             trace!("generic ping packet finished");
