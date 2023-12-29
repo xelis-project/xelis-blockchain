@@ -74,7 +74,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering}
     },
-    collections::HashSet,
+    collections::{HashSet, hash_map::Entry},
     convert::TryInto,
     net::SocketAddr,
     time::Duration,
@@ -617,8 +617,8 @@ impl<S: Storage> P2pServer<S> {
                         // if we haven't send him this peer addr and that he don't have him already, insert it
                         let addr = p.get_outgoing_address();
                         let send = match shared_peers.entry(*addr) {
-                            std::collections::hash_map::Entry::Occupied(mut e) => e.get_mut().update_allow_in(Direction::Out),
-                            std::collections::hash_map::Entry::Vacant(e) => {
+                            Entry::Occupied(mut e) => e.get_mut().update_allow_in(Direction::Out),
+                            Entry::Vacant(e) => {
                                 e.insert(Direction::Out);
                                 true
                             }
