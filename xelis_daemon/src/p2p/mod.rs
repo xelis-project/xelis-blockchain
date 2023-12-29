@@ -98,7 +98,6 @@ pub struct P2pServer<S: Storage> {
     peer_list: SharedPeerList, // all peers accepted
     blockchain: Arc<Blockchain<S>>, // reference to the chain to add blocks/txs
     connections_sender: UnboundedSender<MessageChannel>, // this sender allows to create a queue system in one task only
-    syncing_peer: Mutex<Option<Arc<Peer>>>, // used to check if we are already syncing with one peer or not
     object_tracker: SharedObjectTracker, // used to requests objects to peers and avoid requesting the same object to multiple peers
     is_running: AtomicBool, // used to check if the server is running or not in tasks
     blocks_propagation_queue: Mutex<LruCache<Hash, ()>>, // Synced cache to prevent concurrent tasks adding the block
@@ -146,7 +145,6 @@ impl<S: Storage> P2pServer<S> {
             peer_list,
             blockchain,
             connections_sender,
-            syncing_peer: Mutex::new(None),
             object_tracker,
             is_running: AtomicBool::new(true),
             blocks_propagation_queue: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
@@ -532,53 +530,50 @@ impl<S: Storage> P2pServer<S> {
     async fn chain_sync_loop(self: Arc<Self>) {
         // used to detect how much time we have to wait before next request
         let mut last_chain_sync: u128 = get_current_time_in_millis();
+        let interval = Duration::from_secs(CHAIN_SYNC_DELAY);
         loop {
             // Detect exact time needed before next chain sync
             let current = get_current_time_in_millis();
             let diff = (current - last_chain_sync) as u64;
             if  diff < CHAIN_SYNC_DELAY * MILLIS_PER_SECOND {
                 let wait = CHAIN_SYNC_DELAY * MILLIS_PER_SECOND - diff;
-                info!("Waiting {} ms for chain sync delay...", wait);
+                debug!("Waiting {} ms for chain sync delay...", wait);
                 sleep(Duration::from_millis(wait)).await;
-            } else {
-                last_chain_sync = current;
             }
+            last_chain_sync = current;
 
-            if !self.is_syncing().await {
-                // first we have to check if we allow fast sync mode
-                // and then we check if we have a potential peer above us to fast sync
-                // otherwise we sync normally 
-                let fast_sync = if self.allow_fast_sync() {
-                    trace!("locking peer list for fast sync check");
-                    let peerlist = self.peer_list.read().await;
-                    trace!("peer list locked for fast sync check");
-                    let our_topoheight = self.blockchain.get_topo_height();
-                    peerlist.get_peers().values().find(|p| {
-                        let peer_topoheight = p.get_topoheight();
-                        peer_topoheight > our_topoheight && peer_topoheight - our_topoheight > PRUNE_SAFETY_LIMIT
-                    }).is_some()
-                } else {
-                    false
-                };
+            // first we have to check if we allow fast sync mode
+            // and then we check if we have a potential peer above us to fast sync
+            // otherwise we sync normally 
+            let fast_sync = if self.allow_fast_sync() {
+                trace!("locking peer list for fast sync check");
+                let peerlist = self.peer_list.read().await;
+                trace!("peer list locked for fast sync check");
+                let our_topoheight = self.blockchain.get_topo_height();
+                peerlist.get_peers().values().find(|p| {
+                    let peer_topoheight = p.get_topoheight();
+                    peer_topoheight > our_topoheight && peer_topoheight - our_topoheight > PRUNE_SAFETY_LIMIT
+                }).is_some()
+            } else {
+                false
+            };
 
-                if let Some(peer) = self.select_random_best_peer(fast_sync).await {
-                    self.start_syncing(peer.clone()).await;
-                    debug!("Selected for chain sync is {}", peer);
-                    // check if we can maybe fast sync first
-                    // otherwise, fallback on the normal chain sync
-                    if fast_sync {
-                        if let Err(e) = self.bootstrap_chain(&peer).await {
-                            warn!("Error occured while fast syncing with {}: {}", peer, e);
-                        }
-                    } else {
-                        if let Err(e) = self.request_sync_chain_for(&peer, &mut last_chain_sync).await {
-                            warn!("Error occured on chain sync with {}: {}", peer, e);
-                        }
+            if let Some(peer) = self.select_random_best_peer(fast_sync).await {
+                debug!("Selected for chain sync is {}", peer);
+                // check if we can maybe fast sync first
+                // otherwise, fallback on the normal chain sync
+                if fast_sync {
+                    if let Err(e) = self.bootstrap_chain(&peer).await {
+                        warn!("Error occured while fast syncing with {}: {}", peer, e);
                     }
-                    self.stop_syncing().await;
                 } else {
-                    trace!("No peer found for chain sync, waiting before next check");
+                    if let Err(e) = self.request_sync_chain_for(&peer, &mut last_chain_sync).await {
+                        warn!("Error occured on chain sync with {}: {}", peer, e);
+                    }
                 }
+            } else {
+                trace!("No peer found for chain sync, waiting before next check");
+                sleep(interval).await;
             }
         }
     }
@@ -1665,20 +1660,6 @@ impl<S: Storage> P2pServer<S> {
     pub async fn get_best_topoheight(&self) -> u64 {
         let peer_list = self.peer_list.read().await;
         peer_list.get_best_topoheight()
-    }
-
-    async fn start_syncing(&self, peer: Arc<Peer>) {
-        let mut syncing = self.syncing_peer.lock().await;
-        *syncing = Some(peer);
-    }
-
-    async fn stop_syncing(&self) -> bool {
-        let mut syncing = self.syncing_peer.lock().await;
-        syncing.take().is_some()
-    }
-
-    pub async fn is_syncing(&self) -> bool {
-        self.syncing_peer.lock().await.is_some()
     }
 
     pub async fn is_connected_to(&self, peer_id: &u64) -> Result<bool, P2pError> {
