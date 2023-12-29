@@ -377,7 +377,7 @@ async fn top_block<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> 
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let hash = blockchain.get_top_block_hash().await.context("Error on top block hash")?;
+    let hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error on top block hash")?;
     let response = get_block_response_for_hash(blockchain, &storage, hash, false).await.context("Error while building block response")?;
     manager.message(format!("{}", serde_json::to_string_pretty(&response).context("Error while serializing")?));
 
@@ -457,7 +457,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
 
     let storage = blockchain.get_storage().read().await;
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
-    let top_block_hash = blockchain.get_top_block_hash().await.context("Error while retrieving top block hash")?;
+    let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
     let supply = blockchain.get_supply().await.context("Error while retrieving supply")?;
     let accounts_count = storage.count_accounts().context("Error while counting accounts")?;
