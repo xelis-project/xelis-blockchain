@@ -449,16 +449,22 @@ async fn prune_chain<S: Storage>(manager: &CommandManager, mut arguments: Argume
 async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let storage = blockchain.get_storage().read().await;
 
     let height = blockchain.get_height();
     let topoheight = blockchain.get_topo_height();
     let stableheight = blockchain.get_stable_height();
     let difficulty = blockchain.get_difficulty();
+
+    let storage = blockchain.get_storage().read().await;
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
     let top_block_hash = blockchain.get_top_block_hash().await.context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
     let supply = blockchain.get_supply().await.context("Error while retrieving supply")?;
+    let accounts_count = storage.count_accounts().context("Error while counting accounts")?;
+    let transactions_count = storage.count_transactions().context("Error while counting transactions")?;
+    let blocks_count = storage.count_blocks().context("Error while counting blocks")?;
+    let assets = storage.count_assets().context("Error while counting assets")?;
+    let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?;
 
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
@@ -470,10 +476,6 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Target Block Time: {:.2}s", BLOCK_TIME_MILLIS as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Current Supply: {} XELIS", format_xelis(supply)));
     manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(supply))));
-    let accounts_count = storage.count_accounts().context("Error while counting accounts")?;
-    let transactions_count = storage.count_transactions().context("Error while counting transactions")?;
-    let blocks_count = storage.count_blocks().context("Error while counting blocks")?;
-    let assets = storage.count_assets().context("Error while counting assets")?;
     manager.message(format!("Stored accounts/transactions/blocks/assets: {}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets));
 
     manager.message(format!("Tips ({}):", tips.len()));
@@ -481,7 +483,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
         manager.message(format!("- {}", hash));
     }
 
-    if let Some(pruned_topoheight) = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")? {
+    if let Some(pruned_topoheight) = pruned_topoheight {
         manager.message(format!("Chain is pruned until topoheight {}", pruned_topoheight));
     } else {
         manager.message("Chain is in full mode");
