@@ -604,8 +604,8 @@ impl<S: Storage> P2pServer<S> {
                     let new_peers = ping.get_mut_peers();
                     new_peers.clear();
 
-                    // all the peers we already sent to this current peer
-                    let mut peer_peers = peer.get_peers().lock().await;
+                    // all the peers we already shared with this peer
+                    let mut shared_peers = peer.get_peers().lock().await;
 
                     // iterate through our peerlist to determinate which peers we have to send
                     for p in peer_list.get_peers().values() {
@@ -616,18 +616,18 @@ impl<S: Storage> P2pServer<S> {
 
                         // if we haven't send him this peer addr and that he don't have him already, insert it
                         let addr = p.get_outgoing_address();
-                        let send = if let Some(direction) = peer_peers.get_mut(addr) {
-                            direction.update_allow_in(Direction::Out)
-                        } else {
-                            true
-                        };
+                        let send = shared_peers.get_mut(addr)
+                            // Check if its possible to send it (that we never send it already)
+                            .map(|direction| direction.update_allow_in(Direction::Out))
+                            // If not found, we can send it
+                            .unwrap_or(true);
 
                         if send {
                             // add it in our side to not re send it again
                             trace!("{} didn't received {} yet, adding it to peerlist in ping packet", peer.get_outgoing_address(), addr);
 
-                            if !peer_peers.contains_key(addr) {
-                                peer_peers.insert(*addr, Direction::Out);
+                            if !shared_peers.contains_key(addr) {
+                                shared_peers.insert(*addr, Direction::Out);
                             }
                             // add it to new list to send it
                             new_peers.push(*addr);
@@ -1279,7 +1279,7 @@ impl<S: Storage> P2pServer<S> {
                     // As we can't delete after sending the packet directly
                     // Current solution is to check only if it was a received one
                     let delete = if let Some(direction) = peers.get(&addr) {
-                        trace!("Direction for {} is {:?} (peer disconnected)", addr, direction);
+                        debug!("Direction for {} is {:?} (peer disconnected)", addr, direction);
                         *direction == Direction::Both 
                     } else {
                         false
