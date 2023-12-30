@@ -128,10 +128,18 @@ struct State {
     prompt_sender: Mutex<Option<oneshot::Sender<String>>>,
     has_exited: AtomicBool,
     ascii_escape_regex: Regex,
+    interactive: bool
 }
 
 impl State {
     fn new() -> Self {
+        // enable the raw mode for terminal
+        // so we can read each event/action
+        let interactive = !terminal::enable_raw_mode().is_err();
+        if interactive {
+            warn!("Non-interactive mode enabled");
+        }
+
         Self {
             prompt: Mutex::new(None),
             exit_channel: Mutex::new(None),
@@ -141,7 +149,8 @@ impl State {
             mask_input: AtomicBool::new(false),
             prompt_sender: Mutex::new(None),
             has_exited: AtomicBool::new(false),
-            ascii_escape_regex: Regex::new("\x1B\\[[0-9;]*[A-Za-z]").unwrap()
+            ascii_escape_regex: Regex::new("\x1B\\[[0-9;]*[A-Za-z]").unwrap(),
+            interactive
         }
     }
 
@@ -165,15 +174,12 @@ impl State {
         Ok(())
     }
 
+    pub fn is_interactive(&self) -> bool {
+        self.interactive
+    }
+
     fn ioloop(self: &Arc<Self>, sender: UnboundedSender<String>) -> Result<(), PromptError> {
         debug!("ioloop started");
-        // enable the raw mode for terminal
-        // so we can read each event/action
-        if let Err(e) = terminal::enable_raw_mode() {
-            error!("Error while enabling raw mode: {}", e);
-            warn!("Non-interactive mode enabled");
-            return Ok(())
-        }
 
         // all the history of commands
         let mut history: VecDeque<String> = VecDeque::new();
@@ -294,8 +300,10 @@ impl State {
         }
 
         if !self.has_exited.swap(true, Ordering::SeqCst) {
-            if let Err(e) = terminal::disable_raw_mode() {
-                error!("Error while disabling raw mode: {}", e);
+            if self.is_interactive() {
+                if let Err(e) = terminal::disable_raw_mode() {
+                    error!("Error while disabling raw mode: {}", e);
+                }
             }
         }
 
@@ -344,7 +352,7 @@ impl State {
         let previous_count = self.previous_prompt_line.swap(current_count, Ordering::SeqCst);
 
         // > 1 because prompt line is already counted below
-        if previous_count > 1 {
+        if self.is_interactive() && previous_count > 1 {
             print!("\x1B[{}A\x1B[J", previous_count - 1);
         }
 
@@ -387,31 +395,29 @@ type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, &'a T2) -> LocalBoxFuture<'a, R>
 impl Prompt {
     pub fn new(level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<ShareablePrompt, PromptError> {
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
-        let zelf = Self {
+        let prompt = Self {
             state: Arc::new(State::new()),
             input_receiver: Mutex::new(None),
             read_input_receiver: AsyncMutex::new(read_input_receiver),
             read_input_sender,
         };
-        zelf.setup_logger(level, filename_log, disable_file_logging)?;
+        prompt.setup_logger(level, filename_log, disable_file_logging)?;
 
-        // spawn a thread to prevent IO blocking - https://github.com/tokio-rs/tokio/issues/2466
-        let (input_sender, input_receiver) = mpsc::unbounded_channel::<String>();
-        {
-            let state = Arc::clone(&zelf.state);
+        if prompt.state.is_interactive() {
+            let (input_sender, input_receiver) = mpsc::unbounded_channel::<String>();
+            let state = Arc::clone(&prompt.state);
+            // spawn a thread to prevent IO blocking - https://github.com/tokio-rs/tokio/issues/2466
             std::thread::spawn(move || {
                 if let Err(e) = state.ioloop(input_sender) {
                     error!("Error in ioloop: {}", e);
                 };
             });
-        }
-
-        {
-            let mut lock = zelf.input_receiver.lock()?;
+    
+            let mut lock = prompt.input_receiver.lock()?;
             *lock = Some(input_receiver);
         }
 
-        Ok(Arc::new(zelf))
+        Ok(Arc::new(prompt))
     }
 
     // Start the thread to read stdin and handle events
@@ -480,8 +486,10 @@ impl Prompt {
         }
 
         if !self.state.has_exited.swap(true, Ordering::SeqCst) {
-            if let Err(e) = terminal::disable_raw_mode() {
-                error!("Error while disabling raw mode: {}", e);
+            if self.state.is_interactive() {
+                if let Err(e) = terminal::disable_raw_mode() {
+                    error!("Error while disabling raw mode: {}", e);
+                }
             }
         }
 
@@ -707,11 +715,13 @@ impl Prompt {
 
 impl Drop for Prompt {
     fn drop(&mut self) {
-        if let Ok(true) = terminal::is_raw_mode_enabled() {
-            if let Err(e) = terminal::disable_raw_mode() {
-                error!("Error while forcing to disable raw mode: {}", e);
-            }
-        } 
+        if self.state.is_interactive() {
+            if let Ok(true) = terminal::is_raw_mode_enabled() {
+                if let Err(e) = terminal::disable_raw_mode() {
+                    error!("Error while forcing to disable raw mode: {}", e);
+                }
+            } 
+        }
     }
 }
 
