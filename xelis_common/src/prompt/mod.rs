@@ -120,6 +120,7 @@ impl<T> From<PoisonError<T>> for PromptError {
 // State used to be shared between stdin thread and Prompt instance
 struct State {
     prompt: Mutex<Option<String>>,
+    exit_channel: Mutex<Option<oneshot::Sender<()>>>,
     width: AtomicU16,
     previous_prompt_line: AtomicUsize,
     user_input: Mutex<String>,
@@ -133,6 +134,7 @@ impl State {
     fn new() -> Self {
         Self {
             prompt: Mutex::new(None),
+            exit_channel: Mutex::new(None),
             width: AtomicU16::new(crossterm::terminal::size().unwrap_or((80, 0)).0),
             previous_prompt_line: AtomicUsize::new(0),
             user_input: Mutex::new(String::new()),
@@ -143,12 +145,34 @@ impl State {
         }
     }
 
+    fn set_exit_channel(&self, sender: oneshot::Sender<()>) -> Result<(), PromptError> {
+        let mut exit = self.exit_channel.lock()?;
+        if exit.is_some() {
+            return Err(PromptError::AlreadyRunning)
+        }
+        *exit = Some(sender);
+        Ok(())
+    }
+
+    pub fn stop(&self) -> Result<(), PromptError> {
+        let mut exit = self.exit_channel.lock()?;
+        let sender = exit.take().ok_or(PromptError::NotRunning)?;
+
+        if sender.send(()).is_err() {
+            error!("Error while sending exit signal");
+        }
+
+        Ok(())
+    }
+
     fn ioloop(self: &Arc<Self>, sender: UnboundedSender<String>) -> Result<(), PromptError> {
         debug!("ioloop started");
         // enable the raw mode for terminal
         // so we can read each event/action
         if let Err(e) = terminal::enable_raw_mode() {
             error!("Error while enabling raw mode: {}", e);
+            warn!("Non-interactive mode enabled");
+            return Ok(())
         }
 
         // all the history of commands
@@ -276,6 +300,8 @@ impl State {
         }
 
         info!("ioloop thread is now stopped");
+
+        // Send an empty message to the reader to unblock it
         let mut sender = self.prompt_sender.lock()?;
         if let Some(sender) = sender.take() {
             if let Err(e) = sender.send(String::new()) {
@@ -283,7 +309,7 @@ impl State {
             }
         }
 
-        Ok(())
+        self.stop()
     }
 
     fn should_mask_input(&self) -> bool {
@@ -347,7 +373,6 @@ impl State {
 
 pub struct Prompt {
     state: Arc<State>,
-    exit_channel: Mutex<Option<oneshot::Sender<()>>>,
     input_receiver: Mutex<Option<UnboundedReceiver<String>>>,
     // This following channel is used to cancel the read_input method
     read_input_sender: Sender<()>,
@@ -364,7 +389,6 @@ impl Prompt {
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
         let zelf = Self {
             state: Arc::new(State::new()),
-            exit_channel: Mutex::new(None),
             input_receiver: Mutex::new(None),
             read_input_receiver: AsyncMutex::new(read_input_receiver),
             read_input_sender,
@@ -396,12 +420,8 @@ impl Prompt {
     {
         // setup the exit channel
         let mut exit_receiver = {
-            let mut exit = self.exit_channel.lock()?;
-            if exit.is_some() {
-                return Err(PromptError::AlreadyRunning)
-            }
             let (sender, receiver) = oneshot::channel();
-            *exit = Some(sender);
+            self.state.set_exit_channel(sender)?;
             receiver
         };
 
@@ -425,25 +445,17 @@ impl Prompt {
                     }
                     break;
                 },
-                res = input_receiver.recv() => {
-                    match res {
-                        Some(input) => {
-                            if let Some(command_manager) = command_manager.as_ref() {
-                                match command_manager.handle_command(input).await {
-                                    Err(CommandError::Exit) => break,
-                                    Err(e) => {
-                                        error!("Error while executing command: {}", e);
-                                    }
-                                    _ => {},
-                                }
-                            } else {
-                                debug!("You said '{}'", input);
+                Some(input) = input_receiver.recv() => {
+                    if let Some(command_manager) = command_manager.as_ref() {
+                        match command_manager.handle_command(input).await {
+                            Err(CommandError::Exit) => break,
+                            Err(e) => {
+                                error!("Error while executing command: {}", e);
                             }
-                        },
-                        None => { // if None, it means the sender has been dropped (and so, the thread is stopped)
-                            debug!("Command Manager has been stopped");
-                            break;
+                            _ => {},
                         }
+                    } else {
+                        debug!("You said '{}'", input);
                     }
                 }
                 _ = interval.tick() => {
@@ -479,14 +491,7 @@ impl Prompt {
     // Stop the prompt running
     // can only be called when it was already started
     pub fn stop(&self) -> Result<(), PromptError> {
-        let mut exit = self.exit_channel.lock()?;
-        let sender = exit.take().ok_or(PromptError::NotRunning)?;
-
-        if sender.send(()).is_err() {
-            error!("Error while sending exit signal");
-        }
-
-        Ok(())
+        self.state.stop()
     }
 
     pub fn update_prompt(&self, msg: String) -> Result<(), PromptError> {
