@@ -13,6 +13,7 @@ use std::num::ParseFloatError;
 use std::path::Path;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::task::{Context, Poll};
 use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize, AtomicU16};
 use anyhow::Error;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
@@ -379,6 +380,35 @@ impl State {
     }
 }
 
+struct OptionReader {
+    reader: Option<UnboundedReceiver<String>>
+}
+
+impl OptionReader {
+    fn new(reader: Option<UnboundedReceiver<String>>) -> Self {
+        Self {
+            reader
+        }
+    }
+}
+
+impl Future for OptionReader {
+    type Output = Option<String>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.reader.as_mut() {
+            Some(reader) => {
+                match Pin::new(reader).poll_recv(cx) {
+                    Poll::Ready(Some(value)) => Poll::Ready(Some(value)),
+                    Poll::Ready(None) => Poll::Ready(None),
+                    Poll::Pending => Poll::Pending
+                }
+            },
+            None => Poll::Ready(None)
+        }
+    }
+}
+
 pub struct Prompt {
     state: Arc<State>,
     input_receiver: Mutex<Option<UnboundedReceiver<String>>>,
@@ -431,10 +461,10 @@ impl Prompt {
             receiver
         };
 
-        let mut input_receiver = {
+        let mut input_receiver = OptionReader::new({
             let mut lock = self.input_receiver.lock()?;
-            lock.take().ok_or(PromptError::NotRunning)?
-        };
+            lock.take()
+        });
 
         let mut interval = interval(update_every);
         loop {
@@ -451,7 +481,7 @@ impl Prompt {
                     }
                     break;
                 },
-                Some(input) = input_receiver.recv() => {
+                Some(input) = &mut input_receiver => {
                     if let Some(command_manager) = command_manager.as_ref() {
                         match command_manager.handle_command(input).await {
                             Err(CommandError::Exit) => break,
