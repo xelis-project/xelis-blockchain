@@ -1596,7 +1596,7 @@ impl<S: Storage> Blockchain<S> {
                         storage.set_tx_executed_in_block(tx_hash, &hash)?;
 
                         // Execute the transaction by applying changes in storage
-                        self.execute_transaction(storage, &tx, &mut local_balances, highest_topo).await?;    
+                        self.execute_transaction(storage, &tx, &mut local_balances, highest_topo).await?;
 
                         // For this block, save the highest nonce for each owner
                         {
