@@ -1360,9 +1360,13 @@ impl<S: Storage> Blockchain<S> {
                 return Err(BlockchainError::InvalidBlockTxs(hashes_len, txs_len));
             }
 
-            let mut cache_account: HashMap<&PublicKey, u64> = HashMap::new();
-            let mut cache_tx: HashMap<Hash, bool> = HashMap::new(); // avoid using a TX multiple times
+            // Prevent using same nonces for different TXs or invalid nonces
+            // It also force the right order of TXs
+            let mut cache_nonces: HashMap<&PublicKey, u64> = HashMap::new();
+
+            // All assets spent for each Public Key
             let mut balances = HashMap::new();
+            // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_size = tx.size();
@@ -1378,13 +1382,6 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 debug!("Verifying TX {}", tx_hash);
-
-                // block can't contains the same tx and should have tx hash in block header
-                if cache_tx.contains_key(&tx_hash) {
-                    error!("Block cannot contains the same TX {}", tx_hash);
-                    return Err(BlockchainError::TxAlreadyInBlock(tx_hash));
-                }
-
                 // check that the TX included is not executed in stable height or in block TIPS
                 if storage.is_tx_executed_in_a_block(hash)? {
                     let block_executed = storage.get_block_executer_for_tx(hash)?;
@@ -1414,9 +1411,7 @@ impl<S: Storage> Blockchain<S> {
                                 // otherwise, all looks good but because the TX was executed in another branch, we skip verification
                                 // DAG will choose which branch will execute the TX
                                 info!("TX {} was executed in another branch, skipping verification", tx_hash);
-                                // increase the total size
-                                // add tx hash in cache
-                                cache_tx.insert(tx_hash, true);
+
                                 // because TX was already validated & executed and is not in block tips
                                 // we can safely skip the verification of this TX
                                 continue;
@@ -1429,15 +1424,7 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                self.verify_transaction_with_hash(storage, tx, &tx_hash, &mut balances, Some(&mut cache_account), false, current_topoheight).await?;
-
-                // add tx hash in cache
-                cache_tx.insert(tx_hash, true);
-            }
-
-            if cache_tx.len() != txs_len || cache_tx.len() != hashes_len {
-                error!("Invalid count in TXs, received only {} unique txs", cache_tx.len());
-                return Err(BlockchainError::InvalidBlockTxs(block.get_txs_hashes().len(), cache_tx.len()))
+                self.verify_transaction_with_hash(storage, tx, &tx_hash, &mut balances, Some(&mut cache_nonces), false, current_topoheight).await?;
             }
         }
 
@@ -1573,13 +1560,15 @@ impl<S: Storage> Blockchain<S> {
                 trace!("set block supply to {} at {}", supply, highest_topo);
                 storage.set_supply_at_topo_height(highest_topo, supply)?;
 
-                // track all changes in balances
-                let mut balances: HashMap<&PublicKey, HashMap<&Hash, VersionedBalance>> = HashMap::new();
+                // Block for this hash
                 let block = storage.get_block(&hash).await?;
+                // All fees from the transactions executed in this block
                 let mut total_fees = 0;
-
-                // compute rewards & execute txs
+                // track all changes in balances for this block
+                let mut local_balances: HashMap<&PublicKey, HashMap<&Hash, VersionedBalance>> = HashMap::new();
+                // Highest nonces for each owner in this block
                 let mut local_nonces = HashMap::new();
+                // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     // TODO improve it (too much read/write that can be refactored)
                     if !storage.has_block_linked_to_tx(&tx_hash, &hash)? {
@@ -1601,11 +1590,27 @@ impl<S: Storage> Blockchain<S> {
                                 continue;
                             }
                         }
+
                         // mark tx as executed
                         trace!("Executing tx {} in block {}", tx_hash, hash);
                         storage.set_tx_executed_in_block(tx_hash, &hash)?;
 
-                        self.execute_transaction(storage, &tx, &mut local_nonces, &mut balances, highest_topo).await?;    
+                        // Execute the transaction by applying changes in storage
+                        self.execute_transaction(storage, &tx, &mut local_balances, highest_topo).await?;    
+
+                        // For this block, save the highest nonce for each owner
+                        {
+                            let nonce = tx.get_nonce() + 1;
+                            if let Some(stored_nonce) = local_nonces.get_mut(tx.get_owner()) {
+                                // Put the highest nonce for this account
+                                if *stored_nonce < nonce {
+                                    *stored_nonce = nonce;
+                                }
+                            } else {
+                                local_nonces.insert(tx.get_owner().clone(), nonce);
+                            }
+                        }
+
                         // if the rpc_server is enable, track events
                         if should_track_events.contains(&NotifyEvent::TransactionExecuted) {
                             let value = json!(TransactionExecutedEvent {
@@ -1615,15 +1620,17 @@ impl<S: Storage> Blockchain<S> {
                             });
                             events.entry(NotifyEvent::TransactionExecuted).or_insert_with(Vec::new).push(value);
                         }
+
+                        // Increase total tx fees for miner
                         total_fees += tx.get_fee();
                     }
                 }
 
                 // reward the miner
-                self.reward_miner(storage, &block, block_reward, total_fees, &mut balances, highest_topo).await?;
+                self.reward_miner(storage, &block, block_reward, total_fees, &mut local_balances, highest_topo).await?;
 
                 // save balances for each topoheight
-                for (key, assets) in balances {
+                for (key, assets) in local_balances {
                     for (asset, balance) in assets {
                         trace!("Saving balance {} for {} at topo {}, previous: {:?}", balance.get_balance(), key, highest_topo, balance.get_previous_topoheight());
                         // Save the balance for this topoheight
@@ -1646,8 +1653,19 @@ impl<S: Storage> Blockchain<S> {
                     trace!("Saving nonce {} for {} at topoheight {}", nonce, key, highest_topo);
                     storage.set_last_nonce_to(&key, highest_topo, nonce).await?;
 
-                    // insert in "global" nonces map for easier mempool cleaning
-                    nonces.insert(key, nonce);
+                    // insert the highest nonce in "global" nonces map for easier mempool cleaning
+                    // it is also used to prevent double spending using same nonce
+                    match nonces.entry(key) {
+                        Entry::Occupied(mut entry) => {
+                            let stored_nonce = entry.get_mut();
+                            if *stored_nonce < nonce {
+                                *stored_nonce = nonce;
+                            }
+                        },
+                        Entry::Vacant(entry) => {
+                            entry.insert(nonce);
+                        }
+                    }
                 }
 
                 if should_track_events.contains(&NotifyEvent::BlockOrdered) {
@@ -2143,8 +2161,8 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Execute the transaction by applying all its changes in the Storage
-    // nonces and balances parameters are caches for faster execution (reduce IO operations)
-    async fn execute_transaction<'a>(&self, storage: &mut S, transaction: &'a Transaction, nonces: &mut HashMap<PublicKey, u64>, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, topoheight: u64) -> Result<(), BlockchainError> {
+    // balances parameters are caches for faster execution (reduce IO operations)
+    async fn execute_transaction<'a>(&self, storage: &mut S, transaction: &'a Transaction, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, topoheight: u64) -> Result<(), BlockchainError> {
         let mut total_deducted: HashMap<&'a Hash, u64> = HashMap::new();
         total_deducted.insert(&XELIS_ASSET, transaction.get_fee());
 
@@ -2167,18 +2185,6 @@ impl<S: Storage> Blockchain<S> {
         // now we substract all assets spent from this sender
         for (asset, amount) in total_deducted {
             self.sub_balance(storage, balances, transaction.get_owner(), asset, amount, topoheight).await?;
-        }
-
-        // no need to read from disk, transaction nonce has been verified already
-        let nonce = transaction.get_nonce() + 1;
-        if let Some(stored_nonce) = nonces.get_mut(transaction.get_owner()) {
-            // only put the new nonce if it's higher than the current one
-            // in case of "lost race" side blocks (block which are higher in topoheight and less in height)
-            if *stored_nonce < nonce {
-                *stored_nonce = nonce;
-            }
-        } else {
-            nonces.insert(transaction.get_owner().clone(), nonce);
         }
 
         Ok(())
