@@ -200,6 +200,17 @@ impl Block {
         }
     }
 
+    pub fn with(mut block: BlockHeader, transactions: Vec<Transaction>) -> Self {
+        transactions.iter().for_each(|tx| {
+            block.txs_hashes.insert(tx.hash());
+        });
+
+        Block {
+            header: Immutable::Owned(block),
+            transactions: transactions.into_iter().map(|tx| Immutable::Owned(tx)).collect()
+        }
+    }
+
     pub fn to_header(self) -> Arc<BlockHeader> {
         self.header.to_arc()
     }
