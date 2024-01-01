@@ -1130,10 +1130,13 @@ impl<S: Storage> Blockchain<S> {
         storage.get_transaction(hash).await
     }
 
-    // Get the mining block template for miners
-    // This function is called when a miner request a new block template
-    // We create a block candidate with selected TXs from mempool
-    pub async fn get_block_template_for_storage(&self, storage: &S, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
+    pub async fn get_block_header_template(&self, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
+        let storage = self.storage.read().await;
+        self.get_block_header_template_for_storage(&storage, address).await
+    }
+
+    // Generate a block header template without transactions
+    pub async fn get_block_header_template_for_storage(&self, storage: &S, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
         let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>(); // generate random bytes
         let tips_set = storage.get_tips().await?;
         let mut tips = Vec::with_capacity(tips_set.len());
@@ -1166,7 +1169,16 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
-        let mut block = BlockHeader::new(self.get_version_at_height(height), height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
+        let block = BlockHeader::new(self.get_version_at_height(height), height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
+
+        Ok(block)
+    }
+
+    // Get the mining block template for miners
+    // This function is called when a miner request a new block template
+    // We create a block candidate with selected TXs from mempool
+    pub async fn get_block_template_for_storage(&self, storage: &S, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
+        let mut block = self.get_block_header_template_for_storage(storage, address).await?;
 
         trace!("Locking mempool for building block template");
         let mempool = self.mempool.read().await;
@@ -1510,7 +1522,7 @@ impl<S: Storage> Blockchain<S> {
                         is_written = true;
                     }
 
-                    trace!("Cleaning transactions executions at topo height {} (block {})", topoheight, hash_at_topo);
+                    warn!("Cleaning transactions executions at topo height {} (block {})", topoheight, hash_at_topo);
 
                     let block = storage.get_block_header_by_hash(&hash_at_topo).await?;
 
