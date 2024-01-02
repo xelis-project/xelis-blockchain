@@ -33,7 +33,7 @@ use crate::{
         STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, SIDE_BLOCK_REWARD_PERCENT,
         DEV_PUBLIC_KEY, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS, MILLIS_PER_SECOND, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS,
     },
-    core::difficulty::calculate_difficulty,
+    core::{difficulty::calculate_difficulty, nonce_checker::NonceChecker},
     p2p::P2pServer,
     rpc::{
         rpc::{
@@ -1490,7 +1490,7 @@ impl<S: Storage> Blockchain<S> {
         };
         
         // track all changes in nonces to clean mempool from invalid txs stuck
-        let mut nonces: HashMap<PublicKey, u64> = HashMap::new();
+        let mut final_nonces: HashMap<PublicKey, u64> = HashMap::new();
         // track all events to notify websocket
         let mut events: HashMap<NotifyEvent, Vec<Value>> = HashMap::new();
 
@@ -1541,6 +1541,8 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
+            // This is used to verify that each nonce is used only one time
+            let mut nonce_checker = NonceChecker::new();
             // time to order the DAG that is moving
             debug!("Ordering blocks based on generated DAG order ({} blocks)", full_order.len());
             for (i, hash) in full_order.into_iter().enumerate() {
@@ -1593,14 +1595,11 @@ impl<S: Storage> Blockchain<S> {
                         trace!("Tx {} was already executed in a previous block, skipping...", tx_hash);
                     } else {
                         // tx was not executed, but lets check that it is not a potential double spending
-                        // check that the nonce is not lower than the one already executed
-                        // nonce here is tx nonce of previous execution + 1
-                        if let Some(nonce) = nonces.get(tx.get_owner()) {
-                            if tx.get_nonce() < *nonce {
-                                warn!("Tx {} is a potential double spending, skipping...", tx_hash);
-                                // TX will be orphaned
-                                continue;
-                            }
+                        // check that the nonce is not already used
+                        if !nonce_checker.use_nonce(tx.get_owner(), tx.get_nonce(), highest_topo) {
+                            warn!("Malicious TX {}, it is a potential double spending with same nonce {}, skipping...", tx_hash, tx.get_nonce());
+                            // TX will be orphaned
+                            continue;
                         }
 
                         // mark tx as executed
@@ -1667,7 +1666,7 @@ impl<S: Storage> Blockchain<S> {
 
                     // insert the highest nonce in "global" nonces map for easier mempool cleaning
                     // it is also used to prevent double spending using same nonce
-                    match nonces.entry(key) {
+                    match final_nonces.entry(key) {
                         Entry::Occupied(mut entry) => {
                             let stored_nonce = entry.get_mut();
                             if *stored_nonce < nonce {
@@ -1781,7 +1780,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // Clean all old txs
-        mempool.clean_up(nonces).await;
+        mempool.clean_up(final_nonces).await;
 
         info!("Processed block {} at height {} in {} ms with {} txs", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count());
 

@@ -5,3 +5,4 @@ pub mod blockdag;
 pub mod storage;
 pub mod difficulty;
 pub mod simulator;
+pub mod nonce_checker;
