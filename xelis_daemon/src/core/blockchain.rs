@@ -1991,7 +1991,7 @@ impl<S: Storage> Blockchain<S> {
     // verify the transaction and returns fees available
     // nonces allow us to support multiples tx from same owner in the same block
     // txs must be sorted in ascending order based on account nonce
-    async fn verify_transaction_with_hash<'a>(&self, storage: &S, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, u64>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool, topoheight: u64) -> Result<(), BlockchainError> {
+    async fn verify_transaction_with_hash<'a>(&self, storage: &S, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("Verify transaction with hash {}", hash);
 
         // Verify that the TX has a valid signature
@@ -1999,18 +1999,18 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidTransactionSignature)
         }
 
-        let owner_balances: &mut HashMap<&'a Hash, u64> = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
+        let owner_balances: &mut HashMap<&'a Hash, VersionedBalance> = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
         {
-            let balance = match owner_balances.entry(&XELIS_ASSET) {
+            let version = match owner_balances.entry(&XELIS_ASSET) {
                 Entry::Vacant(entry) => {
                     let (_, balance) = storage.get_balance_at_maximum_topoheight(tx.get_owner(), &XELIS_ASSET, topoheight).await?.ok_or_else(|| BlockchainError::AccountNotFound(tx.get_owner().clone()))?;
-                    entry.insert(balance.get_balance())
+                    entry.insert(balance)
                 },
                 Entry::Occupied(entry) => entry.into_mut(),
             };
 
-            if let Some(value) = balance.checked_sub(tx.get_fee()) {
-                *balance = value;
+            if let Some(value) = version.get_balance().checked_sub(tx.get_fee()) {
+                version.set_balance(value);
             } else {
                 warn!("Overflow detected using fees ({} XEL) in transaction {}", format_xelis(tx.get_fee()), hash);
                 return Err(BlockchainError::Overflow)
@@ -2038,16 +2038,16 @@ impl<S: Storage> Blockchain<S> {
                         extra_data_size += data.len();
                     }
 
-                    let balance = match owner_balances.entry(&output.asset) {
+                    let version = match owner_balances.entry(&output.asset) {
                         Entry::Vacant(entry) => {
-                            let (_, balance) = storage.get_balance_at_maximum_topoheight(tx.get_owner(), &output.asset, topoheight).await?.ok_or_else(|| BlockchainError::AccountNotFound(tx.get_owner().clone()))?;
-                            entry.insert(balance.get_balance())
+                            let (_, version) = storage.get_balance_at_maximum_topoheight(tx.get_owner(), &output.asset, topoheight).await?.ok_or_else(|| BlockchainError::AccountNotFound(tx.get_owner().clone()))?;
+                            entry.insert(version)
                         },
                         Entry::Occupied(entry) => entry.into_mut(),
                     };
 
-                    if let Some(value) = balance.checked_sub(output.amount) {
-                        *balance = value;
+                    if let Some(value) = version.get_balance().checked_sub(output.amount) {
+                        version.set_balance(value);
                     } else {
                         warn!("Overflow detected with transaction transfer {}", hash);
                         return Err(BlockchainError::Overflow)
@@ -2065,15 +2065,15 @@ impl<S: Storage> Blockchain<S> {
                     return Err(BlockchainError::NoValueForBurn)
                 }
 
-                let balance = match owner_balances.entry(asset) {
+                let version = match owner_balances.entry(asset) {
                     Entry::Vacant(entry) => {
-                        let balance = storage.get_new_versioned_balance(tx.get_owner(), asset, topoheight).await?;
-                        entry.insert(balance.get_balance())
+                        let version = storage.get_new_versioned_balance(tx.get_owner(), asset, topoheight).await?;
+                        entry.insert(version)
                     },
                     Entry::Occupied(entry) => entry.into_mut(),
                 };
-                if let Some(value) = balance.checked_sub(*amount) {
-                    *balance = value;
+                if let Some(value) = version.get_balance().checked_sub(*amount) {
+                    version.set_balance(value);
                 } else {
                     warn!("Overflow detected with transaction burn {}", hash);
                     return Err(BlockchainError::Overflow)
