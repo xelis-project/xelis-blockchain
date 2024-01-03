@@ -135,7 +135,8 @@ pub struct Blockchain<S: Storage> {
     tip_base_cache: Mutex<LruCache<(Hash, u64), (Hash, u64)>>,
     // tip work score is used to determine the best tip based on a block, tip base ands a base height
     tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, Difficulty)>>,
-    full_order_cache: Mutex<LruCache<(Hash, Hash, u64), Vec<Hash>>>,
+    // using base hash, current tip hash and base height, this cache is used to store the DAG order
+    full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
     // auto prune mode if enabled, will delete all blocks every N and keep only N top blocks (topoheight based)
     auto_prune_keep_n_blocks: Option<u64>
 }
@@ -839,7 +840,7 @@ impl<S: Storage> Blockchain<S> {
     // first hash in order is the base hash
     // base_height is only used for the cache key
     #[async_recursion]
-    async fn generate_full_order(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: u64) -> Result<Vec<Hash>, BlockchainError> {
+    async fn generate_full_order(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: u64) -> Result<IndexSet<Hash>, BlockchainError> {
         let block_tips = {
             let mut cache = self.full_order_cache.lock().await;
             // check if its present in the cache first
@@ -851,14 +852,16 @@ impl<S: Storage> Blockchain<S> {
             let block_tips = storage.get_past_blocks_for_block_hash(hash).await?;
             // only the genesis block can have 0 tips, returns its hash
             if block_tips.len() == 0 {
-                let result = vec![GENESIS_BLOCK_HASH.clone()];
+                let mut result = IndexSet::new();
+                result.insert(GENESIS_BLOCK_HASH.clone());
                 cache.put((hash.clone(), base.clone(), base_height), result.clone());
                 return Ok(result)
             }
 
             // if the block has been previously ordered, return it as base
             if hash == base {
-                let result = vec![base.clone()];
+                let mut result = IndexSet::new();
+                result.insert(base.clone());
                 cache.put((hash.clone(), base.clone(), base_height), result.clone());
                 return Ok(result)
             }
@@ -880,17 +883,15 @@ impl<S: Storage> Blockchain<S> {
         blockdag::sort_descending_by_cumulative_difficulty(&mut scores);
 
         // let's build the right order now
-        let mut order: Vec<Hash> = Vec::new();
+        let mut order: IndexSet<Hash> = IndexSet::new();
         for (hash, _) in scores {
             let sub_order = self.generate_full_order(storage, hash, base, base_height, base_topo_height).await?;
             for order_hash in sub_order {
-                if !order.contains(&order_hash) {
-                    order.push(order_hash);
-                }
+                order.insert(order_hash);
             }
         }
 
-        order.push(hash.clone());
+        order.insert(hash.clone());
 
         // save in cache final result
         let mut cache = self.full_order_cache.lock().await;
@@ -1422,7 +1423,7 @@ impl<S: Storage> Blockchain<S> {
                             } else {
                                 // otherwise, all looks good but because the TX was executed in another branch, we skip verification
                                 // DAG will choose which branch will execute the TX
-                                info!("TX {} was executed in another branch, skipping verification", tx_hash);
+                                debug!("TX {} was executed in another branch, skipping verification", tx_hash);
 
                                 // because TX was already validated & executed and is not in block tips
                                 // we can safely skip the verification of this TX
@@ -1512,7 +1513,7 @@ impl<S: Storage> Blockchain<S> {
                             if storage.is_block_topological_ordered(order).await && *order == hash_at_topo {
                                 trace!("Hash {} at topo {} stay the same, skipping cleaning", hash_at_topo, topoheight);
                                 // remove the hash from the order because we don't need to recompute it
-                                full_order.remove(0);
+                                full_order.shift_remove_index(0);
                                 topoheight += 1;
                                 skipped += 1;
                                 continue;
@@ -2030,7 +2031,7 @@ impl<S: Storage> Blockchain<S> {
             if let Some(value) = version.get_balance().checked_sub(tx.get_fee()) {
                 version.set_balance(value);
             } else {
-                warn!("Overflow detected using fees ({} XEL) in transaction {}", format_xelis(tx.get_fee()), hash);
+                debug!("Overflow detected using fees ({} XEL) in transaction {}", format_xelis(tx.get_fee()), hash);
                 return Err(BlockchainError::Overflow)
             }
         }
@@ -2093,7 +2094,7 @@ impl<S: Storage> Blockchain<S> {
                 if let Some(value) = version.get_balance().checked_sub(*amount) {
                     version.set_balance(value);
                 } else {
-                    warn!("Overflow detected with transaction burn {}", hash);
+                    debug!("Overflow detected with transaction burn {}", hash);
                     return Err(BlockchainError::Overflow)
                 }
             },
