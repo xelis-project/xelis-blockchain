@@ -1581,7 +1581,7 @@ impl<S: Storage> Blockchain<S> {
                 // track all changes in balances for this block
                 let mut local_balances: HashMap<&PublicKey, HashMap<&Hash, VersionedBalance>> = HashMap::new();
                 // Highest nonces for each owner in this block
-                let mut local_nonces = HashMap::new();
+                let mut local_nonces: HashMap<&PublicKey, u64> = HashMap::new();
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     // TODO improve it (too much read/write that can be refactored)
@@ -1611,15 +1611,38 @@ impl<S: Storage> Blockchain<S> {
 
                         // For this block, save the highest nonce for each owner
                         {
-                            let nonce = tx.get_nonce() + 1;
-                            if let Some(stored_nonce) = local_nonces.get_mut(tx.get_owner()) {
-                                // Put the highest nonce for this account
-                                if *stored_nonce < nonce {
-                                    *stored_nonce = nonce;
+                            match local_nonces.entry(tx.get_owner()) {
+                                Entry::Occupied(mut e) => {
+                                    let stored = e.get_mut();
+                                    if tx.get_nonce() != *stored {
+                                        error!("Diverging nonce! Expected {} got {}", stored, tx.get_nonce());
+                                    }
+
+                                    // Increase it by one because this nonce got consumed by the TX
+                                    *stored += 1;
+                                },
+                                Entry::Vacant(e) => {
+                                    // Lets first check if we have one in our final nonces
+                                    // Otherwise search in storage, and if not found, set it as 0 (should never happens)
+                                    let nonce = match final_nonces.get(e.key()) {
+                                        Some(nonce) => *nonce,
+                                        None => match storage.get_nonce_at_maximum_topoheight(e.key(), highest_topo).await? {
+                                            Some((_, version)) => version.get_nonce(),
+                                            None => {
+                                                warn!("Account {} has no nonce saved for maximum topoheight {}", e.key(), highest_topo);
+                                                0
+                                            }
+                                        }
+                                    };
+
+                                    if tx.get_nonce() != nonce {
+                                        error!("Diverging nonce! Expected {} got {}", nonce, tx.get_nonce());
+                                    }
+
+                                    // Increase it by one because this nonce got consumed by the TX
+                                    e.insert(nonce + 1);
                                 }
-                            } else {
-                                local_nonces.insert(tx.get_owner().clone(), nonce);
-                            }
+                            };
                         }
 
                         // if the rpc_server is enable, track events
@@ -1665,16 +1688,12 @@ impl<S: Storage> Blockchain<S> {
                     storage.set_last_nonce_to(&key, highest_topo, nonce).await?;
 
                     // insert the highest nonce in "global" nonces map for easier mempool cleaning
-                    // it is also used to prevent double spending using same nonce
-                    match final_nonces.entry(key) {
-                        Entry::Occupied(mut entry) => {
-                            let stored_nonce = entry.get_mut();
-                            if *stored_nonce < nonce {
-                                *stored_nonce = nonce;
-                            }
+                    match final_nonces.get_mut(key) {
+                        Some(v) => {
+                            *v = nonce;
                         },
-                        Entry::Vacant(entry) => {
-                            entry.insert(nonce);
+                        None => {
+                            final_nonces.insert(key.clone(), nonce);
                         }
                     }
                 }
