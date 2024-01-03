@@ -427,6 +427,10 @@ Example: `cargo build --release --bin xelis_miner`
 You can also build a debug version (just remove `--release` option) or run it directly from cargo:
 `cargo run`
 
+### Build from Docker
+To build using Docker, use the following command, using the `app` build argument to chose which project to build:
+`docker build -t xelis-daemon:master --build-arg app=xelis_daemon .`
+
 ## Dev Fee
 
 No premine, fair-launch, but to fund this project, we set a developer fee percentage at `5%` of every block reward until the project is fully completed.
