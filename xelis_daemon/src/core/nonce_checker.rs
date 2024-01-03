@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use log::warn;
+use log::trace;
 use xelis_common::crypto::key::PublicKey;
 
 // A simple cache that checks if a nonce has already been used
@@ -19,7 +19,7 @@ impl NonceChecker {
     // Key may be cloned on first entry
     // Returns false if nonce is already used
     pub fn use_nonce(&mut self, key: &PublicKey, nonce: u64, topoheight: u64) -> bool {
-        warn!("NonceChecker::use_nonce: {} {} {}", key, nonce, topoheight);
+        trace!("use_nonce for {}: {} at topoheight {}", key, nonce, topoheight);
 
         match self.cache.get_mut(key) {
             Some(set) => {

@@ -1225,7 +1225,7 @@ impl<S: Storage> Blockchain<S> {
                 trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_owner());
                 let owner = tx.get_owner();
                 if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false, topoheight).await {
-                    warn!("TX {} ({}) is not valid for mining: {}", owner, hash, e);
+                    debug!("TX {} ({}) is not valid for mining: {}", hash, owner, e);
                 } else {
                     trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(fee));
                     // TODO no clone
@@ -1522,7 +1522,7 @@ impl<S: Storage> Blockchain<S> {
                         is_written = true;
                     }
 
-                    warn!("Cleaning transactions executions at topo height {} (block {})", topoheight, hash_at_topo);
+                    debug!("Cleaning transactions executions at topo height {} (block {})", topoheight, hash_at_topo);
 
                     let block = storage.get_block_header_by_hash(&hash_at_topo).await?;
 
@@ -2067,7 +2067,7 @@ impl<S: Storage> Blockchain<S> {
                     if let Some(value) = version.get_balance().checked_sub(output.amount) {
                         version.set_balance(value);
                     } else {
-                        warn!("Overflow detected with transaction transfer {}", hash);
+                        debug!("Overflow detected with transaction transfer {}", hash);
                         return Err(BlockchainError::Overflow)
                     }
                 }
