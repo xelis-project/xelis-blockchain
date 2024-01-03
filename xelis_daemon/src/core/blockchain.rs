@@ -703,6 +703,7 @@ impl<S: Storage> Blockchain<S> {
 
     // this function check that a TIP cannot be refered as past block in another TIP
     async fn verify_non_reachability(&self, storage: &S, block: &BlockHeader) -> Result<bool, BlockchainError> {
+        trace!("Verifying non reachability for block");
         let tips = block.get_tips();
         let tips_count = tips.len();
         let mut reach = Vec::with_capacity(tips_count);
@@ -1398,14 +1399,14 @@ impl<S: Storage> Blockchain<S> {
                 // check that the TX included is not executed in stable height or in block TIPS
                 if storage.is_tx_executed_in_a_block(hash)? {
                     let block_executed = storage.get_block_executer_for_tx(hash)?;
-                    debug!("Tx {} was executed in {}", hash, block);
+                    debug!("Tx {} was executed in {}", hash, block_executed);
                     let block_height = storage.get_height_for_block_hash(&block_executed).await?;
                     // if the tx was executed below stable height, reject whole block!
                     if block_height <= stable_height {
                         error!("Block {} contains a dead tx {}", block_hash, tx_hash);
                         return Err(BlockchainError::DeadTx(tx_hash))
                     } else {
-                        debug!("Tx {} was executed in block {} at height {} (unstable height: {})", tx_hash, block, block_height, stable_height);
+                        debug!("Tx {} was executed in block {} at height {} (stable height: {})", tx_hash, block, block_height, stable_height);
                         // now we should check that the TX was not executed in our TIP branch
                         // because that mean the miner was aware of the TX execution and still include it
                         if all_parents_txs.is_none() {
@@ -1535,6 +1536,7 @@ impl<S: Storage> Blockchain<S> {
                         }
                     }
 
+                    // Delete changes made by this block
                     storage.delete_versioned_balances_at_topoheight(topoheight).await?;
                     storage.delete_versioned_nonces_at_topoheight(topoheight).await?;
 
@@ -1874,8 +1876,13 @@ impl<S: Storage> Blockchain<S> {
     // retrieve all txs hashes until height or until genesis block
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
     async fn get_all_txs_until_height(&self, storage: &S, until_height: u64, tips: impl Iterator<Item = Hash>) -> Result<HashSet<Hash>, BlockchainError> {
+        trace!("get all txs until height {}", until_height);
+        // All transactions hashes found under the stable height
         let mut hashes = HashSet::new();
-        let mut queue: IndexSet<Hash> = IndexSet::new();
+        // Current queue of blocks to process
+        let mut queue = IndexSet::new();
+        // All already processed blocks
+        let mut processed = IndexSet::new();
         queue.extend(tips);
 
         // get last element from queue (order doesn't matter and its faster than moving all elements)
@@ -1891,7 +1898,8 @@ impl<S: Storage> Blockchain<S> {
 
                 // add all tips from block (but check that we didn't already added it)
                 for tip in block.get_tips() {
-                    if !queue.contains(tip) {
+                    if !processed.contains(tip) {
+                        processed.insert(tip.clone());
                         queue.insert(tip.clone());
                     }
                 }
