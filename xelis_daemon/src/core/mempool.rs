@@ -161,9 +161,31 @@ impl Mempool {
                     // filter all txs hashes which are not found
                     // or where its nonce is smaller than the new nonce
                     // TODO when drain_filter is stable, use it (allow to get all hashes deleted)
+                    let mut max: Option<u64> = None;
+                    let mut min: Option<u64> = None;
                     cache.txs.retain(|hash| {
                         let delete = if let Some(tx) = self.txs.get(hash) {
-                            tx.get_tx().get_nonce() < nonce
+                            let tx_nonce = tx.get_tx().get_nonce();
+
+                            // Update cache highest bounds
+                            if let Some(v) = min.clone() {
+                                if  v < tx_nonce {
+                                    max = Some(tx_nonce);
+                                }
+                            } else {
+                                max = Some(tx_nonce);
+                            }
+
+                            // Update cache lowest bounds
+                            if let Some(v) = min.clone() {
+                                if  v > tx_nonce {
+                                    min = Some(tx_nonce);
+                                }
+                            } else {
+                                min = Some(tx_nonce);
+                            }
+
+                            tx_nonce < nonce
                         } else {
                             true
                         };
@@ -173,6 +195,12 @@ impl Mempool {
                         }
                         !delete
                     });
+
+                    // Update cache bounds
+                    if let (Some(min), Some(max)) = (min, max) {
+                        cache.min = min;
+                        cache.max = max;
+                    }
 
                     // delete the nonce cache if no txs are left
                     delete_cache = cache.txs.is_empty();
