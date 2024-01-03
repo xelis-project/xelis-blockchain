@@ -81,7 +81,7 @@ impl Simulator {
 
     async fn generate_blocks(&self, max_blocks: usize, rng: &mut OsRng, keys: &Vec<KeyPair>, blockchain: &Arc<Blockchain<impl Storage>>) -> Vec<Block> {
         info!("Adding simulated blocks");
-        let n = rng.gen_range(0..=max_blocks);
+        let n = rng.gen_range(1..=max_blocks);
         let mut blocks = Vec::with_capacity(n);
         for _ in 0..n {
             let index = rng.gen_range(0..keys.len());
