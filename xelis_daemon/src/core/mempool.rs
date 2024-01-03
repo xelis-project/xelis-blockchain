@@ -98,6 +98,66 @@ impl Mempool {
         Ok(())
     }
 
+    // Remove a TX using its hash from mempool
+    // This will recalculate the cache bounds
+    pub fn remove_tx(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
+        let tx = self.txs.remove(hash).ok_or_else(|| BlockchainError::TxNotFound(hash.clone()))?;
+        // remove the tx hash from sorted txs
+        let key = tx.get_tx().get_owner();
+        let mut delete = false;
+        if let Some(cache) = self.nonces_cache.get_mut(key) {
+            if !cache.txs.remove(hash) {
+                warn!("TX {} not found in mempool while deleting", hash);
+            } else {
+                trace!("TX {} removed from cache", hash);
+                delete = cache.txs.is_empty();
+                if !delete {
+                    trace!("Updating cache bounds");
+                    let mut max: Option<u64> = None;
+                    let mut min: Option<u64> = None;
+                    // Update cache bounds
+                    for tx_hash in cache.txs.iter() {
+                        let tx = self.txs.get(tx_hash).ok_or_else(|| BlockchainError::TxNotFound(hash.clone()))?;
+                        let nonce = tx.get_tx().get_nonce();
+    
+                        // Update cache highest bounds
+                        if let Some(v) = max.clone() {
+                            if  v < nonce {
+                                max = Some(nonce);
+                            }
+                        } else {
+                            max = Some(nonce);
+                        }
+    
+                        // Update cache lowest bounds
+                        if let Some(v) = min.clone() {
+                            if  v > nonce {
+                                min = Some(nonce);
+                            }
+                        } else {
+                            min = Some(nonce);
+                        }
+                    }
+    
+                    if let (Some(min), Some(max)) = (min, max) {
+                        trace!("Updating cache bounds to {}-{}", min, max);
+                        cache.min = min;
+                        cache.max = max;
+                    }
+                }
+            }
+        } else {
+            warn!("No cache found for owner {} while deleting TX {}", tx.get_tx().get_owner(), hash);
+        }
+
+        if delete {
+            trace!("Removing empty nonce cache for owner {}", key);
+            self.nonces_cache.remove(key);
+        }
+
+        Ok(())
+    }
+
     pub fn get_nonces_cache(&self) -> &HashMap<PublicKey, NonceCache> {
         &self.nonces_cache
     }
