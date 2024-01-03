@@ -1411,7 +1411,7 @@ impl<S: Storage> Blockchain<S> {
                         // because that mean the miner was aware of the TX execution and still include it
                         if all_parents_txs.is_none() {
                             // load it only one time
-                            all_parents_txs = Some(self.get_all_txs_until_height(storage, stable_height, block.get_tips().iter().map(Hash::clone)).await?);
+                            all_parents_txs = Some(self.get_all_executed_txs_until_height(storage, stable_height, block.get_tips().iter().map(Hash::clone)).await?);
                         }
 
                         // if its the case, we should reject the block
@@ -1873,9 +1873,9 @@ impl<S: Storage> Blockchain<S> {
         Ok(block_reward)
     }
 
-    // retrieve all txs hashes until height or until genesis block
+    // retrieve all txs hashes until height or until genesis block that were executed in a block
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
-    async fn get_all_txs_until_height(&self, storage: &S, until_height: u64, tips: impl Iterator<Item = Hash>) -> Result<HashSet<Hash>, BlockchainError> {
+    async fn get_all_executed_txs_until_height(&self, storage: &S, until_height: u64, tips: impl Iterator<Item = Hash>) -> Result<HashSet<Hash>, BlockchainError> {
         trace!("get all txs until height {}", until_height);
         // All transactions hashes found under the stable height
         let mut hashes = HashSet::new();
@@ -1893,7 +1893,14 @@ impl<S: Storage> Blockchain<S> {
             if until_height < block.get_height() {
                 // add all txs from block
                 for tx in block.get_txs_hashes() {
-                    hashes.insert(tx.clone());
+                    // Check that we don't have it yet
+                    if !hashes.contains(tx) {
+                        // Then check that it's executed in this block
+                        if storage.is_tx_executed_in_block(tx, &hash)? {
+                            // add it to the list
+                            hashes.insert(tx.clone());
+                        }
+                    }
                 }
 
                 // add all tips from block (but check that we didn't already added it)
