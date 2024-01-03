@@ -250,14 +250,14 @@ Current overhead per block is:
 - Tree `difficulty` saving Difficulty value of a block (8 bytes) using Hash (32 bytes) key.
 - Tree `rewards` saving block reward value (8 bytes) using topoheight (8 bytes) key.
 - Tree `supply` saving current circulating supply value (8 bytes) using topoheight (8 bytes) key.
-- Tree `versioned_balances` is updated at each block (for miner rewards), and also for each account that had interactions (transactions): 32 bytes for key and 16 bytes for value.
-- Tree `versioned_nonces` is updated for each account that send at least one TX per topoheight: 32 bytes for key and 16 bytes for value
+- Tree `versioned_balances` is updated at each block (for miner rewards), and also for each account that had interactions (transactions): 72 bytes for key and 16 bytes for value.
+- Tree `versioned_nonces` is updated for each account that send at least one TX per topoheight: 40 bytes for key and 16 bytes for value
 
-At this moment with current implementation, minimal overhead per new account is 160 bytes for keys and 48 bytes for values:
-- `balances` Public Key (32 bytes) + Asset (32 bytes) => topoheight of last versioned balance (8 bytes)
+At this moment with current implementation, minimal overhead per new account is 208 bytes for keys and 56 bytes for values:
+- `balances` Public Key + Asset (64 bytes) => topoheight of last versioned balance (8 bytes)
 - `nonces` Public Key (32 bytes) => topoheight of last versioned nonce (8 bytes)
-- `versioned_balances` Hash of (Public Key + Topoheight) (32 bytes) => Versioned Balance (16 bytes)
-- `versioned_nonces` Hash of (Public Key + Topoheight) (32 bytes) => Versioned Nonce (16 bytes)
+- `versioned_balances` Public Topoheight + Key + Asset (72 bytes) => Versioned Balance (16 bytes)
+- `versioned_nonces` Topoheight + Public Key (40 bytes) => Versioned Nonce (16 bytes)
 
 An optimized version could be done to reduce further the disk usage by creating pointers.
 Instead of saving multiple times the whole Public Key (32 bytes), we create a pointer table to which a u64 value is assigned.
