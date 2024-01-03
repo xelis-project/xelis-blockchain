@@ -168,7 +168,7 @@ impl Mempool {
                             let tx_nonce = tx.get_tx().get_nonce();
 
                             // Update cache highest bounds
-                            if let Some(v) = min.clone() {
+                            if let Some(v) = max.clone() {
                                 if  v < tx_nonce {
                                     max = Some(tx_nonce);
                                 }
