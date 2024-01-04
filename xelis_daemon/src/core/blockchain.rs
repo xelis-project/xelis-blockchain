@@ -1033,7 +1033,7 @@ impl<S: Storage> Blockchain<S> {
                 // check that the nonce is in the range
                 if !(tx.get_nonce() <= cache.get_max() + 1 && tx.get_nonce() >= cache.get_min()) {
                     debug!("TX {} nonce is not in the range of the pending TXs for this owner, received: {}, expected between {} and {}", hash, tx.get_nonce(), cache.get_min(), cache.get_max());
-                    return Err(BlockchainError::InvalidTxNonceMempoolCache)
+                    return Err(BlockchainError::InvalidTxNonceMempoolCache(tx.get_nonce(), cache.get_min(), cache.get_max()))
                 }
                 // we need to do it in two times because of the constraint of lifetime on &tx
                 let mut balances = HashMap::new();
