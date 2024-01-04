@@ -2000,7 +2000,48 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidTransactionSignature)
         }
 
+        // Then, verify that the nonce is the right one
+        if !skip_nonces {
+            // nonces can be already pre-computed to support multi nonces at the same time in block/mempool
+            if let Some(nonces) = nonces {
+                // check that we don't have nonce from cache and that it exists in storage, otherwise set 0
+                let nonce = match nonces.entry(tx.get_owner()) {
+                    Entry::Vacant(entry) => {
+                        let nonce = if let Some((_, version)) =  storage.get_nonce_at_maximum_topoheight(tx.get_owner(), topoheight).await? {
+                            version.get_nonce()
+                        } else {
+                            0
+                        };
+                        entry.insert(nonce)
+                    },
+                    Entry::Occupied(entry) => entry.into_mut(),
+                };
+    
+                if *nonce != tx.get_nonce() {
+                    debug!("Invalid nonce from cache for tx {}", hash);
+                    return Err(BlockchainError::InvalidTxNonce(hash.clone(), tx.get_nonce(), *nonce, tx.get_owner().clone()))
+                }
+                // we increment it in case any new tx for same owner is following
+                *nonce += 1;
+            } else { // We don't have any cache, compute using chain data
+                // it is possible that a miner has balance but no nonces, so we need to check it
+                let nonce = if let Some((_, version)) =  storage.get_nonce_at_maximum_topoheight(tx.get_owner(), topoheight).await? {
+                    version.get_nonce()
+                } else {
+                    0 // no nonce, so we start at 0
+                };
+
+                if nonce != tx.get_nonce() {
+                    debug!("Invalid nonce in storage for tx {}", hash);
+                    return Err(BlockchainError::InvalidTxNonce(hash.clone(), tx.get_nonce(), nonce, tx.get_owner().clone()))
+                }
+            }
+        }
+
+        // Retrieve sender balances from cache
         let owner_balances: &mut HashMap<&'a Hash, VersionedBalance> = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
+
+        // Verify that the sender has enough balance to pay the fees
         {
             let version = match owner_balances.entry(&XELIS_ASSET) {
                 Entry::Vacant(entry) => {
@@ -2018,6 +2059,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
+        // Now verify that the TX is valid
         match tx.get_data() {
             TransactionType::Transfer(txs) => {
                 if txs.len() == 0 { // don't accept any empty tx
@@ -2085,43 +2127,6 @@ impl<S: Storage> Blockchain<S> {
                 return Err(BlockchainError::SmartContractTodo)
             }
         };
-
-        if !skip_nonces {
-            // nonces can be already pre-computed to support multi nonces at the same time in block/mempool
-            if let Some(nonces) = nonces {
-                // check that we don't have nonce from cache and that it exists in storage, otherwise set 0
-                let nonce = match nonces.entry(tx.get_owner()) {
-                    Entry::Vacant(entry) => {
-                        let nonce = if let Some((_, version)) =  storage.get_nonce_at_maximum_topoheight(tx.get_owner(), topoheight).await? {
-                            version.get_nonce()
-                        } else {
-                            0
-                        };
-                        entry.insert(nonce)
-                    },
-                    Entry::Occupied(entry) => entry.into_mut(),
-                };
-    
-                if *nonce != tx.get_nonce() {
-                    debug!("Invalid nonce from cache for tx {}", hash);
-                    return Err(BlockchainError::InvalidTxNonce(hash.clone(), tx.get_nonce(), *nonce, tx.get_owner().clone()))
-                }
-                // we increment it in case any new tx for same owner is following
-                *nonce += 1;
-            } else { // We don't have any cache, compute using chain data
-                // it is possible that a miner has balance but no nonces, so we need to check it
-                let nonce = if let Some((_, version)) =  storage.get_nonce_at_maximum_topoheight(tx.get_owner(), topoheight).await? {
-                    version.get_nonce()
-                } else {
-                    0 // no nonce, so we start at 0
-                };
-
-                if nonce != tx.get_nonce() {
-                    debug!("Invalid nonce in storage for tx {}", hash);
-                    return Err(BlockchainError::InvalidTxNonce(hash.clone(), tx.get_nonce(), nonce, tx.get_owner().clone()))
-                }
-            }
-        }
 
         Ok(())
     }
