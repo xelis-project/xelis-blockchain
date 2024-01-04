@@ -224,32 +224,34 @@ impl Mempool {
                     let mut max: Option<u64> = None;
                     let mut min: Option<u64> = None;
                     cache.txs.retain(|hash| {
-                        let delete = if let Some(tx) = self.txs.get(hash) {
-                            let tx_nonce = tx.get_tx().get_nonce();
+                        let mut delete = true;
 
-                            // Update cache highest bounds
-                            if let Some(v) = max.clone() {
-                                if  v < tx_nonce {
+                        if let Some(tx) = self.txs.get(hash) {
+                            let tx_nonce = tx.get_tx().get_nonce();
+                            // If TX is still compatible with new nonce, update bounds
+                            if tx_nonce >= nonce {
+                                 // Update cache highest bounds
+                                if let Some(v) = max.clone() {
+                                    if  v < tx_nonce {
+                                        max = Some(tx_nonce);
+                                    }
+                                } else {
                                     max = Some(tx_nonce);
                                 }
-                            } else {
-                                max = Some(tx_nonce);
-                            }
 
-                            // Update cache lowest bounds
-                            if let Some(v) = min.clone() {
-                                if  v > tx_nonce {
+                                // Update cache lowest bounds
+                                if let Some(v) = min.clone() {
+                                    if  v > tx_nonce {
+                                        min = Some(tx_nonce);
+                                    }
+                                } else {
                                     min = Some(tx_nonce);
                                 }
-                            } else {
-                                min = Some(tx_nonce);
+                                delete = false;
                             }
+                        }
 
-                            tx_nonce < nonce
-                        } else {
-                            true
-                        };
-
+                        // Add hash in list if we delete it
                         if delete {
                             hashes.push(Arc::clone(hash));
                         }
@@ -258,6 +260,7 @@ impl Mempool {
 
                     // Update cache bounds
                     if let (Some(min), Some(max)) = (min, max) {
+                        debug!("Update cache bounds: [{}-{}]", min, max);
                         cache.min = min;
                         cache.max = max;
                     }
