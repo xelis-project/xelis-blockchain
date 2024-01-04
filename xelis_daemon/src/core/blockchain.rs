@@ -1605,8 +1605,7 @@ impl<S: Storage> Blockchain<S> {
                             continue;
                         }
 
-                        // + 1 because it got consumed
-                        let next_nonce = nonce_checker.get_new_nonce(tx.get_owner())? + 1;
+                        let next_nonce = nonce_checker.get_new_nonce(tx.get_owner())?;
                         local_nonces.insert(tx.get_owner(), next_nonce);
 
                         // mark tx as executed
