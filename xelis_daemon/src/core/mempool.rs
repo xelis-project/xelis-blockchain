@@ -55,7 +55,7 @@ impl Mempool {
             if nonce >= cache.get_min() && nonce <= cache.get_max() {
                 trace!("nonce {} is in range {}-{}", nonce, cache.get_min(), cache.get_max());
                 // because it's based on order and we may have the same order
-                let index = ((nonce - cache.get_min()) % (cache.get_max() - cache.get_min())) as usize;
+                let index = ((nonce - cache.get_min()) % (cache.get_max() + 1 - cache.get_min())) as usize;
                 cache.txs.insert(hash.clone());
                 must_update = false;
 
