@@ -1,4 +1,5 @@
 name: Docker
+
 on:
   push:
     branches: [ "master" ]
@@ -6,7 +7,10 @@ on:
   pull_request:
     branches: [ "master" ]
   schedule:
-    - cron: '0 4 * * *'
+    - cron: '0 14 * * *'
+
+env:
+  SHOULD_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_type == 'tag' || github.ref == 'refs/heads/dev') }}
 
 jobs:
   build:
@@ -18,9 +22,9 @@ jobs:
     strategy:
       matrix:
         app:
-          - xelis_daemon
-          - xelis_miner
-          - xelis_wallet
+          - daemon
+          - miner
+          - wallet
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -35,23 +39,18 @@ jobs:
           username: xelis
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      - name: Process app name
+      - name: Retrieve version from Cargo.toml
         run: |
-          APP=${{ matrix.app }}
-          echo "XELIS_APP=${APP#xelis_}" >> "$GITHUB_ENV"
-
-      - name: Process app version
-        run: |
-          VERSION=`awk -F ' = ' '$1 ~ /version/ { gsub(/[\\"]/, "", $2); printf("%s",$2) }' ${{ matrix.app }}/Cargo.toml`
+          VERSION=`awk -F ' = ' '$1 ~ /version/ { gsub(/[\\"]/, "", $2); printf("%s",$2) }' xelis_${{ matrix.app }}/Cargo.toml`
           echo "XELIS_VERSION=${VERSION}" >> "$GITHUB_ENV"
 
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: xelis/${{ env.XELIS_APP }}
+          images: xelis/${{ matrix.app }}
           labels: |
-            org.opencontainers.image.title=Xelis ${{ env.XELIS_APP }}
+            org.opencontainers.image.title=Xelis ${{ matrix.app }}
           tags: |
             type=schedule,pattern=${{ env.XELIS_VERSION }}-nightly-{{date 'YYYYMMDD'}}
             type=semver,pattern={{version}},event=tag
@@ -62,12 +61,12 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' && (github.ref_type == 'tag' || github.ref == 'dev') }}
+          push: ${{ env.SHOULD_PUSH }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            app=${{ matrix.app }}
+            app=xelis_${{ matrix.app }}
             commit_hash=${{ github.sha }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.SHOULD_PUSH && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
