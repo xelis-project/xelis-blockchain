@@ -3,10 +3,9 @@
 FROM rust:1.74-bookworm as builder
 
 ARG app
-ARG commit-hash
+ARG commit_hash
 
 ENV BUILD_DIR /tmp/xelis-build
-ENV XELIS_COMMIT_HASH ${commit-hash}
 
 RUN mkdir -p $BUILD_DIR
 WORKDIR $BUILD_DIR
@@ -19,7 +18,7 @@ COPY --parents xelis_wallet/src xelis_wallet/Cargo.toml ./
 
 WORKDIR ${BUILD_DIR}/$app
 
-RUN cargo build --release
+RUN XELIS_COMMIT_HASH=${commit_hash} cargo build --release
 
 # ---
 
