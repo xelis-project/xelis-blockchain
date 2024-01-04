@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ "master" ]
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '0 4 * * *'
 
 jobs:
   build:
@@ -32,7 +32,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          username: xelis
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
       - name: Process app name
@@ -69,5 +69,5 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             app=${{ matrix.app }}
-            commit-hash=${{ github.sha }}
+            commit_hash=${{ github.sha }}
           platforms: linux/amd64,linux/arm64
