@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ "master" ]
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 3 * * *'
 
 jobs:
   build:
@@ -19,7 +19,7 @@ jobs:
       matrix:
         app:
           - xelis_daemon
-          - xelix_miner
+          - xelis_miner
           - xelis_wallet
     steps:
       - name: Checkout repository
