@@ -68,7 +68,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args:
-            - app=${{ matrix.app }}
-            - commit-hash=${{ github.sha }}
+          build-args: |
+            app=${{ matrix.app }}
+            commit-hash=${{ github.sha }}
           platforms: linux/amd64,linux/arm64
