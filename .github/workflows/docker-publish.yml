@@ -55,7 +55,6 @@ jobs:
           tags: |
             type=schedule,pattern=${{ env.XELIS_VERSION }}-nightly-{{date 'YYYYMMDD'}}
             type=semver,pattern={{version}},event=tag
-            type=ref,event=branch
             type=ref,event=pr
 
       - name: Build and push Docker image
