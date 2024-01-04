@@ -14,7 +14,9 @@ pub enum Simulator {
     // Mine only one block every BLOCK_TIME
     Blockchain,
     // Mine random 1-5 blocks every BLOCK_TIME to enable BlockDAG
-    BlockDag
+    BlockDag,
+    // Same as blockDAG but generates much more blocks and TXs for stress test
+    Stress,
 }
 
 impl FromStr for Simulator {
@@ -24,6 +26,7 @@ impl FromStr for Simulator {
         Ok(match s {
             "blockchain" | "0" => Self::Blockchain,
             "blockdag" | "1" => Self::BlockDag,
+            "stress" | "2" => Self::Stress,
             _ => return Err("Invalid simulator type".into())
         })
     }
@@ -33,7 +36,8 @@ impl Display for Simulator {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let str = match &self {
             Self::Blockchain => "blockchain",
-            Self::BlockDag => "blockdag"
+            Self::BlockDag => "blockdag",
+            Self::Stress => "stress",
         };
         write!(f, "{}", str)
     }
@@ -43,7 +47,12 @@ impl Simulator {
     // Start the Simulator mode to generate new blocks automatically
     // It generates random miner keys and mine blocks with them
     pub async fn start<S: Storage>(&self, blockchain: Arc<Blockchain<S>>) {
-        let mut interval = interval(Duration::from_millis(BLOCK_TIME_MILLIS));
+        let millis_interval = match self {
+            Self::Stress => 300,
+            _ => BLOCK_TIME_MILLIS
+        };
+
+        let mut interval = interval(Duration::from_millis(millis_interval));
         let mut rng = OsRng;
         let mut keys: Vec<KeyPair> = Vec::new();
 
@@ -58,6 +67,7 @@ impl Simulator {
             // Number of blocks to generate
             let blocks_count = match self {
                 Self::BlockDag => rng.gen_range(1..=TIPS_LIMIT),
+                Self::Stress => rng.gen_range(1..=10),
                 _ => 1
             };
 
@@ -75,7 +85,11 @@ impl Simulator {
                 }
             }
 
-            self.generate_txs_in_mempool(5, 15, 50, &mut rng, &keys, &blockchain).await;
+            let max_txs = match self {
+                Self::Stress => 200,
+                _ => 15
+            };
+            self.generate_txs_in_mempool(max_txs, 15, 50, &mut rng, &keys, &blockchain).await;
         }
     }
 

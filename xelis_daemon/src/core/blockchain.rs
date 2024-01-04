@@ -1599,54 +1599,22 @@ impl<S: Storage> Blockchain<S> {
                     } else {
                         // tx was not executed, but lets check that it is not a potential double spending
                         // check that the nonce is not already used
-                        if !nonce_checker.use_nonce(tx.get_owner(), tx.get_nonce(), highest_topo) {
+                        if !nonce_checker.use_nonce(&*storage, tx.get_owner(), tx.get_nonce(), highest_topo).await? {
                             warn!("Malicious TX {}, it is a potential double spending with same nonce {}, skipping...", tx_hash, tx.get_nonce());
                             // TX will be orphaned
                             continue;
                         }
 
+                        // + 1 because it got consumed
+                        let next_nonce = nonce_checker.get_new_nonce(tx.get_owner())? + 1;
+                        local_nonces.insert(tx.get_owner(), next_nonce);
+
                         // mark tx as executed
-                        trace!("Executing tx {} in block {}", tx_hash, hash);
+                        info!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
                         storage.set_tx_executed_in_block(tx_hash, &hash)?;
 
                         // Execute the transaction by applying changes in storage
                         self.execute_transaction(storage, &tx, &mut local_balances, highest_topo).await?;
-
-                        // For this block, save the highest nonce for each owner
-                        {
-                            match local_nonces.entry(tx.get_owner()) {
-                                Entry::Occupied(mut e) => {
-                                    let stored = e.get_mut();
-                                    if tx.get_nonce() != *stored {
-                                        error!("Diverging nonce! Expected {} got {}", stored, tx.get_nonce());
-                                    }
-
-                                    // Increase it by one because this nonce got consumed by the TX
-                                    *stored += 1;
-                                },
-                                Entry::Vacant(e) => {
-                                    // Lets first check if we have one in our final nonces
-                                    // Otherwise search in storage, and if not found, set it as 0 (should never happens)
-                                    let nonce = match final_nonces.get(e.key()) {
-                                        Some(nonce) => *nonce,
-                                        None => match storage.get_nonce_at_maximum_topoheight(e.key(), highest_topo).await? {
-                                            Some((_, version)) => version.get_nonce(),
-                                            None => {
-                                                warn!("Account {} has no nonce saved for maximum topoheight {}", e.key(), highest_topo);
-                                                0
-                                            }
-                                        }
-                                    };
-
-                                    if tx.get_nonce() != nonce {
-                                        error!("Diverging nonce! Expected {} got {}", nonce, tx.get_nonce());
-                                    }
-
-                                    // Increase it by one because this nonce got consumed by the TX
-                                    e.insert(nonce + 1);
-                                }
-                            };
-                        }
 
                         // if the rpc_server is enable, track events
                         if should_track_events.contains(&NotifyEvent::TransactionExecuted) {
