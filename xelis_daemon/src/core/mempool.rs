@@ -213,8 +213,20 @@ impl Mempool {
             let mut delete_cache = false;
             // check if we have a TX in cache for this owner
             if let Some(cache) = self.nonces_cache.get_mut(&key) {
-                // check if the minimum nonce used is lower than new nonce
-                if cache.get_min() < nonce {
+                // Check if the minimum nonce is higher than the new nonce, that means
+                // all TXs will be orphaned as its suite got broken
+                // or, check and delete txs if the nonce is lower than the new nonce
+                // otherwise the cache is still up to date
+                if cache.get_min() > nonce {
+                    // We can delete all these TXs as they got automatically orphaned
+                    // Because of the suite being broked
+                    for hash in cache.txs.iter() {
+                        if self.txs.remove(hash).is_none() {
+                            warn!("TX {} not found in mempool while deleting", hash);
+                        }
+                    }
+                    delete_cache = true;
+                } else if cache.get_min() < nonce {
                     // txs hashes to delete
                     let mut hashes: Vec<Arc<Hash>> = Vec::with_capacity(cache.txs.len());
 
