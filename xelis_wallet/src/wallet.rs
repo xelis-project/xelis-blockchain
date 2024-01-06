@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Error, Context};
 use serde_json::{Value, json};
-use tokio::sync::broadcast::{Sender, Receiver};
+use tokio::sync::broadcast::{Sender as BroadcastSender, Receiver as BroadcastReceiver};
 use tokio::sync::{Mutex, RwLock};
 use xelis_common::api::DataElement;
 use xelis_common::api::wallet::FeeBuilder;
@@ -31,7 +31,6 @@ use log::{error, debug};
 
 #[cfg(feature = "api_server")]
 use {
-    fern::colors::Color,
     async_trait::async_trait,
     crate::api::{
         register_rpc_methods,
@@ -44,12 +43,11 @@ use {
         PermissionRequest,
         XSWDPermissionHandler
     },
-    xelis_common::prompt::{
-        ShareablePrompt,
-        colorize_string,
-        colorize_str
-    },
-    xelis_common::rpc_server::RPCHandler
+    xelis_common::rpc_server::RPCHandler,
+    tokio::sync::{
+        mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel},
+        oneshot::{Sender as OneshotSender, channel}
+    }
 };
 
 #[derive(Error, Debug)]
@@ -137,12 +135,11 @@ pub struct Wallet {
     // RPC Server
     #[cfg(feature = "api_server")]
     api_server: Mutex<Option<APIServer<Arc<Self>>>>,
-    // Prompt for CLI
-    // Only used for requesting permissions through it
+    // All XSWD requests are routed through this channel
     #[cfg(feature = "api_server")]
-    prompt: RwLock<Option<ShareablePrompt>>,
+    xswd_channel: RwLock<Option<UnboundedSender<XSWDEvent>>>,
     // Event broadcaster
-    event_broadcaster: Mutex<Option<Sender<Event>>>
+    event_broadcaster: Mutex<Option<BroadcastSender<Event>>>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -152,6 +149,7 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 }
 
 impl Wallet {
+    // Create a new wallet with the specificed storage, keypair and its network
     fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network) -> Arc<Self> {
         let zelf = Self {
             storage: RwLock::new(storage),
@@ -160,13 +158,15 @@ impl Wallet {
             network,
             #[cfg(feature = "api_server")]
             api_server: Mutex::new(None),
-            prompt: RwLock::new(None),
+            #[cfg(feature = "api_server")]
+            xswd_channel: RwLock::new(None),
             event_broadcaster: Mutex::new(None)
         };
 
         Arc::new(zelf)
     }
 
+    // Create a new wallet on disk
     pub fn create(name: String, password: String, seed: Option<String>, network: Network) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
@@ -222,6 +222,7 @@ impl Wallet {
         Ok(Self::new(storage, keypair, network))
     }
 
+    // Open an existing wallet on disk
     pub fn open(name: String, password: String, network: Network) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
@@ -275,7 +276,7 @@ impl Wallet {
     }
 
     // Subscribe to events
-    pub async fn subscribe_events(&self) -> Receiver<Event> {
+    pub async fn subscribe_events(&self) -> BroadcastReceiver<Event> {
         let mut broadcaster = self.event_broadcaster.lock().await;
         match broadcaster.as_ref() {
             Some(broadcaster) => broadcaster.subscribe(),
@@ -287,14 +288,7 @@ impl Wallet {
         }
     }
 
-    #[cfg(feature = "api_server")]
-    pub async fn set_prompt(&self, prompt: ShareablePrompt) {
-        {
-            let mut lock = self.prompt.write().await;
-            *lock = Some(prompt);
-        }
-    }
-
+    // Enable RPC Server with requested authentication and bind address
     #[cfg(feature = "api_server")]
     pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String, config: Option<AuthConfig>) -> Result<(), Error> {
         let mut lock = self.api_server.lock().await;
@@ -309,8 +303,16 @@ impl Wallet {
         Ok(())
     }
 
+    // Enable XSWD Protocol
     #[cfg(feature = "api_server")]
-    pub async fn enable_xswd(self: &Arc<Self>) -> Result<(), Error> {
+    pub async fn enable_xswd(self: &Arc<Self>) -> Result<UnboundedReceiver<XSWDEvent>, Error> {
+        let receiver = {
+            let (sender, receiver) = unbounded_channel();
+            let mut channel = self.xswd_channel.write().await;
+            *channel = Some(sender);
+            receiver
+        };
+
         let mut lock = self.api_server.lock().await;
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
@@ -319,7 +321,7 @@ impl Wallet {
         register_rpc_methods(&mut rpc_handler);
 
         *lock = Some(APIServer::XSWD(XSWD::new(rpc_handler)?));
-        Ok(())
+        Ok(receiver)
     }
 
     #[cfg(feature = "api_server")]
@@ -617,62 +619,50 @@ impl Wallet {
     }
 }
 
+pub enum XSWDEvent {
+    RequestPermission(AppStateShared, RpcRequest, OneshotSender<Result<PermissionResult, Error>>),
+    // bool represents if it was signed or not
+    RequestApplication(AppStateShared, bool, OneshotSender<Result<PermissionResult, Error>>),
+    CancelRequest(AppStateShared, OneshotSender<Result<(), Error>>)
+}
+
 #[cfg(feature = "api_server")]
 #[async_trait]
 impl XSWDPermissionHandler for Arc<Wallet> {
     async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
-        if let Some(prompt) = self.prompt.read().await.as_ref() {
-            match request {
-                PermissionRequest::Application(signed) => {
-                    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_state.get_name(), app_state.get_id());
-                    if signed {
-                        message = colorize_str(Color::BrightYellow, "NOTE: Application authorizaion was already approved previously.\r\n") + &message;
-                    }
-                    let accepted = prompt.read_valid_str_value(colorize_string(Color::Blue, &message), vec!["y", "n"]).await? == "y";
-                    if accepted {
-                        Ok(PermissionResult::Allow)
-                    } else {
-                        Ok(PermissionResult::Deny)
-                    }
-                },
-                PermissionRequest::Request(request) => {
-                    let params = if let Some(params) = &request.params {
-                        params.to_string()
-                    } else {
-                        "".to_string()
-                    };
+        if let Some(sender) = self.xswd_channel.read().await.as_ref() {
+            // no other way ?
+            let app_state = app_state.clone();
+            // create a callback channel to receive the answer
+            let (callback, receiver) = channel();
+            let event = match request {
+                PermissionRequest::Application(signed) => XSWDEvent::RequestApplication(app_state, signed, callback),
+                PermissionRequest::Request(request) => XSWDEvent::RequestPermission(app_state, request.clone(), callback)
+            };
 
-                    let message = format!(
-                        "XSWD: Request from {}: {}\r\nParams: {}\r\nDo you want to allow this request ?\r\n([A]llow / [D]eny / [AA] Always Allow / [AD] Always Deny): ",
-                        app_state.get_name(),
-                        request.method,
-                        params
-                    );
+            // Send the XSWD Message
+            sender.send(event)?;
 
-                    let answer = prompt.read_valid_str_value(colorize_string(Color::Blue, &message), vec!["a", "d", "aa", "ad"]).await?;
-                    Ok(match answer.as_str() {
-                        "a" => PermissionResult::Allow,
-                        "d" => PermissionResult::Deny,
-                        "aa" => PermissionResult::AlwaysAllow,
-                        "ad" => PermissionResult::AlwaysDeny,
-                        _ => unreachable!()
-                    })
-                }
-            }
-        } else {
-            Err(WalletError::NoHandlerAvailable.into())
+            // Wait on the callback
+            return receiver.await?;
         }
+
+        Err(WalletError::NoHandlerAvailable.into())
     }
 
     // there is a lock to acquire so it make it "single threaded"
     // the one who has the lock is the one who is requesting so we don't need to check and can cancel directly
-    async fn cancel_request_permission(&self, _: &AppStateShared) -> Result<(), Error> {
-        debug!("Cancelling request permission");
-        if let Some(prompt) = self.prompt.read().await.as_ref() {
-            prompt.cancel_read_input().await
-        } else {
-            Err(WalletError::NoHandlerAvailable.into())
+    async fn cancel_request_permission(&self, app: &AppStateShared) -> Result<(), Error> {
+        if let Some(sender) = self.xswd_channel.read().await.as_ref() {
+            let (callback, receiver) = channel();
+            // Send XSWD Message
+            sender.send(XSWDEvent::CancelRequest(app.clone(), callback))?;
+
+            // Wait on callback
+            return receiver.await?;
         }
+
+        Err(WalletError::NoHandlerAvailable.into())
     }
 
     async fn get_public_key(&self) -> Result<&PublicKey, Error> {

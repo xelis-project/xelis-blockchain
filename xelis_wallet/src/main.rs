@@ -1,13 +1,14 @@
 use std::{sync::Arc, time::Duration, path::Path};
 
-use anyhow::{Result, Context};
-use xelis_wallet::config::DIR_PATH;
+use anyhow::{Result, Context, Error};
+use tokio::sync::mpsc::UnboundedReceiver;
+use xelis_wallet::{config::DIR_PATH, wallet::XSWDEvent, api::{PermissionResult, AppStateShared}};
 use fern::colors::Color;
 use log::{error, info};
 use clap::Parser;
 use xelis_common::{config::{
     VERSION, XELIS_ASSET, COIN_DECIMALS
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel, self, ShareablePrompt, PromptError}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, utils::{format_xelis, set_network_to, format_coin}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
+}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel, self, ShareablePrompt, PromptError, colorize_string, colorize_str}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, utils::{format_xelis, set_network_to, format_coin}, serializer::Serializer, network::Network, api::wallet::FeeBuilder, rpc_server::RpcRequest};
 use xelis_wallet::{
     wallet::Wallet,
     config::DEFAULT_DAEMON_ADDRESS
@@ -125,8 +126,8 @@ async fn main() -> Result<()> {
             Wallet::create(dir, password, config.seed, config.network)?
         };
 
-        apply_config(&wallet).await;
-        setup_wallet_command_manager(wallet, &command_manager, &prompt).await?;
+        apply_config(&wallet, &prompt).await;
+        setup_wallet_command_manager(wallet, &command_manager).await?;
     } else {
         command_manager.add_command(Command::new("open", "Open a wallet", CommandHandler::Async(async_handler!(open_wallet))))?;
         command_manager.add_command(Command::new("create", "Create a new wallet", CommandHandler::Async(async_handler!(create_wallet))))?;
@@ -143,8 +144,72 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+// This must be run in a separate task
+// TODO handle cancel request in parallel
+async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: ShareablePrompt) {
+    while let Some(event) = receiver.recv().await {
+        match event {
+            XSWDEvent::CancelRequest(_, callback) => {
+                let res = prompt.cancel_read_input().await;
+                if callback.send(res).is_err() {
+                    error!("Error while sending cancel response back to XSWD");
+                }
+            },
+            XSWDEvent::RequestApplication(app_state, signed, callback) => {
+                let res = xswd_handle_request_application(&prompt, app_state, signed).await;
+                if callback.send(res).is_err() {
+                    error!("Error while sending application response back to XSWD");
+                }
+            },
+            XSWDEvent::RequestPermission(app_state, request, callback) => {
+                let res = xswd_handle_request_permission(&prompt, app_state, request).await;
+                if callback.send(res).is_err() {
+                    error!("Error while sending permission response back to XSWD");
+                }
+            }
+        };
+    }
+}
+
+async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: AppStateShared, signed: bool) -> Result<PermissionResult, Error> {
+    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_state.get_name(), app_state.get_id());
+    if signed {
+        message = colorize_str(Color::BrightYellow, "NOTE: Application authorizaion was already approved previously.\r\n") + &message;
+    }
+    let accepted = prompt.read_valid_str_value(colorize_string(Color::Blue, &message), vec!["y", "n"]).await? == "y";
+    if accepted {
+        Ok(PermissionResult::Allow)
+    } else {
+        Ok(PermissionResult::Deny)
+    }
+}
+
+async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: AppStateShared, request: RpcRequest) -> Result<PermissionResult, Error> {
+    let params = if let Some(params) = request.params {
+        params.to_string()
+    } else {
+        "".to_string()
+    };
+
+    let message = format!(
+        "XSWD: Request from {}: {}\r\nParams: {}\r\nDo you want to allow this request ?\r\n([A]llow / [D]eny / [AA] Always Allow / [AD] Always Deny): ",
+        app_state.get_name(),
+        request.method,
+        params
+    );
+
+    let answer = prompt.read_valid_str_value(colorize_string(Color::Blue, &message), vec!["a", "d", "aa", "ad"]).await?;
+    Ok(match answer.as_str() {
+        "a" => PermissionResult::Allow,
+        "d" => PermissionResult::Deny,
+        "aa" => PermissionResult::AlwaysAllow,
+        "ad" => PermissionResult::AlwaysDeny,
+        _ => unreachable!()
+    })
+}
+
 // Apply the config passed in params
-async fn apply_config(wallet: &Arc<Wallet>) {
+async fn apply_config(wallet: &Arc<Wallet>, prompt: &ShareablePrompt) {
     let config: Config = Config::parse();
 
     if !config.offline_mode {
@@ -179,15 +244,20 @@ async fn apply_config(wallet: &Arc<Wallet>) {
                 error!("Error while enabling RPC Server: {}", e);
             }
         } else if config.enable_xswd {
-            if let Err(e) = wallet.enable_xswd().await {
-                error!("Error while enabling XSWD Server: {}", e);
-            }
+            match wallet.enable_xswd().await {
+                Ok(receiver) => {
+                    // Only clone when its necessary
+                    let prompt = prompt.clone();
+                    tokio::spawn(xswd_handler(receiver, prompt));
+                },
+                Err(e) => error!("Error while enabling XSWD Server: {}", e)
+            };
         }
     }
 }
 
 // Function to build the CommandManager when a wallet is open
-async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &CommandManager, prompt: &ShareablePrompt) -> Result<(), CommandError> {
+async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &CommandManager) -> Result<(), CommandError> {
     // Delete commands for opening a wallet
     command_manager.remove_command("open")?;
     command_manager.remove_command("recover")?;
@@ -219,9 +289,6 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
 
         // Stop API Server (RPC or XSWD)
         command_manager.add_command(Command::new("stop_api_server", "Stop the API (XSWD/RPC) Server", CommandHandler::Async(async_handler!(stop_api_server))))?;
-
-        // Save prompt in wallet
-        wallet.set_prompt(prompt.clone()).await;
     }
 
     let mut context = command_manager.get_context().lock()?;
@@ -316,9 +383,9 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
     };
 
     manager.message("Wallet sucessfully opened");
-    apply_config(&wallet).await;
+    apply_config(&wallet, prompt).await;
 
-    setup_wallet_command_manager(wallet, manager, prompt).await?;
+    setup_wallet_command_manager(wallet, manager).await?;
 
     Ok(())
 }
@@ -360,7 +427,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     };
  
     manager.message("Wallet sucessfully created");
-    apply_config(&wallet).await;
+    apply_config(&wallet, prompt).await;
 
     // Display the seed in prompt
     {
@@ -369,7 +436,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
             .await.context("Error while displaying seed")?;
     }
 
-    setup_wallet_command_manager(wallet, manager, prompt).await?;
+    setup_wallet_command_manager(wallet, manager).await?;
 
     Ok(())
 }
@@ -415,9 +482,9 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
     };
 
     manager.message("Wallet sucessfully recovered");
-    apply_config(&wallet).await;
+    apply_config(&wallet, prompt).await;
 
-    setup_wallet_command_manager(wallet, manager, prompt).await?;
+    setup_wallet_command_manager(wallet, manager).await?;
 
     Ok(())
 }
@@ -701,11 +768,14 @@ async fn start_rpc_server(manager: &CommandManager, mut arguments: ArgumentManag
 async fn start_xswd(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
-    if let Err(e) = wallet.enable_xswd().await {
-        manager.error(format!("Error while enabling XSWD Server: {}", e));
-    } else {
-        manager.message("XSWD Server has been enabled");
-    }
+    match wallet.enable_xswd().await {
+        Ok(receiver) => {
+            let prompt = manager.get_prompt().clone();
+            tokio::spawn(xswd_handler(receiver, prompt));
+            manager.message("XSWD Server has been enabled");
+        },
+        Err(e) => manager.error(format!("Error while enabling XSWD Server: {}", e))
+    };
 
     Ok(())
 }
