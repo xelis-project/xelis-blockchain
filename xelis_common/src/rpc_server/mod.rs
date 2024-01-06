@@ -16,7 +16,7 @@ use self::websocket::{WebSocketServerShared, WebSocketHandler};
 
 pub const JSON_RPC_VERSION: &str = "2.0";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RpcRequest {
     pub jsonrpc: String,
     pub id: Option<usize>,
