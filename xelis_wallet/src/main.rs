@@ -145,7 +145,6 @@ async fn main() -> Result<()> {
 }
 
 // This must be run in a separate task
-// TODO handle cancel request in parallel
 async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: ShareablePrompt) {
     while let Some(event) = receiver.recv().await {
         match event {
@@ -156,10 +155,13 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
                 }
             },
             XSWDEvent::RequestApplication(app_state, signed, callback) => {
-                let res = xswd_handle_request_application(&prompt, app_state, signed).await;
-                if callback.send(res).is_err() {
-                    error!("Error while sending application response back to XSWD");
-                }
+                let prompt = prompt.clone();
+                tokio::spawn(async move {
+                    let res = xswd_handle_request_application(&prompt, app_state, signed).await;
+                    if callback.send(res).is_err() {
+                        error!("Error while sending application response back to XSWD");
+                    }
+                });
             },
             XSWDEvent::RequestPermission(app_state, request, callback) => {
                 let res = xswd_handle_request_permission(&prompt, app_state, request).await;
