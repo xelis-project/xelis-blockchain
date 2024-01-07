@@ -1999,6 +1999,11 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidTransactionSignature)
         }
 
+        // Verify that the TX is not already executed in a block
+        if storage.is_tx_executed_in_a_block(hash)? {
+            return Err(BlockchainError::DeadTx(hash.clone()))
+        }
+
         // Then, verify that the nonce is the right one
         if !skip_nonces {
             // nonces can be already pre-computed to support multi nonces at the same time in block/mempool
