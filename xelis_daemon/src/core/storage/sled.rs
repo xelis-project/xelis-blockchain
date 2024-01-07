@@ -37,6 +37,9 @@ const TXS_COUNT: &[u8; 4] = b"CTXS";
 const ASSETS_COUNT: &[u8; 4] = b"CAST";
 const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
 
+// Initial balance when a new account is created
+const INITIAL_BALANCE: VersionedBalance = VersionedBalance::new(0, None);
+
 pub struct SledStorage {
     transactions: Tree, // all txs stored on disk
     txs_executed: Tree, // all txs executed in block
@@ -1104,7 +1107,7 @@ impl Storage for SledStorage {
     async fn get_new_versioned_balance(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("get new versioned balance {} for {} at {}", asset, key, topoheight);
         if topoheight == 0 {
-            return Ok(VersionedBalance::new(0, None))
+            return Ok(INITIAL_BALANCE)
         }
 
         let version = match self.get_balance_at_maximum_topoheight(key, asset, topoheight - 1).await? {
@@ -1117,7 +1120,7 @@ impl Storage for SledStorage {
                 }
                 version
             },
-            None => VersionedBalance::new(0, None)
+            None => INITIAL_BALANCE
         };
 
         Ok(version)
