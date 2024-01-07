@@ -1608,7 +1608,7 @@ impl<S: Storage> Blockchain<S> {
                         local_nonces.insert(tx.get_owner(), next_nonce);
 
                         // mark tx as executed
-                        info!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
+                        debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
                         storage.set_tx_executed_in_block(tx_hash, &hash)?;
 
                         // Execute the transaction by applying changes in storage
