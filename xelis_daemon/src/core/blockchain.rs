@@ -33,7 +33,16 @@ use crate::{
         STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, SIDE_BLOCK_REWARD_PERCENT,
         DEV_PUBLIC_KEY, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS, MILLIS_PER_SECOND, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS,
     },
-    core::{difficulty::calculate_difficulty, nonce_checker::NonceChecker},
+    core::{
+        difficulty::calculate_difficulty,
+        nonce_checker::NonceChecker,
+        tx_selector::{TxSelector, TxSelectorEntry},
+        storage::{Storage, DifficultyProvider},
+        simulator::Simulator,
+        blockdag,
+        error::BlockchainError,
+        mempool::Mempool
+    },
     p2p::P2pServer,
     rpc::{
         rpc::{
@@ -42,19 +51,24 @@ use crate::{
         DaemonRpcServer, SharedDaemonRpcServer
     }
 };
-use super::{storage::{Storage, DifficultyProvider}, simulator::Simulator};
-use std::{sync::atomic::{Ordering, AtomicU64}, collections::hash_map::Entry, time::Instant, borrow::Cow};
-use std::collections::{HashMap, HashSet};
+use std::{
+    sync::{
+        Arc,
+        atomic::{Ordering, AtomicU64},
+    },
+    net::SocketAddr,
+    collections::{
+        HashMap,
+        HashSet,
+        hash_map::Entry
+    },
+    time::Instant,
+    borrow::Cow
+};
 use async_recursion::async_recursion;
 use tokio::sync::{Mutex, RwLock};
 use log::{info, error, debug, warn, trace};
-use std::net::SocketAddr;
-use std::sync::Arc;
 use rand::Rng;
-
-use super::blockdag;
-use super::error::BlockchainError;
-use super::mempool::Mempool;
 
 #[derive(Debug, clap::StructOpt)]
 pub struct Config {
@@ -1187,56 +1201,41 @@ impl<S: Storage> Blockchain<S> {
         trace!("Mempool locked for building block template");
 
         // get all availables txs and sort them by fee per size
-        let mut txs: Vec<(u64, usize, &Arc<Hash>, &Arc<Transaction>)> = mempool.get_txs()
+        let iter = mempool.get_txs()
             .iter()
-            .map(|(hash, tx)| (tx.get_fee(), tx.get_size(), hash, tx.get_tx()))
-            .collect::<Vec<_>>();
+            .map(|(hash, tx)| (tx.get_size(), hash, tx.get_tx()));
 
-        txs.sort_by(|(a_fee, a_size, _, a_tx), (b_fee, b_size, _, b_tx)| {
-            // Descending fees (higher first)
-            let a = a_fee * *a_size as u64;
-            let b = b_fee * *b_size as u64;
-            let fees = b.cmp(&a);
-            // If its not the same group, fees matters
-            if a_tx.get_owner() != b_tx.get_owner() && fees != std::cmp::Ordering::Equal {
-                return fees
-            }
-
-            // Ascending order
-            let nonce = a_tx.get_nonce().cmp(&b_tx.get_nonce());
-            // We have the same owner, differents fees, but same nonce, fees matters
-            if a_tx.get_owner() == b_tx.get_owner() && fees != std::cmp::Ordering::Equal && nonce == std::cmp::Ordering::Equal {
-                return fees
-            }
-
-            nonce
-        });
-
-        let topoheight = self.get_topo_height();
-        let mut total_txs_size = 0;
-        let mut nonces: HashMap<&PublicKey, u64> = HashMap::new();
+        // Build the tx selector using the mempool
+        let mut tx_selector = TxSelector::new(iter);
+        
+        // size of block
         let mut block_size = block.size();
-        {
-            let mut balances = HashMap::new();
-            'main: for (fee, size, hash, tx) in txs {
-                if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
-                    break 'main;
-                }
+        let mut total_txs_size = 0;
 
-                // Check if the TX is valid for this potential block
-                trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_owner());
-                let owner = tx.get_owner();
-                if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false, topoheight).await {
-                    debug!("TX {} ({}) is not valid for mining: {}", hash, owner, e);
-                } else {
-                    trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(fee));
-                    // TODO no clone
-                    block.txs_hashes.insert(hash.as_ref().clone());
-                    block_size += HASH_SIZE; // add the hash size
-                    total_txs_size += size;
-                }
+        // data used to verify txs
+        let topoheight = self.get_topo_height();
+        let mut nonces: HashMap<&PublicKey, u64> = HashMap::new();
+        let mut balances = HashMap::new();
+
+        while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
+            if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
+                break;
+            }
+
+            // Check if the TX is valid for this potential block
+            trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_owner());
+            let owner = tx.get_owner();
+            if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false, topoheight).await {
+                debug!("TX {} ({}) is not valid for mining: {}", hash, owner, e);
+            } else {
+                trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()));
+                // TODO no clone
+                block.txs_hashes.insert(hash.as_ref().clone());
+                block_size += HASH_SIZE; // add the hash size
+                total_txs_size += size;
             }
         }
+
         Ok(block)
     }
 
