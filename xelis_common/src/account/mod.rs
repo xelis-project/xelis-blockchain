@@ -9,7 +9,7 @@ pub struct VersionedBalance {
 }
 
 impl VersionedBalance {
-    pub fn new(balance: u64, previous_topoheight: Option<u64>) -> Self {
+    pub const fn new(balance: u64, previous_topoheight: Option<u64>) -> Self {
         Self {
             balance,
             previous_topoheight
