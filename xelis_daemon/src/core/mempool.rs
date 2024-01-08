@@ -36,6 +36,7 @@ pub struct Mempool {
 }
 
 impl Mempool {
+    // Create a new empty mempool
     pub fn new() -> Self {
         Mempool {
             txs: HashMap::new(),
@@ -158,24 +159,30 @@ impl Mempool {
         Ok(())
     }
 
+    // Get the nonce cache for all keys
     pub fn get_nonces_cache(&self) -> &HashMap<PublicKey, NonceCache> {
         &self.nonces_cache
     }
 
+    // Verify if a TX is in mempool using its hash
     pub fn contains_tx(&self, hash: &Hash) -> bool {
         self.txs.contains_key(hash)
     }
 
+    // Get a sorted TX from its hash
+    // This is useful to get its size along the TX and its first seen
     pub fn get_sorted_tx(&self, hash: &Hash) -> Result<&SortedTx, BlockchainError> {
         let tx = self.txs.get(hash).ok_or_else(|| BlockchainError::TxNotFound(hash.clone()))?;
         Ok(tx)
     }
 
+    // Get a TX (cloned) from mempool using its hash
     pub fn get_tx(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
         let tx = self.get_sorted_tx(hash)?;
         Ok(Arc::clone(tx.get_tx()))
     }
 
+    // Get a reference of TX from mempool using its hash
     pub fn view_tx<'a>(&'a self, hash: &Hash) -> Result<&'a Arc<Transaction>, BlockchainError> {
         if let Some(sorted_tx) = self.txs.get(hash) {
             return Ok(sorted_tx.get_tx())
@@ -184,18 +191,33 @@ impl Mempool {
         Err(BlockchainError::TxNotFound(hash.clone()))
     }
 
+    // Get all txs in mempool
     pub fn get_txs(&self) -> &HashMap<Arc<Hash>, SortedTx> {
         &self.txs
     }
 
+    // Get the nonce cache for a specific key
     pub fn get_cached_nonce(&self, key: &PublicKey) -> Option<&NonceCache> {
         self.nonces_cache.get(key)
     }
 
+    // Check if the nonce is already used for user in mempool
+    pub fn is_nonce_used(&self, key: &PublicKey, nonce: u64) -> bool {
+        if let Some(cache) = self.nonces_cache.get(key) {
+            if nonce >= cache.min && nonce <= cache.max {
+                return cache.has_tx_with_same_nonce(nonce).is_some();
+            }
+        }
+
+        false
+    }
+
+    // Returns the count of txs in mempool
     pub fn size(&self) -> usize {
         self.txs.len()
     }
 
+    // Clear all txs and caches in mempool
     pub fn clear(&mut self) {
         self.txs.clear();
         self.nonces_cache.clear();

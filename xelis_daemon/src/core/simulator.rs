@@ -61,7 +61,7 @@ impl Simulator {
             keys.push(KeyPair::new());
         }
 
-        'main: loop {
+        loop {
             interval.tick().await;
             info!("Adding new simulated block...");
             // Number of blocks to generate
@@ -80,7 +80,6 @@ impl Simulator {
                     Ok(_) => {},
                     Err(e) => {
                         error!("Error while adding block: {}", e);
-                        break 'main;
                     }
                 }
             }
@@ -179,6 +178,15 @@ impl Simulator {
                         nonce
                     }
                 };
+
+                // Check if this nonce is not already used
+                {
+                    let mempool = blockchain.get_mempool().read().await;
+                    if mempool.is_nonce_used(&keypair.get_public_key(), nonce) {
+                        debug!("Nonce {} already used for key {}", nonce, keypair.get_public_key());
+                        continue;
+                    }
+                }
 
                 let key = keypair.get_public_key().clone();
                 // We create a fake signature because it is skipped in simulator mode
