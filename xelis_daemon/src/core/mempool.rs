@@ -240,7 +240,10 @@ impl Mempool {
             let nonce = match storage.get_last_nonce(&key).await {
                 Ok((_, version)) => version.get_nonce(),
                 Err(e) => {
-                    warn!("Error while getting nonce for owner {}: {}", key, e);
+                    // We get an error while retrieving the last nonce for this key,
+                    // that means the key is not in storage anymore, so we can delete safely
+                    // we just have to skip this iteration so it's not getting re-injected
+                    debug!("Error while getting nonce for owner {}, he maybe has no nonce anymore, skipping: {}", key, e);
                     continue;
                 }
             };
