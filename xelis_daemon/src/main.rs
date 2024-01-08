@@ -91,6 +91,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.register_default_commands()?;
 
     // Register all our commands
+    command_manager.add_command(Command::new("list_miners", "List all miners connected", CommandHandler::Async(async_handler!(list_miners::<S>))))?;
     command_manager.add_command(Command::new("list_peers", "List all peers connected", CommandHandler::Async(async_handler!(list_peers::<S>))))?;
     command_manager.add_command(Command::new("list_assets", "List all assets registered on chain", CommandHandler::Async(async_handler!(list_assets::<S>))))?;
     command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance::<S>))))?;
@@ -272,6 +273,30 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     } else {
         manager.message("Balances are equal to verified supply");
     }
+
+    Ok(())
+}
+
+async fn list_miners<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_rpc().read().await.as_ref() {
+        Some(rpc) => match rpc.getwork_server() {
+            Some(getwork) => {
+                let miners = getwork.get_miners().lock().await;
+                manager.message(format!("Miners ({}):", miners.len()));
+                for miner in miners.values() {
+                    manager.message(format!("- {}", miner));
+                }
+            },
+            None => {
+                manager.message("No miners running!");
+            }
+        },
+        None => {
+            manager.message("No RPC server running!");
+        }
+    };
 
     Ok(())
 }

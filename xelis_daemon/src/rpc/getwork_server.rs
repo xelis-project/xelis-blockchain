@@ -39,7 +39,8 @@ pub struct Miner {
     first_seen: u128, // timestamp of first connection
     key: PublicKey, // public key of account (address)
     name: String, // worker name
-    blocks_found: usize, // blocks found since he is connected
+    blocks_accepted: usize, // blocks accepted by us since he is connected
+    blocks_rejected: usize // blocks rejected since he is connected
 }
 
 impl Miner {
@@ -48,7 +49,8 @@ impl Miner {
             first_seen: get_current_time_in_millis(),
             key,
             name,
-            blocks_found: 0
+            blocks_accepted: 0,
+            blocks_rejected: 0
         }
     }
 
@@ -64,14 +66,14 @@ impl Miner {
         &self.name
     }
 
-    pub fn get_blocks_found(&self) -> usize {
-        self.blocks_found
+    pub fn get_blocks_accepted(&self) -> usize {
+        self.blocks_accepted
     }
 }
 
 impl Display for Miner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Miner[address={}, name={}]", self.key, self.name)        
+        write!(f, "Miner[address={}, name={}, accepted={}, rejected={}]", self.key, self.name, self.blocks_accepted, self.blocks_rejected)
     }
 }
 
@@ -170,8 +172,14 @@ impl<S: Storage> GetWorkServer<S> {
         }
     }
 
+    // Returns the number of miners connected to the getwork server
     pub async fn count_miners(&self) -> usize {
         self.miners.lock().await.len()
+    }
+
+    // Returns the list of miners connected to the getwork server
+    pub fn get_miners(&self) -> &Mutex<HashMap<Addr<GetWorkWebSocketHandler<S>>, Miner>> {
+        &self.miners
     }
 
     // retrieve last mining job and set random extra nonce and miner public key
@@ -288,6 +296,24 @@ impl<S: Storage> GetWorkServer<S> {
                 Response::BlockRejected
             }
         };
+
+        // update miner stats
+        {
+            let mut miners = self.miners.lock().await;
+            if let Some(miner) = miners.get_mut(&addr) {
+                match &response {
+                    Response::BlockAccepted => {
+                        debug!("Miner {} found a block!", miner);
+                        miner.blocks_accepted += 1;
+                    },
+                    Response::BlockRejected => {
+                        debug!("Miner {} sent an invalid block", miner);
+                        miner.blocks_rejected += 1;
+                    },
+                    _ => {}
+                }
+            }
+        }
 
         tokio::spawn(async move {
             let resend_job = response == Response::BlockRejected;
