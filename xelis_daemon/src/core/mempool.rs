@@ -1,4 +1,5 @@
 use super::error::BlockchainError;
+use super::storage::Storage;
 use std::collections::HashMap;
 use std::sync::Arc;
 use indexmap::IndexSet;
@@ -223,97 +224,108 @@ impl Mempool {
         self.nonces_cache.clear();
     }
 
-    // delete all old txs not compatible anymore with current state of account
-    pub async fn clean_up(&mut self, nonces: HashMap<PublicKey, u64>) {
-        if self.nonces_cache.is_empty() || nonces.is_empty() {
-            debug!("No mempool cleanup needed");
-            return;
-        }
+    // delete all old txs not compatible anymore with current state of chain
+    // this is called when a new block is added to the chain
+    // Because of DAG reorg, we can't only check updated keys from new block,
+    // as a block could be orphaned and the nonce order would change
+    // So we need to check all keys from mempool and compare it from storage
+    pub async fn clean_up<S: Storage>(&mut self, storage: &S) {
+        trace!("Cleaning up mempool...");
 
-        debug!("Cleaning up mempool ({} accounts)...", nonces.len());
-        for (key, nonce) in nonces {
+        let mut cache = HashMap::new();
+        // Swap the nonces_cache with cache, so we iterate over cache and reinject it in nonces_cache
+        std::mem::swap(&mut cache, &mut self.nonces_cache);
+
+        for (key, mut cache) in cache {
+            let nonce = match storage.get_last_nonce(&key).await {
+                Ok((_, version)) => version.get_nonce(),
+                Err(e) => {
+                    warn!("Error while getting nonce for owner {}: {}", key, e);
+                    continue;
+                }
+            };
+
             let mut delete_cache = false;
-            // check if we have a TX in cache for this owner
-            if let Some(cache) = self.nonces_cache.get_mut(&key) {
-                // Check if the minimum nonce is higher than the new nonce, that means
-                // all TXs will be orphaned as its suite got broken
-                // or, check and delete txs if the nonce is lower than the new nonce
-                // otherwise the cache is still up to date
-                if cache.get_min() > nonce {
-                    // We can delete all these TXs as they got automatically orphaned
-                    // Because of the suite being broked
-                    for hash in cache.txs.iter() {
-                        if self.txs.remove(hash).is_none() {
-                            warn!("TX {} not found in mempool while deleting", hash);
-                        }
+            // Check if the minimum nonce is higher than the new nonce, that means
+            // all TXs will be orphaned as its suite got broken
+            // or, check and delete txs if the nonce is lower than the new nonce
+            // otherwise the cache is still up to date
+            if cache.get_min() > nonce {
+                trace!("All TXs for key {} are orphaned, deleting them", key);
+                // We can delete all these TXs as they got automatically orphaned
+                // Because of the suite being broked
+                for hash in cache.txs.iter() {
+                    if self.txs.remove(hash).is_none() {
+                        warn!("TX {} not found in mempool while deleting", hash);
                     }
-                    delete_cache = true;
-                } else if cache.get_min() < nonce {
-                    // txs hashes to delete
-                    let mut hashes: Vec<Arc<Hash>> = Vec::with_capacity(cache.txs.len());
+                }
+                delete_cache = true;
+            } else if cache.get_min() < nonce {
+                trace!("Deleting TXs for owner {} with nonce < {}", key, nonce);
+                // txs hashes to delete
+                let mut hashes: Vec<Arc<Hash>> = Vec::with_capacity(cache.txs.len());
 
-                    // filter all txs hashes which are not found
-                    // or where its nonce is smaller than the new nonce
-                    // TODO when drain_filter is stable, use it (allow to get all hashes deleted)
-                    let mut max: Option<u64> = None;
-                    let mut min: Option<u64> = None;
-                    cache.txs.retain(|hash| {
-                        let mut delete = true;
+                // filter all txs hashes which are not found
+                // or where its nonce is smaller than the new nonce
+                // TODO when drain_filter is stable, use it (allow to get all hashes deleted)
+                let mut max: Option<u64> = None;
+                let mut min: Option<u64> = None;
+                cache.txs.retain(|hash| {
+                    let mut delete = true;
 
-                        if let Some(tx) = self.txs.get(hash) {
-                            let tx_nonce = tx.get_tx().get_nonce();
-                            // If TX is still compatible with new nonce, update bounds
-                            if tx_nonce >= nonce {
-                                 // Update cache highest bounds
-                                if let Some(v) = max.clone() {
-                                    if  v < tx_nonce {
-                                        max = Some(tx_nonce);
-                                    }
-                                } else {
+                    if let Some(tx) = self.txs.get(hash) {
+                        let tx_nonce = tx.get_tx().get_nonce();
+                        // If TX is still compatible with new nonce, update bounds
+                        if tx_nonce >= nonce {
+                            // Update cache highest bounds
+                            if let Some(v) = max.clone() {
+                                if  v < tx_nonce {
                                     max = Some(tx_nonce);
                                 }
+                            } else {
+                                max = Some(tx_nonce);
+                            }
 
-                                // Update cache lowest bounds
-                                if let Some(v) = min.clone() {
-                                    if  v > tx_nonce {
-                                        min = Some(tx_nonce);
-                                    }
-                                } else {
+                            // Update cache lowest bounds
+                            if let Some(v) = min.clone() {
+                                if  v > tx_nonce {
                                     min = Some(tx_nonce);
                                 }
-                                delete = false;
+                            } else {
+                                min = Some(tx_nonce);
                             }
+                            delete = false;
                         }
-
-                        // Add hash in list if we delete it
-                        if delete {
-                            hashes.push(Arc::clone(hash));
-                        }
-                        !delete
-                    });
-
-                    // Update cache bounds
-                    if let (Some(min), Some(max)) = (min, max) {
-                        debug!("Update cache bounds: [{}-{}]", min, max);
-                        cache.min = min;
-                        cache.max = max;
                     }
 
-                    // delete the nonce cache if no txs are left
-                    delete_cache = cache.txs.is_empty();
+                    // Add hash in list if we delete it
+                    if delete {
+                        hashes.push(Arc::clone(hash));
+                    }
+                    !delete
+                });
 
-                    // now delete all necessary txs
-                    for hash in hashes {
-                        if self.txs.remove(&hash).is_none() {
-                            warn!("TX {} not found in mempool while deleting", hash);
-                        }
+                // Update cache bounds
+                if let (Some(min), Some(max)) = (min, max) {
+                    debug!("Update cache bounds: [{}-{}]", min, max);
+                    cache.min = min;
+                    cache.max = max;
+                }
+
+                // delete the nonce cache if no txs are left
+                delete_cache = cache.txs.is_empty();
+
+                // now delete all necessary txs
+                for hash in hashes {
+                    if self.txs.remove(&hash).is_none() {
+                        warn!("TX {} not found in mempool while deleting", hash);
                     }
                 }
             }
 
-            if delete_cache {
-                trace!("Removing empty nonce cache for owner {}", key);
-                self.nonces_cache.remove(&key);
+            if !delete_cache {
+                debug!("Re-injecting nonce cache for owner {}", key);
+                self.nonces_cache.insert(key, cache);
             }
         }
     }

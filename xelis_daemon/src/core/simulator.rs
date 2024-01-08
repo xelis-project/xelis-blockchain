@@ -173,7 +173,9 @@ impl Simulator {
                         *nonce
                     },
                     Entry::Vacant(e) => {
-                        let nonce = storage.get_last_nonce(keypair.get_public_key()).await.map(|(_, v)| v.get_nonce()).unwrap();
+                        let (topo, version) = storage.get_last_nonce(keypair.get_public_key()).await.unwrap();
+                        let nonce = version.get_nonce();
+                        debug!("Loaded nonce from last nonce for {} is {} at topo {}", keypair.get_public_key(), nonce, topo);
                         e.insert(nonce);
                         nonce
                     }

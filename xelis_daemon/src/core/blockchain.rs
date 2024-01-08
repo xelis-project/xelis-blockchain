@@ -1489,9 +1489,7 @@ impl<S: Storage> Blockchain<S> {
         } else {
             HashSet::new()
         };
-        
-        // track all changes in nonces to clean mempool from invalid txs stuck
-        let mut final_nonces: HashMap<PublicKey, u64> = HashMap::new();
+
         // track all events to notify websocket
         let mut events: HashMap<NotifyEvent, Vec<Value>> = HashMap::new();
 
@@ -1655,16 +1653,6 @@ impl<S: Storage> Blockchain<S> {
                 for (key, nonce) in local_nonces {
                     trace!("Saving nonce {} for {} at topoheight {}", nonce, key, highest_topo);
                     storage.set_last_nonce_to(&key, highest_topo, nonce).await?;
-
-                    // insert the highest nonce in "global" nonces map for easier mempool cleaning
-                    match final_nonces.get_mut(key) {
-                        Some(v) => {
-                            *v = nonce;
-                        },
-                        None => {
-                            final_nonces.insert(key.clone(), nonce);
-                        }
-                    }
                 }
 
                 if should_track_events.contains(&NotifyEvent::BlockOrdered) {
@@ -1768,7 +1756,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // Clean all old txs
-        mempool.clean_up(final_nonces).await;
+        mempool.clean_up(&*storage).await;
 
         info!("Processed block {} at height {} in {} ms with {} txs", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count());
 
