@@ -115,6 +115,7 @@ impl Simulator {
         info!("Adding simulated TXs in mempool");
         let n = rng.gen_range(0..max_txs);
         let mut local_nonces = HashMap::new();
+        let mut local_balances = HashMap::new();
         for _ in 0..n {
             let index = rng.gen_range(0..keys.len());
             let keypair = &keys[index];
@@ -122,6 +123,8 @@ impl Simulator {
             let storage = blockchain.get_storage().read().await;
             if let Ok(true) = storage.has_nonce(keypair.get_public_key()).await {
                 let mut transfers = Vec::new();
+                // Total XEL spend for this tx
+                let mut total_amount = FEE_PER_KB;
                 // Generate all transfers
                 for _ in 0..rng.gen_range(1..=max_transfers) {
 
@@ -131,13 +134,35 @@ impl Simulator {
                         n = rng.gen_range(0..keys.len());
                     }
 
+                    let amount = rng.gen_range(1..=max_amount);
+                    total_amount += amount;
+
                     transfers.push(Transfer {
                         to: keys[n].get_public_key().clone(),
                         asset: XELIS_ASSET,
-                        amount: rng.gen_range(1..=max_amount),
+                        amount,
                         extra_data: None
                     });
                 }
+
+                // Check if we have enough balance
+                match local_balances.entry(keypair.get_public_key()) {
+                    Entry::Occupied(mut e) => {
+                        let balance = e.get_mut();
+                        if *balance < total_amount {
+                            continue;
+                        }
+                        *balance -= total_amount;
+                    },
+                    Entry::Vacant(e) => {
+                        let balance = storage.get_last_balance(keypair.get_public_key(), &XELIS_ASSET).await.map(|(_, v)| v.get_balance()).unwrap();
+                        let balance = e.insert(balance);
+                        if *balance < total_amount {
+                            continue;
+                        }
+                        *balance -= total_amount;
+                    }
+                };
 
                 let data = TransactionType::Transfer(transfers);
 
