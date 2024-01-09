@@ -1906,13 +1906,13 @@ Generate a signature for the input data using your wallet key pair.
 ##### Method `sign_data`
 
 ##### Parameters
-Paramater value can be anything (object, value, array...)
+Parameter value can be anything (object, value, array...)
 
 ##### Request
 ```json
 {
 	"jsonrpc": "2.0",
-	"method": "sign_data",
+	"method": "estimate_fees",
 	"id": 1,
 	"params": {
 		"hello": "world"
@@ -1926,5 +1926,41 @@ Paramater value can be anything (object, value, array...)
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": "5bb7a1f33c3c89e968be9f1c343aa15393ec98905976e38087d53595a3411bd0130f9414b7e5fe4e3bcdcad03e0c6d2cbee01c10514289ad3b2b5e3b2fe8fd03"
+}
+```
+
+#### Estimate Fees
+Estimate the minimum required fees for a future transaction.
+Returned fees are in atomic units.
+
+##### Method `estimate_fees`
+
+##### Parameters
+Paramater value can be anything (object, value, array...)
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "build_transaction",
+	"id": 1,
+	"params": {
+		"transfers": [
+			{
+				"amount": 1000,
+				"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+				"to": "xet1qqq8ar5gagvjhznhj59l3r4lqhe7edutendy6vd4y7jd59exl6u7xschfuhym"
+			}
+		]
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 10000
 }
 ```
