@@ -6,7 +6,10 @@ use fern::colors::Color;
 use futures_util::{StreamExt, SinkExt};
 use serde::{Serialize, Deserialize};
 use tokio::{sync::{broadcast, mpsc, Mutex}, select, time::Instant};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{Message, Error as TungsteniteError}
+};
 use xelis_common::{
     block::{BlockMiner, BLOCK_WORK_SIZE, Difficulty},
     serializer::Serializer,
@@ -14,7 +17,8 @@ use xelis_common::{
     config::VERSION,
     utils::{get_current_time_in_millis, format_hashrate, format_difficulty},
     crypto::{hash::{Hashable, Hash, hash}, address::Address},
-    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel, ShareablePrompt, self}, async_handler,
+    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel, ShareablePrompt, self},
+    async_handler,
 };
 use clap::Parser;
 use log::{error, info, debug, warn};
@@ -189,7 +193,7 @@ async fn communication_task(mut daemon_address: String, job_sender: broadcast::S
                 client
             },
             Err(e) => {
-                if let tokio_tungstenite::tungstenite::Error::Http(e) = e {
+                if let TungsteniteError::Http(e) = e {
                     let body: String = e.into_body()
                         .map_or(
                             "Unknown error".to_owned(),
