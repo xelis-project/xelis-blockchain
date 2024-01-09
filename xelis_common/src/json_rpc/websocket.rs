@@ -19,7 +19,17 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + 'static>
 }
 
 impl<E: Serialize + Hash + Eq + Send + 'static> WebSocketJsonRPCClientImpl<E> {
-    pub async fn new(target: String) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
+    pub async fn new(mut target: String) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
+        if target.starts_with("https://") {
+            target.replace_range(..8, "wss://");
+        }
+        else if target.starts_with("http://") {
+            target.replace_range(..7, "ws://");
+        }
+        else if !target.starts_with("ws://") && !target.starts_with("wss://") {
+            target.insert_str(0, "ws://");
+        }
+
         let (ws, response) = connect_async(target).await?;
         let status = response.status();
         if status.is_server_error() || status.is_client_error() {
