@@ -3,14 +3,24 @@ use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, info, warn};
 use tokio::{task::JoinHandle, sync::Mutex, time::interval};
-use xelis_common::{crypto::{hash::Hash, address::Address}, block::Block, transaction::TransactionType, account::VersionedBalance, asset::AssetWithData, serializer::Serializer, api::DataElement, config::XELIS_ASSET};
+use xelis_common::{
+    crypto::{hash::Hash, address::Address},
+    block::Block,
+    transaction::TransactionType,
+    account::VersionedBalance,
+    asset::AssetWithData,
+    serializer::Serializer,
+    api::{
+        DataElement,
+        wallet::{NotifyEvent, BalanceChanged}
+    },
+    config::XELIS_ASSET
+};
 
-use crate::{daemon_api::DaemonAPI, wallet::{Wallet, Event}, entry::{EntryData, Transfer, TransactionEntry}};
-
-#[cfg(feature = "api_server")]
-use {
-    std::borrow::Cow,
-    xelis_common::api::wallet::{NotifyEvent, BalanceChanged}
+use crate::{
+    daemon_api::DaemonAPI,
+    wallet::{Wallet, Event},
+    entry::{EntryData, Transfer, TransactionEntry}
 };
 
 // NetworkHandler must be behind a Arc to be accessed from Wallet (to stop it) or from tokio task
@@ -113,17 +123,10 @@ impl NetworkHandler {
                 let balance = res.balance;
 
                 // Inform the change of the balance
-                #[cfg(feature = "api_server")]
-                {
-                    if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
-                        api_server.notify_event(&NotifyEvent::BalanceChanged, &BalanceChanged {
-                            asset: Cow::Borrowed(&asset),
-                            balance: balance.get_balance()
-                        }).await;
-                    }
-                }
-
-                self.wallet.propagate_event(Event::BalanceChanged(asset.clone(), balance.get_balance())).await;
+                self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
+                    asset: asset.clone(),
+                    balance: balance.get_balance()
+                })).await;
 
                 // lets write the final balance
                 let mut storage = self.wallet.get_storage().write().await;
@@ -220,14 +223,6 @@ impl NetworkHandler {
                     let mut storage = self.wallet.get_storage().write().await;
 
                     if !storage.has_transaction(entry.get_hash())? {
-                        // notify listeners of new transaction
-                        #[cfg(feature = "api_server")]
-                        {
-                            if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
-                                api_server.notify_event(&NotifyEvent::NewTransaction, &entry).await;
-                            }
-                        }
-
                         storage.save_transaction(entry.get_hash(), &entry)?;
 
                         // Propagate the event to the wallet
@@ -299,13 +294,6 @@ impl NetworkHandler {
             debug!("New topoheight detected for chain: {}", info.topoheight);
 
             // New get_info with different topoheight, inform listeners
-            #[cfg(feature = "api_server")]
-            {
-                if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
-                    api_server.notify_event(&NotifyEvent::NewChainInfo, &info).await;
-                }
-            }
-
             self.wallet.propagate_event(Event::NewTopoHeight(info.topoheight)).await;
             top_block_hash = info.top_block_hash;
 
@@ -345,14 +333,10 @@ impl NetworkHandler {
                 for asset_data in &response {
                     if !storage.contains_asset(asset_data.get_asset())? {
                         // New asset added to the wallet, inform listeners
-                        #[cfg(feature = "api_server")]
-                        {
-                            if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
-                                api_server.notify_event(&NotifyEvent::NewAsset, asset_data).await;
-                            }
-                        }
-
                         storage.add_asset(asset_data.get_asset(), asset_data.get_data().get_decimals())?;
+
+                        // Propagate the event
+                        self.wallet.propagate_event(Event::NewAsset(asset_data.clone())).await;
                     }
                 }
     

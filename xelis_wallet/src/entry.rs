@@ -142,7 +142,7 @@ impl Serializer for EntryData {
     }
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Serialize, Debug, Clone)]
 pub struct TransactionEntry {
     hash: Hash,
     topoheight: u64,

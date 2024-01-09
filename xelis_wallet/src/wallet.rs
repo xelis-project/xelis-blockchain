@@ -2,28 +2,40 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Error, Context};
+use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::sync::broadcast::{Sender as BroadcastSender, Receiver as BroadcastReceiver};
-use tokio::sync::{Mutex, RwLock};
-use xelis_common::api::DataElement;
-use xelis_common::api::wallet::FeeBuilder;
-use xelis_common::config::{XELIS_ASSET, COIN_DECIMALS};
-use xelis_common::crypto::address::{Address, AddressType};
-use xelis_common::crypto::hash::Hash;
-use xelis_common::crypto::key::{KeyPair, PublicKey, Signature};
-use xelis_common::rpc_server::{RpcRequest, InternalRpcError, RpcResponseError};
-use xelis_common::utils::{format_xelis, format_coin};
-use xelis_common::network::Network;
-use xelis_common::serializer::{Serializer, Writer};
-use xelis_common::transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE};
-use crate::api::XSWDNodeMethodHandler;
-use crate::cipher::Cipher;
-use crate::config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE};
-use crate::entry::TransactionEntry;
-use crate::mnemonics;
-use crate::network_handler::{NetworkHandler, SharedNetworkHandler, NetworkError};
-use crate::storage::{EncryptedStorage, Storage};
-use crate::transaction_builder::TransactionBuilder;
+use tokio::sync::{
+    broadcast::{Sender as BroadcastSender, Receiver as BroadcastReceiver},
+    {Mutex, RwLock}
+};
+use xelis_common::{
+    api::{
+        DataElement,
+        wallet::{FeeBuilder, NotifyEvent, BalanceChanged}
+    },
+    asset::AssetWithData,
+    config::{XELIS_ASSET, COIN_DECIMALS},
+    crypto::{
+        address::{Address, AddressType},
+        hash::Hash,
+        key::{KeyPair, PublicKey, Signature},
+    },
+    rpc_server::{RpcRequest, InternalRpcError, RpcResponseError},
+    utils::{format_xelis, format_coin},
+    network::Network,
+    serializer::{Serializer, Writer},
+    transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE},
+};
+use crate::{
+    api::XSWDNodeMethodHandler,
+    cipher::Cipher,
+    config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE},
+    entry::TransactionEntry,
+    network_handler::{NetworkHandler, SharedNetworkHandler, NetworkError},
+    storage::{EncryptedStorage, Storage},
+    transaction_builder::TransactionBuilder,
+    mnemonics,
+};
 use chacha20poly1305::{aead::OsRng, Error as CryptoError};
 use rand::RngCore;
 use thiserror::Error;
@@ -113,14 +125,28 @@ pub enum WalletError {
     NetworkError(#[from] NetworkError),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Clone)]
 pub enum Event {
-    // When a TX is detected from daemon
+    // When a TX is detected from daemon and is added in wallet storage
     NewTransaction(TransactionEntry),
     // When a new block is detected from daemon
     NewTopoHeight(u64),
-    // When a balance change is detected from daemon
-    BalanceChanged(Hash, u64),
+    // When a balance change occurs on wallet
+    BalanceChanged(BalanceChanged),
+    // When a new asset is added to wallet
+    NewAsset(AssetWithData)
+}
+
+impl Event {
+    pub fn kind(&self) -> NotifyEvent {
+        match self {
+            Event::NewTransaction(_) => NotifyEvent::NewTransaction,
+            Event::NewTopoHeight(_) => NotifyEvent::NewChainInfo,
+            Event::BalanceChanged(_) => NotifyEvent::BalanceChanged,
+            Event::NewAsset(_) => NotifyEvent::NewAsset
+        }
+    }
+
 }
 
 pub struct Wallet {
@@ -266,11 +292,23 @@ impl Wallet {
 
     // Propagate a new event to registered listeners
     pub async fn propagate_event(&self, event: Event) {
-        let mut lock = self.event_broadcaster.lock().await;
-        if let Some(broadcaster) = lock.as_ref() {
-            // if the receiver is closed, we remove it
-            if broadcaster.send(event).is_err() {
-                lock.take();
+        // Broadcast it to the API Server
+        {
+            let mut lock = self.api_server.lock().await;
+            if let Some(server) = lock.as_mut() {
+                let kind = event.kind();
+                server.notify_event(&kind, &event).await;
+            }
+        }
+
+        // Broadcast to the event broadcaster
+        {
+            let mut lock = self.event_broadcaster.lock().await;
+            if let Some(broadcaster) = lock.as_ref() {
+                // if the receiver is closed, we remove it
+                if broadcaster.send(event).is_err() {
+                    lock.take();
+                }
             }
         }
     }

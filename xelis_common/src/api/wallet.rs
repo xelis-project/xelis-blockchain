@@ -107,9 +107,9 @@ pub struct GetTransactionParams {
     pub hash: Hash
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct BalanceChanged<'a> {
-    pub asset: Cow<'a, Hash>,
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BalanceChanged {
+    pub asset: Hash,
     pub balance: u64
 }
 

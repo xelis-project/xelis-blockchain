@@ -2,7 +2,7 @@ use std::hash::{Hash as StdHash, Hasher};
 
 use crate::{serializer::{Serializer, Writer, Reader, ReaderError}, crypto::hash::Hash};
 
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct AssetData {
     // At which topoheight this asset is registered
     topoheight: u64,
@@ -40,7 +40,7 @@ impl Serializer for AssetData {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct AssetWithData {
     asset: Hash,
     #[serde(flatten)]
