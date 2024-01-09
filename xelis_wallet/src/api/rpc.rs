@@ -12,7 +12,7 @@ use xelis_common::{
         wallet::{
             BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams,
             GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetValueFromKeyParams,
-            StoreParams, GetMatchingKeysParams, GetAssetPrecisionParams, RescanParams, QueryDBParams, HasKeyParams, DeleteParams
+            StoreParams, GetMatchingKeysParams, GetAssetPrecisionParams, RescanParams, QueryDBParams, HasKeyParams, DeleteParams, EstimateFeesParams
         },
         DataHash, DataElement
     },
@@ -24,6 +24,7 @@ use crate::{wallet::{Wallet, WalletError}, entry::TransactionEntry};
 
 use super::xswd::XSWDWebSocketHandler;
 
+// Register all RPC methods
 pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     info!("Registering RPC methods...");
     handler.register_method("get_version", async_handler!(get_version));
@@ -41,6 +42,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("list_transactions", async_handler!(list_transactions));
     handler.register_method("is_online", async_handler!(is_online));
     handler.register_method("sign_data", async_handler!(sign_data));
+    handler.register_method("estimate_fees", async_handler!(estimate_fees));
 
     // These functions allow to have an encrypted DB directly in the wallet storage
     // You can retrieve keys, values, have differents trees, and store values
@@ -54,6 +56,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("query_db", async_handler!(query_db));
 }
 
+// Retrieve the version of the wallet
 async fn get_version(_: Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
@@ -61,6 +64,7 @@ async fn get_version(_: Context, body: Value) -> Result<Value, InternalRpcError>
     Ok(json!(VERSION))
 }
 
+// Retrieve the network of the wallet
 async fn get_network(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
@@ -71,6 +75,7 @@ async fn get_network(context: Context, body: Value) -> Result<Value, InternalRpc
     Ok(json!(network))
 }
 
+// Retrieve the current nonce of the wallet
 async fn get_nonce(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
@@ -82,6 +87,7 @@ async fn get_nonce(context: Context, body: Value) -> Result<Value, InternalRpcEr
     Ok(json!(nonce))
 }
 
+// Retrieve the current topoheight until which the wallet is synced
 async fn get_topoheight(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
@@ -93,6 +99,7 @@ async fn get_topoheight(context: Context, body: Value) -> Result<Value, Internal
     Ok(json!(topoheight))
 }
 
+// Retrieve the wallet address
 async fn get_address(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAddressParams = parse_params(body)?;
 
@@ -106,6 +113,7 @@ async fn get_address(context: Context, body: Value) -> Result<Value, InternalRpc
     Ok(json!(address))
 }
 
+// Split an integrated address into its address and data
 async fn split_address(_: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SplitAddressParams = parse_params(body)?;
     let address = params.address;
@@ -119,6 +127,7 @@ async fn split_address(_: Context, body: Value) -> Result<Value, InternalRpcErro
     }))
 }
 
+// Rescan the wallet from the provided topoheight (or from the beginning if not provided)
 async fn rescan(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: RescanParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
@@ -126,6 +135,7 @@ async fn rescan(context: Context, body: Value) -> Result<Value, InternalRpcError
     Ok(json!(true))
 }
 
+// Retrieve the balance of the wallet for a specific asset
 async fn get_balance(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBalanceParams = parse_params(body)?;
     let asset = params.asset.unwrap_or(XELIS_ASSET);
@@ -136,6 +146,7 @@ async fn get_balance(context: Context, body: Value) -> Result<Value, InternalRpc
     Ok(json!(balance))
 }
 
+// Retrieve all tracked assets by wallet
 async fn get_tracked_assets(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
@@ -148,6 +159,7 @@ async fn get_tracked_assets(context: Context, body: Value) -> Result<Value, Inte
     Ok(json!(tracked_assets))
 }
 
+// Retrieve decimals used by an asset
 async fn get_asset_precision(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAssetPrecisionParams = parse_params(body)?;
 
@@ -157,6 +169,7 @@ async fn get_asset_precision(context: Context, body: Value) -> Result<Value, Int
     Ok(json!(precision))
 }
 
+// Retrieve a transaction from the wallet storage using its hash
 async fn get_transaction(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetTransactionParams = parse_params(body)?;
 
@@ -168,6 +181,7 @@ async fn get_transaction(context: Context, body: Value) -> Result<Value, Interna
     Ok(json!(data))
 }
 
+// Build a transaction and broadcast it if requested
 async fn build_transaction(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: BuildTransactionParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
@@ -205,6 +219,16 @@ async fn build_transaction(context: Context, body: Value) -> Result<Value, Inter
     }))
 }
 
+// Estimate fees for a transaction
+async fn estimate_fees(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: EstimateFeesParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let fees = wallet.estimate_fees(params.tx_type).await.context("Error while estimating fees")?;
+
+    Ok(json!(fees))
+}
+
+// List transactions from the wallet storage
 async fn list_transactions(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: ListTransactionsParams = parse_params(body)?;
     if let Some(addr) = &params.address {
@@ -220,6 +244,7 @@ async fn list_transactions(context: Context, body: Value) -> Result<Value, Inter
     Ok(json!(txs))
 }
 
+// Check if the wallet is currently connected to a daemon
 async fn is_online(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)

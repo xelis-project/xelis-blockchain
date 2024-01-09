@@ -528,6 +528,14 @@ impl Wallet {
         }
     }
 
+    // Estimate fees for a given transaction type
+    // Estimated fees returned are the minimum required to be valid on chain
+    pub async fn estimate_fees(&self, tx_type: TransactionType) -> Result<u64, WalletError> {
+        let storage = self.storage.read().await;
+        let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), tx_type, storage.get_nonce().unwrap_or(0), FeeBuilder::default());
+        Ok(builder.estimate_fees())
+    }
+
     // set wallet in online mode: start a communication task which will keep the wallet synced
     pub async fn set_online_mode(self: &Arc<Self>, daemon_address: &String) -> Result<(), WalletError> {
         if self.is_online().await {

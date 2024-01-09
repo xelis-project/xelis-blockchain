@@ -31,6 +31,12 @@ pub struct BuildTransactionParams {
     pub tx_as_hex: bool
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct EstimateFeesParams {
+    #[serde(flatten)]
+    pub tx_type: TransactionType,
+}
+
 // :(
 fn default_true_value() -> bool {
     true
