@@ -54,7 +54,7 @@ const MAX_ASSETS: usize = 64;
 
 impl NetworkHandler {
     pub async fn new<S: ToString>(wallet: Arc<Wallet>, daemon_address: S) -> Result<SharedNetworkHandler, Error> {
-        let api = DaemonAPI::new(format!("{}/json_rpc", daemon_address.to_string()));
+        let api = DaemonAPI::new(format!("{}/json_rpc", daemon_address.to_string())).await?;
         // check that we can correctly get version from daemon
         let version = api.get_version().await?;
         debug!("Connected to daemon running version {}", version);

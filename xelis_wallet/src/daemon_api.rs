@@ -1,13 +1,18 @@
 use std::borrow::Cow;
 
 use anyhow::{Context, Result};
+use serde::Serialize;
+use serde_json::Value;
 use xelis_common::{
-    json_rpc::JsonRPCClient,
-    api::daemon::{
-        GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams,
-        GetInfoResult, SubmitTransactionParams, BlockResponse,
-        GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams,
-        GetNonceResult, GetAssetsParams, IsTxExecutedInBlockParams
+    json_rpc::{WebSocketJsonRPCClient, WebSocketJsonRPCClientImpl, JsonRPCResult},
+    api::{
+        daemon::{
+            GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams,
+            GetInfoResult, SubmitTransactionParams, BlockResponse,
+            GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams,
+            GetNonceResult, GetAssetsParams, IsTxExecutedInBlockParams
+        },
+        wallet::NotifyEvent
     },
     account::VersionedBalance,
     crypto::{address::Address, hash::Hash},
@@ -18,18 +23,19 @@ use xelis_common::{
 };
 
 pub struct DaemonAPI {
-    client: JsonRPCClient,
+    client: WebSocketJsonRPCClient<NotifyEvent>,
 }
 
 impl DaemonAPI {
-    pub fn new(daemon_address: String) -> Self {
-        Self {
-            client: JsonRPCClient::new(daemon_address)
-        }
+    pub async fn new(daemon_address: String) -> Result<Self> {
+        let client = WebSocketJsonRPCClientImpl::new(daemon_address).await?;
+        Ok(Self {
+            client
+        })
     }
 
-    pub fn get_client(&self) -> &JsonRPCClient {
-        &self.client
+    pub async fn call<P: Serialize>(&self, method: &String, params: &P) -> JsonRPCResult<Value> {
+        self.client.call_with(method.as_str(), params).await
     }
 
     pub async fn get_version(&self) -> Result<String> {

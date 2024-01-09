@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Error, Context};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::sync::{
     broadcast::{Sender as BroadcastSender, Receiver as BroadcastReceiver},
     {Mutex, RwLock}
@@ -20,7 +20,7 @@ use xelis_common::{
         hash::Hash,
         key::{KeyPair, PublicKey, Signature},
     },
-    rpc_server::{RpcRequest, InternalRpcError, RpcResponseError},
+    rpc_server::{RpcRequest, InternalRpcError, RpcResponseError, JSON_RPC_VERSION},
     utils::{format_xelis, format_coin},
     network::Network,
     serializer::{Serializer, Writer},
@@ -723,8 +723,13 @@ impl XSWDNodeMethodHandler for Arc<Wallet> {
         let network_handler = self.network_handler.lock().await;
         let id = request.id;
         if let Some(network_handler) = network_handler.as_ref() {
-            network_handler.get_api().get_client().send(json!(request)).await
-                .map_err(|e| RpcResponseError::new(id, InternalRpcError::Custom(e.to_string())))
+            let api = network_handler.get_api();
+            let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id, InternalRpcError::Custom(e.to_string())))?;
+            Ok(json!({
+                "jsonrpc": JSON_RPC_VERSION,
+                "id": id,
+                "result": response
+            }))
         } else {
             Err(RpcResponseError::new(id, InternalRpcError::CustomStr("Wallet is not in online mode")))
         }

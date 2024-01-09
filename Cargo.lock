@@ -2964,7 +2964,6 @@ dependencies = [
  "clap",
  "crc32fast",
  "fern",
- "futures-util",
  "hex",
  "indexmap 2.1.0",
  "lazy_static",
@@ -2975,7 +2974,6 @@ dependencies = [
  "sled",
  "thiserror",
  "tokio",
- "tokio-tungstenite 0.21.0",
  "xelis_common",
 ]
 
