@@ -7,7 +7,7 @@ mod http;
 mod websocket;
 
 pub use http::JsonRPCClient;
-pub use websocket::WebSocketJsonRPCClient;
+pub use websocket::{WebSocketJsonRPCClientImpl, WebSocketJsonRPCClient};
 
 const JSON_RPC_VERSION: &str = "2.0";
 
@@ -24,7 +24,6 @@ struct JsonRPCResponse {
     id: Option<usize>,
     result: Option<Value>,
     error: Option<JsonRPCErrorResponse>,
-
 }
 
 #[derive(Debug, Deserialize)]

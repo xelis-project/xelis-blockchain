@@ -86,8 +86,13 @@ impl<E: Serialize + Hash + Eq + Send + 'static> WebSocketJsonRPCClientImpl<E> {
         Ok(())
     }
 
+    // Call a method without parameters
+    pub async fn call<R: DeserializeOwned>(&self, method: &str) -> JsonRPCResult<R> {
+        self.send(method, None, &Value::Null).await
+    }
+
     // Call a method with parameters
-    pub async fn call_with<P: Serialize>(&self, method: &str, params: &P) -> JsonRPCResult<Value> {
+    pub async fn call_with<P: Serialize, R: DeserializeOwned>(&self, method: &str, params: &P) -> JsonRPCResult<R> {
         self.send(method, None, params).await
     }
 
