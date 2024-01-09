@@ -71,8 +71,10 @@ impl<S: Storage> DaemonRpcServer<S> {
             let http_server = HttpServer::new(move || {
                 let server = Arc::clone(&clone);
                 App::new().app_data(web::Data::from(server))
+                    // Traditional HTTP
                     .route("/json_rpc", web::post().to(json_rpc::<Arc<Blockchain<S>>, DaemonRpcServer<S>>))
-                    .route("/ws", web::get().to(websocket::<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>, DaemonRpcServer<S>>))
+                    // WebSocket support
+                    .route("/json_rpc", web::get().to(websocket::<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>, DaemonRpcServer<S>>))
                     .route("/getwork/{address}/{worker}", web::get().to(getwork_endpoint::<S>))
                     .service(index)
             })
