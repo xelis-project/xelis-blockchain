@@ -63,15 +63,15 @@ mod tests {
         assert!(signature.verify(&message_hash, &public_key), "Signature verification failed");
     }
 
-        // Generate a signature for a message and verify that it is incorrect
-        #[test]
-        fn test_signature_invalid() {
-            let (private_key, _) = _generate_key_pair();
-            let message_hash = _create_message_hash(b"Hello World!");
-            let signature = private_key.sign(&message_hash);
+    // Generate a signature for a message and verify that it is incorrect
+    #[test]
+    fn test_signature_invalid() {
+        let (private_key, _) = _generate_key_pair();
+        let message_hash = _create_message_hash(b"Hello World!");
+        let signature = private_key.sign(&message_hash);
 
-            // Verify the signature with the wrong key
-            let (_, public_key) = _generate_key_pair();
-            assert!(!signature.verify(&message_hash, &public_key), "Signature should fail");
-        }
+        // Verify the signature with the wrong key
+        let (_, public_key) = _generate_key_pair();
+        assert!(!signature.verify(&message_hash, &public_key), "Signature should fail");
+    }
 }
