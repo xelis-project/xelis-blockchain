@@ -966,7 +966,7 @@ impl<S: Storage> P2pServer<S> {
                 let header = header.into_owned();
                 let block_hash = header.hash();
                 if block_height < self.blockchain.get_stable_height() {
-                    error!("{} send us a block propagation packet which is under stable height (height = {})!", peer, block_height);
+                    error!("{} send us a block ({}) propagation packet which is under stable height (height = {})!", block_hash, peer, block_height);
                     return Err(P2pError::BlockPropagatedUnderStableHeight(block_hash, block_height))
                 }
 
@@ -1739,7 +1739,7 @@ impl<S: Storage> P2pServer<S> {
             // check that peer height is greater or equal to block height but still under or equal to STABLE_LIMIT
             // or, check that peer height is less or equal to block height but still under or equal to STABLE_LIMIT
             // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
-            if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= STABLE_LIMIT) {
+            if (peer_height >= block.get_height() && peer_height - block.get_height() < STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height < STABLE_LIMIT) {
                 let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                 // check that we don't send the block to the peer that sent it to us
                 if !blocks_propagation.contains(hash) {
