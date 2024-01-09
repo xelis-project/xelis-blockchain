@@ -42,7 +42,9 @@ where
                 App::new()
                     .app_data(Data::from(server))
                     .wrap(auth)
-                    .route("/ws", web::get().to(websocket::<EventWebSocketHandler<W, NotifyEvent>, Self>))
+                    // WebSocket support
+                    .route("/json_rpc", web::get().to(websocket::<EventWebSocketHandler<W, NotifyEvent>, Self>))
+                    // HTTP support
                     .route("/json_rpc", web::post().to(json_rpc::<W, WalletRpcServer<W>>))
                     .service(index)
             })
