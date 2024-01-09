@@ -248,7 +248,7 @@ async fn communication_task(mut daemon_address: String, job_sender: broadcast::S
     }
 }
 
-async fn handle_websocket_message(message: Result<Message, tokio_tungstenite::tungstenite::Error>, job_sender: &broadcast::Sender<ThreadNotification<'_>>) -> Result<bool, Error> {
+async fn handle_websocket_message(message: Result<Message, TungsteniteError>, job_sender: &broadcast::Sender<ThreadNotification<'_>>) -> Result<bool, Error> {
     match message? {
         Message::Text(text) => {
             debug!("new message from daemon: {}", text);
