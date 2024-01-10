@@ -7,7 +7,7 @@ mod http;
 mod websocket;
 
 pub use http::JsonRPCClient;
-pub use websocket::{WebSocketJsonRPCClientImpl, WebSocketJsonRPCClient};
+pub use websocket::{WebSocketJsonRPCClientImpl, WebSocketJsonRPCClient, EventReceiver};
 
 const JSON_RPC_VERSION: &str = "2.0";
 
