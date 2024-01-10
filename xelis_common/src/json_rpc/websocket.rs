@@ -3,7 +3,7 @@ use std::{sync::{atomic::{AtomicUsize, Ordering}, Arc}, collections::HashMap, ha
 use futures_util::{StreamExt, stream::{SplitSink, SplitStream}, SinkExt};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Value, json};
-use tokio::{net::TcpStream, sync::{Mutex, oneshot, mpsc}};
+use tokio::{net::TcpStream, sync::{Mutex, oneshot, broadcast}};
 use tokio_tungstenite::{WebSocketStream, MaybeTlsStream, connect_async, tungstenite::Message};
 use log::error;
 
@@ -19,7 +19,7 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + 'static>
     ws: Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>,
     count: AtomicUsize,
     requests: Mutex<HashMap<usize, oneshot::Sender<JsonRPCResponse>>>,
-    handler_by_id: Mutex<HashMap<usize, mpsc::Sender<Value>>>,
+    handler_by_id: Mutex<HashMap<usize, broadcast::Sender<Value>>>,
     events_to_id: Mutex<HashMap<E, usize>>,
 }
 
@@ -78,10 +78,13 @@ impl<E: Serialize + Hash + Eq + Send + 'static> WebSocketJsonRPCClientImpl<E> {
                     if let Some(id) = response.id {
                         // Check if this ID corresponds to a event subscribed
                         {
-                            let mut events = self.handler_by_id.lock().await;
-                            if let Some(sender) = events.get_mut(&id) {
-                                if let Err(e) = sender.send(response.result.unwrap_or_default()).await {
-                                    error!("Error sending event to the request: {:?}", e);
+                            let mut handlers = self.handler_by_id.lock().await;
+                            if let Some(sender) = handlers.get_mut(&id) {
+                                // Check that we still have someone who listen it
+                                if sender.receiver_count() > 0 {
+                                    if let Err(e) = sender.send(response.result.unwrap_or_default()) {
+                                        error!("Error sending event to the request: {:?}", e);
+                                    }
                                 }
                                 continue;
                             }
@@ -123,10 +126,16 @@ impl<E: Serialize + Hash + Eq + Send + 'static> WebSocketJsonRPCClientImpl<E> {
     }
 
     // Subscribe to an event
-    pub async fn subscribe_event(&self, event: E) -> JsonRPCResult<mpsc::Receiver<Value>> {
-        // verify that we didn't registered this event yet
-        if self.has_event(&event).await {
-            return Err(JsonRPCError::EventAlreadyRegistered)
+    pub async fn subscribe_event(&self, event: E) -> JsonRPCResult<broadcast::Receiver<Value>> {
+        // Returns a Receiver for this event if already registered
+        {
+            let ids = self.events_to_id.lock().await;
+            if let Some(id) = ids.get(&event) {
+                let handlers = self.handler_by_id.lock().await;
+                if let Some(sender) = handlers.get(id) {
+                    return Ok(sender.subscribe());
+                }
+            }
         }
 
         // Generate the ID for this request
@@ -134,18 +143,18 @@ impl<E: Serialize + Hash + Eq + Send + 'static> WebSocketJsonRPCClientImpl<E> {
 
         // Send it to the server
         self.send::<E, bool>("subscribe", Some(id), &event).await?;
-
-        // Create a channel to receive the event
-        let (sender, receiver) = mpsc::channel(1);
-        {
-            let mut events = self.handler_by_id.lock().await;
-            events.insert(id, sender);
-        }
-
+        
         // Create a mapping from the event to the ID used for the request
         {
-            let mut events = self.events_to_id.lock().await;
-            events.insert(event, id);
+            let mut ids = self.events_to_id.lock().await;
+            ids.insert(event, id);
+        }
+
+        // Create a channel to receive the event
+        let (sender, receiver) = broadcast::channel(1);
+        {
+            let mut handlers = self.handler_by_id.lock().await;
+            handlers.insert(id, sender);
         }
 
         Ok(receiver)
@@ -155,8 +164,8 @@ impl<E: Serialize + Hash + Eq + Send + 'static> WebSocketJsonRPCClientImpl<E> {
     pub async fn unsubscribe_event(&self, event: &E) -> JsonRPCResult<()> {        
         // Retrieve the id for this event
         let id = {
-            let mut events = self.events_to_id.lock().await;
-            events.remove(event).ok_or(JsonRPCError::EventNotRegistered)?
+            let mut ids = self.events_to_id.lock().await;
+            ids.remove(event).ok_or(JsonRPCError::EventNotRegistered)?
         };
 
         // Send the unsubscribe rpc method
@@ -164,8 +173,8 @@ impl<E: Serialize + Hash + Eq + Send + 'static> WebSocketJsonRPCClientImpl<E> {
 
         // delete it from events list
         {
-            let mut events = self.handler_by_id.lock().await;
-            events.remove(&id);
+            let mut handlers = self.handler_by_id.lock().await;
+            handlers.remove(&id);
         }
 
         Ok(())

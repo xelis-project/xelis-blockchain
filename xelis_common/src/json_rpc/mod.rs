@@ -67,8 +67,6 @@ pub enum JsonRPCError {
     ConnectionError(String),
     #[error("Event not registered")]
     EventNotRegistered,
-    #[error("Event already registered")]
-    EventAlreadyRegistered,
     #[error(transparent)]
     SocketError(#[from] TungsteniteError),
     #[error(transparent)]
