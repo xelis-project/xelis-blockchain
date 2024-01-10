@@ -161,6 +161,7 @@ pub struct QueryDBParams {
 
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
     // When a new block is detected by wallet
     // it contains Block struct as value

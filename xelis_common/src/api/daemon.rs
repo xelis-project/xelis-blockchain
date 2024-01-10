@@ -342,6 +342,7 @@ pub struct SizeOnDiskResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
     // When a new block is accepted by chain
     // it contains Block struct as value

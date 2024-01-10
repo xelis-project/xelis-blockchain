@@ -329,7 +329,7 @@ Example to subscribe to a registered event in the WebSocket connection:
     "id": 1,
     "method": "subscribe",
     "params": {
-        "notify": "NewBlock"
+        "notify": "new_block"
     }
 }
 ```
@@ -342,20 +342,27 @@ Example to unsubscribe to a specific event:
 {
     "jsonrpc": "2.0",
     "id": 1,
-    "method": "subscribe",
+    "method": "unsubscribe",
     "params": {
-        "notify": "NewBlock"
+        "notify": "new_block"
     }
 }
 ```
 
 Events currently available to subscribe are:
-- `NewBlock`: when a new block is accepted by chain
-- `TransactionAddedInMempool`: when a new valid transaction is added in mempool
-- `TransactionExecuted`: when a transaction has been included in a valid block & executed on chain
-- `TransactionSCResult`: when a valid TX SC Call hash has been executed by chain
-- `NewAsset`: when a new asset has been registered
-- `BlockOrdered` when a block is ordered for the first time or reordered to a new topoheight
+- `block_ordered`: when a block is ordered by DAG
+- `stable_height_changed`: when the stable height has been updated
+- `peer_connected`: when a new peer has connected to the node
+- `peer_disconnected`: when a peer disconnected from us
+- `peer_peer_list_updated`: when the peerlist of a peer has been updated
+- `peer_state_updated`: when the peer state has been updated
+- `peer_peer_disconnected`: when a common peer disconnect from one of our peer
+- `new_block`: when a new block is accepted by chain
+- `transaction_added_in_mempool`: when a new valid transaction is added in mempool
+- `transaction_executed`: when a transaction has been included in a valid block & executed on chain
+- `transaction_sc_result`: when a valid TX SC Call hash has been executed by chain
+- `new_asset`: when a new asset has been registered
+- `block_ordered` when a block is ordered for the first time or reordered to a new topoheight
 
 ### XSWD
 
