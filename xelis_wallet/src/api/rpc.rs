@@ -95,7 +95,7 @@ async fn get_topoheight(context: Context, body: Value) -> Result<Value, Internal
 
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
-    let topoheight = storage.get_daemon_topoheight()?;
+    let topoheight = storage.get_synced_topoheight()?;
     Ok(json!(topoheight))
 }
 

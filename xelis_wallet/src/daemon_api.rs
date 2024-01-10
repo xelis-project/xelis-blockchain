@@ -4,15 +4,12 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::Value;
 use xelis_common::{
-    json_rpc::{WebSocketJsonRPCClient, WebSocketJsonRPCClientImpl, JsonRPCResult},
-    api::{
-        daemon::{
-            GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams,
-            GetInfoResult, SubmitTransactionParams, BlockResponse,
-            GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams,
-            GetNonceResult, GetAssetsParams, IsTxExecutedInBlockParams
-        },
-        wallet::NotifyEvent
+    json_rpc::{WebSocketJsonRPCClient, WebSocketJsonRPCClientImpl, JsonRPCResult, EventReceiver},
+    api::daemon::{
+        GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams,
+        GetInfoResult, SubmitTransactionParams, BlockResponse,
+        GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams,
+        GetNonceResult, GetAssetsParams, IsTxExecutedInBlockParams, NotifyEvent, NewBlockEvent, BlockOrderedEvent, StableHeightChangedEvent, TransactionAddedInMempoolEvent, GetAccountAssetsParams
     },
     account::VersionedBalance,
     crypto::{address::Address, hash::Hash},
@@ -38,6 +35,26 @@ impl DaemonAPI {
         self.client.call_with(method.as_str(), params).await
     }
 
+    pub async fn on_new_block_event(&self) -> Result<EventReceiver<NewBlockEvent>> {
+        let receiver = self.client.subscribe_event(NotifyEvent::NewBlock).await?;
+        Ok(receiver)
+    }
+
+    pub async fn on_block_ordered_event(&self) -> Result<EventReceiver<BlockOrderedEvent>> {
+        let receiver = self.client.subscribe_event(NotifyEvent::BlockOrdered).await?;
+        Ok(receiver)
+    }
+
+    pub async fn on_stable_height_changed_event(&self) -> Result<EventReceiver<StableHeightChangedEvent>> {
+        let receiver = self.client.subscribe_event(NotifyEvent::StableHeightChanged).await?;
+        Ok(receiver)
+    }
+
+    pub async fn on_transaction_added_in_mempool_event(&self) -> Result<EventReceiver<TransactionAddedInMempoolEvent>> {
+        let receiver = self.client.subscribe_event(NotifyEvent::TransactionAddedInMempool).await?;
+        Ok(receiver)
+    }
+
     pub async fn get_version(&self) -> Result<String> {
         let version = self.client.call("get_version").await.context("Error while retrieving version from daemon")?;
         Ok(version)
@@ -46,6 +63,13 @@ impl DaemonAPI {
     pub async fn get_info(&self) -> Result<GetInfoResult> {
         let info = self.client.call("get_info").await.context("Error while retrieving info from chain")?;
         Ok(info)
+    }
+
+    pub async fn get_account_assets(&self, address: &Address) -> Result<Vec<Hash>> {
+        let assets = self.client.call_with("get_account_assets", &GetAccountAssetsParams {
+            address: Cow::Borrowed(address)
+        }).await.context("Error while retrieving account assets")?;
+        Ok(assets)
     }
 
     pub async fn count_assets(&self) -> Result<usize> {

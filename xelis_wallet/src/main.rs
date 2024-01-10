@@ -315,7 +315,7 @@ async fn prompt_message_builder(_: &Prompt, command_manager: &Option<CommandMana
             let topoheight_str = format!(
                 "{}: {}",
                 prompt::colorize_str(Color::Yellow, "TopoHeight"),
-                prompt::colorize_string(Color::Green, &format!("{}", storage.get_daemon_topoheight().unwrap_or(0)))
+                prompt::colorize_string(Color::Green, &format!("{}", storage.get_synced_topoheight().unwrap_or(0)))
             );
             let balance = format!(
                 "{}: {}",

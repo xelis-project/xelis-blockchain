@@ -578,10 +578,10 @@ impl Wallet {
             network_handler.stop().await?;
             {
                 let mut storage = self.get_storage().write().await;
-                if topoheight > storage.get_daemon_topoheight()? {
+                if topoheight > storage.get_synced_topoheight()? {
                     return Err(WalletError::RescanTopoheightTooHigh)
                 }
-                storage.set_daemon_topoheight(topoheight)?;
+                storage.set_synced_topoheight(topoheight)?;
                 storage.delete_top_block_hash()?;
                 // balances will be re-fetched from daemon
                 storage.delete_balances()?;
