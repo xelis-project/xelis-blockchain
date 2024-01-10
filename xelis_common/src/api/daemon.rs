@@ -294,8 +294,8 @@ pub struct AccountHistoryEntry {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetAccountAssetsParams {
-    pub address: Address
+pub struct GetAccountAssetsParams<'a> {
+    pub address: Cow<'a, Address>
 }
 
 #[derive(Serialize, Deserialize)]
