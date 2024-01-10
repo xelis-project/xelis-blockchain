@@ -1,5 +1,14 @@
-use std::{sync::{atomic::{AtomicUsize, Ordering}, Arc}, collections::HashMap, hash::Hash};
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc
+    },
+    collections::HashMap,
+    hash::Hash,
+    marker::PhantomData
+};
 
+use anyhow::Error;
 use futures_util::{StreamExt, stream::{SplitSink, SplitStream}, SinkExt};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Value, json};
@@ -8,6 +17,26 @@ use tokio_tungstenite::{WebSocketStream, MaybeTlsStream, connect_async, tungsten
 use log::error;
 
 use super::{JSON_RPC_VERSION, JsonRPCError, JsonRPCResponse, JsonRPCResult};
+
+// EventReceiver allows to get the event value parsed directly
+pub struct EventReceiver<T: DeserializeOwned> {
+    inner: broadcast::Receiver<Value>,
+    _phantom: PhantomData<T>
+}
+
+impl<T: DeserializeOwned> EventReceiver<T> {
+    pub fn new(inner: broadcast::Receiver<Value>) -> Self {
+        Self {
+            inner,
+            _phantom: PhantomData
+        }
+    }
+
+    pub async fn next(&mut self) -> Result<T, Error> {
+        let value = self.inner.recv().await?;
+        Ok(serde_json::from_value(value)?)
+    }
+}
 
 // It is around a Arc to be shareable easily
 // it has a tokio task running in background to handle all incoming messages
@@ -126,14 +155,14 @@ impl<E: Serialize + Hash + Eq + Send + 'static> WebSocketJsonRPCClientImpl<E> {
     }
 
     // Subscribe to an event
-    pub async fn subscribe_event(&self, event: E) -> JsonRPCResult<broadcast::Receiver<Value>> {
+    pub async fn subscribe_event<T: DeserializeOwned>(&self, event: E) -> JsonRPCResult<EventReceiver<T>> {
         // Returns a Receiver for this event if already registered
         {
             let ids = self.events_to_id.lock().await;
             if let Some(id) = ids.get(&event) {
                 let handlers = self.handler_by_id.lock().await;
                 if let Some(sender) = handlers.get(id) {
-                    return Ok(sender.subscribe());
+                    return Ok(EventReceiver::new(sender.subscribe()));
                 }
             }
         }
@@ -157,7 +186,7 @@ impl<E: Serialize + Hash + Eq + Send + 'static> WebSocketJsonRPCClientImpl<E> {
             handlers.insert(id, sender);
         }
 
-        Ok(receiver)
+        Ok(EventReceiver::new(receiver))
     }
 
     // Unsubscribe from an event
