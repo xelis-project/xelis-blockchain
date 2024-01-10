@@ -233,3 +233,9 @@ impl Serializer for Transaction {
 }
 
 impl Hashable for Transaction {}
+
+impl AsRef<Transaction> for Transaction {
+    fn as_ref(&self) -> &Transaction {
+        self
+    }
+}

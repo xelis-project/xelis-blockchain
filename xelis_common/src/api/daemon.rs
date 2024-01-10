@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::{HashSet, HashMap}, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::{hash::Hash, address::Address}, account::{VersionedBalance, VersionedNonce}, network::Network, block::Difficulty, transaction::Transaction};
+use crate::{crypto::{hash::Hash, address::Address}, account::{VersionedBalance, VersionedNonce}, network::Network, block::{Difficulty, BlockHeader}, transaction::Transaction};
 
 use super::DataHash;
 
@@ -345,7 +345,7 @@ pub struct SizeOnDiskResult {
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
     // When a new block is accepted by chain
-    // it contains Block struct as value
+    // it contains NewBlockEvent as value
     NewBlock,
     // When a block (already in chain or not) is ordered (new topoheight)
     // it contains BlockOrderedEvent as value
@@ -354,7 +354,7 @@ pub enum NotifyEvent {
     // it contains StableHeightChangedEvent struct as value
     StableHeightChanged,
     // When a new transaction is added in mempool
-    // it contains Transaction struct as value
+    // it contains TransactionAddedInMempoolEvent struct as value
     TransactionAddedInMempool,
     // When a transaction has been included in a valid block & executed on chain
     // it contains TransactionExecutedEvent struct as value
@@ -366,16 +366,16 @@ pub enum NotifyEvent {
     // TODO: Smart Contracts
     NewAsset,
     // When a new peer has connected to us
-    // It contains PeerEntry struct as value
+    // It contains PeerConnectedEvent struct as value
     PeerConnected,
     // When a peer has disconnected from us
-    // It contains PeerEntry struct as value
+    // It contains PeerDisconnectedEvent struct as value
     PeerDisconnected,
     // Peer peerlist updated, its all its connected peers
     // It contains PeerPeerListUpdatedEvent as value
     PeerPeerListUpdated,
     // Peer has been updated through a ping packet
-    // Contains PeerEntry as value
+    // Contains PeerStateUpdatedEvent as value
     PeerStateUpdated,
     // When a peer of a peer has disconnected
     // and that he notified us
@@ -383,6 +383,10 @@ pub enum NotifyEvent {
     PeerPeerDisconnected,
 }
 
+// Value of NotifyEvent::NewBlock
+pub type NewBlockEvent = BlockResponse<'static, BlockHeader>;
+
+// Value of NotifyEvent::BlockOrdered
 #[derive(Serialize, Deserialize)]
 pub struct BlockOrderedEvent<'a> {
     // block hash in which this event was triggered
@@ -392,12 +396,17 @@ pub struct BlockOrderedEvent<'a> {
     pub topoheight: u64,
 }
 
+// Value of NotifyEvent::StableHeightChanged
 #[derive(Serialize, Deserialize)]
 pub struct StableHeightChangedEvent {
     pub previous_stable_height: u64,
     pub new_stable_height: u64
 }
 
+// Value of NotifyEvent::TransactionAddedInMempool
+pub type TransactionAddedInMempoolEvent = TransactionResponse<'static, Transaction>;
+
+// Value of NotifyEvent::TransactionExecuted
 #[derive(Serialize, Deserialize)]
 pub struct TransactionExecutedEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
@@ -405,6 +414,13 @@ pub struct TransactionExecutedEvent<'a> {
     pub topoheight: u64,
 }
 
+// Value of NotifyEvent::PeerConnected
+pub type PeerConnectedEvent = PeerEntry<'static>;
+
+// Value of NotifyEvent::PeerDisconnected
+pub type PeerDisconnectedEvent = PeerEntry<'static>;
+
+// Value of NotifyEvent::PeerPeerListUpdated
 #[derive(Serialize, Deserialize)]
 pub struct PeerPeerListUpdatedEvent {
     // Peer ID of the peer that sent us the new peer list
@@ -413,6 +429,10 @@ pub struct PeerPeerListUpdatedEvent {
     pub peerlist: Vec<SocketAddr>
 }
 
+// Value of NotifyEvent::PeerStateUpdated
+pub type PeerStateUpdatedEvent = PeerEntry<'static>;
+
+// Value of NotifyEvent::PeerPeerDisconnected
 #[derive(Serialize, Deserialize)]
 pub struct PeerPeerDisconnectedEvent {
     // Peer ID of the peer that sent us this notification
