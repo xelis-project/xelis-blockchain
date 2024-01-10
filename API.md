@@ -536,12 +536,12 @@ Verify if address has a nonce on-chain registered.
 }
 ```
 
-#### Get Last Balance
+#### Get Balance
 Get up-to-date asset's balance for a specific address
 
 NOTE: Balance is returned in atomic units
 
-##### Method `get_last_balance`
+##### Method `get_balance`
 
 ##### Parameters
 |   Name  |   Type  | Required |                Note               |
@@ -568,7 +568,7 @@ NOTE: Balance is returned in atomic units
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": {
-		"balance": {
+		"version": {
 			"balance": 37726957,
 			"previous_topoheight": 41
 		},

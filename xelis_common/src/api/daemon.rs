@@ -112,8 +112,8 @@ pub struct HasNonceResult {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetLastBalanceResult {
-    pub balance: VersionedBalance,
+pub struct GetBalanceResult {
+    pub version: VersionedBalance,
     pub topoheight: u64
 }
 
@@ -299,8 +299,8 @@ pub struct GetAccountAssetsParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetAssetParams {
-    pub asset: Hash
+pub struct GetAssetParams<'a> {
+    pub asset: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize)]

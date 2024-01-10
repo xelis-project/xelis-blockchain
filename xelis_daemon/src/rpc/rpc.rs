@@ -20,7 +20,7 @@ use xelis_common::{
         GetBlocksAtHeightParams,
         GetTopoHeightRangeParams,
         GetBalanceAtTopoHeightParams,
-        GetLastBalanceResult,
+        GetBalanceResult,
         GetInfoResult,
         GetTopBlockParams,
         GetTransactionsParams,
@@ -174,7 +174,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_block_by_hash", async_handler!(get_block_by_hash::<S>));
     handler.register_method("get_top_block", async_handler!(get_top_block::<S>));
     handler.register_method("submit_block", async_handler!(submit_block::<S>));
-    handler.register_method("get_last_balance", async_handler!(get_last_balance::<S>));
+    handler.register_method("get_balance", async_handler!(get_balance::<S>));
     handler.register_method("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight::<S>));
     handler.register_method("get_info", async_handler!(get_info::<S>));
     handler.register_method("get_nonce", async_handler!(get_nonce::<S>));
@@ -284,7 +284,7 @@ async fn submit_block<S: Storage>(context: Context, body: Value) -> Result<Value
     Ok(json!(true))
 }
 
-async fn get_last_balance<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_balance<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBalanceParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
@@ -292,9 +292,9 @@ async fn get_last_balance<S: Storage>(context: Context, body: Value) -> Result<V
     }
 
     let storage = blockchain.get_storage().read().await;
-    let (topoheight, balance) = storage.get_last_balance(params.address.get_public_key(), &params.asset).await.context("Error while retrieving last balance")?;
-    Ok(json!(GetLastBalanceResult {
-        balance,
+    let (topoheight, version) = storage.get_last_balance(params.address.get_public_key(), &params.asset).await.context("Error while retrieving last balance")?;
+    Ok(json!(GetBalanceResult {
+        version,
         topoheight
     }))
 }
