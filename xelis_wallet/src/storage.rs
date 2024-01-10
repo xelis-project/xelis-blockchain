@@ -33,11 +33,18 @@ pub struct Storage {
 
 // Implement an encrypted storage system 
 pub struct EncryptedStorage {
+    // cipher used to encrypt/decrypt/hash data
     cipher: Cipher,
+    // All transactions where this wallet is part of
     transactions: Tree,
+    // balances for each asset
     balances: Tree,
+    // extra data (network, topoheight, etc)
     extra: Tree,
+    // all assets tracked by the wallet
     assets: Tree,
+    // This tree is used to store all topoheight where a change in the wallet occured
+    changes_topoheight: Tree,
     inner: Storage
 }
 
@@ -49,6 +56,7 @@ impl EncryptedStorage {
             balances: inner.db.open_tree(&cipher.hash_key("balances"))?,
             extra: inner.db.open_tree(&cipher.hash_key("extra"))?,
             assets: inner.db.open_tree(&cipher.hash_key("assets"))?,
+            changes_topoheight: inner.db.open_tree(&cipher.hash_key("changes_topoheight"))?,
             cipher,
             inner
         };
@@ -318,7 +326,7 @@ impl EncryptedStorage {
             let value = el?;
             let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
             if entry.get_topoheight() > topoheight {
-                self.delete_transaction(&entry.get_hash())?;
+                self.delete_transaction(entry.get_hash())?;
             }
         }
 
@@ -395,16 +403,19 @@ impl EncryptedStorage {
         Ok(transactions)
     }
 
+    // Delete a transaction saved in wallet using its hash
     pub fn delete_transaction(&mut self, hash: &Hash) -> Result<()> {
-        self.transactions.remove(hash.as_bytes())?;
+        self.transactions.remove(self.cipher.hash_key(hash.as_bytes()))?;
         Ok(())
     }
 
+    // Delete all transactions from this wallet
     pub fn delete_transactions(&mut self) -> Result<()> {
         self.transactions.clear()?;
         Ok(())
     }
 
+    // Delete all balances from this wallet
     pub fn delete_balances(&mut self) -> Result<()> {
         self.balances.clear()?;
         Ok(())
@@ -417,46 +428,57 @@ impl EncryptedStorage {
         self.save_to_disk(&self.transactions, hash.as_bytes(), &transaction.to_bytes())
     }
 
+    // Check if the transaction is stored in wallet
     pub fn has_transaction(&self, hash: &Hash) -> Result<bool> {
         self.contains_data(&self.transactions, hash.as_bytes())
     }
 
+    // Retrieve the nonce used to create new transactions
     pub fn get_nonce(&self) -> Result<u64> {
         self.load_from_disk(&self.extra, NONCE_KEY)
     }
 
+    // Set the new nonce uised to create new transactions
     pub fn set_nonce(&mut self, nonce: u64) -> Result<()> {
         self.save_to_disk(&self.extra, NONCE_KEY, &nonce.to_be_bytes())
     }
 
+    // Store the keypair
     pub fn set_keypair(&mut self, keypair: &KeyPair) -> Result<()> {
         self.save_to_disk(&self.extra, KEY_PAIR, &keypair.to_bytes())
     }
 
+    // Retrieve the keypair of this wallet
     pub fn get_keypair(&self) -> Result<KeyPair> {
         self.load_from_disk(&self.extra, KEY_PAIR)
     }
 
-    pub fn set_daemon_topoheight(&mut self, topoheight: u64) -> Result<()> {
+    // Set the topoheight until which the wallet is synchronized
+    pub fn set_synced_topoheight(&mut self, topoheight: u64) -> Result<()> {
         self.save_to_disk(&self.extra, TOPOHEIGHT_KEY, &topoheight.to_be_bytes())
     }
 
-    pub fn get_daemon_topoheight(&self) -> Result<u64> {
+    // Get the topoheight until which the wallet is synchronized
+    pub fn get_synced_topoheight(&self) -> Result<u64> {
         self.load_from_disk(&self.extra, TOPOHEIGHT_KEY)
     }
 
+    // Delete the top block hash
     pub fn delete_top_block_hash(&mut self) -> Result<()> {
         self.delete_from_disk(&self.extra, TOP_BLOCK_HASH_KEY)
     }
 
+    // Set the top block hash until which the wallet is synchronized
     pub fn set_top_block_hash(&mut self, hash: &Hash) -> Result<()> {
         self.save_to_disk(&self.extra, TOP_BLOCK_HASH_KEY, hash.as_bytes())
     }
 
+    // Check if a top block hash is set 
     pub fn has_top_block_hash(&self) -> Result<bool> {
         self.contains_data(&self.extra, TOP_BLOCK_HASH_KEY)
     }
 
+    // Top block hash until which the wallet is synchronized 
     pub fn get_top_block_hash(&self) -> Result<Hash> {
         self.load_from_disk(&self.extra, TOP_BLOCK_HASH_KEY)
     }
@@ -469,16 +491,47 @@ impl EncryptedStorage {
         &mut self.inner
     }
 
+    // Get the network on which this wallet is
     fn get_network(&self) -> Result<Network> {
         self.load_from_disk(&self.extra, NETWORK)
     }
 
+    // Save the network to disk
     fn set_network(&mut self, network: &Network) -> Result<()> {
         self.save_to_disk(&self.extra, NETWORK, &network.to_bytes())
     }
 
+    // Check if the network is already registered
     fn has_network(&self) -> Result<bool> {
         self.contains_data(&self.extra, NETWORK)
+    }
+
+    // Add a topoheight where a change occured
+    pub fn add_topoheight_to_changes(&mut self, topoheight: u64, block_hash: &Hash) -> Result<()> {
+        self.save_to_disk(&self.changes_topoheight, &topoheight.to_be_bytes(), block_hash.as_bytes())
+    }
+
+    // Get the block hash for the requested topoheight
+    pub fn get_block_hash_for_topoheight(&self, topoheight: u64) -> Result<Hash> {
+        self.load_from_disk(&self.changes_topoheight, &topoheight.to_be_bytes())
+    }
+
+    // Check if the topoheight is present in the changes tree
+    pub fn has_topoheight_in_changes(&self, topoheight: u64) -> Result<bool> {
+        self.contains_data(&self.changes_topoheight, &topoheight.to_be_bytes())
+    }
+
+    // Delete all changes above topoheight
+    pub fn delete_changes_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
+        for res in self.changes_topoheight.iter() {
+            let (key, _) = res?;
+            let topo = u64::from_bytes(&key)?;
+            if topo > topoheight {
+                self.changes_topoheight.remove(key)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -498,6 +551,7 @@ impl Storage {
         Ok(())
     }
 
+    // retrieve the encrypted form of the master key
     pub fn get_encrypted_master_key(&self) -> Result<Vec<u8>> {
         match self.db.get(MASTER_KEY)? {
             Some(key) => {
@@ -509,11 +563,13 @@ impl Storage {
         }
     }
 
+    // set password salt used to derive the password-based key
     pub fn set_password_salt(&mut self, salt: &[u8]) -> Result<()> {
         self.db.insert(PASSWORD_SALT_KEY, salt)?;
         Ok(())
     }
 
+    // retrieve password salt used to derive the password-based key
     pub fn get_password_salt(&self) -> Result<[u8; SALT_SIZE]> {
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
 
@@ -532,6 +588,7 @@ impl Storage {
         Ok(salt)
     }
 
+    // get the salt used for encrypted storage
     pub fn get_encrypted_storage_salt(&self) -> Result<Vec<u8>> {
         let values = self.db.get(SALT_KEY)?.context("encrypted salt for storage was not found")?;
         let mut encrypted_salt = Vec::with_capacity(values.len());
@@ -540,6 +597,7 @@ impl Storage {
         Ok(encrypted_salt)
     }
 
+    // set the salt used for encrypted storage
     pub fn set_encrypted_storage_salt(&mut self, salt: &[u8]) -> Result<()> {
         self.db.insert(SALT_KEY, salt)?;
         Ok(())
