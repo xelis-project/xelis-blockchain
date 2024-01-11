@@ -87,6 +87,19 @@ Each balances, transaction assets values are in encrypted form and nobody can de
 
 Mining capabilities of XELIS are a bit differents from others chains because of standards being not implemented.
 Each job send to a miner is a `BlockMiner` instance in hex format.
+
+The `BlockMiner` is in following format:
+- header work hash: 32 bytes
+- timestamp (u128 for milliseconds): 16 bytes
+- nonce (u64): 8 bytes
+- extra nonce: 32 bytes
+- miner public key: 32 bytes
+
+The total block work size should be equal to 120 bytes.
+POW Hash should be calculated from this format and compared against the target difficulty.
+
+NOTE: It is recommended to use the GetWork WebSocket server to be notified of new block work and submit correct work.
+
 It includes the header work hash which represents the immutable data from daemon.
 
 Mining jobs are send only when a new block is found or when a new TX is added in mempool.
