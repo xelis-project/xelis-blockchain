@@ -122,6 +122,7 @@ impl NetworkHandler {
                 return Ok(())
             }
 
+            let mut changes_stored = false;
             let response = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
             let block: Block = response.data.data.into_owned();
             let block_hash = response.data.hash.into_owned();
@@ -135,6 +136,12 @@ impl NetworkHandler {
                     {
                         let mut storage = self.wallet.get_storage().write().await;
                         storage.save_transaction(entry.get_hash(), &entry)?;
+
+                        // Store the changes for history
+                        if !changes_stored {
+                            storage.add_topoheight_to_changes(topoheight, &block_hash)?;
+                            changes_stored = true;
+                        }
                     }
 
                     // Propagate the event to the wallet
@@ -197,6 +204,11 @@ impl NetworkHandler {
                         let found = storage.has_transaction(entry.get_hash())?;
                         if !found {
                             storage.save_transaction(entry.get_hash(), &entry)?;
+                            // Store the changes for history
+                            if !changes_stored {
+                                storage.add_topoheight_to_changes(topoheight, &block_hash)?;
+                                changes_stored = true;
+                            }
                         }
                         found
                     };
@@ -403,6 +415,7 @@ impl NetworkHandler {
         // Now sync head state, this will helps us to determinate if we should sync blocks or not
         let address = self.wallet.get_address();
         let should_sync_blocks = self.sync_head_state(&address).await?;
+        // Store the changes for history
 
         if should_sync_blocks {
             self.sync_new_blocks(&address, wallet_topoheight).await?;
@@ -413,6 +426,7 @@ impl NetworkHandler {
             let mut storage = self.wallet.get_storage().write().await;
             storage.set_synced_topoheight(daemon_topoheight)?;
             storage.set_top_block_hash(&daemon_block_hash)?;
+            storage.add_topoheight_to_changes(daemon_topoheight, &daemon_block_hash)?;
         }
 
         Ok(())
