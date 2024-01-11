@@ -147,6 +147,9 @@ impl BlockHeader {
         self.txs_hashes.len()
     }
 
+    // Build the header work (immutable part in mining process)
+    // This is the part that will be used to compute the header work hash
+    // See get_work_hash function and get_serialized_header for final hash computation
     pub fn get_work(&self) -> Vec<u8> {
         let mut bytes: Vec<u8> = Vec::with_capacity(HEADER_WORK_SIZE);
 
@@ -155,9 +158,8 @@ impl BlockHeader {
         bytes.extend(self.get_tips_hash().as_bytes()); // 9 + 32 = 41
         bytes.extend(self.get_txs_hash().as_bytes()); // 41 + 32 = 73
 
-        if bytes.len() != HEADER_WORK_SIZE {
-            panic!("Error, invalid header work size, got {} but expected {}", bytes.len(), HEADER_WORK_SIZE)
-        }
+        debug_assert!(bytes.len() == HEADER_WORK_SIZE, "Error, invalid header work size, got {} but expected {}", bytes.len(), HEADER_WORK_SIZE);
+
         bytes
     }
 
@@ -166,6 +168,7 @@ impl BlockHeader {
         hash(&self.get_work())
     }
 
+    // This is similar as BlockMiner work
     fn get_serialized_header(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(BLOCK_WORK_SIZE);
         bytes.extend(self.get_work_hash().to_bytes());
@@ -174,9 +177,7 @@ impl BlockHeader {
         bytes.extend(self.extra_nonce);
         bytes.extend(self.miner.as_bytes());
 
-        if bytes.len() != BLOCK_WORK_SIZE {
-            panic!("Error, invalid block work size, got {} but expected {}", bytes.len(), BLOCK_WORK_SIZE);
-        }
+        debug_assert!(bytes.len() == BLOCK_WORK_SIZE, "invalid block work size, got {} but expected {}", bytes.len(), BLOCK_WORK_SIZE);
 
         bytes
     }
