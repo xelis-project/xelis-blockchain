@@ -115,7 +115,7 @@ impl NetworkHandler {
     // When the block is requested, we don't limit the syncing to asset in parameter
     async fn get_balance_and_transactions(&self, topoheight_processed: &mut HashSet<u64>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool) -> Result<(), Error> {
         // Retrieve the highest version
-        let (topoheight, mut version) = self.api.get_balance(address, asset).await.map(|res| (res.topoheight, res.version))?;
+        let (mut topoheight, mut version) = self.api.get_balance(address, asset).await.map(|res| (res.topoheight, res.version))?;
         // don't sync already synced blocks
         if min_topoheight >= topoheight {
             return Ok(())
@@ -249,6 +249,7 @@ impl NetworkHandler {
                     return Ok(())
                 }
 
+                topoheight = previous;
                 version = self.api.get_balance_at_topoheight(address, asset, previous).await?;
             } else {
                 return Ok(())
