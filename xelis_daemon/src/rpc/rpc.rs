@@ -44,7 +44,7 @@ use xelis_common::{
     serializer::Serializer,
     transaction::{Transaction, TransactionType},
     crypto::hash::Hash,
-    block::{BlockHeader, Block},
+    block::{BlockHeader, Block, Difficulty},
     config::{XELIS_ASSET, VERSION, MAX_TRANSACTION_SIZE},
     immutable::Immutable,
     rpc_server::{RPCHandler, parse_params},
@@ -66,8 +66,8 @@ pub async fn get_block_type_for_block<S: Storage>(blockchain: &Blockchain<S>, st
     })
 }
 
-pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash, block: &Block, total_size_in_bytes: usize) -> Result<Value, InternalRpcError> {
-    let (topoheight, supply, reward) = if storage.is_block_topological_ordered(&hash).await {
+async fn get_block_data<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<(Option<u64>, Option<u64>, Option<u64>, BlockType, Difficulty, Difficulty), InternalRpcError> {
+    let (topoheight, supply, reward) = if storage.is_block_topological_ordered(hash).await {
         let topoheight = storage.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?;
         (
             Some(topoheight),
@@ -81,10 +81,16 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
             None,
         )
     };
-    let block_type = get_block_type_for_block(&blockchain, &storage, &hash).await?;
-    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await.context("Error while retrieving cumulative difficulty")?;
+
+    let block_type = get_block_type_for_block(&blockchain, &storage, hash).await?;
+    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(hash).await.context("Error while retrieving cumulative difficulty")?;
     let difficulty = storage.get_difficulty_for_block_hash(&hash).await.context("Error while retrieving difficulty")?;
 
+    Ok((topoheight, supply, reward, block_type, cumulative_difficulty, difficulty))
+}
+
+pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash, block: &Block, total_size_in_bytes: usize) -> Result<Value, InternalRpcError> {
+    let (topoheight, supply, reward, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, storage, hash).await?;
     let mut total_fees = 0;
     if block_type != BlockType::Orphaned {
         for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
@@ -105,42 +111,12 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
         return Err(InternalRpcError::AnyError(BlockchainError::BlockNotFound(hash.clone()).into()))
     }
 
-    let (topoheight, supply, reward) = if storage.is_block_topological_ordered(&hash).await {
-        let topoheight = storage.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?;
-        (
-            Some(topoheight),
-            Some(storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?),
-            Some(storage.get_block_reward_at_topo_height(topoheight).context("Error while retrieving block reward")?),
-        )
-    } else {
-        (
-            None,
-            None,
-            None,
-        )
-    };
-
-    let block_type = get_block_type_for_block(&blockchain, &storage, &hash).await?;
-    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await.context("Error while retrieving cumulative difficulty")?;
-    let difficulty = storage.get_difficulty_for_block_hash(&hash).await.context("Error while retrieving difficulty")?;
     let value: Value = if include_txs {
         let block = storage.get_block(&hash).await.context("Error while retrieving full block")?;
-
         let total_size_in_bytes = block.size();
-        let mut total_fees = 0;
-        if block_type != BlockType::Orphaned {
-            for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
-                // check that the TX was correctly executed in this block
-                // retrieve all fees for valid txs
-                if storage.is_tx_executed_in_block(tx_hash, &hash).context("Error while checking if tx was executed")? {
-                    total_fees += tx.get_fee();
-                }
-            }
-        }
-
-        let data: DataHash<'_, Block> = DataHash { hash: Cow::Borrowed(hash), data: Cow::Owned(block) };
-        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees: Some(total_fees), total_size_in_bytes, data })
+        get_block_response(blockchain, storage, hash, &block, total_size_in_bytes).await?
     } else {
+        let (topoheight, supply, reward, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, storage, hash).await?;
         let block = storage.get_block_header_by_hash(&hash).await.context("Error while retrieving full block")?;
 
         let mut total_size_in_bytes = block.size();
