@@ -371,8 +371,13 @@ impl NetworkHandler {
             }
 
             for (asset, value) in balances {
-                let previous_balance = storage.get_balance_for(&asset)?;
-                if previous_balance != value {
+                let must_update = match storage.get_balance_for(&asset) {
+                    Ok(previous) => previous != value,
+                    // If we don't have a balance for this asset, we should update it
+                    Err(_) => true
+                };
+
+                if must_update {
                     // Inform the change of the balance
                     self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
                         asset: asset.clone(),
