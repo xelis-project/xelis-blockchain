@@ -325,7 +325,14 @@ impl NetworkHandler {
 
     // TODO returns hashset of topoheight to scan for txs ?
     async fn sync_head_state(&self, address: &Address) -> Result<bool, Error> {
-        let versioned_nonce = self.api.get_last_nonce(&address).await.map(|v| v.version)?;
+        let versioned_nonce = match self.api.get_nonce(&address).await.map(|v| v.version) {
+            Ok(v) => v,
+            Err(e) => {
+                debug!("Error while fetching last nonce: {}", e);
+                // Account is not registered, we can return safely here
+                return Ok(false)
+            }
+        };
 
         let assets = self.api.get_account_assets(&address).await?;
         let mut balances = HashMap::new();

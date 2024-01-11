@@ -142,7 +142,7 @@ impl DaemonAPI {
         Ok(())
     }
 
-    pub async fn get_last_nonce(&self, address: &Address) -> Result<GetNonceResult> {
+    pub async fn get_nonce(&self, address: &Address) -> Result<GetNonceResult> {
         let nonce = self.client.call_with("get_nonce", &GetNonceParams {
             address: Cow::Borrowed(address),
             topoheight: None

@@ -586,7 +586,7 @@ impl Wallet {
                 // balances will be re-fetched from daemon
                 storage.delete_balances()?;
                 let nonce_result = network_handler.get_api()
-                    .get_last_nonce(&self.get_address()).await
+                    .get_nonce(&self.get_address()).await
                     // User has no transactions/balances yet, set its nonce to 0
                     .map(|v| v.version.get_nonce()).unwrap_or(0);
 
