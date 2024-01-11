@@ -43,9 +43,7 @@ impl<'a> Serializer for BlockMiner<'a> {
             miner.write(writer); // 88 + 32 = 120
         }
 
-        if writer.total_write() != BLOCK_WORK_SIZE {
-            panic!("Invalid block miner size");
-        }
+        debug_assert!(writer.total_write() == BLOCK_WORK_SIZE, "invalid block work size");
     }
 
     fn read(reader: &mut Reader) -> Result<BlockMiner<'a>, ReaderError> {
