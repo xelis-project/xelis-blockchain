@@ -12,7 +12,7 @@ use xelis_common::{
     api::{
         DataElement,
         wallet::BalanceChanged,
-        daemon::NewBlockEvent
+        daemon::{NewBlockEvent, BlockResponse}
     },
 };
 
@@ -111,6 +111,107 @@ impl NetworkHandler {
         }
     }
 
+    async fn process_block(&self, address: &Address, block_response: BlockResponse<'_, Block>, topoheight: u64) -> Result<bool, Error> {
+        let block = block_response.data.data.into_owned();
+        let block_hash = block_response.data.hash.into_owned();
+
+        let mut changes_stored = false;
+        // create Coinbase entry if its our address and we're looking for XELIS asset
+        if *block.get_miner() == *address.get_public_key() {
+            if let Some(reward) = block_response.reward {
+                let coinbase = EntryData::Coinbase(reward);
+                let entry = TransactionEntry::new(block_hash.clone(), topoheight, None, None, coinbase);
+
+                {
+                    let mut storage = self.wallet.get_storage().write().await;
+                    storage.save_transaction(entry.get_hash(), &entry)?;
+
+                    // Store the changes for history
+                    if !changes_stored {
+                        storage.add_topoheight_to_changes(topoheight, &block_hash)?;
+                        changes_stored = true;
+                    }
+                }
+
+                // Propagate the event to the wallet
+                self.wallet.propagate_event(Event::NewTransaction(entry)).await;
+            } else {
+                warn!("No reward for block {} at topoheight {}", block_hash, topoheight);
+            }
+        }
+
+        // Verify all TXs one by one to find one for us
+        let (block, txs) = block.split();
+        for (tx_hash, tx) in block.into_owned().take_txs_hashes().into_iter().zip(txs) {
+            let tx = tx.into_owned();
+            let is_owner = *tx.get_owner() == *address.get_public_key();
+            let fee = if is_owner { Some(tx.get_fee()) } else { None };
+            let nonce = if is_owner { Some(tx.get_nonce()) } else { None };
+            let (owner, data) = tx.consume();
+            let entry: Option<EntryData> = match data {
+                TransactionType::Burn { asset, amount } => {
+                    if is_owner {
+                        Some(EntryData::Burn { asset, amount })
+                    } else {
+                        None
+                    }
+                },
+                TransactionType::Transfer(txs) => {
+                    let mut transfers: Vec<Transfer> = Vec::new();
+                    for tx in txs {
+                        if is_owner || tx.to == *address.get_public_key() {
+                            let extra_data = tx.extra_data.and_then(|bytes| DataElement::from_bytes(&bytes).ok());
+                            let transfer = Transfer::new(tx.to, tx.asset, tx.amount, extra_data);
+                            transfers.push(transfer);
+                        }
+                    }
+
+                    if is_owner { // check that we are owner of this TX
+                        Some(EntryData::Outgoing(transfers))
+                    } else if !transfers.is_empty() { // otherwise, check that we received one or few transfers from it
+                        Some(EntryData::Incoming(owner, transfers))
+                    } else { // this TX has nothing to do with us, nothing to save
+                        None
+                    }
+                },
+                _ => {
+                    error!("Transaction type not supported");
+                    None
+                }
+            };
+
+            if let Some(entry) = entry {
+                // New transaction entry that may be linked to us, check if TX was executed
+                if !self.api.is_tx_executed_in_block(&tx_hash, &block_hash).await? {
+                    debug!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx_hash, block_hash);
+                    continue;
+                }
+
+                let entry = TransactionEntry::new(tx_hash, topoheight, fee, nonce, entry);
+                let propagate = {
+                    let mut storage = self.wallet.get_storage().write().await;
+                    let found = storage.has_transaction(entry.get_hash())?;
+                    if !found {
+                        storage.save_transaction(entry.get_hash(), &entry)?;
+                        // Store the changes for history
+                        if !changes_stored {
+                            storage.add_topoheight_to_changes(topoheight, &block_hash)?;
+                            changes_stored = true;
+                        }
+                    }
+                    !found
+                };
+
+                if propagate {
+                    // Propagate the event to the wallet
+                    self.wallet.propagate_event(Event::NewTransaction(entry)).await;
+                }
+            }
+        }
+
+        Ok(changes_stored)
+    }
+
     // Scan the chain using a specific balance asset, this helps us to get a list of version to only requests blocks where changes happened
     // When the block is requested, we don't limit the syncing to asset in parameter
     async fn get_balance_and_transactions(&self, topoheight_processed: &mut HashSet<u64>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool) -> Result<(), Error> {
@@ -128,106 +229,11 @@ impl NetworkHandler {
             // add this topoheight in cache to not re-process it (blocks are independant of asset to have faster sync)
             // if its not already processed, do it
             if topoheight_processed.insert(topoheight) {
-                let mut changes_stored = false;
                 let response = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
-                let block: Block = response.data.data.into_owned();
-                let block_hash = response.data.hash.into_owned();
-    
-                // create Coinbase entry if its our address and we're looking for XELIS asset
-                if *block.get_miner() == *address.get_public_key() {
-                    if let Some(reward) = response.reward {
-                        let coinbase = EntryData::Coinbase(reward);
-                        let entry = TransactionEntry::new(block_hash.clone(), topoheight, None, None, coinbase);
-    
-                        {
-                            let mut storage = self.wallet.get_storage().write().await;
-                            storage.save_transaction(entry.get_hash(), &entry)?;
-    
-                            // Store the changes for history
-                            if !changes_stored {
-                                storage.add_topoheight_to_changes(topoheight, &block_hash)?;
-                                changes_stored = true;
-                            }
-                        }
-    
-                        // Propagate the event to the wallet
-                        self.wallet.propagate_event(Event::NewTransaction(entry)).await;
-                    } else {
-                        warn!("No reward for block {} at topoheight {}", block_hash, topoheight);
-                    }
-                }
-    
-                // Verify all TXs one by one to find one for us
-                let (block, txs) = block.split();
-                for (tx_hash, tx) in block.into_owned().take_txs_hashes().into_iter().zip(txs) {
-                    let tx = tx.into_owned();
-                    let is_owner = *tx.get_owner() == *address.get_public_key();
-                    let fee = if is_owner { Some(tx.get_fee()) } else { None };
-                    let nonce = if is_owner { Some(tx.get_nonce()) } else { None };
-                    let (owner, data) = tx.consume();
-                    let entry: Option<EntryData> = match data {
-                        TransactionType::Burn { asset, amount } => {
-                            if is_owner {
-                                Some(EntryData::Burn { asset, amount })
-                            } else {
-                                None
-                            }
-                        },
-                        TransactionType::Transfer(txs) => {
-                            let mut transfers: Vec<Transfer> = Vec::new();
-                            for tx in txs {
-                                if is_owner || tx.to == *address.get_public_key() {
-                                    let extra_data = tx.extra_data.and_then(|bytes| DataElement::from_bytes(&bytes).ok());
-                                    let transfer = Transfer::new(tx.to, tx.asset, tx.amount, extra_data);
-                                    transfers.push(transfer);
-                                }
-                            }
-    
-                            if is_owner { // check that we are owner of this TX
-                                Some(EntryData::Outgoing(transfers))
-                            } else if !transfers.is_empty() { // otherwise, check that we received one or few transfers from it
-                                Some(EntryData::Incoming(owner, transfers))
-                            } else { // this TX has nothing to do with us, nothing to save
-                                None
-                            }
-                        },
-                        _ => {
-                            error!("Transaction type not supported");
-                            None
-                        }
-                    };
-    
-                    if let Some(entry) = entry {
-                        // New transaction entry that may be linked to us, check if TX was executed
-                        if !self.api.is_tx_executed_in_block(&tx_hash, &block_hash).await? {
-                            debug!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx_hash, block_hash);
-                            continue;
-                        }
-    
-                        let entry = TransactionEntry::new(tx_hash, topoheight, fee, nonce, entry);
-                        let propagate = {
-                            let mut storage = self.wallet.get_storage().write().await;
-                            let found = storage.has_transaction(entry.get_hash())?;
-                            if !found {
-                                storage.save_transaction(entry.get_hash(), &entry)?;
-                                // Store the changes for history
-                                if !changes_stored {
-                                    storage.add_topoheight_to_changes(topoheight, &block_hash)?;
-                                    changes_stored = true;
-                                }
-                            }
-                            !found
-                        };
-    
-                        if propagate {
-                            // Propagate the event to the wallet
-                            self.wallet.propagate_event(Event::NewTransaction(entry)).await;
-                        }
-                    }
-                }
+                let changes = self.process_block(address, response, topoheight).await?;
 
                 // Check if a change occured, we are the highest version and update balances is requested
-                if balances && highest_version && changes_stored {
+                if balances && highest_version && changes {
                     let mut storage = self.wallet.get_storage().write().await;
                     let previous_balance = storage.get_balance_for(asset).unwrap_or(0);
                     let new_balance = version.get_balance();
@@ -455,7 +461,14 @@ impl NetworkHandler {
             }
         } else if daemon_topoheight > wallet_topoheight {
             // We didn't had to resync, sync only necessary blocks
-            if let Some(_block) = event {
+            if let Some(block) = event {
+                // We can safely handle it by hand by `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
+                if let Some(topoheight) = block.topoheight {
+                    self.process_block(address, block, topoheight).await?;
+                } else {
+                    // It is a block that got directly orphaned by DAG, ignore it
+                    debug!("Block {} is not ordered, skipping it", block.data.hash);
+                }
                 // TODO handle block event
             } else {
                 // No event, sync blocks by hand
