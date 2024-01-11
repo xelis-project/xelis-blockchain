@@ -6,17 +6,18 @@ use serde_json::Value;
 use xelis_common::{
     json_rpc::{WebSocketJsonRPCClient, WebSocketJsonRPCClientImpl, JsonRPCResult, EventReceiver},
     api::daemon::{
-        GetLastBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams,
+        GetBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams,
         GetInfoResult, SubmitTransactionParams, BlockResponse,
         GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams,
-        GetNonceResult, GetAssetsParams, IsTxExecutedInBlockParams, NotifyEvent, NewBlockEvent, BlockOrderedEvent, StableHeightChangedEvent, TransactionAddedInMempoolEvent, GetAccountAssetsParams
+        GetNonceResult, GetAssetsParams, IsTxExecutedInBlockParams,
+        NotifyEvent, NewBlockEvent, BlockOrderedEvent, StableHeightChangedEvent, TransactionAddedInMempoolEvent, GetAccountAssetsParams, GetAssetParams
     },
     account::VersionedBalance,
     crypto::{address::Address, hash::Hash},
     transaction::Transaction,
     serializer::Serializer,
     block::{BlockHeader, Block},
-    asset::AssetWithData
+    asset::{AssetWithData, AssetData}
 };
 
 pub struct DaemonAPI {
@@ -65,6 +66,13 @@ impl DaemonAPI {
         Ok(info)
     }
 
+    pub async fn get_asset(&self, asset: &Hash) -> Result<AssetData> {
+        let assets = self.client.call_with("get_asset", &GetAssetParams {
+            asset: Cow::Borrowed(asset)
+        }).await.context("Error while retrieving asset data")?;
+        Ok(assets)
+    }
+
     pub async fn get_account_assets(&self, address: &Address) -> Result<Vec<Hash>> {
         let assets = self.client.call_with("get_account_assets", &GetAccountAssetsParams {
             address: Cow::Borrowed(address)
@@ -87,11 +95,11 @@ impl DaemonAPI {
         Ok(assets)
     }
 
-    pub async fn get_last_balance(&self, address: &Address, asset: &Hash) -> Result<GetLastBalanceResult> {
-        let balance = self.client.call_with("get_last_balance", &GetBalanceParams {
+    pub async fn get_balance(&self, address: &Address, asset: &Hash) -> Result<GetBalanceResult> {
+        let balance = self.client.call_with("get_balance", &GetBalanceParams {
             address: Cow::Borrowed(address),
             asset: Cow::Borrowed(asset),
-        }).await.context("Error while retrieving last balance")?;
+        }).await.context("Error while retrieving balance")?;
         Ok(balance)
     }
 

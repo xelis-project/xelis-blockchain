@@ -1,20 +1,18 @@
-use std::{sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
+use std::{sync::{Arc, atomic::{AtomicBool, Ordering}}, collections::HashMap};
 use thiserror::Error;
 use anyhow::Error;
-use log::{debug, error, info, warn};
-use tokio::{task::JoinHandle, sync::Mutex, time::interval};
+use log::{debug, error, warn};
+use tokio::{task::JoinHandle, sync::Mutex};
 use xelis_common::{
     crypto::{hash::Hash, address::Address},
     block::Block,
     transaction::TransactionType,
-    account::VersionedBalance,
     asset::AssetWithData,
     serializer::Serializer,
     api::{
         DataElement,
-        wallet::{NotifyEvent, BalanceChanged}
+        wallet::BalanceChanged
     },
-    config::XELIS_ASSET
 };
 
 use crate::{
@@ -35,7 +33,11 @@ pub enum NetworkError {
     #[error(transparent)]
     TaskError(#[from] tokio::task::JoinError),
     #[error(transparent)]
-    DaemonAPIError(#[from] Error)
+    DaemonAPIError(#[from] Error),
+    #[error("Network mismatch")]
+    NetworkMismatch,
+    #[error("Daemon is not synced, we are higher than daemon")]
+    DaemonNotSynced
 }
 
 pub struct NetworkHandler {
@@ -48,9 +50,6 @@ pub struct NetworkHandler {
     // used in case the daemon is not responding but we're already connected
     is_paused: AtomicBool
 }
-
-// how many assets we get by request
-const MAX_ASSETS: usize = 64;
 
 impl NetworkHandler {
     pub async fn new<S: ToString>(wallet: Arc<Wallet>, daemon_address: S) -> Result<SharedNetworkHandler, Error> {
@@ -73,7 +72,12 @@ impl NetworkHandler {
         }
 
         let zelf = Arc::clone(&self);
-        *self.task.lock().await = Some(tokio::spawn(zelf.start_syncing()));
+        *self.task.lock().await = Some(tokio::spawn(async move {
+            if let Err(e) = zelf.start_syncing().await {
+                error!("Error while syncing: {}", e);
+            }
+            Ok(())
+        }));
 
         Ok(())
     }
@@ -109,40 +113,12 @@ impl NetworkHandler {
         self.is_paused.load(Ordering::SeqCst)
     }
 
-    async fn get_versioned_balance_and_topoheight(&self, address: &Address, asset: &Hash, current_topoheight: Option<u64>) -> Result<Option<(u64, VersionedBalance)>, Error> {
-        let (topoheight, balance) = match &current_topoheight {
-            Some(topoheight) => (*topoheight, self.api.get_balance_at_topoheight(address, asset, *topoheight).await?),
-            None => { // try to get last balance
-                let res = match self.api.get_last_balance(&address, asset).await {
-                    Ok(res) => res,
-                    Err(e) => { // balance doesn't exist on chain for this asset
-                        debug!("Error while getting last balance: {}", e);
-                        return Ok(None)
-                    }
-                };
-                let balance = res.balance;
-
-                // Inform the change of the balance
-                self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
-                    asset: asset.clone(),
-                    balance: balance.get_balance()
-                })).await;
-
-                // lets write the final balance
-                let mut storage = self.wallet.get_storage().write().await;
-                storage.set_balance_for(asset, balance.get_balance())?;
-
-                (res.topoheight, balance)
-            }
-        };
-        Ok(Some((topoheight, balance)))
-    }
-
-    async fn get_balance_and_transactions(&self, address: &Address, asset: &Hash, min_topoheight: u64, current_topoheight: Option<u64>) -> Result<(), Error> {
-        let mut res = self.get_versioned_balance_and_topoheight(address, asset, current_topoheight).await?;
-        while let Some((topoheight, balance)) = res.take() {
+    async fn get_balance_and_transactions(&self, address: &Address, asset: &Hash, min_topoheight: u64) -> Result<(), Error> {
+        // Retrieve the highest version
+        let (mut topoheight, mut version) = self.api.get_balance(address, asset).await.map(|res| (res.topoheight, res.version))?;
+        loop {
             // don't sync already synced blocks
-            if min_topoheight > topoheight {
+            if min_topoheight >= topoheight {
                 return Ok(())
             }
 
@@ -151,28 +127,24 @@ impl NetworkHandler {
             let block_hash = response.data.hash.into_owned();
 
             // create Coinbase entry if its our address and we're looking for XELIS asset
-            if *asset == XELIS_ASSET && *block.get_miner() == *address.get_public_key() {
+            if *block.get_miner() == *address.get_public_key() {
                 if let Some(reward) = response.reward {
                     let coinbase = EntryData::Coinbase(reward);
                     let entry = TransactionEntry::new(block_hash.clone(), topoheight, None, None, coinbase);
 
-                    // New coinbase entry, inform listeners
-                    #[cfg(feature = "api_server")]
                     {
-                        if let Some(api_server) = self.wallet.get_api_server().lock().await.as_ref() {
-                            api_server.notify_event(&NotifyEvent::NewTransaction, &entry).await;
-                        }
+                        let mut storage = self.wallet.get_storage().write().await;
+                        storage.save_transaction(entry.get_hash(), &entry)?;
                     }
 
-                    let mut storage = self.wallet.get_storage().write().await;
-                    storage.save_transaction(entry.get_hash(), &entry)?;
-
+                    // Propagate the event to the wallet
                     self.wallet.propagate_event(Event::NewTransaction(entry)).await;
                 } else {
                     warn!("No reward for block {} at topoheight {}", block_hash, topoheight);
                 }
             }
 
+            // Verify all TXs one by one to find one for us
             let (block, txs) = block.split();
             for (tx_hash, tx) in block.into_owned().take_txs_hashes().into_iter().zip(txs) {
                 let tx = tx.into_owned();
@@ -220,142 +192,242 @@ impl NetworkHandler {
                     }
 
                     let entry = TransactionEntry::new(tx_hash, topoheight, fee, nonce, entry);
-                    let mut storage = self.wallet.get_storage().write().await;
+                    let propagate = {
+                        let mut storage = self.wallet.get_storage().write().await;
+                        let found = storage.has_transaction(entry.get_hash())?;
+                        if !found {
+                            storage.save_transaction(entry.get_hash(), &entry)?;
+                        }
+                        found
+                    };
 
-                    if !storage.has_transaction(entry.get_hash())? {
-                        storage.save_transaction(entry.get_hash(), &entry)?;
-
+                    if propagate {
                         // Propagate the event to the wallet
                         self.wallet.propagate_event(Event::NewTransaction(entry)).await;
                     }
                 }
             }
 
-            if let Some(previous_topo) = balance.get_previous_topoheight() {
-                res = self.get_versioned_balance_and_topoheight(address, asset, Some(previous_topo)).await?;
+            if let Some(previous) = version.get_previous_topoheight() {
+                version = self.api.get_balance_at_topoheight(address, asset, previous).await?;
+                topoheight = previous;
+            } else {
+                return Ok(())
             }
+        }
+    }
+
+    // Locate the last topoheight valid for syncing, this support soft forks, DAG reorgs, etc...
+    // Balances and nonce may be outdated, but we will sync them later
+    // All transactions / changes above the last valid topoheight will be deleted
+    // Returns daemon topoheight along wallet stable topoheight
+    async fn locate_sync_topoheight_and_clean(&self) -> Result<(u64, Hash, u64), NetworkError> {
+        let info = self.api.get_info().await?;
+        let daemon_topoheight = info.topoheight;
+        let daemon_block_hash = info.top_block_hash;
+
+        // Verify that we are on the same network
+        {
+            let network = self.wallet.get_network();
+            if info.network != *network {
+                error!("Network mismatch! Our network is {} while daemon is {}", network, info.network);
+                return Err(NetworkError::NetworkMismatch)
+            }
+        }
+
+        // Retrieve the highest point possible
+        let synced_topoheight = {
+            let storage = self.wallet.get_storage().read().await;
+            if storage.has_top_block_hash()? {
+                // Check that the daemon topoheight is the same as our
+                // Verify also that the top block hash is same as our
+                let top_block_hash = storage.get_top_block_hash()?;
+                let synced_topoheight = storage.get_synced_topoheight()?;
+
+                // Check if its the top
+                if daemon_topoheight == synced_topoheight && daemon_block_hash == top_block_hash {
+                    // No need to sync back, we are already synced
+                    return Ok((daemon_topoheight, daemon_block_hash, synced_topoheight))
+                }
+
+                // Verify we are not above the daemon chain
+                if synced_topoheight > info.topoheight {
+                    return Err(NetworkError::DaemonNotSynced)
+                }
+
+                // Check if it's still a correct block
+                let header = self.api.get_block_at_topoheight(synced_topoheight).await?;
+                let block_hash = header.data.hash.into_owned();
+                if block_hash == top_block_hash {
+                    // topoheight and block hash are equal, we are still on right chain
+                    return Ok((daemon_topoheight, daemon_block_hash, synced_topoheight))
+                }
+
+                synced_topoheight
+            } else {
+                0
+            }
+        };
+
+        // Search the highest block that is still valid for wallet
+        let mut maximum = synced_topoheight;
+        let mut minimum = info.pruned_topoheight.unwrap_or(0);
+        while minimum <= maximum {
+            let middle = (minimum + maximum) / 2;
+            if middle == 0 {
+                // we are at the genesis block, we can't go lower
+                break;
+            }
+
+            // get the highest hash we have locally that we synced
+            let local_hash = {
+                let storage = self.wallet.get_storage().read().await;
+                // check if we have a changes that happened in this block locally
+                let Ok(hash) = storage.get_block_hash_for_topoheight(middle) else {
+                    maximum = middle - 1;
+                    continue;
+                };
+                hash
+            };
+
+            // Request the daemon to get the block at this topoheight
+            let block = self.api.get_block_at_topoheight(middle).await?;
+            let block_hash = block.data.hash.into_owned();
+
+            if block_hash == local_hash {
+                // we have this block, increase minimum
+                minimum = middle + 1;
+            } else {
+                // we don't have this block, decrease maximum
+                maximum = middle - 1;
+            }
+        }
+
+        // Reduce the minimum by one to get the last block we have
+        if minimum != 0 {
+            minimum -= 1;
+        }
+
+        // Get the hash of the block at this topoheight
+        let block_hash = self.api.get_block_at_topoheight(minimum).await?.data.hash.into_owned();
+        let mut storage = self.wallet.get_storage().write().await;        
+        // Now let's clean everything
+        storage.delete_transactions_above_topoheight(minimum)?;
+        storage.delete_changes_above_topoheight(minimum)?;
+
+        // Save the new values
+        storage.set_synced_topoheight(minimum)?;
+        storage.set_top_block_hash(&block_hash)?;
+        storage.add_topoheight_to_changes(minimum, &block_hash)?;
+
+        Ok((daemon_topoheight, daemon_block_hash, minimum))
+    }
+
+    // TODO returns hashset of topoheight to scan for txs ?
+    async fn sync_head_state(&self, address: &Address) -> Result<bool, Error> {
+        let versioned_nonce = self.api.get_last_nonce(&address).await.map(|v| v.version)?;
+
+        let assets = self.api.get_account_assets(&address).await?;
+        let mut balances = HashMap::new();
+        for asset in &assets {
+            // check if we have this asset locally
+            if !{
+                let storage = self.wallet.get_storage().read().await;
+                storage.contains_asset(&asset)?
+            } {
+                let data = self.api.get_asset(&asset).await?;
+                
+                // Add the asset to the storage
+                {
+                    let mut storage = self.wallet.get_storage().write().await;
+                    storage.add_asset(&asset, data.get_decimals())?;
+                }
+
+                // New asset added to the wallet, inform listeners
+                self.wallet.propagate_event(Event::NewAsset(AssetWithData::new(asset.clone(), data))).await;
+            }
+
+            // get the balance for this asset
+            let balance = self.api.get_balance(&address, &asset).await.map(|v| v.version)?;
+            balances.insert(asset, balance.get_balance());
+        }
+
+        let mut should_sync_blocks = false;
+        // Apply changes
+        {
+            let mut storage = self.wallet.get_storage().write().await;
+            let new_nonce = versioned_nonce.get_nonce();
+            if new_nonce != storage.get_nonce().unwrap_or(0) {
+                // Store the new nonce
+                storage.set_nonce(new_nonce)?;
+                should_sync_blocks = true;
+            }
+
+            for (asset, value) in balances {
+                let previous_balance = storage.get_balance_for(&asset)?;
+                if previous_balance != value {
+                    // Inform the change of the balance
+                    self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
+                        asset: asset.clone(),
+                        balance: value
+                    })).await;
+
+                    // Update the balance
+                    storage.set_balance_for(asset, value)?;
+
+                    // We should sync new blocks to get the TXs
+                    should_sync_blocks = true;
+                }
+            }
+        }
+
+        Ok(should_sync_blocks)
+    }
+
+    async fn sync(&self) -> Result<(), Error> {
+        // First, locate the last topoheight valid for syncing
+        let (daemon_topoheight, daemon_block_hash, wallet_topoheight) = self.locate_sync_topoheight_and_clean().await?;
+
+        // Now sync head state, this will helps us to determinate if we should sync blocks or not
+        let address = self.wallet.get_address();
+        let should_sync_blocks = self.sync_head_state(&address).await?;
+
+        if should_sync_blocks {
+            self.sync_new_blocks(&address, wallet_topoheight).await?;
+        }
+
+        // Update the topoheight and block hash for wallet
+        {
+            let mut storage = self.wallet.get_storage().write().await;
+            storage.set_synced_topoheight(daemon_topoheight)?;
+            storage.set_top_block_hash(&daemon_block_hash)?;
         }
 
         Ok(())
     }
 
-    // start syncing the wallet with data from daemon API
-    // we get all assets registered on chain and check their balance
-    // we also check if there is a balance change at a previous topoheight
-    // if there is, we get the balance at this topoheight and check if there is a previous topoheight
-    // we do this until we reach the first topoheight
-    // at first time only, retrieve the saved nonce of this account (or when a tx out is detected)
+    // TODO
     async fn start_syncing(self: Arc<Self>) -> Result<(), Error> {
-        let address = self.wallet.get_address();
-        let (mut current_topoheight, mut top_block_hash) = {
-            let storage = self.wallet.get_storage().read().await;
-            (storage.get_daemon_topoheight().unwrap_or(0), storage.get_top_block_hash().unwrap_or(Hash::zero()))
-        };
-        let mut interval = interval(Duration::from_secs(5));
+        // Sync a first time
+        self.sync().await?;
+
+        let mut receiver = self.api.on_new_block_event().await?;
         loop {
-            interval.tick().await;
-            // get infos from chain
-            // TODO compare them with already stored to not resync fully each time
-            let info = match self.api.get_info().await {
-                Ok(info) => info,
-                Err(e) => {
-                    debug!("Impossible to sync new blocks: {}", e);
-                    if !self.is_paused() { // show message only one time per disconnecting
-                        error!("Impossible to sync new blocks, daemon is not reachable");
-                        self.is_paused.store(true, Ordering::SeqCst);
-                    }
-                    continue;
-                }
-            };
-
-            {
-                let network = self.wallet.get_network();
-                if info.network != *network {
-                    error!("Network mismatch! Our network is {} while daemon is {}", network, info.network);
-                    return Ok(())
-                }
-            }
-            // we are in paused mode, but we can connect again to daemon
-            if self.is_paused() {
-                info!("Daemon is reachable again, syncing...");
-                self.is_paused.store(false, Ordering::SeqCst);
-            }
-
-            debug!("current topoheight: {}, info topoheight: {}", info.topoheight, current_topoheight);
-            if info.topoheight == current_topoheight {
-                if current_topoheight != 0 && info.top_block_hash != top_block_hash {
-                    // Looks like we are on a fork, we need to resync from the top
-                    let mut storage = self.wallet.get_storage().write().await;
-                    storage.delete_transactions_above_topoheight(current_topoheight - 1)?;
-                } else {
-                    continue;
-                }
-            }
-            debug!("New topoheight detected for chain: {}", info.topoheight);
-
-            // New get_info with different topoheight, inform listeners
-            self.wallet.propagate_event(Event::NewTopoHeight(info.topoheight)).await;
-            top_block_hash = info.top_block_hash;
-
-            if let Err(e) = self.sync_new_blocks(&address, current_topoheight, info.topoheight).await {
-                error!("Error while syncing new blocks: {}", e);
-            }
-
-            // save current topoheight in daemon
-            {
-                debug!("Saving current topoheight daemon: {}", current_topoheight);
-                let mut storage = self.wallet.get_storage().write().await;
-                storage.set_daemon_topoheight(info.topoheight)?;
-                storage.set_top_block_hash(&top_block_hash)?;
-            }
-            current_topoheight = info.topoheight;
+            let _ = receiver.next().await?;
+            self.sync().await?;
         }
     }
 
-    async fn sync_new_blocks(&self, address: &Address, current_topoheight: u64, network_topoheight: u64) -> Result<(), Error> {
-        let mut assets = {
+    async fn sync_new_blocks(&self, address: &Address, current_topoheight: u64) -> Result<(), Error> {
+        let assets = {
             let storage = self.wallet.get_storage().read().await;
             storage.get_assets()?
         };
 
-        // fetch all new assets from chain
-        {
-            let mut has_next = true;
-            let mut skip = 0;
-            // Loop until we got all assets
-            while has_next {
-                let response = self.api.get_assets(Some(skip), Some(MAX_ASSETS), Some(current_topoheight), Some(network_topoheight)).await?;
-                // if the response is full that may mean we have another page to read
-                has_next = response.len() == MAX_ASSETS;
-                skip += response.len();
-    
-                let mut storage = self.wallet.get_storage().write().await;
-                for asset_data in &response {
-                    if !storage.contains_asset(asset_data.get_asset())? {
-                        // New asset added to the wallet, inform listeners
-                        storage.add_asset(asset_data.get_asset(), asset_data.get_data().get_decimals())?;
-
-                        // Propagate the event
-                        self.wallet.propagate_event(Event::NewAsset(asset_data.clone())).await;
-                    }
-                }
-    
-                assets.extend(response.into_iter().map(AssetWithData::to_asset).collect::<Vec<_>>());
-            }
-        }
-
-        // Retrieve the highest nonce (in one call, in case of assets/txs not tracked correctly)
-        {
-            let nonce = self.api.get_last_nonce(&address).await.map(|v| v.version.get_nonce()).unwrap_or(0);
-            debug!("New nonce found is {}", nonce);
-            let mut storage = self.wallet.get_storage().write().await;
-            storage.set_nonce(nonce)?;
-        }
-
         // get balance and transactions for each asset
         for asset in assets {
             debug!("calling get balances and transactions {}", current_topoheight);
-            if let Err(e) = self.get_balance_and_transactions(&address, &asset, current_topoheight, None).await {
+            if let Err(e) = self.get_balance_and_transactions(&address, &asset, current_topoheight).await {
                 error!("Error while syncing balance for asset {}: {}", asset, e);
             }
         }
