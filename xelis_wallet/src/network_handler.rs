@@ -464,7 +464,10 @@ impl NetworkHandler {
             if let Some(block) = event {
                 // We can safely handle it by hand by `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
                 if let Some(topoheight) = block.topoheight {
-                    self.process_block(address, block, topoheight).await?;
+                    if self.process_block(address, block, topoheight).await? {
+                        // A change happened in this block, lets update balance and nonce
+                        self.sync_head_state(&address).await?;
+                    }
                 } else {
                     // It is a block that got directly orphaned by DAG, ignore it
                     debug!("Block {} is not ordered, skipping it", block.data.hash);
