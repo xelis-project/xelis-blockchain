@@ -80,7 +80,7 @@ where
     fn parse_event(&self, request: &mut RpcRequest) -> Result<E, RpcResponseError> {
         let value = request.params.take().ok_or_else(|| RpcResponseError::new(request.id, InternalRpcError::ExpectedParams))?;
         let params: SubscribeParams<E> = serde_json::from_value(value).map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e)))?;
-        Ok(params.notify)
+        Ok(params.notify.into_owned())
     }
 
     async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: Bytes) -> Result<Value, RpcResponseError> {

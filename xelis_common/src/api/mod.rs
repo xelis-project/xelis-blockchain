@@ -436,8 +436,8 @@ impl Serializer for DataValue {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SubscribeParams<E> {
-    pub notify: E
+pub struct SubscribeParams<'a, E: Clone> {
+    pub notify: Cow<'a, E>
 }
 
 #[derive(Serialize, Deserialize)]

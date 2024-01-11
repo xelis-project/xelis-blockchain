@@ -5,7 +5,8 @@ use std::{
     },
     collections::HashMap,
     hash::Hash,
-    marker::PhantomData
+    marker::PhantomData,
+    borrow::Cow
 };
 
 use anyhow::Error;
@@ -15,6 +16,8 @@ use serde_json::{Value, json};
 use tokio::{net::TcpStream, sync::{Mutex, oneshot, broadcast}};
 use tokio_tungstenite::{WebSocketStream, MaybeTlsStream, connect_async, tungstenite::Message};
 use log::error;
+
+use crate::api::SubscribeParams;
 
 use super::{JSON_RPC_VERSION, JsonRPCError, JsonRPCResponse, JsonRPCResult};
 
@@ -44,7 +47,7 @@ pub type WebSocketJsonRPCClient<E> = Arc<WebSocketJsonRPCClientImpl<E>>;
 
 // A JSON-RPC Client over WebSocket protocol to support events
 // It can be used in multi-thread safely because each request/response are linked using the id attribute.
-pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + 'static> {
+pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Clone + 'static> {
     ws: Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>,
     count: AtomicUsize,
     requests: Mutex<HashMap<usize, oneshot::Sender<JsonRPCResponse>>>,
@@ -52,7 +55,7 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + 'static>
     events_to_id: Mutex<HashMap<E, usize>>,
 }
 
-impl<E: Serialize + Hash + Eq + Send + 'static> WebSocketJsonRPCClientImpl<E> {
+impl<E: Serialize + Hash + Eq + Send + Clone + 'static> WebSocketJsonRPCClientImpl<E> {
     pub async fn new(mut target: String) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
         if target.starts_with("https://") {
             target.replace_range(..8, "wss://");
@@ -171,7 +174,9 @@ impl<E: Serialize + Hash + Eq + Send + 'static> WebSocketJsonRPCClientImpl<E> {
         let id = self.next_id();
 
         // Send it to the server
-        self.send::<E, bool>("subscribe", Some(id), &event).await?;
+        self.send::<_, bool>("subscribe", Some(id), &SubscribeParams {
+            notify: Cow::Borrowed(&event)
+        }).await?;
         
         // Create a mapping from the event to the ID used for the request
         {
