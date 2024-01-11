@@ -216,7 +216,7 @@ impl NetworkHandler {
                                     changes_stored = true;
                                 }
                             }
-                            found
+                            !found
                         };
     
                         if propagate {
