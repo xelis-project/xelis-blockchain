@@ -32,6 +32,11 @@ impl DaemonAPI {
         })
     }
 
+    // is the websocket connection alive
+    pub fn is_online(&self) -> bool {
+        self.client.is_online()
+    }
+
     pub async fn call<P: Serialize>(&self, method: &String, params: &P) -> JsonRPCResult<Value> {
         self.client.call_with(method.as_str(), params).await
     }

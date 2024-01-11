@@ -1,7 +1,7 @@
 use std::{sync::Arc, collections::{HashMap, HashSet}};
 use thiserror::Error;
 use anyhow::Error;
-use log::{debug, error, warn};
+use log::{debug, error, warn, trace};
 use tokio::{task::JoinHandle, sync::Mutex};
 use xelis_common::{
     crypto::{hash::Hash, address::Address},
@@ -84,6 +84,7 @@ impl NetworkHandler {
 
     // Stop the internal loop to stop syncing
     pub async fn stop(&self) -> Result<(), NetworkError> {
+        trace!("Stopping network handler");
         if let Some(handle) = self.task.lock().await.take() {
             if handle.is_finished() {
                 handle.await??;
@@ -105,7 +106,7 @@ impl NetworkHandler {
     pub async fn is_running(&self) -> bool {
         let task = self.task.lock().await;
         if let Some(handle) = task.as_ref() {
-            !handle.is_finished()
+            !handle.is_finished() && self.api.is_online()
         } else {
             false
         }
