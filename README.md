@@ -91,16 +91,26 @@ Each job send to a miner is a `BlockMiner` instance in hex format.
 The `BlockMiner` is in following format:
 - header work hash: 32 bytes
 - timestamp (u128 for milliseconds): 16 bytes
-- nonce (u64): 8 bytes
+- nonce (u64): 8 bytes (BigEndian format)
 - extra nonce: 32 bytes
 - miner public key: 32 bytes
 
 The total block work size should be equal to 120 bytes.
-POW Hash should be calculated from this format and compared against the target difficulty.
+Header work hash is the immutable part of a block work, its a hash calculated using `Keccak256` hashing algorithm with the following format as input:
+- block version (u8): 1 byte
+- block height (u64): 8 bytes (BigEndian format)
+- Hash of the tips: 32 bytes
+- Hash of the transactions hashes: 32 bytes
+
+The header work has to be equal to 73 bytes exactly and its hash to 32 bytes.
+
+**NOTE**: Miner key is not included in the immutable of the block work to be have generic block template that can be compatible with any miner. 
+
+All hashes are calculated using the `Keccak256` hashing algorithm except the Proof-Of-Work hash.
+
+POW Hash should be calculated from the `BlockMiner` format and compared against the target difficulty.
 
 NOTE: It is recommended to use the GetWork WebSocket server to be notified of new block work and submit correct work.
-
-It includes the header work hash which represents the immutable data from daemon.
 
 Mining jobs are send only when a new block is found or when a new TX is added in mempool.
 Miners software are recommended to update themselves the block timestamp (or at least every 500ms) for best network difficulty calculation.
