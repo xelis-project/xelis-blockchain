@@ -1176,6 +1176,18 @@ Retrieve all assets for an account
 ##### Request
 ```json
 {
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_account_assets",
+	"params": {
+		"address": "xet1qqqyvh9vgkcurtj2la0e4jspnfsq7vkaqm863zcfdnej92xg4mpzz3suf96k4"
+	}
+}
+```
+
+##### Response
+```json
+{
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": [
@@ -1184,13 +1196,10 @@ Retrieve all assets for an account
 }
 ```
 
-##### Response
-```json
-
-```
-
 #### Submit Block
-Submit a block to the daemon
+Submit a block header in hexadecimal format to the daemon.
+
+
 
 ##### Method `submit_block`
 
