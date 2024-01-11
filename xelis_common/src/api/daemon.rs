@@ -1,12 +1,15 @@
 use std::{borrow::Cow, collections::{HashSet, HashMap}, net::SocketAddr};
-
 use serde::{Deserialize, Serialize};
-
-use crate::{crypto::{hash::Hash, address::Address}, account::{VersionedBalance, VersionedNonce}, network::Network, block::{Difficulty, BlockHeader}, transaction::Transaction};
-
+use crate::{
+    crypto::{hash::Hash, address::Address},
+    account::{VersionedBalance, VersionedNonce},
+    network::Network,
+    block::{Difficulty, Block},
+    transaction::Transaction
+};
 use super::DataHash;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockType {
     Sync,
     Side,
@@ -384,7 +387,7 @@ pub enum NotifyEvent {
 }
 
 // Value of NotifyEvent::NewBlock
-pub type NewBlockEvent = BlockResponse<'static, BlockHeader>;
+pub type NewBlockEvent = BlockResponse<'static, Block>;
 
 // Value of NotifyEvent::BlockOrdered
 #[derive(Serialize, Deserialize)]

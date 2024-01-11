@@ -46,7 +46,7 @@ use crate::{
     p2p::P2pServer,
     rpc::{
         rpc::{
-            get_block_response_for_hash, get_block_type_for_block
+            get_block_type_for_block, get_block_response
         },
         DaemonRpcServer, SharedDaemonRpcServer
     }
@@ -1297,7 +1297,8 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // block contains header and full TXs
-        if block.size() > MAX_BLOCK_SIZE {
+        let block_size = block.size();
+        if block_size > MAX_BLOCK_SIZE {
             error!("Block size ({} bytes) is greater than the limit ({} bytes)", block.size(), MAX_BLOCK_SIZE);
             return Err(BlockchainError::InvalidBlockSize(MAX_BLOCK_SIZE, block.size()));
         }
@@ -1766,6 +1767,7 @@ impl<S: Storage> Blockchain<S> {
                 trace!("P2p locked, broadcasting in new task");
                 let p2p = p2p.clone();
                 let pruned_topoheight = storage.get_pruned_topoheight()?;
+                let block = block.clone();
                 let block_hash = block_hash.clone();
                 tokio::spawn(async move {
                     p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, pruned_topoheight, &block_hash, mining).await;
@@ -1788,7 +1790,7 @@ impl<S: Storage> Blockchain<S> {
             // notify websocket clients
             trace!("Notifying websocket clients");
             if should_track_events.contains(&NotifyEvent::NewBlock) {
-                match get_block_response_for_hash(self, storage, block_hash, false).await {
+                match get_block_response(self, storage, &block_hash, &Block::new(Immutable::Arc(block), txs), block_size).await {
                     Ok(response) => {
                         events.entry(NotifyEvent::NewBlock).or_insert_with(Vec::new).push(response);
                     },
