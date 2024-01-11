@@ -64,6 +64,8 @@ use {
 
 #[derive(Error, Debug)]
 pub enum WalletError {
+    #[error("Transaction too big: {} bytes, max is {} bytes", _0, _1)]
+    TransactionTooBig(usize, usize),
     #[error("Invalid key pair")]
     InvalidKeyPair,
     #[error("Invalid signature")]

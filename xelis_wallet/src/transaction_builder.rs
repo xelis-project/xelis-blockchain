@@ -4,7 +4,7 @@ use xelis_common::{
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     utils::calculate_tx_fee,
     serializer::{Writer, Serializer},
-    crypto::{key::{SIGNATURE_LENGTH, PublicKey, KeyPair}, hash::{Hash, hash}}, api::wallet::FeeBuilder
+    crypto::{key::{SIGNATURE_LENGTH, PublicKey, KeyPair}, hash::{Hash, hash}}, api::wallet::FeeBuilder, config::MAX_TRANSACTION_SIZE
 };
 
 use crate::wallet::WalletError;
@@ -82,9 +82,13 @@ impl TransactionBuilder {
         total_size
     }
 
-    fn estimate_fees_internal(&self, writer: &Writer) -> u64 {
+    fn tx_size(&self, writer: &Writer) -> usize {
         // 8 represent the field 'fee' in bytes size
-        let total_bytes = SIGNATURE_LENGTH + 8 + writer.total_write();
+        SIGNATURE_LENGTH + 8 + writer.total_write()
+    }
+
+    fn estimate_fees_internal(&self, writer: &Writer) -> u64 {
+        let total_bytes = self.tx_size(writer);
         let calculated_fees = calculate_tx_fee(total_bytes);
         calculated_fees
     }
@@ -126,6 +130,11 @@ impl TransactionBuilder {
         let fee = self.verify_fees_internal(self.estimate_fees_internal(&writer))?;
         writer.write_u64(&fee);
         writer.write_u64(&self.nonce);
+
+        let tx_size = self.tx_size(&writer);
+        if tx_size > MAX_TRANSACTION_SIZE {
+            return Err(WalletError::TransactionTooBig(tx_size, MAX_TRANSACTION_SIZE))
+        }
 
         let signature = keypair.sign(hash(writer.as_bytes()).as_bytes());
         let tx = Transaction::new(self.owner, self.data, fee, self.nonce, signature);
