@@ -50,6 +50,10 @@ pub struct Connection {
 impl Connection {
     pub fn new(stream: TcpStream, addr: SocketAddr) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
+        if let Err(e) = stream.set_nodelay(true) {
+            warn!("Failed to set nodelay on connection {}: {}", addr, e);
+        }
+
         let (read, write) = stream.into_split();
         Self {
             state: State::Pending,
@@ -113,6 +117,7 @@ impl Connection {
         let read = self.read_bytes_from_stream(stream, &mut buf[0..4]).await?;
         if read != 4 {
             warn!("Received invalid packet size: expected to read 4 bytes but read only {} bytes from peer {}", read, self.get_address());
+            warn!("Read: {:?}", &buf[0..read]);
             return Err(P2pError::InvalidPacketSize)
         }
         let array: [u8; 4] = buf[0..4].try_into()?;
