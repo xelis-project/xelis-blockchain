@@ -1526,11 +1526,23 @@ impl<S: Storage> Blockchain<S> {
 
                     let block = storage.get_block_header_by_hash(&hash_at_topo).await?;
 
+                    // Block may be orphaned if its not in the new full order set
+                    let is_orphaned = !full_order.contains(&hash_at_topo);
+
                     // mark txs as unexecuted if it was executed in this block
                     for tx_hash in block.get_txs_hashes() {
                         if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo)? {
                             trace!("Removing execution of {}", tx_hash);
                             storage.remove_tx_executed(&tx_hash)?;
+
+                            if is_orphaned {
+                                // TODO
+                                // This TX is deleted, lets try to add it back to mempool to prevent orphaned TX
+                                // let tx = storage.get_transaction(tx_hash).await?;
+                                // if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, tx_hash.clone(), broadcast).await {
+                                //     debug!("Error while trying to add back in mempool TX {} from {}:", tx_hash, e);
+                                // }
+                            }
                         }
                     }
 
