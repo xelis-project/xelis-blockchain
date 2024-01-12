@@ -130,7 +130,7 @@ impl PeerList {
         let addr = peer.get_outgoing_address();
         let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
         for peer in self.peers.values() {
-            let mut peers = peer.get_peers().lock().await;
+            let peers = peer.get_peers().lock().await;
             // check if it was a common peer (we sent it and we received it)
             // Because its a common peer, we can expect that he will send us the same packet
             if let Some(direction) = peers.get(addr) {
@@ -141,9 +141,6 @@ impl PeerList {
                     if let Err(e) = peer.send_bytes(packet.clone()).await {
                         error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
                     }
-                } else {
-                    trace!("Deleting {} from {}", addr, peer);
-                    peers.remove(addr);
                 }
             }
         }
