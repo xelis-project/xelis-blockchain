@@ -979,11 +979,9 @@ impl<S: Storage> P2pServer<S> {
                             return Err(P2pError::AlreadyTrackedBlock(block_hash))
                         }
                     } else {
-                        blocks_propagation.put(block_hash.clone(), Direction::In);
+                        debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
+                        blocks_propagation.put(block_hash.clone(),  Direction::In);
                     }
-
-                    debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
-                    blocks_propagation.put(block_hash.clone(),  Direction::In);
                 }
 
                 // Avoid sending the same block to a common peer that may have already got it
@@ -992,7 +990,9 @@ impl<S: Storage> P2pServer<S> {
                     debug!("{} is a common peer with {}, adding block {} to its propagation cache", common_peer, peer, block_hash);
                     let mut blocks_propagation = common_peer.get_blocks_propagation().lock().await;
                     // Out allow to get "In" again, because it's a prediction, don't block it completely
-                    blocks_propagation.put(block_hash.clone(), Direction::Out);
+                    if !blocks_propagation.contains(&block_hash) {
+                        blocks_propagation.put(block_hash.clone(), Direction::Out);
+                    }
                 }
 
                 // check that we don't have this block in our chain
