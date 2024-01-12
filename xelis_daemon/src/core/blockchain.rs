@@ -1463,10 +1463,6 @@ impl<S: Storage> Blockchain<S> {
             cumulative_difficulty
         };
 
-        debug!("Locking mempool write mode");
-        let mut mempool = self.mempool.write().await;
-        debug!("mempool write mode ok");
-
         let mut tips = storage.get_tips().await?;
         tips.insert(block_hash.clone());
         for hash in block.get_tips() {
@@ -1493,6 +1489,8 @@ impl<S: Storage> Blockchain<S> {
 
         // track all events to notify websocket
         let mut events: HashMap<NotifyEvent, Vec<Value>> = HashMap::new();
+        // Track all orphaned tranasctions
+        let mut orphaned_transactions = HashSet::new();
 
         // order the DAG (up to TOP_HEIGHT - STABLE_LIMIT)
         let mut highest_topo = 0;
@@ -1536,12 +1534,7 @@ impl<S: Storage> Blockchain<S> {
                             storage.remove_tx_executed(&tx_hash)?;
 
                             if is_orphaned {
-                                // TODO
-                                // This TX is deleted, lets try to add it back to mempool to prevent orphaned TX
-                                // let tx = storage.get_transaction(tx_hash).await?;
-                                // if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, tx_hash.clone(), broadcast).await {
-                                //     debug!("Error while trying to add back in mempool TX {} from {}:", tx_hash, e);
-                                // }
+                                orphaned_transactions.insert(tx_hash.clone());
                             }
                         }
                     }
@@ -1769,7 +1762,21 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // Clean all old txs
-        mempool.clean_up(&*storage).await;
+        {
+            debug!("Locking mempool write mode");
+            let mut mempool = self.mempool.write().await;
+            debug!("mempool write mode ok");
+            mempool.clean_up(&*storage).await;
+        }
+
+        // Now we can try to add back all transactions
+        for tx_hash in orphaned_transactions {
+            debug!("Adding back orphaned tx {}", tx_hash);
+            let tx = storage.get_transaction(&tx_hash).await?;
+            if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, tx_hash, false).await {
+                debug!("Error while adding back orphaned tx: {}", e);
+            }
+        }
 
         info!("Processed block {} at height {} in {} ms with {} txs", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count());
 
