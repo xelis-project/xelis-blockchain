@@ -302,6 +302,10 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                 Ok(message) => message,
                 Err(e) => {
                     error!("Error on thread #{} while waiting on new job: {}", id, e);
+                    // Channel is maybe lagging, try to empty it
+                    while job_receiver.len() > 1 {
+                        let _ = job_receiver.blocking_recv();
+                    }
                     thread::sleep(Duration::from_millis(100));
                     continue;
                 }
