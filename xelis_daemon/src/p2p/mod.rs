@@ -787,7 +787,8 @@ impl<S: Storage> P2pServer<S> {
 
                 match data {
                     ConnectionMessage::Packet(bytes) => {
-                        trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[5], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len() - 4);
+                        // there is a overhead of 4 for each packet (packet size u32 4 bytes, packet id u8 is counted in the packet size)
+                        trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[4], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len());
                         peer.get_connection().send_bytes(&bytes).await?;
                         trace!("data sucessfully sent!");
                     }
