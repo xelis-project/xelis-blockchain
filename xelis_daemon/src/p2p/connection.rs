@@ -141,16 +141,22 @@ impl Connection {
     // this return the size of data read & set in the buffer.
     // used to only lock one time the stream and read on it
     async fn read_bytes_from_stream(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<usize> {
-        let result = stream.read(buf).await?;
-        match result {
-            0 => {
-                Err(P2pError::Disconnected)
-            }
-            n => {
-                self.bytes_in.fetch_add(n, Ordering::Relaxed);
-                Ok(n)
+        let mut read = 0;
+        let buf_len = buf.len();
+        // Packet may have been fragmented, try to read it completely
+        while read < buf_len {
+            let result = stream.read(&mut buf[read..]).await?;
+            match result {
+                0 => {
+                    return Err(P2pError::Disconnected);
+                }
+                n => {
+                    read += n;
+                }
             }
         }
+        self.bytes_in.fetch_add(read, Ordering::Relaxed);
+        Ok(read)
     }
 
     pub async fn close(&self) -> P2pResult<()> {
