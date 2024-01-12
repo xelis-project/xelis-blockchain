@@ -50,10 +50,6 @@ pub struct Connection {
 impl Connection {
     pub fn new(stream: TcpStream, addr: SocketAddr) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
-        if let Err(e) = stream.set_nodelay(true) {
-            warn!("Failed to set nodelay on connection {}: {}", addr, e);
-        }
-
         let (read, write) = stream.into_split();
         Self {
             state: State::Pending,
