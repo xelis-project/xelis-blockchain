@@ -36,7 +36,7 @@ for target in "${targets[@]}"; do
         if [[ "$target" == *"windows"* ]]; then
             binary="$binary.exe"
         fi
-        cp target/$target/release/$binary build/$target/$binary
+        cp target/$target/release-with-lto/$binary build/$target/$binary
     done
 
     # copy extra files
