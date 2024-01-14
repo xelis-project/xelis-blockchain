@@ -129,7 +129,7 @@ impl DaemonAPI {
         let block = self.client.call_with("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
             topoheight,
             include_txs: true
-        }).await.context(format!("Error while fetching block at topoheight {}", topoheight))?;
+        }).await.context(format!("Error while fetching block with txs at topoheight {}", topoheight))?;
         Ok(block)
     }
 

@@ -277,6 +277,7 @@ impl NetworkHandler {
         let info = self.api.get_info().await?;
         let daemon_topoheight = info.topoheight;
         let daemon_block_hash = info.top_block_hash;
+        let pruned_topoheight = info.pruned_topoheight.unwrap_or(0);
 
         // Verify that we are on the same network
         {
@@ -307,12 +308,14 @@ impl NetworkHandler {
                     return Err(NetworkError::DaemonNotSynced)
                 }
 
-                // Check if it's still a correct block
-                let header = self.api.get_block_at_topoheight(synced_topoheight).await?;
-                let block_hash = header.data.hash.into_owned();
-                if block_hash == top_block_hash {
-                    // topoheight and block hash are equal, we are still on right chain
-                    return Ok((daemon_topoheight, daemon_block_hash, synced_topoheight, false))
+                if synced_topoheight > pruned_topoheight {
+                    // Check if it's still a correct block
+                    let header = self.api.get_block_at_topoheight(synced_topoheight).await?;
+                    let block_hash = header.data.hash.into_owned();
+                    if block_hash == top_block_hash {
+                        // topoheight and block hash are equal, we are still on right chain
+                        return Ok((daemon_topoheight, daemon_block_hash, synced_topoheight, false))
+                    }
                 }
 
                 synced_topoheight
@@ -323,10 +326,10 @@ impl NetworkHandler {
 
         // Search the highest block that is still valid for wallet
         let mut maximum = synced_topoheight;
-        let mut minimum = info.pruned_topoheight.unwrap_or(0);
+        let mut minimum = pruned_topoheight;
         while minimum <= maximum {
             let middle = (minimum + maximum) / 2;
-            if middle == 0 {
+            if middle == 0 || middle <= pruned_topoheight {
                 // we are at the genesis block, we can't go lower
                 break;
             }
@@ -356,7 +359,7 @@ impl NetworkHandler {
         }
 
         // Reduce the minimum by one to get the last block we have
-        if minimum != 0 {
+        if minimum != 0 && pruned_topoheight < minimum {
             minimum -= 1;
         }
 
