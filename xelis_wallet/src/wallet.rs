@@ -132,6 +132,10 @@ pub enum Event {
     // When a TX is detected from daemon and is added in wallet storage
     NewTransaction(TransactionEntry),
     // When a new block is detected from daemon
+    // NOTE: Same topoheight can be broadcasted several times if DAG reorg it
+    // And some topoheight can be skipped because of DAG reorg
+    // Example: two blocks at same height, both got same topoheight 69, next block reorg them together
+    // and one of the block get topoheight 69, the other 70, next is 71, but 70 is skipped
     NewTopoHeight(u64),
     // When a balance change occurs on wallet
     BalanceChanged(BalanceChanged),

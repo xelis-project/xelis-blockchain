@@ -365,6 +365,7 @@ impl NetworkHandler {
         let mut storage = self.wallet.get_storage().write().await;        
         // Now let's clean everything
         if storage.delete_changes_above_topoheight(minimum)? {
+            warn!("Cleaning transactions above topoheight {}", minimum);
             // Changes were deleted, we should also delete transactions
             storage.delete_transactions_above_topoheight(minimum)?;
         }
@@ -491,6 +492,9 @@ impl NetworkHandler {
             storage.set_top_block_hash(&daemon_block_hash)?;
         }
 
+        // Propagate the event
+        self.wallet.propagate_event(Event::NewTopoHeight(daemon_topoheight)).await;
+        debug!("Synced to topoheight {}", daemon_topoheight);
         Ok(())
     }
 
