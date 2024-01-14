@@ -35,8 +35,24 @@ impl<T: DeserializeOwned> EventReceiver<T> {
         }
     }
 
+    // Get the next event
+    // if we lagged behind, we will catch up
+    // If you don't want to miss any event, you should create a queue to store them
+    // or an unbounded channel
     pub async fn next(&mut self) -> Result<T, Error> {
-        let value = self.inner.recv().await?;
+        let mut res = self.inner.recv().await;
+        // If we lagged behind, we need to catch up
+        while let Err(e) = res {
+            match e {
+                broadcast::error::RecvError::Lagged(_) => {
+                    trace!("EventReceiver lagged behind, catching up...");
+                    res = self.inner.recv().await;
+                }
+                e => return Err(e.into())
+            };
+        }
+ 
+        let value = res?;
         Ok(serde_json::from_value(value)?)
     }
 }
