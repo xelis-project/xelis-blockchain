@@ -130,16 +130,21 @@ impl PeerList {
         let addr = peer.get_outgoing_address();
         let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
         for peer in self.peers.values() {
-            let peers = peer.get_peers().lock().await;
+            let mut shared_peers = peer.get_peers().lock().await;
             // check if it was a common peer (we sent it and we received it)
             // Because its a common peer, we can expect that he will send us the same packet
-            if let Some(direction) = peers.get(addr) {
-                // If its both direction, don't delete as we expect a packet from him
-                if *direction == Direction::Both {
+            if let Some(direction) = shared_peers.get(addr) {
+                // If its a outgoing direction, send a packet to notify that the peer disconnected
+                if *direction != Direction::In {
                     trace!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
                     // we send the packet to notify the peer that we don't have it in common anymore
                     if let Err(e) = peer.send_bytes(packet.clone()).await {
                         error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
+                    }
+
+                    // We only send it, we never got it back, removing ourself
+                    if *direction == Direction::Out {
+                        shared_peers.remove(addr);
                     }
                 }
             }

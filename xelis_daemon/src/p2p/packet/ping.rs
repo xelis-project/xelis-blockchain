@@ -84,8 +84,8 @@ impl<'a> Ping<'a> {
 
         if !self.peer_list.is_empty() {
             debug!("Received a peer list ({:?}) for {}", self.peer_list, peer.get_outgoing_address());
-            let mut peers = peer.get_peers().lock().await;
-            debug!("Our peer list is ({:?}) for {}", peers, peer.get_outgoing_address());
+            let mut shared_peers = peer.get_peers().lock().await;
+            debug!("Our peer list is ({:?}) for {}", shared_peers, peer.get_outgoing_address());
             let peer_addr = peer.get_connection().get_address();
             let peer_outgoing_addr = peer.get_outgoing_address();
             for addr in &self.peer_list {
@@ -95,14 +95,14 @@ impl<'a> Ping<'a> {
                 }
 
                 debug!("Adding {} for {} in ping packet", addr, peer.get_outgoing_address());
-                if let Some(direction) = peers.get_mut(addr) {
-                    if !direction.update_allow_in(Direction::In) {
+                if let Some(direction) = shared_peers.get_mut(addr) {
+                    if !direction.update(Direction::In) {
                         error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet, direction: {:?}", addr, peer.get_outgoing_address(), direction);
-                        trace!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, peers);
+                        error!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, shared_peers);
                         return Err(P2pError::InvalidProtocolRules)
                     }
                 } else {
-                    peers.insert(*addr, Direction::In);
+                    shared_peers.insert(*addr, Direction::In);
                 }
             }
 

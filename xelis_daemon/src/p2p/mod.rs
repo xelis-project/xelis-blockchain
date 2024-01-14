@@ -617,7 +617,7 @@ impl<S: Storage> P2pServer<S> {
                         // if we haven't send him this peer addr and that he don't have him already, insert it
                         let addr = p.get_outgoing_address();
                         let send = match shared_peers.entry(*addr) {
-                            Entry::Occupied(mut e) => e.get_mut().update_allow_in(Direction::Out),
+                            Entry::Occupied(mut e) => e.get_mut().update(Direction::Out),
                             Entry::Vacant(e) => {
                                 e.insert(Direction::Out);
                                 true
@@ -1268,28 +1268,16 @@ impl<S: Storage> P2pServer<S> {
                 }
             },
             Packet::PeerDisconnected(packet) => {
+                // This packet is used to keep sync between peers being shared
                 let addr = packet.to_addr();
                 debug!("{} disconnected from {}", addr, peer);
                 {
                     let mut shared_peers = peer.get_peers().lock().await;
-    
-                    // Because it was a common peer and that the peer disconnected from us and him
-                    // it would works but if it get only disconnected from one side, that mean
-                    // It would only be deleted from one of the two side and create a desync
-                    // As we can't delete after sending the packet directly
-                    // Current solution is to check only if it was a received one
-                    let delete = if let Some(direction) = shared_peers.get(&addr) {
-                        debug!("Direction for {} is {:?} (peer disconnected from {})", addr, direction, peer);
-                        *direction == Direction::Both 
-                    } else {
-                        false
-                    };
-
-                    if delete {
+                    if shared_peers.contains_key(&addr) {
                         // Delete the peer received
                         shared_peers.remove(&addr);
                     } else {
-                        error!("{} disconnected from {} but its not a common peer ?", addr, peer.get_outgoing_address());
+                        error!("{} disconnected from {} but its not a shared peer ?", addr, peer.get_outgoing_address());
                         return Err(P2pError::UnknownPeerReceived(addr, *peer.get_outgoing_address()))
                     }
                 }
