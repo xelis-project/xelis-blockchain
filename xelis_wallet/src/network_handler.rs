@@ -112,6 +112,8 @@ impl NetworkHandler {
         }
     }
 
+    // Process a block by checking if it contains any transaction for us
+    // Or that we mined it
     async fn process_block(&self, address: &Address, block_response: BlockResponse<'_, Block>, topoheight: u64) -> Result<bool, Error> {
         let block = block_response.data.data.into_owned();
         let block_hash = block_response.data.hash.into_owned();
@@ -362,8 +364,10 @@ impl NetworkHandler {
         let block_hash = self.api.get_block_at_topoheight(minimum).await?.data.hash.into_owned();
         let mut storage = self.wallet.get_storage().write().await;        
         // Now let's clean everything
-        storage.delete_transactions_above_topoheight(minimum)?;
-        storage.delete_changes_above_topoheight(minimum)?;
+        if storage.delete_changes_above_topoheight(minimum)? {
+            // Changes were deleted, we should also delete transactions
+            storage.delete_transactions_above_topoheight(minimum)?;
+        }
 
         // Save the new values
         storage.set_synced_topoheight(minimum)?;

@@ -522,16 +522,19 @@ impl EncryptedStorage {
     }
 
     // Delete all changes above topoheight
-    pub fn delete_changes_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
+    // This will returns true if a changes was deleted
+    pub fn delete_changes_above_topoheight(&mut self, topoheight: u64) -> Result<bool> {
+        let mut deleted = false;
         for res in self.changes_topoheight.iter() {
             let (key, _) = res?;
             let topo = u64::from_bytes(&key)?;
             if topo > topoheight {
                 self.changes_topoheight.remove(key)?;
+                deleted = true;
             }
         }
 
-        Ok(())
+        Ok(deleted)
     }
 }
 
