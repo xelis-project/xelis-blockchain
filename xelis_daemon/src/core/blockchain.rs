@@ -212,7 +212,7 @@ impl<S: Storage> Blockchain<S> {
         } else {
             debug!("Retrieving tips for computing current difficulty");
             let storage = blockchain.get_storage().read().await;
-            let tips_set = storage.get_tips().await?;    
+            let tips_set = storage.get_tips().await?;
             let difficulty = blockchain.get_difficulty_at_tips(&*storage, tips_set.iter()).await?;
             blockchain.difficulty.store(difficulty, Ordering::SeqCst);
         }
@@ -939,6 +939,11 @@ impl<S: Storage> Blockchain<S> {
 
         let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
         if height < 3 {
+            return Ok(MINIMUM_DIFFICULTY)
+        }
+
+        // Simulator is enabled, don't calculate difficulty
+        if self.is_simulator_enabled() {
             return Ok(MINIMUM_DIFFICULTY)
         }
 
