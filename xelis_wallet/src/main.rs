@@ -1,21 +1,63 @@
 use std::{sync::Arc, time::Duration, path::Path};
 
-use anyhow::{Result, Context, Error};
-use tokio::sync::mpsc::UnboundedReceiver;
-use xelis_wallet::{config::DIR_PATH, wallet::XSWDEvent, api::{PermissionResult, AppStateShared}};
+use anyhow::{Result, Context};
 use fern::colors::Color;
 use log::{error, info};
 use clap::Parser;
-use xelis_common::{config::{
-    VERSION, XELIS_ASSET, COIN_DECIMALS
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel, self, ShareablePrompt, PromptError, colorize_string, colorize_str}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, utils::{format_xelis, set_network_to, format_coin}, serializer::Serializer, network::Network, api::wallet::FeeBuilder, rpc_server::RpcRequest};
+use xelis_common::{
+    config::{
+        VERSION, XELIS_ASSET, COIN_DECIMALS
+    },
+    prompt::{
+        Prompt,
+        command::{
+            CommandManager,
+            Command,
+            CommandHandler,
+            CommandError
+        },
+        argument::{
+            Arg,
+            ArgType,
+            ArgumentManager
+        },
+        LogLevel,
+        self,
+        PromptError
+    },
+    async_handler,
+    crypto::{
+        address::{Address, AddressType},
+        hash::Hashable
+    },
+    transaction::{TransactionType, Transaction},
+    utils::{format_xelis, set_network_to, format_coin},
+    serializer::Serializer,
+    network::Network,
+    api::wallet::FeeBuilder,
+};
 use xelis_wallet::{
     wallet::Wallet,
-    config::DEFAULT_DAEMON_ADDRESS
+    config::{DEFAULT_DAEMON_ADDRESS, DIR_PATH}
 };
 
 #[cfg(feature = "api_server")]
-use xelis_wallet::api::AuthConfig;
+use {
+    xelis_wallet::{
+        api::{AuthConfig, PermissionResult, AppStateShared},
+        wallet::XSWDEvent,
+    },
+    xelis_common::{
+        rpc_server::RpcRequest,
+        prompt::{
+            ShareablePrompt,
+            colorize_string,
+            colorize_str
+        }
+    },
+    anyhow::Error,
+    tokio::sync::mpsc::UnboundedReceiver
+};
 
 // This struct is used to configure the RPC Server
 // In case we want to enable it instead of starting
@@ -126,7 +168,7 @@ async fn main() -> Result<()> {
             Wallet::create(dir, password, config.seed, config.network)?
         };
 
-        apply_config(&wallet, &prompt).await;
+        apply_config(&wallet, #[cfg(feature = "api_server")] &prompt).await;
         setup_wallet_command_manager(wallet, &command_manager).await?;
     } else {
         command_manager.add_command(Command::new("open", "Open a wallet", CommandHandler::Async(async_handler!(open_wallet))))?;
@@ -144,6 +186,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "api_server")]
 // This must be run in a separate task
 async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: ShareablePrompt) {
     while let Some(event) = receiver.recv().await {
@@ -173,6 +216,7 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
     }
 }
 
+#[cfg(feature = "api_server")]
 async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: AppStateShared, signed: bool) -> Result<PermissionResult, Error> {
     let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_state.get_name(), app_state.get_id());
     if signed {
@@ -186,6 +230,7 @@ async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: Ap
     }
 }
 
+#[cfg(feature = "api_server")]
 async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: AppStateShared, request: RpcRequest) -> Result<PermissionResult, Error> {
     let params = if let Some(params) = request.params {
         params.to_string()
@@ -211,7 +256,7 @@ async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: App
 }
 
 // Apply the config passed in params
-async fn apply_config(wallet: &Arc<Wallet>, prompt: &ShareablePrompt) {
+async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] prompt: &ShareablePrompt) {
     let config: Config = Config::parse();
 
     if !config.offline_mode {
@@ -385,7 +430,7 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
     };
 
     manager.message("Wallet sucessfully opened");
-    apply_config(&wallet, prompt).await;
+    apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
 
     setup_wallet_command_manager(wallet, manager).await?;
 
@@ -429,7 +474,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     };
  
     manager.message("Wallet sucessfully created");
-    apply_config(&wallet, prompt).await;
+    apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
 
     // Display the seed in prompt
     {
@@ -484,7 +529,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
     };
 
     manager.message("Wallet sucessfully recovered");
-    apply_config(&wallet, prompt).await;
+    apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
 
     setup_wallet_command_manager(wallet, manager).await?;
 

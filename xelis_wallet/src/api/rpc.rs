@@ -339,6 +339,7 @@ async fn has_key(context: Context, body: Value) -> Result<Value, InternalRpcErro
     Ok(json!(storage.has_custom_data(&tree, &params.key)?))
 }
 
+// Search in DB all entries based on filters set
 async fn query_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: QueryDBParams = parse_params(body)?;
     if let Some(query) = &params.key {

@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use anyhow::{Error, Context};
 use serde::Serialize;
-use serde_json::{json, Value};
 use tokio::sync::{
     broadcast::{Sender as BroadcastSender, Receiver as BroadcastReceiver},
     {Mutex, RwLock}
@@ -20,14 +19,12 @@ use xelis_common::{
         hash::Hash,
         key::{KeyPair, PublicKey, Signature},
     },
-    rpc_server::{RpcRequest, InternalRpcError, RpcResponseError, JSON_RPC_VERSION},
     utils::{format_xelis, format_coin},
     network::Network,
     serializer::{Serializer, Writer},
     transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE},
 };
 use crate::{
-    api::XSWDNodeMethodHandler,
     cipher::Cipher,
     config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE},
     entry::TransactionEntry,
@@ -43,8 +40,10 @@ use log::{error, debug};
 
 #[cfg(feature = "api_server")]
 use {
+    serde_json::{json, Value},
     async_trait::async_trait,
     crate::api::{
+        XSWDNodeMethodHandler,
         register_rpc_methods,
         XSWD,
         WalletRpcServer,
@@ -55,7 +54,13 @@ use {
         PermissionRequest,
         XSWDPermissionHandler
     },
-    xelis_common::rpc_server::RPCHandler,
+    xelis_common::rpc_server::{
+        RPCHandler,
+        RpcRequest,
+        InternalRpcError,
+        RpcResponseError,
+        JSON_RPC_VERSION
+    },
     tokio::sync::{
         mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel},
         oneshot::{Sender as OneshotSender, channel}
@@ -299,6 +304,7 @@ impl Wallet {
     // Propagate a new event to registered listeners
     pub async fn propagate_event(&self, event: Event) {
         // Broadcast it to the API Server
+        #[cfg(feature = "api_server")]
         {
             let mut lock = self.api_server.lock().await;
             if let Some(server) = lock.as_mut() {
@@ -671,6 +677,7 @@ impl Wallet {
     }
 }
 
+#[cfg(feature = "api_server")]
 pub enum XSWDEvent {
     RequestPermission(AppStateShared, RpcRequest, OneshotSender<Result<PermissionResult, Error>>),
     // bool represents if it was signed or not
