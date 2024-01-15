@@ -1726,9 +1726,10 @@ impl<S: Storage> P2pServer<S> {
 
             // if the peer is not too far from us, send the block
             // check that peer height is greater or equal to block height but still under or equal to STABLE_LIMIT
-            // or, check that peer height is less or equal to block height but still under or equal to STABLE_LIMIT
+            // or, check that peer height as difference of maximum 1 block
+            // (block height is always + 1 above the highest tip height, so we can just check that peer height is not above block height + 1, it's enough in 90% of time)
             // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
-            if (peer_height >= block.get_height() && peer_height - block.get_height() < STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height < STABLE_LIMIT) {
+            if (peer_height >= block.get_height() && peer_height - block.get_height() < STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
                 let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                 // check that we don't send the block to the peer that sent it to us
                 if !blocks_propagation.contains(hash) {
