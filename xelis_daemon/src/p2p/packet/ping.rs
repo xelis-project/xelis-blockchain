@@ -53,20 +53,18 @@ impl<'a> Ping<'a> {
         peer.set_height(self.height);
 
         if peer.is_pruned() && self.pruned_topoheight.is_none() {
-            error!("Invalid protocol rules: impossible to change the pruned state (), from {} in ping packet", peer);
-            return Err(P2pError::InvalidProtocolRules)
+            return Err(P2pError::InvalidPrunedTopoHeightChange)
         }
 
         if let Some(pruned_topoheight) = self.pruned_topoheight {
             if pruned_topoheight > self.topoheight {
-                error!("Invalid protocol rules: pruned topoheight {} is greater than height {} in ping packet", pruned_topoheight, self.height);
-                return Err(P2pError::InvalidProtocolRules)
+                return Err(P2pError::InvalidPrunedTopoHeight(pruned_topoheight, self.height))
             }
 
             if let Some(old_pruned_topoheight) = peer.get_pruned_topoheight() {
                 if pruned_topoheight < old_pruned_topoheight {
                     error!("Invalid protocol rules: pruned topoheight {} is less than old pruned topoheight {} in ping packet", pruned_topoheight, old_pruned_topoheight);
-                    return Err(P2pError::InvalidProtocolRules)
+                    return Err(P2pError::InvalidNewPrunedTopoHeight(pruned_topoheight, old_pruned_topoheight))
                 }
             }
         }
@@ -90,16 +88,15 @@ impl<'a> Ping<'a> {
             let peer_outgoing_addr = peer.get_outgoing_address();
             for addr in &self.peer_list {
                 if peer_addr == addr || peer_outgoing_addr == addr {
-                    error!("Invalid protocol rules: peer {} sent us its own socket address in ping packet", peer.get_outgoing_address());
-                    return Err(P2pError::InvalidProtocolRules)
+                    return Err(P2pError::OwnSocketAddress(*addr))
                 }
 
                 debug!("Adding {} for {} in ping packet", addr, peer.get_outgoing_address());
                 if let Some(direction) = shared_peers.get_mut(addr) {
                     if !direction.update(Direction::In) {
-                        error!("Invalid protocol rules: received duplicated peer {} from {} in ping packet, direction: {:?}", addr, peer.get_outgoing_address(), direction);
-                        error!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, shared_peers);
-                        return Err(P2pError::InvalidProtocolRules)
+                        let d = *direction;
+                        debug!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, shared_peers);
+                        return Err(P2pError::DuplicatedPeer(*addr, *peer.get_outgoing_address(), d))
                     }
                 } else {
                     shared_peers.insert(*addr, Direction::In);

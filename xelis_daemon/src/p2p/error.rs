@@ -2,6 +2,7 @@ use crate::core::error::BlockchainError;
 use tokio::sync::AcquireError;
 use tokio::sync::mpsc::error::SendError as TSendError;
 use tokio::sync::oneshot::error::RecvError;
+use xelis_common::api::daemon::Direction;
 use xelis_common::crypto::hash::Hash;
 use xelis_common::serializer::ReaderError;
 use std::array::TryFromSliceError;
@@ -19,8 +20,16 @@ use super::packet::object::ObjectRequest;
 pub enum P2pError {
     #[error("Incompatible direction received")]
     InvalidDirection,
-    #[error("Invalid protocol rules")]
-    InvalidProtocolRules,
+    #[error("Duplicated peer {} received from {} received in ping packet (direction = {:?})", _0, _1, _2)]
+    DuplicatedPeer(SocketAddr, SocketAddr, Direction),
+    #[error("Pruned topoheight {} is greater than height {} in ping packet", _0, _1)]
+    InvalidPrunedTopoHeight(u64, u64),
+    #[error("Pruned topoheight {} is less than old pruned topoheight {} in ping packet", _0, _1)]
+    InvalidNewPrunedTopoHeight(u64, u64),
+    #[error("impossible to change the pruned state")]
+    InvalidPrunedTopoHeightChange,
+    #[error("Peer {} send us its own socket address", _0)]
+    OwnSocketAddress(SocketAddr),
     #[error("Invalid list size in pagination with a next page")]
     InvalidInventoryPagination,
     #[error("unknown peer {} disconnected from {}", _0, _1)]
