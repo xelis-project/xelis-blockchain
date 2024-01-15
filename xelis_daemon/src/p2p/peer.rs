@@ -430,8 +430,8 @@ impl Display for Peer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
         // update fail counter to have up-to-date data to display
         self.update_fail_count_default();
-        let peers_count = if let Ok(peers) = self.get_peers().try_lock() {
-            format!("{}", peers.len())
+        let peers = if let Ok(peers) = self.get_peers().try_lock() {
+            format!("{:?}", peers)
         } else {
             "Couldn't retrieve data".to_string()
         };
@@ -460,7 +460,7 @@ impl Display for Peer {
             self.get_version(),
             self.get_fail_count(),
             self.is_out(),
-            peers_count
+            peers
         )
     }
 }
