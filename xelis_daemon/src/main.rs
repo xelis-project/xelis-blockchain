@@ -20,7 +20,7 @@ use crate::{
     },
     config::{BLOCK_TIME_MILLIS, MILLIS_PER_SECOND}
 };
-use std::{sync::Arc, net::IpAddr};
+use std::{sync::Arc, net::{IpAddr, SocketAddr}};
 use std::time::Duration;
 use clap::Parser;
 use anyhow::{Result, Context as AnyContext};
@@ -105,6 +105,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("blacklist", "View blacklist or add a peer address in it", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(blacklist::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("whitelist", "View whitelist or add a peer address in it", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(whitelist::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("verify_chain", "Check chain supply/balances", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(verify_chain::<S>))))?;
+    command_manager.add_command(Command::with_required_arguments("kick_peer", "Kick a peer using its ip:port", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(kick_peer::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -273,6 +274,32 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     } else {
         manager.message("Balances are equal to verified supply");
     }
+
+    Ok(())
+}
+
+async fn kick_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_p2p().read().await.as_ref() {
+        Some(p2p) => {
+            let addr: SocketAddr = args.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+            let peer = {
+                let peer_list = p2p.get_peer_list().read().await;
+                peer_list.get_peer_by_addr(&addr).cloned()
+            };
+
+            if let Some(peer) = peer {
+                peer.close().await.context("Error while closing peer connection")?;
+                manager.message(format!("Peer {} has been kicked", addr));
+            } else {
+                manager.error(format!("Peer {} not found", addr));
+            }
+        },
+        None => {
+            manager.error("P2P is not enabled");
+        }
+    };
 
     Ok(())
 }

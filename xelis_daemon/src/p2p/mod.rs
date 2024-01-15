@@ -1277,8 +1277,8 @@ impl<S: Storage> P2pServer<S> {
                         // Delete the peer received
                         shared_peers.remove(&addr);
                     } else {
-                        error!("{} disconnected from {} but its not a shared peer ?", addr, peer.get_outgoing_address());
-                        return Err(P2pError::UnknownPeerReceived(addr, *peer.get_outgoing_address()))
+                        debug!("{} disconnected from {} but its not in our shared peer, maybe it disconnected from us too", addr, peer.get_outgoing_address());
+                        return Ok(())
                     }
                 }
 

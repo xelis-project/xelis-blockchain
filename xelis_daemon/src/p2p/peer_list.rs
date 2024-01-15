@@ -142,10 +142,8 @@ impl PeerList {
                         error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
                     }
 
-                    // We only send it, we never got it back, removing ourself
-                    if *direction == Direction::Out {
-                        shared_peers.remove(addr);
-                    }
+                    // Maybe he only disconnected from us, delete it to stay synced
+                    shared_peers.remove(addr);
                 }
             }
         }
