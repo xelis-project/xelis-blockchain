@@ -1,11 +1,15 @@
-use super::error::BlockchainError;
-use super::storage::Storage;
+use super::{
+    blockchain::Blockchain,
+    error::BlockchainError,
+    storage::Storage
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use indexmap::IndexSet;
 use log::{trace, debug, warn};
-use xelis_common::utils::get_current_time_in_seconds;
 use xelis_common::{
+    account::VersionedBalance,
+    utils::get_current_time_in_seconds,
     crypto::{
         hash::Hash,
         key::PublicKey
@@ -35,6 +39,9 @@ pub struct AccountCache {
     max: u64,
     // all txs for this user ordered by nonce
     txs: IndexSet<Arc<Hash>>,
+    // Expected balances after all txs in this cache
+    // This is also used to verify the validity of the TX spendings
+    balances: HashMap<Hash, VersionedBalance>
 }
 
 #[derive(serde::Serialize)]
@@ -55,7 +62,7 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub fn add_tx(&mut self, hash: Hash, tx: Arc<Transaction>, size: usize) -> Result<(), BlockchainError> {
+    pub fn add_tx(&mut self, hash: Hash, tx: Arc<Transaction>, size: usize, balances: HashMap<Hash, VersionedBalance>) -> Result<(), BlockchainError> {
         let hash = Arc::new(hash);
         let nonce = tx.get_nonce();
         // update the cache for this owner
@@ -63,6 +70,10 @@ impl Mempool {
         if let Some(cache) = self.caches.get_mut(tx.get_owner()) {
             // delete the TX if its in the range of already tracked nonces
             trace!("Cache found for owner {} with nonce range {}-{}, nonce = {}", tx.get_owner(), cache.get_min(), cache.get_max(), nonce);
+
+            // Support the case where the nonce is already used in cache
+            // If a user want to cancel its TX, he can just resend a TX with same nonce and higher fee
+            // NOTE: This is not possible anymore, disabled in blockchain function
             if nonce >= cache.get_min() && nonce <= cache.get_max() {
                 trace!("nonce {} is in range {}-{}", nonce, cache.get_min(), cache.get_max());
                 // because it's based on order and we may have the same order
@@ -84,6 +95,8 @@ impl Mempool {
             if must_update {
                 cache.update(nonce, hash.clone());
             }
+            // Update re-computed balances
+            cache.set_balances(balances);
         } else {
             let mut txs = IndexSet::new();
             txs.insert(hash.clone());
@@ -92,7 +105,8 @@ impl Mempool {
             let cache = AccountCache {
                 max: nonce,
                 min: nonce,
-                txs
+                txs,
+                balances
             };
             self.caches.insert(tx.get_owner().clone(), cache);
         }
@@ -238,7 +252,7 @@ impl Mempool {
     // Because of DAG reorg, we can't only check updated keys from new block,
     // as a block could be orphaned and the nonce order would change
     // So we need to check all keys from mempool and compare it from storage
-    pub async fn clean_up<S: Storage>(&mut self, storage: &S) {
+    pub async fn clean_up<S: Storage>(&mut self, storage: &S, blockchain: &Blockchain<S>, topoheight: u64) {
         trace!("Cleaning up mempool...");
 
         let mut cache = HashMap::new();
@@ -326,6 +340,40 @@ impl Mempool {
 
                 // delete the nonce cache if no txs are left
                 delete_cache = cache.txs.is_empty();
+                // Cache is not empty yet, but we deleted some TXs from it, balances may be out-dated, verify TXs left
+                // TODO: there may be a way to optimize this even more, by checking if deleted TXs are those who got mined
+                // Which mean, expected balances are still up to date with chain state
+                if !delete_cache && !hashes.is_empty() {
+                    let mut balances = HashMap::new();
+                    let mut invalid_txs = Vec::new();
+                    for tx_hash in &cache.txs {
+                        if let Some(sorted_tx) = self.txs.get(tx_hash) {
+                            // Verify if the TX is still valid
+                            // If not, delete it
+                            let tx = sorted_tx.get_tx();
+
+                            // Skip nonces verification as we already did it
+                            if let Err(e) = blockchain.verify_transaction_with_hash(storage, tx, &tx_hash, &mut balances, None, true, topoheight).await {
+                                warn!("TX {} is not valid anymore, deleting it: {}", tx_hash, e);
+                                invalid_txs.push(tx_hash.clone());
+                            }
+                        } else {
+                            // Shouldn't happen
+                            warn!("TX {} not found in mempool while verifying", tx_hash);
+                        }
+                    }
+
+                    // Update balances cache
+                    if let Some(balances) = balances.remove(&key) {
+                        cache.set_balances(balances.into_iter().map(|(k, v)| (k.clone(), v)).collect());
+                    }
+
+                    // Delete all invalid txs from cache
+                    for hash in invalid_txs {
+                        cache.txs.remove(&hash);
+                        hashes.push(hash);
+                    }
+                }
 
                 // now delete all necessary txs
                 for hash in hashes {
@@ -379,6 +427,16 @@ impl AccountCache {
     // Get all txs hashes for this cache
     pub fn get_txs(&self) -> &IndexSet<Arc<Hash>> {
         &self.txs
+    }
+
+    // Update balances cache
+    fn set_balances(&mut self, balances: HashMap<Hash, VersionedBalance>) {
+        self.balances = balances;
+    }
+
+    // Returns the expected balances cache after the execution of all TXs
+    pub fn get_balances(&self) -> &HashMap<Hash, VersionedBalance> {
+        &self.balances
     }
 
     // Update the cache with a new TX

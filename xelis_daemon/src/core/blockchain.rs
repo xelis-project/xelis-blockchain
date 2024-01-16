@@ -1036,6 +1036,8 @@ impl<S: Storage> Blockchain<S> {
             let current_topoheight = self.get_topo_height();
             // get the highest nonce for this owner
             let owner = tx.get_owner();
+            // final balances of a user after the new TX being applied
+            let mut final_balances: HashMap<Hash, VersionedBalance> = HashMap::new();
             // get the highest nonce available
             // if presents, it means we have at least one tx from this owner in mempool
             if let Some(cache) = mempool.get_cache_for(owner) {
@@ -1050,21 +1052,44 @@ impl<S: Storage> Blockchain<S> {
                     debug!("TX {} nonce is not in the range of the pending TXs for this owner, received: {}, expected between {} and {}", hash, tx.get_nonce(), cache.get_min(), cache.get_max());
                     return Err(BlockchainError::InvalidTxNonceMempoolCache(tx.get_nonce(), cache.get_min(), cache.get_max()))
                 }
+
                 // we need to do it in two times because of the constraint of lifetime on &tx
                 let mut balances = HashMap::new();
                 let mut nonces = HashMap::new();
                 // because we already verified the range of nonce
                 nonces.insert(tx.get_owner(), tx.get_nonce());
+                // Insert expected balance from mempool TXs
+
+                // Now introduce all expected balances for this user from mempool cache
+                let user_balances = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
+                let cached_balances = cache.get_balances();
+                // We are forced to clone the balance because we need to manipulate it in the next step
+                for (asset, balance) in cached_balances {
+                    user_balances.insert(asset, balance.clone());
+                }
 
                 // Verify original TX
                 // We may have double spending in balances, but it is ok because miner check that all txs included are valid
                 self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, Some(&mut nonces), false, current_topoheight).await?;
+
+                // Store all balances changes
+                if let Some(user_balances) = balances.remove(tx.get_owner()) {
+                    for (asset, balance) in user_balances {
+                        final_balances.insert(asset.clone(), balance);
+                    }
+                }
             } else {
                 let mut balances = HashMap::new();
                 self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false, current_topoheight).await?;
+                // Store balances changes
+                if let Some(user_balances) = balances.remove(tx.get_owner()) {
+                    for (asset, balance) in user_balances {
+                        final_balances.insert(asset.clone(), balance);
+                    }
+                }
             }
 
-            mempool.add_tx(hash.clone(), tx.clone(), tx_size)?;
+            mempool.add_tx(hash.clone(), tx.clone(), tx_size, final_balances)?;
         }
 
         if broadcast {
@@ -1227,7 +1252,7 @@ impl<S: Storage> Blockchain<S> {
             trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_owner());
             let owner = tx.get_owner();
             if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false, topoheight).await {
-                debug!("TX {} ({}) is not valid for mining: {}", hash, owner, e);
+                warn!("TX {} ({}) is not valid for mining: {}", hash, owner, e);
             } else {
                 trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()));
                 // TODO no clone
@@ -1767,7 +1792,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("Locking mempool write mode");
             let mut mempool = self.mempool.write().await;
             debug!("mempool write mode ok");
-            mempool.clean_up(&*storage).await;
+            mempool.clean_up(&*storage, &self, highest_topo).await;
         }
 
         // Now we can try to add back all transactions
@@ -2001,7 +2026,7 @@ impl<S: Storage> Blockchain<S> {
     // verify the transaction and returns fees available
     // nonces allow us to support multiples tx from same owner in the same block
     // txs must be sorted in ascending order based on account nonce
-    async fn verify_transaction_with_hash<'a>(&self, storage: &S, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool, topoheight: u64) -> Result<(), BlockchainError> {
+    pub async fn verify_transaction_with_hash<'a>(&self, storage: &S, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("Verify transaction with hash {}", hash);
 
         // Verify that the TX has a valid signature
