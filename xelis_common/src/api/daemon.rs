@@ -81,6 +81,20 @@ pub struct GetBalanceParams<'a> {
     pub asset: Cow<'a, Hash>
 }
 
+
+#[derive(Serialize, Deserialize)]
+pub struct HasBalanceParams<'a> {
+    pub address: Cow<'a, Address>,
+    pub asset: Cow<'a, Hash>,
+    #[serde(default)]
+    pub topoheight: Option<u64>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HasBalanceResult {
+    pub exist: bool
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct GetBalanceAtTopoHeightParams<'a> {
     pub address: Cow<'a, Address>,

@@ -38,7 +38,9 @@ use xelis_common::{
         GetAccountAssetsParams,
         PeerEntry,
         IsTxExecutedInBlockParams,
-        SizeOnDiskResult
+        SizeOnDiskResult,
+        HasBalanceParams,
+        HasBalanceResult
     }, DataHash},
     async_handler,
     serializer::Serializer,
@@ -187,6 +189,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_top_block", async_handler!(get_top_block::<S>));
     handler.register_method("submit_block", async_handler!(submit_block::<S>));
     handler.register_method("get_balance", async_handler!(get_balance::<S>));
+    handler.register_method("has_balance", async_handler!(has_balance::<S>));
     handler.register_method("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight::<S>));
     handler.register_method("get_info", async_handler!(get_info::<S>));
     handler.register_method("get_nonce", async_handler!(get_nonce::<S>));
@@ -309,6 +312,24 @@ async fn get_balance<S: Storage>(context: Context, body: Value) -> Result<Value,
         version,
         topoheight
     }))
+}
+
+async fn has_balance<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: HasBalanceParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+    }
+
+    let key = params.address.get_public_key();
+    let storage = blockchain.get_storage().read().await;
+    let exist = if let Some(topoheight) = params.topoheight {
+        storage.has_balance_at_exact_topoheight(key, &params.asset, topoheight).await.context("Error while checking nonce at topo for account")?
+    } else {
+        storage.has_balance_for(key, &params.asset).await.context("Error while checking nonce for account")?
+    };
+
+    Ok(json!(HasBalanceResult { exist }))
 }
 
 async fn get_info<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
