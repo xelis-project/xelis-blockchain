@@ -642,7 +642,7 @@ impl<S: Storage> P2pServer<S> {
                     if let Err(e) = peer.send_packet(Packet::Ping(Cow::Borrowed(&ping))).await {
                         debug!("Error sending specific ping packet to {}: {}", peer, e);
                     } else {
-                        peer.set_last_ping_sent(get_current_time_in_seconds());
+                        peer.set_last_ping_sent(current_time);
                     }
                 }
             } else {
@@ -653,7 +653,6 @@ impl<S: Storage> P2pServer<S> {
                 let peerlist = self.peer_list.read().await;
                 trace!("End locking peerlist... (generic ping)");
                 // broadcast directly the ping packet asap to all peers
-                let current_time = get_current_time_in_seconds();
                 for peer in peerlist.get_peers().values() {
                     trace!("broadcast generic ping packet to {}", peer);
                     if current_time - peer.get_last_ping_sent() > P2P_PING_DELAY {
@@ -977,7 +976,7 @@ impl<S: Storage> P2pServer<S> {
                     if let Some(direction) = blocks_propagation.get_mut(&block_hash) {
                         if !direction.update(Direction::In) {
                             debug!("{} send us a block ({}) already tracked by him ({:?})", peer, block_hash, direction);
-                            return Err(P2pError::AlreadyTrackedBlock(block_hash))
+                            return Err(P2pError::AlreadyTrackedBlock(block_hash, *direction))
                         }
                     } else {
                         debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
@@ -1188,7 +1187,7 @@ impl<S: Storage> P2pServer<S> {
                 let skip = page_id as usize * NOTIFY_MAX_LEN;
 
                 let mempool = self.blockchain.get_mempool().read().await;
-                let nonces_cache = mempool.get_nonces_cache();
+                let nonces_cache = mempool.get_caches();
                 let all_txs = nonces_cache.values()
                     .flat_map(|v| v.get_txs())
                     .skip(skip).take(NOTIFY_MAX_LEN)
@@ -1731,7 +1730,7 @@ impl<S: Storage> P2pServer<S> {
             // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
             if (peer_height >= block.get_height() && peer_height - block.get_height() < STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
                 let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
-                // check that we don't send the block to the peer that sent it to us
+                // check that this block was never shared with this peer
                 if !blocks_propagation.contains(hash) {
                     // we broadcasted to him, add it to the cache
                     // he should not send it back to us if it's a block found by us

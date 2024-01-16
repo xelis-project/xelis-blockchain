@@ -13,6 +13,8 @@ use xelis_common::{
     transaction::Transaction
 };
 
+// Wrap a TX with its hash and size in bytes for faster access
+// size of tx can be heavy to compute, so we store it here
 #[derive(serde::Serialize)]
 pub struct SortedTx {
     tx: Arc<Transaction>,
@@ -20,9 +22,16 @@ pub struct SortedTx {
     size: usize
 }
 
+// This struct is used to keep nonce cache for a specific key for faster verification
+// But we also include a sorted list of txs for this key, ordered by nonce
+// and a "expected balance" for this key
+// Min/max bounds are used to compute the index of the tx in the sorted list based on its nonce
+// You can get the TX at nonce N by computing the index with (N - min) % (max + 1 - min)
 #[derive(serde::Serialize)]
-pub struct NonceCache {
+pub struct AccountCache {
+    // lowest nonce used
     min: u64,
+    // highest nonce used
     max: u64,
     // all txs for this user ordered by nonce
     txs: IndexSet<Arc<Hash>>,
@@ -33,7 +42,7 @@ pub struct Mempool {
     // store all txs waiting to be included in a block
     txs: HashMap<Arc<Hash>, SortedTx>,
     // store all sender's nonce for faster finding
-    nonces_cache: HashMap<PublicKey, NonceCache>
+    caches: HashMap<PublicKey, AccountCache>
 }
 
 impl Mempool {
@@ -41,7 +50,7 @@ impl Mempool {
     pub fn new() -> Self {
         Mempool {
             txs: HashMap::new(),
-            nonces_cache: HashMap::new()
+            caches: HashMap::new()
         }
     }
 
@@ -51,7 +60,7 @@ impl Mempool {
         let nonce = tx.get_nonce();
         // update the cache for this owner
         let mut must_update = true;
-        if let Some(cache) = self.nonces_cache.get_mut(tx.get_owner()) {
+        if let Some(cache) = self.caches.get_mut(tx.get_owner()) {
             // delete the TX if its in the range of already tracked nonces
             trace!("Cache found for owner {} with nonce range {}-{}, nonce = {}", tx.get_owner(), cache.get_min(), cache.get_max(), nonce);
             if nonce >= cache.get_min() && nonce <= cache.get_max() {
@@ -80,12 +89,12 @@ impl Mempool {
             txs.insert(hash.clone());
 
             // init the cache
-            let cache = NonceCache {
+            let cache = AccountCache {
                 max: nonce,
                 min: nonce,
                 txs
             };
-            self.nonces_cache.insert(tx.get_owner().clone(), cache);
+            self.caches.insert(tx.get_owner().clone(), cache);
         }
 
         let sorted_tx = SortedTx {
@@ -107,7 +116,7 @@ impl Mempool {
         // remove the tx hash from sorted txs
         let key = tx.get_tx().get_owner();
         let mut delete = false;
-        if let Some(cache) = self.nonces_cache.get_mut(key) {
+        if let Some(cache) = self.caches.get_mut(key) {
             if !cache.txs.remove(hash) {
                 warn!("TX {} not found in mempool while deleting", hash);
             } else {
@@ -154,15 +163,15 @@ impl Mempool {
 
         if delete {
             trace!("Removing empty nonce cache for owner {}", key);
-            self.nonces_cache.remove(key);
+            self.caches.remove(key);
         }
 
         Ok(())
     }
 
     // Get the nonce cache for all keys
-    pub fn get_nonces_cache(&self) -> &HashMap<PublicKey, NonceCache> {
-        &self.nonces_cache
+    pub fn get_caches(&self) -> &HashMap<PublicKey, AccountCache> {
+        &self.caches
     }
 
     // Verify if a TX is in mempool using its hash
@@ -197,14 +206,14 @@ impl Mempool {
         &self.txs
     }
 
-    // Get the nonce cache for a specific key
-    pub fn get_cached_nonce(&self, key: &PublicKey) -> Option<&NonceCache> {
-        self.nonces_cache.get(key)
+    // Get the cache for a specific key
+    pub fn get_cache_for(&self, key: &PublicKey) -> Option<&AccountCache> {
+        self.caches.get(key)
     }
 
     // Check if the nonce is already used for user in mempool
     pub fn is_nonce_used(&self, key: &PublicKey, nonce: u64) -> bool {
-        if let Some(cache) = self.nonces_cache.get(key) {
+        if let Some(cache) = self.caches.get(key) {
             if nonce >= cache.min && nonce <= cache.max {
                 return cache.has_tx_with_same_nonce(nonce).is_some();
             }
@@ -221,7 +230,7 @@ impl Mempool {
     // Clear all txs and caches in mempool
     pub fn clear(&mut self) {
         self.txs.clear();
-        self.nonces_cache.clear();
+        self.caches.clear();
     }
 
     // delete all old txs not compatible anymore with current state of chain
@@ -234,7 +243,7 @@ impl Mempool {
 
         let mut cache = HashMap::new();
         // Swap the nonces_cache with cache, so we iterate over cache and reinject it in nonces_cache
-        std::mem::swap(&mut cache, &mut self.nonces_cache);
+        std::mem::swap(&mut cache, &mut self.caches);
 
         for (key, mut cache) in cache {
             let nonce = match storage.get_last_nonce(&key).await {
@@ -328,7 +337,7 @@ impl Mempool {
 
             if !delete_cache {
                 debug!("Re-injecting nonce cache for owner {}", key);
-                self.nonces_cache.insert(key, cache);
+                self.caches.insert(key, cache);
             }
         }
     }
@@ -356,24 +365,29 @@ impl SortedTx {
     }
 }
 
-impl NonceCache {
+impl AccountCache {
+    // Get the lowest nonce for this cache
     pub fn get_min(&self) -> u64 {
         self.min
     }
 
+    // Get the highest nonce for this cache
     pub fn get_max(&self) -> u64 {
         self.max
     }
 
+    // Get all txs hashes for this cache
     pub fn get_txs(&self) -> &IndexSet<Arc<Hash>> {
         &self.txs
     }
 
+    // Update the cache with a new TX
     fn update(&mut self, nonce: u64, hash: Arc<Hash>) {
         self.update_nonce_range(nonce);
         self.txs.insert(hash);
     }
 
+    // Update the nonce range for this cache
     fn update_nonce_range(&mut self, nonce: u64) {
         debug_assert!(self.min <= self.max);
 
@@ -386,18 +400,14 @@ impl NonceCache {
         }
     }
 
+    // Verify if a TX is in cache using its nonce
     pub fn has_tx_with_same_nonce(&self, nonce: u64) -> Option<&Arc<Hash>> {
         if nonce < self.min || nonce > self.max || self.txs.is_empty() {
             return None;
         }
 
         trace!("has tx with same nonce: {}, max: {}, min: {}, size: {}", nonce, self.max, self.min, self.txs.len());
-        let mut r = self.max - self.min;
-        if r == 0 {
-            r = self.txs.len() as u64;
-        }
-
-        let index = ((nonce - self.min) % r) as usize;
+        let index = ((nonce - self.min) % (self.max + 1 - self.min)) as usize;
         self.txs.get_index(index)
     }
 }

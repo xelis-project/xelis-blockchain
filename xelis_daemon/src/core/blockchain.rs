@@ -1038,15 +1038,11 @@ impl<S: Storage> Blockchain<S> {
             let owner = tx.get_owner();
             // get the highest nonce available
             // if presents, it means we have at least one tx from this owner in mempool
-            if let Some(cache) = mempool.get_cached_nonce(owner) {
+            if let Some(cache) = mempool.get_cache_for(owner) {
                 // we accept to delete a tx from mempool if the new one has a higher fee
                 if let Some(hash) = cache.has_tx_with_same_nonce(tx.get_nonce()) {
-                    // TX is in range, we have to delete an existing TX
-                    // check that fees are higher than the future deleted one
-                    let other_tx = mempool.view_tx(hash)?;
-                    if other_tx.get_fee() >= tx.get_fee() {
-                        return Err(BlockchainError::InvalidTxFee(other_tx.get_fee() + 1, tx.get_fee()));
-                    }
+                    // A TX with the same nonce is already in mempool
+                    return Err(BlockchainError::TxNonceAlreadyUsed(tx.get_nonce(), hash.as_ref().clone()))
                 }
 
                 // check that the nonce is in the range
@@ -1212,7 +1208,7 @@ impl<S: Storage> Blockchain<S> {
 
         // Build the tx selector using the mempool
         let mut tx_selector = TxSelector::new(iter);
-        
+
         // size of block
         let mut block_size = block.size();
         let mut total_txs_size = 0;

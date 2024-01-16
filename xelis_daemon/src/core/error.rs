@@ -34,6 +34,8 @@ pub enum BlockchainError {
     InvalidBlockHeightStableHeight,
     #[error("Invalid difficulty")]
     InvalidDifficulty,
+    #[error("Tx nonce {} already used by Tx {}", _0, _1)]
+    TxNonceAlreadyUsed(u64, Hash),
     #[error("Invalid hash, expected {}, got {}", _0, _1)]
     InvalidHash(Hash, Hash),
     #[error("Invalid previous block hash, expected {}, got {}", _0, _1)]

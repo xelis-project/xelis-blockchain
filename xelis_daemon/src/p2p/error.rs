@@ -36,8 +36,8 @@ pub enum P2pError {
     UnknownPeerReceived(SocketAddr, SocketAddr),
     #[error("Block {} at height {} propagated is under our stable height", _0, _1)]
     BlockPropagatedUnderStableHeight(Hash, u64),
-    #[error("Block {} propagated is already tracked", _0)]
-    AlreadyTrackedBlock(Hash),
+    #[error("Block {} propagated is already tracked with direction {:?}", _0, _1)]
+    AlreadyTrackedBlock(Hash, Direction),
     #[error("Transaction {} propagated is already tracked", _0)]
     AlreadyTrackedTx(Hash),
     #[error("Malformed chain request, received {} blocks id", _0)]
