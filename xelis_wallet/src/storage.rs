@@ -508,26 +508,27 @@ impl EncryptedStorage {
 
     // Add a topoheight where a change occured
     pub fn add_topoheight_to_changes(&mut self, topoheight: u64, block_hash: &Hash) -> Result<()> {
-        self.save_to_disk(&self.changes_topoheight, &topoheight.to_be_bytes(), block_hash.as_bytes())
+        self.save_to_disk_with_encrypted_key(&self.changes_topoheight, &topoheight.to_be_bytes(), block_hash.as_bytes())
     }
 
     // Get the block hash for the requested topoheight
     pub fn get_block_hash_for_topoheight(&self, topoheight: u64) -> Result<Hash> {
-        self.load_from_disk(&self.changes_topoheight, &topoheight.to_be_bytes())
+        self.load_from_disk_with_encrypted_key(&self.changes_topoheight, &topoheight.to_be_bytes())
     }
 
     // Check if the topoheight is present in the changes tree
     pub fn has_topoheight_in_changes(&self, topoheight: u64) -> Result<bool> {
-        self.contains_data(&self.changes_topoheight, &topoheight.to_be_bytes())
+        self.contains_encrypted_data(&self.changes_topoheight, &topoheight.to_be_bytes())
     }
 
     // Delete all changes above topoheight
     // This will returns true if a changes was deleted
     pub fn delete_changes_above_topoheight(&mut self, topoheight: u64) -> Result<bool> {
         let mut deleted = false;
-        for res in self.changes_topoheight.iter() {
-            let (key, _) = res?;
-            let topo = u64::from_bytes(&key)?;
+        for res in self.changes_topoheight.iter().keys() {
+            let key = res?;
+            let raw = self.cipher.decrypt_value(&key).context("Error while decrypting key from disk")?;
+            let topo = u64::from_bytes(&raw)?;
             if topo > topoheight {
                 self.changes_topoheight.remove(key)?;
                 deleted = true;
