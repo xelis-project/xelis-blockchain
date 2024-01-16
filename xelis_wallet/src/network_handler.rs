@@ -326,64 +326,72 @@ impl NetworkHandler {
 
         // Search the highest block that is still valid for wallet
         let mut maximum = synced_topoheight;
-        let mut minimum = pruned_topoheight;
-        while minimum <= maximum {
-            let middle = (minimum + maximum) / 2;
-            if middle == 0 || middle <= pruned_topoheight {
-                // we are at the genesis block, we can't go lower
-                break;
-            }
-
-            // get the highest hash we have locally that we synced
-            let local_hash = {
+        let block_hash = loop {
+            maximum = {
                 let storage = self.wallet.get_storage().read().await;
-                // check if we have a changes that happened in this block locally
-                let Ok(hash) = storage.get_block_hash_for_topoheight(middle) else {
-                    maximum = middle - 1;
-                    continue;
-                };
-                hash
+                storage.get_highest_topoheight_in_changes_below(maximum)?
             };
 
-            // Request the daemon to get the block at this topoheight
-            let block = self.api.get_block_at_topoheight(middle).await?;
-            let block_hash = block.data.hash.into_owned();
-
-            if block_hash == local_hash {
-                // we have this block, increase minimum
-                minimum = middle + 1;
-            } else {
-                // we don't have this block, decrease maximum
-                maximum = middle - 1;
+            // We are completely wrong, we should sync from scratch
+            if maximum == 0 {
+                break None;
             }
-        }
 
-        // Reduce the minimum by one to get the last block we have
-        if minimum != 0 && pruned_topoheight < minimum {
-            minimum -= 1;
-        }
+            // We are under the pruned topoheight,
+            // lets assume we are on the right chain under it
+            if maximum < pruned_topoheight {
+                maximum = pruned_topoheight;
+                break None;
+            }
+
+            // Retrieve local hash
+            let local_hash = {
+                let storage = self.wallet.get_storage().read().await;
+                storage.get_block_hash_for_topoheight(maximum)?
+            };
+
+            // Check if we are on the same chain
+            debug!("Checking if we are on the same chain at topoheight {}", maximum);
+            let header = self.api.get_block_at_topoheight(maximum).await?;
+            let block_hash = header.data.hash.into_owned();
+            if block_hash == local_hash {
+                break Some(local_hash);
+            }
+
+            // Looks like we are on a different chain
+            maximum -= 1;
+        };
 
         // Get the hash of the block at this topoheight
-        let block_hash = self.api.get_block_at_topoheight(minimum).await?.data.hash.into_owned();
+        let block_hash = if let Some(block_hash) = block_hash {
+            block_hash
+        } else {
+            let response = self.api.get_block_at_topoheight(maximum).await?;
+            response.data.hash.into_owned()
+        };
+
         let mut storage = self.wallet.get_storage().write().await;        
         // Now let's clean everything
-        if storage.delete_changes_above_topoheight(minimum)? {
-            warn!("Cleaning transactions above topoheight {}", minimum);
+        if storage.delete_changes_above_topoheight(maximum)? {
+            warn!("Cleaning transactions above topoheight {}", maximum);
             // Changes were deleted, we should also delete transactions
-            storage.delete_transactions_above_topoheight(minimum)?;
+            storage.delete_transactions_above_topoheight(maximum)?;
         }
 
         // Save the new values
-        storage.set_synced_topoheight(minimum)?;
+        storage.set_synced_topoheight(maximum)?;
         storage.set_top_block_hash(&block_hash)?;
-        storage.add_topoheight_to_changes(minimum, &block_hash)?;
+        // Add it only if its not already in changes
+        if !storage.has_topoheight_in_changes(maximum)? {
+            storage.add_topoheight_to_changes(maximum, &block_hash)?;
+        }
 
         // Verify its not the first time we do a sync
         if synced_topoheight != 0 {
-            self.wallet.propagate_event(Event::Rescan(minimum)).await;   
+            self.wallet.propagate_event(Event::Rescan(maximum)).await;   
         }
 
-        Ok((daemon_topoheight, daemon_block_hash, minimum, true))
+        Ok((daemon_topoheight, daemon_block_hash, maximum, true))
     }
 
     // Sync the latest version of our balances and nonces and determine if we should parse all blocks

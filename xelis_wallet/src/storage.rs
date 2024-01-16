@@ -302,14 +302,17 @@ impl EncryptedStorage {
         self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())
     }
 
+    // Retrieve the balance for this asset
     pub fn get_balance_for(&self, asset: &Hash) -> Result<u64> {
         self.load_from_disk(&self.balances, asset.as_bytes())
     }
 
+    // Set the balance for this asset
     pub fn set_balance_for(&mut self, asset: &Hash, value: u64) -> Result<()> {
         self.save_to_disk(&self.balances, asset.as_bytes(), &value.to_be_bytes())
     }
 
+    // Retrieve a transaction saved in wallet using its hash
     pub fn get_transaction(&self, hash: &Hash) -> Result<TransactionEntry> {
         self.load_from_disk(&self.transactions, hash.as_bytes())
     }
@@ -536,6 +539,31 @@ impl EncryptedStorage {
         }
 
         Ok(deleted)
+    }
+
+    // Retrieve topoheight changes 
+    pub fn get_topoheight_changes<'a>(&'a self) -> impl Iterator<Item = Result<(u64, Hash)>> + 'a {
+        self.changes_topoheight.iter().rev().map(|res| {
+            let (key, value) = res?;
+            let topo = u64::from_bytes(&self.cipher.decrypt_value(&key)?)?;
+            let hash = Hash::from_bytes(&self.cipher.decrypt_value(&value)?)?;
+            Ok((topo, hash))
+        })
+    }
+
+    // Find highest topoheight in changes
+    pub fn get_highest_topoheight_in_changes_below(&self, max: u64) -> Result<u64> {
+        let mut highest = 0;
+        for res in self.changes_topoheight.iter().keys() {
+            let key = res?;
+            let raw = self.cipher.decrypt_value(&key).context("Error while decrypting key from disk")?;
+            let topo = u64::from_bytes(&raw)?;
+            if topo > highest && topo < max {
+                highest = topo;
+            }
+        }
+
+        Ok(highest)
     }
 }
 
