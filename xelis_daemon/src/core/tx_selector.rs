@@ -49,11 +49,28 @@ pub struct TxSelector<'a> {
 }
 
 impl<'a> TxSelector<'a> {
+    // Create a TxSelector from a list of groups
+    pub fn grouped<I>(groups: I) -> Self
+    where
+        I: Iterator<Item = Vec<TxSelectorEntry<'a>>>
+    {
+        let mut queue = BinaryHeap::new();
+
+        // push every group to the queue
+        for group in groups {
+            queue.push(Transactions(VecDeque::from(group)));
+        }
+
+        Self {
+            queue
+        }
+    }
+
+    // Create a TxSelector from a list of transactions with their hash and size
     pub fn new<I>(iter: I) -> Self
     where
         I: Iterator<Item = (usize, &'a Arc<Hash>, &'a Arc<Transaction>)>
     {
-        let mut queue = BinaryHeap::new();
         let mut groups: HashMap<&PublicKey, Vec<TxSelectorEntry>> = HashMap::new();
 
         // Create groups of transactions
@@ -75,14 +92,11 @@ impl<'a> TxSelector<'a> {
         }
 
         // Order each group by nonces and push it to the queue
-        for (_, mut group) in groups {
-            group.sort_by(|a, b| a.tx.get_nonce().cmp(&b.tx.get_nonce()));
-            queue.push(Transactions(VecDeque::from(group)));
-        }
-
-        Self {
-            queue
-        }
+        let iter = groups.into_iter().map(|(_, mut v)| {
+            v.sort_by(|a, b| a.tx.get_nonce().cmp(&b.tx.get_nonce()));
+            v
+        });
+        Self::grouped(iter)
     }
 
     // Get the next transaction with the highest fee

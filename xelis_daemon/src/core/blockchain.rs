@@ -1226,13 +1226,22 @@ impl<S: Storage> Blockchain<S> {
         let mempool = self.mempool.read().await;
         trace!("Mempool locked for building block template");
 
-        // get all availables txs and sort them by fee per size
-        let iter = mempool.get_txs()
-            .iter()
-            .map(|(hash, tx)| (tx.get_size(), hash, tx.get_tx()));
+        // use the mempool cache to get all availables txs grouped by account
+        let caches = mempool.get_caches();
+        let mut entries: Vec<Vec<TxSelectorEntry>> = Vec::with_capacity(caches.len());
+        for cache in caches.values() {
+            let cache_txs = cache.get_txs();
+            let mut txs = Vec::with_capacity(cache_txs.len());
+            // Map every tx hash to a TxSelectorEntry
+            for tx_hash in cache_txs.iter() {
+                let sorted_tx = mempool.get_sorted_tx(tx_hash)?;
+                txs.push(TxSelectorEntry { size: sorted_tx.get_size(), hash: tx_hash, tx: sorted_tx.get_tx() });
+            }
+            entries.push(txs);
+        }
 
         // Build the tx selector using the mempool
-        let mut tx_selector = TxSelector::new(iter);
+        let mut tx_selector = TxSelector::grouped(entries.into_iter());
 
         // size of block
         let mut block_size = block.size();
