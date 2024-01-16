@@ -117,6 +117,12 @@ pub struct HasNonceParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetNonceAtTopoHeightParams<'a> {
+    pub address: Cow<'a, Address>,
+    pub topoheight: u64
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetNonceResult {
     pub topoheight: u64,
     #[serde(flatten)]
