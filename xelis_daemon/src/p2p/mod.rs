@@ -187,6 +187,7 @@ impl<S: Storage> P2pServer<S> {
             error!("Error while sending Exit message to stop accepting new connections: {}", e);
         }
 
+        info!("Waiting for all peers to be closed...");
         let mut peers = self.peer_list.write().await;
         peers.close_all().await;
         info!("P2p Server is now stopped!");

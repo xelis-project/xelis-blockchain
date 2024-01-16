@@ -145,7 +145,10 @@ pub enum Event {
     // When a balance change occurs on wallet
     BalanceChanged(BalanceChanged),
     // When a new asset is added to wallet
-    NewAsset(AssetWithData)
+    NewAsset(AssetWithData),
+    // When a rescan happened (because of user request or DAG reorg/fork)
+    // Value is topoheight until it deleted transactions
+    Rescan(u64)
 }
 
 impl Event {
@@ -154,7 +157,8 @@ impl Event {
             Event::NewTransaction(_) => NotifyEvent::NewTransaction,
             Event::NewTopoHeight(_) => NotifyEvent::NewChainInfo,
             Event::BalanceChanged(_) => NotifyEvent::BalanceChanged,
-            Event::NewAsset(_) => NotifyEvent::NewAsset
+            Event::NewAsset(_) => NotifyEvent::NewAsset,
+            Event::Rescan(_) => NotifyEvent::Rescan
         }
     }
 

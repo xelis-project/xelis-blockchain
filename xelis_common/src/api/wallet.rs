@@ -178,4 +178,7 @@ pub enum NotifyEvent {
     // When a balance is changed
     // Contains a BalanceChanged as value
     BalanceChanged,
+    // When a rescan happened on the wallet
+    // Contains a topoheight as value to indicate until which topoheight transactions got deleted
+    Rescan
 }

@@ -378,6 +378,11 @@ impl NetworkHandler {
         storage.set_top_block_hash(&block_hash)?;
         storage.add_topoheight_to_changes(minimum, &block_hash)?;
 
+        // Verify its not the first time we do a sync
+        if synced_topoheight != 0 {
+            self.wallet.propagate_event(Event::Rescan(minimum)).await;   
+        }
+
         Ok((daemon_topoheight, daemon_block_hash, minimum, true))
     }
 
