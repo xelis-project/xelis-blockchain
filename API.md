@@ -536,6 +536,42 @@ Verify if address has a nonce on-chain registered.
 }
 ```
 
+#### Get Nonce At TopoHeight
+Get nonce from address at exact topoheight
+
+##### Method `get_nonce_at_topoheight`
+
+##### Parameters
+|    Name    |   Type  | Required |                           Note                          |
+|:----------:|:-------:|:--------:|:-------------------------------------------------------:|
+|   address  | Address | Required |            Valid address registered on chain            |
+| topoheight | Integer | Required | Topoheight to retrieve a version (if exists) of balance |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_nonce_at_topoheight",
+	"params": {
+		"address": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
+		"topoheight": 30
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"nonce": 44,
+		"previous_topoheight": 29
+	}
+}
+```
+
 #### Get Balance
 Get up-to-date asset's balance for a specific address
 
@@ -573,6 +609,42 @@ NOTE: Balance is returned in atomic units
 			"previous_topoheight": 41
 		},
 		"topoheight": 42
+	}
+}
+```
+
+#### Has Balance
+Verify if address has a balance on-chain registered for requested asset.
+
+##### Method `has_balance`
+
+##### Parameters
+|    Name    |   Type  | Required |                    Note                    |
+|:----------:|:-------:|:--------:|:------------------------------------------:|
+|   address  | Address | Required |      Valid address registered on chain     |
+|    asset   |   Hash  | Required |        Asset ID registered on chain        |
+| topoheight | Integer | Optional |        nonce at specified topoheight       |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "has_balance",
+	"params": {
+		"address": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"exist": true
 	}
 }
 ```
