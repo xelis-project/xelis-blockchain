@@ -277,7 +277,7 @@ impl<S: Storage> P2pServer<S> {
                     let reject = if !self.accept_new_connections().await { // if we have already reached the limit, we ignore this new connection
                         debug!("Max peers reached, rejecting connection");
                         true
-                    } else if !self.exclusive_nodes.is_empty() && !self.exclusive_nodes.contains(&addr) {
+                    } else if !self.is_compatible_with_exclusive_nodes(&addr) {
                         debug!("{} is not an exclusive node, reject connection", addr);
                         true
                     } else {
@@ -424,10 +424,19 @@ impl<S: Storage> P2pServer<S> {
         self.handle_connection(peer).await
     }
 
+    // Verify that we don't have any exclusive nodes configured OR that we are part of this list
+    pub fn is_compatible_with_exclusive_nodes(&self, addr: &SocketAddr) -> bool {
+        self.exclusive_nodes.is_empty() || self.exclusive_nodes.contains(addr)
+    }
+
     // Connect to a specific peer address
     // Buffer is passed in parameter to prevent the re-allocation each time
     pub async fn try_to_connect_to_peer(&self, addr: SocketAddr, priority: bool) {
         trace!("try to connect to peer addr {}, priority: {}", addr, priority);
+        if !self.is_compatible_with_exclusive_nodes(&addr) {
+            debug!("Not in exclusive node list: {}, skipping", addr);
+        }
+
         {
             let peer_list = self.peer_list.read().await;
             trace!("peer list locked for trying to connect to peer {}", addr);
