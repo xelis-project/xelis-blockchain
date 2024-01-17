@@ -133,6 +133,7 @@ pub enum WalletError {
 }
 
 #[derive(Serialize, Clone)]
+#[serde(untagged)]
 pub enum Event {
     // When a TX is detected from daemon and is added in wallet storage
     NewTransaction(TransactionEntry),
@@ -148,7 +149,11 @@ pub enum Event {
     NewAsset(AssetWithData),
     // When a rescan happened (because of user request or DAG reorg/fork)
     // Value is topoheight until it deleted transactions
-    Rescan(u64)
+    Rescan(u64),
+    // Wallet is now in online mode
+    Online,
+    // Wallet is now in offline mode
+    Offline
 }
 
 impl Event {
@@ -158,7 +163,9 @@ impl Event {
             Event::NewTopoHeight(_) => NotifyEvent::NewChainInfo,
             Event::BalanceChanged(_) => NotifyEvent::BalanceChanged,
             Event::NewAsset(_) => NotifyEvent::NewAsset,
-            Event::Rescan(_) => NotifyEvent::Rescan
+            Event::Rescan(_) => NotifyEvent::Rescan,
+            Event::Online => NotifyEvent::Online,
+            Event::Offline => NotifyEvent::Offline
         }
     }
 

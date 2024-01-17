@@ -76,8 +76,16 @@ impl NetworkHandler {
             if let Err(e) = res.as_ref() {
                 error!("Error while syncing: {}", e);
             }
+
+            // Notify that we are offline
+            zelf.wallet.propagate_event(Event::Offline).await;
+
             res
         }));
+
+
+        // Notify that we are online
+        self.wallet.propagate_event(Event::Online).await;
 
         Ok(())
     }
@@ -87,10 +95,15 @@ impl NetworkHandler {
         trace!("Stopping network handler");
         if let Some(handle) = self.task.lock().await.take() {
             if handle.is_finished() {
+                // We are already finished, which mean the event got triggered
                 handle.await??;
             } else {
                 handle.abort();
+
+                // Notify that we are offline
+                self.wallet.propagate_event(Event::Offline).await;
             }
+
             Ok(())
         } else {
             Err(NetworkError::NotRunning)
@@ -517,7 +530,7 @@ impl NetworkHandler {
     // Runs an infinite loop to sync on each new block added in chain
     // Because of potential forks and DAG reorg during attacks,
     // we verify the last valid topoheight where changes happened
-    async fn start_syncing(self: Arc<Self>) -> Result<(), Error> {
+    async fn start_syncing(self: &Arc<Self>) -> Result<(), Error> {
         // Generate only one time the address
         let address = self.wallet.get_address();
         // Do a first sync to be up-to-date with the daemon
