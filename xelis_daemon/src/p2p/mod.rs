@@ -435,6 +435,7 @@ impl<S: Storage> P2pServer<S> {
         trace!("try to connect to peer addr {}, priority: {}", addr, priority);
         if !self.is_compatible_with_exclusive_nodes(&addr) {
             debug!("Not in exclusive node list: {}, skipping", addr);
+            return;
         }
 
         {
