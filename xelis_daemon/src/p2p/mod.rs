@@ -113,6 +113,9 @@ pub struct P2pServer<S: Storage> {
     // Can be reduced for low devices, and increased for high end devices
     // You may sync faster or slower depending on this value
     max_chain_response_size: usize,
+    // Configured exclusive nodes
+    // If not empty, no other peer than those listed can connect to this node
+    exclusive_nodes: HashSet<SocketAddr>,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -151,14 +154,15 @@ impl<S: Storage> P2pServer<S> {
             blocks_processor,
             allow_fast_sync_mode,
             allow_boost_sync_mode,
-            max_chain_response_size: max_chain_response_size.unwrap_or(CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS)
+            max_chain_response_size: max_chain_response_size.unwrap_or(CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS),
+            exclusive_nodes: HashSet::from_iter(exclusive_nodes.into_iter())
         };
 
         let arc = Arc::new(server);
         {
             let zelf = Arc::clone(&arc);
             tokio::spawn(async move {
-                if let Err(e) = zelf.start(connections_receiver, use_peerlist, exclusive_nodes).await {
+                if let Err(e) = zelf.start(connections_receiver, use_peerlist).await {
                     error!("Unexpected error on P2p module: {}", e);
                 }
             });
@@ -198,11 +202,11 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Connect to nodes which aren't already connected in parameters
-    async fn connect_to_nodes(self: &Arc<Self>, nodes: &Vec<SocketAddr>) -> Result<(), P2pError> {
+    async fn connect_to_nodes(self: &Arc<Self>, nodes: impl Iterator<Item = SocketAddr>) -> Result<(), P2pError> {
         for addr in nodes {
             if self.accept_new_connections().await {
-                if !self.is_connected_to_addr(addr).await? {
-                    self.try_to_connect_to_peer(addr.clone(), true).await;
+                if !self.is_connected_to_addr(&addr).await? {
+                    self.try_to_connect_to_peer(addr, true).await;
                 }
             }
         }
@@ -210,7 +214,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // every 10 seconds, verify and connect if necessary
-    async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: Vec<SocketAddr>) -> Result<(), P2pError> {
+    async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: HashSet<SocketAddr>) -> Result<(), P2pError> {
         debug!("Starting maintains seed nodes task...");
         let mut interval = interval(Duration::from_secs(10));
         loop {
@@ -221,7 +225,7 @@ impl<S: Storage> P2pServer<S> {
             }
 
             if self.accept_new_connections().await {
-                if let Err(e) = self.connect_to_nodes(&nodes).await {
+                if let Err(e) = self.connect_to_nodes(nodes.iter().cloned()).await {
                     debug!("Error while connecting to seed nodes: {}", e);
                 };
             }
@@ -232,7 +236,8 @@ impl<S: Storage> P2pServer<S> {
 
     // connect to seed nodes, start p2p server
     // and wait on all new connections
-    async fn start(self: &Arc<Self>, mut receiver: UnboundedReceiver<MessageChannel>, use_peerlist: bool, mut exclusive_nodes: Vec<SocketAddr>) -> Result<(), P2pError> {
+    async fn start(self: &Arc<Self>, mut receiver: UnboundedReceiver<MessageChannel>, use_peerlist: bool) -> Result<(), P2pError> {
+        let mut exclusive_nodes = self.exclusive_nodes.clone();
         if exclusive_nodes.is_empty() {
             debug!("No exclusive nodes available, using seed nodes...");
             exclusive_nodes = SEED_NODES.iter().map(|s| s.parse().unwrap()).collect();
@@ -267,23 +272,33 @@ impl<S: Storage> P2pServer<S> {
                 res = listener.accept() => {
                     trace!("New listener result received (is err: {})", res.is_err());
                     let (mut stream, addr) = res?;
-                    if !self.accept_new_connections().await { // if we have already reached the limit, we ignore this new connection
+
+                    // Verify if we can accept new connections
+                    let reject = if !self.accept_new_connections().await { // if we have already reached the limit, we ignore this new connection
                         debug!("Max peers reached, rejecting connection");
-                        if let Err(e) = stream.shutdown().await {
-                            debug!("Error while closing & ignoring incoming connection {}: {}", addr, e);
-                        }
-                        continue;
+                        true
+                    } else if !self.exclusive_nodes.is_empty() && !self.exclusive_nodes.contains(&addr) {
+                        debug!("{} is not an exclusive node, reject connection", addr);
+                        true
                     } else {
                         // check that this incoming peer isn't blacklisted
                         let peer_list = self.peer_list.read().await;
                         if peer_list.is_blacklisted(&addr.ip()) {
                             debug!("{} is blacklisted, rejecting connection", addr);
-                            if let Err(e) = stream.shutdown().await {
-                                debug!("Error while closing & ignoring incoming connection {}: {}", addr, e);
-                            }
-                            continue;
+                            true
+                        } else {
+                            false
                         }
+                    };
+
+                    // Reject connection
+                    if reject {
+                        if let Err(e) = stream.shutdown().await {
+                            debug!("Error while closing & ignoring incoming connection {}: {}", addr, e);
+                        }
+                        continue;
                     }
+
                     (Connection::new(stream, addr), false, false)
                 },
                 Some(msg) = receiver.recv() => match msg {
