@@ -67,12 +67,22 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + C
     ws: Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>,
     count: AtomicUsize,
     requests: Mutex<HashMap<usize, oneshot::Sender<JsonRPCResponse>>>,
+    // This contains all id sent to register to a event on daemon
+    // It stores the sender channel to propagate the event to apps 
     handler_by_id: Mutex<HashMap<usize, broadcast::Sender<Value>>>,
+    // This contains all events registered by the app with its usize
+    // This allows us to subscribe to same channel if its already subscribed
     events_to_id: Mutex<HashMap<E, usize>>,
     // websocket server address
     target: String,
+    // auto reconnect duration
     auto_reconnect: Mutex<Option<Duration>>,
-    online: AtomicBool
+    // is the client online
+    online: AtomicBool,
+    // This channel is called when the connection is lost
+    offline_channel: Mutex<Option<broadcast::Sender<()>>>,
+    // This channel is called each time we connect
+    online_channel: Mutex<Option<broadcast::Sender<()>>>
 }
 
 pub const DEFAULT_AUTO_RECONNECT: Duration = Duration::from_secs(5);
@@ -110,7 +120,9 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
             events_to_id: Mutex::new(HashMap::new()),
             target,
             auto_reconnect: Mutex::new(Some(DEFAULT_AUTO_RECONNECT)),
-            online: AtomicBool::new(true)
+            online: AtomicBool::new(true),
+            offline_channel: Mutex::new(None),
+            online_channel: Mutex::new(None)
         });
 
         {
@@ -130,6 +142,45 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
         self.count.fetch_add(1, Ordering::SeqCst)
     }
 
+    // Notify a channel if we lose/gain the connection
+    async fn notify_connection_channel(&self, mutex: &Mutex<Option<broadcast::Sender<()>>>) {
+        let mut channel = mutex.lock().await;
+        if let Some(sender) = channel.as_ref() {
+            // Nobody listen anymore, close the channel
+            if sender.is_empty() {
+                *channel = None;
+            } else {
+                // Notify receivers
+                if let Err(e) = sender.send(()) {
+                    error!("Error sending event to the request: {:?}", e);
+                }
+            }
+        }
+    }
+
+    // Register to a channel
+    async fn register_to_connection_channel(&self, mutex: &Mutex<Option<broadcast::Sender<()>>>) -> broadcast::Receiver<()> {
+        let mut channel = mutex.lock().await;
+        match channel.as_ref() {
+            Some(sender) => sender.subscribe(),
+            None => {
+                let (sender, receiver) = broadcast::channel(1);
+                *channel = Some(sender);
+                receiver
+            }
+        }
+    }
+
+    // Call this function to be notified by a channel when we lose the connection
+    pub async fn on_connection_lost(&self) -> broadcast::Receiver<()> {
+        self.register_to_connection_channel(&self.offline_channel).await
+    }
+
+    // Call this function to be notified by a channel when we are connected to the server
+    pub async fn on_connection(&self) -> broadcast::Receiver<()> {
+        self.register_to_connection_channel(&self.online_channel).await
+    }
+    
     // Should the client try to reconnect to the server if the connection is lost
     pub async fn should_auto_reconnect(&self) -> bool {
         self.auto_reconnect.lock().await.is_some()
@@ -167,6 +218,9 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
         trace!("try reconnect");
         // We are not online anymore
         self.online.store(false, Ordering::SeqCst);
+
+        // Notify that we are offline
+        self.notify_connection_channel(&self.offline_channel).await;
 
         // Check if we should reconnect
         let mut reconnect = {
@@ -210,6 +264,9 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
 
             // We are online again
             self.online.store(true, Ordering::SeqCst);
+
+            // Notify that we are online again
+            self.notify_connection_channel(&self.online_channel).await;
 
             return Some(read)
         }

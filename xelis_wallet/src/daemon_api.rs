@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::Value;
+use tokio::sync::broadcast;
 use xelis_common::{
     json_rpc::{WebSocketJsonRPCClient, WebSocketJsonRPCClientImpl, JsonRPCResult, EventReceiver},
     api::daemon::{
@@ -35,6 +36,16 @@ impl DaemonAPI {
     // is the websocket connection alive
     pub fn is_online(&self) -> bool {
         self.client.is_online()
+    }
+
+    // On connection event
+    pub async fn on_connection(&self) -> broadcast::Receiver<()> {
+        self.client.on_connection().await
+    }
+
+    // On connection lost
+    pub async fn on_connection_lost(&self) -> broadcast::Receiver<()> {
+        self.client.on_connection_lost().await
     }
 
     pub async fn call<P: Serialize>(&self, method: &String, params: &P) -> JsonRPCResult<Value> {

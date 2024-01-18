@@ -539,11 +539,29 @@ impl NetworkHandler {
         // Thanks to websocket, we can be notified when a new block is added in chain
         // this allows us to have a instant sync of each new block instead of polling periodically
         let mut receiver = self.api.on_new_block_event().await?;
+
+        // Network events to detect if we are online or offline
+        let mut on_connection = self.api.on_connection().await;
+        let mut on_connection_lost = self.api.on_connection_lost().await;
+
         loop {
-            // Wait on a new block, we don't parse the block directly as it may
-            // have reorg the chain
-            let event = receiver.next().await?;
-            self.sync(&address, Some(event)).await?;
+            tokio::select! {
+                // Wait on a new block, we don't parse the block directly as it may
+                // have reorg the chain
+                res = receiver.next() => {
+                    let event = res?;
+                    self.sync(&address, Some(event)).await?;
+                },
+                // Detect network events
+                res = on_connection.recv() => {
+                    res?;
+                    self.wallet.propagate_event(Event::Online).await;
+                },
+                res = on_connection_lost.recv() => {
+                    res?;
+                    self.wallet.propagate_event(Event::Offline).await;
+                }
+            }
         }
     }
 
