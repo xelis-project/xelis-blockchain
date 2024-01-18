@@ -147,7 +147,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
         let mut channel = mutex.lock().await;
         if let Some(sender) = channel.as_ref() {
             // Nobody listen anymore, close the channel
-            if sender.is_empty() {
+            if sender.receiver_count() == 0 {
                 *channel = None;
             } else {
                 // Notify receivers
