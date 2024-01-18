@@ -1,20 +1,28 @@
-use super::error::P2pError;
-use super::packet::Packet;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::net::SocketAddr;
-use std::time::Duration;
+use super::{
+    error::P2pError,
+    packet::Packet
+};
+use std::{
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    net::SocketAddr,
+    time::Duration,
+    fmt::{Display, Error, Formatter},
+    convert::TryInto
+};
 use human_bytes::human_bytes;
 use humantime::format_duration;
-use tokio::net::TcpStream;
-use tokio::net::tcp::{OwnedWriteHalf, OwnedReadHalf};
+use tokio::{
+    net::{
+        TcpStream,
+        tcp::{OwnedWriteHalf, OwnedReadHalf}
+    },
+    sync::{mpsc, Mutex},
+    io::{AsyncWriteExt, AsyncReadExt},
+};
 use xelis_common::{
     utils::get_current_time_in_seconds,
     serializer::{Reader, Serializer},
 };
-use std::fmt::{Display, Error, Formatter};
-use tokio::sync::{mpsc, Mutex};
-use tokio::io::{AsyncWriteExt, AsyncReadExt};
-use std::convert::TryInto;
 use bytes::Bytes;
 use log::{trace, warn};
 
