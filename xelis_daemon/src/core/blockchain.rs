@@ -2260,6 +2260,7 @@ impl<S: Storage> Blockchain<S> {
     // It will return the target block time if we don't have enough blocks
     // We calculate it by taking the timestamp of the block at topoheight - 50 and the timestamp of the block at topoheight
     // It is the same as computing the average time between the last 50 blocks but much faster
+    // Genesis block timestamp isn't take in count for this calculation
     pub async fn get_average_block_time_for_storage(&self, storage: &S) -> Result<u64, BlockchainError> {
         // current topoheight
         let topoheight = self.get_topo_height();
@@ -2269,10 +2270,10 @@ impl<S: Storage> Blockchain<S> {
         // otherwise returns topoheight
         let mut count = if topoheight > 50 {
             50
-        } else if topoheight == 0 {
+        } else if topoheight <= 1 {
             return Ok(BLOCK_TIME_MILLIS);
         } else {
-            topoheight
+            topoheight - 1
         };
 
         // check that we are not under the pruned topoheight
