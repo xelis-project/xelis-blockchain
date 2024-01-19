@@ -355,16 +355,16 @@ impl EncryptedStorage {
             }
     
             let (save, mut transfers) = match entry.get_mut_entry() {
-                EntryData::Coinbase(_) if accept_coinbase => (true, None),
+                EntryData::Coinbase { .. } if accept_coinbase => (true, None),
                 EntryData::Burn { .. } if accept_burn => (true, None),
-                EntryData::Incoming(sender, transfers) if accept_incoming => match address {
-                    Some(key) => (*key == *sender, Some(transfers)),
+                EntryData::Incoming { from, transfers } if accept_incoming => match address {
+                    Some(key) => (*key == *from, Some(transfers)),
                     None => (true, None)
                 },
-                EntryData::Outgoing(txs) if accept_outgoing => match address {
-                    Some(filter_key) => (txs.iter().find(|tx| {
+                EntryData::Outgoing { transfers } if accept_outgoing => match address {
+                    Some(filter_key) => (transfers.iter().find(|tx| {
                         *tx.get_key() == *filter_key
-                    }).is_some(), Some(txs)),
+                    }).is_some(), Some(transfers)),
                     None => (true, None),
                 },
                 _ => (false, None)

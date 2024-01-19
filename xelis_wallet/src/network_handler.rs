@@ -135,7 +135,7 @@ impl NetworkHandler {
         // create Coinbase entry if its our address and we're looking for XELIS asset
         if *block.get_miner() == *address.get_public_key() {
             if let Some(reward) = block_response.reward {
-                let coinbase = EntryData::Coinbase(reward);
+                let coinbase = EntryData::Coinbase { reward };
                 let entry = TransactionEntry::new(block_hash.clone(), topoheight, None, None, coinbase);
 
                 {
@@ -183,9 +183,9 @@ impl NetworkHandler {
                     }
 
                     if is_owner { // check that we are owner of this TX
-                        Some(EntryData::Outgoing(transfers))
+                        Some(EntryData::Outgoing { transfers })
                     } else if !transfers.is_empty() { // otherwise, check that we received one or few transfers from it
-                        Some(EntryData::Incoming(owner, transfers))
+                        Some(EntryData::Incoming { from: owner, transfers })
                     } else { // this TX has nothing to do with us, nothing to save
                         None
                     }

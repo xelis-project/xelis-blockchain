@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 
 use serde::Serialize;
-use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, utils::format_xelis, api::DataElement};
+use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, utils::format_xelis, api::DataElement, config::XELIS_ASSET};
 
 #[derive(Debug, Serialize, Clone)]
 pub struct Transfer {
@@ -68,23 +68,23 @@ impl Serializer for Transfer {
 #[derive(Debug, Serialize, Clone)]
 pub enum EntryData {
     #[serde(rename = "coinbase")]
-    Coinbase(u64), // Coinbase is only XELIS_ASSET
+    Coinbase { reward: u64 }, // Coinbase is only XELIS_ASSET
     #[serde(rename = "burn")]
     Burn {
         asset: Hash,
         amount: u64
     },
     #[serde(rename = "incoming")]
-    Incoming(PublicKey, Vec<Transfer>),
+    Incoming { from: PublicKey, transfers: Vec<Transfer> },
     #[serde(rename = "outgoing")]
-    Outgoing(Vec<Transfer>)
+    Outgoing { transfers: Vec<Transfer> }
 }
 
 impl Serializer for EntryData {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let id = reader.read_u8()?;
         Ok(match id  {
-            0 => Self::Coinbase(reader.read_u64()?),
+            0 => Self::Coinbase { reward: reader.read_u64()? },
             1 => Self::Burn {
                 asset: reader.read_hash()?,
                 amount: reader.read_u64()?
@@ -97,7 +97,7 @@ impl Serializer for EntryData {
                     let transfer = Transfer::read(reader)?;
                     transfers.push(transfer);
                 }
-                Self::Incoming(key, transfers)
+                Self::Incoming { from: key, transfers }
             }
             3 => {
                 let size = reader.read_u16()? as usize;
@@ -106,7 +106,7 @@ impl Serializer for EntryData {
                     let transfer = Transfer::read(reader)?;
                     transfers.push(transfer);
                 }
-                Self::Outgoing(transfers)
+                Self::Outgoing { transfers }
             }
             _ => return Err(ReaderError::InvalidValue)
         }) 
@@ -114,24 +114,24 @@ impl Serializer for EntryData {
 
     fn write(&self, writer: &mut Writer) {
         match &self {
-            Self::Coinbase(amount) => {
+            Self::Coinbase{ reward } => {
                 writer.write_u8(0);
-                writer.write_u64(amount);
+                writer.write_u64(reward);
             },
             Self::Burn { asset, amount } => {
                 writer.write_u8(1);
                 writer.write_hash(asset);
                 writer.write_u64(amount);
             },
-            Self::Incoming(key, transfers) => {
+            Self::Incoming { from, transfers } => {
                 writer.write_u8(2);
-                key.write(writer);
+                from.write(writer);
                 writer.write_u16(transfers.len() as u16);
                 for transfer in transfers {
                     transfer.write(writer);
                 }
             },
-            Self::Outgoing(transfers) => {
+            Self::Outgoing { transfers } => {
                 writer.write_u8(3);
                 writer.write_u16(transfers.len() as u16);
                 for transfer in transfers {
@@ -221,21 +221,29 @@ impl Serializer for TransactionEntry {
 impl Display for TransactionEntry {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let entry_str = match self.get_entry() {
-            EntryData::Coinbase(reward) => format!("Coinbase {} XELIS", format_xelis(*reward)),
+            EntryData::Coinbase { reward } => format!("Coinbase {} XELIS", format_xelis(*reward)),
             EntryData::Burn { asset, amount } => format!("Burn {} of {}", amount, asset),
-            EntryData::Incoming(sender, txs) => {
-                if txs.len() == 1 {
-                    format!("Received from {} {} {}", sender, format_xelis(txs[0].amount), txs[0].asset)
-                } else {
-                    format!("Incoming from {} {} transfers", sender, txs.len())
+            EntryData::Incoming { from, transfers } => {
+                let mut str = String::new();
+                for transfer in transfers {
+                    if *transfer.get_asset() == XELIS_ASSET {
+                        str.push_str(&format!("Received {} XELIS from {}", format_xelis(transfer.get_amount()), from));
+                    } else {
+                        str.push_str(&format!("Received {} {} from {}", transfer.get_amount(), transfer.get_asset(), from));
+                    }
                 }
+                str
             },
-            EntryData::Outgoing(txs) => {
-                if txs.len() == 1 {
-                    format!("Sent to {} {} {}", txs[0].key, format_xelis(txs[0].amount), txs[0].asset)
-                } else {
-                    format!("{} differents transfers", txs.len())
+            EntryData::Outgoing { transfers } => {
+                let mut str = String::new();
+                for transfer in transfers {
+                    if *transfer.get_asset() == XELIS_ASSET {
+                        str.push_str(&format!("Sent {} XELIS to {}", format_xelis(transfer.get_amount()), transfer.get_key()));
+                    } else {
+                        str.push_str(&format!("Sent {} {} to {}", transfer.get_amount(), transfer.get_asset(), transfer.get_key()));
+                    }
                 }
+                str
             }
         };
 
