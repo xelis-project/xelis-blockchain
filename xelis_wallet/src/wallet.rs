@@ -142,14 +142,19 @@ pub enum Event {
     // And some topoheight can be skipped because of DAG reorg
     // Example: two blocks at same height, both got same topoheight 69, next block reorg them together
     // and one of the block get topoheight 69, the other 70, next is 71, but 70 is skipped
-    NewTopoHeight(u64),
+    NewTopoHeight {
+        topoheight: u64
+    },
     // When a balance change occurs on wallet
     BalanceChanged(BalanceChanged),
     // When a new asset is added to wallet
     NewAsset(AssetWithData),
     // When a rescan happened (because of user request or DAG reorg/fork)
     // Value is topoheight until it deleted transactions
-    Rescan(u64),
+    // Next sync will restart at this topoheight
+    Rescan {
+        start_topoheight: u64   
+    },
     // Wallet is now in online mode
     Online,
     // Wallet is now in offline mode
@@ -160,10 +165,10 @@ impl Event {
     pub fn kind(&self) -> NotifyEvent {
         match self {
             Event::NewTransaction(_) => NotifyEvent::NewTransaction,
-            Event::NewTopoHeight(_) => NotifyEvent::NewChainInfo,
+            Event::NewTopoHeight { .. } => NotifyEvent::NewChainInfo,
             Event::BalanceChanged(_) => NotifyEvent::BalanceChanged,
             Event::NewAsset(_) => NotifyEvent::NewAsset,
-            Event::Rescan(_) => NotifyEvent::Rescan,
+            Event::Rescan { .. } => NotifyEvent::Rescan,
             Event::Online => NotifyEvent::Online,
             Event::Offline => NotifyEvent::Offline
         }

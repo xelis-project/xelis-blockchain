@@ -401,7 +401,7 @@ impl NetworkHandler {
 
         // Verify its not the first time we do a sync
         if synced_topoheight != 0 {
-            self.wallet.propagate_event(Event::Rescan(maximum)).await;   
+            self.wallet.propagate_event(Event::Rescan { start_topoheight: maximum }).await;   
         }
 
         Ok((daemon_topoheight, daemon_block_hash, maximum, true))
@@ -522,7 +522,7 @@ impl NetworkHandler {
         }
 
         // Propagate the event
-        self.wallet.propagate_event(Event::NewTopoHeight(daemon_topoheight)).await;
+        self.wallet.propagate_event(Event::NewTopoHeight { topoheight: daemon_topoheight }).await;
         debug!("Synced to topoheight {}", daemon_topoheight);
         Ok(())
     }
