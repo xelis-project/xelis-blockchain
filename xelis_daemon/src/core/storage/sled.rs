@@ -9,9 +9,11 @@ use xelis_common::{
     crypto::{key::PublicKey, hash::Hash},
     immutable::Immutable,
     transaction::Transaction,
-    block::{BlockHeader, Block, Difficulty},
+    block::{BlockHeader, Block},
+    difficulty::Difficulty,
     account::{VersionedBalance, VersionedNonce},
-    network::Network, asset::{AssetData, AssetWithData},
+    network::Network,
+    asset::{AssetData, AssetWithData},
 };
 use std::{
     collections::HashSet,

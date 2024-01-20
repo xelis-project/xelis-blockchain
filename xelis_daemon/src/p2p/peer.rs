@@ -1,6 +1,6 @@
 use lru::LruCache;
 use xelis_common::api::daemon::Direction;
-use xelis_common::block::Difficulty;
+use xelis_common::difficulty::Difficulty;
 use xelis_common::config::TIPS_LIMIT;
 use crate::config::{
     PEER_FAIL_TIME_RESET, STABLE_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS

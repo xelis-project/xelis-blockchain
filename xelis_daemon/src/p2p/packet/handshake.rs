@@ -1,7 +1,9 @@
 use log::debug;
 use xelis_common::{
     serializer::{Serializer, Writer, ReaderError, Reader},
-    crypto::hash::Hash, network::Network, block::Difficulty
+    crypto::hash::Hash,
+    network::Network,
+    difficulty::Difficulty
 };
 
 use crate::p2p::peer_list::SharedPeerList;

@@ -7,7 +7,9 @@ use indexmap::IndexSet;
 use xelis_common::{
     crypto::{key::PublicKey, hash::Hash},
     transaction::Transaction,
-    block::{Block, BlockHeader, Difficulty}, account::{VersionedBalance, VersionedNonce},
+    block::{Block, BlockHeader},
+    account::{VersionedBalance, VersionedNonce},
+    difficulty::Difficulty,
     immutable::Immutable,
     network::Network, asset::{AssetData, AssetWithData},
 };

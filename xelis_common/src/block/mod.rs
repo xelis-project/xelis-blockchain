@@ -17,10 +17,6 @@ pub const EXTRA_NONCE_SIZE: usize = 32;
 pub const HEADER_WORK_SIZE: usize = 73;
 pub const BLOCK_WORK_SIZE: usize = 120; // 32 + 16 + 8 + 32 + 32 = 120
 
-// This type is used to easily switch between u64 and u128 as example
-// And its easier to see where we use the block difficulty
-pub type Difficulty = u64;
-
 pub fn serialize_extra_nonce<S: serde::Serializer>(extra_nonce: &[u8; EXTRA_NONCE_SIZE], s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(&hex::encode(extra_nonce))
 }

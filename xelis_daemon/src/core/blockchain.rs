@@ -5,10 +5,10 @@ use serde_json::{Value, json};
 use xelis_common::{
     config::{XELIS_ASSET, COIN_DECIMALS, MAX_TRANSACTION_SIZE, TIPS_LIMIT},
     crypto::{key::PublicKey, hash::{Hashable, Hash, HASH_SIZE}},
-    difficulty::check_difficulty,
+    difficulty::{Difficulty, check_difficulty},
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     utils::{get_current_time_in_millis, format_xelis, get_current_time_in_seconds},
-    block::{Block, BlockHeader, EXTRA_NONCE_SIZE, Difficulty},
+    block::{Block, BlockHeader, EXTRA_NONCE_SIZE},
     immutable::Immutable,
     serializer::Serializer,
     account::VersionedBalance,

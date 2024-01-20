@@ -1,7 +1,7 @@
 use std::f64::consts::E;
 
 use log::trace;
-use xelis_common::block::Difficulty;
+use xelis_common::difficulty::Difficulty;
 use crate::config::{STABLE_LIMIT, BLOCK_TIME_MILLIS, MINIMUM_DIFFICULTY};
 
 const M: f64 = STABLE_LIMIT as f64;

@@ -1,8 +1,11 @@
-use crate::block::Difficulty;
 use crate::crypto::hash::Hash;
 use num_bigint::{BigUint, ToBigUint};
 use thiserror::Error;
 use num_traits::One;
+
+// This type is used to easily switch between u64 and u128 as example
+// And its easier to see where we use the block difficulty
+pub type Difficulty = u64;
 
 #[derive(Error, Debug)]
 pub enum DifficultyError {

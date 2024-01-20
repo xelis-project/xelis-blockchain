@@ -10,8 +10,24 @@ use log::{info, error, warn};
 use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
-    prompt::{Prompt, command::{CommandManager, CommandError, Command, CommandHandler}, PromptError, argument::{ArgumentManager, Arg, ArgType}, LogLevel, self, ShareablePrompt},
-    config::{VERSION, XELIS_ASSET}, utils::{format_hashrate, set_network_to, format_xelis, format_coin, format_difficulty}, async_handler, crypto::{address::Address, hash::Hashable}, network::Network, transaction::Transaction, serializer::Serializer, block::Difficulty, context::Context
+    prompt::{
+        Prompt,
+        command::{CommandManager, CommandError, Command, CommandHandler},
+        PromptError,
+        argument::{ArgumentManager, Arg, ArgType},
+        LogLevel,
+        self,
+        ShareablePrompt
+    },
+    config::{VERSION, XELIS_ASSET},
+    utils::{format_hashrate, set_network_to, format_xelis, format_coin, format_difficulty},
+    async_handler,
+    crypto::{address::Address, hash::Hashable},
+    network::Network,
+    transaction::Transaction,
+    serializer::Serializer,
+    difficulty::Difficulty,
+    context::Context
 };
 use crate::{
     core::{
@@ -20,8 +36,11 @@ use crate::{
     },
     config::{BLOCK_TIME_MILLIS, MILLIS_PER_SECOND}
 };
-use std::{sync::Arc, net::{IpAddr, SocketAddr}};
-use std::time::Duration;
+use std::{
+    sync::Arc,
+    net::{IpAddr, SocketAddr},
+    time::Duration
+};
 use clap::Parser;
 use anyhow::{Result, Context as AnyContext};
 

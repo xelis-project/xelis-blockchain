@@ -4,7 +4,7 @@ use log::debug;
 use xelis_common::{
     crypto::{hash::Hash, key::PublicKey},
     serializer::{Serializer, ReaderError, Reader, Writer},
-    block::Difficulty,
+    difficulty::Difficulty,
     asset::AssetWithData
 };
 use super::chain::{BlockId, CommonPoint};

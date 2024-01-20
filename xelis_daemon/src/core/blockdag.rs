@@ -1,5 +1,5 @@
 use indexmap::IndexSet;
-use xelis_common::block::Difficulty;
+use xelis_common::difficulty::Difficulty;
 use xelis_common::crypto::hash::Hash;
 use super::storage::Storage;
 use super::{error::BlockchainError, storage::DifficultyProvider};

@@ -4,7 +4,8 @@ use crate::{
     crypto::{hash::Hash, address::Address},
     account::{VersionedBalance, VersionedNonce},
     network::Network,
-    block::{Difficulty, Block},
+    block::Block,
+    difficulty::Difficulty,
     transaction::Transaction
 };
 use super::DataHash;

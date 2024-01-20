@@ -1,6 +1,7 @@
 use lazy_static::lazy_static;
 use xelis_common::{
-    block::{Difficulty, BlockHeader},
+    block::BlockHeader,
+    difficulty::Difficulty,
     config::COIN_VALUE,
     crypto::{
         key::PublicKey, address::Address, hash::{Hash, Hashable}

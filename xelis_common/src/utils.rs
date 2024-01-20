@@ -1,8 +1,12 @@
-use crate::block::Difficulty;
-use crate::network::Network;
-use crate::config::{FEE_PER_KB, COIN_DECIMALS};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use crate::{
+    network::Network,
+    config::{FEE_PER_KB, COIN_DECIMALS},
+    difficulty::Difficulty,
+};
+use std::{
+    sync::Mutex,
+    time::{SystemTime, UNIX_EPOCH, Duration}
+};
 
 #[macro_export]
 macro_rules! async_handler {

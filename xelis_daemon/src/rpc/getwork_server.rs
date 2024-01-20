@@ -13,7 +13,8 @@ use xelis_common::{
     utils::get_current_time_in_millis,
     api::daemon::{GetBlockTemplateResult, SubmitBlockParams},
     serializer::Serializer,
-    block::{BlockHeader, BlockMiner, Difficulty},
+    block::{BlockHeader, BlockMiner},
+    difficulty::Difficulty,
     immutable::Immutable,
     rpc_server::{RpcResponseError, InternalRpcError}
 };

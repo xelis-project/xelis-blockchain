@@ -6,7 +6,7 @@ use xelis_common::{
         ReaderError,
         Reader
     },
-    block::Difficulty,
+    difficulty::Difficulty,
     api::daemon::{NotifyEvent, PeerPeerListUpdatedEvent, Direction}
 };
 use crate::{

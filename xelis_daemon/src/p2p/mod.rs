@@ -12,7 +12,8 @@ use xelis_common::{
     config::{VERSION, TIPS_LIMIT},
     serializer::Serializer,
     crypto::hash::{Hashable, Hash},
-    block::{BlockHeader, Block, Difficulty},
+    block::{BlockHeader, Block},
+    difficulty::Difficulty,
     utils::{get_current_time_in_seconds, get_current_time_in_millis},
     immutable::Immutable,
     api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent, Direction}

@@ -11,9 +11,9 @@ use tokio_tungstenite::{
     tungstenite::{Message, Error as TungsteniteError}
 };
 use xelis_common::{
-    block::{BlockMiner, BLOCK_WORK_SIZE, Difficulty},
+    block::{BlockMiner, BLOCK_WORK_SIZE},
     serializer::Serializer,
-    difficulty::check_difficulty,
+    difficulty::{Difficulty, check_difficulty},
     config::VERSION,
     utils::{get_current_time_in_millis, format_hashrate, format_difficulty},
     crypto::{hash::{Hashable, Hash, hash}, address::Address},
