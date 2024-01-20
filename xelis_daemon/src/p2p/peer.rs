@@ -1,32 +1,42 @@
-use lru::LruCache;
-use xelis_common::api::daemon::Direction;
-use xelis_common::difficulty::Difficulty;
-use xelis_common::config::TIPS_LIMIT;
-use crate::config::{
-    PEER_FAIL_TIME_RESET, STABLE_LIMIT, PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS
+use crate::{
+    config::{
+        PEER_FAIL_TIME_RESET, STABLE_LIMIT,
+        PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS
+    },
+    p2p::packet::PacketWrapper
 };
-use crate::p2p::packet::PacketWrapper;
-use xelis_common::utils::get_current_time_in_seconds;
 use xelis_common::{
+    config::TIPS_LIMIT,
+    api::daemon::Direction,
+    difficulty::Difficulty,
     crypto::hash::Hash,
-    serializer::Serializer
+    serializer::Serializer,
+    utils::get_current_time_in_seconds
 };
-use super::packet::bootstrap_chain::{StepRequest, BootstrapChainRequest, StepResponse};
-use super::packet::chain::{ChainRequest, ChainResponse};
-use super::packet::object::{ObjectRequest, OwnedObjectResponse};
-use super::peer_list::SharedPeerList;
-use super::connection::{Connection, ConnectionMessage};
-use super::packet::Packet;
-use super::error::P2pError;
-use std::net::{SocketAddr, IpAddr};
-use std::sync::atomic::{AtomicU8, AtomicU64, AtomicBool, Ordering};
-use std::fmt::{Display, Error, Formatter};
-use std::time::Duration;
-use tokio::sync::oneshot::Sender;
-use tokio::time::timeout;
-use std::collections::{HashMap, HashSet};
-use tokio::sync::Mutex;
-use std::borrow::Cow;
+use super::{
+    packet::{
+        bootstrap_chain::{StepRequest, BootstrapChainRequest, StepResponse},
+        chain::{ChainRequest, ChainResponse},
+        object::{ObjectRequest, OwnedObjectResponse},
+        Packet
+    },
+    peer_list::SharedPeerList,
+    connection::{Connection, ConnectionMessage},
+    error::P2pError
+};
+use std::{
+    net::{SocketAddr, IpAddr},
+    sync::atomic::{AtomicU8, AtomicU64, AtomicBool, Ordering},
+    fmt::{Display, Error, Formatter},
+    collections::{HashMap, HashSet},
+    time::Duration,
+    borrow::Cow
+};
+use tokio::{
+    sync::{oneshot::Sender, Mutex},
+    time::timeout,
+};
+use lru::LruCache;
 use bytes::Bytes;
 use log::{warn, trace, debug};
 
