@@ -1,10 +1,12 @@
 use crate::serializer::{Writer, Serializer, ReaderError, Reader};
-use std::fmt::{Display, Error, Formatter};
+use std::{
+    fmt::{Display, Error, Formatter},
+    convert::TryInto,
+    hash::Hasher
+};
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
 use sha3::{Keccak256, Digest};
-use std::convert::TryInto;
-use std::hash::Hasher;
 
 pub const HASH_SIZE: usize = 32; // 32 bytes / 256 bits
 

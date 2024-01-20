@@ -1,9 +1,9 @@
 use std::borrow::Cow;
-
 use serde::{Deserialize, Serialize};
-
-use crate::{transaction::{TransactionType, Transaction}, crypto::{hash::Hash, address::Address}};
-
+use crate::{
+    transaction::{TransactionType, Transaction},
+    crypto::{hash::Hash, address::Address}
+};
 use super::{DataHash, DataElement, DataValue, query::Query};
 
 

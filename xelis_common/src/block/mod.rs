@@ -1,17 +1,20 @@
 mod miner;
 
 use indexmap::IndexSet;
-use log::debug;
-pub use miner::BlockMiner;
-
 use serde::Deserialize;
+use log::debug;
 
-use crate::config::TIPS_LIMIT;
-use crate::crypto::hash::{Hash, Hashable, hash};
-use crate::crypto::key::PublicKey;
-use crate::immutable::Immutable;
-use crate::transaction::Transaction;
-use crate::serializer::{Serializer, Writer, Reader, ReaderError};
+use crate::{
+    config::TIPS_LIMIT,
+    crypto::{
+        hash::{Hash, Hashable, hash},
+        key::PublicKey,
+    },
+    immutable::Immutable,
+    transaction::Transaction,
+    serializer::{Serializer, Writer, Reader, ReaderError}
+};
+pub use miner::BlockMiner;
 
 pub const EXTRA_NONCE_SIZE: usize = 32;
 pub const HEADER_WORK_SIZE: usize = 73;

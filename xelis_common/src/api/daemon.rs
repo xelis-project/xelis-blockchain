@@ -1,4 +1,8 @@
-use std::{borrow::Cow, collections::{HashSet, HashMap}, net::SocketAddr};
+use std::{
+    borrow::Cow,
+    collections::{HashSet, HashMap},
+    net::SocketAddr
+};
 use serde::{Deserialize, Serialize};
 use crate::{
     crypto::{hash::Hash, address::Address},

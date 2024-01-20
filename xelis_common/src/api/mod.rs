@@ -3,7 +3,10 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
-use crate::{serializer::{Serializer, Reader, ReaderError, Writer}, crypto::hash::Hash};
+use crate::{
+    serializer::{Serializer, Reader, ReaderError, Writer},
+    crypto::hash::Hash
+};
 
 pub mod wallet;
 pub mod daemon;

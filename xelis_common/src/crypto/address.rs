@@ -1,13 +1,18 @@
+use std::{
+    fmt::{Display, Formatter},
+    str::FromStr
+};
+use crate::{
+    api::{DataElement, DataType, DataValue},
+    serializer::{Serializer, Writer, Reader, ReaderError},
+    config::{PREFIX_ADDRESS, TESTNET_PREFIX_ADDRESS},
+    transaction::EXTRA_DATA_LIMIT_SIZE
+};
+use super::{
+    bech32::{Bech32Error, encode, convert_bits, decode},
+    key::PublicKey
+};
 use core::fmt;
-use std::fmt::{Display, Formatter};
-use std::str::FromStr;
-
-use crate::api::{DataElement, DataType, DataValue};
-use crate::serializer::{Serializer, Writer, Reader, ReaderError};
-use crate::config::{PREFIX_ADDRESS, TESTNET_PREFIX_ADDRESS};
-use crate::transaction::EXTRA_DATA_LIMIT_SIZE;
-use super::bech32::{Bech32Error, encode, convert_bits, decode};
-use super::key::PublicKey;
 use log::debug;
 use serde::de::Error as SerdeError;
 use anyhow::Error;

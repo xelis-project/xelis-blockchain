@@ -1,10 +1,15 @@
 use reqwest::Client as HttpClient;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use serde::{
+    Serialize,
+    de::DeserializeOwned
+};
+use super::{
+    JsonRPCResult, JsonRPCErrorResponse, JsonRPCError,
+    JSON_RPC_VERSION, PARSE_ERROR_CODE, INVALID_REQUEST_CODE,
+    METHOD_NOT_FOUND_CODE, INVALID_PARAMS_CODE, INTERNAL_ERROR_CODE
+};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-use super::{JsonRPCResult, JsonRPCErrorResponse, JsonRPCError, JSON_RPC_VERSION, PARSE_ERROR_CODE, INVALID_REQUEST_CODE, METHOD_NOT_FOUND_CODE, INVALID_PARAMS_CODE, INTERNAL_ERROR_CODE};
 
 pub struct JsonRPCClient {
     http: HttpClient,

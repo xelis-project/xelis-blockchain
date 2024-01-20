@@ -1,6 +1,11 @@
 use std::borrow::Cow;
-
-use crate::{crypto::{hash::{Hash, Hashable, hash}, key::PublicKey}, serializer::{Serializer, Writer, Reader, ReaderError}};
+use crate::{
+    crypto::{
+        hash::{Hash, Hashable, hash},
+        key::PublicKey
+    },
+    serializer::{Serializer, Writer, Reader, ReaderError}
+};
 
 use super::{EXTRA_NONCE_SIZE, BLOCK_WORK_SIZE};
 

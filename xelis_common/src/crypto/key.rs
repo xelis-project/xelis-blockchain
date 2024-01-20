@@ -1,12 +1,18 @@
-use crate::api::DataElement;
-use crate::utils::get_network;
-use crate::serializer::{Reader, ReaderError, Serializer, Writer};
-use super::address::{Address, AddressType};
-use super::hash::Hash;
-use std::cmp::Ordering;
-use std::fmt::{Display, Error, Formatter};
+use crate::{
+    api::DataElement,
+    utils::get_network,
+    serializer::{Reader, ReaderError, Serializer, Writer}
+};
+use super::{
+    address::{Address, AddressType},
+    hash::Hash
+};
+use std::{
+    cmp::Ordering,
+    fmt::{Display, Error, Formatter},
+    hash::Hasher
+};
 use rand::{rngs::OsRng, RngCore};
-use std::hash::Hasher;
 
 pub const KEY_LENGTH: usize = 32;
 pub const SIGNATURE_LENGTH: usize = 64;
