@@ -253,6 +253,12 @@ impl Serializer for BlockHeader {
 
     fn read(reader: &mut Reader) -> Result<BlockHeader, ReaderError> {
         let version = reader.read_u8()?;
+        // At this moment we only support version 0, so we check it here directly
+        if version != 0 {
+            debug!("Expected version 0 got version {version}");
+            return Err(ReaderError::InvalidValue)
+        }
+
         let height = reader.read_u64()?;
         let timestamp = reader.read_u128()?;
         let nonce = reader.read_u64()?;

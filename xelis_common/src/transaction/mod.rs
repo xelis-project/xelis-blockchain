@@ -1,3 +1,5 @@
+use log::debug;
+
 use crate::crypto::key::{PublicKey, Signature, SIGNATURE_LENGTH};
 use crate::crypto::hash::{Hashable, hash, Hash};
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
@@ -215,6 +217,12 @@ impl Serializer for Transaction {
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
         let version = reader.read_u8()?;
+        // At this moment we only support version 0, so we check it here directly
+        if version != 0 {
+            debug!("Expected version 0 got version {version}");
+            return Err(ReaderError::InvalidValue)
+        }
+
         let owner = PublicKey::read(reader)?;
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;
