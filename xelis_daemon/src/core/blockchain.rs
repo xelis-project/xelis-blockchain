@@ -1319,9 +1319,10 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::AlreadyInChain)
         }
 
-        if block.get_timestamp() > get_current_time_in_millis() + TIMESTAMP_IN_FUTURE_LIMIT { // accept 2s in future
+        let current_timestamp = get_current_time_in_millis(); 
+        if block.get_timestamp() > current_timestamp + TIMESTAMP_IN_FUTURE_LIMIT { // accept 2s in future
             error!("Block timestamp is too much in future!");
-            return Err(BlockchainError::TimestampIsInFuture(get_current_time_in_millis(), block.get_timestamp()));
+            return Err(BlockchainError::TimestampIsInFuture(current_timestamp, block.get_timestamp()));
         }
 
         let tips_count = block.get_tips().len();
