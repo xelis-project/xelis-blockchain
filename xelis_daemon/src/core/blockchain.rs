@@ -955,7 +955,7 @@ impl<S: Storage> Blockchain<S> {
         let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, parent_tips.iter()).await?;
         let parent_best_tip_timestamp = provider.get_timestamp_for_block_hash(parent_best_tip).await?;
  
-        let difficulty = calculate_difficulty(parent_best_tip_timestamp, best_tip_timestamp, biggest_difficulty);
+        let difficulty = calculate_difficulty(tips.len() as u64, parent_best_tip_timestamp, best_tip_timestamp, biggest_difficulty);
         Ok(difficulty)
     }
 
