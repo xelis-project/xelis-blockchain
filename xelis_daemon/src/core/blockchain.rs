@@ -1306,6 +1306,12 @@ impl<S: Storage> Blockchain<S> {
     // Add a new block in chain using the requested storage
     pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         let start = Instant::now();
+
+        // Verify that the block is on the correct version
+        if block.get_version() != self.get_version_at_height(block.get_height()) {
+            return Err(BlockchainError::InvalidBlockVersion)
+        }
+
         let block_hash = block.hash();
         debug!("Add new block {}", block_hash);
         if storage.has_block(&block_hash).await? {

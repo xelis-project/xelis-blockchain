@@ -142,6 +142,8 @@ pub enum BlockchainError {
     ExpectedTips,
     #[error("Block has invalid tips")]
     InvalidTips,
+    #[error("Invalid block version")]
+    InvalidBlockVersion,
     #[error("Block is already in chain")]
     AlreadyInChain,
     #[error("Block has an invalid reachability")]
