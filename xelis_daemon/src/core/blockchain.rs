@@ -1575,7 +1575,7 @@ impl<S: Storage> Blockchain<S> {
                             block_hash: Cow::Borrowed(&hash_at_topo),
                             old_topoheight: topoheight,
                         });
-                        events.entry(NotifyEvent::BlockOrdered).or_insert_with(Vec::new).push(value);
+                        events.entry(NotifyEvent::BlockOrphaned).or_insert_with(Vec::new).push(value);
                     }
 
                     // mark txs as unexecuted if it was executed in this block
@@ -1820,12 +1820,36 @@ impl<S: Storage> Blockchain<S> {
             mempool.clean_up(&*storage, &self, highest_topo).await;
         }
 
+        // Check if the event is tracked
+        let orphan_event_tracked = should_track_events.contains(&NotifyEvent::TransactionOrphaned);
         // Now we can try to add back all transactions
         for tx_hash in orphaned_transactions {
             debug!("Adding back orphaned tx {}", tx_hash);
-            let tx = storage.get_transaction(&tx_hash).await?;
-            if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, tx_hash, false).await {
-                debug!("Error while adding back orphaned tx: {}", e);
+            // It is verified in add_tx_to_mempool function too
+            // But to prevent loading the TX from storage and to fire wrong event
+            if storage.is_tx_executed_in_a_block(&tx_hash)? {
+                let tx = storage.get_transaction(&tx_hash).await?;
+                // Clone only if its necessary
+                if !orphan_event_tracked {
+                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, tx_hash, false).await {
+                        debug!("Error while adding back orphaned tx: {}", e);
+                    }
+                } else {
+                    if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx.clone(), tx_hash.clone(), false).await {
+                        debug!("Error while adding back orphaned tx: {}, broadcasting event", e);
+                        // We couldn't add it back to mempool, let's notify this event
+                        if should_track_events.contains(&NotifyEvent::TransactionOrphaned) {
+                            let data = TransactionResponse {
+                                blocks: None,
+                                executed_in_block: None,
+                                in_mempool: false,
+                                first_seen: None,
+                                data: DataHash { hash: Cow::Borrowed(&tx_hash), data: Cow::Borrowed(&tx) }
+                            };
+                            events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
+                        }
+                    }
+                }
             }
         }
 

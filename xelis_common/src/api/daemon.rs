@@ -366,11 +366,14 @@ pub enum NotifyEvent {
     // it contains BlockOrderedEvent as value
     BlockOrdered,
     // When a block that was ordered is not in the new DAG order
-    // it contains Block hash that got orphaned
+    // it contains BlockOrphanedEvent that got orphaned
     BlockOrphaned,
     // When stable height has changed (different than the previous one)
     // it contains StableHeightChangedEvent struct as value
     StableHeightChanged,
+    // When a transaction that was executed in a block is not reintroduced in mempool
+    // It contains TransactionOrphanedEvent as value
+    TransactionOrphaned,
     // When a new transaction is added in mempool
     // it contains TransactionAddedInMempoolEvent struct as value
     TransactionAddedInMempool,
@@ -431,6 +434,8 @@ pub struct StableHeightChangedEvent {
 
 // Value of NotifyEvent::TransactionAddedInMempool
 pub type TransactionAddedInMempoolEvent = TransactionResponse<'static, Transaction>;
+// Value of NotifyEvent::TransactionOrphaned
+pub type TransactionOrphanedEvent = TransactionResponse<'static, Transaction>;
 
 // Value of NotifyEvent::TransactionExecuted
 #[derive(Serialize, Deserialize)]
