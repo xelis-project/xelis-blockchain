@@ -1,35 +1,44 @@
 pub mod command;
 pub mod argument;
 
-use crate::crypto::hash::Hash;
-use crate::serializer::{Serializer, ReaderError};
-
+use crate::{
+    crypto::hash::Hash,
+    serializer::{Serializer, ReaderError},
+};
+use std::{
+    collections::VecDeque,
+    fmt::{Display, Formatter, self},
+    fs::create_dir,
+    io::{Write, stdout, Error as IOError},
+    num::ParseFloatError,
+    path::Path,
+    pin::Pin,
+    str::FromStr,
+    task::{Context, Poll},
+    sync::{
+        {PoisonError, Arc, Mutex},
+        atomic::{AtomicBool, Ordering, AtomicUsize, AtomicU16},
+    },
+    time::Duration,
+    future::Future
+};
+use crossterm::{
+    event::{self, Event, KeyCode, KeyModifiers, KeyEventKind},
+    terminal as crossterminal,
+};
+use tokio::{
+    sync::{
+        mpsc::{self, UnboundedSender, UnboundedReceiver, Sender, Receiver},
+        oneshot,
+        Mutex as AsyncMutex
+    },
+    time::{interval, timeout}
+};
 use self::command::{CommandError, CommandManager};
-use std::collections::VecDeque;
-use std::fmt::{Display, Formatter, self};
-use std::fs::create_dir;
-use std::io::{Write, stdout, Error as IOError};
-use std::num::ParseFloatError;
-use std::path::Path;
-use std::pin::Pin;
-use std::str::FromStr;
-use std::task::{Context, Poll};
-use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize, AtomicU16};
 use anyhow::Error;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
-use crossterm::terminal;
 use fern::colors::{ColoredLevelConfig, Color};
 use regex::Regex;
-use tokio::sync::{
-    mpsc::{self, UnboundedSender, UnboundedReceiver, Sender, Receiver},
-    oneshot,
-    Mutex as AsyncMutex
-};
-use std::sync::{PoisonError, Arc, Mutex};
 use log::{info, error, Level, debug, LevelFilter, warn};
-use tokio::time::{interval, timeout};
-use std::time::Duration;
-use std::future::Future;
 use thiserror::Error;
 
 // used for launch param
@@ -136,7 +145,7 @@ impl State {
     fn new() -> Self {
         // enable the raw mode for terminal
         // so we can read each event/action
-        let interactive = !terminal::enable_raw_mode().is_err();
+        let interactive = !crossterminal::enable_raw_mode().is_err();
         if interactive {
             warn!("Non-interactive mode enabled");
         }
@@ -144,7 +153,7 @@ impl State {
         Self {
             prompt: Mutex::new(None),
             exit_channel: Mutex::new(None),
-            width: AtomicU16::new(crossterm::terminal::size().unwrap_or((80, 0)).0),
+            width: AtomicU16::new(crossterminal::size().unwrap_or((80, 0)).0),
             previous_prompt_line: AtomicUsize::new(0),
             user_input: Mutex::new(String::new()),
             mask_input: AtomicBool::new(false),
@@ -302,7 +311,7 @@ impl State {
 
         if !self.has_exited.swap(true, Ordering::SeqCst) {
             if self.is_interactive() {
-                if let Err(e) = terminal::disable_raw_mode() {
+                if let Err(e) = crossterminal::disable_raw_mode() {
                     error!("Error while disabling raw mode: {}", e);
                 }
             }
@@ -517,7 +526,7 @@ impl Prompt {
 
         if !self.state.has_exited.swap(true, Ordering::SeqCst) {
             if self.state.is_interactive() {
-                if let Err(e) = terminal::disable_raw_mode() {
+                if let Err(e) = crossterminal::disable_raw_mode() {
                     error!("Error while disabling raw mode: {}", e);
                 }
             }
@@ -746,8 +755,8 @@ impl Prompt {
 impl Drop for Prompt {
     fn drop(&mut self) {
         if self.state.is_interactive() {
-            if let Ok(true) = terminal::is_raw_mode_enabled() {
-                if let Err(e) = terminal::disable_raw_mode() {
+            if let Ok(true) = crossterminal::is_raw_mode_enabled() {
+                if let Err(e) = crossterminal::disable_raw_mode() {
                     error!("Error while forcing to disable raw mode: {}", e);
                 }
             } 
