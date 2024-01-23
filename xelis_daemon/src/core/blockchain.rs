@@ -19,7 +19,8 @@ use xelis_common::{
             TransactionExecutedEvent,
             BlockType,
             StableHeightChangedEvent,
-            TransactionResponse
+            TransactionResponse,
+            BlockOrphanedEvent
         },
         DataHash
     },
@@ -1568,6 +1569,14 @@ impl<S: Storage> Blockchain<S> {
 
                     // Block may be orphaned if its not in the new full order set
                     let is_orphaned = !full_order.contains(&hash_at_topo);
+                    // Notify if necessary that we have a block orphaned
+                    if is_orphaned && should_track_events.contains(&NotifyEvent::BlockOrphaned) {
+                        let value = json!(BlockOrphanedEvent {
+                            block_hash: Cow::Borrowed(&hash_at_topo),
+                            old_topoheight: topoheight,
+                        });
+                        events.entry(NotifyEvent::BlockOrdered).or_insert_with(Vec::new).push(value);
+                    }
 
                     // mark txs as unexecuted if it was executed in this block
                     for tx_hash in block.get_txs_hashes() {

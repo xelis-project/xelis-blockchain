@@ -365,6 +365,9 @@ pub enum NotifyEvent {
     // When a block (already in chain or not) is ordered (new topoheight)
     // it contains BlockOrderedEvent as value
     BlockOrdered,
+    // When a block that was ordered is not in the new DAG order
+    // it contains Block hash that got orphaned
+    BlockOrphaned,
     // When stable height has changed (different than the previous one)
     // it contains StableHeightChangedEvent struct as value
     StableHeightChanged,
@@ -409,6 +412,14 @@ pub struct BlockOrderedEvent<'a> {
     pub block_type: BlockType,
     // the new topoheight of the block
     pub topoheight: u64,
+}
+
+// Value of NotifyEvent::BlockOrphaned
+#[derive(Serialize, Deserialize)]
+pub struct BlockOrphanedEvent<'a> {
+    pub block_hash: Cow<'a, Hash>,
+    // Tpoheight of the block before being orphaned
+    pub old_topoheight: u64
 }
 
 // Value of NotifyEvent::StableHeightChanged
