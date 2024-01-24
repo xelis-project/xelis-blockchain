@@ -10,6 +10,12 @@ use log::{info, error, warn};
 use p2p::P2pServer;
 use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
 use xelis_common::{
+    async_handler,
+    config::{VERSION, XELIS_ASSET},
+    context::Context,
+    crypto::{address::Address, hash::Hashable},
+    difficulty::Difficulty,
+    network::Network,
     prompt::{
         Prompt,
         command::{CommandManager, CommandError, Command, CommandHandler},
@@ -19,15 +25,13 @@ use xelis_common::{
         self,
         ShareablePrompt
     },
-    config::{VERSION, XELIS_ASSET},
-    utils::{format_hashrate, set_network_to, format_xelis, format_coin, format_difficulty},
-    async_handler,
-    crypto::{address::Address, hash::Hashable},
-    network::Network,
-    transaction::Transaction,
+    rpc_server::WebSocketServerHandler,
     serializer::Serializer,
-    difficulty::Difficulty,
-    context::Context
+    transaction::Transaction,
+    utils::{
+        format_hashrate, set_network_to,
+        format_xelis, format_coin, format_difficulty
+    }
 };
 use crate::{
     core::{
@@ -126,6 +130,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("verify_chain", "Check chain supply/balances", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(verify_chain::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("kick_peer", "Kick a peer using its ip:port", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(kick_peer::<S>))))?;
     command_manager.add_command(Command::new("clear_caches", "Clear storage caches", CommandHandler::Async(async_handler!(clear_caches::<S>))))?;
+    command_manager.add_command(Command::new("clear_rpc_connections", "Clear all WS connections from RPC", CommandHandler::Async(async_handler!(clear_rpc_connections::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -565,6 +570,26 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let elapsed = format_duration(Duration::from_secs(elapsed_seconds)).to_string();
     manager.message(format!("Uptime: {}", elapsed));
     manager.message(format!("Running on version {}", VERSION));
+    Ok(())
+}
+
+async fn clear_rpc_connections<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_rpc().read().await.as_ref() {
+        Some(rpc) => match rpc.get_websocket().clear_connections().await {
+            Ok(_) => {
+                manager.message("All RPC connections cleared");
+            },
+            Err(e) => {
+                manager.error(format!("Error while clearing RPC connections: {}", e));
+            }
+        },
+        None => {
+            manager.error("RPC is not enabled");
+        }
+    };
+
     Ok(())
 }
 

@@ -6,7 +6,7 @@ use actix_web::{HttpRequest as ActixHttpRequest, web::{Payload, Bytes}, HttpResp
 use actix_ws::{Session, MessageStream, Message, CloseReason, CloseCode};
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use log::{debug, trace};
+use log::{debug, error, trace};
 use tokio::{sync::Mutex, select};
 
 pub use self::{
@@ -143,14 +143,39 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         })
     }
 
+    // Turns off all connections
+    pub async fn stop(&self) {
+        if let Err(e) = self.clear_connections().await {
+            error!("Error while clearing connections: {}", e);
+        }
+    }
+
+    // Returns the number of connections
+    pub async fn count_connections(&self) -> usize {
+        self.sessions.lock().await.len()
+    }
+
+    // Turns off all connections
+    pub async fn clear_connections(&self) -> Result<(), WebSocketError> {
+        let mut sessions = self.sessions.lock().await;
+        for session in sessions.drain() {
+            session.close(None).await?;
+        }
+
+        Ok(())
+    }
+
+    // Returns the RPC handler used for this server
     pub fn get_handler(&self) -> &H {
         &self.handler
     }
 
+    // Returns all sessions managed by this server
     pub fn get_sessions(&self) -> &Mutex<HashSet<WebSocketSessionShared<H>>> {
         &self.sessions
     }
 
+    // Handle a new WebSocket connection request, register it and start handling it
     pub async fn handle_connection(self: &Arc<Self>, request: ActixHttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
         debug!("Handling new WebSocket connection");
         let (response, session, stream) = actix_ws::handle(&request, body)?;
@@ -174,10 +199,12 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         Ok(response)
     }
 
+    // Internal function to generate a unique id for a session
     fn next_id(&self) -> u64 {
         self.id_counter.fetch_add(1, Ordering::SeqCst)
     }
 
+    // Delete a session from the server
     pub async fn delete_session(self: &Arc<Self>, session: &WebSocketSessionShared<H>, reason: Option<CloseReason>) {
         trace!("deleting session #{}", session.id);
         // close session
@@ -201,7 +228,10 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         }
         trace!("sessions unlocked");
     }
-    
+
+    // Internal function to handle a WebSocket connection
+    // This will send a ping every 5 seconds and close the connection if no pong is received within 30 seconds
+    // It will also translate all messages to the handler
     async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: MessageStream) {
         // call on_connection
         if let Err(e) = self.handler.on_connection(&session).await {
