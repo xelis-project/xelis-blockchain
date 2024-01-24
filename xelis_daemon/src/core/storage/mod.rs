@@ -125,7 +125,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
 
     async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError>;
     // Count is the number of blocks (topoheight) to rewind
-    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
+    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64, stable_height: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
     fn has_blocks(&self) -> bool;
     fn count_blocks(&self) -> Result<u64, BlockchainError>;
     async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError>;

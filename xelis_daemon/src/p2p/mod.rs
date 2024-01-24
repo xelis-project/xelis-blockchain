@@ -1476,7 +1476,7 @@ impl<S: Storage> P2pServer<S> {
             // check that if we can trust him
             if peer.is_priority() {
                 warn!("Rewinding chain without checking because {} is a priority node (pop count: {})", peer, pop_count);
-                self.blockchain.rewind_chain(pop_count).await?;
+                self.blockchain.rewind_chain(pop_count, true).await?;
             } else {
                 // request all blocks header and verify basic chain structure
                 let mut chain_validator = ChainValidator::new(self.blockchain.clone());
@@ -1500,7 +1500,7 @@ impl<S: Storage> P2pServer<S> {
                 }
                 // peer chain looks correct, lets rewind our chain
                 warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
-                self.blockchain.rewind_chain(pop_count).await?;
+                self.blockchain.rewind_chain(pop_count, true).await?;
 
                 // now retrieve all txs from all blocks header and add block in chain
                 for hash in chain_validator.get_order() {
@@ -1960,12 +1960,13 @@ impl<S: Storage> P2pServer<S> {
                             let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
                             
                             warn!("Common point is {} while our top block hash is {} !", common_point.get_hash(), top_block_hash);
+                            // Count how much blocks we need to pop
                             let pop_count = if pruned_topoheight >= common_point.get_topoheight() {
                                 our_topoheight - pruned_topoheight
                             } else {
                                 our_topoheight - common_point.get_topoheight()
                             };
-                            our_topoheight = self.blockchain.rewind_chain_for_storage(&mut *storage, pop_count).await?;
+                            our_topoheight = self.blockchain.rewind_chain_for_storage(&mut *storage, pop_count, true).await?;
                             debug!("New topoheight after rewind is now {}", our_topoheight);
                         }
                     } else {

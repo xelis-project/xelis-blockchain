@@ -1330,7 +1330,7 @@ impl Storage for SledStorage {
         Ok(())
     }
 
-    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
+    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64, stable_topo_height: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
         trace!("pop blocks from height: {}, topoheight: {}, count: {}", height, topoheight, count);
         if height < count as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
@@ -1357,7 +1357,7 @@ impl Storage for SledStorage {
         let mut done = 0;
         'main: loop {
             // stop rewinding if its genesis block or if we reached the lowest topo
-            if topoheight <= lowest_topo || topoheight == 0 || height == 0 { // prevent removing genesis block
+            if topoheight <= lowest_topo || topoheight <= stable_topo_height || height == 0 { // prevent removing genesis block
                 trace!("Done: {done}, count: {count}, height: {height}, topoheight: {topoheight}");
                 break 'main;
             }
