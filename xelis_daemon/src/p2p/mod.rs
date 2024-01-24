@@ -1488,7 +1488,8 @@ impl<S: Storage> P2pServer<S> {
             // check that if we can trust him
             if peer.is_priority() {
                 warn!("Rewinding chain without checking because {} is a priority node (pop count: {})", peer, pop_count);
-                self.blockchain.rewind_chain(pop_count, true).await?;
+                // User trust him as a priority node, rewind chain without checking, allow to go below stable height also
+                self.blockchain.rewind_chain(pop_count, false).await?;
             } else {
                 // request all blocks header and verify basic chain structure
                 let mut chain_validator = ChainValidator::new(self.blockchain.clone());
