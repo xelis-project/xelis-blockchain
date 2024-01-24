@@ -504,7 +504,7 @@ impl<S: Storage> P2pServer<S> {
     // candidate peer should have a greater topoheight or a higher block height than us
     // if we are not in fast sync mode, we must verify its pruned topoheight to be sure
     // he have the blocks we need
-    async fn select_random_best_peer(&self, fast_sync: bool) -> Option<Arc<Peer>> {
+    async fn select_random_best_peer(&self, fast_sync: bool, previous_peer: Option<&Arc<Peer>>) -> Option<Arc<Peer>> {
         trace!("select random best peer");
         let peer_list = self.peer_list.read().await;
         trace!("peer list locked for select random best peer");
@@ -512,7 +512,8 @@ impl<S: Storage> P2pServer<S> {
         let our_topoheight = self.blockchain.get_topo_height();
         // search for peers which are greater than us
         // and that are pruned but before our height so we can sync correctly
-        let peers: Vec<&Arc<Peer>> = peer_list.get_peers().values().filter(|p| {
+        let available_peers = peer_list.get_peers().values();
+        let mut peers: IndexSet<&Arc<Peer>> = available_peers.filter(|p| {
             let peer_topoheight = p.get_topoheight();
             if fast_sync {
                 // if we want to fast sync, but this peer is not compatible, we skip it
@@ -533,6 +534,14 @@ impl<S: Storage> P2pServer<S> {
             p.get_height() > our_height || peer_topoheight > our_topoheight
         }).collect();
 
+        // Try to not reuse the same peer between each sync
+        if let Some(previous_peer) = previous_peer {
+            if peers.len() > 1 {
+                debug!("removing previous peer {} from random selection", previous_peer);
+                peers.remove(previous_peer);
+            }
+        }
+
         let count = peers.len();
         trace!("peers available for random selection: {}", count);
         if count == 0 {
@@ -540,7 +549,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         let selected = rand::thread_rng().gen_range(0..count);
-        let peer = peers.get(selected)?;
+        let peer = peers.get_index(selected)?;
         trace!("selected peer for sync chain: ({}) {}", selected, peer);
         // clone the Arc to prevent the lock until the end of the sync request
         Some(Arc::clone(peer))
@@ -558,6 +567,8 @@ impl<S: Storage> P2pServer<S> {
         // used to detect how much time we have to wait before next request
         let mut last_chain_sync: u128 = get_current_time_in_millis();
         let interval = Duration::from_secs(CHAIN_SYNC_DELAY);
+        // Try to not reuse the same peer between each sync
+        let mut previous_peer: Option<Arc<Peer>> = None;
         loop {
             // Detect exact time needed before next chain sync
             let current = get_current_time_in_millis();
@@ -585,7 +596,7 @@ impl<S: Storage> P2pServer<S> {
                 false
             };
 
-            if let Some(peer) = self.select_random_best_peer(fast_sync).await {
+            if let Some(peer) = self.select_random_best_peer(fast_sync, previous_peer.as_ref()).await {
                 debug!("Selected for chain sync is {}", peer);
                 // check if we can maybe fast sync first
                 // otherwise, fallback on the normal chain sync
@@ -598,6 +609,7 @@ impl<S: Storage> P2pServer<S> {
                         warn!("Error occured on chain sync with {}: {}", peer, e);
                     }
                 }
+                previous_peer = Some(peer);
             } else {
                 trace!("No peer found for chain sync, waiting before next check");
                 sleep(interval).await;
@@ -1427,7 +1439,7 @@ impl<S: Storage> P2pServer<S> {
             return Ok(())
         };
 
-        debug!("{} found a common point with block {} at {} for sync, received {} blocks", peer, common_point.get_hash(), common_point.get_topoheight(), response_size);
+        debug!("{} found a common point with block {} at {} for sync, received {} blocks", peer.get_outgoing_address(), common_point.get_hash(), common_point.get_topoheight(), response_size);
         let pop_count = {
             let storage = self.blockchain.get_storage().read().await;
             let topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;

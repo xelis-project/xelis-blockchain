@@ -30,7 +30,8 @@ use std::{
     fmt::{Display, Error, Formatter},
     collections::{HashMap, HashSet},
     time::Duration,
-    borrow::Cow
+    borrow::Cow,
+    hash::Hash as StdHash
 };
 use tokio::{
     sync::{oneshot::Sender, Mutex},
@@ -480,5 +481,19 @@ impl Drop for Peer {
         if !self.get_connection().is_closed() {
             warn!("{} was not closed correctly /!\\", self)
         }
+    }
+}
+
+impl PartialEq for Peer {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_id() == other.get_id()
+    }
+}
+
+impl Eq for Peer {}
+
+impl StdHash for Peer {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.get_id().hash(state);
     }
 }
