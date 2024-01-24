@@ -145,10 +145,20 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         (p2p, getwork)
     };
 
+    let rpc = {
+        let rpc = blockchain.get_rpc().read().await;
+        rpc.clone()
+    };
+
     let closure = |_: &_, _: &_| async {
         let (peers, median) = match &p2p {
             Some(p2p) => (p2p.get_peer_count().await, p2p.get_median_topoheight_of_peers().await),
             None => (0, blockchain.get_topo_height())
+        };
+
+        let rpc_count = match &rpc {
+            Some(rpc) => rpc.get_websocket().count_connections().await,
+            None => 0
         };
 
         let miners = match &getwork {
@@ -169,6 +179,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
                 median,
                 network_hashrate,
                 peers,
+                rpc_count,
                 miners,
                 mempool,
                 network
@@ -179,7 +190,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     prompt.start(Duration::from_millis(100), Box::new(async_handler!(closure)), &Some(command_manager)).await
 }
 
-fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrate: f64, peers_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
+fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrate: f64, peers_count: usize, rpc_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
     let topoheight_str = format!(
         "{}: {}/{}",
         prompt::colorize_str(Color::Yellow, "TopoHeight"),
@@ -201,12 +212,16 @@ fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrat
         prompt::colorize_str(Color::Yellow, "Peers"),
         prompt::colorize_string(Color::Green, &format!("{}", peers_count))
     );
+    let rpc_str = format!(
+        "{}: {}",
+        prompt::colorize_str(Color::Yellow, "RPC"),
+        prompt::colorize_string(Color::Green, &format!("{}", rpc_count))
+    );
     let miners_str = format!(
         "{}: {}",
         prompt::colorize_str(Color::Yellow, "Miners"),
         prompt::colorize_string(Color::Green, &format!("{}", miners_count))
     );
-
 
     let network_str = if !network.is_mainnet() {
         format!(
@@ -216,12 +231,13 @@ fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrat
     } else { "".into() };
 
     format!(
-        "{} | {} | {} | {} | {} | {} {}{} ",
+        "{} | {} | {} | {} | {} | {} | {} {}{} ",
         prompt::colorize_str(Color::Blue, "XELIS"),
         topoheight_str,
         network_hashrate_str,
         mempool_str,
         peers_str,
+        rpc_str,
         miners_str,
         network_str,
         prompt::colorize_str(Color::BrightBlack, ">>")
