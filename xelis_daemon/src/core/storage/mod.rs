@@ -31,6 +31,9 @@ pub trait DifficultyProvider {
 
 #[async_trait]
 pub trait Storage: DifficultyProvider + Sync + Send + 'static {
+    // Clear caches if exists
+    async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
+
     fn get_pruned_topoheight(&self) -> Result<Option<u64>, BlockchainError>;
     fn set_pruned_topoheight(&mut self, pruned_topoheight: u64) -> Result<(), BlockchainError>;
 

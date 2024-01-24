@@ -171,53 +171,6 @@ impl SledStorage {
         Ok(storage)
     }
 
-    async fn clear_caches(&self) {
-        if let Some(cache) = self.transactions_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.blocks_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.past_blocks_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.topo_by_hash_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.hash_at_topo_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.cumulative_difficulty_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.assets_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.balances_trees_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-
-        if let Some(cache) = self.nonces_trees_cache.as_ref() {
-            let mut cache = cache.lock().await;
-            cache.clear();
-        }
-    }
-
     fn load_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<T, BlockchainError> {
         match tree.get(key)? {
             Some(bytes) => {
@@ -451,6 +404,55 @@ impl DifficultyProvider for SledStorage {
 
 #[async_trait]
 impl Storage for SledStorage {
+    async fn clear_caches(&mut self) -> Result<(), BlockchainError> {
+        if let Some(cache) = self.transactions_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.blocks_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.past_blocks_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.topo_by_hash_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.hash_at_topo_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.cumulative_difficulty_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.assets_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.balances_trees_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        if let Some(cache) = self.nonces_trees_cache.as_ref() {
+            let mut cache = cache.lock().await;
+            cache.clear();
+        }
+
+        Ok(())
+    }
+
     fn get_pruned_topoheight(&self) -> Result<Option<u64>, BlockchainError> {
         Ok(self.pruned_topoheight)
     }
@@ -1471,7 +1473,7 @@ impl Storage for SledStorage {
         self.delete_versioned_nonces_above_topoheight(topoheight).await?;
 
         // Clear all caches to not have old data after rewind
-        self.clear_caches().await;
+        self.clear_caches().await?;
 
         // store the new tips and topo topoheight
         self.store_tips(&tips)?;
