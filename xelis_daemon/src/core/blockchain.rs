@@ -2055,12 +2055,12 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Rewind the chain by removing N blocks from the top
-    pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64, until_stable_height: bool) -> Result<u64, BlockchainError> {
+    pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64, stop_at_stable_height: bool) -> Result<u64, BlockchainError> {
         trace!("rewind chain with count = {}", count);
         let current_height = self.get_height();
         let current_topoheight = self.get_topo_height();
         warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, current_height, current_topoheight);
-        let until = if until_stable_height {
+        let until = if stop_at_stable_height {
             self.get_stable_height()
         } else {
             0
@@ -2082,7 +2082,7 @@ impl<S: Storage> Blockchain<S> {
         self.height.store(new_height, Ordering::Release);
         self.topoheight.store(new_topoheight, Ordering::Release);
         // update stable height if it's allowed
-        if !until_stable_height {
+        if !stop_at_stable_height {
             let tips = storage.get_tips().await?;
             let (stable_hash, stable_height) = self.find_common_base(&storage, &tips).await?;
 
