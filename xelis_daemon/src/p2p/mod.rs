@@ -1480,8 +1480,6 @@ impl<S: Storage> P2pServer<S> {
         if pop_count > 0
             && peer.get_topoheight() > our_previous_topoheight
             && peer.get_height() >= our_previous_height
-            // if the difference is above the STABLE LIMIT, we have to rewind as the common point is in stable height and no block can be added
-            && common_point.get_topoheight() <= our_previous_topoheight && our_previous_topoheight - common_point.get_topoheight() > STABLE_LIMIT
             // then, verify if it's a priority node, otherwise, check if we are connected to a priority node so only him can rewind us
             && (peer.is_priority() || !self.is_connected_to_a_synced_priority_node().await)
         {
