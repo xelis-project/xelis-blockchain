@@ -1376,6 +1376,9 @@ impl<S: Storage> P2pServer<S> {
         let mut top_blocks = IndexSet::new();
         // common point used to notify peer if he should rewind or not
         let common_point = self.find_common_point(&*storage, blocks).await?;
+        // Lowest height of the blocks sent
+        let mut lowest_common_height = None;
+
         if let Some(common_point) = &common_point {
             let mut topoheight = common_point.get_topoheight();
             // lets add all blocks ordered hash
@@ -1383,6 +1386,8 @@ impl<S: Storage> P2pServer<S> {
             let stable_height = self.blockchain.get_stable_height();
             // used to detect if we find unstable height for alt tips
             let mut potential_unstable_height = None;
+            // Search the lowest height
+            let mut lowest_height = self.blockchain.get_height();
             // check to see if we should search for alt tips (and above unstable height)
             let should_search_alt_tips = top_topoheight - topoheight < accepted_response_size as u64;
 
@@ -1397,10 +1402,18 @@ impl<S: Storage> P2pServer<S> {
                         potential_unstable_height = Some(height);
                     }
                 }
+
+                // Find the lowest height
+                let height = storage.get_height_for_block_hash(&hash).await?;
+                if height < lowest_height {
+                    lowest_height = height;
+                }
+
                 trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
                 response_blocks.insert(hash);
                 topoheight += 1;
             }
+            lowest_common_height = Some(lowest_height);
 
             // now, lets check if peer is near to be synced, and send him alt tips blocks
             if let Some(mut height) = potential_unstable_height {
@@ -1422,7 +1435,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         debug!("Sending {} blocks & {} top blocks as response to {}", response_blocks.len(), top_blocks.len(), peer);
-        peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, response_blocks, top_blocks))).await?;
+        peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, lowest_common_height, response_blocks, top_blocks))).await?;
         Ok(())
     }
 
@@ -1430,7 +1443,7 @@ impl<S: Storage> P2pServer<S> {
         trace!("handle chain response from {}", peer);
         let response_size = response.size();
 
-        let Some(common_point) = response.get_common_point() else {
+        let (Some(common_point), Some(lowest_height)) = (response.get_common_point(), response.get_lowest_height()) else {
             warn!("No common block was found with {}", peer);
             if response.size() > 0 {
                 warn!("Peer have no common block but send us {} blocks!", response.size());
@@ -1439,7 +1452,7 @@ impl<S: Storage> P2pServer<S> {
             return Ok(())
         };
 
-        debug!("{} found a common point with block {} at {} for sync, received {} blocks", peer.get_outgoing_address(), common_point.get_hash(), common_point.get_topoheight(), response_size);
+        debug!("{} found a common point with block {} at topo {} for sync, received {} blocks", peer.get_outgoing_address(), common_point.get_hash(), common_point.get_topoheight(), response_size);
         let pop_count = {
             let storage = self.blockchain.get_storage().read().await;
             let topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
@@ -1451,7 +1464,7 @@ impl<S: Storage> P2pServer<S> {
             let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
             trace!("block height: {}, stable height: {}, topoheight: {}, hash: {}", block_height, self.blockchain.get_stable_height(), topoheight, common_point.get_hash());
             // We are under the stable height, rewind is necessary
-            if block_height <= self.blockchain.get_stable_height() {
+            if lowest_height <= self.blockchain.get_stable_height() {
                 let our_topoheight = self.blockchain.get_topo_height();
                 if our_topoheight > topoheight {
                     our_topoheight - topoheight

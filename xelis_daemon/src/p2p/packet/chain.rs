@@ -154,28 +154,42 @@ impl Serializer for CommonPoint {
 
 #[derive(Debug)]
 pub struct ChainResponse {
+    // Common point between us and the peer
+    // This is based on the same DAG ordering for a block 
     common_point: Option<CommonPoint>,
+    // Lowest height of the blocks in the response
+    lowest_height: Option<u64>,
     blocks: IndexSet<Hash>,
     top_blocks: IndexSet<Hash>
 }
 
 impl ChainResponse {
-    pub fn new(common_point: Option<CommonPoint>, blocks: IndexSet<Hash>, top_blocks: IndexSet<Hash>) -> Self {
+    pub fn new(common_point: Option<CommonPoint>, lowest_height: Option<u64>, blocks: IndexSet<Hash>, top_blocks: IndexSet<Hash>) -> Self {
+        debug_assert!(common_point.is_some() == lowest_height.is_some());
         Self {
             common_point,
+            lowest_height: None,
             blocks,
             top_blocks
         }
     }
 
+    // Get the common point for this response
     pub fn get_common_point(&mut self) -> Option<CommonPoint> {
         self.common_point.take()
     }
 
+    // Get the lowest height of the blocks in the response
+    pub fn get_lowest_height(&self) -> Option<u64> {
+        self.lowest_height
+    }
+
+    // Get the count of blocks received
     pub fn size(&self) -> usize {
         self.blocks.len()
     }
 
+    // Take ownership of the blocks
     pub fn consume(self) -> (IndexSet<Hash>, IndexSet<Hash>) {
         (self.blocks, self.top_blocks)
     }
@@ -184,6 +198,16 @@ impl ChainResponse {
 impl Serializer for ChainResponse {
     fn write(&self, writer: &mut Writer) {
         self.common_point.write(writer);
+        // No need to write the blocks if we don't have a common point
+        if self.common_point.is_none() {
+            return
+        }
+
+        // Write the lowest height
+        if let Some(lowest_height) = self.lowest_height {
+            writer.write_u64(&lowest_height);
+        }
+
         writer.write_u16(self.blocks.len() as u16);
         for hash in &self.blocks {
             writer.write_hash(hash);
@@ -197,6 +221,12 @@ impl Serializer for ChainResponse {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let common_point = Option::read(reader)?;
+        // No need to read the blocks if we don't have a common point
+        if common_point.is_none() {
+            return Ok(Self::new(None, None, IndexSet::new(), IndexSet::new()))
+        }
+
+        let lowest_height = reader.read_u64()?;
         let len = reader.read_u16()?;
         if len > CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u16 {
             debug!("Invalid chain response length: {}", len);
@@ -227,6 +257,6 @@ impl Serializer for ChainResponse {
             }
         }
 
-        Ok(Self::new(common_point, blocks, top_blocks))
+        Ok(Self::new(common_point, Some(lowest_height), blocks, top_blocks))
     }
 }
