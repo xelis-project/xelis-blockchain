@@ -1573,11 +1573,7 @@ impl<S: Storage> P2pServer<S> {
             // Peekable is here to help to know if we are at the last element
             // so we create only one channel for the last blocker
             let mut blocks_iter = blocks.into_iter().peekable();
-            loop {
-                let Some(hash) = blocks_iter.next() else {
-                    break;
-                };
-
+            while let Some(hash) = blocks_iter.next() {
                 if !self.blockchain.has_block(&hash).await? {
                     trace!("Block {} is not found, asking it to {} (index = {})", hash, peer.get_outgoing_address(), total_requested);
                     // if it's allowed by the user, request all blocks in parallel
