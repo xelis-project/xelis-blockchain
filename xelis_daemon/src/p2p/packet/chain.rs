@@ -168,7 +168,7 @@ impl ChainResponse {
         debug_assert!(common_point.is_some() == lowest_height.is_some());
         Self {
             common_point,
-            lowest_height: None,
+            lowest_height,
             blocks,
             top_blocks
         }
