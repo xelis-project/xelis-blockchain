@@ -37,7 +37,7 @@ impl TMessage for Response {
 }
 
 pub struct Miner {
-    first_seen: u128, // timestamp of first connection
+    first_seen: u64, // timestamp of first connection
     key: PublicKey, // public key of account (address)
     name: String, // worker name
     blocks_accepted: usize, // blocks accepted by us since he is connected
@@ -55,7 +55,7 @@ impl Miner {
         }
     }
 
-    pub fn first_seen(&self) -> u128 {
+    pub fn first_seen(&self) -> u64 {
         self.first_seen
     }
 
@@ -157,8 +157,8 @@ pub struct GetWorkServer<S: Storage> {
     mining_jobs: Mutex<LruCache<Hash, (BlockHeader, Difficulty)>>,
     last_header_hash: Mutex<Option<Hash>>,
     // used only when a new TX is received in mempool
-    last_notify: Mutex<u128>,
-    notify_rate_limit_ms: u128
+    last_notify: Mutex<u64>,
+    notify_rate_limit_ms: u64
 }
 
 impl<S: Storage> GetWorkServer<S> {

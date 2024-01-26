@@ -305,7 +305,7 @@ pub struct AccountHistoryEntry {
     pub hash: Hash,
     #[serde(flatten)]
     pub history_type: AccountHistoryType,
-    pub block_timestamp: u128
+    pub block_timestamp: u64
 }
 
 #[derive(Serialize, Deserialize)]

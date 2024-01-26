@@ -90,7 +90,7 @@ Each job send to a miner is a `BlockMiner` instance in hex format.
 
 The `BlockMiner` is in following format:
 - header work hash: 32 bytes
-- timestamp (u128 for milliseconds): 16 bytes
+- timestamp (u64 for milliseconds): 8 bytes
 - nonce (u64): 8 bytes (BigEndian format)
 - extra nonce: 32 bytes
 - miner public key: 32 bytes

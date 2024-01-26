@@ -13,14 +13,14 @@ use super::{EXTRA_NONCE_SIZE, BLOCK_WORK_SIZE};
 #[derive(Clone, Debug)]
 pub struct BlockMiner<'a> {
     pub header_work_hash: Hash, // include merkle tree of tips, txs, and height (immutable)
-    pub timestamp: u128, // miners can update timestamp to keep it up-to-date
+    pub timestamp: u64, // miners can update timestamp to keep it up-to-date
     pub nonce: u64,
     pub miner: Option<Cow<'a, PublicKey>>,
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE]
 }
 
 impl<'a> BlockMiner<'a> {
-    pub fn new(header_work_hash: Hash, timestamp: u128) -> Self {
+    pub fn new(header_work_hash: Hash, timestamp: u64) -> Self {
         Self {
             header_work_hash,
             timestamp,
@@ -40,12 +40,12 @@ impl<'a> BlockMiner<'a> {
 impl<'a> Serializer for BlockMiner<'a> {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(&self.header_work_hash); // 32
-        writer.write_u128(&self.timestamp); // 32 + 16 = 48
-        writer.write_u64(&self.nonce); // 48 + 8 = 56
-        writer.write_bytes(&self.extra_nonce); // 56 + 32 = 88
+        writer.write_u64(&self.timestamp); // 32 + 8 = 40
+        writer.write_u64(&self.nonce); // 40 + 8 = 48
+        writer.write_bytes(&self.extra_nonce); // 48 + 32 = 80
 
         if let Some(miner) = &self.miner {
-            miner.write(writer); // 88 + 32 = 120
+            miner.write(writer); // 80 + 32 = 112
         }
 
         debug_assert!(writer.total_write() == BLOCK_WORK_SIZE, "invalid block work size");
@@ -57,7 +57,7 @@ impl<'a> Serializer for BlockMiner<'a> {
         }
 
         let header_work_hash = reader.read_hash()?;
-        let timestamp = reader.read_u128()?;
+        let timestamp = reader.read_u64()?;
         let nonce = reader.read_u64()?;
         let extra_nonce = reader.read_bytes_32()?;
         let miner = Some(Cow::Owned(PublicKey::read(reader)?));

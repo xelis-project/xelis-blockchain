@@ -11,7 +11,7 @@ const FACTOR: i64 = 10000;
 // Calculate the difficulty for the next block
 // Difficulty jump can happen easily but drop is limited to 2x the block time
 // This is to prevent any attack on the difficulty where a miner would try to manipulate the network
-pub fn calculate_difficulty_v1(parent_timestamp: u128, new_timestamp: u128, previous_difficulty: Difficulty) -> Difficulty {
+pub fn calculate_difficulty_v1(parent_timestamp: u64, new_timestamp: u64, previous_difficulty: Difficulty) -> Difficulty {
     let mut solve_time = (new_timestamp - parent_timestamp) as f64;
 
     // Limit to 2x the block time to prevent any too-big difficulty drop
@@ -34,7 +34,7 @@ const DIFFICULTY_BOUND_DIVISOR: u64 = 2048;
 const CHAIN_TIME_RANGE: u64 = BLOCK_TIME_MILLIS * 2 / 3;
 
 // Difficulty algorithm from Ethereum: Homestead but tweaked for our needs
-pub fn calculate_difficulty(tips_count: u64, parent_timestamp: u128, new_timestamp: u128, previous_difficulty: Difficulty) -> Difficulty {
+pub fn calculate_difficulty(tips_count: u64, parent_timestamp: u64, new_timestamp: u64, previous_difficulty: Difficulty) -> Difficulty {
     // For current testnet, keep using same algorithm
     if true {
         return calculate_difficulty_v1(parent_timestamp, new_timestamp, previous_difficulty);

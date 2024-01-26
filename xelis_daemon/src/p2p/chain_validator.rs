@@ -112,7 +112,7 @@ impl<S: Storage> DifficultyProvider for ChainValidator<S> {
         Ok(storage.get_height_for_block_hash(hash).await?)
     }
 
-    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u128, BlockchainError> {
+    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         if let Some(data) = self.blocks.get(hash) {
             return Ok(data.header.get_timestamp())
         }
