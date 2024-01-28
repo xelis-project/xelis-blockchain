@@ -123,24 +123,6 @@ Miners software are recommended to update themselves the block timestamp (or at 
 
 Actually, the POW Hashing algorithm is `Keccak256` which is until we develop (or choose) our own algorithm.
 
-## Pruning Mode
-
-This allows anyone who want to run a light node to reduce the blockchain size by deleting blocks, transactions and versioned balances.
-The pruned topoheight can only be at a `Sync Block` and behind at least `PRUNE_SAFETY_LIMIT` blocks of the top topoheight.
-
-For wallets connected to a pruned node, you can't retrieve transactions history and miner rewards which happened before the pruned topoheight.
-But your balances are still up-to-date with the chain and if your wallets already synced them, they stay in your wallet database.
-
-The security of the chain is not reduced as all your blocks were already verified by your own node locally.
-
-## Fast Sync
-
-Fast sync mode allow you to sync really fast the necessary data only to run a correct and valid version of the chain. For this we request a peer
-to send us its chain state at a stable point, which include all accounts nonces, assets, balances, top blocks.
-So in future, when the chain will be really heavy, anyone can still join it by using fast sync system, which is compatible with the pruning mode.
-
-**WARNING**: You should use fast sync mode only with a trusted peer, because they can send you a potential fake chain.
-
 ## Client Protocol
 
 XELIS integrate along with BlockDAG a way to accept multiple times the same TX and only execute it one time.
@@ -206,19 +188,50 @@ The daemon also have 3 tokio tasks running:
 - Chain sync (which select a random peer for syncing its chain)
 - Ping task which build a generic ping packet which is send to every peers connected (or build a specific one for each when its necessary)
 
-### Handshake
+### Pruning Mode
+
+This allows anyone who want to run a light node to reduce the blockchain size by deleting blocks, transactions and versioned balances.
+The pruned topoheight can only be at a `Sync Block` and behind at least `PRUNE_SAFETY_LIMIT` blocks of the top topoheight.
+
+For wallets connected to a pruned node, you can't retrieve transactions history and miner rewards which happened before the pruned topoheight.
+But your balances are still up-to-date with the chain and if your wallets already synced them, they stay in your wallet database.
+
+The security of the chain is not reduced as all your blocks were already verified by your own node locally.
+
+### Fast Sync
+
+Fast sync mode allow you to sync really fast the necessary data only to run a correct and valid version of the chain. For this we request a peer
+to send us its chain state at a stable point, which include all accounts nonces, assets, balances, top blocks.
+So in future, when the chain will be really heavy, anyone can still join it by using fast sync system, which is compatible with the pruning mode.
+
+**WARNING**: You should use fast sync mode only with a trusted peer, because they can send you a potential fake chain.
+
+### Boost Sync
+
+This is requesting the full chain to others nodes, but faster.
+Boost sync mode can be enabled using `--allow-boost-sync-mode`. This mode use more resources but sync much faster.
+It is faster because it's requesting blocks to sync in parallel, instead of traditional synchronization that would just request one block, verify it, execute it, repeat.
+It's not enabled by default to prevent too much load on nodes. 
+
+This is the perfect mix between Fast sync and traditional chain sync, to have the full ledger while being faster.
+
+### Packets
+
+This parts explains the most importants packets used in XELIS network to communicate over the P2p network.
+
+#### Handshake
 
 Handshake packet must be the first packet sent with the blockchain state inside when connecting to a peer.
 If valid, the peer will send the same packet with is own blockchain state.
 
 Except at beginning, this packet should never be sent again.
 
-### Ping
+#### Ping
 
 Ping packet is sent at an regular interval and inform peers of the our blockchain state.
 Every 15 minutes, the packet can contains up to `MAX_LEN` sockets addresses (IPv4 or IPv6) to help others nodes to extends theirs peers list.
 
-### Chain Sync
+#### Chain Sync
 
 We select randomly a peer which is higher in height from the peers list than us and send him a chain request.
 
@@ -230,13 +243,13 @@ Through the "ask and await" request object system, we ask the complete block (bl
 
 Chain sync is requested with a minimum interval of `CHAIN_SYNC_DELAY` seconds.
 
-### Block Propagation
+#### Block Propagation
 
 Block propagation packet contains the block header only. Its sent to all peers who have theirs height minus our height less than `STABLE_LIMIT`.
 To build the block, we retrieve transactions from mempool.
 If a transaction is not found in the mempool, we request it from the same peer in order to build it.
 
-### Transaction Propagation
+#### Transaction Propagation
 
 Transaction propagation packet contains the hash only to prevent sending the TX.
 Its also backed by a cache per peer to knows if the transaction was already received from him / send to him.
@@ -378,7 +391,9 @@ Example to unsubscribe to a specific event:
 }
 ```
 
-Events currently available to subscribe are:
+#### Daemon
+
+Events availables to subscribe on the daemon API are:
 - `block_ordered`: when a block is ordered by DAG
 - `stable_height_changed`: when the stable height has been updated
 - `peer_connected`: when a new peer has connected to the node
@@ -392,6 +407,18 @@ Events currently available to subscribe are:
 - `transaction_sc_result`: when a valid TX SC Call hash has been executed by chain
 - `new_asset`: when a new asset has been registered
 - `block_ordered` when a block is ordered for the first time or reordered to a new topoheight
+- `block_orphaned` when a block that was previously ordered became orphaned because it was not selected in DAG reorg.
+
+#### Wallet
+
+Events availables to subscribe on the wallet API are:
+- `new_topoheight`: when a new topoheight is sent by the daemon
+- `new_asset`: when a new asset has been added to the wallet.
+- `new_transaction`: when a new transaction (coinbase, outgoing, incoming) has been added to wallet history.
+- `balance_changed`: when a balance changes has been detected.
+- `rescan`: when a rescan happened on the wallet.
+- `online`: when the wallet network state is now online.
+- `offline`: whenthe wallet network state is now offline.
 
 ### XSWD
 
