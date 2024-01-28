@@ -165,7 +165,7 @@ impl Event {
     pub fn kind(&self) -> NotifyEvent {
         match self {
             Event::NewTransaction(_) => NotifyEvent::NewTransaction,
-            Event::NewTopoHeight { .. } => NotifyEvent::NewChainInfo,
+            Event::NewTopoHeight { .. } => NotifyEvent::NewTopoHeight,
             Event::BalanceChanged(_) => NotifyEvent::BalanceChanged,
             Event::NewAsset(_) => NotifyEvent::NewAsset,
             Event::Rescan { .. } => NotifyEvent::Rescan,
