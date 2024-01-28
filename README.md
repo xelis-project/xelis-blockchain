@@ -70,11 +70,17 @@ XELIS use a blockDAG with following rules:
 - Block should not have deviated too much from main chain / heavier tips.
 - Maximum 9% of difficulty difference between Tips selected in the same block.
 - Side Blocks receive only 30% of block reward.
-- Block rewards (with fees) are added to account only when block is in stable height.
 - Supply is re-calculated each time the block is re-ordered because its based on topo order.
 - Transactions and miner rewards are re-computed when a new block is added and the block there linked to is not yet in stable topo height. 
+- A same transaction can be added in more than a block if they are not in the same tip branch. Client protocol will execute it only one time.
 
-Topoheight represents how many unique blocks there is in the blockchain, and its ordered by DAG.
+Topoheight represents how many unique blocks there is in the blockchain ordered by DAG.
+
+A block ordered is a valid and executed one.
+
+Topoheight order is unstable and may change until the blocks are in the stable height.
+
+Longest chain is the one selected by nodes. But for tips branches conflicts, cumulative difficulty is used to select the main chain.
 
 ## Homomorphic Encryption
 
