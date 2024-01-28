@@ -1,4 +1,4 @@
-# XELIS Blockchain
+# XELIS
 All rights reserved.
 
 A from scratch blockchain made in Rust and powered by Tokio, using account model. XELIS is based on an event-driven system combined with the native async/await and works with a unique and from scratch p2p system. This allow to be notified on any events happening on the network and to be able to react to them instead of checking periodically for updates.
@@ -18,7 +18,20 @@ We provide differents built-in network:
 - Testnet: Running
 - Devnet: this network is used for local development purpose where you want to create your own local chain. It has no peers
 
-### Objectives
+## Main features
+
+The main features of XELIS are the following:
+- **BlockDAG**: reduce orphaned blocks rate.
+- **Egalitarian Mining**: any CPU or GPU can mine XELIS easily.
+- **Privacy**: Homomorphic Encryption allows to have encrypted balances and encrypted transfered amounts.
+- **Confidential Asset**: Any asset deployed on XELIS network will have the same privacy and functionality like XELIS. Not just a number in a Smart Contract.
+- **Event system**: every event happening on the network (daemon or wallet) can be detected and notified easily.
+- **Instant Sync**: Your wallet balances and history is synced in few seconds.
+- **Smart Contracts**: Create and deploy unstoppable decentralized applications.
+- **Integrated addresses**: introduce any data in your wallet address to share informations in a transaction.
+- **Easy to use**: We aims to provide the most easiest platform to build and use daily.
+
+## Objectives
 
 The main objectives of XELIS are:
 - Provide privacy on transactions / balances.
@@ -35,12 +48,14 @@ Others objectives in mind are:
 
 ### Network
 
-- Expected Block Time is ~`15` seconds
-- Address prefix is `xel` on mainnet and `xet` for testnet
+- Expected Block Time is `15` seconds
+- Address prefix is `xel` on mainnet and `xet` for testnet/devnet
 - Transaction fee is `0.01000` XEL per KB
-- Full coin can be divided up to `5` decimals
-- Maximum supply is set at `18.4` millions
-- Maximum block size is set at `1.25` MB
+- Up to `8` decimals
+- Maximum supply: `18.4` millions
+- Maximum block size: `1.25` MB
+- Difficulty adjustment algorithm: retarget at every block
+- Block reward emission: retarget at every block (Smooth decrease)
 
 ### Daemon
 
