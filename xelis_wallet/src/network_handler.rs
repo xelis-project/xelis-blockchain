@@ -207,6 +207,8 @@ impl NetworkHandler {
                 let propagate = {
                     let mut storage = self.wallet.get_storage().write().await;
                     let found = storage.has_transaction(entry.get_hash())?;
+                    // Even if we probably scanned it before and a DAG reorg happened,
+                    // It shouldn't be found because it got deleted from storage
                     if !found {
                         storage.save_transaction(entry.get_hash(), &entry)?;
                         // Store the changes for history
