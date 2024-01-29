@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use indexmap::IndexMap;
+use log::trace;
 use sled::{Tree, Db};
 use xelis_common::{
     crypto::{hash::Hash, key::{KeyPair, PublicKey}},
@@ -428,111 +429,133 @@ impl EncryptedStorage {
     // We hash the hash of the TX to use it as a key to not let anyone being able to see txs saved on disk
     // with no access to the decrypted master key
     pub fn save_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
+        trace!("save transaction {}", hash);
         self.save_to_disk(&self.transactions, hash.as_bytes(), &transaction.to_bytes())
     }
 
     // Check if the transaction is stored in wallet
     pub fn has_transaction(&self, hash: &Hash) -> Result<bool> {
+        trace!("has transaction {}", hash);
         self.contains_data(&self.transactions, hash.as_bytes())
     }
 
     // Retrieve the nonce used to create new transactions
     pub fn get_nonce(&self) -> Result<u64> {
+        trace!("get nonce");
         self.load_from_disk(&self.extra, NONCE_KEY)
     }
 
     // Set the new nonce uised to create new transactions
     pub fn set_nonce(&mut self, nonce: u64) -> Result<()> {
+        trace!("set nonce to {}", nonce);
         self.save_to_disk(&self.extra, NONCE_KEY, &nonce.to_be_bytes())
     }
 
     // Store the keypair
     pub fn set_keypair(&mut self, keypair: &KeyPair) -> Result<()> {
+        trace!("set keypair");
         self.save_to_disk(&self.extra, KEY_PAIR, &keypair.to_bytes())
     }
 
     // Retrieve the keypair of this wallet
     pub fn get_keypair(&self) -> Result<KeyPair> {
+        trace!("get keypair");
         self.load_from_disk(&self.extra, KEY_PAIR)
     }
 
     // Set the topoheight until which the wallet is synchronized
     pub fn set_synced_topoheight(&mut self, topoheight: u64) -> Result<()> {
+        trace!("set synced topoheight to {}", topoheight);
         self.save_to_disk(&self.extra, TOPOHEIGHT_KEY, &topoheight.to_be_bytes())
     }
 
     // Get the topoheight until which the wallet is synchronized
     pub fn get_synced_topoheight(&self) -> Result<u64> {
+        trace!("get synced topoheight");
         self.load_from_disk(&self.extra, TOPOHEIGHT_KEY)
     }
 
     // Delete the top block hash
     pub fn delete_top_block_hash(&mut self) -> Result<()> {
+        trace!("delete top block hash");
         self.delete_from_disk(&self.extra, TOP_BLOCK_HASH_KEY)
     }
 
     // Set the top block hash until which the wallet is synchronized
     pub fn set_top_block_hash(&mut self, hash: &Hash) -> Result<()> {
+        trace!("set top block hash to {}", hash);
         self.save_to_disk(&self.extra, TOP_BLOCK_HASH_KEY, hash.as_bytes())
     }
 
     // Check if a top block hash is set 
     pub fn has_top_block_hash(&self) -> Result<bool> {
+        trace!("has top block hash");
         self.contains_data(&self.extra, TOP_BLOCK_HASH_KEY)
     }
 
     // Top block hash until which the wallet is synchronized 
     pub fn get_top_block_hash(&self) -> Result<Hash> {
+        trace!("get top block hash");
         self.load_from_disk(&self.extra, TOP_BLOCK_HASH_KEY)
     }
 
     pub fn get_public_storage(&self) -> &Storage {
+        trace!("get public storage");
         &self.inner
     }
 
     pub fn get_mutable_public_storage(&mut self) -> &mut Storage {
+        trace!("get mutable public storage");
         &mut self.inner
     }
 
     // Get the network on which this wallet is
     fn get_network(&self) -> Result<Network> {
+        trace!("get network");
         self.load_from_disk(&self.extra, NETWORK)
     }
 
     // Save the network to disk
     fn set_network(&mut self, network: &Network) -> Result<()> {
+        trace!("set network to {}", network);
         self.save_to_disk(&self.extra, NETWORK, &network.to_bytes())
     }
 
     // Check if the network is already registered
     fn has_network(&self) -> Result<bool> {
+        trace!("has network");
         self.contains_data(&self.extra, NETWORK)
     }
 
     // Add a topoheight where a change occured
     pub fn add_topoheight_to_changes(&mut self, topoheight: u64, block_hash: &Hash) -> Result<()> {
+        trace!("add topoheight to changes: {} at {}", topoheight, block_hash);
         self.save_to_disk_with_encrypted_key(&self.changes_topoheight, &topoheight.to_be_bytes(), block_hash.as_bytes())
     }
 
     // Get the block hash for the requested topoheight
     pub fn get_block_hash_for_topoheight(&self, topoheight: u64) -> Result<Hash> {
+        trace!("get block hash for topoheight {}", topoheight);
         self.load_from_disk_with_encrypted_key(&self.changes_topoheight, &topoheight.to_be_bytes())
     }
 
     // Check if the topoheight is present in the changes tree
     pub fn has_topoheight_in_changes(&self, topoheight: u64) -> Result<bool> {
+        trace!("has topoheight {} in changes", topoheight);
         self.contains_encrypted_data(&self.changes_topoheight, &topoheight.to_be_bytes())
     }
 
     // Delete all changes above topoheight
     // This will returns true if a changes was deleted
     pub fn delete_changes_above_topoheight(&mut self, topoheight: u64) -> Result<bool> {
+        trace!("delete changes above topoheight {}", topoheight);
         let mut deleted = false;
         for res in self.changes_topoheight.iter().keys() {
             let key = res?;
             let raw = self.cipher.decrypt_value(&key).context("Error while decrypting key from disk")?;
             let topo = u64::from_bytes(&raw)?;
             if topo > topoheight {
+                trace!("deleting topoheight changes at {}", topo);
                 self.changes_topoheight.remove(key)?;
                 deleted = true;
             }
@@ -543,6 +566,7 @@ impl EncryptedStorage {
 
     // Retrieve topoheight changes 
     pub fn get_topoheight_changes<'a>(&'a self) -> impl Iterator<Item = Result<(u64, Hash)>> + 'a {
+        trace!("get topoheight changes");
         self.changes_topoheight.iter().rev().map(|res| {
             let (key, value) = res?;
             let topo = u64::from_bytes(&self.cipher.decrypt_value(&key)?)?;
@@ -553,6 +577,7 @@ impl EncryptedStorage {
 
     // Find highest topoheight in changes
     pub fn get_highest_topoheight_in_changes_below(&self, max: u64) -> Result<u64> {
+        trace!("get highest topoheight in changes below {}", max);
         let mut highest = 0;
         for res in self.changes_topoheight.iter().keys() {
             let key = res?;
@@ -579,12 +604,14 @@ impl Storage {
     // save the encrypted form of the master key
     // it can only be decrypted using the password-based key
     pub fn set_encrypted_master_key(&mut self, encrypted_key: &[u8]) -> Result<()> {
+        trace!("set encrypted master key");
         self.db.insert(MASTER_KEY, encrypted_key)?;
         Ok(())
     }
 
     // retrieve the encrypted form of the master key
     pub fn get_encrypted_master_key(&self) -> Result<Vec<u8>> {
+        trace!("get encrypted master key");
         match self.db.get(MASTER_KEY)? {
             Some(key) => {
                 Ok(key.to_vec())
@@ -597,12 +624,14 @@ impl Storage {
 
     // set password salt used to derive the password-based key
     pub fn set_password_salt(&mut self, salt: &[u8]) -> Result<()> {
+        trace!("set password salt");
         self.db.insert(PASSWORD_SALT_KEY, salt)?;
         Ok(())
     }
 
     // retrieve password salt used to derive the password-based key
     pub fn get_password_salt(&self) -> Result<[u8; SALT_SIZE]> {
+        trace!("get password salt");
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
 
         match self.db.get(PASSWORD_SALT_KEY)? {
@@ -622,6 +651,7 @@ impl Storage {
 
     // get the salt used for encrypted storage
     pub fn get_encrypted_storage_salt(&self) -> Result<Vec<u8>> {
+        trace!("get encrypted storage salt");
         let values = self.db.get(SALT_KEY)?.context("encrypted salt for storage was not found")?;
         let mut encrypted_salt = Vec::with_capacity(values.len());
         encrypted_salt.extend_from_slice(&values);
@@ -631,6 +661,7 @@ impl Storage {
 
     // set the salt used for encrypted storage
     pub fn set_encrypted_storage_salt(&mut self, salt: &[u8]) -> Result<()> {
+        trace!("set encrypted storage salt");
         self.db.insert(SALT_KEY, salt)?;
         Ok(())
     }

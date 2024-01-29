@@ -77,6 +77,11 @@ impl NetworkHandler {
                 error!("Error while syncing: {}", e);
             }
 
+            // Turn off the websocket connection
+            if let Err(e) = zelf.api.disconnect().await {
+                debug!("Error while closing websocket connection: {}", e);
+            }
+
             // Notify that we are offline
             zelf.wallet.propagate_event(Event::Offline).await;
 
@@ -102,6 +107,11 @@ impl NetworkHandler {
 
                 // Notify that we are offline
                 self.wallet.propagate_event(Event::Offline).await;
+            }
+
+            // Turn off the websocket connection
+            if let Err(e) = self.api.disconnect().await {
+                debug!("Error while closing websocket connection: {}", e);
             }
 
             Ok(())
@@ -130,6 +140,7 @@ impl NetworkHandler {
     async fn process_block(&self, address: &Address, block_response: BlockResponse<'_, Block>, topoheight: u64) -> Result<bool, Error> {
         let block = block_response.data.data.into_owned();
         let block_hash = block_response.data.hash.into_owned();
+        debug!("Processing block {} at topoheight {}", block_hash, topoheight);
 
         let mut changes_stored = false;
         // create Coinbase entry if its our address and we're looking for XELIS asset
@@ -159,6 +170,7 @@ impl NetworkHandler {
         // Verify all TXs one by one to find one for us
         let (block, txs) = block.split();
         for (tx_hash, tx) in block.into_owned().take_txs_hashes().into_iter().zip(txs) {
+            trace!("Checking transaction {}", tx_hash);
             let tx = tx.into_owned();
             let is_owner = *tx.get_owner() == *address.get_public_key();
             let fee = if is_owner { Some(tx.get_fee()) } else { None };

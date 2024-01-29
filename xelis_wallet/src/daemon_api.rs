@@ -38,6 +38,11 @@ impl DaemonAPI {
         self.client.is_online()
     }
 
+    // Disconnect by closing the connection with node RPC
+    pub async fn disconnect(&self) -> Result<()> {
+        self.client.disconnect().await
+    }
+
     // On connection event
     pub async fn on_connection(&self) -> broadcast::Receiver<()> {
         self.client.on_connection().await
