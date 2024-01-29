@@ -213,6 +213,15 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
         }
         Ok(())
     }
+
+    // This will stop the task keeping the connection with the node
+    pub async fn disconnect(&self) -> Result<(), Error> {
+        self.set_auto_reconnect(None).await;
+        let mut ws = self.ws.lock().await;
+        ws.close().await?;
+        Ok(())
+    }
+
     // Try to reconnect to the server
     async fn try_reconnect(self: &Arc<Self>) -> Option<SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>> {
         trace!("try reconnect");
