@@ -7,7 +7,8 @@ use xelis_common::{
         Writer,
         ReaderError,
         Reader
-    }, config::TIPS_LIMIT,
+    },
+    config::TIPS_LIMIT
 };
 use crate::config::{
     CHAIN_SYNC_REQUEST_MAX_BLOCKS,
@@ -15,6 +16,7 @@ use crate::config::{
     CHAIN_SYNC_TOP_BLOCKS,
     CHAIN_SYNC_RESPONSE_MIN_BLOCKS
 };
+use std::hash::{Hash as StdHash, Hasher};
 
 #[derive(Clone, Debug)]
 pub struct BlockId {
@@ -43,6 +45,20 @@ impl BlockId {
     }
 }
 
+impl StdHash for BlockId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+impl PartialEq for BlockId {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl Eq for BlockId {}
+
 impl Serializer for BlockId {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(self.get_hash());
@@ -56,14 +72,14 @@ impl Serializer for BlockId {
 
 #[derive(Clone, Debug)]
 pub struct ChainRequest {
-    blocks: Vec<BlockId>,
+    blocks: IndexSet<BlockId>,
     // Number of maximum block responses allowed
     // This allow, directly in the protocol, to change the response param based on hardware resources
     accepted_response_size: u16
 }
 
 impl ChainRequest {
-    pub fn new(blocks: Vec<BlockId>, accepted_response_size: u16) -> Self {
+    pub fn new(blocks: IndexSet<BlockId>, accepted_response_size: u16) -> Self {
         Self {
             blocks,
             accepted_response_size
@@ -74,7 +90,7 @@ impl ChainRequest {
         self.blocks.len()
     }
 
-    pub fn get_blocks(self) -> Vec<BlockId> {
+    pub fn get_blocks(self) -> IndexSet<BlockId> {
         self.blocks
     }
 
@@ -100,9 +116,12 @@ impl Serializer for ChainRequest {
             return Err(ReaderError::InvalidValue)
         }
 
-        let mut blocks = Vec::with_capacity(len as usize);
+        let mut blocks = IndexSet::with_capacity(len as usize);
         for _ in 0..len {
-            blocks.push(BlockId::read(reader)?);
+            if !blocks.insert(BlockId::read(reader)?) {
+                debug!("Duplicated block id in chain request");
+                return Err(ReaderError::InvalidValue)
+            }
         }
 
         let accepted_response_size = reader.read_u16()?;

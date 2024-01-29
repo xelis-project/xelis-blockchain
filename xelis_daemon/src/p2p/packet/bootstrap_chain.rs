@@ -81,7 +81,7 @@ impl StepKind {
 #[derive(Debug)]
 pub enum StepRequest<'a> {
     // Request chain info (top topoheight, top height, top hash)
-    ChainInfo(Vec<BlockId>),
+    ChainInfo(IndexSet<BlockId>),
     // Min topoheight, Max topoheight, Pagination
     Assets(u64, u64, Option<u64>),
     // Min topoheight, Max topoheight, Asset, pagination
@@ -128,9 +128,12 @@ impl Serializer for StepRequest<'_> {
                     return Err(ReaderError::InvalidValue)
                 }
 
-                let mut blocks = Vec::with_capacity(len as usize);
+                let mut blocks = IndexSet::with_capacity(len as usize);
                 for _ in 0..len {
-                    blocks.push(BlockId::read(reader)?);
+                    if !blocks.insert(BlockId::read(reader)?) {
+                        debug!("Duplicated block id for chain info request");
+                        return Err(ReaderError::InvalidValue)
+                    }
                 }
                 Self::ChainInfo(blocks)
             }

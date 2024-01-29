@@ -18,6 +18,8 @@ use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Block id list is malformed")]
+    InvalidBlockIdList,
     #[error("Incompatible direction received")]
     InvalidDirection,
     #[error("Duplicated peer {} received from {} received in ping packet (direction = {:?})", _0, _1, _2)]
