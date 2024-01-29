@@ -509,7 +509,14 @@ You can also build a debug version (just remove `--release` option) or run it di
 To build using Docker, use the following command, using the `app` build argument to chose which project to build:
 `docker build -t xelis-daemon:master --build-arg app=xelis_daemon .`
 
-## Dev Fee
+## Funding
 
-No premine, fair-launch, but to fund this project, we set a developer fee percentage at `5%` of every block reward until the project is fully completed.
-This will also helps us to rewards community build and attracts others developers.
+XELIS is a community driven project and is not funded by any company or organization.
+To helps the development, the success and provide a better support of XELIS, we set a dev fee percentage starting at 15% on block reward.
+
+Current dev fee curve is as following:
+
+- 15% from block 0 to 1 250 000 (expected time is ~6 months with side blocks from blockDAG)
+- 10% from block 1 250 001 to 3 000 000 (expected time is another ~6 months with side blocks from blockDAG and network growing)
+- 5% from 3 000 001 until the project being developed and stable enough to reduce it.
+- 
