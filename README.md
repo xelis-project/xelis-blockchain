@@ -111,15 +111,15 @@ Each job send to a miner is a `BlockMiner` instance in hex format.
 
 The `BlockMiner` is in following format:
 - header work hash: 32 bytes
-- timestamp (u128 for milliseconds): 16 bytes
-- nonce (u64): 8 bytes (BigEndian format)
+- timestamp (u128 for milliseconds): 16 bytes (BigEndian)
+- nonce (u64): 8 bytes (BigEndian)
 - extra nonce: 32 bytes
 - miner public key: 32 bytes
 
 The total block work size should be equal to 120 bytes.
 Header work hash is the immutable part of a block work, its a hash calculated using `Keccak256` hashing algorithm with the following format as input:
-- block version (u8): 1 byte
-- block height (u64): 8 bytes (BigEndian format)
+- block version: 1 byte
+- block height (u64): 8 bytes (BigEndian)
 - Hash of the tips: 32 bytes
 - Hash of the transactions hashes: 32 bytes
 
