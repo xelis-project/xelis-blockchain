@@ -35,6 +35,7 @@ async-trait = { version = "0.1.64", optional = true }
 regex = "1"
 serde_regex = "1.1.0"
 tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
+primitive-types = "0.12.2"
 
 [features]
 json_rpc = ["dep:reqwest"]
