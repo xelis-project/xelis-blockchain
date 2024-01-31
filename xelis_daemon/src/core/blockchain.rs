@@ -1698,6 +1698,11 @@ impl<S: Storage> Blockchain<S> {
                         // Execute the transaction by applying changes in storage
                         self.execute_transaction(storage, &tx, &mut local_balances, highest_topo).await?;
 
+                        // Delete the transaction from  the list if it was marked as orphaned
+                        if orphaned_transactions.remove(&tx_hash) {
+                            trace!("Transaction {} was marked as orphaned, but got executed again", tx_hash);
+                        }
+
                         // if the rpc_server is enable, track events
                         if should_track_events.contains(&NotifyEvent::TransactionExecuted) {
                             let value = json!(TransactionExecutedEvent {
