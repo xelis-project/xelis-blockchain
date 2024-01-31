@@ -76,7 +76,7 @@ Others objectives in mind are:
 
 XELIS use a blockDAG with following rules:
 - A block is considered `Sync Block` when the block height is less than `TOP_HEIGHT - STABLE_LIMIT` and it's the unique block at a specific height (or only ordered block at its height and don't have lower cumulative difficulty than previous blocks).
-- A block is considered `Side Block` when block height is less than or equal to height of past 8 topographical blocks.
+- A block is considered `Side Block` when block height is less than or equal to height of past 8 topological blocks.
 - A block is considered `Orphaned` when the block is not ordered in DAG (no topological height for it).
 - A height is not unique anymore.
 - Topo height is unique for each block, but can change when the DAG is re-ordered up to `TOP_HEIGHT - STABLE_LIMIT`.
