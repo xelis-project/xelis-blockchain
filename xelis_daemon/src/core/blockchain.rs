@@ -607,9 +607,13 @@ impl<S: Storage> Blockchain<S> {
         let sync_block_cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(hash).await?;
         // if potential sync block has lower cumulative difficulty than one of past blocks, it is not a sync block
         for hash in pre_blocks {
-            let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
-            if cumulative_difficulty >= sync_block_cumulative_difficulty {
-                return Ok(false)
+            // We compare only against block ordered otherwise we can have desync between node which could lead to fork
+            // This is rare event but can happen
+            if storage.is_block_topological_ordered(&hash).await {
+                let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+                if cumulative_difficulty >= sync_block_cumulative_difficulty {
+                    return Ok(false)
+                }
             }
         }
 
