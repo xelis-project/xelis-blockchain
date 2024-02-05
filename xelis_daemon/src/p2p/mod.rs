@@ -1385,21 +1385,34 @@ impl<S: Storage> P2pServer<S> {
     // For this we have a list of block id which is basically block hash + its topoheight
     // BlockId list should be in descending order (higher topoheight first)
     async fn find_common_point(&self, storage: &S, blocks: IndexSet<BlockId>) -> Result<Option<CommonPoint>, P2pError> {
-        let mut topoheight = if let Some(first) = blocks.first() {
+        let start_topoheight = if let Some(first) = blocks.first() {
             first.get_topoheight() + 1
         } else {
-            debug!("Block id list is empty!");
+            warn!("Block id list is empty!");
             return Err(P2pError::InvalidBlockIdList)
         };
 
+        // Verify we have the same genesis block hash
+        if let Some(genesis_id) = blocks.last() {
+            let our_genesis_hash = storage.get_hash_at_topo_height(0).await?;
+            if *genesis_id.get_hash() != our_genesis_hash || genesis_id.get_topoheight() > start_topoheight {
+                warn!("Block id list has incorrect block genesis hash! Got {} at {}", genesis_id.get_hash(), genesis_id.get_topoheight());
+                return Err(P2pError::InvalidBlockIdList)
+            }
+        }
+
+        let mut expected_topoheight = start_topoheight;
         // search a common point
-        for block_id in blocks {
+        for (i, block_id) in blocks.into_iter().enumerate() {
             // Verify good order of blocks
-            if topoheight == 0 || topoheight - 1 != block_id.get_topoheight() {
-                debug!("Block id list has not a good order, current topo {}, next: {}", topoheight, block_id.get_topoheight());
+            // If we already processed genesis block (topo 0) and still have some blocks, it's invalid list
+            // If we are in the first 30 blocks, verify the exact good order
+            // If we are above it, i = i * 2, start topo - i = expected topoheight
+            if expected_topoheight == 0 || (i < 30 && expected_topoheight - 1 != block_id.get_topoheight()) {
+                warn!("Block id list has not a good order at index {}, current topo {}, next: {}", i, expected_topoheight, block_id.get_topoheight());
                 return Err(P2pError::InvalidBlockIdList) 
             }
-            topoheight -= 1;
+            expected_topoheight -= 1;
 
             trace!("Searching common point for block {} at topoheight {}", block_id.get_hash(), block_id.get_topoheight());
             if storage.has_block(block_id.get_hash()).await? {
@@ -1987,9 +2000,10 @@ impl<S: Storage> P2pServer<S> {
         // we add 1 for the genesis block added below
         trace!("Building list of blocks id for {} blocks, pruned topo: {}", topoheight, pruned_topoheight);
         while i < topoheight && topoheight - i > pruned_topoheight && blocks.len() + 1 < CHAIN_SYNC_REQUEST_MAX_BLOCKS {
-            trace!("Requesting hash at topo {} for building list of blocks id", topoheight - i);
-            let hash = storage.get_hash_at_topo_height(topoheight - i).await?;
-            blocks.insert(BlockId::new(hash, topoheight - i));
+            let current_topo = topoheight - i;
+            trace!("Requesting hash at topo {} for building list of blocks id", current_topo);
+            let hash = storage.get_hash_at_topo_height(current_topo).await?;
+            blocks.insert(BlockId::new(hash, current_topo));
             // This parameter can be tuned based on the chain size
             if blocks.len() < 30 {
                 i += 1;
