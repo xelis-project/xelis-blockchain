@@ -1372,9 +1372,10 @@ impl<S: Storage> P2pServer<S> {
     async fn listen_connection(self: &Arc<Self>, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
         // Read & parse the packet
         let packet = peer.get_connection().read_packet(buf, MAX_BLOCK_SIZE as u32).await?;
+        let packet_id = packet.get_id();
         // Handle the packet
         if let Err(e) = self.handle_incoming_packet(&peer, packet).await {
-            error!("Error occured while handling incoming packet from {}: {}", peer, e);
+            error!("Error occured while handling incoming packet #{} from {}: {}", packet_id, peer, e);
             peer.increment_fail_count();
         }
 
@@ -1414,13 +1415,13 @@ impl<S: Storage> P2pServer<S> {
             }
             expected_topoheight -= 1;
 
-            trace!("Searching common point for block {} at topoheight {}", block_id.get_hash(), block_id.get_topoheight());
+            info!("Searching common point for block {} at topoheight {}", block_id.get_hash(), block_id.get_topoheight());
             if storage.has_block(block_id.get_hash()).await? {
                 let (hash, topoheight) = block_id.consume();
-                trace!("Block {} is common, expected topoheight: {}", hash, topoheight);
+                info!("Block {} is common, expected topoheight: {}", hash, topoheight);
                 // check that the block is ordered like us
                 if storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
-                    debug!("common point found at block {} with same topoheight at {}", hash, topoheight);
+                    info!("common point found at block {} with same topoheight at {}", hash, topoheight);
                     return Ok(Some(CommonPoint::new(hash, topoheight)))
                 }
             }

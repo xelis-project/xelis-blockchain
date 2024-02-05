@@ -92,6 +92,26 @@ pub enum Packet<'a> {
     PeerDisconnected(PacketPeerDisconnected)
 }
 
+impl Packet<'_> {
+    pub fn get_id(&self) -> u8 {
+        match self {
+            Packet::Handshake(_) => HANDSHAKE_ID,
+            Packet::TransactionPropagation(_) => TX_PROPAGATION_ID,
+            Packet::BlockPropagation(_) => BLOCK_PROPAGATION_ID,
+            Packet::ChainRequest(_) => CHAIN_REQUEST_ID,
+            Packet::ChainResponse(_) => CHAIN_RESPONSE_ID,
+            Packet::Ping(_) => PING_ID,
+            Packet::ObjectRequest(_) => OBJECT_REQUEST_ID,
+            Packet::ObjectResponse(_) => OBJECT_RESPONSE_ID,
+            Packet::NotifyInventoryRequest(_) => NOTIFY_INV_REQUEST_ID,
+            Packet::NotifyInventoryResponse(_) => NOTIFY_INV_RESPONSE_ID,
+            Packet::BootstrapChainRequest(_) => BOOTSTRAP_CHAIN_REQUEST_ID,
+            Packet::BootstrapChainResponse(_) => BOOTSTRAP_CHAIN_RESPONSE_ID,
+            Packet::PeerDisconnected(_) => PEER_DISCONNECTED_ID
+        }
+    }
+}
+
 impl<'a> Serializer for Packet<'a> {
     fn read(reader: &mut Reader) -> Result<Packet<'a>, ReaderError> {
         let id = reader.read_u8()?;
