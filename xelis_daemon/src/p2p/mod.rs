@@ -19,32 +19,23 @@ use xelis_common::{
     api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent, Direction}
 };
 use crate::{
-    core::{
-        blockchain::Blockchain,
-        storage::Storage,
-        error::BlockchainError
-    },
-    p2p::{
-        chain_validator::ChainValidator,
-        packet::{
-            bootstrap_chain::{
-                StepRequest, StepResponse, BootstrapChainResponse, MAX_ITEMS_PER_PAGE, BlockMetadata
-            },
-            inventory::{
-                NOTIFY_MAX_LEN, NotifyInventoryRequest, NotifyInventoryResponse
-            },
-            chain::CommonPoint
-        },
-        tracker::ResponseBlocker,
-        connection::ConnectionMessage,
-    },
     config::{
-        NETWORK_ID, SEED_NODES, MAX_BLOCK_SIZE, CHAIN_SYNC_DELAY, P2P_PING_DELAY, CHAIN_SYNC_REQUEST_MAX_BLOCKS,
-        P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, STABLE_LIMIT, PEER_FAIL_LIMIT,
-        CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH, PRUNE_SAFETY_LIMIT, P2P_EXTEND_PEERLIST_DELAY,
-        PEER_TIMEOUT_INIT_CONNECTION, CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, MILLIS_PER_SECOND
-    },
-    rpc::rpc::get_peer_entry
+        CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_DELAY, CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START,
+        CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH,
+        MAX_BLOCK_SIZE, MILLIS_PER_SECOND, NETWORK_ID, P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY,
+        P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, PEER_FAIL_LIMIT,
+        PEER_TIMEOUT_INIT_CONNECTION, PRUNE_SAFETY_LIMIT, SEED_NODES, STABLE_LIMIT
+    }, core::{
+        blockchain::Blockchain, error::BlockchainError, storage::Storage
+    }, p2p::{
+        chain_validator::ChainValidator, connection::ConnectionMessage, packet::{
+            bootstrap_chain::{
+                BlockMetadata, BootstrapChainResponse, StepRequest, StepResponse, MAX_ITEMS_PER_PAGE
+            }, chain::CommonPoint, inventory::{
+                NotifyInventoryRequest, NotifyInventoryResponse, NOTIFY_MAX_LEN
+            }
+        }, tracker::ResponseBlocker
+    }, rpc::rpc::get_peer_entry
 };
 use self::{
     packet::{
@@ -62,7 +53,13 @@ use self::{
 };
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::{mpsc::{self, UnboundedSender, UnboundedReceiver, Sender, Receiver, unbounded_channel}, Mutex},
+    sync::{
+        mpsc::{
+            self, UnboundedSender, UnboundedReceiver,
+            Sender, Receiver, unbounded_channel
+        },
+        Mutex
+    },
     select,
     task::JoinHandle,
     io::AsyncWriteExt,
@@ -1407,9 +1404,9 @@ impl<S: Storage> P2pServer<S> {
         for (i, block_id) in blocks.into_iter().enumerate() {
             // Verify good order of blocks
             // If we already processed genesis block (topo 0) and still have some blocks, it's invalid list
-            // If we are in the first 30 blocks, verify the exact good order
+            // If we are in the first CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START blocks, verify the exact good order
             // If we are above it, i = i * 2, start topo - i = expected topoheight
-            if expected_topoheight == 0 || (i < 30 && expected_topoheight - 1 != block_id.get_topoheight()) {
+            if expected_topoheight == 0 || (i < CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START && expected_topoheight - 1 != block_id.get_topoheight()) {
                 warn!("Block id list has not a good order at index {}, current topo {}, next: {}", i, expected_topoheight, block_id.get_topoheight());
                 return Err(P2pError::InvalidBlockIdList) 
             }
@@ -2006,7 +2003,7 @@ impl<S: Storage> P2pServer<S> {
             let hash = storage.get_hash_at_topo_height(current_topo).await?;
             blocks.insert(BlockId::new(hash, current_topo));
             // This parameter can be tuned based on the chain size
-            if blocks.len() < 30 {
+            if blocks.len() < CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START {
                 i += 1;
             } else {
                 i = i * 2;
