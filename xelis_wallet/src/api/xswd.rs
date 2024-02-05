@@ -440,6 +440,11 @@ where
                 return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application permissions are not signed")))
             }
 
+            if app_data.signature.is_some() {
+                // TODO: verify the signature
+                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application signature not supported yet")))
+            }
+
             if app_data.permissions.len() > 255 {
                 return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Too many permissions")))
             }
