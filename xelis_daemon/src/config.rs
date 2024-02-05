@@ -43,6 +43,7 @@ pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
 pub const STABLE_LIMIT: u64 = 8; // in how many height we consider the block stable
 
 // Emission rules
+// 15%, 10%, 5% per block going to dev address
 pub const DEV_FEES: [DevFeeThreshold; 3] = [
     DevFeeThreshold {
         height: 0,
@@ -56,10 +57,12 @@ pub const DEV_FEES: [DevFeeThreshold; 3] = [
         height: 3_000_000, // after ~1 year it's reduced to 5%
         fee_percentage: 5
     }
-]; // 15%, 10%, 5% per block going to dev address
-pub const SIDE_BLOCK_REWARD_PERCENT: u64 = 30; // only 30% of reward for side block
+];
+// only 30% of reward for side block
+pub const SIDE_BLOCK_REWARD_PERCENT: u64 = 30;
 pub const EMISSION_SPEED_FACTOR: u64 = 20;
-pub const MAXIMUM_SUPPLY: u64 = 18_400_000 * COIN_VALUE; // 18.4M full coin
+// 18.4M full coin
+pub const MAXIMUM_SUPPLY: u64 = 18_400_000 * COIN_VALUE;
 
 // Genesis block to have the same starting point for every nodes
 pub const GENESIS_BLOCK: &str = "0000000000000000000000000000000000000001872f3e0c02000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd"; // Genesis block in hexadecimal format
@@ -68,28 +71,50 @@ pub const GENESIS_BLOCK: &str = "0000000000000000000000000000000000000001872f3e0
 pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5";
 
 // Chain sync config
-pub const CHAIN_SYNC_DELAY: u64 = 5; // minimum X seconds between each chain sync request per peer
-pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = CHAIN_SYNC_DELAY * 3; // wait maximum between each chain sync request to peers
-pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64; // allows up to X blocks id (hash + height) sent for request
-pub const CHAIN_SYNC_RESPONSE_MIN_BLOCKS: usize = 512; // minimum X blocks hashes sent for response
-pub const CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS: usize = 4096; // Default response blocks sent/accepted
-pub const CHAIN_SYNC_RESPONSE_MAX_BLOCKS: usize = 16384; // allows up to X blocks hashes sent for response
-pub const CHAIN_SYNC_TOP_BLOCKS: usize = 10; // send last 10 heights
+// minimum X seconds between each chain sync request per peer
+pub const CHAIN_SYNC_DELAY: u64 = 5;
+// wait maximum between each chain sync request to peers
+pub const CHAIN_SYNC_TIMEOUT_SECS: u64 = CHAIN_SYNC_DELAY * 3;
+// first 30 blocks are sent in linear way, then it's exponential
+pub const CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START: usize = 30;
+// allows up to X blocks id (hash + height) sent for request
+pub const CHAIN_SYNC_REQUEST_MAX_BLOCKS: usize = 64;
+// minimum X blocks hashes sent for response
+pub const CHAIN_SYNC_RESPONSE_MIN_BLOCKS: usize = 512;
+// Default response blocks sent/accepted
+pub const CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS: usize = 4096;
+// allows up to X blocks hashes sent for response
+pub const CHAIN_SYNC_RESPONSE_MAX_BLOCKS: usize = 16384;
+// send last 10 heights
+pub const CHAIN_SYNC_TOP_BLOCKS: usize = 10;
 
 // P2p rules
-pub const P2P_PING_DELAY: u64 = 10; // time between each ping
-pub const P2P_PING_PEER_LIST_DELAY: u64 = 60 * 5; // time in seconds between each update of peerlist
-pub const P2P_PING_PEER_LIST_LIMIT: usize = 16; // maximum number of addresses to be send
-pub const P2P_DEFAULT_MAX_PEERS: usize = 32; // default number of maximum peers
-pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60; // time in seconds between each time we try to connect to a new peer
+// time between each ping
+pub const P2P_PING_DELAY: u64 = 10;
+// time in seconds between each update of peerlist
+pub const P2P_PING_PEER_LIST_DELAY: u64 = 60 * 5;
+// maximum number of addresses to be send
+pub const P2P_PING_PEER_LIST_LIMIT: usize = 16;
+// default number of maximum peers
+pub const P2P_DEFAULT_MAX_PEERS: usize = 32;
+// time in seconds between each time we try to connect to a new peer
+pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
+
 // Peer rules
-pub const PEER_FAIL_TIME_RESET: u64 = 60 * 5; // number of seconds to reset the counter
-pub const PEER_FAIL_LIMIT: u8 = 20; // number of fail to disconnect the peer
-pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15000; // millis until we timeout
-pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60000; // millis until we timeout
-pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 3000; // millis until we timeout
+// number of seconds to reset the counter
+pub const PEER_FAIL_TIME_RESET: u64 = 60 * 5;
+// number of fail to disconnect the peer
+pub const PEER_FAIL_LIMIT: u8 = 20;
+// millis until we timeout
+pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15000;
+// millis until we timeout
+pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60000;
+// millis until we timeout
+pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 3000;
 
 lazy_static! {
+    // Developer public key is lazily converted from address to support any network
     pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
+    // Genesis block hash generated from the hex string directly
     pub static ref GENESIS_BLOCK_HASH: Hash = BlockHeader::from_hex(GENESIS_BLOCK.to_owned()).unwrap().hash();
 }
