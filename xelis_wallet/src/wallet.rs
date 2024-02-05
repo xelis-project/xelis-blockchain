@@ -603,16 +603,20 @@ impl Wallet {
 
         let handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.as_ref() {
+            debug!("Stopping network handler!");
             network_handler.stop().await?;
             {
                 let mut storage = self.get_storage().write().await;
                 if topoheight > storage.get_synced_topoheight()? {
                     return Err(WalletError::RescanTopoheightTooHigh)
                 }
+                debug!("set synced topoheight to {}", topoheight);
                 storage.set_synced_topoheight(topoheight)?;
                 storage.delete_top_block_hash()?;
                 // balances will be re-fetched from daemon
                 storage.delete_balances()?;
+
+                debug!("Retrieve current wallet nonce");
                 let nonce_result = network_handler.get_api()
                     .get_nonce(&self.get_address()).await
                     // User has no transactions/balances yet, set its nonce to 0
@@ -621,11 +625,14 @@ impl Wallet {
                 storage.set_nonce(nonce_result)?;
 
                 if topoheight == 0 {
+                    debug!("Deleting all transactions for full rescan");
                     storage.delete_transactions()?;
                 } else {
+                    debug!("Deleting transactions above {} for partial rescan", topoheight);
                     storage.delete_transactions_above_topoheight(topoheight)?;
                 }
             }
+            debug!("Starting again network handler");
             network_handler.start().await.context("Error while restarting network handler")?;
         } else {
             return Err(WalletError::NotOnlineMode)

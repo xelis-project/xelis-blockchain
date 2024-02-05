@@ -13,9 +13,9 @@ use anyhow::Error;
 use futures_util::{StreamExt, stream::{SplitSink, SplitStream}, SinkExt};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Value, json};
-use tokio::{net::TcpStream, sync::{Mutex, oneshot, broadcast}, time::sleep};
+use tokio::{net::TcpStream, sync::{broadcast, oneshot, Mutex}, task::JoinHandle, time::sleep};
 use tokio_tungstenite::{WebSocketStream, MaybeTlsStream, connect_async, tungstenite::Message};
-use log::{error, debug, trace};
+use log::{debug, error, trace, warn};
 
 use crate::api::SubscribeParams;
 
@@ -82,7 +82,9 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + C
     // This channel is called when the connection is lost
     offline_channel: Mutex<Option<broadcast::Sender<()>>>,
     // This channel is called each time we connect
-    online_channel: Mutex<Option<broadcast::Sender<()>>>
+    online_channel: Mutex<Option<broadcast::Sender<()>>>,
+    // Background task that keep alive WS connection
+    background_task: Mutex<Option<JoinHandle<()>>>
 }
 
 pub const DEFAULT_AUTO_RECONNECT: Duration = Duration::from_secs(5);
@@ -122,16 +124,21 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
             auto_reconnect: Mutex::new(Some(DEFAULT_AUTO_RECONNECT)),
             online: AtomicBool::new(true),
             offline_channel: Mutex::new(None),
-            online_channel: Mutex::new(None)
+            online_channel: Mutex::new(None),
+            background_task: Mutex::new(None)
         });
 
         {
-            let client = client.clone();
-            tokio::spawn(async move {
-                if let Err(e) = client.read(read).await {
+            let zelf = client.clone();
+            let handle = tokio::spawn(async move {
+                if let Err(e) = zelf.read(read).await {
                     error!("Error in the WebSocket client ioloop: {:?}", e);
                 };
             });
+
+            // Store the handle
+            let mut lock = client.background_task.lock().await;
+            *lock = Some(handle);
         }
 
         Ok(client)
@@ -217,9 +224,57 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
     // This will stop the task keeping the connection with the node
     pub async fn disconnect(&self) -> Result<(), Error> {
         self.set_auto_reconnect(None).await;
-        let mut ws = self.ws.lock().await;
-        ws.close().await?;
+
+        self.online.store(false, Ordering::SeqCst);
+        {
+            let mut ws = self.ws.lock().await;
+            ws.close().await?;
+        }
+
+        {
+            let task = self.background_task.lock().await.take();
+            if let Some(task) = task {
+                task.abort();
+            }
+        }
+
+        // Clear all data
+        self.clear_events().await;
+        self.clear_requests().await;
+
         Ok(())
+    }
+
+    // Reconnect by starting again the background task
+    pub async fn reconnect(self: &Arc<Self>) -> Result<bool, Error> {
+        if self.is_online() {
+            return Ok(false)
+        }
+
+        let mut task = self.background_task.lock().await;
+        if let Some(task) = task.take() {
+            warn!("Task was not closed correctly!");
+            task.abort();
+        }
+
+        {
+            let ws = Self::connect_to(&self.target).await?;
+            let (write, read) = ws.split();
+            {
+                let mut lock = self.ws.lock().await;
+                *lock = write;
+            }
+
+            let zelf = self.clone();
+            let handle = tokio::spawn(async move {
+                if let Err(e) = zelf.read(read).await {
+                    error!("Error in the WebSocket client ioloop: {:?}", e);
+                };
+            });
+            *task = Some(handle);
+        }
+
+        Ok(true)
     }
 
     // Try to reconnect to the server

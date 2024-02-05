@@ -70,6 +70,13 @@ impl NetworkHandler {
             return Err(NetworkError::AlreadyRunning)
         }
 
+        if !self.api.is_online() {
+            if !self.api.reconnect().await? {
+                error!("Couldn't reconnect to server");
+                return Err(NetworkError::NotRunning)
+            }
+        }
+
         let zelf = Arc::clone(&self);
         *self.task.lock().await = Some(tokio::spawn(async move {
             let res =  zelf.start_syncing().await;

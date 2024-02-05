@@ -43,6 +43,11 @@ impl DaemonAPI {
         self.client.disconnect().await
     }
 
+    // Try to reconnect using the same client
+    pub async fn reconnect(&self) -> Result<bool> {
+        self.client.reconnect().await
+    }
+
     // On connection event
     pub async fn on_connection(&self) -> broadcast::Receiver<()> {
         self.client.on_connection().await
