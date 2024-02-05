@@ -1415,13 +1415,13 @@ impl<S: Storage> P2pServer<S> {
             }
             expected_topoheight -= 1;
 
-            info!("Searching common point for block {} at topoheight {}", block_id.get_hash(), block_id.get_topoheight());
+            debug!("Searching common point for block {} at topoheight {}", block_id.get_hash(), block_id.get_topoheight());
             if storage.has_block(block_id.get_hash()).await? {
                 let (hash, topoheight) = block_id.consume();
-                info!("Block {} is common, expected topoheight: {}", hash, topoheight);
+                debug!("Block {} is common, expected topoheight: {}", hash, topoheight);
                 // check that the block is ordered like us
                 if storage.is_block_topological_ordered(&hash).await && storage.get_topo_height_for_hash(&hash).await? == topoheight { // common point
-                    info!("common point found at block {} with same topoheight at {}", hash, topoheight);
+                    debug!("common point found at block {} with same topoheight at {}", hash, topoheight);
                     return Ok(Some(CommonPoint::new(hash, topoheight)))
                 }
             }
