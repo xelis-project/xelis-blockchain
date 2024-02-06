@@ -6,6 +6,7 @@ use num_traits::One;
 // This type is used to easily switch between u64 and u128 as example
 // And its easier to see where we use the block difficulty
 pub type Difficulty = u64;
+pub type CumulativeDifficulty = u128;
 
 #[derive(Error, Debug)]
 pub enum DifficultyError {

@@ -5,11 +5,11 @@ use std::{
 };
 use serde::{Deserialize, Serialize};
 use crate::{
-    crypto::{hash::Hash, address::Address},
     account::{VersionedBalance, VersionedNonce},
-    network::Network,
     block::Block,
-    difficulty::Difficulty,
+    crypto::{address::Address, hash::Hash},
+    difficulty::{CumulativeDifficulty, Difficulty},
+    network::Network,
     transaction::Transaction
 };
 use super::DataHash;
@@ -29,7 +29,7 @@ pub struct BlockResponse<'a, T: Clone> {
     pub difficulty: Difficulty,
     pub supply: Option<u64>,
     pub reward: Option<u64>,
-    pub cumulative_difficulty: Difficulty,
+    pub cumulative_difficulty: CumulativeDifficulty,
     pub total_fees: Option<u64>,
     pub total_size_in_bytes: usize,
     #[serde(flatten)]
@@ -228,7 +228,7 @@ pub struct PeerEntry<'a> {
     pub last_ping: u64,
     pub pruned_topoheight: Option<u64>,
     pub peers: HashMap<SocketAddr, Direction>,
-    pub cumulative_difficulty: Difficulty,
+    pub cumulative_difficulty: CumulativeDifficulty,
     pub connected_on: u64
 }
 
