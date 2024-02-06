@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_common::{
@@ -57,29 +57,22 @@ impl<S: Storage> ChainValidator<S> {
             return Err(BlockchainError::InvalidTips)
         }
 
-        // verify that we have already all its tips & that they are all unique
+        // verify that we have already all its tips
         {
-            let mut unique_tips = HashSet::with_capacity(tips_count);
             for tip in tips {
                 trace!("Checking tip {} for block {}", tip, hash);
                 if !self.blocks.contains_key(tip) && !self.blockchain.has_block(tip).await? {
                     error!("Block {} contains tip {} which is not present in chain validator", hash, tip);
                     return Err(BlockchainError::InvalidTips)
                 }
-
-                if unique_tips.contains(tip) {
-                    error!("Block {} contains a duplicated tip {}!", hash, tip);
-                    return Err(BlockchainError::InvalidTips)
-                }
-
-                unique_tips.insert(tip);
             }
         }
 
         let pow_hash = header.get_pow_hash();
         trace!("POW hash: {}", pow_hash);
         let difficulty = self.blockchain.verify_proof_of_work(self, &pow_hash, tips.iter()).await?;
-        let cumulative_difficulty = 0;
+        // TODO FIXME
+        let cumulative_difficulty = CumulativeDifficulty::zero();
 
         let hash = Arc::new(hash);
         self.blocks.insert(hash.clone(), Data { header: Arc::new(header), difficulty, cumulative_difficulty });

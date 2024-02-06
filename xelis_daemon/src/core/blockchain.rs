@@ -804,7 +804,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        map.insert(hash.clone(), storage.get_difficulty_for_block_hash(hash).await? as CumulativeDifficulty);
+        map.insert(hash.clone(), storage.get_difficulty_for_block_hash(hash).await?.into());
 
         Ok(())
     }
@@ -832,10 +832,10 @@ impl<S: Storage> Blockchain<S> {
         if base != hash {
             map.insert(base.clone(), storage.get_cumulative_difficulty_for_block_hash(base).await?);
         }
-        map.insert(hash.clone(), storage.get_difficulty_for_block_hash(hash).await? as CumulativeDifficulty);
+        map.insert(hash.clone(), storage.get_difficulty_for_block_hash(hash).await?.into());
 
         let mut set = HashSet::with_capacity(map.len());
-        let mut score = 0;
+        let mut score = CumulativeDifficulty::zero();
         for (hash, value) in map {
             set.insert(hash);
             score += value;
@@ -1511,7 +1511,7 @@ impl<S: Storage> Blockchain<S> {
         // Compute cumulative difficulty for block
         let cumulative_difficulty = {
             let cumulative_difficulty: CumulativeDifficulty = if tips_count == 0 {
-                GENESIS_BLOCK_DIFFICULTY as CumulativeDifficulty
+                GENESIS_BLOCK_DIFFICULTY.into()
             } else {
                 let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
                 let (_, cumulative_difficulty) = self.find_tip_work_score(&storage, &block_hash, &base, base_height).await?;
