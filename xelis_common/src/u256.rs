@@ -1,14 +1,29 @@
-use primitive_types::U256;
+use std::{fmt::{self, Display, Formatter}, ops::AddAssign};
 
-use crate::serializer::{Reader, ReaderError, Serializer, Writer};
+use primitive_types::U256;
+use serde::{Deserialize, Serialize};
+
+use crate::{difficulty::Difficulty, serializer::{Reader, ReaderError, Serializer, Writer}};
 
 // This is like a variable length integer but only for U256
 // It is mostly used to save difficulty and cumulative difficulty on disk
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[serde(transparent)]
 pub struct CompactU256(U256);
 
 impl CompactU256 {
-    pub fn new(u: U256) -> Self {
+    pub const fn new(u: U256) -> Self {
         Self(u)
+    }
+
+    // This is used to create a CompactU256 with value 0
+    pub const fn zero() -> Self {
+        Self(U256::zero())
+    }
+
+    // This is used to create a CompactU256 with value 1
+    pub const fn one() -> Self {
+        Self(U256::one())
     }
 }
 
@@ -58,6 +73,24 @@ impl From<U256> for CompactU256 {
 impl From<CompactU256> for U256 {
     fn from(c: CompactU256) -> Self {
         c.0
+    }
+}
+
+impl From<Difficulty> for CompactU256 {
+    fn from(difficulty: Difficulty) -> Self {
+        U256::from(difficulty).into()
+    }
+}
+
+impl Display for CompactU256 {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl AddAssign for CompactU256 {
+    fn add_assign(&mut self, other: Self) {
+        self.0 += other.0;
     }
 }
 

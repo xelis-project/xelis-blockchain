@@ -1,4 +1,4 @@
-use crate::crypto::hash::Hash;
+use crate::{u256::CompactU256, crypto::hash::Hash};
 use num_bigint::{BigUint, ToBigUint};
 use thiserror::Error;
 use num_traits::One;
@@ -6,7 +6,7 @@ use num_traits::One;
 // This type is used to easily switch between u64 and u128 as example
 // And its easier to see where we use the block difficulty
 pub type Difficulty = u64;
-pub type CumulativeDifficulty = u128;
+pub type CumulativeDifficulty = CompactU256;
 
 #[derive(Error, Debug)]
 pub enum DifficultyError {
