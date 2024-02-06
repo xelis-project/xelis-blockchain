@@ -2,11 +2,11 @@ use std::{collections::{HashMap, HashSet}, sync::Arc};
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_common::{
-    crypto::hash::Hash,
     block::BlockHeader,
-    immutable::Immutable, 
     config::TIPS_LIMIT,
-    difficulty::Difficulty
+    crypto::hash::Hash,
+    difficulty::{CumulativeDifficulty, Difficulty},
+    immutable::Immutable
 };
 use crate::core::{
     error::BlockchainError,
@@ -18,7 +18,7 @@ use log::{error, trace};
 struct Data {
     header: Arc<BlockHeader>,
     difficulty: Difficulty,
-    cumulative_difficulty: Difficulty
+    cumulative_difficulty: CumulativeDifficulty
 }
 
 pub struct ChainValidator<S: Storage> {
@@ -130,7 +130,7 @@ impl<S: Storage> DifficultyProvider for ChainValidator<S> {
         Ok(storage.get_difficulty_for_block_hash(hash).await?)
     }
 
-    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
+    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError> {
         if let Some(data) = self.blocks.get(hash) {
             return Ok(data.cumulative_difficulty)
         }

@@ -7,10 +7,10 @@ use crate::{
     p2p::packet::PacketWrapper
 };
 use xelis_common::{
-    config::TIPS_LIMIT,
     api::daemon::Direction,
-    difficulty::Difficulty,
+    config::TIPS_LIMIT,
     crypto::hash::Hash,
+    difficulty::CumulativeDifficulty,
     serializer::Serializer,
     utils::get_current_time_in_seconds
 };
@@ -89,7 +89,7 @@ pub struct Peer {
     // last time we sent a ping packet to this peer
     last_ping_sent: AtomicU64,
     // cumulative difficulty of peer chain
-    cumulative_difficulty: AtomicU64,
+    cumulative_difficulty: Mutex<CumulativeDifficulty>,
     // All transactions propagated from/to this peer
     txs_cache: Mutex<LruCache<Hash, Direction>>,
     // last blocks propagated to/from this peer
@@ -112,7 +112,7 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: Difficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>) -> Self {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
 
@@ -141,7 +141,7 @@ impl Peer {
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
             last_ping_sent: AtomicU64::new(0),
-            cumulative_difficulty: AtomicU64::new(cumulative_difficulty),
+            cumulative_difficulty: Mutex::new(cumulative_difficulty),
             txs_cache: Mutex::new(LruCache::new(128)),
             blocks_propagation: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
             last_inventory: AtomicU64::new(0),
@@ -249,14 +249,14 @@ impl Peer {
     }
 
     // Get the cumulative difficulty
-    pub fn get_cumulative_difficulty(&self) -> Difficulty {
-        self.cumulative_difficulty.load(Ordering::Acquire)
+    pub fn get_cumulative_difficulty(&self) -> &Mutex<CumulativeDifficulty> {
+        &self.cumulative_difficulty
     }
 
     // Store the cumulative difficulty
     // This is updated by ping packet
-    pub fn set_cumulative_difficulty(&self, cumulative_difficulty: Difficulty) {
-        self.cumulative_difficulty.store(cumulative_difficulty, Ordering::Release)
+    pub async fn set_cumulative_difficulty(&self, cumulative_difficulty: CumulativeDifficulty) {
+        *self.cumulative_difficulty.lock().await = cumulative_difficulty;
     }
 
     // Verify if its a outgoing connection

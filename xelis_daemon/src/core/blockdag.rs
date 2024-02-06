@@ -1,11 +1,11 @@
 use indexmap::IndexSet;
-use xelis_common::difficulty::Difficulty;
+use xelis_common::difficulty::CumulativeDifficulty;
 use xelis_common::crypto::hash::Hash;
 use super::storage::Storage;
 use super::{error::BlockchainError, storage::DifficultyProvider};
 
 // sort the scores by cumulative difficulty and, if equals, by hash value
-pub fn sort_descending_by_cumulative_difficulty<T>(scores: &mut Vec<(T, Difficulty)>)
+pub fn sort_descending_by_cumulative_difficulty<T>(scores: &mut Vec<(T, CumulativeDifficulty)>)
 where
     T: AsRef<Hash>,
 {
@@ -32,7 +32,7 @@ where
         0 => Err(BlockchainError::ExpectedTips),
         1 => Ok(tips.into_iter().collect()),
         _ => {
-            let mut scores: Vec<(Hash, Difficulty)> = Vec::with_capacity(tips_len);
+            let mut scores: Vec<(Hash, CumulativeDifficulty)> = Vec::with_capacity(tips_len);
             for hash in tips {
                 let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
                 scores.push((hash, cumulative_difficulty));

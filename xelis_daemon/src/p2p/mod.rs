@@ -9,14 +9,14 @@ mod tracker;
 use indexmap::IndexSet;
 use lru::LruCache;
 use xelis_common::{
-    config::{VERSION, TIPS_LIMIT},
-    serializer::Serializer,
-    crypto::hash::{Hashable, Hash},
-    block::{BlockHeader, Block},
-    difficulty::Difficulty,
-    utils::{get_current_time_in_seconds, get_current_time_in_millis},
+    api::daemon::{Direction, NotifyEvent, PeerPeerDisconnectedEvent},
+    block::{Block, BlockHeader},
+    config::{TIPS_LIMIT, VERSION},
+    crypto::hash::{Hash, Hashable},
+    difficulty::CumulativeDifficulty,
     immutable::Immutable,
-    api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent, Direction}
+    serializer::Serializer,
+    utils::{get_current_time_in_millis, get_current_time_in_seconds}
 };
 use crate::{
     config::{
@@ -26,16 +26,30 @@ use crate::{
         P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, PEER_FAIL_LIMIT,
         PEER_TIMEOUT_INIT_CONNECTION, PRUNE_SAFETY_LIMIT, SEED_NODES, STABLE_LIMIT
     }, core::{
-        blockchain::Blockchain, error::BlockchainError, storage::Storage
+        blockchain::Blockchain,
+        error::BlockchainError,
+        storage::Storage
     }, p2p::{
-        chain_validator::ChainValidator, connection::ConnectionMessage, packet::{
+        chain_validator::ChainValidator,
+        connection::ConnectionMessage,
+        packet::{
             bootstrap_chain::{
-                BlockMetadata, BootstrapChainResponse, StepRequest, StepResponse, MAX_ITEMS_PER_PAGE
-            }, chain::CommonPoint, inventory::{
-                NotifyInventoryRequest, NotifyInventoryResponse, NOTIFY_MAX_LEN
+                BlockMetadata,
+                BootstrapChainResponse,
+                StepRequest,
+                StepResponse,
+                MAX_ITEMS_PER_PAGE
+            },
+            chain::CommonPoint,
+            inventory::{
+                NotifyInventoryRequest,
+                NotifyInventoryResponse,
+                NOTIFY_MAX_LEN
             }
-        }, tracker::ResponseBlocker
-    }, rpc::rpc::get_peer_entry
+        },
+        tracker::ResponseBlocker
+    },
+    rpc::rpc::get_peer_entry
 };
 use self::{
     packet::{
@@ -1831,7 +1845,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: Difficulty, our_topoheight: u64, our_height: u64, pruned_topoheight: Option<u64>, hash: &Hash, lock: bool) {
+    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: CumulativeDifficulty, our_topoheight: u64, our_height: u64, pruned_topoheight: Option<u64>, hash: &Hash, lock: bool) {
         debug!("Broadcasting block {} at height {}", hash, block.get_height());
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock

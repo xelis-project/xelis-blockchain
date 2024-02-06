@@ -2,10 +2,7 @@ use std::borrow::Cow;
 use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{
-    crypto::{hash::Hash, key::PublicKey},
-    serializer::{Serializer, ReaderError, Reader, Writer},
-    difficulty::Difficulty,
-    asset::AssetWithData
+    asset::AssetWithData, crypto::{hash::Hash, key::PublicKey}, difficulty::{CumulativeDifficulty, Difficulty}, serializer::{Reader, ReaderError, Serializer, Writer}
 };
 use super::chain::{BlockId, CommonPoint};
 use crate::config::CHAIN_SYNC_REQUEST_MAX_BLOCKS;
@@ -26,7 +23,7 @@ pub struct BlockMetadata {
     pub supply: u64,
     pub reward: u64,
     pub difficulty: Difficulty,
-    pub cumulative_difficulty: Difficulty
+    pub cumulative_difficulty: CumulativeDifficulty
 }
 
 impl Serializer for BlockMetadata {
@@ -35,7 +32,7 @@ impl Serializer for BlockMetadata {
         let supply = reader.read_u64()?;
         let reward = reader.read_u64()?;
         let difficulty = Difficulty::read(reader)?;
-        let cumulative_difficulty = Difficulty::read(reader)?;
+        let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
 
         Ok(Self {
             hash,

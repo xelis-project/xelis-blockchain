@@ -1,19 +1,19 @@
 mod sled;
-pub use self::sled::SledStorage;
 
+pub use self::sled::SledStorage;
 use std::{collections::HashSet, sync::Arc};
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use xelis_common::{
-    crypto::{key::PublicKey, hash::Hash},
-    transaction::Transaction,
-    block::{Block, BlockHeader},
     account::{VersionedBalance, VersionedNonce},
-    difficulty::Difficulty,
+    asset::{AssetData, AssetWithData},
+    block::{Block, BlockHeader},
+    crypto::{hash::Hash, key::PublicKey},
+    difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
-    network::Network, asset::{AssetData, AssetWithData},
+    network::Network,
+    transaction::Transaction
 };
-
 use crate::core::error::BlockchainError;
 
 pub type Tips = HashSet<Hash>;
@@ -24,7 +24,7 @@ pub trait DifficultyProvider {
     async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
     async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u128, BlockchainError>;
     async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError>;
-    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError>;
+    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError>;
     async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Immutable<IndexSet<Hash>>, BlockchainError>;
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError>;
 }
@@ -153,7 +153,7 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError>;
     fn set_supply_at_topo_height(&mut self, topoheight: u64, supply: u64) -> Result<(), BlockchainError>;
 
-    async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: Difficulty) -> Result<(), BlockchainError>;
+    async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: CumulativeDifficulty) -> Result<(), BlockchainError>;
 
     fn get_top_topoheight(&self) -> Result<u64, BlockchainError>;
     fn set_top_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;

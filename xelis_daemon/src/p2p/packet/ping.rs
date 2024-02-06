@@ -1,13 +1,10 @@
 use xelis_common::{
+    api::daemon::{Direction, NotifyEvent, PeerPeerListUpdatedEvent},
     crypto::hash::Hash,
+    difficulty::CumulativeDifficulty,
     serializer::{
-        Writer,
-        Serializer,
-        ReaderError,
-        Reader
-    },
-    difficulty::Difficulty,
-    api::daemon::{NotifyEvent, PeerPeerListUpdatedEvent, Direction}
+        Reader, ReaderError, Serializer, Writer
+    }
 };
 use crate::{
     p2p::{peer::Peer, error::P2pError},
@@ -23,19 +20,18 @@ use std::{
 };
 use log::{error, trace, debug};
 
-
 #[derive(Clone, Debug)]
 pub struct Ping<'a> {
     top_hash: Cow<'a, Hash>,
     topoheight: u64,
     height: u64,
     pruned_topoheight: Option<u64>,
-    cumulative_difficulty: Difficulty,
+    cumulative_difficulty: CumulativeDifficulty,
     peer_list: Vec<SocketAddr>
 }
 
 impl<'a> Ping<'a> {
-    pub fn new(top_hash: Cow<'a, Hash>, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, cumulative_difficulty: Difficulty, peer_list: Vec<SocketAddr>) -> Self {
+    pub fn new(top_hash: Cow<'a, Hash>, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, cumulative_difficulty: CumulativeDifficulty, peer_list: Vec<SocketAddr>) -> Self {
         Self {
             top_hash,
             topoheight,
@@ -70,7 +66,7 @@ impl<'a> Ping<'a> {
         }
 
         peer.set_pruned_topoheight(self.pruned_topoheight);
-        peer.set_cumulative_difficulty(self.cumulative_difficulty);
+        peer.set_cumulative_difficulty(self.cumulative_difficulty).await;
 
         trace!("Locking RPC Server to notify PeerStateUpdated event");
         if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
@@ -160,7 +156,7 @@ impl Serializer for Ping<'_> {
                 return Err(ReaderError::InvalidValue)
             }
         }
-        let cumulative_difficulty = Difficulty::read(reader)?;
+        let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
         let peers_len = reader.read_u8()? as usize;
         if peers_len > P2P_PING_PEER_LIST_LIMIT {
             debug!("Too much peers sent in this ping packet: received {} while max is {}", peers_len, P2P_PING_PEER_LIST_LIMIT);

@@ -5,15 +5,15 @@ use crate::{
     config::PRUNE_SAFETY_LIMIT
 };
 use xelis_common::{
-    serializer::{Reader, Serializer},
-    crypto::{key::PublicKey, hash::Hash},
-    immutable::Immutable,
-    transaction::Transaction,
-    block::{BlockHeader, Block},
-    difficulty::Difficulty,
     account::{VersionedBalance, VersionedNonce},
-    network::Network,
     asset::{AssetData, AssetWithData},
+    block::{Block, BlockHeader},
+    crypto::{hash::Hash, key::PublicKey},
+    difficulty::{CumulativeDifficulty, Difficulty},
+    immutable::Immutable,
+    network::Network,
+    serializer::{Reader, Serializer},
+    transaction::Transaction
 };
 use std::{
     collections::HashSet,
@@ -67,7 +67,7 @@ pub struct SledStorage {
     past_blocks_cache: Option<Mutex<LruCache<Hash, Arc<IndexSet<Hash>>>>>, // previous blocks saved at each new block
     topo_by_hash_cache: Option<Mutex<LruCache<Hash, u64>>>,
     hash_at_topo_cache: Option<Mutex<LruCache<u64, Hash>>>,
-    cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, Difficulty>>>,
+    cumulative_difficulty_cache: Option<Mutex<LruCache<Hash, CumulativeDifficulty>>>,
     assets_cache: Option<Mutex<LruCache<Hash, ()>>>,
     balances_trees_cache: Option<Mutex<LruCache<(Hash, u64), Tree>>>, // versioned balances tree keep in cache to prevent hash recompute
     nonces_trees_cache: Option<Mutex<LruCache<u64, Tree>>>, // versioned nonces tree keep in cache to prevent hash recompute
@@ -370,7 +370,7 @@ impl DifficultyProvider for SledStorage {
         self.load_from_disk(&self.difficulty, hash.as_bytes())
     }
 
-    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
+    async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError> {
         trace!("get cumulative difficulty for hash {}", hash);
         self.get_cacheable_data_copiable(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash).await
     }
@@ -488,7 +488,7 @@ impl Storage for SledStorage {
         let _: Difficulty = self.delete_cacheable_data(&self.difficulty, &None, &hash).await?;
 
         trace!("Deleting cumulative difficulty");
-        let cumulative_difficulty: Difficulty = self.delete_cacheable_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
+        let cumulative_difficulty: CumulativeDifficulty = self.delete_cacheable_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, &hash).await?;
         trace!("Cumulative difficulty deleted: {}", cumulative_difficulty);
 
         let mut txs = Vec::new();
@@ -1699,7 +1699,7 @@ impl Storage for SledStorage {
         Ok(())
     }
 
-    async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: Difficulty) -> Result<(), BlockchainError> {
+    async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: CumulativeDifficulty) -> Result<(), BlockchainError> {
         trace!("set cumulative difficulty for hash {}", hash);
         self.cumulative_difficulty.insert(hash.as_bytes(), cumulative_difficulty.to_bytes())?;
         Ok(())

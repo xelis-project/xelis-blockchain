@@ -1,63 +1,75 @@
-use crate::{core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError, mempool::Mempool}, p2p::peer::Peer, config::{DEV_FEES, MAXIMUM_SUPPLY}};
+use crate::{
+    core::{
+        blockchain::{Blockchain, get_block_reward},
+        storage::Storage,
+        error::BlockchainError,
+        mempool::Mempool
+    },
+    p2p::peer::Peer,
+    config::{DEV_FEES, MAXIMUM_SUPPLY, BLOCK_TIME_MILLIS}
+};
 use super::{InternalRpcError, ApiError};
+use xelis_common::{
+    api::{
+        daemon::{
+            AccountHistoryEntry,
+            AccountHistoryType,
+            BlockResponse,
+            BlockType,
+            GetAccountAssetsParams,
+            GetAccountHistoryParams,
+            GetAccountsParams,
+            GetAssetParams,
+            GetAssetsParams,
+            GetBalanceAtTopoHeightParams,
+            GetBalanceParams,
+            GetBalanceResult,
+            GetBlockAtTopoHeightParams,
+            GetBlockByHashParams,
+            GetBlockTemplateParams,
+            GetBlockTemplateResult,
+            GetBlocksAtHeightParams,
+            GetHeightRangeParams,
+            GetInfoResult,
+            GetNonceAtTopoHeightParams,
+            GetNonceParams,
+            GetNonceResult,
+            GetTopBlockParams,
+            GetTopoHeightRangeParams,
+            GetTransactionParams,
+            GetTransactionsParams,
+            HasBalanceParams,
+            HasBalanceResult,
+            HasNonceParams,
+            HasNonceResult,
+            IsTxExecutedInBlockParams,
+            P2pStatusResult,
+            PeerEntry,
+            SizeOnDiskResult,
+            SubmitBlockParams,
+            SubmitTransactionParams,
+            TransactionResponse
+        },
+        DataHash
+    },
+    config::{MAX_TRANSACTION_SIZE, VERSION, XELIS_ASSET},
+    async_handler,
+    block::{Block, BlockHeader},
+    transaction::{Transaction, TransactionType},
+    difficulty::{CumulativeDifficulty, Difficulty},
+    crypto::hash::Hash,
+    context::Context,
+    immutable::Immutable,
+    rpc_server::{parse_params, RPCHandler},
+    serializer::Serializer
+};
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
 use serde_json::{json, Value};
-use xelis_common::{
-    api::{daemon::{
-        BlockType,
-        BlockResponse,
-        GetBlockAtTopoHeightParams,
-        GetBlockByHashParams,
-        GetBlockTemplateParams,
-        GetBlockTemplateResult,
-        SubmitBlockParams,
-        GetBalanceParams,
-        GetNonceParams,
-        SubmitTransactionParams,
-        GetTransactionParams,
-        P2pStatusResult,
-        GetBlocksAtHeightParams,
-        GetTopoHeightRangeParams,
-        GetBalanceAtTopoHeightParams,
-        GetBalanceResult,
-        GetInfoResult,
-        GetTopBlockParams,
-        GetTransactionsParams,
-        TransactionResponse,
-        GetHeightRangeParams,
-        GetNonceResult,
-        GetAssetsParams,
-        GetAccountsParams,
-        HasNonceResult,
-        HasNonceParams,
-        GetAssetParams,
-        GetAccountHistoryParams,
-        AccountHistoryEntry,
-        AccountHistoryType,
-        GetAccountAssetsParams,
-        PeerEntry,
-        IsTxExecutedInBlockParams,
-        SizeOnDiskResult,
-        HasBalanceParams,
-        HasBalanceResult,
-        GetNonceAtTopoHeightParams
-    }, DataHash},
-    async_handler,
-    serializer::Serializer,
-    transaction::{Transaction, TransactionType},
-    crypto::hash::Hash,
-    block::{BlockHeader, Block},
-    difficulty::Difficulty,
-    config::{XELIS_ASSET, VERSION, MAX_TRANSACTION_SIZE},
-    immutable::Immutable,
-    rpc_server::{RPCHandler, parse_params},
-    context::Context
-};
-use crate::config::BLOCK_TIME_MILLIS;
 use std::{sync::Arc, borrow::Cow};
 use log::{info, debug, trace};
 
+// Get the block type using the block hash and the blockchain current state
 pub async fn get_block_type_for_block<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<BlockType, InternalRpcError> {
     Ok(if blockchain.is_block_orphaned_for_storage(storage, hash).await {
         BlockType::Orphaned
@@ -70,7 +82,7 @@ pub async fn get_block_type_for_block<S: Storage>(blockchain: &Blockchain<S>, st
     })
 }
 
-async fn get_block_data<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<(Option<u64>, Option<u64>, Option<u64>, BlockType, Difficulty, Difficulty), InternalRpcError> {
+async fn get_block_data<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<(Option<u64>, Option<u64>, Option<u64>, BlockType, CumulativeDifficulty, Difficulty), InternalRpcError> {
     let (topoheight, supply, reward) = if storage.is_block_topological_ordered(hash).await {
         let topoheight = storage.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?;
         (
@@ -110,6 +122,7 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
     Ok(json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees: Some(total_fees), total_size_in_bytes, data }))
 }
 
+// Get a block response based on data in chain and from parameters
 pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash, include_txs: bool) -> Result<Value, InternalRpcError> {
     if !storage.has_block(&hash).await.context("Error while checking if block exist")? {
         return Err(InternalRpcError::AnyError(BlockchainError::BlockNotFound(hash.clone()).into()))
@@ -135,6 +148,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
     Ok(value)
 }
 
+// Transaction response based on data in chain/mempool and from parameters
 pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transaction>, hash: &Hash, in_mempool: bool, first_seen: Option<u64>) -> Result<Value, InternalRpcError> {
     let blocks = if storage.has_tx_blocks(hash).context("Error while checking if tx in included in blocks")? {
         Some(storage.get_blocks_for_tx(hash).context("Error while retrieving in which blocks its included")?)
@@ -158,9 +172,11 @@ pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, mempool:
     }
 }
 
+// Get a Peer Entry based on peer data
 pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
     let top_block_hash = peer.get_top_block_hash().lock().await.clone();
     let peers = peer.get_peers().lock().await.clone();
+    let cumulative_difficulty = peer.get_cumulative_difficulty().lock().await;
     PeerEntry {
         id: peer.get_id(),
         addr: Cow::Borrowed(peer.get_connection().get_address()),
@@ -173,11 +189,12 @@ pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
         last_ping: peer.get_last_ping(),
         peers,
         pruned_topoheight: peer.get_pruned_topoheight(),
-        cumulative_difficulty: peer.get_cumulative_difficulty(),
+        cumulative_difficulty: *cumulative_difficulty,
         connected_on: peer.get_connection().connected_on()
     }
 }
 
+// This function is used to register all the RPC methods
 pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>) {
     info!("Registering RPC methods...");
     handler.register_method("get_version", async_handler!(version::<S>));

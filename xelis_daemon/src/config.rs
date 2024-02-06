@@ -1,13 +1,15 @@
 use lazy_static::lazy_static;
 use xelis_common::{
+    api::daemon::DevFeeThreshold,
     block::BlockHeader,
-    difficulty::Difficulty,
     config::COIN_VALUE,
     crypto::{
-        key::PublicKey, address::Address, hash::{Hash, Hashable}
+        address::Address,
+        hash::{Hash, Hashable},
+        key::PublicKey
     },
-    serializer::Serializer,
-    api::daemon::DevFeeThreshold
+    difficulty::Difficulty,
+    serializer::Serializer
 };
 
 // In case of potential forks, have a unique network id to not connect to others compatible chains

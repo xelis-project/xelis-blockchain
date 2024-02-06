@@ -1,16 +1,19 @@
 use log::debug;
 use xelis_common::{
-    serializer::{Serializer, Writer, ReaderError, Reader},
     crypto::hash::Hash,
+    difficulty::CumulativeDifficulty,
     network::Network,
-    difficulty::Difficulty
+    serializer::{Reader, ReaderError, Serializer, Writer}
 };
-
-use crate::p2p::peer_list::SharedPeerList;
-use crate::p2p::connection::Connection;
-use crate::p2p::peer::Peer;
-use std::collections::HashSet;
-use std::fmt::{Display, Error, Formatter};
+use crate::p2p::{
+    peer_list::SharedPeerList,
+    peer::Peer,
+    connection::Connection
+};
+use std::{
+    fmt::{Display, Error, Formatter},
+    collections::HashSet
+};
 
 // this Handshake is the first data sent when connecting to the server
 // If handshake is valid, server reply with his own handshake
@@ -30,13 +33,13 @@ pub struct Handshake {
     pruned_topoheight: Option<u64>, // until when the node is pruned (if it is)
     top_hash: Hash, // current block top hash
     genesis_hash: Hash, // genesis hash
-    cumulative_difficulty: Difficulty,
+    cumulative_difficulty: CumulativeDifficulty,
 } // Server reply with his own list of peers, but we remove all already known by requester for the response.
 
 impl Handshake {
     pub const MAX_LEN: usize = 16;
 
-    pub fn new(version: String, network: Network, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, top_hash: Hash, genesis_hash: Hash, cumulative_difficulty: Difficulty) -> Self {
+    pub fn new(version: String, network: Network, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, top_hash: Hash, genesis_hash: Hash, cumulative_difficulty: CumulativeDifficulty) -> Self {
         debug_assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN); // version cannot be greater than 16 chars
         if let Some(node_tag) = &node_tag {
             debug_assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN); // node tag cannot be greater than 16 chars
@@ -170,7 +173,7 @@ impl Serializer for Handshake {
         }
         let top_hash = reader.read_hash()?;
         let genesis_hash = reader.read_hash()?;
-        let cumulative_difficulty = Difficulty::read(reader)?;
+        let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
 
         Ok(Handshake::new(version, network, node_tag, network_id, peer_id, local_port, utc_time, topoheight, height, pruned_topoheight, top_hash, genesis_hash, cumulative_difficulty))
     }

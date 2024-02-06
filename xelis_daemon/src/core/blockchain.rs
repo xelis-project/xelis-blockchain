@@ -3,29 +3,12 @@ use indexmap::IndexSet;
 use lru::LruCache;
 use serde_json::{Value, json};
 use xelis_common::{
-    config::{XELIS_ASSET, COIN_DECIMALS, MAX_TRANSACTION_SIZE, TIPS_LIMIT},
-    crypto::{key::PublicKey, hash::{Hashable, Hash, HASH_SIZE}},
-    difficulty::{Difficulty, check_difficulty},
-    transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
-    utils::{get_current_time_in_millis, format_xelis, get_current_time_in_seconds},
-    block::{Block, BlockHeader, EXTRA_NONCE_SIZE},
-    immutable::Immutable,
-    serializer::Serializer,
-    account::VersionedBalance,
-    api::{
+    account::VersionedBalance, api::{
         daemon::{
-            NotifyEvent,
-            BlockOrderedEvent,
-            TransactionExecutedEvent,
-            BlockType,
-            StableHeightChangedEvent,
-            TransactionResponse,
-            BlockOrphanedEvent
+            BlockOrderedEvent, BlockOrphanedEvent, BlockType, NotifyEvent, StableHeightChangedEvent, TransactionExecutedEvent, TransactionResponse
         },
         DataHash
-    },
-    network::Network,
-    asset::AssetData
+    }, asset::AssetData, block::{Block, BlockHeader, EXTRA_NONCE_SIZE}, config::{COIN_DECIMALS, MAX_TRANSACTION_SIZE, TIPS_LIMIT, XELIS_ASSET}, crypto::{hash::{Hash, Hashable, HASH_SIZE}, key::PublicKey}, difficulty::{check_difficulty, CumulativeDifficulty, Difficulty}, immutable::Immutable, network::Network, serializer::Serializer, transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE}, utils::{format_xelis, get_current_time_in_millis, get_current_time_in_seconds}
 };
 use crate::{
     config::{
@@ -159,7 +142,7 @@ pub struct Blockchain<S: Storage> {
     // key is (tip hash, tip height) while value is (base hash, base height)
     tip_base_cache: Mutex<LruCache<(Hash, u64), (Hash, u64)>>,
     // tip work score is used to determine the best tip based on a block, tip base ands a base height
-    tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, Difficulty)>>,
+    tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, CumulativeDifficulty)>>,
     // using base hash, current tip hash and base height, this cache is used to store the DAG order
     full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
     // auto prune mode if enabled, will delete all blocks every N and keep only N top blocks (topoheight based)
@@ -810,7 +793,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     #[async_recursion] // TODO no recursion
-    async fn find_tip_work_score_internal<'a>(&self, storage: &S, map: &mut HashMap<Hash, Difficulty>, hash: &'a Hash, base_topoheight: u64, base_height: u64) -> Result<(), BlockchainError> {
+    async fn find_tip_work_score_internal<'a>(&self, storage: &S, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: u64, base_height: u64) -> Result<(), BlockchainError> {
         let tips = storage.get_past_blocks_for_block_hash(hash).await?;
         for hash in tips.iter() {
             if !map.contains_key(hash) {
@@ -821,13 +804,13 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        map.insert(hash.clone(), storage.get_difficulty_for_block_hash(hash).await?);
+        map.insert(hash.clone(), storage.get_difficulty_for_block_hash(hash).await? as CumulativeDifficulty);
 
         Ok(())
     }
 
     // find the sum of work done
-    async fn find_tip_work_score(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, Difficulty), BlockchainError> {
+    async fn find_tip_work_score(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError> {
         let mut cache = self.tip_work_score_cache.lock().await;
         if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
             trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
@@ -835,7 +818,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let block = storage.get_block_header_by_hash(hash).await?;
-        let mut map: HashMap<Hash, Difficulty> = HashMap::new();
+        let mut map: HashMap<Hash, CumulativeDifficulty> = HashMap::new();
         let base_topoheight = storage.get_topo_height_for_hash(base).await?;
         for hash in block.get_tips() {
             if !map.contains_key(hash) {
@@ -849,7 +832,7 @@ impl<S: Storage> Blockchain<S> {
         if base != hash {
             map.insert(base.clone(), storage.get_cumulative_difficulty_for_block_hash(base).await?);
         }
-        map.insert(hash.clone(), storage.get_difficulty_for_block_hash(hash).await?);
+        map.insert(hash.clone(), storage.get_difficulty_for_block_hash(hash).await? as CumulativeDifficulty);
 
         let mut set = HashSet::with_capacity(map.len());
         let mut score = 0;
@@ -1527,8 +1510,8 @@ impl<S: Storage> Blockchain<S> {
 
         // Compute cumulative difficulty for block
         let cumulative_difficulty = {
-            let cumulative_difficulty: Difficulty = if tips_count == 0 {
-                GENESIS_BLOCK_DIFFICULTY
+            let cumulative_difficulty: CumulativeDifficulty = if tips_count == 0 {
+                GENESIS_BLOCK_DIFFICULTY as CumulativeDifficulty
             } else {
                 let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
                 let (_, cumulative_difficulty) = self.find_tip_work_score(&storage, &block_hash, &base, base_height).await?;
