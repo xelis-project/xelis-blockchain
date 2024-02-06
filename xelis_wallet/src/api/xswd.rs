@@ -248,6 +248,7 @@ where
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum Permission {
     Ask,
     AcceptAlways,
