@@ -48,7 +48,7 @@ impl<'a> Ping<'a> {
 
     pub async fn update_peer<S: Storage>(self, peer: &Arc<Peer>, blockchain: &Arc<Blockchain<S>>) -> Result<(), P2pError> {
         trace!("Updating {} with {}", peer, self);
-        peer.set_block_top_hash(self.top_hash.into_owned()).await;
+        peer.set_top_block_hash(self.top_hash.into_owned()).await;
         peer.set_topoheight(self.topoheight);
         peer.set_height(self.height);
 
