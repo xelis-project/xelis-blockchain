@@ -29,8 +29,17 @@ pub trait DifficultyProvider {
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError>;
 }
 
+// This trait is used for find_tip_work_score to provide topoheight of each blocks
 #[async_trait]
-pub trait Storage: DifficultyProvider + Sync + Send + 'static {
+pub trait DagOrderProvider {
+    async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
+    async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
+    async fn is_block_topological_ordered(&self, hash: &Hash) -> bool;
+    async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError>;
+}
+
+#[async_trait]
+pub trait Storage: DifficultyProvider + DagOrderProvider + Sync + Send + 'static {
     // Clear caches if exists
     async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
 
@@ -144,11 +153,6 @@ pub trait Storage: DifficultyProvider + Sync + Send + 'static {
     async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError>;
     async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError>;
     async fn remove_block_hash_at_height(&self, hash: &Hash, height: u64) -> Result<(), BlockchainError>;
-
-    async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
-    async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
-    async fn is_block_topological_ordered(&self, hash: &Hash) -> bool;
-    async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError>;
 
     async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError>;
     fn set_supply_at_topo_height(&mut self, topoheight: u64, supply: u64) -> Result<(), BlockchainError>;

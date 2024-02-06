@@ -25,7 +25,7 @@ use lru::LruCache;
 use sled::Tree;
 use log::{debug, trace, error, warn, info};
 
-use super::{Tips, Storage, DifficultyProvider};
+use super::{DagOrderProvider, DifficultyProvider, Storage, Tips};
 
 // Constant keys used for extra Tree
 const TIPS: &[u8; 4] = b"TIPS";
@@ -349,7 +349,6 @@ impl SledStorage {
     }
 }
 
-
 #[async_trait]
 impl DifficultyProvider for SledStorage {
     // TODO optimize all these functions to read only what is necessary
@@ -399,6 +398,70 @@ impl DifficultyProvider for SledStorage {
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
         trace!("get block by hash: {}", hash);
         self.get_cacheable_arc_data(&self.blocks, &self.blocks_cache, hash).await
+    }
+}
+
+#[async_trait]
+impl DagOrderProvider for SledStorage {
+    async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("set topo height for {} at {}", hash, topoheight);
+        self.topo_by_hash.insert(hash.as_bytes(), topoheight.to_bytes())?;
+        self.hash_at_topo.insert(topoheight.to_be_bytes(), hash.as_bytes())?;
+
+        // save in cache
+        if let Some(cache) = &self.topo_by_hash_cache {
+            let mut topo = cache.lock().await;
+            topo.put(hash.clone(), topoheight);
+        }
+
+        if let Some(cache) = &self.hash_at_topo_cache {
+            let mut hash_at_topo = cache.lock().await;
+            hash_at_topo.put(topoheight, hash.clone());
+        }
+
+        Ok(())
+    }
+
+    async fn is_block_topological_ordered(&self, hash: &Hash) -> bool {
+        trace!("is block topological ordered: {}", hash);
+        let topoheight = match self.get_topo_height_for_hash(&hash).await {
+            Ok(topoheight) => topoheight,
+            Err(e) => {
+                trace!("Error while checking if block {} is ordered: {}", hash, e);
+                return false
+            }
+        };
+
+        let hash_at_topo = match self.get_hash_at_topo_height(topoheight).await {
+            Ok(hash_at_topo) => hash_at_topo,
+            Err(e) => {
+                trace!("Error while checking if a block hash is ordered at topo {}: {}", topoheight, e);
+                return false
+            }
+        };
+        hash_at_topo == *hash
+    }
+
+    async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        trace!("get topoheight for hash: {}", hash);
+        self.get_cacheable_data_copiable(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await
+    }
+
+    async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
+        trace!("get hash at topoheight: {}", topoheight);
+        let hash = if let Some(cache) = &self.hash_at_topo_cache {
+            let mut hash_at_topo = cache.lock().await;
+            if let Some(value) = hash_at_topo.get(&topoheight) {
+                return Ok(value.clone())
+            }
+            let hash: Hash = self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes())?;
+            hash_at_topo.put(topoheight, hash.clone());
+            hash
+        } else {
+            self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes())?
+        };
+
+        Ok(hash)
     }
 }
 
@@ -1625,67 +1688,6 @@ impl Storage for SledStorage {
         }
 
         Ok(())
-    }
-
-    async fn set_topo_height_for_block(&mut self, hash: &Hash, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("set topo height for {} at {}", hash, topoheight);
-        self.topo_by_hash.insert(hash.as_bytes(), topoheight.to_bytes())?;
-        self.hash_at_topo.insert(topoheight.to_be_bytes(), hash.as_bytes())?;
-
-        // save in cache
-        if let Some(cache) = &self.topo_by_hash_cache {
-            let mut topo = cache.lock().await;
-            topo.put(hash.clone(), topoheight);
-        }
-
-        if let Some(cache) = &self.hash_at_topo_cache {
-            let mut hash_at_topo = cache.lock().await;
-            hash_at_topo.put(topoheight, hash.clone());
-        }
-
-        Ok(())
-    }
-
-    async fn is_block_topological_ordered(&self, hash: &Hash) -> bool {
-        trace!("is block topological ordered: {}", hash);
-        let topoheight = match self.get_topo_height_for_hash(&hash).await {
-            Ok(topoheight) => topoheight,
-            Err(e) => {
-                trace!("Error while checking if block {} is ordered: {}", hash, e);
-                return false
-            }
-        };
-
-        let hash_at_topo = match self.get_hash_at_topo_height(topoheight).await {
-            Ok(hash_at_topo) => hash_at_topo,
-            Err(e) => {
-                trace!("Error while checking if a block hash is ordered at topo {}: {}", topoheight, e);
-                return false
-            }
-        };
-        hash_at_topo == *hash
-    }
-
-    async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
-        trace!("get topoheight for hash: {}", hash);
-        self.get_cacheable_data_copiable(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await
-    }
-
-    async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
-        trace!("get hash at topoheight: {}", topoheight);
-        let hash = if let Some(cache) = &self.hash_at_topo_cache {
-            let mut hash_at_topo = cache.lock().await;
-            if let Some(value) = hash_at_topo.get(&topoheight) {
-                return Ok(value.clone())
-            }
-            let hash: Hash = self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes())?;
-            hash_at_topo.put(topoheight, hash.clone());
-            hash
-        } else {
-            self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes())?
-        };
-
-        Ok(hash)
     }
 
     async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {

@@ -21,7 +21,7 @@ use crate::{
         difficulty::calculate_difficulty,
         nonce_checker::NonceChecker,
         tx_selector::{TxSelector, TxSelectorEntry},
-        storage::{Storage, DifficultyProvider},
+        storage::{Storage, DifficultyProvider, DagOrderProvider},
         simulator::Simulator,
         blockdag,
         error::BlockchainError,
@@ -810,7 +810,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // find the sum of work done
-    async fn find_tip_work_score(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError> {
+    async fn find_tip_work_score<DD: DifficultyProvider + DagOrderProvider>(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError> {
         let mut cache = self.tip_work_score_cache.lock().await;
         if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
             trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
@@ -856,7 +856,7 @@ impl<S: Storage> Blockchain<S> {
 
         let mut scores = Vec::with_capacity(tips.len());
         for hash in tips {
-            let (_, cumulative_difficulty) = self.find_tip_work_score(storage, hash, base, base_height).await?;
+            let (_, cumulative_difficulty) = self.find_tip_work_score::<S>(storage, hash, base, base_height).await?;
             scores.push((hash, cumulative_difficulty));
         }
 
@@ -1514,7 +1514,7 @@ impl<S: Storage> Blockchain<S> {
                 GENESIS_BLOCK_DIFFICULTY.into()
             } else {
                 let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
-                let (_, cumulative_difficulty) = self.find_tip_work_score(&storage, &block_hash, &base, base_height).await?;
+                let (_, cumulative_difficulty) = self.find_tip_work_score::<S>(&storage, &block_hash, &base, base_height).await?;
                 cumulative_difficulty
             };
             storage.set_cumulative_difficulty_for_block_hash(&block_hash, cumulative_difficulty).await?;
