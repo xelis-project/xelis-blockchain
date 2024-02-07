@@ -718,7 +718,7 @@ Get all assets available on network with its registered topoheight and necessary
 	"result": [
 		{
 			"asset": "0000000000000000000000000000000000000000000000000000000000000000",
-			"decimals": 5,
+			"decimals": 8,
 			"topoheight": 0
 		}
 	]
@@ -753,7 +753,7 @@ Get registered topoheight and decimals data from a specific asset.
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": {
-		"decimals": 5,
+		"decimals": 8,
 		"topoheight": 0
 	}
 }
