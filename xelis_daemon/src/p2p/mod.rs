@@ -1582,7 +1582,7 @@ impl<S: Storage> P2pServer<S> {
                 self.blockchain.rewind_chain(pop_count, false).await?;
             } else {
                 // request all blocks header and verify basic chain structure
-                let mut chain_validator = ChainValidator::new(self.blockchain.clone());
+                let mut chain_validator = ChainValidator::new(&self.blockchain);
                 for hash in blocks {
                     trace!("Request block header for chain validator: {}", hash);
 
@@ -1606,8 +1606,8 @@ impl<S: Storage> P2pServer<S> {
                 self.blockchain.rewind_chain(pop_count, true).await?;
 
                 // now retrieve all txs from all blocks header and add block in chain
-                for hash in chain_validator.get_order() {
-                    let header = chain_validator.consume_block_header(&hash)?;
+                for (hash, header) in chain_validator.get_blocks() {
+                    trace!("Processing block {} from chain validator", hash);
                     // we don't already have this block, lets retrieve its txs and add in our chain
                     if !self.blockchain.has_block(&hash).await? {
                         let mut transactions = Vec::new(); // don't pre allocate
@@ -1630,6 +1630,7 @@ impl<S: Storage> P2pServer<S> {
                             }
                         }
 
+                        // Assemble back the block and add it to the chain
                         let block = Block::new(Immutable::Arc(header), transactions);
                         self.blockchain.add_new_block(block, false, false).await?; // don't broadcast block because it's syncing
                     }

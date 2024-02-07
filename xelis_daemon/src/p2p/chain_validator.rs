@@ -1,6 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use async_trait::async_trait;
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     block::BlockHeader,
     config::TIPS_LIMIT,
@@ -15,29 +15,36 @@ use crate::core::{
 };
 use log::{error, trace};
 
-struct Data {
+// This struct is used to store the block data in the chain validator
+struct BlockData {
     header: Arc<BlockHeader>,
     difficulty: Difficulty,
     cumulative_difficulty: CumulativeDifficulty
 }
 
-pub struct ChainValidator<S: Storage> {
-    blocks: HashMap<Arc<Hash>, Data>, // include all blocks
-    order: Vec<Arc<Hash>>, // keep the order of incoming blocks
-    blockchain: Arc<Blockchain<S>>
+// Chain validator is used to validate the blocks received from the network
+// We store the blocks in topological order and we verify the proof of work validity
+// This is doing only minimal checks and valid chain order based on topoheight and difficulty
+pub struct ChainValidator<'a, S: Storage> {
+    // store all blocks data in topological order
+    blocks: IndexMap<Hash, BlockData>,
+    // Blockchain reference used to verify current chain state
+    blockchain: &'a Blockchain<S>
 }
 
-impl<S: Storage> ChainValidator<S> {
-    pub fn new(blockchain: Arc<Blockchain<S>>) -> Self {
+impl<'a, S: Storage> ChainValidator<'a, S> {
+    pub fn new(blockchain: &'a Blockchain<S>) -> Self {
         Self {
-            blocks: HashMap::new(),
-            order: Vec::new(),
+            blocks: IndexMap::new(),
             blockchain
         }
     }
 
     // validate the basic chain structure
+    // We expect that the block added is the next block ordered by topoheight
     pub async fn insert_block(&mut self, hash: Hash, header: BlockHeader) -> Result<(), BlockchainError> {
+        trace!("Inserting block {} into chain validator", hash);
+
         if self.blocks.contains_key(&hash) {
             error!("Block {} is already in validator chain!", hash);
             return Err(BlockchainError::AlreadyInChain)
@@ -74,28 +81,19 @@ impl<S: Storage> ChainValidator<S> {
         // TODO FIXME
         let cumulative_difficulty = CumulativeDifficulty::zero();
 
-        let hash = Arc::new(hash);
-        self.blocks.insert(hash.clone(), Data { header: Arc::new(header), difficulty, cumulative_difficulty });
-        self.order.push(hash);
+        self.blocks.insert(hash, BlockData { header: Arc::new(header), difficulty, cumulative_difficulty });
 
         Ok(())
     }
 
-    // retrieve the whole chain order maintained internally
-    pub fn get_order(&mut self) -> Vec<Arc<Hash>> {
-        let order = std::mem::replace(&mut self.order, Vec::new());
-        order
-    }
-
-    // used in P2P to retrieve the BlockHeader instead of doing a Copy of it
-    pub fn consume_block_header(&mut self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
-        let data = self.blocks.remove(hash).ok_or_else(|| BlockchainError::BlockNotFound(hash.clone()))?;
-        Ok(data.header)
+    // Retrieve all blocks from the chain validator
+    pub fn get_blocks(self) -> impl Iterator<Item = (Hash, Arc<BlockHeader>)> {
+        self.blocks.into_iter().map(|(hash, data)| (hash, data.header))
     }
 }
 
 #[async_trait]
-impl<S: Storage> DifficultyProvider for ChainValidator<S> {
+impl<S: Storage> DifficultyProvider for ChainValidator<'_, S> {
     async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         if let Some(data) = self.blocks.get(hash) {
             return Ok(data.header.get_height())
