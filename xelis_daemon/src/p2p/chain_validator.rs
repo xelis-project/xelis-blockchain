@@ -9,9 +9,9 @@ use xelis_common::{
     immutable::Immutable
 };
 use crate::core::{
-    error::BlockchainError,
     blockchain::Blockchain,
-    storage::{DifficultyProvider, Storage}
+    error::BlockchainError,
+    storage::{DagOrderProvider, DifficultyProvider, Storage}
 };
 use log::{error, trace};
 
@@ -29,14 +29,18 @@ pub struct ChainValidator<'a, S: Storage> {
     // store all blocks data in topological order
     blocks: IndexMap<Hash, BlockData>,
     // Blockchain reference used to verify current chain state
-    blockchain: &'a Blockchain<S>
+    blockchain: &'a Blockchain<S>,
+    // This is used to compute the expected topoheight of each new block
+    // It must be 1 topoheight above the common point
+    starting_topoheight: u64
 }
 
 impl<'a, S: Storage> ChainValidator<'a, S> {
-    pub fn new(blockchain: &'a Blockchain<S>) -> Self {
+    pub fn new(blockchain: &'a Blockchain<S>, starting_topoheight: u64) -> Self {
         Self {
             blocks: IndexMap::new(),
-            blockchain
+            blockchain,
+            starting_topoheight
         }
     }
 
@@ -146,5 +150,41 @@ impl<S: Storage> DifficultyProvider for ChainValidator<'_, S> {
 
         let storage = self.blockchain.get_storage().read().await;
         Ok(storage.get_block_header_by_hash(hash).await?)
+    }
+}
+
+#[async_trait]
+impl<S: Storage> DagOrderProvider for ChainValidator<'_, S> {
+    async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+        if let Some(index) = self.blocks.get_index_of(hash) {
+            return Ok(self.starting_topoheight + index as u64)
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        Ok(storage.get_topo_height_for_hash(hash).await?)
+    }
+
+    // This should never happen in our case
+    async fn set_topo_height_for_block(&mut self, _: &Hash, _: u64) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
+    }
+
+    async fn is_block_topological_ordered(&self, hash: &Hash) -> bool {
+        if self.blocks.contains_key(hash) {
+            return true
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        storage.is_block_topological_ordered(hash).await
+    }
+
+    async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
+        if topoheight >= self.starting_topoheight {
+            let index = (topoheight - self.starting_topoheight) as usize;
+            return self.blocks.get_index(index).map(|(hash, _)| hash.clone()).ok_or(BlockchainError::BlockNotOrdered);
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        Ok(storage.get_hash_at_topo_height(topoheight).await?)
     }
 }

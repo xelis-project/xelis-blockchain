@@ -793,46 +793,46 @@ impl<S: Storage> Blockchain<S> {
     }
 
     #[async_recursion] // TODO no recursion
-    async fn find_tip_work_score_internal<'a>(&self, storage: &S, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: u64, base_height: u64) -> Result<(), BlockchainError> {
-        let tips = storage.get_past_blocks_for_block_hash(hash).await?;
+    async fn find_tip_work_score_internal<'a, DD: DifficultyProvider + DagOrderProvider + Sync + Send>(&self, provider: &DD, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: u64, base_height: u64) -> Result<(), BlockchainError> {
+        let tips = provider.get_past_blocks_for_block_hash(hash).await?;
         for hash in tips.iter() {
             if !map.contains_key(hash) {
-                let is_ordered = storage.is_block_topological_ordered(hash).await;
-                if !is_ordered || (is_ordered && storage.get_topo_height_for_hash(hash).await? >= base_topoheight) {
-                    self.find_tip_work_score_internal(storage, map, hash, base_topoheight, base_height).await?;
+                let is_ordered = provider.is_block_topological_ordered(hash).await;
+                if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(hash).await? >= base_topoheight) {
+                    self.find_tip_work_score_internal(provider, map, hash, base_topoheight, base_height).await?;
                 }
             }
         }
 
-        map.insert(hash.clone(), storage.get_difficulty_for_block_hash(hash).await?.into());
+        map.insert(hash.clone(), provider.get_difficulty_for_block_hash(hash).await?.into());
 
         Ok(())
     }
 
     // find the sum of work done
-    async fn find_tip_work_score<DD: DifficultyProvider + DagOrderProvider>(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError> {
+    pub async fn find_tip_work_score<DD: DifficultyProvider + DagOrderProvider + Sync + Send>(&self, provider: &DD, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError> {
         let mut cache = self.tip_work_score_cache.lock().await;
         if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
             trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
             return Ok(value.clone())
         }
 
-        let block = storage.get_block_header_by_hash(hash).await?;
+        let block = provider.get_block_header_by_hash(hash).await?;
         let mut map: HashMap<Hash, CumulativeDifficulty> = HashMap::new();
-        let base_topoheight = storage.get_topo_height_for_hash(base).await?;
+        let base_topoheight = provider.get_topo_height_for_hash(base).await?;
         for hash in block.get_tips() {
             if !map.contains_key(hash) {
-                let is_ordered = storage.is_block_topological_ordered(hash).await;
-                if !is_ordered || (is_ordered && storage.get_topo_height_for_hash(hash).await? >= base_topoheight) {
-                    self.find_tip_work_score_internal(storage, &mut map, hash, base_topoheight, base_height).await?;
+                let is_ordered = provider.is_block_topological_ordered(hash).await;
+                if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(hash).await? >= base_topoheight) {
+                    self.find_tip_work_score_internal(provider, &mut map, hash, base_topoheight, base_height).await?;
                 }
             }
         }
 
         if base != hash {
-            map.insert(base.clone(), storage.get_cumulative_difficulty_for_block_hash(base).await?);
+            map.insert(base.clone(), provider.get_cumulative_difficulty_for_block_hash(base).await?);
         }
-        map.insert(hash.clone(), storage.get_difficulty_for_block_hash(hash).await?.into());
+        map.insert(hash.clone(), provider.get_difficulty_for_block_hash(hash).await?.into());
 
         let mut set = HashSet::with_capacity(map.len());
         let mut score = CumulativeDifficulty::zero();

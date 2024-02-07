@@ -22,6 +22,8 @@ pub enum DiskContext {
 
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("Block is not ordered")]
+    BlockNotOrdered,
     #[error("Transaction size is {} while limit is {}", human_bytes(*_0 as f64), human_bytes(*_1 as f64))]
     TxTooBig(usize, usize),
     #[error("Timestamp {} is less than parent", _0)]
@@ -134,6 +136,8 @@ pub enum BlockchainError {
     UnexpectedTransactionVariant,
     #[error("Unexpected error on database: {}", _0)]
     DatabaseError(#[from] sled::Error),
+    #[error("Unsupported operation")]
+    UnsupportedOperation,
     #[error("Data not found on disk: {}", _0)]
     NotFoundOnDisk(DiskContext),
     #[error("Invalid paramater: max chain response size isn't in range")]

@@ -1531,13 +1531,14 @@ impl<S: Storage> P2pServer<S> {
             return Ok(())
         };
 
-        debug!("{} found a common point with block {} at topo {} for sync, received {} blocks", peer.get_outgoing_address(), common_point.get_hash(), common_point.get_topoheight(), response_size);
+        let common_topoheight = common_point.get_topoheight();
+        debug!("{} found a common point with block {} at topo {} for sync, received {} blocks", peer.get_outgoing_address(), common_point.get_hash(), common_topoheight, response_size);
         let pop_count = {
             let storage = self.blockchain.get_storage().read().await;
             let topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
-            if topoheight != common_point.get_topoheight() {
-                error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, topoheight, common_point.get_topoheight());
-                return Err(P2pError::InvalidCommonPoint(common_point.get_topoheight()).into())
+            if topoheight != common_topoheight {
+                error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, topoheight, common_topoheight);
+                return Err(P2pError::InvalidCommonPoint(common_topoheight).into())
             }
 
             let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
@@ -1582,7 +1583,9 @@ impl<S: Storage> P2pServer<S> {
                 self.blockchain.rewind_chain(pop_count, false).await?;
             } else {
                 // request all blocks header and verify basic chain structure
-                let mut chain_validator = ChainValidator::new(&self.blockchain);
+                // Starting topoheight must be the next topoheight after common block
+                // Blocks in chain response must be ordered by topoheight otherwise it will give incorrect results 
+                let mut chain_validator = ChainValidator::new(&self.blockchain, common_topoheight + 1);
                 for hash in blocks {
                     trace!("Request block header for chain validator: {}", hash);
 
