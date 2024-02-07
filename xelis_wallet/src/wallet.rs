@@ -36,7 +36,7 @@ use crate::{
 use chacha20poly1305::{aead::OsRng, Error as CryptoError};
 use rand::RngCore;
 use thiserror::Error;
-use log::{error, debug};
+use log::{debug, error, trace};
 
 #[cfg(feature = "api_server")]
 use {
@@ -317,6 +317,43 @@ impl Wallet {
         Ok(Self::new(storage, keypair, network))
     }
 
+    // Close the wallet
+    // this will stop the network handler and the API Server if it's running
+    // Because wallet is behind Arc, we need to close differents modules that has a copy of it
+    pub async fn close(&self) {
+        trace!("Closing wallet");
+
+        #[cfg(feature = "api_server")]
+        {
+            // Close API server
+            {
+                let mut lock = self.api_server.lock().await;
+                if let Some(server) = lock.take() {
+                    server.stop().await;
+                }
+            }
+
+            // Close XSWD channel in case it exists
+            {
+                let mut lock = self.xswd_channel.write().await;
+                if let Some(sender) = lock.take() {
+                    drop(sender);
+                }
+            }
+        }
+
+        {
+            let mut lock = self.network_handler.lock().await;
+            if let Some(handler) = lock.take() {
+                if let Err(e) = handler.stop().await {
+                    error!("Error while stopping network handler: {}", e);
+                }
+            }
+        }
+
+        self.close_events_channel().await;
+    }
+
     // Propagate a new event to registered listeners
     pub async fn propagate_event(&self, event: Event) {
         // Broadcast it to the API Server
@@ -352,6 +389,14 @@ impl Wallet {
                 receiver
             }
         }
+    }
+
+    // Close events channel
+    // This will disconnect all subscribers
+    pub async fn close_events_channel(&self) -> bool {
+        trace!("Closing events channel");
+        let mut broadcaster = self.event_broadcaster.lock().await;
+        broadcaster.take().is_some()
     }
 
     // Enable RPC Server with requested authentication and bind address
