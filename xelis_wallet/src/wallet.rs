@@ -342,6 +342,7 @@ impl Wallet {
             }
         }
 
+        // Stop gracefully the network handler
         {
             let mut lock = self.network_handler.lock().await;
             if let Some(handler) = lock.take() {
@@ -351,6 +352,14 @@ impl Wallet {
             }
         }
 
+        // Stop gracefully the storage
+        {
+            let mut storage = self.storage.write().await;
+            storage.stop().await;
+        }
+
+        // Close the event broadcaster
+        // So all subscribers will be notified
         self.close_events_channel().await;
     }
 

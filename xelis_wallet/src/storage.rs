@@ -10,6 +10,7 @@ use xelis_common::{
 };
 use anyhow::{Context, Result, anyhow};
 use crate::{config::SALT_SIZE, cipher::Cipher, wallet::WalletError, entry::{TransactionEntry, EntryData}};
+use log::error;
 
 // keys used to retrieve from storage
 const NONCE_KEY: &[u8] = b"NONCE";
@@ -72,6 +73,13 @@ impl EncryptedStorage {
         }
 
         Ok(storage)
+    }
+
+    // Await for the storage to be flushed
+    pub async fn stop(&mut self) {
+        if let Err(e) = self.inner.db.flush_async().await {
+            error!("Error while flushing the database: {}", e);
+        }
     }
 
     // Key must be hashed or encrypted before calling this function
