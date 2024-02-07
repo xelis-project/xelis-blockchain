@@ -5,36 +5,34 @@ use fern::colors::Color;
 use log::{error, info};
 use clap::Parser;
 use xelis_common::{
-    config::{
-        VERSION, XELIS_ASSET, COIN_DECIMALS
-    },
-    prompt::{
-        Prompt,
-        command::{
-            CommandManager,
-            Command,
-            CommandHandler,
-            CommandError
-        },
-        argument::{
-            Arg,
-            ArgType,
-            ArgumentManager
-        },
-        LogLevel,
-        self,
-        PromptError
-    },
+    api::wallet::FeeBuilder,
     async_handler,
+    config::{
+        COIN_DECIMALS, VERSION, XELIS_ASSET
+    },
     crypto::{
         address::{Address, AddressType},
         hash::Hashable
     },
-    transaction::{TransactionType, Transaction},
-    utils::{format_xelis, set_network_to, format_coin},
-    serializer::Serializer,
     network::Network,
-    api::wallet::FeeBuilder,
+    prompt::{
+        self, argument::{
+            Arg,
+            ArgType,
+            ArgumentManager
+        }, command::{
+            Command,
+            CommandError,
+            CommandHandler,
+            CommandManager
+        },
+        LogLevel,
+        Prompt,
+        PromptError
+    },
+    serializer::Serializer,
+    transaction::{Transaction, TransactionType},
+    utils::{format_coin, format_xelis, set_network_to}
 };
 use xelis_wallet::{
     wallet::Wallet,
@@ -181,6 +179,12 @@ async fn main() -> Result<()> {
 
     if let Err(e) = prompt.start(Duration::from_millis(100), Box::new(async_handler!(prompt_message_builder)), Some(&command_manager)).await {
         error!("Error while running prompt: {}", e);
+    }
+
+    if let Ok(context) = command_manager.get_context().lock() {
+        if let Ok(wallet) = context.get::<Arc<Wallet>>() {
+            wallet.close().await;
+        }
     }
 
     Ok(())
