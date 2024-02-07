@@ -179,7 +179,7 @@ async fn main() -> Result<()> {
         command_manager.display_commands()?;
     }
 
-    if let Err(e) = prompt.start(Duration::from_millis(100), Box::new(async_handler!(prompt_message_builder)), &Some(command_manager)).await {
+    if let Err(e) = prompt.start(Duration::from_millis(100), Box::new(async_handler!(prompt_message_builder)), Some(&command_manager)).await {
         error!("Error while running prompt: {}", e);
     }
 
@@ -345,7 +345,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
 }
 
 // Function passed as param to prompt to build the prompt message shown
-async fn prompt_message_builder(_: &Prompt, command_manager: &Option<CommandManager>) -> Result<String, PromptError> {
+async fn prompt_message_builder(_: &Prompt, command_manager: Option<&CommandManager>) -> Result<String, PromptError> {
     if let Some(manager) = command_manager {
         let context = manager.get_context().lock()?;
         if let Ok(wallet) = context.get::<Arc<Wallet>>() {

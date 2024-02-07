@@ -371,7 +371,7 @@ async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
     let command_manager = CommandManager::new(prompt.clone());
     command_manager.register_default_commands()?;
 
-    let closure = |_: &_, _: &_| async {
+    let closure = |_: &_, _: _| async {
         let height_str = format!(
             "{}: {}",
             prompt::colorize_str(Color::Yellow, "Height"),
@@ -416,6 +416,6 @@ async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
         )
     };
 
-    prompt.start(Duration::from_millis(100), Box::new(async_handler!(closure)), &Some(command_manager)).await?;
+    prompt.start(Duration::from_millis(100), Box::new(async_handler!(closure)), Some(&command_manager)).await?;
     Ok(())
 }

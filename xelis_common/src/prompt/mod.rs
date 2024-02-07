@@ -429,7 +429,7 @@ pub struct Prompt {
 pub type ShareablePrompt = Arc<Prompt>;
 
 type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
-type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, &'a T2) -> LocalBoxFuture<'a, R> + 'a>;
+type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, T2) -> LocalBoxFuture<'a, R> + 'a>;
 
 impl Prompt {
     pub fn new(level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<ShareablePrompt, PromptError> {
@@ -461,7 +461,7 @@ impl Prompt {
 
     // Start the thread to read stdin and handle events
     // Execute commands if a commande manager is present
-    pub async fn start<'a>(&'a self, update_every: Duration, fn_message: AsyncF<'a, Self, Option<CommandManager>, Result<String, PromptError>>, command_manager: &'a Option<CommandManager>) -> Result<(), PromptError>
+    pub async fn start<'a>(&'a self, update_every: Duration, fn_message: AsyncF<'a, Self, Option<&'a CommandManager>, Result<String, PromptError>>, command_manager: Option<&'a CommandManager>) -> Result<(), PromptError>
     {
         // setup the exit channel
         let mut exit_receiver = {
