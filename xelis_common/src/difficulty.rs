@@ -1,11 +1,14 @@
 use crate::{u256::CompactU256, crypto::hash::Hash};
-use num_bigint::{BigUint, ToBigUint};
+use primitive_types::U256;
 use thiserror::Error;
-use num_traits::One;
 
 // This type is used to easily switch between u64 and u128 as example
 // And its easier to see where we use the block difficulty
+// Difficulty is a value that represents the amount of work required to mine a block
+// On XELIS, each difficulty point is a hash per second
 pub type Difficulty = u64;
+// Cumulative difficulty is the sum of all difficulties of all blocks in the chain
+// It is used to determine which branch is the main chain in BlockDAG merging.
 pub type CumulativeDifficulty = CompactU256;
 
 #[derive(Error, Debug)]
@@ -16,26 +19,10 @@ pub enum DifficultyError {
     ErrorOnConversionBigUint
 }
 
+// Verify the validity of a block difficulty against the current network difficulty
 pub fn check_difficulty(hash: &Hash, difficulty: Difficulty) -> Result<bool, DifficultyError> {
-    let big_diff = difficulty_to_big(difficulty)?;
-    let big_hash = hash_to_big(hash);
+    let diff: U256 = difficulty.into();
+    let hash_work = U256::from_big_endian(hash.as_bytes());
 
-    Ok(big_hash <= big_diff)
-}
-
-pub fn difficulty_to_big(difficulty: Difficulty) -> Result<BigUint, DifficultyError> {
-    if difficulty == 0 {
-        return Err(DifficultyError::DifficultyCannotBeZero)
-    }
-
-    let big_diff = match ToBigUint::to_biguint(&difficulty) {
-        Some(v) => v,
-        None => return Err(DifficultyError::ErrorOnConversionBigUint)
-    };
-    let one_lsh_256 = BigUint::one() << 256;
-    Ok(one_lsh_256 / big_diff)
-}
-
-pub fn hash_to_big(hash: &Hash) -> BigUint {
-    BigUint::from_bytes_be(hash.as_bytes())
+    Ok(hash_work <= diff)
 }
