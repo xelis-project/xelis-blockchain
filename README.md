@@ -301,10 +301,11 @@ All theses data are saved in plaintext.
 
 The database engine used is sled. It may changes in future.
 
-Current overhead per block is:
+Current overhead per block:
 - Tree `blocks` saving Block header (132 bytes with no TXs) value using Hash (32 bytes) key.
 - Trees `topo_by_hash` and `hash_by_topo` saving both Hash (32 bytes) <=> topoheight (8 bytes) pointers. (x2)
-- Tree `difficulty` saving Difficulty value of a block (8 bytes) using Hash (32 bytes) key.
+- Tree `difficulty` saving Difficulty value of a block (up to 33 bytes) using Hash (32 bytes) key.
+- Tree `cumulative_difficulty` saving the cumulative difficulty value (up to 33 bytes) of a topoheight (8 bytes).
 - Tree `rewards` saving block reward value (8 bytes) using topoheight (8 bytes) key.
 - Tree `supply` saving current circulating supply value (8 bytes) using topoheight (8 bytes) key.
 - Tree `versioned_balances` is updated at each block (for miner rewards), and also for each account that had interactions (transactions): 72 bytes for key and 16 bytes for value.
