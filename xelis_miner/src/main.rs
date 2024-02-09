@@ -331,7 +331,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
 
                     // Solve block
                     hash = job.get_pow_hash();
-                    while !match check_difficulty(&hash, expected_difficulty) {
+                    while !match check_difficulty(&hash, &expected_difficulty) {
                         Ok(value) => value,
                         Err(e) => {
                             error!("Mining Thread #{}: error on difficulty check: {}", id, e);
