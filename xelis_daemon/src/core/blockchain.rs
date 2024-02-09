@@ -135,7 +135,7 @@ pub struct Blockchain<S: Storage> {
     rpc: RwLock<Option<SharedDaemonRpcServer<S>>>,
     // current difficulty at tips
     // its used as cache to display current network hashrate
-    difficulty: AtomicU64,
+    difficulty: Mutex<Difficulty>,
     // used to skip PoW verification
     simulator: Option<Simulator>,
     // current network type on which one we're using/connected to
@@ -194,7 +194,7 @@ impl<S: Storage> Blockchain<S> {
             storage: RwLock::new(storage),
             p2p: RwLock::new(None),
             rpc: RwLock::new(None),
-            difficulty: AtomicU64::new(GENESIS_BLOCK_DIFFICULTY),
+            difficulty: Mutex::new(GENESIS_BLOCK_DIFFICULTY),
             simulator: config.simulator,
             network,
             tip_base_cache: Mutex::new(LruCache::new(1024)),
@@ -211,7 +211,7 @@ impl<S: Storage> Blockchain<S> {
             let storage = blockchain.get_storage().read().await;
             let tips_set = storage.get_tips().await?;
             let difficulty = blockchain.get_difficulty_at_tips(&*storage, tips_set.iter()).await?;
-            blockchain.difficulty.store(difficulty, Ordering::SeqCst);
+            blockchain.set_difficulty(difficulty).await;
         }
 
         // now compute the stable height
@@ -339,7 +339,7 @@ impl<S: Storage> Blockchain<S> {
 
         // Recompute the difficulty with new tips
         let difficulty = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
-        self.difficulty.store(difficulty, Ordering::SeqCst);
+        self.set_difficulty(difficulty).await;
 
         // TXs in mempool may be outdated, clear them as they will be asked later again
         debug!("locking mempool for cleaning");
@@ -401,7 +401,7 @@ impl<S: Storage> Blockchain<S> {
         };
         let mut hash = header.hash();
         let mut current_height = self.get_height();
-        while !self.is_simulator_enabled() && !check_difficulty(&hash, difficulty)? {
+        while !self.is_simulator_enabled() && !check_difficulty(&hash, &difficulty)? {
             if self.get_height() != current_height {
                 current_height = self.get_height();
                 header = self.get_block_template(key.clone()).await?;
@@ -963,11 +963,14 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // confirms whether the actual tip difficulty is withing 9% deviation with best tip (reference)
-    async fn validate_tips(&self, storage: &S, best_tip: &Hash, tip: &Hash) -> Result<bool, BlockchainError> {
-        let best_difficulty = storage.get_difficulty_for_block_hash(best_tip).await?;
-        let block_difficulty = storage.get_difficulty_for_block_hash(tip).await?;
+    async fn validate_tips<P: DifficultyProvider>(&self, provider: &P, best_tip: &Hash, tip: &Hash) -> Result<bool, BlockchainError> {
+        const MAX_DEVIATION: Difficulty = Difficulty::from_u64(91);
+        const PERCENTAGE: Difficulty = Difficulty::from_u64(100);
 
-        Ok(best_difficulty * 91 / 100 < block_difficulty)
+        let best_difficulty = provider.get_difficulty_for_block_hash(best_tip).await?;
+        let block_difficulty = provider.get_difficulty_for_block_hash(tip).await?;
+
+        Ok(best_difficulty * MAX_DEVIATION / PERCENTAGE < block_difficulty)
     }
 
     // Get difficulty at tips
@@ -1006,9 +1009,14 @@ impl<S: Storage> Blockchain<S> {
         Ok(difficulty)
     }
 
+    async fn set_difficulty(&self, difficulty: Difficulty) {
+        let mut lock = self.difficulty.lock().await;
+        *lock = difficulty;
+    }
+
     // Get the current difficulty target for the next block
-    pub fn get_difficulty(&self) -> Difficulty {
-        self.difficulty.load(Ordering::SeqCst)
+    pub async fn get_difficulty(&self) -> Difficulty {
+        *self.difficulty.lock().await
     }
 
     // pass in params the already computed block hash and its tips
@@ -1021,7 +1029,7 @@ impl<S: Storage> Blockchain<S> {
         I::IntoIter: ExactSizeIterator
     {
         let difficulty = self.get_difficulty_at_tips(provider, tips).await?;
-        if self.is_simulator_enabled() || check_difficulty(hash, difficulty)? {
+        if self.is_simulator_enabled() || check_difficulty(hash, &difficulty)? {
             Ok(difficulty)
         } else {
             Err(BlockchainError::InvalidDifficulty)
@@ -1792,7 +1800,7 @@ impl<S: Storage> Blockchain<S> {
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, new_tips.iter()).await?.clone();
         for hash in new_tips {
             if best_tip != hash {
-                if !self.validate_tips(&storage, &best_tip, &hash).await? {
+                if !self.validate_tips::<S>(&storage, &best_tip, &hash).await? {
                     warn!("Rusty TIP {} declared stale", hash);
                 } else {
                     debug!("Tip {} is valid, adding to final Tips list", hash);
@@ -1865,7 +1873,7 @@ impl<S: Storage> Blockchain<S> {
 
             trace!("update difficulty in cache");
             let difficulty = self.get_difficulty_at_tips(storage, tips.iter()).await?;
-            self.difficulty.store(difficulty, Ordering::SeqCst);
+            self.set_difficulty(difficulty).await;
         }
 
         // Clean all old txs

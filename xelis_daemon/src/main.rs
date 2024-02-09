@@ -67,6 +67,8 @@ pub struct NodeConfig {
     network: Network
 }
 
+const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_PER_SECOND);
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut config: NodeConfig = NodeConfig::parse();
@@ -171,7 +173,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
             mempool.size()
         };
 
-        let network_hashrate = (blockchain.get_difficulty() / (BLOCK_TIME_MILLIS / MILLIS_PER_SECOND) as Difficulty) as f64;
+        let network_hashrate = (blockchain.get_difficulty().await / BLOCK_TIME).into();
 
         Ok(
             build_prompt_message(
@@ -546,7 +548,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let height = blockchain.get_height();
     let topoheight = blockchain.get_topo_height();
     let stableheight = blockchain.get_stable_height();
-    let difficulty = blockchain.get_difficulty();
+    let difficulty = blockchain.get_difficulty().await;
 
     let storage = blockchain.get_storage().read().await;
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
@@ -563,7 +565,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Stable Height: {}", stableheight));
     manager.message(format!("Topo Height: {}", topoheight));
     manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
-    manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / (BLOCK_TIME_MILLIS / MILLIS_PER_SECOND) as Difficulty) as f64)));
+    manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / BLOCK_TIME).into())));
     manager.message(format!("Top block hash: {}", top_block_hash));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Target Block Time: {:.2}s", BLOCK_TIME_MILLIS as f64 / MILLIS_PER_SECOND as f64));

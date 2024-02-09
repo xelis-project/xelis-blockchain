@@ -1438,7 +1438,7 @@ impl Storage for SledStorage {
         }
 
         // Store difficulty
-        self.difficulty.insert(hash.as_bytes(), &difficulty.to_be_bytes())?;
+        self.difficulty.insert(hash.as_bytes(), difficulty.to_bytes())?;
 
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
 

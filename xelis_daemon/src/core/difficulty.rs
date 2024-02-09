@@ -19,8 +19,9 @@ pub fn calculate_difficulty_v1(parent_timestamp: u128, new_timestamp: u128, prev
         solve_time = BLOCK_TIME * 2f64;
     }
 
+    let previous_difficulty: u64 = previous_difficulty.into();
     let adjustment_factor = (E.powf((1f64 - solve_time as f64 / BLOCK_TIME) / M) * FACTOR as f64) as i64;
-    let diff = ((previous_difficulty as i64 * adjustment_factor) / FACTOR) as Difficulty;
+    let diff = (((previous_difficulty as i64 * adjustment_factor) / FACTOR) as u64).into();
     trace!("adjustment factor: {}, previous difficulty: {}, new difficulty: {}", adjustment_factor, previous_difficulty, diff);
 
     if diff < MINIMUM_DIFFICULTY {
@@ -30,7 +31,7 @@ pub fn calculate_difficulty_v1(parent_timestamp: u128, new_timestamp: u128, prev
     diff
 }
 
-const DIFFICULTY_BOUND_DIVISOR: u64 = 2048;
+const DIFFICULTY_BOUND_DIVISOR: Difficulty = Difficulty::from_u64(2048);
 const CHAIN_TIME_RANGE: u64 = BLOCK_TIME_MILLIS * 2 / 3;
 
 // Difficulty algorithm from Ethereum: Homestead but tweaked for our needs
@@ -55,6 +56,7 @@ pub fn calculate_difficulty(tips_count: u64, parent_timestamp: u128, new_timesta
         x = 99;
     }
 
+    let x: Difficulty = x.into();
     // Compute the new diff based on the adjustement
     adjust = adjust * x;
     let new_diff = if neg {

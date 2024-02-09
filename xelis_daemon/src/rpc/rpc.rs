@@ -368,7 +368,7 @@ async fn get_info<S: Storage>(context: Context, body: Value) -> Result<Value, In
         let average_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
         (top_block_hash, supply, pruned_topoheight, average_block_time)
     };
-    let difficulty = blockchain.get_difficulty();
+    let difficulty = blockchain.get_difficulty().await;
     let block_time_target = BLOCK_TIME_MILLIS;
     let block_reward = get_block_reward(circulating_supply);
     let mempool_size = blockchain.get_mempool_size().await;
