@@ -1,4 +1,4 @@
-use crate::{u256::CompactU256, crypto::hash::Hash};
+use crate::{varuint::VarUint, crypto::hash::Hash};
 use primitive_types::U256;
 use thiserror::Error;
 
@@ -9,7 +9,7 @@ use thiserror::Error;
 pub type Difficulty = u64;
 // Cumulative difficulty is the sum of all difficulties of all blocks in the chain
 // It is used to determine which branch is the main chain in BlockDAG merging.
-pub type CumulativeDifficulty = CompactU256;
+pub type CumulativeDifficulty = VarUint;
 
 #[derive(Error, Debug)]
 pub enum DifficultyError {
