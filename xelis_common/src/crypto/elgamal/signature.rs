@@ -37,27 +37,28 @@ pub fn hash_and_point_to_scalar(key: &PublicKey, message_hash: &Hash, point: &Ri
     Scalar::hash_from_bytes::<Sha512>(&data)
 }
 
+#[cfg(test)]
 mod tests {
     use curve25519_dalek::scalar::Scalar;
     use rand::rngs::OsRng;
 
     use crate::crypto::{elgamal::{PrivateKey, PublicKey}, hash::{hash, Hash}};
 
-    fn _generate_key_pair() -> (PrivateKey, PublicKey) {
+    fn generate_key_pair() -> (PrivateKey, PublicKey) {
         let private_key = PrivateKey::new(Scalar::random(&mut OsRng));
         let public_key = private_key.to_public_key();
         (private_key, public_key)
     }
 
-    fn _create_message_hash(message: &[u8]) -> Hash {
+    fn create_message_hash(message: &[u8]) -> Hash {
         hash(message)
     }
 
     // Generate a signature for a message and verify it
     #[test]
     fn test_signature() {
-        let (private_key, public_key) = _generate_key_pair();
-        let message_hash = _create_message_hash(b"Hello World!");
+        let (private_key, public_key) = generate_key_pair();
+        let message_hash = create_message_hash(b"Hello World!");
         let signature = private_key.sign(&message_hash);
 
         assert!(signature.verify(&message_hash, &public_key), "Signature verification failed");
@@ -66,12 +67,12 @@ mod tests {
     // Generate a signature for a message and verify that it is incorrect
     #[test]
     fn test_signature_invalid() {
-        let (private_key, _) = _generate_key_pair();
-        let message_hash = _create_message_hash(b"Hello World!");
+        let (private_key, _) = generate_key_pair();
+        let message_hash = create_message_hash(b"Hello World!");
         let signature = private_key.sign(&message_hash);
 
         // Verify the signature with the wrong key
-        let (_, public_key) = _generate_key_pair();
+        let (_, public_key) = generate_key_pair();
         assert!(!signature.verify(&message_hash, &public_key), "Signature should fail");
     }
 }

@@ -1,7 +1,11 @@
 use crate::{
-    network::Network,
-    config::{FEE_PER_KB, COIN_DECIMALS},
+    config::{
+        COIN_DECIMALS,
+        FEE_PER_KB
+    },
     difficulty::Difficulty,
+    network::Network,
+    varuint::VarUint
 };
 use std::{
     sync::Mutex,
@@ -95,9 +99,10 @@ const DIFFICULTY_FORMATS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
 pub fn format_difficulty(mut difficulty: Difficulty) -> String {
     let max = HASHRATE_FORMATS.len() - 1;
     let mut count = 0;
-    while difficulty > 1000 && count < max {
+    let thousand = VarUint::from_u64(1000);
+    while difficulty > thousand && count < max {
         count += 1;
-        difficulty = difficulty / 1000;
+        difficulty = difficulty / thousand;
     }
 
     return format!("{}{}", difficulty, DIFFICULTY_FORMATS[count]);

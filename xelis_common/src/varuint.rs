@@ -1,14 +1,11 @@
 use std::{
     fmt::{self, Display, Formatter},
-    ops::AddAssign
+    ops::{Add, AddAssign, Div, Mul, Sub}
 };
 use log::debug;
 use primitive_types::U256;
 use serde::{Deserialize, Serialize};
-use crate::{
-    difficulty::Difficulty,
-    serializer::{Reader, ReaderError, Serializer, Writer}
-};
+use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 
 // This is like a variable length integer but up to U256
 // It is mostly used to save difficulty and cumulative difficulty on disk
@@ -108,15 +105,39 @@ impl From<U256> for VarUint {
     }
 }
 
+impl From<u128> for VarUint {
+    fn from(u: u128) -> Self {
+        Self::from_u128(u)
+    }
+}
+
+impl From<u64> for VarUint {
+    fn from(u: u64) -> Self {
+        Self::from_u64(u)
+    }
+}
+
 impl From<VarUint> for U256 {
     fn from(c: VarUint) -> Self {
         c.0
     }
 }
 
-impl From<Difficulty> for VarUint {
-    fn from(difficulty: Difficulty) -> Self {
-        U256::from(difficulty).into()
+impl From<VarUint> for u128 {
+    fn from(c: VarUint) -> u128 {
+        c.0.as_u128()
+    }
+}
+
+impl From<VarUint> for u64 {
+    fn from(c: VarUint) -> u64 {
+        c.0.as_u64()
+    }
+}
+
+impl From<VarUint> for f64 {
+    fn from(c: VarUint) -> f64 {
+        c.0.as_u128() as f64
     }
 }
 
@@ -132,6 +153,39 @@ impl AddAssign for VarUint {
     }
 }
 
+impl Div for VarUint {
+    type Output = Self;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        Self(self.0 / rhs.0)
+    }
+}
+
+impl Mul for VarUint {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self(self.0 * rhs.0)
+    }
+}
+
+impl Sub for VarUint {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl Add for VarUint {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use primitive_types::U256;
     use crate::serializer::{Reader, Serializer};
@@ -139,29 +193,29 @@ mod tests {
 
     #[test]
     fn test_serde_0() {
-        _test_serde([0u8; 32], 0);
+        test_serde([0u8; 32], 0);
     }
 
     #[test]
     fn test_serde_highest_byte_u64() {
         let mut bytes = [0u8; 32];
         bytes[7] = 0xFF;
-        _test_serde(bytes, 8);
+        test_serde(bytes, 8);
     }
 
     #[test]
     fn test_serde_low_u128() {
         let mut bytes = [0u8; 32];
         bytes[8] = 1;
-        _test_serde(bytes, 9);
+        test_serde(bytes, 9);
     }
 
     #[test]
     fn test_serde_max() {
-        _test_serde([u8::MAX; 32], 32);
+        test_serde([u8::MAX; 32], 32);
     }
 
-    fn _test_serde(bytes: [u8; 32], expected_size: usize) {
+    fn test_serde(bytes: [u8; 32], expected_size: usize) {
         let compact: VarUint = U256::from_big_endian(&bytes).into();
         let bytes = compact.to_bytes();
         assert_eq!(bytes.len() - 1, expected_size); // - 1 for byte len
