@@ -32,16 +32,48 @@ pub struct ChainValidator<'a, S: Storage> {
     blockchain: &'a Blockchain<S>,
     // This is used to compute the expected topoheight of each new block
     // It must be 1 topoheight above the common point
-    starting_topoheight: u64
+    starting_topoheight: u64,
+    // Cache to prevent searching it multiple times
+    // it is used to find the cumulative difficulty for each block
+    stable_hash: Hash
 }
 
 impl<'a, S: Storage> ChainValidator<'a, S> {
-    pub fn new(blockchain: &'a Blockchain<S>, starting_topoheight: u64) -> Self {
-        Self {
+    pub async fn new(blockchain: &'a Blockchain<S>, starting_topoheight: u64) -> Result<Self, BlockchainError> {        
+        // Retrieve the stable hash
+        let stable_hash = {
+            let stable_topo = blockchain.get_stable_topoheight();
+            let storage = blockchain.get_storage().read().await;
+            storage.get_hash_at_topo_height(stable_topo).await?
+        };
+
+        Ok(Self {
             blocks: IndexMap::new(),
             blockchain,
-            starting_topoheight
-        }
+            starting_topoheight,
+            stable_hash
+        })
+    }
+
+    // Check if the chain validator has a higher cumulative difficulty than our blockchain
+    // This is used to determine if we should switch to the new chain by popping blocks or not
+    pub async fn has_higher_cumulative_difficulty(&self) -> Result<bool, BlockchainError> {
+        let new_cumulative_difficulty = self.get_chain_cumulative_difficulty().ok_or(BlockchainError::NotEnoughBlocks)?;
+
+        // Retrieve the current cumulative difficulty
+        let current_cumulative_difficulty = {
+            let storage = self.blockchain.get_storage().read().await;
+            let top_block_hash = self.blockchain.get_top_block_hash_for_storage(&storage).await?;
+            storage.get_cumulative_difficulty_for_block_hash(&top_block_hash).await?
+        };
+
+        Ok(*new_cumulative_difficulty > current_cumulative_difficulty)
+    }
+
+    // Retrieve the cumulative difficulty of the chain validator
+    // It is the cumulative difficulty of the last block added
+    pub fn get_chain_cumulative_difficulty(&self) -> Option<&CumulativeDifficulty> {
+        self.blocks.last().map(|(_, data)| &data.cumulative_difficulty)
     }
 
     // validate the basic chain structure
@@ -82,8 +114,9 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         let pow_hash = header.get_pow_hash();
         trace!("POW hash: {}", pow_hash);
         let difficulty = self.blockchain.verify_proof_of_work(self, &pow_hash, tips.iter()).await?;
-        // TODO FIXME
-        let cumulative_difficulty = CumulativeDifficulty::zero();
+
+        // Find the cumulative difficulty for this block
+        let (_, cumulative_difficulty) = self.blockchain.find_tip_work_score(self, &hash, &self.stable_hash, self.blockchain.get_stable_height()).await?;
 
         self.blocks.insert(hash, BlockData { header: Arc::new(header), difficulty, cumulative_difficulty });
 

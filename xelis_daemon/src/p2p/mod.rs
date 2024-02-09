@@ -1585,7 +1585,7 @@ impl<S: Storage> P2pServer<S> {
                 // request all blocks header and verify basic chain structure
                 // Starting topoheight must be the next topoheight after common block
                 // Blocks in chain response must be ordered by topoheight otherwise it will give incorrect results 
-                let mut chain_validator = ChainValidator::new(&self.blockchain, common_topoheight + 1);
+                let mut chain_validator = ChainValidator::new(&self.blockchain, common_topoheight + 1).await?;
                 for hash in blocks {
                     trace!("Request block header for chain validator: {}", hash);
 
@@ -1604,6 +1604,14 @@ impl<S: Storage> P2pServer<S> {
                         return Err(P2pError::ExpectedBlock.into())
                     }
                 }
+
+                // Verify that it has a higher cumulative difficulty than us
+                // Otherwise we don't switch to his chain
+                if !chain_validator.has_higher_cumulative_difficulty().await? {
+                    error!("{} sent us a chain response with lower cumulative difficulty than ours", peer);
+                    return Err(BlockchainError::LowerCumulativeDifficulty)
+                }
+
                 // peer chain looks correct, lets rewind our chain
                 warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
                 self.blockchain.rewind_chain(pop_count, true).await?;

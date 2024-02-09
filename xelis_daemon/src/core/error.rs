@@ -98,6 +98,8 @@ pub enum BlockchainError {
     BlockNotFound(Hash),
     #[error("Error while retrieving block by height: {} not found", _0)]
     BlockHeightNotFound(u64),
+    #[error("Chain has a too low cumulative difficulty")]
+    LowerCumulativeDifficulty,
     #[error(transparent)]
     ErrorStd(#[from] std::io::Error),
     #[error(transparent)]
