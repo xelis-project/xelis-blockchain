@@ -364,7 +364,7 @@ async fn get_info<S: Storage>(context: Context, body: Value) -> Result<Value, In
         let storage = blockchain.get_storage().read().await;
         let top_block_hash = storage.get_hash_at_topo_height(topoheight).await.context("Error while retrieving hash at topo height")?;
         let supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply at topo height")?;
-        let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?;
+        let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
         let average_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
         (top_block_hash, supply, pruned_topoheight, average_block_time)
     };
@@ -763,7 +763,7 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
     let key = params.address.get_public_key();
     let minimum_topoheight = params.minimum_topoheight.unwrap_or(0);
     let storage = blockchain.get_storage().read().await;
-    let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?.unwrap_or(0);
+    let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?.unwrap_or(0);
     let mut version = if let Some(topo) = params.maximum_topoheight {
         if topo < pruned_topoheight {
             return Err(InternalRpcError::CustomStr("Maximum topoheight is lower than pruned topoheight"));

@@ -25,7 +25,14 @@ use lru::LruCache;
 use sled::Tree;
 use log::{debug, trace, error, warn, info};
 
-use super::{DagOrderProvider, DifficultyProvider, Storage, Tips};
+use super::{
+    BlocksAtHeightProvider,
+    DagOrderProvider,
+    DifficultyProvider,
+    PrunedTopoheightProvider,
+    Storage,
+    Tips
+};
 
 // Constant keys used for extra Tree
 const TIPS: &[u8; 4] = b"TIPS";
@@ -466,6 +473,64 @@ impl DagOrderProvider for SledStorage {
 }
 
 #[async_trait]
+impl BlocksAtHeightProvider for SledStorage {
+    async fn set_blocks_at_height(&self, tips: Tips, height: u64) -> Result<(), BlockchainError> {
+        trace!("set {} blocks at height {}", tips.len(), height);
+        self.blocks_at_height.insert(height.to_be_bytes(), tips.to_bytes())?;
+        Ok(())
+    }
+
+    // returns all blocks hash at specified height
+    async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError> {
+        trace!("get blocks at height {}", height);
+        self.load_from_disk(&self.blocks_at_height, &height.to_be_bytes())
+    }
+
+    async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError> {
+        trace!("add block {} at height {}", hash, height);
+        let mut tips = if self.has_blocks_at_height(height).await? {
+            let hashes = self.get_blocks_at_height(height).await?;
+            trace!("Found {} blocks at this height", hashes.len());
+            hashes
+        } else {
+            trace!("No blocks found at this height");
+            Tips::new()
+        };
+
+        tips.insert(hash);
+        self.set_blocks_at_height(tips, height).await
+    }
+
+    async fn remove_block_hash_at_height(&self, hash: &Hash, height: u64) -> Result<(), BlockchainError> {
+        trace!("remove block {} at height {}", hash, height);
+        let mut tips = self.get_blocks_at_height(height).await?;
+        tips.remove(hash);
+
+        // Delete the height if there is no blocks present anymore
+        if tips.is_empty() {
+            self.blocks_at_height.remove(&height.to_be_bytes())?;
+        } else {
+            self.set_blocks_at_height(tips, height).await?;
+        }
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl PrunedTopoheightProvider for SledStorage {
+    async fn get_pruned_topoheight(&self) -> Result<Option<u64>, BlockchainError> {
+        Ok(self.pruned_topoheight)
+    }
+
+    async fn set_pruned_topoheight(&mut self, pruned_topoheight: u64) -> Result<(), BlockchainError> {
+        self.pruned_topoheight = Some(pruned_topoheight);
+        self.extra.insert(PRUNED_TOPOHEIGHT, &pruned_topoheight.to_be_bytes())?;
+        Ok(())
+    }
+}
+
+#[async_trait]
 impl Storage for SledStorage {
     async fn clear_caches(&mut self) -> Result<(), BlockchainError> {
         if let Some(cache) = self.transactions_cache.as_ref() {
@@ -513,16 +578,6 @@ impl Storage for SledStorage {
             cache.clear();
         }
 
-        Ok(())
-    }
-
-    fn get_pruned_topoheight(&self) -> Result<Option<u64>, BlockchainError> {
-        Ok(self.pruned_topoheight)
-    }
-
-    fn set_pruned_topoheight(&mut self, pruned_topoheight: u64) -> Result<(), BlockchainError> {
-        self.pruned_topoheight = Some(pruned_topoheight);
-        self.extra.insert(PRUNED_TOPOHEIGHT, &pruned_topoheight.to_be_bytes())?;
         Ok(())
     }
 
@@ -1406,7 +1461,7 @@ impl Storage for SledStorage {
         let mut lowest_topo = topoheight - count;
         trace!("Lowest topoheight for rewind: {}", lowest_topo);
 
-        let pruned_topoheight = self.get_pruned_topoheight()?.unwrap_or(0);
+        let pruned_topoheight = self.get_pruned_topoheight().await?.unwrap_or(0);
         if pruned_topoheight != 0 {
             let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
             if lowest_topo <= safety_pruned_topoheight {
@@ -1646,48 +1701,6 @@ impl Storage for SledStorage {
     async fn has_blocks_at_height(&self, height: u64) -> Result<bool, BlockchainError> {
         trace!("get blocks at height {}", height);
         Ok(self.blocks_at_height.contains_key(&height.to_be_bytes())?)
-    }
-
-    async fn set_blocks_at_height(&self, tips: Tips, height: u64) -> Result<(), BlockchainError> {
-        trace!("set {} blocks at height {}", tips.len(), height);
-        self.blocks_at_height.insert(height.to_be_bytes(), tips.to_bytes())?;
-        Ok(())
-    }
-
-    // returns all blocks hash at specified height
-    async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError> {
-        trace!("get blocks at height {}", height);
-        self.load_from_disk(&self.blocks_at_height, &height.to_be_bytes())
-    }
-
-    async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError> {
-        trace!("add block {} at height {}", hash, height);
-        let mut tips = if self.has_blocks_at_height(height).await? {
-            let hashes = self.get_blocks_at_height(height).await?;
-            trace!("Found {} blocks at this height", hashes.len());
-            hashes
-        } else {
-            trace!("No blocks found at this height");
-            Tips::new()
-        };
-
-        tips.insert(hash);
-        self.set_blocks_at_height(tips, height).await
-    }
-
-    async fn remove_block_hash_at_height(&self, hash: &Hash, height: u64) -> Result<(), BlockchainError> {
-        trace!("remove block {} at height {}", hash, height);
-        let mut tips = self.get_blocks_at_height(height).await?;
-        tips.remove(hash);
-
-        // Delete the height if there is no blocks present anymore
-        if tips.is_empty() {
-            self.blocks_at_height.remove(&height.to_be_bytes())?;
-        } else {
-            self.set_blocks_at_height(tips, height).await?;
-        }
-
-        Ok(())
     }
 
     async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {

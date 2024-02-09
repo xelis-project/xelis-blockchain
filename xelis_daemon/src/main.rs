@@ -249,7 +249,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let storage = blockchain.get_storage().read().await;
-    let mut pruned_topoheight = storage.get_pruned_topoheight().context("Error on pruned topoheight")?.unwrap_or(0);
+    let mut pruned_topoheight = storage.get_pruned_topoheight().await.context("Error on pruned topoheight")?.unwrap_or(0);
     let mut expected_supply = if pruned_topoheight > 0 {
         let supply = storage.get_supply_at_topo_height(pruned_topoheight).await.context("Error while retrieving starting expected supply")?;
         pruned_topoheight += 1;
@@ -557,7 +557,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let transactions_count = storage.count_transactions().context("Error while counting transactions")?;
     let blocks_count = storage.count_blocks().context("Error while counting blocks")?;
     let assets = storage.count_assets().context("Error while counting assets")?;
-    let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?;
+    let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
 
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));

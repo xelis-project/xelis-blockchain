@@ -402,7 +402,7 @@ impl<S: Storage> P2pServer<S> {
         let storage = self.blockchain.get_storage().read().await;
         let (block, top_hash) = storage.get_top_block_header().await?;
         let topoheight = self.blockchain.get_topo_height();
-        let pruned_topoheight = storage.get_pruned_topoheight()?;
+        let pruned_topoheight = storage.get_pruned_topoheight().await?;
         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_hash).await.unwrap_or_else(|_| CumulativeDifficulty::zero());
         Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, top_hash, GENESIS_BLOCK_HASH.clone(), cumulative_difficulty))
     }
@@ -503,7 +503,7 @@ impl<S: Storage> P2pServer<S> {
     // if a peer is given, we will check and update the peers list
     async fn build_generic_ping_packet_with_storage(&self, storage: &S) -> Ping<'_> {
         let (cumulative_difficulty, block_top_hash, pruned_topoheight) = {
-            let pruned_topoheight = match storage.get_pruned_topoheight() {
+            let pruned_topoheight = match storage.get_pruned_topoheight().await {
                 Ok(pruned_topoheight) => pruned_topoheight,
                 Err(e) => {
                     error!("Couldn't get the pruned topoheight from storage for generic ping packet: {}", e);
@@ -1585,7 +1585,7 @@ impl<S: Storage> P2pServer<S> {
                 // request all blocks header and verify basic chain structure
                 // Starting topoheight must be the next topoheight after common block
                 // Blocks in chain response must be ordered by topoheight otherwise it will give incorrect results 
-                let mut chain_validator = ChainValidator::new(&self.blockchain, common_topoheight + 1).await?;
+                let mut chain_validator = ChainValidator::new(&self.blockchain, common_topoheight + 1);
                 for hash in blocks {
                     trace!("Request block header for chain validator: {}", hash);
 
@@ -1922,7 +1922,7 @@ impl<S: Storage> P2pServer<S> {
         debug!("Handle bootstrap chain request {:?} from {}", request_kind, peer);
 
         let storage = self.blockchain.get_storage().read().await;
-        let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
+        let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
         if let Some(topoheight) = request.get_requested_topoheight() {
             let our_topoheight = self.blockchain.get_topo_height();
             // verify that the topoheight asked is above the PRUNE_SAFETY_LIMIT
@@ -1941,7 +1941,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::ChainInfo(blocks) => {
                 let common_point = self.find_common_point(&*storage, blocks).await?;
                 let tips = storage.get_tips().await?;
-                let (hash, height) = self.blockchain.find_common_base(&storage, &tips).await?;
+                let (hash, height) = self.blockchain.find_common_base::<S, _>(&storage, &tips).await?;
                 let stable_topo = storage.get_topo_height_for_hash(&hash).await?;
                 StepResponse::ChainInfo(common_point, stable_topo, height, hash)
             },
@@ -2018,7 +2018,7 @@ impl<S: Storage> P2pServer<S> {
     async fn build_list_of_blocks_id(&self, storage: &S) -> Result<IndexSet<BlockId>, BlockchainError> {
         let mut blocks = IndexSet::new();
         let topoheight = self.blockchain.get_topo_height();
-        let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
+        let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
         let mut i = 0;
 
         // we add 1 for the genesis block added below
@@ -2088,7 +2088,7 @@ impl<S: Storage> P2pServer<S> {
 
                         let top_block_hash = storage.get_top_block_hash().await?;
                         if *common_point.get_hash() != top_block_hash {
-                            let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
+                            let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
                             
                             warn!("Common point is {} while our top block hash is {} !", common_point.get_hash(), top_block_hash);
                             // Count how much blocks we need to pop
@@ -2227,7 +2227,7 @@ impl<S: Storage> P2pServer<S> {
                     }
 
                     let mut storage = self.blockchain.get_storage().write().await;
-                    storage.set_pruned_topoheight(lowest_topoheight)?;
+                    storage.set_pruned_topoheight(lowest_topoheight).await?;
                     storage.set_top_topoheight(top_topoheight)?;
                     storage.set_top_height(top_height)?;
                     storage.store_tips(&HashSet::from([top_block_hash.take().expect("Expected top block hash for fast sync")]))?;

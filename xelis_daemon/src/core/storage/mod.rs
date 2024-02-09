@@ -39,12 +39,28 @@ pub trait DagOrderProvider {
 }
 
 #[async_trait]
-pub trait Storage: DifficultyProvider + DagOrderProvider + Sync + Send + 'static {
+pub trait BlocksAtHeightProvider {
+    // This is used to store the blocks hashes at a specific height
+    async fn set_blocks_at_height(&self, tips: Tips, height: u64) -> Result<(), BlockchainError>;
+    // Retrieve the blocks hashes at a specific height
+    async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError>;
+    // Append a block hash at a specific height
+    async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError>;
+    // Remove a block hash at a specific height
+    async fn remove_block_hash_at_height(&self, hash: &Hash, height: u64) -> Result<(), BlockchainError>;
+}
+
+// This trait is used for pruning
+#[async_trait]
+pub trait PrunedTopoheightProvider {
+    async fn get_pruned_topoheight(&self) -> Result<Option<u64>, BlockchainError>;
+    async fn set_pruned_topoheight(&mut self, pruned_topoheight: u64) -> Result<(), BlockchainError>;
+}
+
+#[async_trait]
+pub trait Storage: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider + BlocksAtHeightProvider + Sync + Send + 'static {
     // Clear caches if exists
     async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
-
-    fn get_pruned_topoheight(&self) -> Result<Option<u64>, BlockchainError>;
-    fn set_pruned_topoheight(&mut self, pruned_topoheight: u64) -> Result<(), BlockchainError>;
 
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
     async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
@@ -148,11 +164,6 @@ pub trait Storage: DifficultyProvider + DagOrderProvider + Sync + Send + 'static
     async fn get_block(&self, hash: &Hash) -> Result<Block, BlockchainError>;
     async fn get_top_block(&self) -> Result<Block, BlockchainError>;
     async fn get_top_block_header(&self) -> Result<(Arc<BlockHeader>, Hash), BlockchainError>;
-
-    async fn set_blocks_at_height(&self, tips: Tips, height: u64) -> Result<(), BlockchainError>;
-    async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError>;
-    async fn add_block_hash_at_height(&mut self, hash: Hash, height: u64) -> Result<(), BlockchainError>;
-    async fn remove_block_hash_at_height(&self, hash: &Hash, height: u64) -> Result<(), BlockchainError>;
 
     async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError>;
     fn set_supply_at_topo_height(&mut self, topoheight: u64, supply: u64) -> Result<(), BlockchainError>;

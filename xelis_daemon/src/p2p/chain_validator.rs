@@ -9,9 +9,14 @@ use xelis_common::{
     immutable::Immutable
 };
 use crate::core::{
-    blockchain::Blockchain,
-    error::BlockchainError,
-    storage::{DagOrderProvider, DifficultyProvider, Storage}
+    blockchain::Blockchain, blockdag, error::BlockchainError, storage::{
+        BlocksAtHeightProvider,
+        DagOrderProvider,
+        DifficultyProvider,
+        PrunedTopoheightProvider,
+        Storage,
+        Tips
+    }
 };
 use log::{error, trace};
 
@@ -28,31 +33,24 @@ struct BlockData {
 pub struct ChainValidator<'a, S: Storage> {
     // store all blocks data in topological order
     blocks: IndexMap<Hash, BlockData>,
+    // store all blocks hashes at a specific height
+    blocks_at_height: IndexMap<u64, Tips>,
     // Blockchain reference used to verify current chain state
     blockchain: &'a Blockchain<S>,
     // This is used to compute the expected topoheight of each new block
     // It must be 1 topoheight above the common point
     starting_topoheight: u64,
-    // Cache to prevent searching it multiple times
-    // it is used to find the cumulative difficulty for each block
-    stable_hash: Hash
 }
 
 impl<'a, S: Storage> ChainValidator<'a, S> {
-    pub async fn new(blockchain: &'a Blockchain<S>, starting_topoheight: u64) -> Result<Self, BlockchainError> {        
-        // Retrieve the stable hash
-        let stable_hash = {
-            let stable_topo = blockchain.get_stable_topoheight();
-            let storage = blockchain.get_storage().read().await;
-            storage.get_hash_at_topo_height(stable_topo).await?
-        };
-
-        Ok(Self {
+    // Starting topoheight must be 1 topoheight above the common point
+    pub fn new(blockchain: &'a Blockchain<S>, starting_topoheight: u64) -> Self {        
+        Self {
             blocks: IndexMap::new(),
+            blocks_at_height: IndexMap::new(),
             blockchain,
-            starting_topoheight,
-            stable_hash
-        })
+            starting_topoheight
+        }
     }
 
     // Check if the chain validator has a higher cumulative difficulty than our blockchain
@@ -111,13 +109,26 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             }
         }
 
+        // Verify the block height by tips
+        {
+            let height_by_tips = blockdag::calculate_height_at_tips(self, header.get_tips().iter()).await?;
+            if height_by_tips != header.get_height() {
+                error!("Block {} has height {} while expected height is {}", hash, header.get_height(), height_by_tips);
+                return Err(BlockchainError::InvalidBlockHeight(height_by_tips, header.get_height()))
+            }
+        }
+
         let pow_hash = header.get_pow_hash();
         trace!("POW hash: {}", pow_hash);
         let difficulty = self.blockchain.verify_proof_of_work(self, &pow_hash, tips.iter()).await?;
 
         // Find the cumulative difficulty for this block
-        let (_, cumulative_difficulty) = self.blockchain.find_tip_work_score(self, &hash, &self.stable_hash, self.blockchain.get_stable_height()).await?;
+        let (base, base_height) = self.blockchain.find_common_base(self, header.get_tips()).await?;
+        let (_, cumulative_difficulty) = self.blockchain.find_tip_work_score(self, &hash, &base, base_height).await?;
 
+        // Store the block in both maps
+        // One is for blocks at height and the other is for the block data
+        self.blocks_at_height.entry(header.get_height()).or_insert_with(Tips::new).insert(hash.clone());
         self.blocks.insert(hash, BlockData { header: Arc::new(header), difficulty, cumulative_difficulty });
 
         Ok(())
@@ -219,5 +230,45 @@ impl<S: Storage> DagOrderProvider for ChainValidator<'_, S> {
 
         let storage = self.blockchain.get_storage().read().await;
         Ok(storage.get_hash_at_topo_height(topoheight).await?)
+    }
+}
+
+#[async_trait]
+impl<S: Storage> BlocksAtHeightProvider for ChainValidator<'_, S> {
+    // This is used to store the blocks hashes at a specific height
+    async fn set_blocks_at_height(&self, _: Tips, _: u64) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
+    }
+
+    // Retrieve the blocks hashes at a specific height
+    async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError> {
+        if let Some(tips) = self.blocks_at_height.get(&height) {
+            return Ok(tips.clone())
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        storage.get_blocks_at_height(height).await
+    }
+
+    // Append a block hash at a specific height
+    async fn add_block_hash_at_height(&mut self, _: Hash, _: u64) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
+    }
+
+    // Remove a block hash at a specific height
+    async fn remove_block_hash_at_height(&self, _: &Hash, _: u64) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
+    }
+}
+
+#[async_trait]
+impl<S: Storage> PrunedTopoheightProvider for ChainValidator<'_, S> {
+    async fn get_pruned_topoheight(&self) -> Result<Option<u64>, BlockchainError> {
+        let storage = self.blockchain.get_storage().read().await;
+        storage.get_pruned_topoheight().await
+    }
+
+    async fn set_pruned_topoheight(&mut self, _: u64) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
     }
 }

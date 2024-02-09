@@ -100,6 +100,8 @@ pub enum BlockchainError {
     BlockHeightNotFound(u64),
     #[error("Chain has a too low cumulative difficulty")]
     LowerCumulativeDifficulty,
+    #[error("No cumulative difficulty found")]
+    NoCumulativeDifficulty,
     #[error(transparent)]
     ErrorStd(#[from] std::io::Error),
     #[error(transparent)]

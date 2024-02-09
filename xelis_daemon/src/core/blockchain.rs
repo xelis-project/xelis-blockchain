@@ -54,6 +54,8 @@ use tokio::sync::{Mutex, RwLock};
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
+use super::storage::{BlocksAtHeightProvider, PrunedTopoheightProvider};
+
 #[derive(Debug, clap::StructOpt)]
 pub struct Config {
     /// Optional node tag
@@ -217,7 +219,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("Retrieving tips for computing current stable height");
             let storage = blockchain.get_storage().read().await;
             let tips = storage.get_tips().await?;
-            let (stable_hash, stable_height) = blockchain.find_common_base(&storage, &tips).await?;
+            let (stable_hash, stable_height) = blockchain.find_common_base::<S, _>(&storage, &tips).await?;
             blockchain.stable_height.store(stable_height, Ordering::SeqCst);
             // Search the stable topoheight
             let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
@@ -437,13 +439,13 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // 1 is to not delete the genesis block
-        let last_pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(1);
+        let last_pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(1);
         if topoheight < last_pruned_topoheight {
             return Err(BlockchainError::PruneLowerThanLastPruned)
         }
 
         // find new stable point based on a sync block under the limit topoheight
-        let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight(&storage, topoheight, self.get_height()).await?;
+        let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight::<S>(&storage, topoheight, self.get_height()).await?;
         debug!("Located sync topoheight found: {}", located_sync_topoheight);
         
         if located_sync_topoheight > last_pruned_topoheight {
@@ -463,7 +465,8 @@ impl<S: Storage> Blockchain<S> {
             // delete nonces versions
             storage.delete_versioned_nonces_below_topoheight(located_sync_topoheight).await?;
 
-            storage.set_pruned_topoheight(located_sync_topoheight)?;
+            // Update the pruned topoheight
+            storage.set_pruned_topoheight(located_sync_topoheight).await?;
             Ok(located_sync_topoheight)
         } else {
             debug!("located_sync_topoheight <= topoheight, no pruning needed");
@@ -472,11 +475,14 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // determine the topoheight of the nearest sync block until limit topoheight
-    pub async fn locate_nearest_sync_block_for_topoheight(&self, storage: &S, mut topoheight: u64, current_height: u64) -> Result<u64, BlockchainError> {
+    pub async fn locate_nearest_sync_block_for_topoheight<P>(&self, provider: &P, mut topoheight: u64, current_height: u64) -> Result<u64, BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider
+    {
         while topoheight > 0 {
-            let block_hash = storage.get_hash_at_topo_height(topoheight).await?;
-            if self.is_sync_block_at_height(storage, &block_hash, current_height).await? {
-                let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
+            let block_hash = provider.get_hash_at_topo_height(topoheight).await?;
+            if self.is_sync_block_at_height(provider, &block_hash, current_height).await? {
+                let topoheight = provider.get_topo_height_for_hash(&block_hash).await?;
                 return Ok(topoheight)
             }
 
@@ -510,18 +516,22 @@ impl<S: Storage> Blockchain<S> {
         self.stable_topoheight.load(Ordering::Acquire)
     }
 
+    // Get the network on which this chain is running
     pub fn get_network(&self) -> &Network {
         &self.network
     }
 
+    // Get the current emitted supply of XELIS at current topoheight
     pub async fn get_supply(&self) -> Result<u64, BlockchainError> {
         self.storage.read().await.get_supply_at_topo_height(self.get_topo_height()).await
     }
 
+    // Get the count of transactions available in the mempool
     pub async fn get_mempool_size(&self) -> usize {
         self.mempool.read().await.size()
     }
 
+    // Get the current top block hash in chain
     pub async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
         let storage = self.storage.read().await;
         self.get_top_block_hash_for_storage(&storage).await
@@ -534,30 +544,38 @@ impl<S: Storage> Blockchain<S> {
         storage.get_hash_at_topo_height(self.get_topo_height()).await
     }
 
+    // Verify if we have the current block in storage by locking it ourself
     pub async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         let storage = self.storage.read().await;
         storage.has_block(hash).await
     }
 
+    // Verify if the block is a sync block for current chain height
     pub async fn is_sync_block(&self, storage: &S, hash: &Hash) -> Result<bool, BlockchainError> {
         let current_height = self.get_height();
-        self.is_sync_block_at_height(storage, hash, current_height).await
+        self.is_sync_block_at_height::<S>(storage, hash, current_height).await
     }
 
-    async fn is_sync_block_at_height(&self, storage: &S, hash: &Hash, height: u64) -> Result<bool, BlockchainError> {
+    // Verify if the block is a sync block
+    // A sync block is a block that is ordered and has the highest cumulative difficulty at its height
+    // It is used to determine if the block is a stable block or not
+    async fn is_sync_block_at_height<P>(&self, provider: &P, hash: &Hash, height: u64) -> Result<bool, BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider
+    {
         trace!("is sync block {} at height {}", hash, height);
-        let block_height = storage.get_height_for_block_hash(hash).await?;
+        let block_height = provider.get_height_for_block_hash(hash).await?;
         if block_height == 0 { // genesis block is a sync block
             return Ok(true)
         }
 
         // block must be ordered and in stable height
-        if block_height + STABLE_LIMIT > height || !storage.is_block_topological_ordered(hash).await {
+        if block_height + STABLE_LIMIT > height || !provider.is_block_topological_ordered(hash).await {
             return Ok(false)
         }
 
         // if block is alone at its height, it is a sync block
-        let tips_at_height = storage.get_blocks_at_height(block_height).await?;
+        let tips_at_height = provider.get_blocks_at_height(block_height).await?;
         if tips_at_height.len() == 1 {
             return Ok(true)
         }
@@ -565,7 +583,7 @@ impl<S: Storage> Blockchain<S> {
         // if block is not alone at its height and they are ordered (not orphaned), it can't be a sync block
         let mut blocks_in_main_chain = 0;
         for hash in tips_at_height {
-            if storage.is_block_topological_ordered(&hash).await {
+            if provider.is_block_topological_ordered(&hash).await {
                 blocks_in_main_chain += 1;
                 if blocks_in_main_chain > 1 {
                     return Ok(false)
@@ -582,18 +600,18 @@ impl<S: Storage> Blockchain<S> {
         let mut i = block_height - 1;
         let mut pre_blocks = HashSet::new();
         while i >= stable_point && i != 0 {
-            let blocks = storage.get_blocks_at_height(i).await?;
+            let blocks = provider.get_blocks_at_height(i).await?;
             pre_blocks.extend(blocks);
             i -= 1;
         }
 
-        let sync_block_cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(hash).await?;
+        let sync_block_cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash).await?;
         // if potential sync block has lower cumulative difficulty than one of past blocks, it is not a sync block
         for hash in pre_blocks {
             // We compare only against block ordered otherwise we can have desync between node which could lead to fork
             // This is rare event but can happen
-            if storage.is_block_topological_ordered(&hash).await {
-                let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+            if provider.is_block_topological_ordered(&hash).await {
+                let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(&hash).await?;
                 if cumulative_difficulty >= sync_block_cumulative_difficulty {
                     return Ok(false)
                 }
@@ -604,9 +622,12 @@ impl<S: Storage> Blockchain<S> {
     }
 
     #[async_recursion]
-    async fn find_tip_base(&self, storage: &S, hash: &Hash, height: u64, pruned_topoheight: u64) -> Result<(Hash, u64), BlockchainError> {
-        if pruned_topoheight > 0 && storage.is_block_topological_ordered(hash).await {
-            let topoheight = storage.get_topo_height_for_hash(hash).await?;
+    async fn find_tip_base<P>(&self, provider: &P, hash: &Hash, height: u64, pruned_topoheight: u64) -> Result<(Hash, u64), BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + Send + Sync
+    {
+        if pruned_topoheight > 0 && provider.is_block_topological_ordered(hash).await {
+            let topoheight = provider.get_topo_height_for_hash(hash).await?;
             // Node is pruned, we only prune chain to stable height so we can return the hash
             if topoheight <= pruned_topoheight {
                 debug!("Node is pruned, returns {} at {} as stable tip base", hash, height);
@@ -622,7 +643,7 @@ impl<S: Storage> Blockchain<S> {
                 return Ok((base_hash.clone(), *base_height))
             }
 
-            let tips = storage.get_past_blocks_for_block_hash(hash).await?;
+            let tips = provider.get_past_blocks_for_block_hash(hash).await?;
             let tips_count = tips.len();
             if tips_count == 0 { // only genesis block can have 0 tips saved
                 // save in cache
@@ -634,18 +655,19 @@ impl<S: Storage> Blockchain<S> {
 
         let mut bases = Vec::with_capacity(tips_count);
         for hash in tips.iter() {
-            if pruned_topoheight > 0 && storage.is_block_topological_ordered(hash).await {
-                let topoheight = storage.get_topo_height_for_hash(hash).await?;
+            if pruned_topoheight > 0 && provider.is_block_topological_ordered(hash).await {
+                let topoheight = provider.get_topo_height_for_hash(hash).await?;
                 // Node is pruned, we only prune chain to stable height so we can return the hash
                 if topoheight <= pruned_topoheight {
-                    let block_height = storage.get_height_for_block_hash(hash).await?;
+                    let block_height = provider.get_height_for_block_hash(hash).await?;
                     debug!("Node is pruned, returns tip {} at {} as stable tip base", hash, block_height);
                     return Ok((hash.clone(), block_height))
                 }
             }
+
             // if block is sync, it is a tip base
-            if self.is_sync_block_at_height(storage, hash, height).await? {
-                let block_height = storage.get_height_for_block_hash(hash).await?;
+            if self.is_sync_block_at_height(provider, hash, height).await? {
+                let block_height = provider.get_height_for_block_hash(hash).await?;
                 // save in cache (lock each time to avoid deadlocks)
                 let mut cache = self.tip_base_cache.lock().await;
                 cache.put((hash.clone(), height), (hash.clone(), block_height));
@@ -654,7 +676,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             // if block is not sync, we need to find its tip base too
-            bases.push(self.find_tip_base(storage, hash, height, pruned_topoheight).await?);
+            bases.push(self.find_tip_base(provider, hash, height, pruned_topoheight).await?);
         }
 
         if bases.is_empty() {
@@ -676,21 +698,25 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // find the common base (block hash and block height) of all tips
-    pub async fn find_common_base<'a, I: IntoIterator<Item = &'a Hash> + Copy>(&self, storage: &S, tips: I) -> Result<(Hash, u64), BlockchainError> {
+    pub async fn find_common_base<'a, P, I>(&self, provider: &P, tips: I) -> Result<(Hash, u64), BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + Send + Sync,
+        I: IntoIterator<Item = &'a Hash> + Copy,
+    {
         debug!("Searching for common base for tips {}", tips.into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
         let mut best_height = 0;
         // first, we check the best (highest) height of all tips
         for hash in tips.into_iter() {
-            let height = storage.get_height_for_block_hash(hash).await?;
+            let height = provider.get_height_for_block_hash(hash).await?;
             if height > best_height {
                 best_height = height;
             }
         }
 
-        let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
+        let pruned_topoheight = provider.get_pruned_topoheight().await?.unwrap_or(0);
         let mut bases = Vec::new();
         for hash in tips.into_iter() {
-            bases.push(self.find_tip_base(storage, hash, best_height, pruned_topoheight).await?);
+            bases.push(self.find_tip_base(provider, hash, best_height, pruned_topoheight).await?);
         }
 
         
@@ -793,7 +819,11 @@ impl<S: Storage> Blockchain<S> {
     }
 
     #[async_recursion] // TODO no recursion
-    async fn find_tip_work_score_internal<'a, DD: DifficultyProvider + DagOrderProvider + Sync + Send>(&self, provider: &DD, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: u64, base_height: u64) -> Result<(), BlockchainError> {
+    async fn find_tip_work_score_internal<'a, P>(&self, provider: &P, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: u64, base_height: u64) -> Result<(), BlockchainError>
+    where
+        // Sync + Send is required for recursive calls
+        P: DifficultyProvider + DagOrderProvider + Sync + Send
+    {
         let tips = provider.get_past_blocks_for_block_hash(hash).await?;
         for hash in tips.iter() {
             if !map.contains_key(hash) {
@@ -1815,7 +1845,7 @@ impl<S: Storage> Blockchain<S> {
 
         // update stable height and difficulty in cache
         {
-            let (stable_hash, stable_height) = self.find_common_base(&storage, &tips).await?;
+            let (stable_hash, stable_height) = self.find_common_base::<S, _>(&storage, &tips).await?;
             if should_track_events.contains(&NotifyEvent::StableHeightChanged) {
                 // detect the change in stable height
                 let previous_stable_height = self.get_stable_height();
@@ -1886,7 +1916,7 @@ impl<S: Storage> Blockchain<S> {
             if let Some(p2p) = self.p2p.read().await.as_ref() {
                 trace!("P2p locked, broadcasting in new task");
                 let p2p = p2p.clone();
-                let pruned_topoheight = storage.get_pruned_topoheight()?;
+                let pruned_topoheight = storage.get_pruned_topoheight().await?;
                 let block = block.clone();
                 let block_hash = block_hash.clone();
                 tokio::spawn(async move {
@@ -2076,7 +2106,7 @@ impl<S: Storage> Blockchain<S> {
         // update stable height if it's allowed
         if !stop_at_stable_height {
             let tips = storage.get_tips().await?;
-            let (stable_hash, stable_height) = self.find_common_base(&storage, &tips).await?;
+            let (stable_hash, stable_height) = self.find_common_base::<S, _>(&storage, &tips).await?;
 
             // if we have a RPC server, propagate the StableHeightChanged if necessary
             if let Some(rpc) = self.rpc.read().await.as_ref() {
@@ -2350,7 +2380,7 @@ impl<S: Storage> Blockchain<S> {
         };
 
         // check that we are not under the pruned topoheight
-        if let Some(pruned_topoheight) = storage.get_pruned_topoheight()? {
+        if let Some(pruned_topoheight) = storage.get_pruned_topoheight().await? {
             if topoheight - count < pruned_topoheight {
                 count = pruned_topoheight
             }
