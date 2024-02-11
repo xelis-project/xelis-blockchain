@@ -9,7 +9,10 @@ use xelis_common::{
     immutable::Immutable
 };
 use crate::core::{
-    blockchain::Blockchain, blockdag, error::BlockchainError, storage::{
+    blockchain::Blockchain,
+    blockdag,
+    error::BlockchainError,
+    storage::{
         BlocksAtHeightProvider,
         DagOrderProvider,
         DifficultyProvider,
