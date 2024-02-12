@@ -102,7 +102,7 @@ impl Connection {
         Ok(bytes)
     }
 
-    pub async fn read_packet_from_bytes(&self, bytes: &[u8]) -> P2pResult<Packet<'_>> {
+    pub async fn read_packet_from_bytes(&self, bytes: &[u8]) -> P2pResult<Packet<'static>> {
         let mut reader = Reader::new(&bytes);
         let packet = Packet::read(&mut reader)?;
         if reader.total_read() != bytes.len() {
@@ -112,7 +112,7 @@ impl Connection {
         Ok(packet)
     }
 
-    pub async fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<Packet<'_>> {
+    pub async fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<Packet<'static>> {
         let bytes = self.read_packet_bytes(buf, max_size).await?;
         self.read_packet_from_bytes(&bytes).await
     }

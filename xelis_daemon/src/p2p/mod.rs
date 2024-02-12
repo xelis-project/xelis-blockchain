@@ -360,7 +360,7 @@ impl<S: Storage> P2pServer<S> {
     // Verify handshake send by a new connection
     // based on data size, network ID, peers address validity
     // block height and block top hash of this peer (to know if we are on the same chain)
-    async fn verify_handshake(&self, mut connection: Connection, handshake: Handshake, out: bool, priority: bool) -> Result<Peer, P2pError> {
+    async fn verify_handshake(&self, mut connection: Connection, handshake: Handshake<'_>, out: bool, priority: bool) -> Result<Peer, P2pError> {
         if handshake.get_network() != self.blockchain.get_network() {
             trace!("{} has an invalid network: {}", connection, handshake.get_network());
             return Err(P2pError::InvalidNetwork)
@@ -398,14 +398,15 @@ impl<S: Storage> P2pServer<S> {
 
     // Build a handshake packet
     // We feed the packet with all chain data
-    async fn build_handshake(&self) -> Result<Handshake, P2pError> {
+    async fn build_handshake(&self) -> Result<Vec<u8>, P2pError> {
         let storage = self.blockchain.get_storage().read().await;
         let (block, top_hash) = storage.get_top_block_header().await?;
         let topoheight = self.blockchain.get_topo_height();
         let pruned_topoheight = storage.get_pruned_topoheight().await?;
         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_hash).await.unwrap_or_else(|_| CumulativeDifficulty::zero());
-        let genesis_block = get_genesis_block_hash(self.blockchain.get_network()).clone();
-        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, top_hash, genesis_block, cumulative_difficulty))
+        let genesis_block = get_genesis_block_hash(self.blockchain.get_network());
+        let handshake = Handshake::new(Cow::Owned(VERSION.to_owned()), *self.blockchain.get_network(), Cow::Borrowed(self.get_tag()), Cow::Borrowed(&NETWORK_ID), self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, Cow::Borrowed(&top_hash), Cow::Borrowed(genesis_block), Cow::Borrowed(&cumulative_difficulty));
+        Ok(Packet::Handshake(Cow::Owned(handshake)).to_bytes())
     }
 
     // this function handle all new connections
@@ -413,7 +414,7 @@ impl<S: Storage> P2pServer<S> {
     // if the handshake is valid, we accept it & register it on server
     async fn handle_new_connection(self: &Arc<Self>, buf: &mut [u8], mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
         trace!("New connection: {}", connection);
-        let handshake: Handshake = match timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), connection.read_packet(buf, buf.len() as u32)).await?? {
+        let handshake: Handshake<'_> = match timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), connection.read_packet(buf, buf.len() as u32)).await?? {
             Packet::Handshake(h) => h.into_owned(), // only allow handshake packet
             _ => return Err(P2pError::ExpectedHandshake)
         };
@@ -496,8 +497,8 @@ impl<S: Storage> P2pServer<S> {
 
     // Send a handshake to a connection (this is used to determine if its a potential peer)
     async fn send_handshake(&self, connection: &Connection) -> Result<(), P2pError> {
-        let handshake: Handshake = self.build_handshake().await?;
-        connection.send_bytes(&Packet::Handshake(Cow::Owned(handshake)).to_bytes()).await
+        let handshake = self.build_handshake().await?;
+        connection.send_bytes(&handshake).await
     }
 
     // build a ping packet with the current state of the blockchain

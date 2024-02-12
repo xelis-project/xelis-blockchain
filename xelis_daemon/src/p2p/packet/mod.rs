@@ -73,7 +73,7 @@ impl<'a, T: Serializer + Clone> Serializer for PacketWrapper<'a, T> {
 
 #[derive(Debug)]
 pub enum Packet<'a> {
-    Handshake(Cow<'a, Handshake>), // first packet to connect to a node
+    Handshake(Cow<'a, Handshake<'a>>), // first packet to connect to a node
     // packet contains tx hash, view this packet as a "notification"
     // instead of sending the TX directly, we notify our peers
     // so the peer that already have this TX in mempool don't have to read it again
