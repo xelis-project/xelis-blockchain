@@ -26,7 +26,7 @@ use anyhow::{Result, Error, Context};
 use lazy_static::lazy_static;
 
 #[derive(Parser)]
-#[clap(version = VERSION, about = "XELIS Miner")]
+#[clap(version = VERSION, about = "An innovate cryptocurrency with BlockDAG and Homomorphic Encryption enabling Smart Contracts")]
 pub struct MinerConfig {
     /// Wallet address to mine and receive block rewards on
     #[clap(short, long)]

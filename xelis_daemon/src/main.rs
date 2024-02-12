@@ -49,7 +49,7 @@ use clap::Parser;
 use anyhow::{Result, Context as AnyContext};
 
 #[derive(Parser)]
-#[clap(version = VERSION, about = "XELIS Daemon")]
+#[clap(version = VERSION, about = "An innovate cryptocurrency with BlockDAG and Homomorphic Encryption enabling Smart Contracts")]
 pub struct NodeConfig {
     #[structopt(flatten)]
     nested: Config,
