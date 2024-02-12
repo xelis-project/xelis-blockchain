@@ -9,6 +9,7 @@ use xelis_common::{
         key::PublicKey
     },
     difficulty::Difficulty,
+    network::Network,
     serializer::Serializer
 };
 
@@ -66,8 +67,6 @@ pub const EMISSION_SPEED_FACTOR: u64 = 20;
 // 18.4M full coin
 pub const MAXIMUM_SUPPLY: u64 = 18_400_000 * COIN_VALUE;
 
-// Genesis block to have the same starting point for every nodes
-pub const GENESIS_BLOCK: &str = "0000000000000000000000000000000000000001872f3e0c02000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd"; // Genesis block in hexadecimal format
 // Developer address for paying dev fees until Smart Contracts integration
 // (testnet/mainnet format is converted lazily later)
 pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5";
@@ -114,9 +113,33 @@ pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60000;
 // millis until we timeout
 pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 3000;
 
+// Genesis block to have the same starting point for every nodes
+// Genesis block in hexadecimal format
+const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000000000000000000001872f3e0c02000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd";
+
+// Genesis block getter
+// This is necessary to prevent having the same Genesis Block for differents network
+// Dev returns none to generate a new genesis block each time it starts a chain
+pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
+    match network {
+        Network::Mainnet => todo!("Mainnet is not ready yet, please use testnet network"),
+        Network::Testnet => Some(TESTNET_GENESIS_BLOCK),
+        Network::Dev => None
+    }
+}
+
 lazy_static! {
     // Developer public key is lazily converted from address to support any network
     pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
+
     // Genesis block hash generated from the hex string directly
-    pub static ref GENESIS_BLOCK_HASH: Hash = BlockHeader::from_hex(GENESIS_BLOCK.to_owned()).unwrap().hash();
+    static ref TESTNET_GENESIS_BLOCK_HASH: Hash = BlockHeader::from_hex(TESTNET_GENESIS_BLOCK.to_owned()).unwrap().hash();
+}
+
+// Genesis block hash based on network selected
+pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
+    match network {
+        Network::Mainnet => todo!("Mainnet is not ready yet, please use testnet network"),
+        _ => &TESTNET_GENESIS_BLOCK_HASH
+    }
 }

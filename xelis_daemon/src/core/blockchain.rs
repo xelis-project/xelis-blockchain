@@ -12,25 +12,28 @@ use xelis_common::{
 };
 use crate::{
     config::{
-        DEFAULT_P2P_BIND_ADDRESS, P2P_DEFAULT_MAX_PEERS, DEFAULT_RPC_BIND_ADDRESS, DEFAULT_CACHE_SIZE, MAX_BLOCK_SIZE,
-        EMISSION_SPEED_FACTOR, MAXIMUM_SUPPLY, DEV_FEES, GENESIS_BLOCK, TIMESTAMP_IN_FUTURE_LIMIT,
-        STABLE_LIMIT, GENESIS_BLOCK_HASH, MINIMUM_DIFFICULTY, GENESIS_BLOCK_DIFFICULTY, SIDE_BLOCK_REWARD_PERCENT,
-        DEV_PUBLIC_KEY, PRUNE_SAFETY_LIMIT, BLOCK_TIME_MILLIS, MILLIS_PER_SECOND, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS,
+        get_genesis_block_hash, get_hex_genesis_block,
+        BLOCK_TIME_MILLIS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
+        DEFAULT_CACHE_SIZE, DEFAULT_P2P_BIND_ADDRESS, DEFAULT_RPC_BIND_ADDRESS, DEV_FEES,
+        DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY, MAXIMUM_SUPPLY,
+        MAX_BLOCK_SIZE, MILLIS_PER_SECOND, MINIMUM_DIFFICULTY, P2P_DEFAULT_MAX_PEERS,
+        PRUNE_SAFETY_LIMIT, SIDE_BLOCK_REWARD_PERCENT, STABLE_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT
     },
     core::{
-        difficulty::calculate_difficulty,
-        nonce_checker::NonceChecker,
-        tx_selector::{TxSelector, TxSelectorEntry},
-        storage::{Storage, DifficultyProvider, DagOrderProvider},
-        simulator::Simulator,
         blockdag,
+        difficulty::calculate_difficulty,
         error::BlockchainError,
-        mempool::Mempool
+        mempool::Mempool,
+        nonce_checker::NonceChecker,
+        simulator::Simulator,
+        storage::{DagOrderProvider, DifficultyProvider, Storage},
+        tx_selector::{TxSelector, TxSelectorEntry}
     },
     p2p::P2pServer,
     rpc::{
         rpc::{
-            get_block_type_for_block, get_block_response
+            get_block_type_for_block,
+            get_block_response
         },
         DaemonRpcServer, SharedDaemonRpcServer
     }
@@ -358,29 +361,32 @@ impl<S: Storage> Blockchain<S> {
         debug!("Registering XELIS asset: {} at topoheight 0", XELIS_ASSET);
         storage.add_asset(&XELIS_ASSET, AssetData::new(0, COIN_DECIMALS)).await?;
 
-        let genesis_block = if GENESIS_BLOCK.len() != 0 {
-            info!("De-serializing genesis block...");
-            let genesis = Block::from_hex(GENESIS_BLOCK.to_owned())?;
+        let (genesis_block, genesis_hash) = if let Some(genesis_block) = get_hex_genesis_block(&self.network) {
+            info!("De-serializing genesis block for network {}...", self.network);
+            let genesis = Block::from_hex(genesis_block.to_owned())?;
             if *genesis.get_miner() != *DEV_PUBLIC_KEY {
                 return Err(BlockchainError::GenesisBlockMiner)
             }
 
             let expected_hash = genesis.hash();
-            if *GENESIS_BLOCK_HASH != expected_hash {
-                error!("Genesis block hash is invalid! Expected: {}, got: {}", expected_hash, *GENESIS_BLOCK_HASH);
+            let genesis_hash = get_genesis_block_hash(&self.network);
+            if *genesis_hash != expected_hash {
+                error!("Genesis block hash is invalid! Expected: {}, got: {}", expected_hash, genesis_hash);
                 return Err(BlockchainError::InvalidGenesisHash)
             }
 
-            debug!("Adding genesis block '{}' to chain", *GENESIS_BLOCK_HASH);
-            genesis
+            (genesis, expected_hash)
         } else {
-            error!("No genesis block found!");
+            warn!("No genesis block found!");
             info!("Generating a new genesis block...");
             let header = BlockHeader::new(0, 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
             let block = Block::new(Immutable::Owned(header), Vec::new());
-            info!("Genesis generated: {}", block.to_hex());
-            block
+            let block_hash = block.hash();
+            info!("Genesis generated: {} with hash {}", block.to_hex(), block_hash);
+            (block, block_hash)
         };
+
+        debug!("Adding genesis block '{}' to chain", genesis_hash);
 
         // hardcode genesis block topoheight
         storage.set_topo_height_for_block(&genesis_block.hash(), 0).await?;
@@ -914,8 +920,9 @@ impl<S: Storage> Blockchain<S> {
             let block_tips = storage.get_past_blocks_for_block_hash(hash).await?;
             // only the genesis block can have 0 tips, returns its hash
             if block_tips.len() == 0 {
+                debug!("Genesis block detected, zero tips");
                 let mut result = IndexSet::new();
-                result.insert(GENESIS_BLOCK_HASH.clone());
+                result.insert(hash.clone());
                 cache.put((hash.clone(), base.clone(), base_height), result.clone());
                 return Ok(result)
             }
