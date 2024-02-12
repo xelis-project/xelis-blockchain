@@ -143,3 +143,17 @@ pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
         _ => &TESTNET_GENESIS_BLOCK_HASH
     }
 }
+
+// Mainnet seed nodes
+const MAINNET_SEED_NODES: [&str; 0] = [];
+// Testnet seed nodes
+const TESTNET_SEED_NODES: [&str; 2] = ["74.208.251.149:2125", "162.19.249.100:2125"];
+
+// Get seed nodes based on the network used
+pub const fn get_seed_nodes(network: &Network) -> &[&str] {
+    match network {
+        Network::Mainnet => &MAINNET_SEED_NODES,
+        Network::Testnet => &TESTNET_SEED_NODES,
+        Network::Dev => &[],
+    }
+}

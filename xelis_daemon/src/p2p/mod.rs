@@ -20,11 +20,11 @@ use xelis_common::{
 };
 use crate::{
     config::{
-        get_genesis_block_hash,
+        get_genesis_block_hash, get_seed_nodes,
         CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_DELAY, CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START,
         CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, MAX_BLOCK_SIZE,
         MILLIS_PER_SECOND, NETWORK_ID, P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT,
-        PEER_FAIL_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, PRUNE_SAFETY_LIMIT, SEED_NODES, STABLE_LIMIT
+        PEER_FAIL_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, PRUNE_SAFETY_LIMIT, STABLE_LIMIT
     }, core::{
         blockchain::Blockchain,
         error::BlockchainError,
@@ -265,7 +265,9 @@ impl<S: Storage> P2pServer<S> {
         let mut exclusive_nodes = self.exclusive_nodes.clone();
         if exclusive_nodes.is_empty() {
             debug!("No exclusive nodes available, using seed nodes...");
-            exclusive_nodes = SEED_NODES.iter().map(|s| s.parse().unwrap()).collect();
+            let network = self.blockchain.get_network();
+            let seed_nodes = get_seed_nodes(&network);
+            exclusive_nodes = seed_nodes.iter().map(|s| s.parse().unwrap()).collect();
         }
 
         // create tokio task to maintains connection to exclusive nodes or seed nodes
