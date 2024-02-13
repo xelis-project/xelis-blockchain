@@ -20,9 +20,15 @@ pub enum DifficultyError {
 }
 
 // Verify the validity of a block difficulty against the current network difficulty
+// All operations are done on U256 to avoid overflow
 pub fn check_difficulty(hash: &Hash, difficulty: &Difficulty) -> Result<bool, DifficultyError> {
     let diff = difficulty.as_ref();
-    let hash_work = U256::from_big_endian(hash.as_bytes());
+    if diff.is_zero() {
+        return Err(DifficultyError::DifficultyCannotBeZero)
+    }
 
-    Ok(hash_work <= *diff)
+    let hash_work = U256::from_big_endian(hash.as_bytes());
+    let target = U256::max_value() / diff;
+
+    Ok(hash_work <= target)
 }
