@@ -607,14 +607,14 @@ impl<S: Storage> P2pServer<S> {
     // Based on the user configuration, it will try to sync the chain with another node with longest chain if any
     async fn chain_sync_loop(self: Arc<Self>) {
         // used to detect how much time we have to wait before next request
-        let mut last_chain_sync: u128 = get_current_time_in_millis();
+        let mut last_chain_sync = get_current_time_in_millis();
         let interval = Duration::from_secs(CHAIN_SYNC_DELAY);
         // Try to not reuse the same peer between each sync
         let mut previous_peer: Option<Arc<Peer>> = None;
         loop {
             // Detect exact time needed before next chain sync
             let current = get_current_time_in_millis();
-            let diff = (current - last_chain_sync) as u64;
+            let diff = current - last_chain_sync;
             if  diff < CHAIN_SYNC_DELAY * MILLIS_PER_SECOND {
                 let wait = CHAIN_SYNC_DELAY * MILLIS_PER_SECOND - diff;
                 debug!("Waiting {} ms for chain sync delay...", wait);
@@ -2271,7 +2271,7 @@ impl<S: Storage> P2pServer<S> {
     // we send up to CHAIN_SYNC_REQUEST_MAX_BLOCKS blocks id (combinaison of block hash and topoheight)
     // we add at the end the genesis block to be sure to be on the same chain as others peers
     // its used to find a common point with the peer to which we ask the chain
-    pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>, last_chain_sync: &mut u128) -> Result<(), BlockchainError> {
+    pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>, last_chain_sync: &mut u64) -> Result<(), BlockchainError> {
         trace!("Requesting chain from {}", peer);
 
         // This can be configured by the node operator, it will be adjusted between protocol bounds

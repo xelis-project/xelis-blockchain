@@ -6,9 +6,9 @@ const DIFFICULTY_BOUND_DIVISOR: Difficulty = Difficulty::from_u64(2048);
 const CHAIN_TIME_RANGE: u64 = BLOCK_TIME_MILLIS * 2 / 3;
 
 // Difficulty algorithm from Ethereum: Homestead but tweaked for our needs
-pub fn calculate_difficulty(tips_count: u64, parent_timestamp: u128, new_timestamp: u128, previous_difficulty: Difficulty) -> Difficulty {
+pub fn calculate_difficulty(tips_count: u64, parent_timestamp: u64, new_timestamp: u64, previous_difficulty: Difficulty) -> Difficulty {
     let mut adjust = previous_difficulty / DIFFICULTY_BOUND_DIVISOR;
-    let mut x = (new_timestamp - parent_timestamp) as u64 / CHAIN_TIME_RANGE;
+    let mut x = (new_timestamp - parent_timestamp) / CHAIN_TIME_RANGE;
     trace!("x: {x}, tips count: {tips_count}, adjust: {adjust}");
     let neg = x >= tips_count;
     if x == 0 {

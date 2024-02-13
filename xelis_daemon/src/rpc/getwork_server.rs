@@ -1,4 +1,12 @@
-use std::{sync::Arc, collections::HashMap, fmt::Display, borrow::Cow};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    fmt::Display,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc
+    }
+};
 use actix::{Actor, AsyncContext, Handler, Message as TMessage, StreamHandler, Addr};
 use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
 use anyhow::Context;
@@ -37,7 +45,7 @@ impl TMessage for Response {
 }
 
 pub struct Miner {
-    first_seen: u128, // timestamp of first connection
+    first_seen: u64, // timestamp of first connection
     key: PublicKey, // public key of account (address)
     name: String, // worker name
     blocks_accepted: usize, // blocks accepted by us since he is connected
@@ -55,7 +63,7 @@ impl Miner {
         }
     }
 
-    pub fn first_seen(&self) -> u128 {
+    pub fn first_seen(&self) -> u64 {
         self.first_seen
     }
 
@@ -157,8 +165,8 @@ pub struct GetWorkServer<S: Storage> {
     mining_jobs: Mutex<LruCache<Hash, (BlockHeader, Difficulty)>>,
     last_header_hash: Mutex<Option<Hash>>,
     // used only when a new TX is received in mempool
-    last_notify: Mutex<u128>,
-    notify_rate_limit_ms: u128
+    last_notify: AtomicU64,
+    notify_rate_limit_ms: u64
 }
 
 impl<S: Storage> GetWorkServer<S> {
@@ -168,7 +176,7 @@ impl<S: Storage> GetWorkServer<S> {
             blockchain,
             mining_jobs: Mutex::new(LruCache::new(STABLE_LIMIT as usize)),
             last_header_hash: Mutex::new(None),
-            last_notify: Mutex::new(0),
+            last_notify: AtomicU64::new(0),
             notify_rate_limit_ms: 500 // maximum one time every 500ms
         }
     }
@@ -351,12 +359,12 @@ impl<S: Storage> GetWorkServer<S> {
     pub async fn notify_new_job_rate_limited(&self) -> Result<(), InternalRpcError> {
         {
             let now = get_current_time_in_millis();
-            let mut last_notify = self.last_notify.lock().await;
-            if now - *last_notify < self.notify_rate_limit_ms {
+            let last_notify = self.last_notify.load(Ordering::SeqCst);
+            if now - last_notify < self.notify_rate_limit_ms {
                 debug!("Rate limit reached, not notifying miners");
                 return Ok(());
             }
-            *last_notify = now;
+            self.last_notify.store(now, Ordering::SeqCst);
         }
 
         self.notify_new_job().await

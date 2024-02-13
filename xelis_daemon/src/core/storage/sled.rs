@@ -365,7 +365,7 @@ impl DifficultyProvider for SledStorage {
         Ok(block.get_height())
     }
 
-    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u128, BlockchainError> {
+    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         trace!("get timestamp for hash {}", hash);
         let block = self.get_block_header_by_hash(hash).await?;
         Ok(block.get_timestamp())
