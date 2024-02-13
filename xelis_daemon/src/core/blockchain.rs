@@ -397,7 +397,7 @@ impl<S: Storage> Blockchain<S> {
             let header = BlockHeader::new(0, 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
             let block = Block::new(Immutable::Owned(header), Vec::new());
             let block_hash = block.hash();
-            info!("Genesis generated: {} with hash {}", block.to_hex(), block_hash);
+            info!("Genesis generated: {} with {:?} {}", block.to_hex(), block_hash, block_hash);
             (block, block_hash)
         };
 
@@ -1050,7 +1050,9 @@ impl<S: Storage> Blockchain<S> {
         I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
         I::IntoIter: ExactSizeIterator
     {
+        trace!("Verifying proof of work for block {}", hash);
         let difficulty = self.get_difficulty_at_tips(provider, tips).await?;
+        trace!("Difficulty at tips: {}", difficulty);
         if self.is_simulator_enabled() || check_difficulty(hash, &difficulty)? {
             Ok(difficulty)
         } else {
