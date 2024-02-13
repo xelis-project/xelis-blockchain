@@ -7,9 +7,9 @@ use xelis_common::{
     }
 };
 use crate::{
-    p2p::{peer::Peer, error::P2pError},
     config::P2P_PING_PEER_LIST_LIMIT,
     core::{blockchain::Blockchain, storage::Storage},
+    p2p::{error::P2pError, is_local_address, peer::Peer},
     rpc::rpc::get_peer_entry
 };
 use std::{
@@ -81,10 +81,14 @@ impl<'a> Ping<'a> {
             let mut shared_peers = peer.get_peers().lock().await;
             debug!("Our peer list is ({:?}) for {}", shared_peers, peer.get_outgoing_address());
             let peer_addr = peer.get_connection().get_address();
-            let peer_outgoing_addr = peer.get_outgoing_address();
             for addr in &self.peer_list {
-                if peer_addr == addr || peer_outgoing_addr == addr {
+                if peer_addr == addr {
                     return Err(P2pError::OwnSocketAddress(*addr))
+                }
+
+                // Local addresses are not allowed
+                if is_local_address(&addr) {
+                    return Err(P2pError::LocalSocketAddress(*addr))
                 }
 
                 debug!("Adding {} for {} in ping packet", addr, peer.get_outgoing_address());

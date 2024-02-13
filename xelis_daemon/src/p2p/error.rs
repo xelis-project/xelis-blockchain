@@ -32,6 +32,8 @@ pub enum P2pError {
     InvalidPrunedTopoHeightChange,
     #[error("Peer {} send us its own socket address", _0)]
     OwnSocketAddress(SocketAddr),
+    #[error("Local socket address {} received from peer", _0)]
+    LocalSocketAddress(SocketAddr),
     #[error("Invalid list size in pagination with a next page")]
     InvalidInventoryPagination,
     #[error("unknown peer {} disconnected from {}", _0, _1)]

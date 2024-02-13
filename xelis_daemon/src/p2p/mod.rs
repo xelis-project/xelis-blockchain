@@ -88,7 +88,7 @@ use std::{
     },
     collections::{HashSet, hash_map::Entry},
     convert::TryInto,
-    net::SocketAddr,
+    net::{SocketAddr, IpAddr},
     time::Duration,
 };
 use bytes::Bytes;
@@ -697,6 +697,13 @@ impl<S: Storage> P2pServer<S> {
 
                         // if we haven't send him this peer addr and that he don't have him already, insert it
                         let addr = p.get_outgoing_address();
+
+                        // Don't share local network addresses
+                        if is_local_address(addr) {
+                            debug!("{} is a local address, skipping", addr);
+                            continue;
+                        }
+
                         let send = match shared_peers.entry(*addr) {
                             Entry::Occupied(mut e) => e.get_mut().update(Direction::Out),
                             Entry::Vacant(e) => {
@@ -2291,5 +2298,20 @@ impl<S: Storage> P2pServer<S> {
         *last_chain_sync = get_current_time_in_millis();
 
         self.handle_chain_response(peer, response, requested_max_size).await
+    }
+}
+
+// Check if a socket address is a local address
+pub fn is_local_address(socket_addr: &SocketAddr) -> bool {
+    match socket_addr.ip() {
+        IpAddr::V4(ipv4) => {
+            // Check if it's a local IPv4 address (e.g., 127.0.0.1)
+            ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local()
+        }
+        IpAddr::V6(ipv6) => {
+            // Check if it's a local IPv6 address (e.g., ::1)
+            // https://github.com/rust-lang/rust/issues/27709
+            ipv6.is_loopback() // || ipv6.is_unique_local()
+        }
     }
 }
