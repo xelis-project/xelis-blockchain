@@ -14,7 +14,7 @@ pub fn calculate_difficulty(tips_count: u64, parent_timestamp: TimestampMillis, 
     let mut x = (new_timestamp - parent_timestamp) / CHAIN_TIME_RANGE;
     trace!("x: {x}, tips count: {tips_count}, adjust: {adjust}");
     let neg = x >= tips_count;
-    if x == 0 {
+    if neg {
         x = x - tips_count;
     } else {
         x = tips_count - x;
