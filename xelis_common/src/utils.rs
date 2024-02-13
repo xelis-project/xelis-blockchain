@@ -59,7 +59,7 @@ pub fn calculate_tx_fee(tx_size: usize) -> u64 {
     size_in_kb * FEE_PER_KB
 }
 
-const HASHRATE_FORMATS: [&str; 5] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s"];
+const HASHRATE_FORMATS: [&str; 7] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s"];
 
 // Format a hashrate in human-readable format
 pub fn format_hashrate(mut hashrate: f64) -> String {
@@ -73,7 +73,7 @@ pub fn format_hashrate(mut hashrate: f64) -> String {
     return format!("{:.2} {}", hashrate, HASHRATE_FORMATS[count]);
 }
 
-const DIFFICULTY_FORMATS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
+const DIFFICULTY_FORMATS: [&str; 7] = ["", "K", "M", "G", "T", "P", "E"];
 
 // Format a difficulty in a human-readable format
 pub fn format_difficulty(mut difficulty: Difficulty) -> String {
