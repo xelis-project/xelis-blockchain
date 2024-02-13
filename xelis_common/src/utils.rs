@@ -34,8 +34,10 @@ pub fn get_current_time_in_seconds() -> u64 {
 }
 
 // return timestamp in milliseconds
-pub fn get_current_time_in_millis() -> u128 {
-    get_current_time().as_millis()
+// We cast it to u64 as we have plenty of time before it overflows
+// See more: https://github.com/xelis-project/xelis-blockchain/issues/18
+pub fn get_current_time_in_millis() -> u64 {
+    get_current_time().as_millis() as u64
 }
 
 // Format any coin value using the requested decimals count
