@@ -1,16 +1,14 @@
 use lazy_static::lazy_static;
 use xelis_common::{
     api::daemon::DevFeeThreshold,
-    block::BlockHeader,
     config::COIN_VALUE,
     crypto::{
         address::Address,
-        hash::{Hash, Hashable},
+        hash::Hash,
         key::PublicKey
     },
     difficulty::Difficulty,
     network::Network,
-    serializer::Serializer,
     time::TimestampSeconds,
 };
 
@@ -70,7 +68,7 @@ pub const MAXIMUM_SUPPLY: u64 = 18_400_000 * COIN_VALUE;
 
 // Developer address for paying dev fees until Smart Contracts integration
 // (testnet/mainnet format is converted lazily later)
-pub const DEV_ADDRESS: &str = "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5";
+pub const DEV_ADDRESS: &str = "xel1qyq9429603jzyngncdtt755llt2gp3a8n5599xuzenavav36spcqzss68u86v";
 
 // Chain sync config
 // minimum X seconds between each chain sync request per peer
@@ -116,7 +114,7 @@ pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 3000;
 
 // Genesis block to have the same starting point for every nodes
 // Genesis block in hexadecimal format
-const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000000000000000000001872f3e0c02000000000000000000000000000000000000000000000000000000000000000000000000000000000000006c24cdc1c8ee8f028b8cafe7b79a66a0902f26d89dd54eeff80abcf251a9a3bd";
+const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018da3b23040000000000000000000000000000000000000000000000000000000000000000000000000000000000000005aa8ba7c64224d13c356bf529ffad480c7a79d28529b82ccfaceb23a80700142";
 
 // Genesis block getter
 // This is necessary to prevent having the same Genesis Block for differents network
@@ -132,10 +130,11 @@ pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
 lazy_static! {
     // Developer public key is lazily converted from address to support any network
     pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
-
-    // Genesis block hash generated from the hex string directly
-    static ref TESTNET_GENESIS_BLOCK_HASH: Hash = BlockHeader::from_hex(TESTNET_GENESIS_BLOCK.to_owned()).unwrap().hash();
 }
+
+// Testnet genesis block hash
+// It must be the same as the hash of the genesis block
+const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([23, 65, 193, 5, 125, 206, 169, 115, 142, 220, 123, 37, 103, 109, 52, 87, 62, 26, 126, 25, 198, 113, 116, 52, 143, 136, 10, 134, 219, 114, 197, 131]);
 
 // Genesis block hash based on network selected
 pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
