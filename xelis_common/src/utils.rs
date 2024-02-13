@@ -7,10 +7,7 @@ use crate::{
     network::Network,
     varuint::VarUint
 };
-use std::{
-    sync::Mutex,
-    time::{SystemTime, UNIX_EPOCH, Duration}
-};
+use std::sync::Mutex;
 
 #[macro_export]
 macro_rules! async_handler {
@@ -19,25 +16,6 @@ macro_rules! async_handler {
           Box::pin($func(a, b))
         }
     };
-}
-
-#[inline]
-pub fn get_current_time() -> Duration {
-    let start = SystemTime::now();
-    let time = start.duration_since(UNIX_EPOCH).expect("Incorrect time returned from get_current_time");
-    time
-}
-
-// return timestamp in seconds
-pub fn get_current_time_in_seconds() -> u64 {
-    get_current_time().as_secs()
-}
-
-// return timestamp in milliseconds
-// We cast it to u64 as we have plenty of time before it overflows
-// See more: https://github.com/xelis-project/xelis-blockchain/issues/18
-pub fn get_current_time_in_millis() -> u64 {
-    get_current_time().as_millis() as u64
 }
 
 // Format any coin value using the requested decimals count

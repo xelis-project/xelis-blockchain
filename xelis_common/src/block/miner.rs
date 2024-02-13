@@ -4,7 +4,8 @@ use crate::{
         hash::{Hash, Hashable, hash},
         key::PublicKey
     },
-    serializer::{Serializer, Writer, Reader, ReaderError}
+    serializer::{Serializer, Writer, Reader, ReaderError},
+    time::TimestampMillis,
 };
 
 use super::{EXTRA_NONCE_SIZE, BLOCK_WORK_SIZE};
@@ -13,14 +14,14 @@ use super::{EXTRA_NONCE_SIZE, BLOCK_WORK_SIZE};
 #[derive(Clone, Debug)]
 pub struct BlockMiner<'a> {
     pub header_work_hash: Hash, // include merkle tree of tips, txs, and height (immutable)
-    pub timestamp: u64, // miners can update timestamp to keep it up-to-date
+    pub timestamp: TimestampMillis, // miners can update timestamp to keep it up-to-date
     pub nonce: u64,
     pub miner: Option<Cow<'a, PublicKey>>,
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE]
 }
 
 impl<'a> BlockMiner<'a> {
-    pub fn new(header_work_hash: Hash, timestamp: u64) -> Self {
+    pub fn new(header_work_hash: Hash, timestamp: TimestampMillis) -> Self {
         Self {
             header_work_hash,
             timestamp,

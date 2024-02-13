@@ -12,7 +12,8 @@ use crate::{
     },
     immutable::Immutable,
     transaction::Transaction,
-    serializer::{Serializer, Writer, Reader, ReaderError}
+    serializer::{Serializer, Writer, Reader, ReaderError},
+    time::TimestampMillis
 };
 pub use miner::BlockMiner;
 
@@ -36,7 +37,7 @@ pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserializer: D
 pub struct BlockHeader {
     pub version: u8,
     pub tips: IndexSet<Hash>,
-    pub timestamp: u64,
+    pub timestamp: TimestampMillis,
     pub height: u64,
     pub nonce: u64,
     #[serde(serialize_with = "serialize_extra_nonce")]
@@ -54,7 +55,7 @@ pub struct Block {
 }
 
 impl BlockHeader {
-    pub fn new(version: u8, height: u64, timestamp: u64, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: IndexSet<Hash>) -> Self {
+    pub fn new(version: u8, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: IndexSet<Hash>) -> Self {
         BlockHeader {
             version,
             height,
@@ -83,7 +84,7 @@ impl BlockHeader {
         self.height
     }
 
-    pub fn get_timestamp(&self) -> u64 {
+    pub fn get_timestamp(&self) -> TimestampMillis {
         self.timestamp
     }
 
