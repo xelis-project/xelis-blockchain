@@ -20,7 +20,7 @@ use tokio::{
     io::{AsyncWriteExt, AsyncReadExt},
 };
 use xelis_common::{
-    utils::get_current_time_in_seconds,
+    time::{TimestampSeconds, get_current_time_in_seconds},
     serializer::{Reader, Serializer},
 };
 use bytes::Bytes;
@@ -51,7 +51,7 @@ pub struct Connection {
     rx: Mutex<Rx>, // Rx to read bytes to send
     bytes_in: AtomicUsize, // total bytes read
     bytes_out: AtomicUsize, // total bytes sent
-    connected_on: u64,
+    connected_on: TimestampSeconds,
     closed: AtomicBool, // if Connection#close() is called, close is set to true
 }
 
@@ -192,7 +192,7 @@ impl Connection {
         self.bytes_in.load(Ordering::Relaxed)
     }
 
-    pub fn connected_on(&self) -> u64 {
+    pub fn connected_on(&self) -> TimestampSeconds {
         self.connected_on
     }
 

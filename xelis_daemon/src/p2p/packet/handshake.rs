@@ -3,7 +3,8 @@ use xelis_common::{
     crypto::hash::Hash,
     difficulty::CumulativeDifficulty,
     network::Network,
-    serializer::{Reader, ReaderError, Serializer, Writer}
+    serializer::{Reader, ReaderError, Serializer, Writer},
+    time::TimestampSeconds
 };
 use crate::p2p::{
     peer_list::SharedPeerList,
@@ -36,7 +37,7 @@ pub struct Handshake<'a> {
     // local P2p Server port
     local_port: u16,
     // current time in seconds
-    utc_time: u64,
+    utc_time: TimestampSeconds,
     // current topo height
     topoheight: u64,
     // current block height
@@ -54,7 +55,7 @@ pub struct Handshake<'a> {
 impl<'a> Handshake<'a> {
     pub const MAX_LEN: usize = 16;
 
-    pub fn new(version: Cow<'a, String>, network: Network, node_tag: Cow<'a, Option<String>>, network_id: Cow<'a, [u8; 16]>, peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, top_hash: Cow<'a, Hash>, genesis_hash: Cow<'a, Hash>, cumulative_difficulty: Cow<'a, CumulativeDifficulty>) -> Self {
+    pub fn new(version: Cow<'a, String>, network: Network, node_tag: Cow<'a, Option<String>>, network_id: Cow<'a, [u8; 16]>, peer_id: u64, local_port: u16, utc_time: TimestampSeconds, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, top_hash: Cow<'a, Hash>, genesis_hash: Cow<'a, Hash>, cumulative_difficulty: Cow<'a, CumulativeDifficulty>) -> Self {
         debug_assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN);
         // version cannot be greater than 16 chars
         if let Some(node_tag) = node_tag.as_ref() {
@@ -105,7 +106,7 @@ impl<'a> Handshake<'a> {
         self.peer_id
     }
 
-    pub fn get_utc_time(&self) -> u64 {
+    pub fn get_utc_time(&self) -> TimestampSeconds {
         self.utc_time
     }
 

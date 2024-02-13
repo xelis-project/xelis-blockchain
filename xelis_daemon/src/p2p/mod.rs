@@ -16,7 +16,7 @@ use xelis_common::{
     difficulty::CumulativeDifficulty,
     immutable::Immutable,
     serializer::Serializer,
-    utils::{get_current_time_in_millis, get_current_time_in_seconds}
+    time::{TimestampMillis, get_current_time_in_millis, get_current_time_in_seconds}
 };
 use crate::{
     config::{
@@ -2271,7 +2271,7 @@ impl<S: Storage> P2pServer<S> {
     // we send up to CHAIN_SYNC_REQUEST_MAX_BLOCKS blocks id (combinaison of block hash and topoheight)
     // we add at the end the genesis block to be sure to be on the same chain as others peers
     // its used to find a common point with the peer to which we ask the chain
-    pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>, last_chain_sync: &mut u64) -> Result<(), BlockchainError> {
+    pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>, last_chain_sync: &mut TimestampMillis) -> Result<(), BlockchainError> {
         trace!("Requesting chain from {}", peer);
 
         // This can be configured by the node operator, it will be adjusted between protocol bounds

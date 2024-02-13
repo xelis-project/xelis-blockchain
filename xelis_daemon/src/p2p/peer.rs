@@ -12,7 +12,7 @@ use xelis_common::{
     crypto::hash::Hash,
     difficulty::CumulativeDifficulty,
     serializer::Serializer,
-    utils::get_current_time_in_seconds
+    time::{TimestampSeconds, get_current_time_in_seconds}
 };
 use super::{
     packet::{
@@ -318,12 +318,12 @@ impl Peer {
 
     // Get the last time we got a chain sync request
     // This is used to prevent spamming the chain sync packet
-    pub fn get_last_chain_sync(&self) -> u64 {
+    pub fn get_last_chain_sync(&self) -> TimestampSeconds {
         self.last_chain_sync.load(Ordering::Acquire)
     }
 
     // Store the last time we got a chain sync request
-    pub fn set_last_chain_sync(&self, time: u64) {
+    pub fn set_last_chain_sync(&self, time: TimestampSeconds) {
         self.last_chain_sync.store(time, Ordering::Release);
     }
 
@@ -454,43 +454,43 @@ impl Peer {
     }
 
     // Get the last time we got a peer list
-    pub fn get_last_peer_list(&self) -> u64 {
+    pub fn get_last_peer_list(&self) -> TimestampSeconds {
         self.last_peer_list.load(Ordering::Acquire)
     }
 
     // Track the last time we got a peer list
     // This is used to prevent spamming the peer list
-    pub fn set_last_peer_list(&self, value: u64) {
+    pub fn set_last_peer_list(&self, value: TimestampSeconds) {
         self.last_peer_list.store(value, Ordering::Release)
     }
 
     // Get the last time we got a ping packet from this peer
-    pub fn get_last_ping(&self) -> u64 {
+    pub fn get_last_ping(&self) -> TimestampSeconds {
         self.last_ping.load(Ordering::Acquire)
     }
 
     // Track the last time we got a ping packet from this peer
-    pub fn set_last_ping(&self, value: u64) {
+    pub fn set_last_ping(&self, value: TimestampSeconds) {
         self.last_ping.store(value, Ordering::Release)
     }
 
     // Get the last time we sent a ping packet to this peer
-    pub fn get_last_ping_sent(&self) -> u64 {
+    pub fn get_last_ping_sent(&self) -> TimestampSeconds {
         self.last_ping_sent.load(Ordering::Acquire)
     }
 
     // Track the last time we sent a ping packet to this peer
-    pub fn set_last_ping_sent(&self, value: u64) {
+    pub fn set_last_ping_sent(&self, value: TimestampSeconds) {
         self.last_ping.store(value, Ordering::Release)
     }
 
     // Get the last time a inventory has been requested
-    pub fn get_last_inventory(&self) -> u64 {
+    pub fn get_last_inventory(&self) -> TimestampSeconds {
         self.last_inventory.load(Ordering::Acquire)
     }
 
     // Set the last inventory time
-    pub fn set_last_inventory(&self, value: u64) {
+    pub fn set_last_inventory(&self, value: TimestampSeconds) {
         self.last_inventory.store(value, Ordering::Release)
     }
 

@@ -6,7 +6,8 @@ use xelis_common::{
     config::TIPS_LIMIT,
     crypto::hash::Hash,
     difficulty::{CumulativeDifficulty, Difficulty},
-    immutable::Immutable
+    immutable::Immutable,
+    time::TimestampMillis
 };
 use crate::core::{
     blockchain::Blockchain,
@@ -154,7 +155,7 @@ impl<S: Storage> DifficultyProvider for ChainValidator<'_, S> {
         Ok(storage.get_height_for_block_hash(hash).await?)
     }
 
-    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<TimestampMillis, BlockchainError> {
         if let Some(data) = self.blocks.get(hash) {
             return Ok(data.header.get_timestamp())
         }

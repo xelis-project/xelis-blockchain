@@ -9,7 +9,7 @@ use indexmap::IndexSet;
 use log::{trace, debug, warn};
 use xelis_common::{
     account::VersionedBalance,
-    utils::get_current_time_in_seconds,
+    time::{TimestampSeconds, get_current_time_in_seconds},
     crypto::{
         hash::Hash,
         key::PublicKey
@@ -22,7 +22,7 @@ use xelis_common::{
 #[derive(serde::Serialize)]
 pub struct SortedTx {
     tx: Arc<Transaction>,
-    first_seen: u64, // timestamp when the tx was added
+    first_seen: TimestampSeconds, // timestamp when the tx was added
     size: usize
 }
 
@@ -404,7 +404,7 @@ impl SortedTx {
         self.size
     }
 
-    pub fn get_first_seen(&self) -> u64 {
+    pub fn get_first_seen(&self) -> TimestampSeconds {
         self.first_seen
     }
 

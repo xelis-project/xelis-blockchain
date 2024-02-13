@@ -13,7 +13,8 @@ use xelis_common::{
     immutable::Immutable,
     network::Network,
     serializer::{Reader, Serializer},
-    transaction::Transaction
+    transaction::Transaction,
+    time::TimestampMillis
 };
 use std::{
     collections::HashSet,
@@ -365,7 +366,7 @@ impl DifficultyProvider for SledStorage {
         Ok(block.get_height())
     }
 
-    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
+    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<TimestampMillis, BlockchainError> {
         trace!("get timestamp for hash {}", hash);
         let block = self.get_block_header_by_hash(hash).await?;
         Ok(block.get_timestamp())

@@ -61,7 +61,8 @@ use xelis_common::{
     context::Context,
     immutable::Immutable,
     rpc_server::{parse_params, RPCHandler},
-    serializer::Serializer
+    serializer::Serializer,
+    time::TimestampSeconds,
 };
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
@@ -149,7 +150,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
 }
 
 // Transaction response based on data in chain/mempool and from parameters
-pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transaction>, hash: &Hash, in_mempool: bool, first_seen: Option<u64>) -> Result<Value, InternalRpcError> {
+pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transaction>, hash: &Hash, in_mempool: bool, first_seen: Option<TimestampSeconds>) -> Result<Value, InternalRpcError> {
     let blocks = if storage.has_tx_blocks(hash).context("Error while checking if tx in included in blocks")? {
         Some(storage.get_blocks_for_tx(hash).context("Error while retrieving in which blocks its included")?)
     } else {

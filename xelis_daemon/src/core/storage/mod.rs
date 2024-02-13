@@ -12,7 +12,8 @@ use xelis_common::{
     difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
     network::Network,
-    transaction::Transaction
+    transaction::Transaction,
+    time::TimestampMillis,
 };
 use crate::core::error::BlockchainError;
 
@@ -22,7 +23,7 @@ pub type Tips = HashSet<Hash>;
 #[async_trait]
 pub trait DifficultyProvider {
     async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
-    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError>;
+    async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<TimestampMillis, BlockchainError>;
     async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError>;
     async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError>;
     async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Immutable<IndexSet<Hash>>, BlockchainError>;

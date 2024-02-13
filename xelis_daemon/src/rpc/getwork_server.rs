@@ -18,7 +18,7 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use xelis_common::{
     crypto::{key::PublicKey, hash::Hash},
-    utils::get_current_time_in_millis,
+    time::{TimestampMillis, get_current_time_in_millis},
     api::daemon::{GetBlockTemplateResult, SubmitBlockParams},
     serializer::Serializer,
     block::{BlockHeader, BlockMiner},
@@ -45,7 +45,7 @@ impl TMessage for Response {
 }
 
 pub struct Miner {
-    first_seen: u64, // timestamp of first connection
+    first_seen: TimestampMillis, // timestamp of first connection
     key: PublicKey, // public key of account (address)
     name: String, // worker name
     blocks_accepted: usize, // blocks accepted by us since he is connected

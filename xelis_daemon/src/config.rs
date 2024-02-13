@@ -10,7 +10,8 @@ use xelis_common::{
     },
     difficulty::Difficulty,
     network::Network,
-    serializer::Serializer
+    serializer::Serializer,
+    time::TimestampSeconds,
 };
 
 // In case of potential forks, have a unique network id to not connect to others compatible chains
@@ -37,7 +38,7 @@ pub const GENESIS_BLOCK_DIFFICULTY: Difficulty = Difficulty::from_u64(1);
 // 1024 * 1024 + (256 * 1024) bytes = 1.25 MB maximum size per block with txs
 pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024);
 // 2 seconds maximum in future (prevent any attack on reducing difficulty but keep margin for unsynced devices)
-pub const TIMESTAMP_IN_FUTURE_LIMIT: u64 = 2 * 1000;
+pub const TIMESTAMP_IN_FUTURE_LIMIT: TimestampSeconds = 2 * 1000;
 
 // keep at least last N blocks until top topoheight when pruning the chain
 pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
