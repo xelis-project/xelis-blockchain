@@ -134,7 +134,7 @@ lazy_static! {
 
 // Testnet genesis block hash
 // It must be the same as the hash of the genesis block
-const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([23, 65, 193, 5, 125, 206, 169, 115, 142, 220, 123, 37, 103, 109, 52, 87, 62, 26, 126, 25, 198, 113, 116, 52, 143, 136, 10, 134, 219, 114, 197, 131]);
+const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([109, 203, 250, 149, 1, 188, 174, 174, 73, 34, 161, 57, 249, 27, 1, 208, 211, 246, 120, 135, 37, 127, 130, 230, 43, 151, 17, 166, 76, 212, 32, 121]);
 
 // Genesis block hash based on network selected
 pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
