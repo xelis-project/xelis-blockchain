@@ -11,15 +11,29 @@ use tokio_tungstenite::{
     tungstenite::{Message, Error as TungsteniteError}
 };
 use xelis_common::{
-    block::{BlockMiner, BLOCK_WORK_SIZE},
-    serializer::Serializer,
-    difficulty::{Difficulty, check_difficulty},
-    config::VERSION,
-    utils::{format_hashrate, format_difficulty},
-    time::get_current_time_in_millis,
-    crypto::{hash::{Hashable, Hash, hash}, address::Address},
-    api::daemon::{GetBlockTemplateResult, SubmitBlockParams}, prompt::{Prompt, command::CommandManager, LogLevel, ShareablePrompt, self},
+    api::daemon::{GetBlockTemplateResult, SubmitBlockParams},
     async_handler,
+    block::{BlockMiner, BLOCK_WORK_SIZE},
+    config::VERSION,
+    crypto::{
+        address::Address,
+        hash::{hash, Hash, Hashable}
+    },
+    difficulty::{
+        check_difficulty_against_target,
+        compute_difficulty_target,
+        Difficulty
+    },
+    prompt::{
+        self,
+        command::CommandManager,
+        LogLevel,
+        Prompt,
+        ShareablePrompt
+    },
+    serializer::Serializer,
+    time::get_current_time_in_millis,
+    utils::{format_difficulty, format_hashrate}
 };
 use clap::Parser;
 use log::{error, info, debug, warn};
@@ -31,7 +45,7 @@ use lazy_static::lazy_static;
 pub struct MinerConfig {
     /// Wallet address to mine and receive block rewards on
     #[clap(short, long)]
-    miner_address: Address,
+    miner_address: Option<Address>,
     /// Daemon address to connect to for mining
     #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String,
@@ -88,14 +102,8 @@ const UPDATE_EVERY_NONCE: u64 = 1_000;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
-    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
-    let address = config.miner_address;
-
     let threads_count = num_cpus::get();
     let mut threads = config.num_threads;
-    if threads_count > u8::MAX as usize {
-        warn!("Your CPU have more than 255 threads. This miner only support up to 255 threads used at once.");
-    }
 
     // if no specific threads count is specified in options, set detected threads count
     if threads < 1 {
@@ -110,6 +118,12 @@ async fn main() -> Result<()> {
         return Ok(())
     }
 
+    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
+    if threads_count > u8::MAX as usize {
+        warn!("Your CPU have more than 255 threads. This miner only support up to 255 threads used at once.");
+    }
+
+    let address = config.miner_address.ok_or_else(|| Error::msg("No miner address specified"))?;
     info!("Miner address: {}", address);    
     if config.num_threads != 0 && threads as usize != threads_count {
         warn!("Attention, the number of threads used may not be optimal, recommended is: {}", threads_count);
@@ -151,10 +165,10 @@ fn benchmark(threads: usize, iterations: usize) {
         let start = Instant::now();
         let mut handles = vec![];
         for _ in 0..bench {
+            let mut random_bytes: [u8; BLOCK_WORK_SIZE] = [0; BLOCK_WORK_SIZE];
+            random_bytes.iter_mut().for_each(|v| *v = rand::random::<u8>());
             let handle = thread::spawn(move || {
-                let mut random_bytes: [u8; BLOCK_WORK_SIZE] = [0; BLOCK_WORK_SIZE];
                 for _ in 0..iterations {
-                    random_bytes.iter_mut().for_each(|v| *v = rand::random::<u8>());
                     let _ = hash(&random_bytes);
                 }
             });
@@ -330,15 +344,17 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                     // because it's a u8, it support up to 255 threads
                     job.extra_nonce[job.extra_nonce.len() - 1] = id;
 
-                    // Solve block
-                    hash = job.get_pow_hash();
-                    while !match check_difficulty(&hash, &expected_difficulty) {
+                    let difficulty_target = match compute_difficulty_target(&expected_difficulty) {
                         Ok(value) => value,
                         Err(e) => {
-                            error!("Mining Thread #{}: error on difficulty check: {}", id, e);
+                            error!("Mining Thread #{}: error on difficulty target computation: {}", id, e);
                             continue 'main;
                         }
-                    } {
+                    };
+
+                    // Solve block
+                    hash = job.get_pow_hash();
+                    while !check_difficulty_against_target(&hash, &difficulty_target) {
                         // check if we have a new job pending
                         // Only update every 1 000 iterations to avoid too much CPU usage
                         if job.nonce % UPDATE_EVERY_NONCE == 0 {
