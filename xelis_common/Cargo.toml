@@ -8,7 +8,7 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sha3 = "0.10.6"
+blake3 = "1.5.0"
 hex = "0.4.3"
 num-bigint = "0.4.0"
 num-traits = "0.2.14"
