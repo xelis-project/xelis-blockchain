@@ -22,13 +22,23 @@ pub enum DifficultyError {
 // Verify the validity of a block difficulty against the current network difficulty
 // All operations are done on U256 to avoid overflow
 pub fn check_difficulty(hash: &Hash, difficulty: &Difficulty) -> Result<bool, DifficultyError> {
+    let target = compute_difficulty_target(difficulty)?;
+    Ok(check_difficulty_against_target(hash, &target))
+}
+
+// Compute the difficulty target from the difficulty value
+// This can be used to keep the target in cache instead of recomputing it each time
+pub fn compute_difficulty_target(difficulty: &Difficulty) -> Result<U256, DifficultyError> {
     let diff = difficulty.as_ref();
     if diff.is_zero() {
         return Err(DifficultyError::DifficultyCannotBeZero)
     }
 
-    let hash_work = U256::from_big_endian(hash.as_bytes());
-    let target = U256::max_value() / diff;
+    Ok(U256::max_value() / diff)
+}
 
-    Ok(hash_work <= target)
+// Check if the hash is below the target difficulty
+pub fn check_difficulty_against_target(hash: &Hash, target: &U256) -> bool {
+    let hash_work = U256::from_big_endian(hash.as_bytes());
+    hash_work <= *target
 }
