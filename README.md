@@ -117,7 +117,7 @@ The `BlockMiner` is in following format:
 - miner public key: 32 bytes
 
 The total block work size should be equal to 120 bytes.
-Header work hash is the immutable part of a block work, its a hash calculated using `Keccak256` hashing algorithm with the following format as input:
+Header work hash is the immutable part of a block work, its a hash calculated using `Blake3` hashing algorithm with the following format as input:
 - block version: 1 byte
 - block height (u64): 8 bytes (BigEndian)
 - Hash of the tips: 32 bytes
@@ -127,7 +127,7 @@ The header work has to be equal to 73 bytes exactly and its hash to 32 bytes.
 
 **NOTE**: Miner key is not included in the immutable of the block work to be have generic block template that can be compatible with any miner. 
 
-All hashes are calculated using the `Keccak256` hashing algorithm except the Proof-Of-Work hash.
+All hashes are calculated using the `Blake3` hashing algorithm except the Proof-Of-Work hash.
 
 POW Hash should be calculated from the `BlockMiner` format and compared against the target difficulty.
 
@@ -136,7 +136,7 @@ NOTE: It is recommended to use the GetWork WebSocket server to be notified of ne
 Mining jobs are send only when a new block is found or when a new TX is added in mempool.
 Miners software are recommended to update themselves the block timestamp (or at least every 500ms) for best network difficulty calculation.
 
-Actually, the POW Hashing algorithm is `Keccak256` which is until we develop (or choose) our own algorithm.
+Actually, the POW Hashing algorithm is `Blake3` which is until we develop (or choose) our own algorithm.
 
 ## Client Protocol
 
@@ -343,7 +343,7 @@ Wallet implement a fully-encrypted storage system with following features:
 
 Exception for assets list which has its key encrypted to be able to retrieve them later.
 
-Hash algorithm used is Keccak-256 for keys / tree names.
+Hash algorithm used is Blake3 for keys / tree names.
 The random salt generated is a 64 bytes length.
 This simple system prevent someone to read / use the data without the necessary secret key.
 
