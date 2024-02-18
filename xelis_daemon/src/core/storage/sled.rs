@@ -76,9 +76,9 @@ pub struct SledStorage {
     // account nonces to prevent TX replay attack
     pub(super) nonces: Tree,
     // block reward for each block topoheight
-    rewards: Tree,
+    pub(super) rewards: Tree,
     // supply for each block topoheight
-    supply: Tree,
+    pub(super) supply: Tree,
     // difficulty for each block hash
     pub(super) difficulty: Tree,
     // tree to store all blocks hashes where a tx was included in 
@@ -650,17 +650,6 @@ impl Storage for SledStorage {
         Ok(self.extra.contains_key(NETWORK)?)
     }
 
-    fn get_block_reward_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {
-        trace!("get block reward at topo height {}", topoheight);
-        Ok(self.load_from_disk(&self.rewards, &topoheight.to_be_bytes())?)
-    }
-
-    fn set_block_reward_at_topo_height(&mut self, topoheight: u64, reward: u64) -> Result<(), BlockchainError> {
-        trace!("set block reward to {} at topo height {}", reward, topoheight);
-        self.rewards.insert(topoheight.to_be_bytes(), &reward.to_be_bytes())?;
-        Ok(())
-    }
-
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64, stable_topo_height: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
         trace!("pop blocks from height: {}, topoheight: {}, count: {}", height, topoheight, count);
         if height < count as u64 { // also prevent removing genesis block
@@ -816,13 +805,6 @@ impl Storage for SledStorage {
         Ok((height, topoheight, txs))
     }
 
-    async fn get_block_header_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>), BlockchainError> {
-        trace!("get block at topoheight: {}", topoheight);
-        let hash = self.get_hash_at_topo_height(topoheight).await?;
-        let block = self.get_block_header_by_hash(&hash).await?;
-        Ok((hash, block))
-    }
-
     async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError> {
         trace!("get top block hash");
         self.get_hash_at_topo_height(self.get_top_topoheight()?).await
@@ -878,17 +860,6 @@ impl Storage for SledStorage {
         trace!("Saving {} Tips", tips.len());
         self.extra.insert(TIPS, tips.to_bytes())?;
         self.tips_cache = tips.clone();
-        Ok(())
-    }
-
-    async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {
-        trace!("get supply at topo height {}", topoheight);
-        self.load_from_disk(&self.supply, &topoheight.to_be_bytes())
-    }
-
-    fn set_supply_at_topo_height(&mut self, topoheight: u64, supply: u64) -> Result<(), BlockchainError> {
-        trace!("set supply at topo height {}", topoheight);
-        self.supply.insert(topoheight.to_be_bytes(), &supply.to_be_bytes())?;
         Ok(())
     }
 

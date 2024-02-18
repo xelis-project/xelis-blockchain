@@ -18,7 +18,7 @@ use crate::core::error::BlockchainError;
 pub type Tips = HashSet<Hash>;
 
 #[async_trait]
-pub trait Storage: DagOrderProvider + PrunedTopoheightProvider + NonceProvider + ClientProtocolProvider + BlockProvider + Sync + Send + 'static {
+pub trait Storage: DagOrderProvider + PrunedTopoheightProvider + NonceProvider + ClientProtocolProvider + BlockDagProvider + Sync + Send + 'static {
     // Clear caches if exists
     async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
 
@@ -51,44 +51,48 @@ pub trait Storage: DagOrderProvider + PrunedTopoheightProvider + NonceProvider +
     // same as above but for nonces
     async fn create_snapshot_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
+    // Get the network on which the chain is running
     fn get_network(&self) -> Result<Network, BlockchainError>;
 
+    // Verify if we already marked this chain as having a network
     fn has_network(&self) -> Result<bool, BlockchainError>;
 
+    // Set the network on which the chain is running
     fn set_network(&mut self, network: &Network) -> Result<(), BlockchainError>;
-
-    fn get_block_reward_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError>;
-
-    fn set_block_reward_at_topo_height(&mut self, topoheight: u64, reward: u64) -> Result<(), BlockchainError>;
 
     // Count is the number of blocks (topoheight) to rewind
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64, stable_height: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;
 
-    async fn get_block_header_at_topoheight(&self, topoheight: u64) -> Result<(Hash, Arc<BlockHeader>), BlockchainError>;
-
+    // Get the top block hash of the chain
     async fn get_top_block_hash(&self) -> Result<Hash, BlockchainError>;
     
+    // Get the top block of the chain, based on top block hash
     async fn get_top_block(&self) -> Result<Block, BlockchainError>;
 
+    // Get the top block header of the chain, based on top block hash
     async fn get_top_block_header(&self) -> Result<(Arc<BlockHeader>, Hash), BlockchainError>;
 
-    async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError>;
-
-    fn set_supply_at_topo_height(&mut self, topoheight: u64, supply: u64) -> Result<(), BlockchainError>;
-
+    // Get the top topoheight of the chain
     fn get_top_topoheight(&self) -> Result<u64, BlockchainError>;
 
+    // Set the top topoheight of the chain
     fn set_top_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
+    // Get the top height of the chain
     fn get_top_height(&self) -> Result<u64, BlockchainError>;
 
+    // Set the top height of the chain
     fn set_top_height(&mut self, height: u64) -> Result<(), BlockchainError>;
 
+    // Get current chain tips
     async fn get_tips(&self) -> Result<Tips, BlockchainError>;
 
+    // Store chain tips
     fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError>;
 
+    // Get the size of the chain on disk in bytes
     async fn get_size_on_disk(&self) -> Result<u64, BlockchainError>;
 
+    // Stop the storage and wait for it to finish
     async fn stop(&mut self) -> Result<(), BlockchainError>;
 }
