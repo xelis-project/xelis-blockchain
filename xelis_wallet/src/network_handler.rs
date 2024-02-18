@@ -66,11 +66,14 @@ impl NetworkHandler {
 
     // Start the internal loop to sync all missed blocks and all newly added blocks
     pub async fn start(self: &Arc<Self>) -> Result<(), NetworkError> {
+        trace!("Starting network handler");
+
         if self.is_running().await {
             return Err(NetworkError::AlreadyRunning)
         }
 
         if !self.api.is_online() {
+            debug!("API is offline, trying to reconnect");
             if !self.api.reconnect().await? {
                 error!("Couldn't reconnect to server");
                 return Err(NetworkError::NotRunning)

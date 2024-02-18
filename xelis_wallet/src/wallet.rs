@@ -650,6 +650,7 @@ impl Wallet {
     // that will delete all transactions above the given topoheight and all balances
     // then it will re-fetch all transactions and balances from daemon
     pub async fn rescan(&self, topoheight: u64) -> Result<(), WalletError> {
+        trace!("Rescan wallet from topoheight {}", topoheight);
         if !self.is_online().await {
             // user have to set it online
             return Err(WalletError::NotOnlineMode)
