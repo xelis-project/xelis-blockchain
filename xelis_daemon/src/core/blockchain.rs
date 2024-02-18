@@ -193,7 +193,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        let on_disk = storage.has_blocks();
+        let on_disk = storage.has_blocks().await;
         let (height, topoheight) = if on_disk {
             info!("Reading last metadata available...");
             let height = storage.get_top_height()?;
@@ -568,7 +568,7 @@ impl<S: Storage> Blockchain<S> {
     // Verify if we have the current block in storage by locking it ourself
     pub async fn has_block(&self, hash: &Hash) -> Result<bool, BlockchainError> {
         let storage = self.storage.read().await;
-        storage.has_block(hash).await
+        storage.has_block_with_hash(hash).await
     }
 
     // Verify if the block is a sync block for current chain height
@@ -1393,7 +1393,7 @@ impl<S: Storage> Blockchain<S> {
 
         let block_hash = block.hash();
         debug!("Add new block {}", block_hash);
-        if storage.has_block(&block_hash).await? {
+        if storage.has_block_with_hash(&block_hash).await? {
             error!("Block {} is already in chain!", block_hash);
             return Err(BlockchainError::AlreadyInChain)
         }
@@ -1425,7 +1425,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         for tip in block.get_tips() {
-            if !storage.has_block(tip).await? {
+            if !storage.has_block_with_hash(tip).await? {
                 error!("This block ({}) has a TIP ({}) which is not present in chain", block_hash, tip);
                 return Err(BlockchainError::InvalidTips)
             }
@@ -1519,7 +1519,7 @@ impl<S: Storage> Blockchain<S> {
                 debug!("Verifying TX {}", tx_hash);
                 // check that the TX included is not executed in stable height or in block TIPS
                 if storage.is_tx_executed_in_a_block(hash)? {
-                    let block_executed = storage.get_block_executer_for_tx(hash)?;
+                    let block_executed = storage.get_block_executor_for_tx(hash)?;
                     debug!("Tx {} was executed in {}", hash, block_executed);
                     let block_height = storage.get_height_for_block_hash(&block_executed).await?;
                     // if the tx was executed below stable height, reject whole block!
@@ -1710,7 +1710,7 @@ impl<S: Storage> Blockchain<S> {
                 storage.set_supply_at_topo_height(highest_topo, supply)?;
 
                 // Block for this hash
-                let block = storage.get_block(&hash).await?;
+                let block = storage.get_block_by_hash(&hash).await?;
                 // All fees from the transactions executed in this block
                 let mut total_fees = 0;
                 // track all changes in balances for this block

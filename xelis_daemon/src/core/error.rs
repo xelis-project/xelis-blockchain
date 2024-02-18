@@ -197,7 +197,9 @@ pub enum BlockchainError {
     #[error("Prune topoheight is lower or equal than previous pruned topoheight")]
     PruneLowerThanLastPruned,
     #[error("Auto prune mode is misconfigured")]
-    AutoPruneMode
+    AutoPruneMode,
+    #[error(transparent)]
+    TryFromSliceError(#[from] std::array::TryFromSliceError),
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

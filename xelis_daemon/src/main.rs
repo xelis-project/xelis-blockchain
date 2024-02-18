@@ -436,7 +436,7 @@ async fn show_balance<S: Storage>(manager: &CommandManager, mut arguments: Argum
         return Ok(());
     }
 
-    let asset_data = storage.get_asset_data(&asset).context("Error while retrieving asset data")?;
+    let asset_data = storage.get_asset(&asset).await.context("Error while retrieving asset data")?;
     let (mut topo, mut version) = storage.get_last_balance(&key, &asset).await.context("Error while retrieving last balance")?;
     loop {
         history -= 1;
@@ -555,10 +555,10 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
     let supply = blockchain.get_supply().await.context("Error while retrieving supply")?;
-    let accounts_count = storage.count_accounts().context("Error while counting accounts")?;
-    let transactions_count = storage.count_transactions().context("Error while counting transactions")?;
-    let blocks_count = storage.count_blocks().context("Error while counting blocks")?;
-    let assets = storage.count_assets().context("Error while counting assets")?;
+    let accounts_count = storage.count_accounts().await.context("Error while counting accounts")?;
+    let transactions_count = storage.count_transactions().await.context("Error while counting transactions")?;
+    let blocks_count = storage.count_blocks().await.context("Error while counting blocks")?;
+    let assets = storage.count_assets().await.context("Error while counting assets")?;
     let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
 
     manager.message(format!("Height: {}", height));

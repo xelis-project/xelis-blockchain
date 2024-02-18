@@ -1090,7 +1090,7 @@ impl<S: Storage> P2pServer<S> {
                 // check that we don't have this block in our chain
                 {
                     let storage = self.blockchain.get_storage().read().await;
-                    if storage.has_block(&block_hash).await? {
+                    if storage.has_block_with_hash(&block_hash).await? {
                         debug!("{}: {} with hash {} is already in our chain. Skipping", peer, header, block_hash);
                         return Ok(())
                     }
@@ -1198,7 +1198,7 @@ impl<S: Storage> P2pServer<S> {
                         debug!("{} asked full block {}", peer, hash);
                         let block = {
                             let storage = self.blockchain.get_storage().read().await;
-                            storage.get_block(hash).await
+                            storage.get_block_by_hash(hash).await
                         };
 
                         match block {
@@ -1438,7 +1438,7 @@ impl<S: Storage> P2pServer<S> {
             expected_topoheight -= 1;
 
             debug!("Searching common point for block {} at topoheight {}", block_id.get_hash(), block_id.get_topoheight());
-            if storage.has_block(block_id.get_hash()).await? {
+            if storage.has_block_with_hash(block_id.get_hash()).await? {
                 let (hash, topoheight) = block_id.consume();
                 debug!("Block {} is common, expected topoheight: {}", hash, topoheight);
                 // check that the block is ordered like us

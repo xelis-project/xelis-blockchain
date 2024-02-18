@@ -199,6 +199,10 @@ impl<S: Storage> DifficultyProvider for ChainValidator<'_, S> {
         let storage = self.blockchain.get_storage().read().await;
         Ok(storage.get_block_header_by_hash(hash).await?)
     }
+
+    async fn set_cumulative_difficulty_for_block_hash(&mut self, _: &Hash, _: CumulativeDifficulty) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
+    }
 }
 
 #[async_trait]
@@ -239,9 +243,13 @@ impl<S: Storage> DagOrderProvider for ChainValidator<'_, S> {
 
 #[async_trait]
 impl<S: Storage> BlocksAtHeightProvider for ChainValidator<'_, S> {
-    // This is used to store the blocks hashes at a specific height
-    async fn set_blocks_at_height(&self, _: Tips, _: u64) -> Result<(), BlockchainError> {
-        Err(BlockchainError::UnsupportedOperation)
+    async fn has_blocks_at_height(&self, height: u64) -> Result<bool, BlockchainError> {
+        if self.blocks_at_height.contains_key(&height) {
+            return Ok(true)
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        storage.has_blocks_at_height(height).await
     }
 
     // Retrieve the blocks hashes at a specific height
@@ -252,6 +260,11 @@ impl<S: Storage> BlocksAtHeightProvider for ChainValidator<'_, S> {
 
         let storage = self.blockchain.get_storage().read().await;
         storage.get_blocks_at_height(height).await
+    }
+
+    // This is used to store the blocks hashes at a specific height
+    async fn set_blocks_at_height(&self, _: Tips, _: u64) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
     }
 
     // Append a block hash at a specific height

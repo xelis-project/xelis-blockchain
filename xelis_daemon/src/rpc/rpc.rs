@@ -125,12 +125,12 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
 
 // Get a block response based on data in chain and from parameters
 pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash, include_txs: bool) -> Result<Value, InternalRpcError> {
-    if !storage.has_block(&hash).await.context("Error while checking if block exist")? {
+    if !storage.has_block_with_hash(&hash).await.context("Error while checking if block exist")? {
         return Err(InternalRpcError::AnyError(BlockchainError::BlockNotFound(hash.clone()).into()))
     }
 
     let value: Value = if include_txs {
-        let block = storage.get_block(&hash).await.context("Error while retrieving full block")?;
+        let block = storage.get_block_by_hash(&hash).await.context("Error while retrieving full block")?;
         let total_size_in_bytes = block.size();
         get_block_response(blockchain, storage, hash, &block, total_size_in_bytes).await?
     } else {
@@ -158,7 +158,7 @@ pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transact
     };
 
     let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(tx) };
-    let executed_in_block = storage.get_block_executer_for_tx(hash).ok();
+    let executed_in_block = storage.get_block_executor_for_tx(hash).ok();
     Ok(json!(TransactionResponse { blocks, executed_in_block, data, in_mempool, first_seen }))
 }
 
@@ -468,7 +468,7 @@ async fn get_asset<S: Storage>(context: Context, body: Value) -> Result<Value, I
     let params: GetAssetParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let asset = storage.get_asset_data(&params.asset).context("Asset was not found")?;
+    let asset = storage.get_asset(&params.asset).await.context("Asset was not found")?;
     Ok(json!(asset))
 }
 
@@ -501,7 +501,7 @@ async fn count_assets<S: Storage>(context: Context, body: Value) -> Result<Value
     }
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let count = storage.count_assets().context("Error while retrieving assets count")?;
+    let count = storage.count_assets().await.context("Error while retrieving assets count")?;
     Ok(json!(count))
 }
 
@@ -511,7 +511,7 @@ async fn count_accounts<S: Storage>(context: Context, body: Value) -> Result<Val
     }
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let count = storage.count_accounts().context("Error while retrieving accounts count")?;
+    let count = storage.count_accounts().await.context("Error while retrieving accounts count")?;
     Ok(json!(count))
 }
 
@@ -521,7 +521,7 @@ async fn count_transactions<S: Storage>(context: Context, body: Value) -> Result
     }
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let count = storage.count_transactions().context("Error while retrieving transactions count")?;
+    let count = storage.count_transactions().await.context("Error while retrieving transactions count")?;
     Ok(json!(count))
 }
 
