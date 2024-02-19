@@ -366,7 +366,7 @@ async fn get_info<S: Storage>(context: Context, body: Value) -> Result<Value, In
         let top_block_hash = storage.get_hash_at_topo_height(topoheight).await.context("Error while retrieving hash at topo height")?;
         let supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply at topo height")?;
         let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
-        let average_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
+        let average_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
         (top_block_hash, supply, pruned_topoheight, average_block_time)
     };
     let difficulty = blockchain.get_difficulty().await;

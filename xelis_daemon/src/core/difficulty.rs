@@ -7,28 +7,23 @@ use xelis_common::{
 use crate::config::{BLOCK_TIME_MILLIS, MINIMUM_DIFFICULTY};
 
 const DIFFICULTY_BOUND_DIVISOR: Difficulty = Difficulty::from_u64(100);
-const CHAIN_TIME_RANGE: TimestampMillis = BLOCK_TIME_MILLIS / 2;
 
-// Difficulty algorithm from Ethereum: Homestead but tweaked for our needs
-pub fn calculate_difficulty(tips_count: u64, parent_timestamp: TimestampMillis, new_timestamp: TimestampMillis, previous_difficulty: Difficulty) -> Difficulty {
+// Custom difficulty in test
+pub fn calculate_difficulty(tips_count: u64, average_solve_time: TimestampMillis, previous_difficulty: Difficulty) -> Difficulty {
     let mut adjust = previous_difficulty / DIFFICULTY_BOUND_DIVISOR;
-    let solve_time = new_timestamp - parent_timestamp;
     // By how much we need to adjust the difficulty
     // If we have a solve time of 30s and the range is 15s, we need to adjust by 2
-    // With a bound divisor of 100, we will adjust by 2% of the previous difficulty
-    let mut x = solve_time / CHAIN_TIME_RANGE;
-    trace!("x: {x}, tips count: {tips_count}, adjust: {adjust}, difficulty: {}, adjust: {}", format_difficulty(previous_difficulty), format_difficulty(adjust));
-
-    let neg = x >= tips_count;
-    if neg {
-        x = x - tips_count;
+    // With a bound divisor of 1000, we will adjust by 0.1% for each points in x
+    let (mut x, neg) = if average_solve_time > BLOCK_TIME_MILLIS {
+        (average_solve_time / BLOCK_TIME_MILLIS, true)
     } else {
-        x = tips_count - x;
-    }
+        (BLOCK_TIME_MILLIS / average_solve_time, false)
+    };
+    trace!("x: {x}, neg: {neg}, tips count: {tips_count}, adjust: {adjust}, difficulty: {}, adjust: {}", format_difficulty(previous_difficulty), format_difficulty(adjust));
 
-    // max(x, 99)
-    if x > 99 {
-        x = 99;
+    // Maximum 10% adjustment
+    if x >= 10 {
+        x = 10;
     }
 
     trace!("final x: {}", x);

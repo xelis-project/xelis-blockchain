@@ -1009,9 +1009,9 @@ impl<S: Storage> Blockchain<S> {
     // If tips is empty, returns genesis difficulty
     // Find the best tip (highest cumulative difficulty), then its difficulty, timestamp and its own tips
     // Same for its parent, then calculate the difficulty between the two timestamps
-    pub async fn get_difficulty_at_tips<'a, D, I>(&self, provider: &D, tips: I) -> Result<Difficulty, BlockchainError>
+    pub async fn get_difficulty_at_tips<'a, P, I>(&self, provider: &P, tips: I) -> Result<Difficulty, BlockchainError>
     where
-        D: DifficultyProvider,
+        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider,
         I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
         I::IntoIter: ExactSizeIterator
     {
@@ -1031,13 +1031,10 @@ impl<S: Storage> Blockchain<S> {
 
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, tips.clone().into_iter()).await?;
         let biggest_difficulty = provider.get_difficulty_for_block_hash(best_tip).await?;
-        let best_tip_timestamp = provider.get_timestamp_for_block_hash(best_tip).await?;
 
-        let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
-        let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, parent_tips.iter()).await?;
-        let parent_best_tip_timestamp = provider.get_timestamp_for_block_hash(parent_best_tip).await?;
- 
-        let difficulty = calculate_difficulty(tips.len() as u64, parent_best_tip_timestamp, best_tip_timestamp, biggest_difficulty);
+        let average_solve_time = self.get_average_block_time(provider).await?;
+
+        let difficulty = calculate_difficulty(tips.len() as u64, average_solve_time, biggest_difficulty);
         Ok(difficulty)
     }
 
@@ -1054,9 +1051,9 @@ impl<S: Storage> Blockchain<S> {
     // pass in params the already computed block hash and its tips
     // check the difficulty calculated at tips
     // if the difficulty is valid, returns it (prevent to re-compute it)
-    pub async fn verify_proof_of_work<'a, D, I>(&self, provider: &D, hash: &Hash, tips: I) -> Result<Difficulty, BlockchainError>
+    pub async fn verify_proof_of_work<'a, P, I>(&self, provider: &P, hash: &Hash, tips: I) -> Result<Difficulty, BlockchainError>
     where
-        D: DifficultyProvider,
+        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider,
         I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
         I::IntoIter: ExactSizeIterator
     {
@@ -1953,6 +1950,7 @@ impl<S: Storage> Blockchain<S> {
 
         info!("Processed block {} at height {} in {} ms with {} txs", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count());
 
+        // Broadcast to p2p nodes
         if broadcast {
             trace!("Broadcasting block");
             if let Some(p2p) = self.p2p.read().await.as_ref() {
@@ -1969,17 +1967,19 @@ impl<S: Storage> Blockchain<S> {
 
         // broadcast to websocket new block
         if let Some(rpc) = rpc_server.as_ref() {
-            // if we have a getwork server, notify miners
-            if let Some(getwork) = rpc.getwork_server() {
-                let getwork = getwork.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = getwork.notify_new_job().await {
-                        debug!("Error while notifying new job to miners: {}", e);
-                    }
-                });
+            // if we have a getwork server, and that its not from syncing, notify miners
+            if broadcast {
+                if let Some(getwork) = rpc.getwork_server() {
+                    let getwork = getwork.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = getwork.notify_new_job().await {
+                            debug!("Error while notifying new job to miners: {}", e);
+                        }
+                    });
+                }
             }
 
-            // notify websocket clients
+            // atm, we always notify websocket clients
             trace!("Notifying websocket clients");
             if should_track_events.contains(&NotifyEvent::NewBlock) {
                 match get_block_response(self, storage, &block_hash, &Block::new(Immutable::Arc(block), txs), block_size).await {
@@ -2406,7 +2406,10 @@ impl<S: Storage> Blockchain<S> {
     // We calculate it by taking the timestamp of the block at topoheight - 50 and the timestamp of the block at topoheight
     // It is the same as computing the average time between the last 50 blocks but much faster
     // Genesis block timestamp isn't take in count for this calculation
-    pub async fn get_average_block_time_for_storage(&self, storage: &S) -> Result<TimestampMillis, BlockchainError> {
+    pub async fn get_average_block_time<P>(&self, provider: &P) -> Result<TimestampMillis, BlockchainError>
+    where
+        P: DifficultyProvider + PrunedTopoheightProvider + DagOrderProvider
+    {
         // current topoheight
         let topoheight = self.get_topo_height();
 
@@ -2422,17 +2425,17 @@ impl<S: Storage> Blockchain<S> {
         };
 
         // check that we are not under the pruned topoheight
-        if let Some(pruned_topoheight) = storage.get_pruned_topoheight().await? {
+        if let Some(pruned_topoheight) = provider.get_pruned_topoheight().await? {
             if topoheight - count < pruned_topoheight {
                 count = pruned_topoheight
             }
         }
 
-        let now_hash = storage.get_hash_at_topo_height(topoheight).await?;
-        let now_timestamp = storage.get_timestamp_for_block_hash(&now_hash).await?;
+        let now_hash = provider.get_hash_at_topo_height(topoheight).await?;
+        let now_timestamp = provider.get_timestamp_for_block_hash(&now_hash).await?;
 
-        let count_hash = storage.get_hash_at_topo_height(topoheight - count).await?;
-        let count_timestamp = storage.get_timestamp_for_block_hash(&count_hash).await?;
+        let count_hash = provider.get_hash_at_topo_height(topoheight - count).await?;
+        let count_timestamp = provider.get_timestamp_for_block_hash(&count_hash).await?;
 
         let diff = now_timestamp - count_timestamp;
         Ok(diff / count)
