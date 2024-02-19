@@ -97,7 +97,7 @@ lazy_static! {
 }
 
 // After how many iterations we update the timestamp of the block to avoid too much CPU usage 
-const UPDATE_EVERY_NONCE: u64 = 1_000;
+const UPDATE_EVERY_NONCE: u64 = 10_000;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
@@ -170,6 +170,9 @@ fn benchmark(threads: usize, iterations: usize) {
                 for _ in 0..iterations {
                     let _ = job.get_pow_hash();
                     job.increase_nonce();
+                    if job.nonce() % UPDATE_EVERY_NONCE == 0 {
+                        job.set_timestamp(get_current_time_in_millis());
+                    }
                 }
             });
             handles.push(handle);
@@ -361,11 +364,11 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                             if !job_receiver.is_empty() {
                                 continue 'main;
                             }
+                            job.set_timestamp(get_current_time_in_millis());
                         }
 
                         hash = job.get_pow_hash();
                         job.increase_nonce();
-                        job.set_timestamp(get_current_time_in_millis());
                         HASHRATE_COUNTER.fetch_add(1, Ordering::Relaxed);
                     }
 
