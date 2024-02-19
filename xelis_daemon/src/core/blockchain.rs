@@ -6,7 +6,13 @@ use xelis_common::{
     account::VersionedBalance,
     api::{
         daemon::{
-            BlockOrderedEvent, BlockOrphanedEvent, BlockType, NotifyEvent, StableHeightChangedEvent, TransactionExecutedEvent, TransactionResponse
+            BlockOrderedEvent,
+            BlockOrphanedEvent,
+            BlockType,
+            NotifyEvent,
+            StableHeightChangedEvent,
+            TransactionExecutedEvent,
+            TransactionResponse
         },
         DataHash
     },
@@ -23,7 +29,11 @@ use xelis_common::{
     serializer::Serializer,
     transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
     utils::format_xelis,
-    time::{get_current_time_in_millis, get_current_time_in_seconds}
+    time::{
+        get_current_time_in_millis,
+        get_current_time_in_seconds,
+        TimestampMillis
+    }
 };
 use crate::{
     config::{
@@ -2396,7 +2406,7 @@ impl<S: Storage> Blockchain<S> {
     // We calculate it by taking the timestamp of the block at topoheight - 50 and the timestamp of the block at topoheight
     // It is the same as computing the average time between the last 50 blocks but much faster
     // Genesis block timestamp isn't take in count for this calculation
-    pub async fn get_average_block_time_for_storage(&self, storage: &S) -> Result<u64, BlockchainError> {
+    pub async fn get_average_block_time_for_storage(&self, storage: &S) -> Result<TimestampMillis, BlockchainError> {
         // current topoheight
         let topoheight = self.get_topo_height();
 
@@ -2424,7 +2434,7 @@ impl<S: Storage> Blockchain<S> {
         let count_hash = storage.get_hash_at_topo_height(topoheight - count).await?;
         let count_timestamp = storage.get_timestamp_for_block_hash(&count_hash).await?;
 
-        let diff = (now_timestamp - count_timestamp) as u64;
+        let diff = now_timestamp - count_timestamp;
         Ok(diff / count)
     }
 }
