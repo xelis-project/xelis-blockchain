@@ -98,7 +98,7 @@ lazy_static! {
 }
 
 // After how many iterations we update the timestamp of the block to avoid too much CPU usage 
-const UPDATE_EVERY_NONCE: u64 = 10_000;
+const UPDATE_EVERY_NONCE: u64 = 100_000;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
@@ -361,16 +361,16 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                     while !check_difficulty_against_target(&hash, &difficulty_target) {
                         job.increase_nonce();
                         // check if we have a new job pending
-                        // Only update every 1 000 iterations to avoid too much CPU usage
+                        // Only update every N iterations to avoid too much CPU usage
                         if job.nonce() % UPDATE_EVERY_NONCE == 0 {
                             if !job_receiver.is_empty() {
                                 continue 'main;
                             }
                             job.set_timestamp(get_current_time_in_millis());
+                            HASHRATE_COUNTER.fetch_add(UPDATE_EVERY_NONCE as usize, Ordering::Relaxed);
                         }
 
                         hash = job.get_pow_hash();
-                        HASHRATE_COUNTER.fetch_add(1, Ordering::Relaxed);
                     }
 
                     // compute the reference hash for easier finding of the block
@@ -437,6 +437,6 @@ async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
         )
     };
 
-    prompt.start(Duration::from_millis(100), Box::new(async_handler!(closure)), Some(&command_manager)).await?;
+    prompt.start(Duration::from_millis(1000), Box::new(async_handler!(closure)), Some(&command_manager)).await?;
     Ok(())
 }
