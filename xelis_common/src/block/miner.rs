@@ -97,17 +97,21 @@ impl<'a> BlockMiner<'a> {
 
 impl<'a> Serializer for BlockMiner<'a> {
     fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.header_work_hash); // 32
-        writer.write_u64(&self.timestamp); // 32 + 8 = 40
-        writer.write_u64(&self.nonce); // 40 + 8 = 48
-        writer.write_bytes(&self.extra_nonce); // 48 + 32 = 80
-
-        // 80 + 32 = 112
-        if let Some(miner) = &self.miner {
-            miner.write(writer);
+        if let Some(cache) = self.cache {
+            writer.write_bytes(&cache);
         } else {
-            // We set a 32 bytes empty public key as we don't have any miner
-            writer.write_bytes(&[0u8; 32]);
+            writer.write_hash(&self.header_work_hash); // 32
+            writer.write_u64(&self.timestamp); // 32 + 8 = 40
+            writer.write_u64(&self.nonce); // 40 + 8 = 48
+            writer.write_bytes(&self.extra_nonce); // 48 + 32 = 80
+    
+            // 80 + 32 = 112
+            if let Some(miner) = &self.miner {
+                miner.write(writer);
+            } else {
+                // We set a 32 bytes empty public key as we don't have any miner
+                writer.write_bytes(&[0u8; 32]);
+            }
         }
 
         debug_assert!(writer.total_write() == BLOCK_WORK_SIZE, "invalid block work size, expected {}, got {}", BLOCK_WORK_SIZE, writer.total_write());
