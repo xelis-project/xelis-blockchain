@@ -56,7 +56,7 @@ pub struct MinerConfig {
     #[clap(short, long)]
     benchmark: bool,
     /// Iterations to run the benchmark
-    #[clap(short, long, default_value_t = 1_000_000)]
+    #[clap(short, long, default_value_t = 10_000_000)]
     iterations: usize,
     /// Disable the log file
     #[clap(short = 'f', long)]
