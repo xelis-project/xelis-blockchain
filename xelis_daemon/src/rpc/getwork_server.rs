@@ -34,10 +34,11 @@ use crate::{
 pub type SharedGetWorkServer<S> = Arc<GetWorkServer<S>>;
 
 #[derive(Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")] 
 pub enum Response {
     NewJob(GetBlockTemplateResult),
     BlockAccepted,
-    BlockRejected
+    BlockRejected(String)
 }
 
 impl TMessage for Response {
@@ -290,7 +291,7 @@ impl<S: Storage> GetWorkServer<S> {
             Ok(_) => Response::BlockAccepted,
             Err(e) => {
                 debug!("Error while accepting miner block: {}", e);
-                Response::BlockRejected
+                Response::BlockRejected(e.to_string())
             }
         })
     }
@@ -304,7 +305,7 @@ impl<S: Storage> GetWorkServer<S> {
             Ok(response) => response,
             Err(e) => {
                 debug!("Error while accepting miner job: {}", e);
-                Response::BlockRejected
+                Response::BlockRejected(e.to_string())
             }
         };
 
@@ -317,7 +318,7 @@ impl<S: Storage> GetWorkServer<S> {
                         debug!("Miner {} found a block!", miner);
                         miner.blocks_accepted += 1;
                     },
-                    Response::BlockRejected => {
+                    Response::BlockRejected(_) => {
                         debug!("Miner {} sent an invalid block", miner);
                         miner.blocks_rejected += 1;
                     },
@@ -327,7 +328,10 @@ impl<S: Storage> GetWorkServer<S> {
         }
 
         tokio::spawn(async move {
-            let resend_job = response == Response::BlockRejected;
+            let resend_job = match response {
+                Response::BlockRejected(_) => true,
+                _ => false
+            };
             debug!("Sending response to the miner");
             if let Err(e) = addr.send(response).await {
                 error!("Error while sending block rejected response: {}", e);
@@ -383,7 +387,7 @@ impl<S: Storage> GetWorkServer<S> {
                 debug!("No miners connected, no need to notify them");
                 return Ok(());
             }
-        }    
+        }
     
         debug!("Notify all miners for a new job");
         let (header, difficulty) = {
