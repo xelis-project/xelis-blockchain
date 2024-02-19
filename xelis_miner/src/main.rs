@@ -13,11 +13,11 @@ use tokio_tungstenite::{
 use xelis_common::{
     api::daemon::{GetBlockTemplateResult, SubmitBlockParams},
     async_handler,
-    block::{BlockMiner, BLOCK_WORK_SIZE},
+    block::BlockMiner,
     config::VERSION,
     crypto::{
         address::Address,
-        hash::{hash, Hash, Hashable}
+        hash::{Hash, Hashable}
     },
     difficulty::{
         check_difficulty_against_target,
@@ -165,11 +165,11 @@ fn benchmark(threads: usize, iterations: usize) {
         let start = Instant::now();
         let mut handles = vec![];
         for _ in 0..bench {
-            let mut random_bytes: [u8; BLOCK_WORK_SIZE] = [0; BLOCK_WORK_SIZE];
-            random_bytes.iter_mut().for_each(|v| *v = rand::random::<u8>());
+            let mut job = BlockMiner::new(Hash::zero(), get_current_time_in_millis());
             let handle = thread::spawn(move || {
                 for _ in 0..iterations {
-                    let _ = hash(&random_bytes);
+                    let _ = job.get_pow_hash();
+                    job.nonce += 1;
                 }
             });
             handles.push(handle);
