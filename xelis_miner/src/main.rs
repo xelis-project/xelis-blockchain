@@ -359,6 +359,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                     // Solve block
                     hash = job.get_pow_hash();
                     while !check_difficulty_against_target(&hash, &difficulty_target) {
+                        job.increase_nonce();
                         // check if we have a new job pending
                         // Only update every 1 000 iterations to avoid too much CPU usage
                         if job.nonce() % UPDATE_EVERY_NONCE == 0 {
@@ -369,7 +370,6 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                         }
 
                         hash = job.get_pow_hash();
-                        job.increase_nonce();
                         HASHRATE_COUNTER.fetch_add(1, Ordering::Relaxed);
                     }
 
