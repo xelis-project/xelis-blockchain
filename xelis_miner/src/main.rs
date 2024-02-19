@@ -169,7 +169,7 @@ fn benchmark(threads: usize, iterations: usize) {
             let handle = thread::spawn(move || {
                 for _ in 0..iterations {
                     let _ = job.get_pow_hash();
-                    job.nonce += 1;
+                    job.increase_nonce();
                 }
             });
             handles.push(handle);
@@ -243,7 +243,7 @@ async fn communication_task(mut daemon_address: String, job_sender: broadcast::S
                     }
                 },
                 Some(block) = block_receiver.recv() => { // send all valid blocks found to the daemon
-                    debug!("Block header work hash found: {}", block.header_work_hash);
+                    debug!("Block header work hash found: {}", block.get_header_work_hash());
                     let submit = serde_json::json!(SubmitBlockParams { block_template: block.to_hex() }).to_string();
                     if let Err(e) = write.send(Message::Text(submit)).await {
                         error!("Error while sending the block found to the daemon: {}", e);
@@ -342,7 +342,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                     job = new_job;
                     // set thread id in extra nonce for more work spread between threads
                     // because it's a u8, it support up to 255 threads
-                    job.extra_nonce[job.extra_nonce.len() - 1] = id;
+                    job.set_thread_id(id);
 
                     let difficulty_target = match compute_difficulty_target(&expected_difficulty) {
                         Ok(value) => value,
@@ -357,15 +357,15 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                     while !check_difficulty_against_target(&hash, &difficulty_target) {
                         // check if we have a new job pending
                         // Only update every 1 000 iterations to avoid too much CPU usage
-                        if job.nonce % UPDATE_EVERY_NONCE == 0 {
+                        if job.nonce() % UPDATE_EVERY_NONCE == 0 {
                             if !job_receiver.is_empty() {
                                 continue 'main;
                             }
                         }
 
-                        job.nonce += 1;
                         hash = job.get_pow_hash();
-                        job.timestamp = get_current_time_in_millis();
+                        job.increase_nonce();
+                        job.set_timestamp(get_current_time_in_millis());
                         HASHRATE_COUNTER.fetch_add(1, Ordering::Relaxed);
                     }
 
