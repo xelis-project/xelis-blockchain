@@ -80,10 +80,11 @@ enum ThreadNotification<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")] 
 pub enum SocketMessage {
     NewJob(GetBlockTemplateResult),
     BlockAccepted,
-    BlockRejected
+    BlockRejected(String)
 }
 
 static WEBSOCKET_CONNECTED: AtomicBool = AtomicBool::new(false);
@@ -284,9 +285,9 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
                     BLOCKS_FOUND.fetch_add(1, Ordering::SeqCst);
                     info!("Block submitted has been accepted by network !");
                 },
-                SocketMessage::BlockRejected => {
+                SocketMessage::BlockRejected(err) => {
                     BLOCKS_REJECTED.fetch_add(1, Ordering::SeqCst);
-                    error!("Block submitted has been rejected by network !");
+                    error!("Block submitted has been rejected by network: {}", err);
                 }
             }
         },
