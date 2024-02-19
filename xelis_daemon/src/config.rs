@@ -39,6 +39,7 @@ pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024);
 pub const TIMESTAMP_IN_FUTURE_LIMIT: TimestampSeconds = 2 * 1000;
 
 // keep at least last N blocks until top topoheight when pruning the chain
+// WARNING: This must be at least 50 blocks for difficulty adjustement
 pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
 
 // BlockDAG rules
@@ -68,7 +69,7 @@ pub const MAXIMUM_SUPPLY: u64 = 18_400_000 * COIN_VALUE;
 
 // Developer address for paying dev fees until Smart Contracts integration
 // (testnet/mainnet format is converted lazily later)
-pub const DEV_ADDRESS: &str = "xel1qyq9429603jzyngncdtt755llt2gp3a8n5599xuzenavav36spcqzss68u86v";
+pub const DEV_ADDRESS: &str = "xel:3tr88r8vvx3qxvgr7gdja5kae784v8htc7ayaj4nxlzgflhchlmqq4gwg7h";
 
 // Chain sync config
 // minimum X seconds between each chain sync request per peer
@@ -114,7 +115,7 @@ pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 3000;
 
 // Genesis block to have the same starting point for every nodes
 // Genesis block in hexadecimal format
-const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018da3b23040000000000000000000000000000000000000000000000000000000000000000000000000000000000000005aa8ba7c64224d13c356bf529ffad480c7a79d28529b82ccfaceb23a80700142";
+const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018dc0f93552000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac6738cec61a2033103f21b2ed2ddcf8f561eebc7ba4ecab337c484fef8bff6";
 
 // Genesis block getter
 // This is necessary to prevent having the same Genesis Block for differents network
@@ -134,7 +135,7 @@ lazy_static! {
 
 // Testnet genesis block hash
 // It must be the same as the hash of the genesis block
-const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([109, 203, 250, 149, 1, 188, 174, 174, 73, 34, 161, 57, 249, 27, 1, 208, 211, 246, 120, 135, 37, 127, 130, 230, 43, 151, 17, 166, 76, 212, 32, 121]);
+const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([183, 21, 203, 2, 41, 209, 63, 95, 84, 10, 228, 138, 223, 3, 188, 49, 176, 148, 176, 64, 176, 117, 106, 36, 84, 99, 27, 45, 221, 137, 156, 58]);
 
 // Genesis block hash based on network selected
 pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
