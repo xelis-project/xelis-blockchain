@@ -367,7 +367,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                                 continue 'main;
                             }
                             job.set_timestamp(get_current_time_in_millis());
-                            HASHRATE_COUNTER.fetch_add(UPDATE_EVERY_NONCE as usize, Ordering::Relaxed);
+                            HASHRATE_COUNTER.fetch_add(UPDATE_EVERY_NONCE as usize, Ordering::SeqCst);
                         }
 
                         hash = job.get_pow_hash();
