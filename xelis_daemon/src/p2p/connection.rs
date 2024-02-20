@@ -1,13 +1,18 @@
 use super::{
+    encryption::Encryption,
     error::P2pError,
     packet::Packet
 };
 use std::{
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
-    net::SocketAddr,
-    time::Duration,
+    convert::TryInto,
     fmt::{Display, Error, Formatter},
-    convert::TryInto
+    net::SocketAddr,
+    sync::atomic::{
+        AtomicBool,
+        AtomicUsize,
+        Ordering
+    },
+    time::Duration
 };
 use human_bytes::human_bytes;
 use humantime::format_duration;
@@ -34,8 +39,9 @@ pub enum ConnectionMessage {
 pub type Tx = mpsc::UnboundedSender<ConnectionMessage>;
 pub type Rx = mpsc::UnboundedReceiver<ConnectionMessage>;
 
-type P2pResult<T> = std::result::Result<T, P2pError>;
+type P2pResult<T> = Result<T, P2pError>;
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum State {
     Pending, // connection is new, no handshake received
     Handshake, // handshake received, not checked
@@ -44,15 +50,26 @@ pub enum State {
 
 pub struct Connection {
     state: State,
-    write: Mutex<OwnedWriteHalf>, // write to stream
-    read: Mutex<OwnedReadHalf>, // read from stream
-    addr: SocketAddr, // TCP Address
-    tx: Mutex<Tx>, // Tx to send bytes
-    rx: Mutex<Rx>, // Rx to read bytes to send
-    bytes_in: AtomicUsize, // total bytes read
-    bytes_out: AtomicUsize, // total bytes sent
+    // write to stream
+    write: Mutex<OwnedWriteHalf>,
+    // read from stream
+    read: Mutex<OwnedReadHalf>,
+    // TCP Address
+    addr: SocketAddr,
+    // Tx to send bytes
+    tx: Mutex<Tx>,
+    // Rx to read bytes to send
+    rx: Mutex<Rx>,
+    // total bytes read
+    bytes_in: AtomicUsize,
+    // total bytes sent
+    bytes_out: AtomicUsize,
+    // when the connection was established
     connected_on: TimestampSeconds,
-    closed: AtomicBool, // if Connection#close() is called, close is set to true
+    // if Connection#close() is called, close is set to true
+    closed: AtomicBool,
+    // Encryption state used for packets
+    encryption: Mutex<Encryption>
 }
 
 impl Connection {
@@ -69,7 +86,8 @@ impl Connection {
             connected_on: get_current_time_in_seconds(),
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
-            closed: AtomicBool::new(false)
+            closed: AtomicBool::new(false),
+            encryption: Mutex::new(Encryption::new())
         }
     }
 
@@ -81,14 +99,24 @@ impl Connection {
         &self.rx
     }
 
-    pub async fn send_bytes(&self, buf: &[u8]) -> P2pResult<()> {
+    // Send bytes to the peer
+    // Encrypt must be used all time except for the handshake
+    pub async fn send_bytes(&self, packet: &[u8], encrypt_buffer: Option<&mut [u8]>) -> P2pResult<()> {
         let mut stream = self.write.lock().await;
-        stream.write_all(buf).await?;
-        self.bytes_out.fetch_add(buf.len(), Ordering::Relaxed);
+        if let Some(buffer) = encrypt_buffer {
+            let mut encryption = self.encryption.lock().await;
+            encryption.encrypt_packet(packet, buffer)?;
+            stream.write_all(buffer).await?;
+        } else {
+            stream.write_all(packet).await?;
+        }
+
+        self.bytes_out.fetch_add(packet.len(), Ordering::Relaxed);
         stream.flush().await?;
         Ok(())
     }
 
+    // Read packet bytes from the stream
     pub async fn read_packet_bytes(&self, buf: &mut [u8], max_size: u32) -> P2pResult<Vec<u8>> {
         let mut stream = self.read.lock().await;
         let size = self.read_packet_size(&mut stream, buf).await?;
@@ -164,6 +192,13 @@ impl Connection {
             }
         }
         self.bytes_in.fetch_add(read, Ordering::Relaxed);
+
+        // If it's a peer, and that the handshake was done, we decrypt the packet
+        if self.state == State::Success {
+            let encryption = self.encryption.lock().await;
+            encryption.decrypt_packet(&mut buf[0..read])?;
+        }
+
         Ok(read)
     }
 

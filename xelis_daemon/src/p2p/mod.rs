@@ -5,6 +5,7 @@ pub mod packet;
 pub mod peer_list;
 pub mod chain_validator;
 mod tracker;
+mod encryption;
 
 use indexmap::IndexSet;
 use lru::LruCache;
@@ -498,9 +499,10 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Send a handshake to a connection (this is used to determine if its a potential peer)
+    // Handsake is sent only once, when we connect to a new peer, and we get it back from connection to make it a peer
     async fn send_handshake(&self, connection: &Connection) -> Result<(), P2pError> {
         let handshake = self.build_handshake().await?;
-        connection.send_bytes(&handshake).await
+        connection.send_bytes(&handshake, None).await
     }
 
     // build a ping packet with the current state of the blockchain
@@ -876,7 +878,7 @@ impl<S: Storage> P2pServer<S> {
                     ConnectionMessage::Packet(bytes) => {
                         // there is a overhead of 4 for each packet (packet size u32 4 bytes, packet id u8 is counted in the packet size)
                         trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[4], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len());
-                        peer.get_connection().send_bytes(&bytes).await?;
+                        peer.get_connection().send_bytes(&bytes, None).await?;
                         trace!("data sucessfully sent!");
                     }
                     ConnectionMessage::Exit => {
