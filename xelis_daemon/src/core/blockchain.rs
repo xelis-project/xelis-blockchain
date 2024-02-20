@@ -1031,10 +1031,16 @@ impl<S: Storage> Blockchain<S> {
 
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, tips.clone().into_iter()).await?;
         let biggest_difficulty = provider.get_difficulty_for_block_hash(best_tip).await?;
+        let best_tip_timestamp = provider.get_timestamp_for_block_hash(best_tip).await?;
 
+        let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
+        let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, parent_tips.iter()).await?;
+        let parent_best_tip_timestamp = provider.get_timestamp_for_block_hash(parent_best_tip).await?;
+
+        let solve_time = best_tip_timestamp - parent_best_tip_timestamp;
         let average_solve_time = self.get_average_block_time(provider).await?;
 
-        let difficulty = calculate_difficulty(tips.len() as u64, average_solve_time, biggest_difficulty);
+        let difficulty = calculate_difficulty(tips.len() as u64, average_solve_time, solve_time, biggest_difficulty);
         Ok(difficulty)
     }
 
