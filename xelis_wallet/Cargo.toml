@@ -22,7 +22,7 @@ hex = "0.4.3"
 indexmap = { version = "2.0.0", features = ["serde"] }
 log = "0.4"
 rand = "0.8.4"
-thiserror = "1.0.30"
+thiserror = "1.0.57"
 tokio = { version = "1", features = ["rt-multi-thread"]}
 anyhow = "1"
 fern = { version = "0.6", features = ["colored"] }

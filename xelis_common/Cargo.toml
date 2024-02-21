@@ -17,7 +17,7 @@ serde_json = "1"
 rand = "0.8.4"
 ed25519-dalek = { version = "1.0.1", features = ["serde"] }
 curve25519-dalek = { package = "curve25519-dalek-ng", version = "4.1.1" }
-thiserror = "1.0.30"
+thiserror = "1.0.57"
 anyhow = "1.0.57"
 log = "0.4"
 fern = { version = "0.6", features = ["colored", "date-based"] }
@@ -36,6 +36,7 @@ regex = "1"
 serde_regex = "1.1.0"
 tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
 primitive-types = { version = "0.12.2", features = ["serde"] }
+xelis-he = { git = "ssh://git@github.com/xelis-project/xelis-he.git" }
 
 [features]
 json_rpc = ["dep:reqwest"]
