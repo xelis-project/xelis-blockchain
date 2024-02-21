@@ -114,7 +114,7 @@ impl Connection {
     // (That's what TLS/SSL does with the CA, but it's not decentralized and it's not trustless)
     // A potential idea would be to hardcode seed nodes keys,
     // and each nodes share the key of other along the socket address
-    pub async fn exchange_keys(&mut self) -> P2pResult<()> {
+    pub async fn exchange_keys(&mut self, buffer: &mut [u8]) -> P2pResult<()> {
         trace!("Exchanging keys with {}", self.addr);
 
         // Update our state
@@ -130,10 +130,9 @@ impl Connection {
         }
 
         // Wait for the peer to receive its key
-        let mut buffer = [0; 256];
         let Packet::KeyExchange(peer_key) = timeout(
             Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION),
-            self.read_packet(&mut buffer, 256)
+            self.read_packet(buffer, 256)
         ).await?? else {
             error!("Expected KeyExchange packet");
             return Err(P2pError::InvalidPacket);

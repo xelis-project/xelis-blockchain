@@ -329,11 +329,7 @@ impl<S: Storage> P2pServer<S> {
                         continue;
                     }
 
-                    let mut connection = Connection::new(stream, addr, false);
-                    if let Err(e) = connection.exchange_keys().await {
-                        debug!("Error while exchanging keys with incoming connection {}: {}", addr, e);
-                        continue;
-                    }
+                    let connection = Connection::new(stream, addr, false);
                     (connection, false)
                 },
                 Some(msg) = receiver.recv() => match msg {
@@ -424,6 +420,11 @@ impl<S: Storage> P2pServer<S> {
     // if the handshake is valid, we accept it & register it on server
     async fn handle_new_connection(self: &Arc<Self>, buf: &mut [u8], mut connection: Connection, priority: bool) -> Result<(), P2pError> {
         trace!("New connection: {}", connection);
+        connection.exchange_keys(buf).await?;
+        if connection.is_out() {
+            self.send_handshake(&connection).await?;
+        }
+
         let handshake: Handshake<'_> = match timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), connection.read_packet(buf, buf.len() as u32)).await?? {
             Packet::Handshake(h) => h.into_owned(), // only allow handshake packet
             _ => return Err(P2pError::ExpectedHandshake)
@@ -500,9 +501,7 @@ impl<S: Storage> P2pServer<S> {
             return Err(P2pError::PeerAlreadyConnected(format!("{}", addr)));
         }
         let stream = timeout(Duration::from_millis(800), TcpStream::connect(&addr)).await??; // allow maximum 800ms of latency
-        let mut connection = Connection::new(stream, addr, true);
-        connection.exchange_keys().await?;
-        self.send_handshake(&connection).await?;
+        let connection = Connection::new(stream, addr, true);
         Ok(connection)
     }
 
