@@ -1,28 +1,52 @@
 use std::{sync::Arc, borrow::Cow};
-
 use anyhow::Context as AnyContext;
-use log::info;
 use xelis_common::{
     rpc_server::{
-        RPCHandler, InternalRpcError, parse_params, websocket::WebSocketSessionShared
+        RPCHandler,
+        InternalRpcError,
+        parse_params,
+        websocket::WebSocketSessionShared
     },
     config::{VERSION, XELIS_ASSET},
     async_handler,
     api::{
         wallet::{
-            BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams,
-            GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetValueFromKeyParams,
-            StoreParams, GetMatchingKeysParams, GetAssetPrecisionParams, RescanParams, QueryDBParams, HasKeyParams, DeleteParams, EstimateFeesParams
+            BuildTransactionParams,
+            FeeBuilder,
+            TransactionResponse,
+            ListTransactionsParams,
+            GetAddressParams,
+            GetBalanceParams,
+            GetTransactionParams,
+            SplitAddressParams,
+            SplitAddressResult,
+            GetValueFromKeyParams,
+            StoreParams,
+            GetMatchingKeysParams,
+            GetAssetPrecisionParams,
+            RescanParams,
+            QueryDBParams,
+            HasKeyParams,
+            DeleteParams,
+            EstimateFeesParams,
         },
-        DataHash, DataElement
+        DataHash,
+        DataElement
     },
-    crypto::hash::Hashable,
-    serializer::Serializer, context::Context
+    crypto::Hashable,
+    serializer::Serializer,
+    context::Context
 };
 use serde_json::{Value, json};
-use crate::{wallet::{Wallet, WalletError}, entry::TransactionEntry};
-
+use crate::{
+    wallet::{
+        Wallet,
+        WalletError
+    },
+    entry::TransactionEntry
+};
 use super::xswd::XSWDWebSocketHandler;
+use log::info;
 
 // Register all RPC methods
 pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {

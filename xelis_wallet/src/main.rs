@@ -1,5 +1,8 @@
-use std::{sync::Arc, time::Duration, path::Path};
-
+use std::{
+    sync::Arc,
+    time::Duration,
+    path::Path
+};
 use anyhow::{Result, Context};
 use fern::colors::Color;
 use log::{error, info};
@@ -8,19 +11,24 @@ use xelis_common::{
     api::wallet::FeeBuilder,
     async_handler,
     config::{
-        COIN_DECIMALS, VERSION, XELIS_ASSET
+        COIN_DECIMALS,
+        VERSION,
+        XELIS_ASSET
     },
     crypto::{
-        address::{Address, AddressType},
-        hash::Hashable
+        Address,
+        AddressType,
+        Hashable
     },
     network::Network,
     prompt::{
-        self, argument::{
+        self,
+        argument::{
             Arg,
             ArgType,
             ArgumentManager
-        }, command::{
+        },
+        command::{
             Command,
             CommandError,
             CommandHandler,
@@ -31,8 +39,15 @@ use xelis_common::{
         PromptError
     },
     serializer::Serializer,
-    transaction::{Transaction, TransactionType},
-    utils::{format_coin, format_xelis, set_network_to}
+    transaction::{
+        Transaction,
+        TransactionType
+    },
+    utils::{
+        format_coin,
+        format_xelis,
+        set_network_to
+    }
 };
 use xelis_wallet::{
     wallet::Wallet,
@@ -42,7 +57,11 @@ use xelis_wallet::{
 #[cfg(feature = "api_server")]
 use {
     xelis_wallet::{
-        api::{AuthConfig, PermissionResult, AppStateShared},
+        api::{
+            AuthConfig,
+            PermissionResult,
+            AppStateShared
+        },
         wallet::XSWDEvent,
     },
     xelis_common::{

@@ -1,26 +1,67 @@
-use std::{sync::{Arc, atomic::{AtomicBool, Ordering}}, collections::{HashMap, HashSet}, borrow::Cow};
+use std::{
+    sync::{
+        Arc,
+        atomic::{
+            AtomicBool,
+            Ordering
+        }
+    },
+    collections::{
+        HashMap,
+        HashSet
+    },
+    borrow::Cow
+};
 use anyhow::Error;
 use async_trait::async_trait;
-use actix_web::{get, web::{Data, Payload, self, Bytes}, HttpRequest, Responder, HttpServer, App, dev::ServerHandle, HttpResponse};
-use log::{info, error, debug};
-use serde_json::{Value, json};
-use tokio::sync::{Mutex, RwLock, Semaphore};
+use actix_web::{
+    get,
+    web::{
+        Data,
+        Payload,
+        self,
+        Bytes
+    },
+    HttpRequest,
+    Responder,
+    HttpServer,
+    App,
+    dev::ServerHandle,
+    HttpResponse
+};
+use serde_json::{
+    Value,
+    json
+};
+use tokio::sync::{
+    Mutex,
+    RwLock,
+    Semaphore
+};
 use xelis_common::{
     rpc_server::{
         RPCHandler,
         websocket::{
-            WebSocketHandler, WebSocketSessionShared, WebSocketServer
+            WebSocketHandler,
+            WebSocketSessionShared,
+            WebSocketServer
         },
-        RpcRequest, RpcResponseError, InternalRpcError, RpcResponse
+        RpcRequest,
+        RpcResponseError,
+        InternalRpcError,
+        RpcResponse
     },
     crypto::{
-        key::{
-            Signature, SIGNATURE_LENGTH, PublicKey
-        },
-        hash::hash
+        Signature,
+        SIGNATURE_LENGTH,
+        PublicKey,
+        hash
     },
     serializer::{
-        Serializer, ReaderError, Reader, Writer
+        Serializer,
+        ReaderError,
+        Reader,
+        Writer
     },
     api::{
         wallet::NotifyEvent,
@@ -29,6 +70,11 @@ use xelis_common::{
 };
 use serde::{Deserialize, Serialize};
 use crate::config::XSWD_BIND_ADDRESS;
+use log::{
+    debug,
+    info,
+    error,
+};
 
 // XSWD Protocol (XELIS Secure WebSocket DApp)
 // is a way to communicate with the XELIS Wallet

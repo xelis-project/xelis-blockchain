@@ -4,39 +4,79 @@ use std::sync::Arc;
 use anyhow::{Error, Context};
 use serde::Serialize;
 use tokio::sync::{
-    broadcast::{Sender as BroadcastSender, Receiver as BroadcastReceiver},
-    {Mutex, RwLock}
+    broadcast::{
+        Sender as BroadcastSender,
+        Receiver as BroadcastReceiver
+    },
+    Mutex,
+    RwLock
 };
 use xelis_common::{
     api::{
         DataElement,
-        wallet::{FeeBuilder, NotifyEvent, BalanceChanged}
+        wallet::{
+            FeeBuilder,
+            NotifyEvent,
+            BalanceChanged
+        }
     },
     asset::AssetWithData,
     config::{XELIS_ASSET, COIN_DECIMALS},
     crypto::{
-        address::{Address, AddressType},
-        hash::Hash,
-        key::{KeyPair, PublicKey, Signature},
+        Address,
+        AddressType,
+        Hash,
+        KeyPair,
+        PublicKey,
+        Signature,
     },
-    utils::{format_xelis, format_coin},
+    utils::{
+        format_xelis,
+        format_coin
+    },
     network::Network,
-    serializer::{Serializer, Writer},
-    transaction::{TransactionType, Transfer, Transaction, EXTRA_DATA_LIMIT_SIZE},
+    serializer::{
+        Serializer,
+        Writer
+    },
+    transaction::{
+        TransactionType,
+        Transfer,
+        Transaction,
+        EXTRA_DATA_LIMIT_SIZE
+    },
 };
 use crate::{
     cipher::Cipher,
-    config::{PASSWORD_ALGORITHM, PASSWORD_HASH_SIZE, SALT_SIZE},
+    config::{
+        PASSWORD_ALGORITHM,
+        PASSWORD_HASH_SIZE,
+        SALT_SIZE
+    },
     entry::TransactionEntry,
-    network_handler::{NetworkHandler, SharedNetworkHandler, NetworkError},
-    storage::{EncryptedStorage, Storage},
+    network_handler::{
+        NetworkHandler,
+        SharedNetworkHandler,
+        NetworkError
+    },
+    storage::{
+        EncryptedStorage,
+        Storage
+    },
     transaction_builder::TransactionBuilder,
     mnemonics,
 };
-use chacha20poly1305::{aead::OsRng, Error as CryptoError};
+use chacha20poly1305::{
+    aead::OsRng,
+    Error as CryptoError
+};
 use rand::RngCore;
 use thiserror::Error;
-use log::{debug, error, trace};
+use log::{
+    trace,
+    debug,
+    error,
+};
 
 #[cfg(feature = "api_server")]
 use {

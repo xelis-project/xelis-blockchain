@@ -5,20 +5,48 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::broadcast;
 use xelis_common::{
-    json_rpc::{WebSocketJsonRPCClient, WebSocketJsonRPCClientImpl, JsonRPCResult, EventReceiver},
+    json_rpc::{
+        WebSocketJsonRPCClient,
+        WebSocketJsonRPCClientImpl,
+        JsonRPCResult,
+        EventReceiver
+    },
     api::daemon::{
-        GetBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams,
-        GetInfoResult, SubmitTransactionParams, BlockResponse,
-        GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams,
-        GetNonceResult, GetAssetsParams, IsTxExecutedInBlockParams,
-        NotifyEvent, NewBlockEvent, BlockOrderedEvent, StableHeightChangedEvent, TransactionAddedInMempoolEvent, GetAccountAssetsParams, GetAssetParams
+        GetBalanceResult,
+        GetBalanceAtTopoHeightParams,
+        GetBalanceParams,
+        GetInfoResult,
+        SubmitTransactionParams,
+        BlockResponse,
+        GetBlockAtTopoHeightParams,
+        GetTransactionParams,
+        GetNonceParams,
+        GetNonceResult,
+        GetAssetsParams,
+        IsTxExecutedInBlockParams,
+        NotifyEvent,
+        NewBlockEvent,
+        BlockOrderedEvent,
+        StableHeightChangedEvent,
+        TransactionAddedInMempoolEvent,
+        GetAccountAssetsParams,
+        GetAssetParams
     },
     account::VersionedBalance,
-    crypto::{address::Address, hash::Hash},
+    crypto::{
+        Address,
+        Hash
+    },
     transaction::Transaction,
     serializer::Serializer,
-    block::{BlockHeader, Block},
-    asset::{AssetWithData, AssetData}
+    block::{
+        BlockHeader,
+        Block
+    },
+    asset::{
+        AssetWithData,
+        AssetData
+    }
 };
 
 pub struct DaemonAPI {

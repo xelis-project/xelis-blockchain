@@ -1,10 +1,24 @@
 use std::collections::HashMap;
 
 use xelis_common::{
-    transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
+    transaction::{
+        Transaction,
+        TransactionType,
+        EXTRA_DATA_LIMIT_SIZE
+    },
     utils::calculate_tx_fee,
-    serializer::{Writer, Serializer},
-    crypto::{key::{SIGNATURE_LENGTH, PublicKey, KeyPair}, hash::{Hash, hash}}, api::wallet::FeeBuilder, config::MAX_TRANSACTION_SIZE
+    serializer::{
+        Writer,
+        Serializer
+    },
+    crypto::{
+        SIGNATURE_LENGTH,
+        PublicKey,
+        KeyPair, Hash,
+        hash
+    },
+    api::wallet::FeeBuilder,
+    config::MAX_TRANSACTION_SIZE
 };
 
 use crate::wallet::WalletError;

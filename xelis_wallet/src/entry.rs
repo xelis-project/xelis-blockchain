@@ -1,7 +1,24 @@
-use std::fmt::{self, Display, Formatter};
-
+use std::fmt::{
+    self,
+    Display,
+    Formatter
+};
 use serde::Serialize;
-use xelis_common::{crypto::{hash::Hash, key::PublicKey}, serializer::{Serializer, ReaderError, Reader, Writer}, utils::format_xelis, api::DataElement, config::XELIS_ASSET};
+use xelis_common::{
+    crypto::{
+        Hash,
+        PublicKey
+    },
+    serializer::{
+        Serializer,
+        ReaderError,
+        Reader,
+        Writer
+    },
+    utils::format_xelis,
+    api::DataElement,
+    config::XELIS_ASSET
+};
 
 #[derive(Debug, Serialize, Clone)]
 pub struct Transfer {

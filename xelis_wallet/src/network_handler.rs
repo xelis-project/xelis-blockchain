@@ -1,10 +1,19 @@
-use std::{sync::Arc, collections::{HashMap, HashSet}};
+use std::{
+    sync::Arc,
+    collections::{
+        HashMap,
+        HashSet
+    }
+};
 use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, warn, trace};
 use tokio::{task::JoinHandle, sync::Mutex};
 use xelis_common::{
-    crypto::{hash::Hash, address::Address},
+    crypto::{
+        Hash,
+        Address
+    },
     block::Block,
     transaction::TransactionType,
     asset::AssetWithData,
@@ -12,14 +21,23 @@ use xelis_common::{
     api::{
         DataElement,
         wallet::BalanceChanged,
-        daemon::{NewBlockEvent, BlockResponse}
+        daemon::{
+            NewBlockEvent,
+            BlockResponse
+        }
     },
 };
-
 use crate::{
     daemon_api::DaemonAPI,
-    wallet::{Wallet, Event},
-    entry::{EntryData, Transfer, TransactionEntry}
+    wallet::{
+        Wallet,
+        Event
+    },
+    entry::{
+        EntryData,
+        Transfer,
+        TransactionEntry
+    }
 };
 
 // NetworkHandler must be behind a Arc to be accessed from Wallet (to stop it) or from tokio task
@@ -276,7 +294,9 @@ impl NetworkHandler {
                 if balances && highest_version && changes {
                     let mut storage = self.wallet.get_storage().write().await;
                     let previous_balance = storage.get_balance_for(asset).unwrap_or(0);
-                    let new_balance = version.get_balance();
+                    // TODO decrypt the balance
+                    // let new_balance = version.get_balance();
+                    let new_balance = 0;
                     if previous_balance != new_balance {
                         storage.set_balance_for(asset, new_balance)?;
                         // Propagate the event
@@ -463,8 +483,9 @@ impl NetworkHandler {
             }
 
             // get the balance for this asset
-            let balance = self.api.get_balance(&address, &asset).await.map(|v| v.version)?;
-            balances.insert(asset, balance.get_balance());
+            let _balance = self.api.get_balance(&address, &asset).await.map(|v| v.version)?;
+            let balance = 0; //balance.get_balance();
+            balances.insert(asset, balance);
         }
 
         let mut should_sync_blocks = false;
@@ -478,7 +499,9 @@ impl NetworkHandler {
                 should_sync_blocks = true;
             }
 
-            for (asset, value) in balances {
+            for (asset, _value) in balances {
+                // TODO decrypt the balance and compare it with the new one
+                let value = 0;
                 let must_update = match storage.get_balance_for(&asset) {
                     Ok(previous) => previous != value,
                     // If we don't have a balance for this asset, we should update it

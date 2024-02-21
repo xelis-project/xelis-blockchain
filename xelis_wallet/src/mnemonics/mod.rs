@@ -1,11 +1,13 @@
 pub mod languages;
 
 use std::collections::HashMap;
-
 use anyhow::{Result, Context, anyhow};
 use lazy_static::lazy_static;
 use log::debug;
-use xelis_common::{crypto::key::PrivateKey, serializer::Serializer};
+use xelis_common::{
+    crypto::PrivateKey,
+    serializer::Serializer
+};
 use languages::*;
 
 const KEY_SIZE: usize = 32;
