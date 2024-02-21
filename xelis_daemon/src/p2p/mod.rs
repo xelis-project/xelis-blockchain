@@ -7,6 +7,8 @@ pub mod chain_validator;
 mod tracker;
 mod encryption;
 
+pub use encryption::EncryptionKey;
+
 use indexmap::IndexSet;
 use lru::LruCache;
 use xelis_common::{
@@ -296,7 +298,7 @@ impl<S: Storage> P2pServer<S> {
         // only allocate one time the buffer for this packet
         let mut handshake_buffer = [0; 512];
         loop {
-            let (connection, out, priority) = select! {
+            let (connection, priority) = select! {
                 res = listener.accept() => {
                     trace!("New listener result received (is err: {})", res.is_err());
                     let (mut stream, addr) = res?;
@@ -327,7 +329,12 @@ impl<S: Storage> P2pServer<S> {
                         continue;
                     }
 
-                    (Connection::new(stream, addr), false, false)
+                    let mut connection = Connection::new(stream, addr, false);
+                    if let Err(e) = connection.exchange_keys().await {
+                        debug!("Error while exchanging keys with incoming connection {}: {}", addr, e);
+                        continue;
+                    }
+                    (connection, false)
                 },
                 Some(msg) = receiver.recv() => match msg {
                     MessageChannel::Exit => break,
@@ -338,7 +345,7 @@ impl<S: Storage> P2pServer<S> {
                         }
 
                         match self.connect_to_peer(addr).await {
-                            Ok(connection) => (connection, true, priority),
+                            Ok(connection) => (connection, priority),
                             Err(e) => {
                                 trace!("Error while trying to connect to new outgoing peer: {}", e);
                                 // if its a outgoing connection, increase its fail count
@@ -350,9 +357,9 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
             };
-            trace!("Handling new connection: {} (out = {}, priority = {})", connection, out, priority);
-            if let Err(e) = self.handle_new_connection(&mut handshake_buffer, connection, out, priority).await {
-                trace!("Error occured on handled connection: {}", e);
+            trace!("Handling new connection: {} (out = {}, priority = {})", connection, connection.is_out(), priority);
+            if let Err(e) = self.handle_new_connection(&mut handshake_buffer, connection, priority).await {
+                debug!("Error occured on handled connection: {}", e);
                 // no need to close it here, as it will be automatically closed in drop
             }
         }
@@ -363,7 +370,7 @@ impl<S: Storage> P2pServer<S> {
     // Verify handshake send by a new connection
     // based on data size, network ID, peers address validity
     // block height and block top hash of this peer (to know if we are on the same chain)
-    async fn verify_handshake(&self, mut connection: Connection, handshake: Handshake<'_>, out: bool, priority: bool) -> Result<Peer, P2pError> {
+    async fn verify_handshake(&self, mut connection: Connection, handshake: Handshake<'_>, priority: bool) -> Result<Peer, P2pError> {
         if handshake.get_network() != self.blockchain.get_network() {
             trace!("{} has an invalid network: {}", connection, handshake.get_network());
             return Err(P2pError::InvalidNetwork)
@@ -395,7 +402,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         connection.set_state(State::Success);
-        let peer = handshake.create_peer(connection, out, priority, Arc::clone(&self.peer_list));
+        let peer = handshake.create_peer(connection, priority, Arc::clone(&self.peer_list));
         Ok(peer)
     }
 
@@ -415,7 +422,7 @@ impl<S: Storage> P2pServer<S> {
     // this function handle all new connections
     // A new connection have to send an Handshake
     // if the handshake is valid, we accept it & register it on server
-    async fn handle_new_connection(self: &Arc<Self>, buf: &mut [u8], mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
+    async fn handle_new_connection(self: &Arc<Self>, buf: &mut [u8], mut connection: Connection, priority: bool) -> Result<(), P2pError> {
         trace!("New connection: {}", connection);
         let handshake: Handshake<'_> = match timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), connection.read_packet(buf, buf.len() as u32)).await?? {
             Packet::Handshake(h) => h.into_owned(), // only allow handshake packet
@@ -423,11 +430,11 @@ impl<S: Storage> P2pServer<S> {
         };
         trace!("received handshake packet!");
         connection.set_state(State::Handshake);
-        let peer = self.verify_handshake(connection, handshake, out, priority).await?;
+        let peer = self.verify_handshake(connection, handshake, priority).await?;
         trace!("Handshake has been verified");
         // if it's a outgoing connection, don't send the handshake back
         // because we have already sent it
-        if !out {
+        if !peer.is_out() {
             trace!("Sending handshake back to {}", peer);
             self.send_handshake(peer.get_connection()).await?;
         }
@@ -493,7 +500,8 @@ impl<S: Storage> P2pServer<S> {
             return Err(P2pError::PeerAlreadyConnected(format!("{}", addr)));
         }
         let stream = timeout(Duration::from_millis(800), TcpStream::connect(&addr)).await??; // allow maximum 800ms of latency
-        let connection = Connection::new(stream, addr);
+        let mut connection = Connection::new(stream, addr, true);
+        connection.exchange_keys().await?;
         self.send_handshake(&connection).await?;
         Ok(connection)
     }
@@ -501,8 +509,9 @@ impl<S: Storage> P2pServer<S> {
     // Send a handshake to a connection (this is used to determine if its a potential peer)
     // Handsake is sent only once, when we connect to a new peer, and we get it back from connection to make it a peer
     async fn send_handshake(&self, connection: &Connection) -> Result<(), P2pError> {
+        trace!("Sending handshake to {}", connection);
         let handshake = self.build_handshake().await?;
-        connection.send_bytes(&handshake, None).await
+        connection.send_bytes(&handshake).await
     }
 
     // build a ping packet with the current state of the blockchain
@@ -878,7 +887,7 @@ impl<S: Storage> P2pServer<S> {
                     ConnectionMessage::Packet(bytes) => {
                         // there is a overhead of 4 for each packet (packet size u32 4 bytes, packet id u8 is counted in the packet size)
                         trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[4], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len());
-                        peer.get_connection().send_bytes(&bytes, None).await?;
+                        peer.get_connection().send_bytes(&bytes).await?;
                         trace!("data sucessfully sent!");
                     }
                     ConnectionMessage::Exit => {
@@ -1009,6 +1018,11 @@ impl<S: Storage> P2pServer<S> {
                 error!("{} sent us handshake packet (not valid!)", peer);
                 peer.get_connection().close().await?;
                 return Err(P2pError::InvalidPacket)
+            },
+            Packet::KeyExchange(key) => {
+                trace!("{}: Rotate key packet", peer);
+                let key = key.into_owned();
+                peer.get_connection().rotate_peer_key(key).await?;
             },
             Packet::TransactionPropagation(packet_wrapper) => {
                 trace!("{}: Transaction Propagation packet", peer);

@@ -81,9 +81,9 @@ impl<'a> Handshake<'a> {
     }
 
     // Create a new peer using its connection and this handshake packet
-    pub fn create_peer(self, connection: Connection, out: bool, priority: bool, peer_list: SharedPeerList) -> Peer {
+    pub fn create_peer(self, connection: Connection, priority: bool, peer_list: SharedPeerList) -> Peer {
         let peers = HashSet::new();
-        Peer::new(connection, self.get_peer_id(), self.node_tag.into_owned(), self.local_port, self.version.into_owned(), self.top_hash.into_owned(), self.topoheight, self.height, self.pruned_topoheight, out, priority, self.cumulative_difficulty.into_owned(), peer_list, peers)
+        Peer::new(connection, self.get_peer_id(), self.node_tag.into_owned(), self.local_port, self.version.into_owned(), self.top_hash.into_owned(), self.topoheight, self.height, self.pruned_topoheight, priority, self.cumulative_difficulty.into_owned(), peer_list, peers)
     }
 
     pub fn get_version(&self) -> &String {

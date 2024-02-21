@@ -22,7 +22,7 @@ use super::{
         Packet
     },
     peer_list::SharedPeerList,
-    connection::{Connection, ConnectionMessage},
+    connection::Connection,
     error::P2pError
 };
 use std::{
@@ -60,8 +60,6 @@ pub struct Peer {
     local_port: u16,
     // daemon version
     version: String,
-    // True mean we are the client
-    out: bool,
     // if this node can be trusted (seed node or added manually by user)
     priority: bool,
     // current block top hash for this peer
@@ -112,7 +110,7 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>) -> Self {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
 
@@ -130,7 +128,6 @@ impl Peer {
             top_hash: Mutex::new(top_hash),
             topoheight: AtomicU64::new(topoheight),
             height: AtomicU64::new(height),
-            out,
             priority,
             last_fail_count: AtomicU64::new(0),
             fail_count: AtomicU8::new(0),
@@ -261,7 +258,7 @@ impl Peer {
 
     // Verify if its a outgoing connection
     pub fn is_out(&self) -> bool {
-        self.out
+        self.connection.is_out()
     }
 
     // Get the priority flag of the peer
@@ -529,11 +526,7 @@ impl Peer {
     // Send packet bytes to the peer
     // This will send the bytes to the writer task through its channel
     pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), P2pError> {
-        trace!("Sending {} bytes to {}", bytes.len(), self.get_outgoing_address());
-        let tx = self.connection.get_tx().lock().await;
-        trace!("Lock acquired, Sending packet");
-        tx.send(ConnectionMessage::Packet(bytes))?;
-        Ok(())
+        self.get_connection().send_bytes_to_task(bytes).await
     }
 }
 

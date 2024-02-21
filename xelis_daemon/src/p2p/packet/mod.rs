@@ -21,6 +21,8 @@ use xelis_common::{
     crypto::hash::Hash
 };
 
+use super::EncryptionKey;
+
 // All registered packet ids
 const HANDSHAKE_ID: u8 = 0;
 const TX_PROPAGATION_ID: u8 = 1;
@@ -35,6 +37,7 @@ const NOTIFY_INV_RESPONSE_ID: u8 = 9;
 const BOOTSTRAP_CHAIN_REQUEST_ID: u8 = 10;
 const BOOTSTRAP_CHAIN_RESPONSE_ID: u8 = 11;
 const PEER_DISCONNECTED_ID: u8 = 12;
+const KEY_EXCHANGE_ID: u8 = 13;
 
 // PacketWrapper allows us to link any Packet to a Ping
 #[derive(Debug)]
@@ -89,7 +92,9 @@ pub enum Packet<'a> {
     NotifyInventoryResponse(NotifyInventoryResponse<'a>),
     BootstrapChainRequest(BootstrapChainRequest<'a>),
     BootstrapChainResponse(BootstrapChainResponse),
-    PeerDisconnected(PacketPeerDisconnected)
+    PeerDisconnected(PacketPeerDisconnected),
+    // Encryption
+    KeyExchange(Cow<'a, EncryptionKey>),
 }
 
 impl Packet<'_> {
@@ -107,7 +112,8 @@ impl Packet<'_> {
             Packet::NotifyInventoryResponse(_) => NOTIFY_INV_RESPONSE_ID,
             Packet::BootstrapChainRequest(_) => BOOTSTRAP_CHAIN_REQUEST_ID,
             Packet::BootstrapChainResponse(_) => BOOTSTRAP_CHAIN_RESPONSE_ID,
-            Packet::PeerDisconnected(_) => PEER_DISCONNECTED_ID
+            Packet::PeerDisconnected(_) => PEER_DISCONNECTED_ID,
+            Packet::KeyExchange(_) => KEY_EXCHANGE_ID,
         }
     }
 }
@@ -130,6 +136,7 @@ impl<'a> Serializer for Packet<'a> {
             BOOTSTRAP_CHAIN_REQUEST_ID => Packet::BootstrapChainRequest(BootstrapChainRequest::read(reader)?),
             BOOTSTRAP_CHAIN_RESPONSE_ID => Packet::BootstrapChainResponse(BootstrapChainResponse::read(reader)?),
             PEER_DISCONNECTED_ID => Packet::PeerDisconnected(PacketPeerDisconnected::read(reader)?),
+            KEY_EXCHANGE_ID => Packet::KeyExchange(Cow::Owned(EncryptionKey::read(reader)?)),
             id => {
                 error!("invalid packet id received: {}", id);
                 return Err(ReaderError::InvalidValue)
@@ -157,12 +164,11 @@ impl<'a> Serializer for Packet<'a> {
             Packet::NotifyInventoryResponse(inventory) => (NOTIFY_INV_RESPONSE_ID, inventory),
             Packet::BootstrapChainRequest(request) => (BOOTSTRAP_CHAIN_REQUEST_ID, request),
             Packet::BootstrapChainResponse(response) => (BOOTSTRAP_CHAIN_RESPONSE_ID, response),
-            Packet::PeerDisconnected(disconnected) => (PEER_DISCONNECTED_ID, disconnected)
+            Packet::PeerDisconnected(disconnected) => (PEER_DISCONNECTED_ID, disconnected),
+            Packet::KeyExchange(key) => (KEY_EXCHANGE_ID, key),
         };
 
         let packet = serializer.to_bytes();
-        let packet_len: u32 = packet.len() as u32 + 1;
-        writer.write_u32(&packet_len);
         writer.write_u8(id);
         writer.write_bytes(&packet);
     }

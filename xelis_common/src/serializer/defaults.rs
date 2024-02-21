@@ -290,3 +290,12 @@ impl Serializer for SocketAddr {
         self.port().write(writer);
     }
 }
+
+impl Serializer for () {
+    fn read(_reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(())
+    }
+
+    fn write(&self, _writer: &mut Writer) {
+    }
+}

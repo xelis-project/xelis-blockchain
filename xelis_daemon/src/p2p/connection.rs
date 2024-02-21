@@ -1,9 +1,11 @@
 use super::{
-    encryption::Encryption,
+    encryption::{Encryption, EncryptionError},
     error::P2pError,
-    packet::Packet
+    packet::Packet,
+    EncryptionKey
 };
 use std::{
+    borrow::Cow,
     convert::TryInto,
     fmt::{Display, Error, Formatter},
     net::SocketAddr,
@@ -17,19 +19,20 @@ use std::{
 use human_bytes::human_bytes;
 use humantime::format_duration;
 use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{
-        TcpStream,
-        tcp::{OwnedWriteHalf, OwnedReadHalf}
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream
     },
     sync::{mpsc, Mutex},
-    io::{AsyncWriteExt, AsyncReadExt},
+    time::timeout
 };
 use xelis_common::{
     time::{TimestampSeconds, get_current_time_in_seconds},
     serializer::{Reader, Serializer},
 };
 use bytes::Bytes;
-use log::{trace, warn};
+use log::{debug, error, trace, warn};
 
 pub enum ConnectionMessage {
     Packet(Bytes),
@@ -44,11 +47,15 @@ type P2pResult<T> = Result<T, P2pError>;
 #[derive(Debug, PartialEq, Eq)]
 pub enum State {
     Pending, // connection is new, no handshake received
+    KeyHandshake, // peer key received, sending our
     Handshake, // handshake received, not checked
     Success // handshake is valid
 }
 
 pub struct Connection {
+    // True mean we are the client
+    out: bool,
+    // State of the connection
     state: State,
     // write to stream
     write: Mutex<OwnedWriteHalf>,
@@ -69,14 +76,18 @@ pub struct Connection {
     // if Connection#close() is called, close is set to true
     closed: AtomicBool,
     // Encryption state used for packets
-    encryption: Mutex<Encryption>
+    encryption: Mutex<Option<Encryption>>
 }
 
+// We are rotating every 1GB sent
+const ROTATE_EVERY_N_BYTES: usize = 1024 * 1024 * 1024;
+
 impl Connection {
-    pub fn new(stream: TcpStream, addr: SocketAddr) -> Self {
+    pub fn new(stream: TcpStream, addr: SocketAddr, out: bool) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
         let (read, write) = stream.into_split();
         Self {
+            out,
             state: State::Pending,
             write: Mutex::new(write),
             read: Mutex::new(read),
@@ -87,31 +98,129 @@ impl Connection {
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
             closed: AtomicBool::new(false),
-            encryption: Mutex::new(Encryption::new())
+            encryption: Mutex::new(None)
         }
     }
 
-    pub fn get_tx(&self) -> &Mutex<Tx> {
-        &self.tx
+    // TODO: Refactor
+    pub async fn send_our_key(&self) -> P2pResult<()> {
+        let mut encryption = Encryption::new();
+        let packet = self.rotate_key_packet(&mut encryption).await?;
+        self.send_bytes(&packet).await?;
+
+        let mut guard = self.encryption.lock().await;
+        *guard = Some(encryption);
+
+        Ok(())
+    }
+
+    // TODO: Refactor
+    pub async fn exchange_keys(&mut self) -> P2pResult<()> {
+        self.set_state(State::KeyHandshake);
+        if self.is_out() {
+            self.send_our_key().await?;
+        }
+
+        let mut buffer = [0; 256];
+        let Packet::KeyExchange(peer_key) = timeout(Duration::from_millis(5000), self.read_packet(&mut buffer, 256)).await?? else {
+            error!("Expected KeyExchange packet");
+            return Err(P2pError::InvalidPacket);
+        };
+
+        let mut encryption = self.encryption.lock().await;
+        if let Some(encryption) = encryption.as_mut() {
+            encryption.rotate_key(peer_key.into_owned(), false)?;
+        } else {
+            drop(encryption);
+
+            let mut encryption = Encryption::new();
+            encryption.rotate_key(peer_key.into_owned(), false)?;
+
+            let packet = self.rotate_key_packet(&mut encryption).await?;
+            self.send_bytes(&packet).await?;
+
+            let mut guard = self.encryption.lock().await;
+            *guard = Some(encryption);
+        }
+        Ok(())
+    }
+
+    // Verify if its a outgoing connection
+    pub fn is_out(&self) -> bool {
+        self.out
+    }
+
+    // Send packet bytes to the peer
+    // This will send the bytes to the writer task through its channel
+    pub async fn send_bytes_to_task(&self, bytes: Bytes) -> Result<(), P2pError> {
+        trace!("Sending {} bytes to {}", bytes.len(), self.addr);
+        let tx = self.tx.lock().await;
+        trace!("Lock acquired, Sending packet");
+        tx.send(ConnectionMessage::Packet(bytes))?;
+        Ok(())
     }
 
     pub fn get_rx(&self) -> &Mutex<Rx> {
         &self.rx
     }
 
+    // This will send to the peer a packet to rotate the key
+    async fn rotate_key_packet(&self, encryption: &mut Encryption) -> P2pResult<Bytes> {
+        let new_key = encryption.generate_key();
+        let write_ready = encryption.is_write_ready();
+
+        encryption.rotate_key(new_key, true)?;
+
+        let mut packet = Bytes::from(Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes());
+        if write_ready {
+            packet = encryption.encrypt_packet(&packet)?.into();
+        }
+
+        Ok(packet)
+    }
+
+    // Rotate the peer symetric key
+    // We update our state
+    // Because we use TCP and packets are read/executed in sequential order,
+    // We don't need to send a ACK to the peer to confirm the key rotation
+    // as all next packets will be encrypted with the new key and we have updated it before
+    pub async fn rotate_peer_key(&self, key: EncryptionKey) -> P2pResult<()> {
+        let mut encryption = self.encryption.lock().await;
+        if let Some(encryption) = encryption.as_mut() {
+            encryption.rotate_key(key, false)?;
+            Ok(())
+        } else {
+            Err(EncryptionError::NotSupported.into())
+        }
+    }
+
     // Send bytes to the peer
     // Encrypt must be used all time except for the handshake
-    pub async fn send_bytes(&self, packet: &[u8], encrypt_buffer: Option<&mut [u8]>) -> P2pResult<()> {
+    pub async fn send_bytes(&self, packet: &[u8]) -> P2pResult<()> {
         let mut stream = self.write.lock().await;
-        if let Some(buffer) = encrypt_buffer {
-            let mut encryption = self.encryption.lock().await;
-            encryption.encrypt_packet(packet, buffer)?;
-            stream.write_all(buffer).await?;
+
+        // Count the bytes sent
+        let bytes_out = self.bytes_out.fetch_add(packet.len(), Ordering::Relaxed);
+
+        let mut guard = self.encryption.lock().await;
+        if let Some(encryption) = guard.as_mut().and_then(|e| e.is_write_ready().then(|| e)){
+            let buffer = encryption.encrypt_packet(packet)?;
+            let buf_len = buffer.len() as u32;
+            stream.write(&buf_len.to_be_bytes()).await?;
+            stream.write_all(&buffer).await?;
+
+            // Rotate the key if necessary
+            if bytes_out > 0 && bytes_out % ROTATE_EVERY_N_BYTES == 0 {
+                debug!("Rotating our key with peer {}", self.get_address());
+                let packet = self.rotate_key_packet(encryption).await?;
+                stream.write_all(&packet).await?;
+            }
         } else {
+            let packet_len = packet.len() as u32;
+            stream.write_all(&packet_len.to_be_bytes()).await?;
             stream.write_all(packet).await?;
         }
 
-        self.bytes_out.fetch_add(packet.len(), Ordering::Relaxed);
         stream.flush().await?;
         Ok(())
     }
@@ -170,7 +279,15 @@ impl Connection {
             left -= read as u32;
             bytes.extend(&buf[0..read]);
         }
-        Ok(bytes)
+
+        // If encryption is supported, use it
+        let mut guard = self.encryption.lock().await;
+        if let Some(encryption) = guard.as_mut().and_then(|e| e.is_read_ready().then(|| e)) {
+            let content = encryption.decrypt_packet(&bytes)?;
+            Ok(content)
+        } else {
+            Ok(bytes)
+        }
     }
 
     // this function will wait until something is sent to the socket if it's in blocking mode
@@ -193,18 +310,12 @@ impl Connection {
         }
         self.bytes_in.fetch_add(read, Ordering::Relaxed);
 
-        // If it's a peer, and that the handshake was done, we decrypt the packet
-        if self.state == State::Success {
-            let encryption = self.encryption.lock().await;
-            encryption.decrypt_packet(&mut buf[0..read])?;
-        }
-
         Ok(read)
     }
 
     pub async fn close(&self) -> P2pResult<()> {
         self.closed.store(true, Ordering::Relaxed);
-        let tx = self.get_tx().lock().await;
+        let tx = self.tx.lock().await;
         tx.send(ConnectionMessage::Exit)?; // send a exit message to stop the current lock of stream
         let mut stream = self.write.lock().await;
         stream.shutdown().await?; // sometimes the peer is not removed on other peer side
