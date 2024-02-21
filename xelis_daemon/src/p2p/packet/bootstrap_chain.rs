@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{
-    asset::AssetWithData, crypto::{hash::Hash, key::PublicKey}, difficulty::{CumulativeDifficulty, Difficulty}, serializer::{Reader, ReaderError, Serializer, Writer}
+    account::BalanceRepresentation, asset::AssetWithData, crypto::{hash::Hash, key::PublicKey}, difficulty::{CumulativeDifficulty, Difficulty}, serializer::{Reader, ReaderError, Serializer, Writer}
 };
 use super::chain::{BlockId, CommonPoint};
 use crate::config::CHAIN_SYNC_REQUEST_MAX_BLOCKS;
@@ -234,7 +234,7 @@ pub enum StepResponse {
     ChainInfo(Option<CommonPoint>, u64, u64, Hash), // common point, topoheight of stable hash, stable height, stable hash
     Assets(IndexSet<AssetWithData>, Option<u64>), // Set of assets, pagination
     Keys(IndexSet<PublicKey>, Option<u64>), // Set of keys, pagination
-    Balances(Vec<Option<u64>>), // Balances requested
+    Balances(Vec<Option<BalanceRepresentation>>), // Balances requested
     Nonces(Vec<u64>), // Nonces for requested accounts
     BlocksMetadata(Vec<BlockMetadata>), // top blocks metadata
 }
@@ -286,7 +286,7 @@ impl Serializer for StepResponse {
                 Self::Keys(keys, page)
             },
             3 => {
-                Self::Balances(Vec::<Option<u64>>::read(reader)?)
+                Self::Balances(Vec::read(reader)?)
             },
             4 => {
                 Self::Nonces(Vec::<u64>::read(reader)?)

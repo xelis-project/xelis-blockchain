@@ -1786,7 +1786,7 @@ impl<S: Storage> Blockchain<S> {
                 // save balances for each topoheight
                 for (key, assets) in local_balances {
                     for (asset, balance) in assets {
-                        trace!("Saving balance {} for {} at topo {}, previous: {:?}", balance.get_balance(), key, highest_topo, balance.get_previous_topoheight());
+                        trace!("Saving balance {:?} for {} at topo {}, previous: {:?}", balance.get_balance(), key, highest_topo, balance.get_previous_topoheight());
                         // Save the balance for this topoheight
                         storage.set_last_balance_to(key, asset, highest_topo, &balance).await?;
                     }
@@ -2187,147 +2187,7 @@ impl<S: Storage> Blockchain<S> {
     // nonces allow us to support multiples tx from same owner in the same block
     // txs must be sorted in ascending order based on account nonce
     pub async fn verify_transaction_with_hash<'a>(&self, storage: &S, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("Verify transaction with hash {}", hash);
-
-        // Verify that the TX has a valid signature
-        if !self.is_simulator_enabled() && !tx.verify_signature() {
-            return Err(BlockchainError::InvalidTransactionSignature)
-        }
-
-        // Verify that the TX is not already executed in a block
-        if storage.is_tx_executed_in_a_block(hash)? {
-            return Err(BlockchainError::DeadTx(hash.clone()))
-        }
-
-        // Then, verify that the nonce is the right one
-        if !skip_nonces {
-            // nonces can be already pre-computed to support multi nonces at the same time in block/mempool
-            if let Some(nonces) = nonces {
-                // check that we don't have nonce from cache and that it exists in storage, otherwise set 0
-                let nonce = match nonces.entry(tx.get_owner()) {
-                    Entry::Vacant(entry) => {
-                        let nonce = if let Some((_, version)) =  storage.get_nonce_at_maximum_topoheight(tx.get_owner(), topoheight).await? {
-                            version.get_nonce()
-                        } else {
-                            0
-                        };
-                        entry.insert(nonce)
-                    },
-                    Entry::Occupied(entry) => entry.into_mut(),
-                };
-    
-                if *nonce != tx.get_nonce() {
-                    debug!("Invalid nonce from cache for tx {}", hash);
-                    return Err(BlockchainError::InvalidTxNonce(hash.clone(), tx.get_nonce(), *nonce, tx.get_owner().clone()))
-                }
-                // we increment it in case any new tx for same owner is following
-                *nonce += 1;
-            } else { // We don't have any cache, compute using chain data
-                // it is possible that a miner has balance but no nonces, so we need to check it
-                let nonce = if let Some((_, version)) =  storage.get_nonce_at_maximum_topoheight(tx.get_owner(), topoheight).await? {
-                    version.get_nonce()
-                } else {
-                    0 // no nonce, so we start at 0
-                };
-
-                if nonce != tx.get_nonce() {
-                    debug!("Invalid nonce in storage for tx {}", hash);
-                    return Err(BlockchainError::InvalidTxNonce(hash.clone(), tx.get_nonce(), nonce, tx.get_owner().clone()))
-                }
-            }
-        }
-
-        // Retrieve sender balances from cache
-        let owner_balances: &mut HashMap<&'a Hash, VersionedBalance> = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
-
-        // Verify that the sender has enough balance to pay the fees
-        {
-            let version = match owner_balances.entry(&XELIS_ASSET) {
-                Entry::Vacant(entry) => {
-                    let (_, balance) = storage.get_balance_at_maximum_topoheight(tx.get_owner(), &XELIS_ASSET, topoheight).await?.ok_or_else(|| BlockchainError::AccountNotFound(tx.get_owner().clone()))?;
-                    entry.insert(balance)
-                },
-                Entry::Occupied(entry) => entry.into_mut(),
-            };
-
-            if let Some(value) = version.get_balance().checked_sub(tx.get_fee()) {
-                version.set_balance(value);
-            } else {
-                debug!("Overflow detected using fees ({} XEL) in transaction {}", format_xelis(tx.get_fee()), hash);
-                return Err(BlockchainError::Overflow)
-            }
-        }
-
-        // Now verify that the TX is valid
-        match tx.get_data() {
-            TransactionType::Transfer(txs) => {
-                if txs.len() == 0 { // don't accept any empty tx
-                    return Err(BlockchainError::TxEmpty(hash.clone()))
-                }
-
-                // invalid serde tx
-                if txs.len() > u8::MAX as usize {
-                    return Err(BlockchainError::TooManyOutputInTx(hash.clone()))
-                }
-
-                let mut extra_data_size = 0; 
-                for output in txs {
-                    if output.to == *tx.get_owner() { // we can't transfer coins to ourself, why would you do that ?
-                        return Err(BlockchainError::InvalidTransactionToSender(hash.clone()))
-                    }
-
-                    if let Some(data) = &output.extra_data {
-                        extra_data_size += data.len();
-                    }
-
-                    let version = match owner_balances.entry(&output.asset) {
-                        Entry::Vacant(entry) => {
-                            let (_, version) = storage.get_balance_at_maximum_topoheight(tx.get_owner(), &output.asset, topoheight).await?.ok_or_else(|| BlockchainError::AccountNotFound(tx.get_owner().clone()))?;
-                            entry.insert(version)
-                        },
-                        Entry::Occupied(entry) => entry.into_mut(),
-                    };
-
-                    if let Some(value) = version.get_balance().checked_sub(output.amount) {
-                        version.set_balance(value);
-                    } else {
-                        debug!("Overflow detected with transaction transfer {}", hash);
-                        return Err(BlockchainError::Overflow)
-                    }
-                }
-
-                // Total extra data size must maximum 1KB
-                if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
-                    return Err(BlockchainError::InvalidTransactionExtraDataTooBig(EXTRA_DATA_LIMIT_SIZE, extra_data_size))   
-                }
-            }
-            TransactionType::Burn { asset, amount } => {
-                if *amount == 0 {
-                    error!("Burn Tx {} has no value to burn", hash);
-                    return Err(BlockchainError::NoValueForBurn)
-                }
-
-                let version = match owner_balances.entry(asset) {
-                    Entry::Vacant(entry) => {
-                        let version = storage.get_new_versioned_balance(tx.get_owner(), asset, topoheight).await?;
-                        entry.insert(version)
-                    },
-                    Entry::Occupied(entry) => entry.into_mut(),
-                };
-                if let Some(value) = version.get_balance().checked_sub(*amount) {
-                    version.set_balance(value);
-                } else {
-                    debug!("Overflow detected with transaction burn {}", hash);
-                    return Err(BlockchainError::Overflow)
-                }
-            },
-            _ => {
-                // TODO implement SC
-                return Err(BlockchainError::SmartContractTodo)
-            }
-        };
-
-        Ok(())
+        todo!("verify transaction with hash {}", hash)
     }
 
     // retrieve the already added balance with changes OR generate a new versioned balance
@@ -2348,16 +2208,7 @@ impl<S: Storage> Blockchain<S> {
     async fn add_balance<'a>(&self, storage: &S, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, amount: u64, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("add balance {} for {} at topoheight {} with {}", asset, key, topoheight, amount);
         let version = self.retrieve_balance(storage, balances, key, asset, topoheight).await?;
-        version.add_balance(amount);
-        Ok(())
-    }
-
-    // this function just subtract from balance
-    // its used to centralize all computation
-    async fn sub_balance<'a>(&self, storage: &S, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, amount: u64, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("sub balance {} for {} at topoheight {} with {}", asset, key, topoheight, amount);
-        let version = self.retrieve_balance(storage, balances, key, asset, topoheight).await?;
-        version.sub_balance(amount);
+        version.add_plaintext_to_balance(amount);
         Ok(())
     }
 
@@ -2380,31 +2231,7 @@ impl<S: Storage> Blockchain<S> {
     // Execute the transaction by applying all its changes in the Storage
     // balances parameters are caches for faster execution (reduce IO operations)
     async fn execute_transaction<'a>(&self, storage: &mut S, transaction: &'a Transaction, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, topoheight: u64) -> Result<(), BlockchainError> {
-        let mut total_deducted: HashMap<&'a Hash, u64> = HashMap::new();
-        total_deducted.insert(&XELIS_ASSET, transaction.get_fee());
-
-        match transaction.get_data() {
-            TransactionType::Burn { asset, amount } => {
-                *total_deducted.entry(asset).or_insert(0) += amount;
-            }
-            TransactionType::Transfer(txs) => {
-                for output in txs {
-                    // update receiver's account
-                    self.add_balance(storage, balances, &output.to, &output.asset, output.amount, topoheight).await?;
-                    *total_deducted.entry(&output.asset).or_insert(0) += output.amount;
-                }
-            }
-            _ => {
-                return Err(BlockchainError::SmartContractTodo)
-            }
-        };
-
-        // now we substract all assets spent from this sender
-        for (asset, amount) in total_deducted {
-            self.sub_balance(storage, balances, transaction.get_owner(), asset, amount, topoheight).await?;
-        }
-
-        Ok(())
+        todo!("execute transaction")
     }
 
     // Calculate the average block time on the last 50 blocks

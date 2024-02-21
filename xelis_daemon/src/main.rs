@@ -30,7 +30,7 @@ use xelis_common::{
     transaction::Transaction,
     utils::{
         format_hashrate, set_network_to,
-        format_xelis, format_coin, format_difficulty
+        format_xelis, format_difficulty
     }
 };
 use crate::{
@@ -293,31 +293,6 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     }
     manager.message("Supply is valid");
 
-    // Now let's check balances
-    manager.message(format!("Checking balances at topoheight {}", topoheight));
-    let chunk_size = 1024;
-    let mut skip = 0;
-    let mut total_balances = 0;
-    loop {
-        let keys = storage.get_partial_keys(chunk_size, skip, 0, topoheight).await.context("Error on get_partial_keys")?;
-        if keys.len() == 0 {
-            break;
-        }
-
-        for key in keys {
-            if let Some((_, balance)) = storage.get_balance_at_maximum_topoheight(&key, &XELIS_ASSET, topoheight).await.context("Error while retrieving balance")? {
-                total_balances += balance.get_balance();
-            }
-        }
-        skip += chunk_size;
-    }
-
-    if total_balances != expected_supply {
-        manager.error(format!("Total balances is not equal to expected supply! Balances: {}, Supply: {}", total_balances, expected_supply));
-    } else {
-        manager.message("Balances are equal to verified supply");
-    }
-
     Ok(())
 }
 
@@ -436,11 +411,10 @@ async fn show_balance<S: Storage>(manager: &CommandManager, mut arguments: Argum
         return Ok(());
     }
 
-    let asset_data = storage.get_asset(&asset).await.context("Error while retrieving asset data")?;
     let (mut topo, mut version) = storage.get_last_balance(&key, &asset).await.context("Error while retrieving last balance")?;
     loop {
         history -= 1;
-        manager.message(format!("Balance found at topoheight {}: {}", topo, format_coin(version.get_balance(), asset_data.get_decimals())));
+        manager.message(format!("Version at topoheight {}: {}", topo, version));
 
         if history == 0 || topo == 0 {
             break;

@@ -1,7 +1,6 @@
 pub mod defaults;
 
 use crate::crypto::hash::Hash;
-use std::fmt::{Display, Error, Formatter};
 use std::convert::TryInto;
 use num_bigint::BigUint;
 use std::marker::Sized;
@@ -97,10 +96,16 @@ impl Writer {
 
 #[derive(Error, Debug)]
 pub enum ReaderError {
+    #[error("Invalid size")]
     InvalidSize,
+    #[error("Invalid value")]
     InvalidValue,
+    #[error("Invalid hex")]
     InvalidHex,
-    ErrorTryInto
+    #[error("Error on try into")]
+    ErrorTryInto,
+    #[error(transparent)]
+    Any(anyhow::Error)
 }
 
 // Reader help us to read safely from bytes
@@ -116,6 +121,10 @@ impl<'a> Reader<'a> {
             bytes,
             total: 0
         }
+    }
+
+    pub fn read<T: Serializer>(&mut self) -> Result<T, ReaderError> {
+        T::read(self)
     }
 
     pub fn read_bool(&mut self) -> Result<bool, ReaderError> {
@@ -236,17 +245,6 @@ impl<'a> Reader<'a> {
 
     pub fn total_read(&self) -> usize {
         self.total
-    }
-}
-
-impl Display for ReaderError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
-        match self {
-            ReaderError::ErrorTryInto => write!(f, "Error on try into"),
-            ReaderError::InvalidSize => write!(f, "Invalid size"),
-            ReaderError::InvalidValue => write!(f, "Invalid value"),
-            ReaderError::InvalidHex => write!(f, "Invalid hex"),
-        }
     }
 }
 

@@ -5,7 +5,7 @@ use crate::{
     core::error::{BlockchainError, DiskContext}
 };
 use xelis_common::{
-    account::{VersionedBalance, VersionedNonce},
+    account::{BalanceRepresentation, VersionedBalance, VersionedNonce},
     block::{Block, BlockHeader},
     crypto::{hash::Hash, key::PublicKey},
     difficulty::{CumulativeDifficulty, Difficulty},
@@ -49,9 +49,6 @@ pub(super) const ACCOUNTS_COUNT: &[u8; 4] = b"CACC";
 pub(super) const TXS_COUNT: &[u8; 4] = b"CTXS";
 const ASSETS_COUNT: &[u8; 4] = b"CAST";
 pub(super) const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
-
-// Initial balance when a new account is created
-pub(super) const INITIAL_BALANCE: VersionedBalance = VersionedBalance::new(0, None);
 
 pub struct SledStorage {
     // All trees used to store data

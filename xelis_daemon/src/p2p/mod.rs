@@ -2191,7 +2191,7 @@ impl<S: Storage> P2pServer<S> {
                         for (key, balance) in keys.iter().zip(balances) {
                             // check that the account have balance for this asset
                             if let Some(balance) = balance {
-                                debug!("Saving balance {} for key {} at topoheight {}", balance, key, stable_topoheight);
+                                debug!("Saving balance {:?} for key {} at topoheight {}", balance, key, stable_topoheight);
                                 let mut versioned_balance = storage.get_new_versioned_balance(key, &asset, stable_topoheight).await?;
                                 versioned_balance.set_balance(balance);
                                 storage.set_last_balance_to(key, &asset, stable_topoheight, &versioned_balance).await?;
