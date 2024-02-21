@@ -106,12 +106,14 @@ pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
 pub const PEER_FAIL_TIME_RESET: u64 = 60 * 5;
 // number of fail to disconnect the peer
 pub const PEER_FAIL_LIMIT: u8 = 20;
-// millis until we timeout
+// millis until we timeout during an object request
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15000;
-// millis until we timeout
+// millis until we timeout during a bootstrap request
 pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60000;
-// millis until we timeout
+// millis until we timeout during a handshake
 pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 3000;
+// 16 additional bytes are for AEAD from ChaCha20Poly1305
+pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
 
 // Genesis block to have the same starting point for every nodes
 // Genesis block in hexadecimal format

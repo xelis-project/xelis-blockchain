@@ -1,4 +1,4 @@
-use crate::config::{MAX_BLOCK_SIZE, PEER_TIMEOUT_INIT_CONNECTION};
+use crate::config::PEER_TIMEOUT_INIT_CONNECTION;
 use super::{
     encryption::{Encryption, EncryptionError},
     error::P2pError,
@@ -257,7 +257,7 @@ impl Connection {
     // Read packet bytes from the stream
     pub async fn read_packet_bytes(&self, buf: &mut [u8], max_size: u32) -> P2pResult<Vec<u8>> {
         let mut stream = self.read.lock().await;
-        let size = self.read_packet_size(&mut stream, buf).await?;
+        let size = self.read_packet_size(&mut stream, buf, max_size).await?;
         if size == 0 || size > max_size {
             warn!("Received invalid packet size: {} bytes (max: {} bytes) from peer {}", size, max_size, self.get_address());
             return Err(P2pError::InvalidPacketSize)
@@ -288,7 +288,7 @@ impl Connection {
 
     // Read the packet size, this is always sent in raw (not encrypted)
     // And packet size must be a u32 in big endian
-    async fn read_packet_size(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<u32> {
+    async fn read_packet_size(&self, stream: &mut OwnedReadHalf, buf: &mut [u8], max_usize: u32) -> P2pResult<u32> {
         let read = self.read_bytes_from_stream(stream, &mut buf[0..4]).await?;
         if read != 4 {
             warn!("Received invalid packet size: expected to read 4 bytes but read only {} bytes from peer {}", read, self.get_address());
@@ -299,8 +299,7 @@ impl Connection {
         let size = u32::from_be_bytes(array);
 
         // Verify if the size is valid
-        // 16 additional bytes are for AEAD
-        if size > (MAX_BLOCK_SIZE + 16) as u32 {
+        if size > max_usize {
             warn!("Received invalid packet size: {} bytes from peer {}", size, self.get_address());
             return Err(P2pError::InvalidPacketSize)
         }

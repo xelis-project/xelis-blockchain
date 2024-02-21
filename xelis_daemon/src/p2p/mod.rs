@@ -25,7 +25,7 @@ use crate::{
     config::{
         get_genesis_block_hash, get_seed_nodes,
         CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_DELAY, CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START,
-        CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, MAX_BLOCK_SIZE,
+        CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, PEER_MAX_PACKET_SIZE,
         MILLIS_PER_SECOND, NETWORK_ID, P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT,
         PEER_FAIL_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, PRUNE_SAFETY_LIMIT, STABLE_LIMIT
     }, core::{
@@ -1408,7 +1408,8 @@ impl<S: Storage> P2pServer<S> {
     // Packet is read from the same task always, while its handling is delegated to a unique task
     async fn listen_connection(self: &Arc<Self>, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
         // Read & parse the packet
-        let packet = peer.get_connection().read_packet(buf, MAX_BLOCK_SIZE as u32).await?;
+        // 16 additional bytes are for AEAD
+        let packet = peer.get_connection().read_packet(buf, PEER_MAX_PACKET_SIZE).await?;
         let packet_id = packet.get_id();
         // Handle the packet
         if let Err(e) = self.handle_incoming_packet(&peer, packet).await {
