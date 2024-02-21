@@ -5,37 +5,54 @@ pub mod packet;
 pub mod peer_list;
 pub mod chain_validator;
 mod tracker;
+mod encryption;
+
+pub use encryption::EncryptionKey;
 
 use indexmap::IndexSet;
 use lru::LruCache;
 use xelis_common::{
-    config::{VERSION, TIPS_LIMIT},
-    serializer::Serializer,
-    crypto::hash::{Hashable, Hash},
-    block::{BlockHeader, Block},
-    difficulty::Difficulty,
-    utils::{get_current_time_in_seconds, get_current_time_in_millis},
+    api::daemon::{Direction, NotifyEvent, PeerPeerDisconnectedEvent},
+    block::{Block, BlockHeader},
+    config::{TIPS_LIMIT, VERSION},
+    crypto::hash::{Hash, Hashable},
+    difficulty::CumulativeDifficulty,
     immutable::Immutable,
-    api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent, Direction}
+    serializer::Serializer,
+    time::{TimestampMillis, get_current_time_in_millis, get_current_time_in_seconds}
 };
 use crate::{
     config::{
+        get_genesis_block_hash, get_seed_nodes,
         CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_DELAY, CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START,
-        CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, GENESIS_BLOCK_HASH,
-        MAX_BLOCK_SIZE, MILLIS_PER_SECOND, NETWORK_ID, P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY,
-        P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT, PEER_FAIL_LIMIT,
-        PEER_TIMEOUT_INIT_CONNECTION, PRUNE_SAFETY_LIMIT, SEED_NODES, STABLE_LIMIT
+        CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, PEER_MAX_PACKET_SIZE,
+        MILLIS_PER_SECOND, NETWORK_ID, P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT,
+        PEER_FAIL_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, PRUNE_SAFETY_LIMIT, STABLE_LIMIT
     }, core::{
-        blockchain::Blockchain, error::BlockchainError, storage::Storage
+        blockchain::Blockchain,
+        error::BlockchainError,
+        storage::Storage
     }, p2p::{
-        chain_validator::ChainValidator, connection::ConnectionMessage, packet::{
+        chain_validator::ChainValidator,
+        connection::ConnectionMessage,
+        packet::{
             bootstrap_chain::{
-                BlockMetadata, BootstrapChainResponse, StepRequest, StepResponse, MAX_ITEMS_PER_PAGE
-            }, chain::CommonPoint, inventory::{
-                NotifyInventoryRequest, NotifyInventoryResponse, NOTIFY_MAX_LEN
+                BlockMetadata,
+                BootstrapChainResponse,
+                StepRequest,
+                StepResponse,
+                MAX_ITEMS_PER_PAGE
+            },
+            chain::CommonPoint,
+            inventory::{
+                NotifyInventoryRequest,
+                NotifyInventoryResponse,
+                NOTIFY_MAX_LEN
             }
-        }, tracker::ResponseBlocker
-    }, rpc::rpc::get_peer_entry
+        },
+        tracker::ResponseBlocker
+    },
+    rpc::rpc::get_peer_entry
 };
 use self::{
     packet::{
@@ -74,7 +91,7 @@ use std::{
     },
     collections::{HashSet, hash_map::Entry},
     convert::TryInto,
-    net::SocketAddr,
+    net::{SocketAddr, IpAddr},
     time::Duration,
 };
 use bytes::Bytes;
@@ -251,7 +268,9 @@ impl<S: Storage> P2pServer<S> {
         let mut exclusive_nodes = self.exclusive_nodes.clone();
         if exclusive_nodes.is_empty() {
             debug!("No exclusive nodes available, using seed nodes...");
-            exclusive_nodes = SEED_NODES.iter().map(|s| s.parse().unwrap()).collect();
+            let network = self.blockchain.get_network();
+            let seed_nodes = get_seed_nodes(&network);
+            exclusive_nodes = seed_nodes.iter().map(|s| s.parse().unwrap()).collect();
         }
 
         // create tokio task to maintains connection to exclusive nodes or seed nodes
@@ -279,7 +298,7 @@ impl<S: Storage> P2pServer<S> {
         // only allocate one time the buffer for this packet
         let mut handshake_buffer = [0; 512];
         loop {
-            let (connection, out, priority) = select! {
+            let (connection, priority) = select! {
                 res = listener.accept() => {
                     trace!("New listener result received (is err: {})", res.is_err());
                     let (mut stream, addr) = res?;
@@ -310,7 +329,8 @@ impl<S: Storage> P2pServer<S> {
                         continue;
                     }
 
-                    (Connection::new(stream, addr), false, false)
+                    let connection = Connection::new(stream, addr, false);
+                    (connection, false)
                 },
                 Some(msg) = receiver.recv() => match msg {
                     MessageChannel::Exit => break,
@@ -321,7 +341,7 @@ impl<S: Storage> P2pServer<S> {
                         }
 
                         match self.connect_to_peer(addr).await {
-                            Ok(connection) => (connection, true, priority),
+                            Ok(connection) => (connection, priority),
                             Err(e) => {
                                 trace!("Error while trying to connect to new outgoing peer: {}", e);
                                 // if its a outgoing connection, increase its fail count
@@ -333,9 +353,9 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
             };
-            trace!("Handling new connection: {} (out = {}, priority = {})", connection, out, priority);
-            if let Err(e) = self.handle_new_connection(&mut handshake_buffer, connection, out, priority).await {
-                trace!("Error occured on handled connection: {}", e);
+            trace!("Handling new connection: {} (out = {}, priority = {})", connection, connection.is_out(), priority);
+            if let Err(e) = self.handle_new_connection(&mut handshake_buffer, connection, priority).await {
+                debug!("Error occured on handled connection: {}", e);
                 // no need to close it here, as it will be automatically closed in drop
             }
         }
@@ -346,7 +366,7 @@ impl<S: Storage> P2pServer<S> {
     // Verify handshake send by a new connection
     // based on data size, network ID, peers address validity
     // block height and block top hash of this peer (to know if we are on the same chain)
-    async fn verify_handshake(&self, mut connection: Connection, handshake: Handshake, out: bool, priority: bool) -> Result<Peer, P2pError> {
+    async fn verify_handshake(&self, mut connection: Connection, handshake: Handshake<'_>, priority: bool) -> Result<Peer, P2pError> {
         if handshake.get_network() != self.blockchain.get_network() {
             trace!("{} has an invalid network: {}", connection, handshake.get_network());
             return Err(P2pError::InvalidNetwork)
@@ -364,7 +384,7 @@ impl<S: Storage> P2pServer<S> {
             return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }
 
-        if *handshake.get_block_genesis_hash() != *GENESIS_BLOCK_HASH {
+        if *handshake.get_block_genesis_hash() != *get_genesis_block_hash(self.blockchain.get_network()) {
             debug!("Invalid genesis block hash {}", handshake.get_block_genesis_hash());
             return Err(P2pError::InvalidHandshake)
         }
@@ -378,37 +398,44 @@ impl<S: Storage> P2pServer<S> {
         }
 
         connection.set_state(State::Success);
-        let peer = handshake.create_peer(connection, out, priority, Arc::clone(&self.peer_list));
+        let peer = handshake.create_peer(connection, priority, Arc::clone(&self.peer_list));
         Ok(peer)
     }
 
     // Build a handshake packet
     // We feed the packet with all chain data
-    async fn build_handshake(&self) -> Result<Handshake, P2pError> {
+    async fn build_handshake(&self) -> Result<Vec<u8>, P2pError> {
         let storage = self.blockchain.get_storage().read().await;
         let (block, top_hash) = storage.get_top_block_header().await?;
         let topoheight = self.blockchain.get_topo_height();
-        let pruned_topoheight = storage.get_pruned_topoheight()?;
-        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_hash).await.unwrap_or(0);
-        Ok(Handshake::new(VERSION.to_owned(), *self.blockchain.get_network(), self.get_tag().clone(), NETWORK_ID, self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, top_hash, GENESIS_BLOCK_HASH.clone(), cumulative_difficulty))
+        let pruned_topoheight = storage.get_pruned_topoheight().await?;
+        let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_hash).await.unwrap_or_else(|_| CumulativeDifficulty::zero());
+        let genesis_block = get_genesis_block_hash(self.blockchain.get_network());
+        let handshake = Handshake::new(Cow::Owned(VERSION.to_owned()), *self.blockchain.get_network(), Cow::Borrowed(self.get_tag()), Cow::Borrowed(&NETWORK_ID), self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, Cow::Borrowed(&top_hash), Cow::Borrowed(genesis_block), Cow::Borrowed(&cumulative_difficulty));
+        Ok(Packet::Handshake(Cow::Owned(handshake)).to_bytes())
     }
 
     // this function handle all new connections
     // A new connection have to send an Handshake
     // if the handshake is valid, we accept it & register it on server
-    async fn handle_new_connection(self: &Arc<Self>, buf: &mut [u8], mut connection: Connection, out: bool, priority: bool) -> Result<(), P2pError> {
+    async fn handle_new_connection(self: &Arc<Self>, buf: &mut [u8], mut connection: Connection, priority: bool) -> Result<(), P2pError> {
         trace!("New connection: {}", connection);
-        let handshake: Handshake = match timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), connection.read_packet(buf, buf.len() as u32)).await?? {
+        connection.exchange_keys(buf).await?;
+        if connection.is_out() {
+            self.send_handshake(&connection).await?;
+        }
+
+        let handshake: Handshake<'_> = match timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), connection.read_packet(buf, buf.len() as u32)).await?? {
             Packet::Handshake(h) => h.into_owned(), // only allow handshake packet
             _ => return Err(P2pError::ExpectedHandshake)
         };
         trace!("received handshake packet!");
         connection.set_state(State::Handshake);
-        let peer = self.verify_handshake(connection, handshake, out, priority).await?;
+        let peer = self.verify_handshake(connection, handshake, priority).await?;
         trace!("Handshake has been verified");
         // if it's a outgoing connection, don't send the handshake back
         // because we have already sent it
-        if !out {
+        if !peer.is_out() {
             trace!("Sending handshake back to {}", peer);
             self.send_handshake(peer.get_connection()).await?;
         }
@@ -474,22 +501,23 @@ impl<S: Storage> P2pServer<S> {
             return Err(P2pError::PeerAlreadyConnected(format!("{}", addr)));
         }
         let stream = timeout(Duration::from_millis(800), TcpStream::connect(&addr)).await??; // allow maximum 800ms of latency
-        let connection = Connection::new(stream, addr);
-        self.send_handshake(&connection).await?;
+        let connection = Connection::new(stream, addr, true);
         Ok(connection)
     }
 
     // Send a handshake to a connection (this is used to determine if its a potential peer)
+    // Handsake is sent only once, when we connect to a new peer, and we get it back from connection to make it a peer
     async fn send_handshake(&self, connection: &Connection) -> Result<(), P2pError> {
-        let handshake: Handshake = self.build_handshake().await?;
-        connection.send_bytes(&Packet::Handshake(Cow::Owned(handshake)).to_bytes()).await
+        trace!("Sending handshake to {}", connection);
+        let handshake = self.build_handshake().await?;
+        connection.send_bytes(&handshake).await
     }
 
     // build a ping packet with the current state of the blockchain
     // if a peer is given, we will check and update the peers list
     async fn build_generic_ping_packet_with_storage(&self, storage: &S) -> Ping<'_> {
         let (cumulative_difficulty, block_top_hash, pruned_topoheight) = {
-            let pruned_topoheight = match storage.get_pruned_topoheight() {
+            let pruned_topoheight = match storage.get_pruned_topoheight().await {
                 Ok(pruned_topoheight) => pruned_topoheight,
                 Err(e) => {
                     error!("Couldn't get the pruned topoheight from storage for generic ping packet: {}", e);
@@ -500,9 +528,9 @@ impl<S: Storage> P2pServer<S> {
             match storage.get_top_block_hash().await {
                 Err(e) => {
                     error!("Couldn't get the top block hash from storage for generic ping packet: {}", e);
-                    (0, GENESIS_BLOCK_HASH.clone(), pruned_topoheight)
+                    (CumulativeDifficulty::zero(), get_genesis_block_hash(self.blockchain.get_network()).clone(), pruned_topoheight)
                 },
-                Ok(hash) => (storage.get_cumulative_difficulty_for_block_hash(&hash).await.unwrap_or(0), hash, pruned_topoheight)
+                Ok(hash) => (storage.get_cumulative_difficulty_for_block_hash(&hash).await.unwrap_or_else(|_| CumulativeDifficulty::zero()), hash, pruned_topoheight)
             }
         };
         let highest_topo_height = self.blockchain.get_topo_height();
@@ -589,14 +617,14 @@ impl<S: Storage> P2pServer<S> {
     // Based on the user configuration, it will try to sync the chain with another node with longest chain if any
     async fn chain_sync_loop(self: Arc<Self>) {
         // used to detect how much time we have to wait before next request
-        let mut last_chain_sync: u128 = get_current_time_in_millis();
+        let mut last_chain_sync = get_current_time_in_millis();
         let interval = Duration::from_secs(CHAIN_SYNC_DELAY);
         // Try to not reuse the same peer between each sync
         let mut previous_peer: Option<Arc<Peer>> = None;
         loop {
             // Detect exact time needed before next chain sync
             let current = get_current_time_in_millis();
-            let diff = (current - last_chain_sync) as u64;
+            let diff = current - last_chain_sync;
             if  diff < CHAIN_SYNC_DELAY * MILLIS_PER_SECOND {
                 let wait = CHAIN_SYNC_DELAY * MILLIS_PER_SECOND - diff;
                 debug!("Waiting {} ms for chain sync delay...", wait);
@@ -679,6 +707,13 @@ impl<S: Storage> P2pServer<S> {
 
                         // if we haven't send him this peer addr and that he don't have him already, insert it
                         let addr = p.get_outgoing_address();
+
+                        // Don't share local network addresses
+                        if is_local_address(addr) {
+                            debug!("{} is a local address, skipping", addr);
+                            continue;
+                        }
+
                         let send = match shared_peers.entry(*addr) {
                             Entry::Occupied(mut e) => e.get_mut().update(Direction::Out),
                             Entry::Vacant(e) => {
@@ -983,6 +1018,11 @@ impl<S: Storage> P2pServer<S> {
                 peer.get_connection().close().await?;
                 return Err(P2pError::InvalidPacket)
             },
+            Packet::KeyExchange(key) => {
+                trace!("{}: Rotate key packet", peer);
+                let key = key.into_owned();
+                peer.get_connection().rotate_peer_key(key).await?;
+            },
             Packet::TransactionPropagation(packet_wrapper) => {
                 trace!("{}: Transaction Propagation packet", peer);
                 let (hash, ping) = packet_wrapper.consume();
@@ -1065,7 +1105,7 @@ impl<S: Storage> P2pServer<S> {
                 // check that we don't have this block in our chain
                 {
                     let storage = self.blockchain.get_storage().read().await;
-                    if storage.has_block(&block_hash).await? {
+                    if storage.has_block_with_hash(&block_hash).await? {
                         debug!("{}: {} with hash {} is already in our chain. Skipping", peer, header, block_hash);
                         return Ok(())
                     }
@@ -1173,7 +1213,7 @@ impl<S: Storage> P2pServer<S> {
                         debug!("{} asked full block {}", peer, hash);
                         let block = {
                             let storage = self.blockchain.get_storage().read().await;
-                            storage.get_block(hash).await
+                            storage.get_block_by_hash(hash).await
                         };
 
                         match block {
@@ -1368,7 +1408,8 @@ impl<S: Storage> P2pServer<S> {
     // Packet is read from the same task always, while its handling is delegated to a unique task
     async fn listen_connection(self: &Arc<Self>, buf: &mut [u8], peer: &Arc<Peer>) -> Result<(), P2pError> {
         // Read & parse the packet
-        let packet = peer.get_connection().read_packet(buf, MAX_BLOCK_SIZE as u32).await?;
+        // 16 additional bytes are for AEAD
+        let packet = peer.get_connection().read_packet(buf, PEER_MAX_PACKET_SIZE).await?;
         let packet_id = packet.get_id();
         // Handle the packet
         if let Err(e) = self.handle_incoming_packet(&peer, packet).await {
@@ -1413,7 +1454,7 @@ impl<S: Storage> P2pServer<S> {
             expected_topoheight -= 1;
 
             debug!("Searching common point for block {} at topoheight {}", block_id.get_hash(), block_id.get_topoheight());
-            if storage.has_block(block_id.get_hash()).await? {
+            if storage.has_block_with_hash(block_id.get_hash()).await? {
                 let (hash, topoheight) = block_id.consume();
                 debug!("Block {} is common, expected topoheight: {}", hash, topoheight);
                 // check that the block is ordered like us
@@ -1517,13 +1558,14 @@ impl<S: Storage> P2pServer<S> {
             return Ok(())
         };
 
-        debug!("{} found a common point with block {} at topo {} for sync, received {} blocks", peer.get_outgoing_address(), common_point.get_hash(), common_point.get_topoheight(), response_size);
+        let common_topoheight = common_point.get_topoheight();
+        debug!("{} found a common point with block {} at topo {} for sync, received {} blocks", peer.get_outgoing_address(), common_point.get_hash(), common_topoheight, response_size);
         let pop_count = {
             let storage = self.blockchain.get_storage().read().await;
             let topoheight = storage.get_topo_height_for_hash(common_point.get_hash()).await?;
-            if topoheight != common_point.get_topoheight() {
-                error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, topoheight, common_point.get_topoheight());
-                return Err(P2pError::InvalidCommonPoint(common_point.get_topoheight()).into())
+            if topoheight != common_topoheight {
+                error!("{} sent us a valid block hash, but at invalid topoheight (expected: {}, got: {})!", peer, topoheight, common_topoheight);
+                return Err(P2pError::InvalidCommonPoint(common_topoheight).into())
             }
 
             let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
@@ -1568,7 +1610,9 @@ impl<S: Storage> P2pServer<S> {
                 self.blockchain.rewind_chain(pop_count, false).await?;
             } else {
                 // request all blocks header and verify basic chain structure
-                let mut chain_validator = ChainValidator::new(self.blockchain.clone());
+                // Starting topoheight must be the next topoheight after common block
+                // Blocks in chain response must be ordered by topoheight otherwise it will give incorrect results 
+                let mut chain_validator = ChainValidator::new(&self.blockchain, common_topoheight + 1);
                 for hash in blocks {
                     trace!("Request block header for chain validator: {}", hash);
 
@@ -1587,13 +1631,21 @@ impl<S: Storage> P2pServer<S> {
                         return Err(P2pError::ExpectedBlock.into())
                     }
                 }
+
+                // Verify that it has a higher cumulative difficulty than us
+                // Otherwise we don't switch to his chain
+                if !chain_validator.has_higher_cumulative_difficulty().await? {
+                    error!("{} sent us a chain response with lower cumulative difficulty than ours", peer);
+                    return Err(BlockchainError::LowerCumulativeDifficulty)
+                }
+
                 // peer chain looks correct, lets rewind our chain
                 warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
                 self.blockchain.rewind_chain(pop_count, true).await?;
 
                 // now retrieve all txs from all blocks header and add block in chain
-                for hash in chain_validator.get_order() {
-                    let header = chain_validator.consume_block_header(&hash)?;
+                for (hash, header) in chain_validator.get_blocks() {
+                    trace!("Processing block {} from chain validator", hash);
                     // we don't already have this block, lets retrieve its txs and add in our chain
                     if !self.blockchain.has_block(&hash).await? {
                         let mut transactions = Vec::new(); // don't pre allocate
@@ -1616,6 +1668,7 @@ impl<S: Storage> P2pServer<S> {
                             }
                         }
 
+                        // Assemble back the block and add it to the chain
                         let block = Block::new(Immutable::Arc(header), transactions);
                         self.blockchain.add_new_block(block, false, false).await?; // don't broadcast block because it's syncing
                     }
@@ -1831,7 +1884,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // broadcast block to all peers that can accept directly this new block
-    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: Difficulty, our_topoheight: u64, our_height: u64, pruned_topoheight: Option<u64>, hash: &Hash, lock: bool) {
+    pub async fn broadcast_block(&self, block: &BlockHeader, cumulative_difficulty: CumulativeDifficulty, our_topoheight: u64, our_height: u64, pruned_topoheight: Option<u64>, hash: &Hash, lock: bool) {
         debug!("Broadcasting block {} at height {}", hash, block.get_height());
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock
@@ -1896,7 +1949,7 @@ impl<S: Storage> P2pServer<S> {
         debug!("Handle bootstrap chain request {:?} from {}", request_kind, peer);
 
         let storage = self.blockchain.get_storage().read().await;
-        let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
+        let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
         if let Some(topoheight) = request.get_requested_topoheight() {
             let our_topoheight = self.blockchain.get_topo_height();
             // verify that the topoheight asked is above the PRUNE_SAFETY_LIMIT
@@ -1915,7 +1968,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::ChainInfo(blocks) => {
                 let common_point = self.find_common_point(&*storage, blocks).await?;
                 let tips = storage.get_tips().await?;
-                let (hash, height) = self.blockchain.find_common_base(&storage, &tips).await?;
+                let (hash, height) = self.blockchain.find_common_base::<S, _>(&storage, &tips).await?;
                 let stable_topo = storage.get_topo_height_for_hash(&hash).await?;
                 StepResponse::ChainInfo(common_point, stable_topo, height, hash)
             },
@@ -1992,7 +2045,7 @@ impl<S: Storage> P2pServer<S> {
     async fn build_list_of_blocks_id(&self, storage: &S) -> Result<IndexSet<BlockId>, BlockchainError> {
         let mut blocks = IndexSet::new();
         let topoheight = self.blockchain.get_topo_height();
-        let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
+        let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
         let mut i = 0;
 
         // we add 1 for the genesis block added below
@@ -2062,7 +2115,7 @@ impl<S: Storage> P2pServer<S> {
 
                         let top_block_hash = storage.get_top_block_hash().await?;
                         if *common_point.get_hash() != top_block_hash {
-                            let pruned_topoheight = storage.get_pruned_topoheight()?.unwrap_or(0);
+                            let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
                             
                             warn!("Common point is {} while our top block hash is {} !", common_point.get_hash(), top_block_hash);
                             // Count how much blocks we need to pop
@@ -2201,7 +2254,7 @@ impl<S: Storage> P2pServer<S> {
                     }
 
                     let mut storage = self.blockchain.get_storage().write().await;
-                    storage.set_pruned_topoheight(lowest_topoheight)?;
+                    storage.set_pruned_topoheight(lowest_topoheight).await?;
                     storage.set_top_topoheight(top_topoheight)?;
                     storage.set_top_height(top_height)?;
                     storage.store_tips(&HashSet::from([top_block_hash.take().expect("Expected top block hash for fast sync")]))?;
@@ -2234,7 +2287,7 @@ impl<S: Storage> P2pServer<S> {
     // we send up to CHAIN_SYNC_REQUEST_MAX_BLOCKS blocks id (combinaison of block hash and topoheight)
     // we add at the end the genesis block to be sure to be on the same chain as others peers
     // its used to find a common point with the peer to which we ask the chain
-    pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>, last_chain_sync: &mut u128) -> Result<(), BlockchainError> {
+    pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>, last_chain_sync: &mut TimestampMillis) -> Result<(), BlockchainError> {
         trace!("Requesting chain from {}", peer);
 
         // This can be configured by the node operator, it will be adjusted between protocol bounds
@@ -2261,5 +2314,20 @@ impl<S: Storage> P2pServer<S> {
         *last_chain_sync = get_current_time_in_millis();
 
         self.handle_chain_response(peer, response, requested_max_size).await
+    }
+}
+
+// Check if a socket address is a local address
+pub fn is_local_address(socket_addr: &SocketAddr) -> bool {
+    match socket_addr.ip() {
+        IpAddr::V4(ipv4) => {
+            // Check if it's a local IPv4 address (e.g., 127.0.0.1)
+            ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local()
+        }
+        IpAddr::V6(ipv6) => {
+            // Check if it's a local IPv6 address (e.g., ::1)
+            // https://github.com/rust-lang/rust/issues/27709
+            ipv6.is_loopback() // || ipv6.is_unique_local()
+        }
     }
 }

@@ -104,8 +104,9 @@ impl Default for LookupTable {
     }
 }
 
+#[cfg(test)]
 mod tests {
-    fn _assert_value(value: u64) {
+    fn assert_value(value: u64) {
         let m = &super::Scalar::from(value) * &super::RISTRETTO_BASEPOINT_TABLE;
         let table = super::LookupTable::default();
         assert_eq!(table.lookup(&m), value);
@@ -113,16 +114,16 @@ mod tests {
 
     #[test]
     fn test_lookup_find_0() {
-        _assert_value(0);
+        assert_value(0);
     }
 
     #[test]
     fn test_lookup_find_1_000_000() {
-        _assert_value(1_000_000);
+        assert_value(1_000_000);
     }
 
     #[test]
     fn test_lookup_find_100_000_00000() {
-        _assert_value(100_000_00000);
+        assert_value(100_000_00000);
     }
 }

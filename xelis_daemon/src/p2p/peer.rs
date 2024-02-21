@@ -7,12 +7,12 @@ use crate::{
     p2p::packet::PacketWrapper
 };
 use xelis_common::{
-    config::TIPS_LIMIT,
     api::daemon::Direction,
-    difficulty::Difficulty,
+    config::TIPS_LIMIT,
     crypto::hash::Hash,
+    difficulty::CumulativeDifficulty,
     serializer::Serializer,
-    utils::get_current_time_in_seconds
+    time::{TimestampSeconds, get_current_time_in_seconds}
 };
 use super::{
     packet::{
@@ -22,7 +22,7 @@ use super::{
         Packet
     },
     peer_list::SharedPeerList,
-    connection::{Connection, ConnectionMessage},
+    connection::Connection,
     error::P2pError
 };
 use std::{
@@ -60,8 +60,6 @@ pub struct Peer {
     local_port: u16,
     // daemon version
     version: String,
-    // True mean we are the client
-    out: bool,
     // if this node can be trusted (seed node or added manually by user)
     priority: bool,
     // current block top hash for this peer
@@ -89,7 +87,7 @@ pub struct Peer {
     // last time we sent a ping packet to this peer
     last_ping_sent: AtomicU64,
     // cumulative difficulty of peer chain
-    cumulative_difficulty: AtomicU64,
+    cumulative_difficulty: Mutex<CumulativeDifficulty>,
     // All transactions propagated from/to this peer
     txs_cache: Mutex<LruCache<Hash, Direction>>,
     // last blocks propagated to/from this peer
@@ -112,7 +110,7 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, out: bool, priority: bool, cumulative_difficulty: Difficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>) -> Self {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
 
@@ -130,7 +128,6 @@ impl Peer {
             top_hash: Mutex::new(top_hash),
             topoheight: AtomicU64::new(topoheight),
             height: AtomicU64::new(height),
-            out,
             priority,
             last_fail_count: AtomicU64::new(0),
             fail_count: AtomicU8::new(0),
@@ -141,7 +138,7 @@ impl Peer {
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
             last_ping_sent: AtomicU64::new(0),
-            cumulative_difficulty: AtomicU64::new(cumulative_difficulty),
+            cumulative_difficulty: Mutex::new(cumulative_difficulty),
             txs_cache: Mutex::new(LruCache::new(128)),
             blocks_propagation: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
             last_inventory: AtomicU64::new(0),
@@ -249,19 +246,19 @@ impl Peer {
     }
 
     // Get the cumulative difficulty
-    pub fn get_cumulative_difficulty(&self) -> Difficulty {
-        self.cumulative_difficulty.load(Ordering::Acquire)
+    pub fn get_cumulative_difficulty(&self) -> &Mutex<CumulativeDifficulty> {
+        &self.cumulative_difficulty
     }
 
     // Store the cumulative difficulty
     // This is updated by ping packet
-    pub fn set_cumulative_difficulty(&self, cumulative_difficulty: Difficulty) {
-        self.cumulative_difficulty.store(cumulative_difficulty, Ordering::Release)
+    pub async fn set_cumulative_difficulty(&self, cumulative_difficulty: CumulativeDifficulty) {
+        *self.cumulative_difficulty.lock().await = cumulative_difficulty;
     }
 
     // Verify if its a outgoing connection
     pub fn is_out(&self) -> bool {
-        self.out
+        self.connection.is_out()
     }
 
     // Get the priority flag of the peer
@@ -318,12 +315,12 @@ impl Peer {
 
     // Get the last time we got a chain sync request
     // This is used to prevent spamming the chain sync packet
-    pub fn get_last_chain_sync(&self) -> u64 {
+    pub fn get_last_chain_sync(&self) -> TimestampSeconds {
         self.last_chain_sync.load(Ordering::Acquire)
     }
 
     // Store the last time we got a chain sync request
-    pub fn set_last_chain_sync(&self, time: u64) {
+    pub fn set_last_chain_sync(&self, time: TimestampSeconds) {
         self.last_chain_sync.store(time, Ordering::Release);
     }
 
@@ -454,43 +451,43 @@ impl Peer {
     }
 
     // Get the last time we got a peer list
-    pub fn get_last_peer_list(&self) -> u64 {
+    pub fn get_last_peer_list(&self) -> TimestampSeconds {
         self.last_peer_list.load(Ordering::Acquire)
     }
 
     // Track the last time we got a peer list
     // This is used to prevent spamming the peer list
-    pub fn set_last_peer_list(&self, value: u64) {
+    pub fn set_last_peer_list(&self, value: TimestampSeconds) {
         self.last_peer_list.store(value, Ordering::Release)
     }
 
     // Get the last time we got a ping packet from this peer
-    pub fn get_last_ping(&self) -> u64 {
+    pub fn get_last_ping(&self) -> TimestampSeconds {
         self.last_ping.load(Ordering::Acquire)
     }
 
     // Track the last time we got a ping packet from this peer
-    pub fn set_last_ping(&self, value: u64) {
+    pub fn set_last_ping(&self, value: TimestampSeconds) {
         self.last_ping.store(value, Ordering::Release)
     }
 
     // Get the last time we sent a ping packet to this peer
-    pub fn get_last_ping_sent(&self) -> u64 {
+    pub fn get_last_ping_sent(&self) -> TimestampSeconds {
         self.last_ping_sent.load(Ordering::Acquire)
     }
 
     // Track the last time we sent a ping packet to this peer
-    pub fn set_last_ping_sent(&self, value: u64) {
+    pub fn set_last_ping_sent(&self, value: TimestampSeconds) {
         self.last_ping.store(value, Ordering::Release)
     }
 
     // Get the last time a inventory has been requested
-    pub fn get_last_inventory(&self) -> u64 {
+    pub fn get_last_inventory(&self) -> TimestampSeconds {
         self.last_inventory.load(Ordering::Acquire)
     }
 
     // Set the last inventory time
-    pub fn set_last_inventory(&self, value: u64) {
+    pub fn set_last_inventory(&self, value: TimestampSeconds) {
         self.last_inventory.store(value, Ordering::Release)
     }
 
@@ -529,11 +526,7 @@ impl Peer {
     // Send packet bytes to the peer
     // This will send the bytes to the writer task through its channel
     pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), P2pError> {
-        trace!("Sending {} bytes to {}", bytes.len(), self.get_outgoing_address());
-        let tx = self.connection.get_tx().lock().await;
-        trace!("Lock acquired, Sending packet");
-        tx.send(ConnectionMessage::Packet(bytes))?;
-        Ok(())
+        self.get_connection().send_bytes_to_task(bytes).await
     }
 }
 

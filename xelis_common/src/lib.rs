@@ -13,7 +13,8 @@ pub mod network;
 pub mod asset;
 pub mod context;
 pub mod queue;
-pub mod compactu256;
+pub mod varuint;
+pub mod time;
 
 #[cfg(feature = "json_rpc")]
 pub mod json_rpc;

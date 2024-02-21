@@ -13,6 +13,7 @@ use std::io::Error as IOError;
 use std::sync::PoisonError;
 use thiserror::Error;
 
+use super::encryption::EncryptionError;
 use super::packet::bootstrap_chain::StepKind;
 use super::packet::object::ObjectRequest;
 
@@ -32,6 +33,8 @@ pub enum P2pError {
     InvalidPrunedTopoHeightChange,
     #[error("Peer {} send us its own socket address", _0)]
     OwnSocketAddress(SocketAddr),
+    #[error("Local socket address {} received from peer", _0)]
+    LocalSocketAddress(SocketAddr),
     #[error("Invalid list size in pagination with a next page")]
     InvalidInventoryPagination,
     #[error("unknown peer {} disconnected from {}", _0, _1)]
@@ -129,7 +132,9 @@ pub enum P2pError {
     #[error("Error while serde JSON: {}", _0)]
     JsonError(#[from] serde_json::Error),
     #[error(transparent)]
-    SemaphoreAcquireError(#[from] AcquireError)
+    SemaphoreAcquireError(#[from] AcquireError),
+    #[error(transparent)]
+    EncryptionError(#[from] EncryptionError),
 }
 
 impl From<BlockchainError> for P2pError {

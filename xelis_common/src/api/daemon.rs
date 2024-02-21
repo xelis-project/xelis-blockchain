@@ -5,12 +5,13 @@ use std::{
 };
 use serde::{Deserialize, Serialize};
 use crate::{
-    crypto::{hash::Hash, address::Address},
     account::{VersionedBalance, VersionedNonce},
-    network::Network,
     block::Block,
-    difficulty::Difficulty,
-    transaction::Transaction
+    crypto::{address::Address, hash::Hash},
+    difficulty::{CumulativeDifficulty, Difficulty},
+    network::Network,
+    transaction::Transaction,
+    time::{TimestampSeconds, TimestampMillis}
 };
 use super::DataHash;
 
@@ -29,7 +30,7 @@ pub struct BlockResponse<'a, T: Clone> {
     pub difficulty: Difficulty,
     pub supply: Option<u64>,
     pub reward: Option<u64>,
-    pub cumulative_difficulty: Difficulty,
+    pub cumulative_difficulty: CumulativeDifficulty,
     pub total_fees: Option<u64>,
     pub total_size_in_bytes: usize,
     #[serde(flatten)]
@@ -225,11 +226,11 @@ pub struct PeerEntry<'a> {
     pub top_block_hash: Hash,
     pub topoheight: u64,
     pub height: u64,
-    pub last_ping: u64,
+    pub last_ping: TimestampSeconds,
     pub pruned_topoheight: Option<u64>,
     pub peers: HashMap<SocketAddr, Direction>,
-    pub cumulative_difficulty: Difficulty,
-    pub connected_on: u64
+    pub cumulative_difficulty: CumulativeDifficulty,
+    pub connected_on: TimestampSeconds
 }
 
 #[derive(Serialize, Deserialize)]
@@ -271,7 +272,7 @@ pub struct TransactionResponse<'a, T: Clone + AsRef<Transaction>> {
     // if its a mempool tx, we add the timestamp when it was added
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
-    pub first_seen: Option<u64>,
+    pub first_seen: Option<TimestampSeconds>,
     #[serde(flatten)]
     pub data: DataHash<'a, T>
 }
@@ -305,7 +306,7 @@ pub struct AccountHistoryEntry {
     pub hash: Hash,
     #[serde(flatten)]
     pub history_type: AccountHistoryType,
-    pub block_timestamp: u128
+    pub block_timestamp: TimestampMillis
 }
 
 #[derive(Serialize, Deserialize)]

@@ -41,18 +41,22 @@ impl Address {
         }
     }
 
+    // Get the public key from the address
     pub fn get_public_key(&self) -> &PublicKey {
         &self.key
     }
 
+    // Take the public key from the address
     pub fn to_public_key(self) -> PublicKey {
         self.key
     }
 
+    // Get the address type
     pub fn get_type(&self) -> &AddressType {
         &self.addr_type
     }
 
+    // Split the address into its components
     pub fn split(self) -> (PublicKey, AddressType) {
         (self.key, self.addr_type)
     }
@@ -67,6 +71,7 @@ impl Address {
         }
     }
 
+    // Check if the address is a normal address (no data integrated)
     pub fn is_normal(&self) -> bool {
         match self.addr_type {
             AddressType::Normal => true,
@@ -74,10 +79,31 @@ impl Address {
         }
     }
 
+    // Check if the address is a mainnet address
     pub fn is_mainnet(&self) -> bool {
         self.mainnet
     }
 
+    // Compress the address to a byte array
+    // We don't use Serializer trait to avoid storing mainnet bool
+    fn compress(&self) -> Vec<u8> {
+        let mut writer = Writer::new();
+        self.key.write(&mut writer);
+        self.addr_type.write(&mut writer);
+        writer.bytes()
+    }
+
+    // Read the address from a byte array
+    // Hrp validity isn't checked here, it should be done before calling this function
+    fn decompress(bytes: &[u8], hrp: &str) -> Result<Self, ReaderError> {
+        let mut reader = Reader::new(bytes);
+        let mainnet = hrp == PREFIX_ADDRESS;
+        let key = PublicKey::read(&mut reader)?;
+        let addr_type = AddressType::read(&mut reader)?;
+        Ok(Self::new(mainnet, addr_type, key))
+    }
+
+    // Search for a data value in the address
     pub fn get_data(&self, name: String, data_type: DataType) -> Option<&DataValue> {
         match &self.addr_type {
             AddressType::Normal => None,
@@ -85,8 +111,9 @@ impl Address {
         }
     }
 
+    // Returns the address as a string (human readable format)
     pub fn as_string(&self) -> Result<String, Bech32Error> {
-        let bits = convert_bits(&self.to_bytes(), 8, 5, true)?;
+        let bits = convert_bits(&self.compress(), 8, 5, true)?;
         let hrp = if self.is_mainnet() {
             PREFIX_ADDRESS
         } else {
@@ -97,6 +124,7 @@ impl Address {
         Ok(result)
     }
 
+    // Parse an address from a string (human readable format)
     pub fn from_string(address: &String) -> Result<Self, Error> {
         let (hrp, decoded) = decode(address)?;
         // check that hrp is valid one
@@ -105,8 +133,7 @@ impl Address {
         }
 
         let bits = convert_bits(&decoded, 5, 8, false)?;
-        let mut reader = Reader::new(&bits);
-        let addr = Address::read(&mut reader)?;
+        let addr = Address::decompress(&bits, hrp.as_str())?;
 
         // now check that the hrp decoded is the one for the network state
         if (addr.is_mainnet() && hrp != PREFIX_ADDRESS) || (!addr.is_mainnet() && hrp != TESTNET_PREFIX_ADDRESS) {
@@ -170,26 +197,6 @@ impl Serializer for AddressType {
             _ => return Err(ReaderError::InvalidValue)
         };
         Ok(_type)
-    }
-}
-
-impl<'a> Serializer for Address {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_bool(self.mainnet);
-        self.addr_type.write(writer);
-        self.key.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Address, ReaderError> {
-        let mainnet = reader.read_bool()?;
-        let addr_type = AddressType::read(reader)?;
-        let key = PublicKey::read(reader)?;
-
-        Ok(Address {
-            mainnet,
-            addr_type,
-            key
-        })
     }
 }
 

@@ -1,11 +1,15 @@
-use crate::crypto::hash::Hash;
-use num_bigint::{BigUint, ToBigUint};
+use crate::{varuint::VarUint, crypto::hash::Hash};
+use primitive_types::U256;
 use thiserror::Error;
-use num_traits::One;
 
 // This type is used to easily switch between u64 and u128 as example
 // And its easier to see where we use the block difficulty
-pub type Difficulty = u64;
+// Difficulty is a value that represents the amount of work required to mine a block
+// On XELIS, each difficulty point is a hash per second
+pub type Difficulty = VarUint;
+// Cumulative difficulty is the sum of all difficulties of all blocks in the chain
+// It is used to determine which branch is the main chain in BlockDAG merging.
+pub type CumulativeDifficulty = VarUint;
 
 #[derive(Error, Debug)]
 pub enum DifficultyError {
@@ -15,26 +19,26 @@ pub enum DifficultyError {
     ErrorOnConversionBigUint
 }
 
-pub fn check_difficulty(hash: &Hash, difficulty: Difficulty) -> Result<bool, DifficultyError> {
-    let big_diff = difficulty_to_big(difficulty)?;
-    let big_hash = hash_to_big(hash);
-
-    Ok(big_hash <= big_diff)
+// Verify the validity of a block difficulty against the current network difficulty
+// All operations are done on U256 to avoid overflow
+pub fn check_difficulty(hash: &Hash, difficulty: &Difficulty) -> Result<bool, DifficultyError> {
+    let target = compute_difficulty_target(difficulty)?;
+    Ok(check_difficulty_against_target(hash, &target))
 }
 
-pub fn difficulty_to_big(difficulty: Difficulty) -> Result<BigUint, DifficultyError> {
-    if difficulty == 0 {
+// Compute the difficulty target from the difficulty value
+// This can be used to keep the target in cache instead of recomputing it each time
+pub fn compute_difficulty_target(difficulty: &Difficulty) -> Result<U256, DifficultyError> {
+    let diff = difficulty.as_ref();
+    if diff.is_zero() {
         return Err(DifficultyError::DifficultyCannotBeZero)
     }
 
-    let big_diff = match ToBigUint::to_biguint(&difficulty) {
-        Some(v) => v,
-        None => return Err(DifficultyError::ErrorOnConversionBigUint)
-    };
-    let one_lsh_256 = BigUint::one() << 256;
-    Ok(one_lsh_256 / big_diff)
+    Ok(U256::max_value() / diff)
 }
 
-pub fn hash_to_big(hash: &Hash) -> BigUint {
-    BigUint::from_bytes_be(hash.as_bytes())
+// Check if the hash is below the target difficulty
+pub fn check_difficulty_against_target(hash: &Hash, target: &U256) -> bool {
+    let hash_work = U256::from_big_endian(hash.as_bytes());
+    hash_work <= *target
 }

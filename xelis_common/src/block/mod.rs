@@ -12,13 +12,14 @@ use crate::{
     },
     immutable::Immutable,
     transaction::Transaction,
-    serializer::{Serializer, Writer, Reader, ReaderError}
+    serializer::{Serializer, Writer, Reader, ReaderError},
+    time::TimestampMillis
 };
 pub use miner::BlockMiner;
 
 pub const EXTRA_NONCE_SIZE: usize = 32;
 pub const HEADER_WORK_SIZE: usize = 73;
-pub const BLOCK_WORK_SIZE: usize = 120; // 32 + 16 + 8 + 32 + 32 = 120
+pub const BLOCK_WORK_SIZE: usize = 112; // 32 + 8 + 8 + 32 + 32 = 112
 
 pub fn serialize_extra_nonce<S: serde::Serializer>(extra_nonce: &[u8; EXTRA_NONCE_SIZE], s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(&hex::encode(extra_nonce))
@@ -32,22 +33,11 @@ pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserializer: D
     Ok(extra_nonce)
 }
 
-// transform it as u64, its good enough until serde is able to de/serialize u128
-pub fn serialize_timestamp<S: serde::Serializer>(timestamp: &u128, s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_u64(*timestamp as u64)
-}
-
-pub fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u128, D::Error> {
-    Ok(u64::deserialize(deserializer)? as u128)
-}
-
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct BlockHeader {
     pub version: u8,
     pub tips: IndexSet<Hash>,
-    #[serde(serialize_with = "serialize_timestamp")]
-    #[serde(deserialize_with = "deserialize_timestamp")]
-    pub timestamp: u128,
+    pub timestamp: TimestampMillis,
     pub height: u64,
     pub nonce: u64,
     #[serde(serialize_with = "serialize_extra_nonce")]
@@ -65,7 +55,7 @@ pub struct Block {
 }
 
 impl BlockHeader {
-    pub fn new(version: u8, height: u64, timestamp: u128, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: IndexSet<Hash>) -> Self {
+    pub fn new(version: u8, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: IndexSet<Hash>) -> Self {
         BlockHeader {
             version,
             height,
@@ -94,7 +84,7 @@ impl BlockHeader {
         self.height
     }
 
-    pub fn get_timestamp(&self) -> u128 {
+    pub fn get_timestamp(&self) -> TimestampMillis {
         self.timestamp
     }
 
@@ -236,19 +226,20 @@ impl Serializer for BlockHeader {
     fn write(&self, writer: &mut Writer) {
         writer.write_u8(self.version); // 1
         writer.write_u64(&self.height); // 1 + 8 = 9
-        writer.write_u128(&self.timestamp); // 9 + 16 = 25
-        writer.write_u64(&self.nonce); // 25 + 8 = 33
-        writer.write_bytes(&self.extra_nonce); // 33 + 32 = 65
-        writer.write_u8(self.tips.len() as u8); // 65 + 1 = 66
+        writer.write_u64(&self.timestamp); // 9 + 8 = 17
+        writer.write_u64(&self.nonce); // 17 + 8 = 25
+        writer.write_bytes(&self.extra_nonce); // 25 + 32 = 57
+        writer.write_u8(self.tips.len() as u8); // 57 + 1 = 58
         for tip in &self.tips {
             writer.write_hash(tip); // 32
         }
 
-        writer.write_u16(self.txs_hashes.len() as u16); // 66 + 2 = 68
+        writer.write_u16(self.txs_hashes.len() as u16); // 58 + 2 = 60
         for tx in &self.txs_hashes {
             writer.write_hash(tx); // 32
         }
-        self.miner.write(writer); // 68 + 32 = 100
+        self.miner.write(writer); // 60 + 32 = 92
+        // Minimum size is 92 bytes
     }
 
     fn read(reader: &mut Reader) -> Result<BlockHeader, ReaderError> {
@@ -260,7 +251,7 @@ impl Serializer for BlockHeader {
         }
 
         let height = reader.read_u64()?;
-        let timestamp = reader.read_u128()?;
+        let timestamp = reader.read_u64()?;
         let nonce = reader.read_u64()?;
         let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
 

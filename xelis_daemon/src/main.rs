@@ -49,7 +49,7 @@ use clap::Parser;
 use anyhow::{Result, Context as AnyContext};
 
 #[derive(Parser)]
-#[clap(version = VERSION, about = "XELIS Daemon")]
+#[clap(version = VERSION, about = "An innovate cryptocurrency with BlockDAG and Homomorphic Encryption enabling Smart Contracts")]
 pub struct NodeConfig {
     #[structopt(flatten)]
     nested: Config,
@@ -66,6 +66,8 @@ pub struct NodeConfig {
     #[clap(long, arg_enum, default_value_t = Network::Mainnet)]
     network: Network
 }
+
+const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_PER_SECOND);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -171,7 +173,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
             mempool.size()
         };
 
-        let network_hashrate = (blockchain.get_difficulty() / (BLOCK_TIME_MILLIS / MILLIS_PER_SECOND) as Difficulty) as f64;
+        let network_hashrate = (blockchain.get_difficulty().await / BLOCK_TIME).into();
 
         Ok(
             build_prompt_message(
@@ -249,7 +251,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let storage = blockchain.get_storage().read().await;
-    let mut pruned_topoheight = storage.get_pruned_topoheight().context("Error on pruned topoheight")?.unwrap_or(0);
+    let mut pruned_topoheight = storage.get_pruned_topoheight().await.context("Error on pruned topoheight")?.unwrap_or(0);
     let mut expected_supply = if pruned_topoheight > 0 {
         let supply = storage.get_supply_at_topo_height(pruned_topoheight).await.context("Error while retrieving starting expected supply")?;
         pruned_topoheight += 1;
@@ -434,7 +436,7 @@ async fn show_balance<S: Storage>(manager: &CommandManager, mut arguments: Argum
         return Ok(());
     }
 
-    let asset_data = storage.get_asset_data(&asset).context("Error while retrieving asset data")?;
+    let asset_data = storage.get_asset(&asset).await.context("Error while retrieving asset data")?;
     let (mut topo, mut version) = storage.get_last_balance(&key, &asset).await.context("Error while retrieving last balance")?;
     loop {
         history -= 1;
@@ -546,24 +548,24 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let height = blockchain.get_height();
     let topoheight = blockchain.get_topo_height();
     let stableheight = blockchain.get_stable_height();
-    let difficulty = blockchain.get_difficulty();
+    let difficulty = blockchain.get_difficulty().await;
 
     let storage = blockchain.get_storage().read().await;
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
     let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
-    let avg_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
+    let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
     let supply = blockchain.get_supply().await.context("Error while retrieving supply")?;
-    let accounts_count = storage.count_accounts().context("Error while counting accounts")?;
-    let transactions_count = storage.count_transactions().context("Error while counting transactions")?;
-    let blocks_count = storage.count_blocks().context("Error while counting blocks")?;
-    let assets = storage.count_assets().context("Error while counting assets")?;
-    let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?;
+    let accounts_count = storage.count_accounts().await.context("Error while counting accounts")?;
+    let transactions_count = storage.count_transactions().await.context("Error while counting transactions")?;
+    let blocks_count = storage.count_blocks().await.context("Error while counting blocks")?;
+    let assets = storage.count_assets().await.context("Error while counting assets")?;
+    let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
 
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
     manager.message(format!("Topo Height: {}", topoheight));
     manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
-    manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / (BLOCK_TIME_MILLIS / MILLIS_PER_SECOND) as Difficulty) as f64)));
+    manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / BLOCK_TIME).into())));
     manager.message(format!("Top block hash: {}", top_block_hash));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Target Block Time: {:.2}s", BLOCK_TIME_MILLIS as f64 / MILLIS_PER_SECOND as f64));

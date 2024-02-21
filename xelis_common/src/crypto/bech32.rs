@@ -4,7 +4,7 @@ use thiserror::Error;
 
 const CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 const GENERATOR: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
-const SEPARATOR: char = '1';
+const SEPARATOR: char = ':';
 
 #[derive(Error, Debug)]
 pub enum Bech32Error {
@@ -24,8 +24,8 @@ pub enum Bech32Error {
     InvalidValue(u8, usize), // value, max
     #[error("Separator '1' not found")]
     Separator1NotFound,
-    #[error("Invalid separator '1' position: {}", _0)]
-    Separator1InvalidPosition(usize), // position
+    #[error("Invalid separator position: {}", _0)]
+    SeparatorInvalidPosition(usize), // position
     #[error(transparent)]
     InvalidUTF8Sequence(#[from] FromUtf8Error), // error returned by 'String::from_utf8'
     #[error("Invalid prefix, got: {}, expected: {}", _0, _1)]
@@ -160,7 +160,7 @@ pub fn decode(bech: &String) -> Result<(String, Vec<u8>), Bech32Error> {
 
     let pos = bech.rfind(SEPARATOR).ok_or(Bech32Error::Separator1NotFound)?;
     if pos < 1 || pos + 7 > bech.len() {
-        return Err(Bech32Error::Separator1InvalidPosition(pos))
+        return Err(Bech32Error::SeparatorInvalidPosition(pos))
     }
 
     let hrp = bech[0..pos].to_owned();

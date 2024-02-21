@@ -75,7 +75,7 @@ pub struct RPCConfig {
 }
 
 #[derive(Parser)]
-#[clap(version = VERSION, about = "XELIS Wallet")]
+#[clap(version = VERSION, about = "An innovate cryptocurrency with BlockDAG and Homomorphic Encryption enabling Smart Contracts")]
 pub struct Config {
     /// Daemon address to use
     #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]

@@ -1,12 +1,13 @@
 use crate::{
-    network::Network,
-    config::{FEE_PER_KB, COIN_DECIMALS},
+    config::{
+        COIN_DECIMALS,
+        FEE_PER_KB
+    },
     difficulty::Difficulty,
+    network::Network,
+    varuint::VarUint
 };
-use std::{
-    sync::Mutex,
-    time::{SystemTime, UNIX_EPOCH, Duration}
-};
+use std::sync::Mutex;
 
 #[macro_export]
 macro_rules! async_handler {
@@ -15,23 +16,6 @@ macro_rules! async_handler {
           Box::pin($func(a, b))
         }
     };
-}
-
-#[inline]
-pub fn get_current_time() -> Duration {
-    let start = SystemTime::now();
-    let time = start.duration_since(UNIX_EPOCH).expect("Incorrect time returned from get_current_time");
-    time
-}
-
-// return timestamp in seconds
-pub fn get_current_time_in_seconds() -> u64 {
-    get_current_time().as_secs()
-}
-
-// return timestamp in milliseconds
-pub fn get_current_time_in_millis() -> u128 {
-    get_current_time().as_millis()
 }
 
 // Format any coin value using the requested decimals count
@@ -75,7 +59,7 @@ pub fn calculate_tx_fee(tx_size: usize) -> u64 {
     size_in_kb * FEE_PER_KB
 }
 
-const HASHRATE_FORMATS: [&str; 5] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s"];
+const HASHRATE_FORMATS: [&str; 7] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s"];
 
 // Format a hashrate in human-readable format
 pub fn format_hashrate(mut hashrate: f64) -> String {
@@ -89,15 +73,16 @@ pub fn format_hashrate(mut hashrate: f64) -> String {
     return format!("{:.2} {}", hashrate, HASHRATE_FORMATS[count]);
 }
 
-const DIFFICULTY_FORMATS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
+const DIFFICULTY_FORMATS: [&str; 7] = ["", "K", "M", "G", "T", "P", "E"];
 
 // Format a difficulty in a human-readable format
 pub fn format_difficulty(mut difficulty: Difficulty) -> String {
     let max = HASHRATE_FORMATS.len() - 1;
     let mut count = 0;
-    while difficulty > 1000 && count < max {
+    let thousand = VarUint::from_u64(1000);
+    while difficulty > thousand && count < max {
         count += 1;
-        difficulty = difficulty / 1000;
+        difficulty = difficulty / thousand;
     }
 
     return format!("{}{}", difficulty, DIFFICULTY_FORMATS[count]);
