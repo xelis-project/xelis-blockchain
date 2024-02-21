@@ -10,7 +10,7 @@ use crate::serializer::{Serializer, ReaderError, Reader, Writer};
 // Type used in case of future change, to have everything linked to the same type
 pub type BalanceRepresentation = ElGamalCiphertext;
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct VersionedBalance {
     balance: BalanceRepresentation,
     previous_topoheight: Option<u64>,
@@ -94,28 +94,5 @@ impl Serializer for VersionedBalance {
             balance,
             previous_topoheight
         })
-    }
-}
-
-impl Serialize for VersionedBalance {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut writer = Writer::new();
-        self.write(&mut writer);
-        let bytes = writer.bytes();
-        serializer.serialize_bytes(&bytes)
-    }
-}
-
-impl<'de> Deserialize<'de> for VersionedBalance {
-    fn deserialize<D>(deserializer: D) -> Result<VersionedBalance, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let bytes = Vec::<u8>::deserialize(deserializer)?;
-        let mut reader = Reader::new(&bytes);
-        VersionedBalance::read(&mut reader).map_err(serde::de::Error::custom)
     }
 }

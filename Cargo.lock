@@ -567,9 +567,9 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.15.1"
+version = "3.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c764d619ca78fccbf3069b37bd7af92577f044bb15236036662d79b6559f25b7"
+checksum = "a3b1be7772ee4501dba05acbe66bb1e8760f6a6c474a36035631638e4415f130"
 
 [[package]]
 name = "byte-slice-cast"
@@ -3206,7 +3206,7 @@ dependencies = [
 [[package]]
 name = "xelis-he"
 version = "0.1.0"
-source = "git+ssh://git@github.com/xelis-project/xelis-he.git#6a26b0dba0c7ec80c14024a54b635fad67ea766f"
+source = "git+ssh://git@github.com/xelis-project/xelis-he.git#c0ff9009c11854e6b8aa6b8fde9146e5948d277f"
 dependencies = [
  "bulletproofs",
  "bytemuck",

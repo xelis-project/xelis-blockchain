@@ -267,7 +267,7 @@ impl serde::Serialize for Ciphertext {
 impl<'de> serde::Deserialize<'de> for Ciphertext {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::Deserializer<'de> {
         let bytes = <Vec<u8>>::deserialize(deserializer)?;
-        Ok(Self::from_bytes(&bytes).map_err(|_| serde::de::Error::custom("Invalid ciphertext bytes"))?)
+        Ok(Self::from_bytes(&bytes).map_err(serde::de::Error::custom)?)
     }
 }
 

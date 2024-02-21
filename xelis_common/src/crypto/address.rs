@@ -213,7 +213,7 @@ impl<'a> serde::Deserialize<'a> for Address {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where D: serde::Deserializer<'a> {
         let hex = String::deserialize(deserializer)?;
-        Address::from_string(&hex).map_err(|e| SerdeError::custom(e))
+        Address::from_string(&hex).map_err(SerdeError::custom)
     }
 }
 
