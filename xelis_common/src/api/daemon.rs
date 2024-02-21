@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     account::{VersionedBalance, VersionedNonce},
     block::Block,
-    crypto::{address::Address, hash::Hash},
+    crypto::{Address, Hash},
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
     transaction::Transaction,

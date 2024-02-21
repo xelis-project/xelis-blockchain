@@ -1,4 +1,4 @@
-use crate::{varuint::VarUint, crypto::hash::Hash};
+use crate::{varuint::VarUint, crypto::Hash};
 use primitive_types::U256;
 use thiserror::Error;
 

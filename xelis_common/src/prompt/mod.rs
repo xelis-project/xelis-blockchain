@@ -2,7 +2,7 @@ pub mod command;
 pub mod argument;
 
 use crate::{
-    crypto::hash::Hash,
+    crypto::Hash,
     serializer::{Serializer, ReaderError},
 };
 use std::{

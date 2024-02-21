@@ -1,7 +1,13 @@
 use log::debug;
 
-use crate::crypto::key::{PublicKey, Signature, SIGNATURE_LENGTH};
-use crate::crypto::hash::{Hashable, hash, Hash};
+use crate::crypto::{
+    SIGNATURE_LENGTH,
+    PublicKey,
+    Signature,
+    Hashable,
+    Hash,
+    hash,
+};
 use crate::serializer::{Serializer, Writer, Reader, ReaderError};
 use std::collections::HashMap;
 

@@ -1,4 +1,4 @@
-use crate::crypto::hash::Hash;
+use crate::crypto::Hash;
 
 pub const VERSION: &str = env!("BUILD_VERSION");
 pub const XELIS_ASSET: Hash = Hash::zero();

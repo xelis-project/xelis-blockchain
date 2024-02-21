@@ -1,5 +1,10 @@
-pub mod hash;
-pub mod key;
-pub mod bech32;
-pub mod address;
+mod hash;
+mod bech32;
+mod address;
+mod key;
+
 pub mod elgamal;
+
+pub use hash::*;
+pub use address::*;
+pub use key::*;

@@ -1,8 +1,10 @@
 use std::borrow::Cow;
 use crate::{
     crypto::{
-        hash::{Hash, Hashable, hash},
-        key::PublicKey
+        PublicKey,
+        Hashable,
+        Hash,
+        hash,
     },
     serializer::{Serializer, Writer, Reader, ReaderError},
     time::TimestampMillis,

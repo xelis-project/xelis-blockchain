@@ -1,6 +1,8 @@
 use std::hash::{Hash as StdHash, Hasher};
-
-use crate::{serializer::{Serializer, Writer, Reader, ReaderError}, crypto::hash::Hash};
+use crate::{
+    serializer::{Serializer, Writer, Reader, ReaderError},
+    crypto::Hash
+};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct AssetData {

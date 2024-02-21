@@ -1,6 +1,12 @@
-use crate::crypto::hash::Hash;
+use crate::crypto::Hash;
 use super::{Serializer, Writer, Reader, ReaderError};
-use std::{collections::{HashSet, BTreeSet, HashMap}, borrow::Cow, hash::Hash as StdHash, net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr}};
+use std::{
+    collections::{HashSet, BTreeSet, HashMap},
+    borrow::Cow,
+    hash::Hash as StdHash,
+    net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr
+    }
+};
 use indexmap::IndexSet;
 use log::{error, warn};
 

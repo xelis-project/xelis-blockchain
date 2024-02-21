@@ -5,7 +5,7 @@ use serde_json::Value;
 use thiserror::Error;
 use crate::{
     serializer::{Serializer, Reader, ReaderError, Writer},
-    crypto::hash::Hash
+    crypto::Hash
 };
 
 pub mod wallet;
