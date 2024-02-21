@@ -1,4 +1,4 @@
-use crate::config::PEER_TIMEOUT_INIT_CONNECTION;
+use crate::config::{MAX_BLOCK_SIZE, PEER_TIMEOUT_INIT_CONNECTION};
 use super::{
     encryption::{Encryption, EncryptionError},
     error::P2pError,
@@ -298,6 +298,13 @@ impl Connection {
         }
         let array: [u8; 4] = buf[0..4].try_into()?;
         let size = u32::from_be_bytes(array);
+
+        // Verify if the size is valid
+        // 16 additional bytes are for AEAD
+        if size > (MAX_BLOCK_SIZE + 16) as u32 {
+            warn!("Received invalid packet size: {} bytes from peer {}", size, self.get_address());
+            return Err(P2pError::InvalidPacketSize)
+        }
         Ok(size)
     }
 
