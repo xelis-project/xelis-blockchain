@@ -1,8 +1,8 @@
 mod hash;
-mod bech32;
 mod address;
 mod key;
 
+pub mod bech32;
 pub mod elgamal;
 
 pub use hash::*;
