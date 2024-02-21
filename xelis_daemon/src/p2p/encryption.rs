@@ -8,11 +8,16 @@ pub type EncryptionKey = [u8; 32];
 // Each peer has its own key and can rotate as he want
 // The nonce is incremented by one on each encrypt/decrypt
 // This allows us to not send the generated nonce and reduce bandwidth usage
+// Using a 64 bits nonce is enough for our use case
+// We use the first 8 bytes to store the nonce and the last 4 bytes are set to 0
+// Also, we rotate the keys every 1 GB of data to avoid any potential attack
+// We would reach 1 GB much before the nonce overflow
+// This is a simple implementation and we can improve it later
 pub struct Encryption {
     nonce_buffer: [u8; 12],
-    // This is the symetric key used to encrypt the data
+    // Cipher using our key to encrypt packets
     our_cipher: Option<ChaCha20Poly1305>,
-    // Key used by the peer
+    // Cipher using the peer key to decrypt packets
     peer_cipher: Option<ChaCha20Poly1305>,
     // Nonce to use for the next outgoing packet
     our_nonce: u64,
