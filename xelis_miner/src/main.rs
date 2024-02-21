@@ -1,23 +1,47 @@
 pub mod config;
 
-use std::{time::Duration, sync::atomic::{AtomicU64, Ordering, AtomicUsize, AtomicBool}, thread};
+use std::{
+    time::Duration,
+    sync::atomic::{
+        AtomicU64,
+        Ordering,
+        AtomicUsize,
+        AtomicBool
+    },
+    thread
+};
 use crate::config::DEFAULT_DAEMON_ADDRESS;
 use fern::colors::Color;
 use futures_util::{StreamExt, SinkExt};
 use serde::{Serialize, Deserialize};
-use tokio::{sync::{broadcast, mpsc, Mutex}, select, time::Instant};
+use tokio::{
+    sync::{
+        broadcast,
+        mpsc,
+        Mutex
+    },
+    select,
+    time::Instant,
+};
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Message, Error as TungsteniteError}
+    tungstenite::{
+        Message,
+        Error as TungsteniteError
+    }
 };
 use xelis_common::{
-    api::daemon::{GetBlockTemplateResult, SubmitBlockParams},
+    api::daemon::{
+        GetBlockTemplateResult,
+        SubmitBlockParams
+    },
     async_handler,
     block::BlockMiner,
     config::VERSION,
     crypto::{
-        address::Address,
-        hash::{Hash, Hashable}
+        Address,
+        Hash,
+        Hashable
     },
     difficulty::{
         check_difficulty_against_target,
@@ -33,11 +57,23 @@ use xelis_common::{
     },
     serializer::Serializer,
     time::get_current_time_in_millis,
-    utils::{format_difficulty, format_hashrate}
+    utils::{
+        format_difficulty,
+        format_hashrate
+    }
 };
 use clap::Parser;
-use log::{error, info, debug, warn};
-use anyhow::{Result, Error, Context};
+use log::{
+    debug,
+    info,
+    warn,
+    error,
+};
+use anyhow::{
+    Result,
+    Error,
+    Context
+};
 use lazy_static::lazy_static;
 
 #[derive(Parser)]
