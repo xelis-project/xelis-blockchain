@@ -559,6 +559,7 @@ impl<S: Storage> P2pServer<S> {
         // search for peers which are greater than us
         // and that are pruned but before our height so we can sync correctly
         let available_peers = peer_list.get_peers().values();
+        // IndexSet is used to select by random index
         let mut peers: IndexSet<&Arc<Peer>> = available_peers.filter(|p| {
             let peer_topoheight = p.get_topoheight();
             if fast_sync {
@@ -584,7 +585,8 @@ impl<S: Storage> P2pServer<S> {
         if let Some(previous_peer) = previous_peer {
             if peers.len() > 1 {
                 debug!("removing previous peer {} from random selection", previous_peer);
-                peers.remove(previous_peer);
+                // We don't need to preserve the order
+                peers.swap_remove(previous_peer);
             }
         }
 

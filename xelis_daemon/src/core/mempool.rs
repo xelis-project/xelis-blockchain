@@ -3,7 +3,7 @@ use super::{
     error::BlockchainError,
     storage::Storage
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, mem};
 use std::sync::Arc;
 use indexmap::IndexSet;
 use log::{trace, debug, warn};
@@ -131,7 +131,8 @@ impl Mempool {
         let key = tx.get_tx().get_owner();
         let mut delete = false;
         if let Some(cache) = self.caches.get_mut(key) {
-            if !cache.txs.remove(hash) {
+            // Shift remove is O(n) on average, but we need to preserve the order
+            if !cache.txs.shift_remove(hash) {
                 warn!("TX {} not found in mempool while deleting", hash);
             } else {
                 trace!("TX {} removed from cache", hash);
@@ -355,6 +356,7 @@ impl Mempool {
                             // Skip nonces verification as we already did it
                             if let Err(e) = blockchain.verify_transaction_with_hash(storage, tx, &tx_hash, &mut balances, None, true, topoheight).await {
                                 warn!("TX {} is not valid anymore, deleting it: {}", tx_hash, e);
+                                // Clone is needed as we can't remove a value from a map while iterating over it
                                 invalid_txs.push(tx_hash.clone());
                             }
                         } else {
@@ -368,11 +370,25 @@ impl Mempool {
                         cache.set_balances(balances.into_iter().map(|(k, v)| (k.clone(), v)).collect());
                     }
 
-                    // Delete all invalid txs from cache
-                    for hash in invalid_txs {
-                        cache.txs.remove(&hash);
-                        hashes.push(hash);
+                    if invalid_txs.len() == cache.txs.len() {
+                        // All txs are invalid, delete the cache
+                        delete_cache = true;
+
+                        // We empty the cache, so we can delete all txs
+                        let mut local_cache = IndexSet::new();
+                        mem::swap(&mut local_cache, &mut cache.txs);
+
+                        hashes.extend(local_cache);
+                    } else {
+                        // Delete all invalid txs from cache
+                        for hash in invalid_txs {
+                            // We have to shift remove as we need to preserve the order
+                            // This in O(n) on average
+                            cache.txs.shift_remove(&hash);
+                            hashes.push(hash);
+                        }
                     }
+
                 }
 
                 // now delete all necessary txs
