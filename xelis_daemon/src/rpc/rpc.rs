@@ -1,12 +1,12 @@
 use crate::{
+    config::{BLOCK_TIME_MILLIS, DEV_FEES, MAXIMUM_SUPPLY},
     core::{
-        blockchain::{Blockchain, get_block_reward},
-        storage::Storage,
+        blockchain::{get_block_dev_fee, get_block_reward, Blockchain},
         error::BlockchainError,
-        mempool::Mempool
+        mempool::Mempool,
+        storage::Storage
     },
-    p2p::peer::Peer,
-    config::{DEV_FEES, MAXIMUM_SUPPLY, BLOCK_TIME_MILLIS}
+    p2p::peer::Peer
 };
 use super::{InternalRpcError, ApiError};
 use xelis_common::{
@@ -785,7 +785,14 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
 
             let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
             if params.asset == XELIS_ASSET && *block_header.get_miner() == *key {
-                let reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
+                let mut reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
+                // subtract dev fee if any
+                let dev_fee_percentage = get_block_dev_fee(block_header.get_height());
+                if dev_fee_percentage != 0 {
+                    let dev_fee = reward * dev_fee_percentage / 100;
+                    reward -= dev_fee;
+                }
+
                 let history_type = AccountHistoryType::Mining { reward };
                 history.push(AccountHistoryEntry {
                     topoheight: topo,
