@@ -1,8 +1,15 @@
 use indexmap::IndexSet;
-use xelis_common::difficulty::CumulativeDifficulty;
-use xelis_common::crypto::hash::Hash;
-use super::storage::Storage;
-use super::{error::BlockchainError, storage::DifficultyProvider};
+use xelis_common::{
+    difficulty::CumulativeDifficulty,
+    crypto::Hash,
+};
+use super::{    
+    storage::{
+        Storage,
+        DifficultyProvider
+    },
+    error::BlockchainError,
+};
 
 // sort the scores by cumulative difficulty and, if equals, by hash value
 pub fn sort_descending_by_cumulative_difficulty<T>(scores: &mut Vec<(T, CumulativeDifficulty)>)

@@ -1,11 +1,54 @@
-use std::{borrow::Cow, time::{Duration, Instant}, sync::{Arc, atomic::{AtomicU64, Ordering}}, collections::HashMap};
+use std::{
+    borrow::Cow,
+    time::{Duration, Instant},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering}
+    },
+    collections::HashMap
+};
 use bytes::Bytes;
-use tokio::{sync::{mpsc::{Sender, Receiver, self}, RwLock, oneshot, Mutex, broadcast}, select, time::interval};
-use xelis_common::{crypto::hash::Hash, serializer::Serializer, queue::Queue};
-use crate::{core::{blockchain::Blockchain, storage::Storage}, config::PEER_TIMEOUT_REQUEST_OBJECT};
-use log::{error, debug, trace, warn};
-use super::{packet::{object::{ObjectRequest, OwnedObjectResponse}, Packet}, error::P2pError, peer::Peer};
-
+use tokio::{
+    sync::{
+        mpsc::{Sender, Receiver, self},
+        RwLock,
+        oneshot,
+        Mutex,
+        broadcast
+    },
+    select,
+    time::interval
+};
+use xelis_common::{
+    crypto::Hash,
+    serializer::Serializer,
+    queue::Queue
+};
+use crate::{
+    core::{
+        blockchain::Blockchain,
+        storage::Storage
+    },
+    config::PEER_TIMEOUT_REQUEST_OBJECT
+};
+use super::{
+    packet::{
+        object::{
+            ObjectRequest,
+            OwnedObjectResponse
+        },
+        Packet
+    },
+    error::P2pError,
+    peer::Peer
+};
+use log::{
+    error,
+    debug,
+    trace,
+    warn
+};
+    
 pub type SharedObjectTracker = Arc<ObjectTracker>;
 pub type ResponseBlocker = broadcast::Receiver<()>;
 

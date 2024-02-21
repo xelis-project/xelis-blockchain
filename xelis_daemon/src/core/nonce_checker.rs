@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use log::trace;
-use xelis_common::crypto::key::PublicKey;
+use xelis_common::crypto::PublicKey;
 
 use super::{storage::Storage, error::BlockchainError};
 

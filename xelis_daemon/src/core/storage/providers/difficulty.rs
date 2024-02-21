@@ -3,7 +3,15 @@ use async_trait::async_trait;
 use indexmap::IndexSet;
 use log::trace;
 use xelis_common::{
-    block::BlockHeader, crypto::hash::Hash, difficulty::{CumulativeDifficulty, Difficulty}, immutable::Immutable, serializer::Serializer, time::TimestampMillis
+    block::BlockHeader,
+    crypto::Hash,
+    difficulty::{
+        CumulativeDifficulty,
+        Difficulty
+    },
+    immutable::Immutable,
+    serializer::Serializer,
+    time::TimestampMillis
 };
 use crate::core::{
     error::BlockchainError,
@@ -57,7 +65,7 @@ impl DifficultyProvider for SledStorage {
 
     async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError> {
         trace!("get cumulative difficulty for hash {}", hash);
-        self.get_cacheable_data_copiable(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash).await
+        self.get_cacheable_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash).await
     }
 
     async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Immutable<IndexSet<Hash>>, BlockchainError> {

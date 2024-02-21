@@ -2,7 +2,22 @@ use std::borrow::Cow;
 use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{
-    account::BalanceRepresentation, asset::AssetWithData, crypto::{hash::Hash, key::PublicKey}, difficulty::{CumulativeDifficulty, Difficulty}, serializer::{Reader, ReaderError, Serializer, Writer}
+    account::BalanceRepresentation,
+    asset::AssetWithData,
+    crypto::{
+        Hash,
+        PublicKey,
+    },
+    difficulty::{
+        CumulativeDifficulty,
+        Difficulty
+    },
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    }
 };
 use super::chain::{BlockId, CommonPoint};
 use crate::config::CHAIN_SYNC_REQUEST_MAX_BLOCKS;

@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use log::trace;
-use xelis_common::{block::BlockHeader, crypto::hash::Hash};
+use xelis_common::{
+    block::BlockHeader,
+    crypto::Hash
+};
 
 use crate::core::{error::BlockchainError, storage::SledStorage};
 

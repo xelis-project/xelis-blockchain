@@ -12,14 +12,22 @@ pub use encryption::EncryptionKey;
 use indexmap::IndexSet;
 use lru::LruCache;
 use xelis_common::{
-    api::daemon::{Direction, NotifyEvent, PeerPeerDisconnectedEvent},
+    api::daemon::{
+        Direction,
+        NotifyEvent,
+        PeerPeerDisconnectedEvent
+    },
     block::{Block, BlockHeader},
     config::{TIPS_LIMIT, VERSION},
-    crypto::hash::{Hash, Hashable},
+    crypto::{Hash, Hashable},
     difficulty::CumulativeDifficulty,
     immutable::Immutable,
     serializer::Serializer,
-    time::{TimestampMillis, get_current_time_in_millis, get_current_time_in_seconds}
+    time::{
+        TimestampMillis,
+        get_current_time_in_millis,
+        get_current_time_in_seconds
+    }
 };
 use crate::{
     config::{

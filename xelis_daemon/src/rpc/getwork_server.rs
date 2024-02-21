@@ -3,32 +3,70 @@ use std::{
     collections::HashMap,
     fmt::Display,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{
+            AtomicU64,
+            Ordering
+        },
         Arc
     }
 };
-use actix::{Actor, AsyncContext, Handler, Message as TMessage, StreamHandler, Addr};
-use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
+use actix::{
+    Actor,
+    AsyncContext,
+    Handler,
+    Message as TMessage,
+    StreamHandler,
+    Addr
+};
+use actix_web_actors::ws::{
+    ProtocolError,
+    Message,
+    WebsocketContext
+};
 use anyhow::Context;
 use log::{debug, warn, error};
 use lru::LruCache;
-use rand::{rngs::OsRng, RngCore};
+use rand::{
+    rngs::OsRng,
+    RngCore
+};
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 use xelis_common::{
-    crypto::{key::PublicKey, hash::Hash},
-    time::{TimestampMillis, get_current_time_in_millis},
-    api::daemon::{GetBlockTemplateResult, SubmitBlockParams},
+    crypto::{
+        PublicKey,
+        Hash
+    },
+    time::{
+        TimestampMillis,
+        get_current_time_in_millis
+    },
+    api::daemon::{
+        GetBlockTemplateResult,
+        SubmitBlockParams
+    },
     serializer::Serializer,
-    block::{BlockHeader, BlockMiner},
+    block::{
+        BlockHeader,
+        BlockMiner
+    },
     difficulty::Difficulty,
     immutable::Immutable,
-    rpc_server::{RpcResponseError, InternalRpcError}
+    rpc_server::{
+        RpcResponseError,
+        InternalRpcError
+    }
 };
 use crate::{
-    core::{blockchain::Blockchain, storage::Storage},
-    config::{DEV_PUBLIC_KEY, STABLE_LIMIT}
+    core::{
+        blockchain::Blockchain,
+        storage::Storage
+    },
+    config::{
+        DEV_PUBLIC_KEY,
+        STABLE_LIMIT
+    }
 };
 
 pub type SharedGetWorkServer<S> = Arc<GetWorkServer<S>>;

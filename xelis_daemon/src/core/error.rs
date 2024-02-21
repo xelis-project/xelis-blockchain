@@ -2,7 +2,11 @@ use crate::p2p::error::P2pError;
 use std::sync::PoisonError;
 use thiserror::Error;
 use xelis_common::{
-    crypto::{hash::Hash, key::PublicKey, bech32::Bech32Error},
+    crypto::{
+        Hash,
+        PublicKey,
+        bech32::Bech32Error
+    },
     serializer::ReaderError,
     prompt::PromptError,
     difficulty::DifficultyError,

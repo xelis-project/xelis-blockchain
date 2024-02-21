@@ -1,15 +1,25 @@
 use xelis_common::{
     api::daemon::{Direction, NotifyEvent, PeerPeerListUpdatedEvent},
-    crypto::hash::Hash,
+    crypto::Hash,
     difficulty::CumulativeDifficulty,
     serializer::{
-        Reader, ReaderError, Serializer, Writer
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
     }
 };
 use crate::{
     config::P2P_PING_PEER_LIST_LIMIT,
-    core::{blockchain::Blockchain, storage::Storage},
-    p2p::{error::P2pError, is_local_address, peer::Peer},
+    core::{
+        blockchain::Blockchain,
+        storage::Storage
+    },
+    p2p::{
+        error::P2pError,
+        peer::Peer,
+        is_local_address,
+    },
     rpc::rpc::get_peer_entry
 };
 use std::{

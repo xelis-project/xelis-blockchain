@@ -4,8 +4,11 @@ use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     block::BlockHeader,
     config::TIPS_LIMIT,
-    crypto::hash::Hash,
-    difficulty::{CumulativeDifficulty, Difficulty},
+    crypto::Hash,
+    difficulty::{
+        CumulativeDifficulty,
+        Difficulty
+    },
     immutable::Immutable,
     time::TimestampMillis
 };

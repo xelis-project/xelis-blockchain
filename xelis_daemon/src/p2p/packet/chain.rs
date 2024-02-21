@@ -1,7 +1,7 @@
 use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{
-    crypto::hash::Hash,
+    crypto::Hash,
     serializer::{
         Serializer,
         Writer,

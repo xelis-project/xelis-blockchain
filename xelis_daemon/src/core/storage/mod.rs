@@ -10,11 +10,13 @@ use std::{collections::HashSet, sync::Arc};
 use async_trait::async_trait;
 use xelis_common::{
     block::{Block, BlockHeader},
-    crypto::hash::Hash,
+    crypto::Hash,
     network::Network,
     transaction::Transaction,
 };
 use crate::core::error::BlockchainError;
+
+// Represents the tips of the chain or of a block
 pub type Tips = HashSet<Hash>;
 
 #[async_trait]

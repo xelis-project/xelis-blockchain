@@ -5,9 +5,9 @@ use crate::{
     core::error::{BlockchainError, DiskContext}
 };
 use xelis_common::{
-    account::{BalanceRepresentation, VersionedBalance, VersionedNonce},
+    account::{VersionedBalance, VersionedNonce},
     block::{Block, BlockHeader},
-    crypto::{hash::Hash, key::PublicKey},
+    crypto::{Hash, PublicKey},
     difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
     network::Network,
@@ -252,15 +252,15 @@ impl SledStorage {
         Ok(value)
     }
 
-    pub(super) async fn get_cacheable_data_copiable<K: Eq + StdHash + Serializer + Clone, V: Serializer + Copy>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
+    pub(super) async fn get_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: &Option<Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
         let value = if let Some(cache) = cache {
             let mut cache = cache.lock().await;
             if let Some(value) = cache.get(key) {
-                return Ok(*value);
+                return Ok(value.clone());
             }
 
-            let value = self.load_from_disk(tree, &key.to_bytes())?;
-            cache.put(key.clone(), value);
+            let value: V = self.load_from_disk(tree, &key.to_bytes())?;
+            cache.put(key.clone(), value.clone());
             value
         } else {
             self.load_from_disk(tree, &key.to_bytes())?

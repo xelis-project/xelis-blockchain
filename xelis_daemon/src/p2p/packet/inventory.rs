@@ -1,8 +1,15 @@
 use std::borrow::Cow;
-
 use indexmap::IndexSet;
 use log::debug;
-use xelis_common::{crypto::hash::Hash, serializer::{Serializer, ReaderError, Reader, Writer}};
+use xelis_common::{
+    crypto::Hash,
+    serializer::{
+        Serializer,
+        ReaderError,
+        Reader,
+        Writer
+    }
+};
 
 pub const NOTIFY_MAX_LEN: usize = 16384; // 16384 * 32 bytes = 512 KiB
 

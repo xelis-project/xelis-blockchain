@@ -9,16 +9,29 @@ use crate::{
 use xelis_common::{
     api::daemon::Direction,
     config::TIPS_LIMIT,
-    crypto::hash::Hash,
+    crypto::Hash,
     difficulty::CumulativeDifficulty,
     serializer::Serializer,
-    time::{TimestampSeconds, get_current_time_in_seconds}
+    time::{
+        TimestampSeconds,
+        get_current_time_in_seconds
+    }
 };
 use super::{
     packet::{
-        bootstrap_chain::{StepRequest, BootstrapChainRequest, StepResponse},
-        chain::{ChainRequest, ChainResponse},
-        object::{ObjectRequest, OwnedObjectResponse},
+        bootstrap_chain::{
+            StepRequest,
+            BootstrapChainRequest,
+            StepResponse
+        },
+        chain::{
+            ChainRequest,
+            ChainResponse
+        },
+        object::{
+            ObjectRequest,
+            OwnedObjectResponse
+        },
         Packet
     },
     peer_list::SharedPeerList,
@@ -40,7 +53,13 @@ use tokio::{
 };
 use lru::LruCache;
 use bytes::Bytes;
-use log::{debug, log_enabled, trace, warn, Level};
+use log::{
+    Level,
+    log_enabled,
+    trace,
+    debug,
+    warn,
+};
 
 // A RequestedObjects is a map of all objects requested from a peer
 // This is done to be awaitable with a timeout

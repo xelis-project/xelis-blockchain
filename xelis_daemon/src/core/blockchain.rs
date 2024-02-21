@@ -20,8 +20,10 @@ use xelis_common::{
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE},
     config::{COIN_DECIMALS, MAX_TRANSACTION_SIZE, TIPS_LIMIT, XELIS_ASSET},
     crypto::{
-        hash::{Hash, Hashable, HASH_SIZE},
-        key::PublicKey
+        HASH_SIZE,
+        Hashable,
+        Hash,
+        PublicKey
     },
     difficulty::{check_difficulty, CumulativeDifficulty, Difficulty},
     immutable::Immutable,

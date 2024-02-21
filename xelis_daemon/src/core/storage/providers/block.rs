@@ -2,7 +2,14 @@ use std::sync::{atomic::Ordering, Arc};
 
 use async_trait::async_trait;
 use log::{debug, trace};
-use xelis_common::{block::{Block, BlockHeader}, crypto::hash::Hash, difficulty::Difficulty, immutable::Immutable, serializer::Serializer, transaction::Transaction};
+use xelis_common::{
+    block::{Block, BlockHeader},
+    crypto::Hash,
+    difficulty::Difficulty,
+    immutable::Immutable,
+    serializer::Serializer,
+    transaction::Transaction
+};
 
 use crate::core::{error::BlockchainError, storage::{sled::BLOCKS_COUNT, SledStorage}};
 

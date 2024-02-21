@@ -3,9 +3,9 @@ use xelis_common::{
     api::daemon::DevFeeThreshold,
     config::COIN_VALUE,
     crypto::{
-        address::Address,
-        hash::Hash,
-        key::PublicKey
+        Address,
+        Hash,
+        PublicKey
     },
     difficulty::Difficulty,
     network::Network,

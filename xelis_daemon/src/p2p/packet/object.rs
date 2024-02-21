@@ -1,9 +1,12 @@
 use xelis_common::{
-    crypto::hash::{
+    crypto::{
         Hash,
         Hashable
     },
-    block::{Block, BlockHeader},
+    block::{
+        Block,
+        BlockHeader
+    },
     transaction::Transaction,
     serializer::{
         Serializer,

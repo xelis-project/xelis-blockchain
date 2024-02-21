@@ -1,7 +1,15 @@
 use crate::{
-    config::{BLOCK_TIME_MILLIS, DEV_FEES, MAXIMUM_SUPPLY},
+    config::{
+        BLOCK_TIME_MILLIS,
+        DEV_FEES,
+        MAXIMUM_SUPPLY
+    },
     core::{
-        blockchain::{get_block_dev_fee, get_block_reward, Blockchain},
+        blockchain::{
+            get_block_dev_fee,
+            get_block_reward,
+            Blockchain
+        },
         error::BlockchainError,
         mempool::Mempool,
         storage::Storage
@@ -52,15 +60,31 @@ use xelis_common::{
         },
         DataHash
     },
-    config::{MAX_TRANSACTION_SIZE, VERSION, XELIS_ASSET},
+    config::{
+        MAX_TRANSACTION_SIZE,
+        VERSION,
+        XELIS_ASSET
+    },
     async_handler,
-    block::{Block, BlockHeader},
-    transaction::{Transaction, TransactionType},
-    difficulty::{CumulativeDifficulty, Difficulty},
-    crypto::hash::Hash,
+    block::{
+        Block,
+        BlockHeader
+    },
+    transaction::{
+        Transaction,
+        TransactionType
+    },
+    difficulty::{
+        CumulativeDifficulty,
+        Difficulty
+    },
+    crypto::Hash,
     context::Context,
     immutable::Immutable,
-    rpc_server::{parse_params, RPCHandler},
+    rpc_server::{
+        parse_params,
+        RPCHandler
+    },
     serializer::Serializer,
     time::TimestampSeconds,
 };

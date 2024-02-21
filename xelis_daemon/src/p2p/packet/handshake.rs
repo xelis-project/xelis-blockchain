@@ -1,6 +1,6 @@
 use log::debug;
 use xelis_common::{
-    crypto::hash::Hash,
+    crypto::Hash,
     difficulty::CumulativeDifficulty,
     network::Network,
     serializer::{Reader, ReaderError, Serializer, Writer},

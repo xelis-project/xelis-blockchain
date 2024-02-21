@@ -1,12 +1,31 @@
-use std::{str::FromStr, fmt::{Display, Formatter}, sync::Arc, time::Duration, collections::{HashMap, hash_map::Entry}};
-
+use std::{
+    str::FromStr,
+    fmt::{Display, Formatter},
+    sync::Arc,
+    time::Duration,
+    collections::{HashMap, hash_map::Entry}
+};
 use log::{info, error, debug};
 use rand::{rngs::OsRng, Rng};
 use tokio::time::interval;
-use xelis_common::{crypto::{key::KeyPair, hash::Hashable}, transaction::{Transaction, TransactionType, Transfer}, config::{FEE_PER_KB, XELIS_ASSET, TIPS_LIMIT}, block::Block};
-
+use xelis_common::{
+    crypto::{
+        KeyPair,
+        Hashable
+    },
+    transaction::{
+        Transaction,
+        TransactionType,
+        Transfer
+    },
+    config::{
+        FEE_PER_KB,
+        XELIS_ASSET,
+        TIPS_LIMIT
+    },
+    block::Block
+};
 use crate::config::BLOCK_TIME_MILLIS;
-
 use super::{blockchain::Blockchain, storage::Storage};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

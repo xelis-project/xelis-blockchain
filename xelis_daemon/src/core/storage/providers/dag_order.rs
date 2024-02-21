@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use log::trace;
-use xelis_common::{crypto::hash::Hash, serializer::Serializer};
+use xelis_common::{
+    crypto::Hash,
+    serializer::Serializer
+};
 use crate::core::{
     error::BlockchainError,
     storage::SledStorage,
@@ -58,7 +61,7 @@ impl DagOrderProvider for SledStorage {
 
     async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         trace!("get topoheight for hash: {}", hash);
-        self.get_cacheable_data_copiable(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await
+        self.get_cacheable_data(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await
     }
 
     async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError> {

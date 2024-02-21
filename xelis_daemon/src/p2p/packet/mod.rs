@@ -18,7 +18,7 @@ use log::{trace, error};
 use xelis_common::{
     serializer::{Serializer, Reader, ReaderError, Writer},
     block::BlockHeader,
-    crypto::hash::Hash
+    crypto::Hash
 };
 
 use super::EncryptionKey;

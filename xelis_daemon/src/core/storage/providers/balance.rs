@@ -3,12 +3,11 @@ use log::{trace, error};
 use xelis_common::{
     account::{
         BalanceRepresentation,
-        VersionedBalance,
-        INITIAL_BALANCE,
+        VersionedBalance
     },
     crypto::{
-        hash::Hash,
-        key::PublicKey,
+        Hash,
+        PublicKey,
     },
     serializer::Serializer
 };
@@ -108,7 +107,7 @@ impl BalanceProvider for SledStorage {
             return Ok(0)
         }
 
-        self.get_cacheable_data_copiable(&self.balances, &None, &key).await
+        self.get_cacheable_data(&self.balances, &None, &key).await
     }
 
     // set in storage the new top topoheight (the most up-to-date versioned balance)
@@ -142,7 +141,7 @@ impl BalanceProvider for SledStorage {
         }
 
         let disk_key = self.get_versioned_balance_key(key, asset, topoheight);
-        self.get_cacheable_data_copiable(&self.versioned_balances, &None, &disk_key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone(), topoheight, asset.clone()))
+        self.get_cacheable_data(&self.versioned_balances, &None, &disk_key).await.map_err(|_| BlockchainError::NoBalanceChanges(key.clone(), topoheight, asset.clone()))
     }
 
     // delete the last topoheight registered for this key
@@ -214,7 +213,8 @@ impl BalanceProvider for SledStorage {
     async fn get_new_versioned_balance(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("get new versioned balance {} for {} at {}", asset, key, topoheight);
         if topoheight == 0 {
-            return Ok(INITIAL_BALANCE)
+            // if its the first balance, then we return a zero balance
+            return Ok(VersionedBalance::zero())
         }
 
         let version = match self.get_balance_at_maximum_topoheight(key, asset, topoheight - 1).await? {
@@ -227,7 +227,8 @@ impl BalanceProvider for SledStorage {
                 }
                 version
             },
-            None => INITIAL_BALANCE
+            // if its the first balance, then we return a zero balance
+            None => VersionedBalance::zero()
         };
 
         Ok(version)
@@ -248,7 +249,7 @@ impl BalanceProvider for SledStorage {
             return Err(BlockchainError::NoBalance(key.clone()))
         }
 
-        let topoheight = self.get_cacheable_data_copiable(&self.balances, &None, &self.get_balance_key_for(key, asset)).await?;
+        let topoheight = self.get_cacheable_data(&self.balances, &None, &self.get_balance_key_for(key, asset)).await?;
         let version = self.get_balance_at_exact_topoheight(key, asset, topoheight).await?;
         Ok((topoheight, version))
     }

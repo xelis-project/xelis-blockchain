@@ -4,7 +4,7 @@ use indexmap::IndexSet;
 use log::trace;
 use xelis_common::{
     asset::{AssetData, AssetWithData},
-    crypto::{hash::{Hash, HASH_SIZE}, key::PublicKey},
+    crypto::{Hash, HASH_SIZE, PublicKey},
     serializer::Serializer,
 };
 use crate::core::{

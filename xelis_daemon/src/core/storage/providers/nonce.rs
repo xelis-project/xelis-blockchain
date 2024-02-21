@@ -5,7 +5,8 @@ use indexmap::IndexSet;
 use log::{trace, error};
 use xelis_common::{
     account::VersionedNonce,
-    crypto::key::PublicKey, serializer::Serializer
+    crypto::PublicKey,
+    serializer::Serializer
 };
 use crate::core::{
     error::BlockchainError,

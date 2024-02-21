@@ -1,8 +1,16 @@
 use async_trait::async_trait;
 use log::trace;
-use xelis_common::{crypto::hash::Hash, serializer::Serializer};
-
-use crate::core::{error::BlockchainError, storage::{SledStorage, Tips}};
+use xelis_common::{
+    crypto::Hash,
+    serializer::Serializer
+};
+use crate::core::{
+    error::BlockchainError,
+    storage::{
+        SledStorage,
+        Tips
+    }
+};
 
 #[async_trait]
 pub trait ClientProtocolProvider {

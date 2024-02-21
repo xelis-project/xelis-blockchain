@@ -11,8 +11,8 @@ use xelis_common::{
     account::VersionedBalance,
     time::{TimestampSeconds, get_current_time_in_seconds},
     crypto::{
-        hash::Hash,
-        key::PublicKey
+        Hash,
+        PublicKey
     },
     transaction::Transaction
 };

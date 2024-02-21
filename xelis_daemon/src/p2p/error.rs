@@ -3,7 +3,7 @@ use tokio::sync::AcquireError;
 use tokio::sync::mpsc::error::SendError as TSendError;
 use tokio::sync::oneshot::error::RecvError;
 use xelis_common::api::daemon::Direction;
-use xelis_common::crypto::hash::Hash;
+use xelis_common::crypto::Hash;
 use xelis_common::serializer::ReaderError;
 use std::array::TryFromSliceError;
 use std::net::{AddrParseError, SocketAddr};

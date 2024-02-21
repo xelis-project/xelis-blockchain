@@ -3,9 +3,18 @@ use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
     transaction::Transaction,
-    crypto::hash::Hash,
+    crypto::Hash,
 };
-use crate::core::{error::{BlockchainError, DiskContext}, storage::{sled::TXS_COUNT, SledStorage}};
+use crate::core::{
+    error::{
+        BlockchainError,
+        DiskContext
+    },
+    storage::{
+        sled::TXS_COUNT,
+        SledStorage
+    }
+};
 
 #[async_trait]
 pub trait TransactionProvider {

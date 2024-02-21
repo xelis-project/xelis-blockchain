@@ -8,19 +8,33 @@ use fern::colors::Color;
 use humantime::format_duration;
 use log::{info, error, warn};
 use p2p::P2pServer;
-use rpc::{getwork_server::SharedGetWorkServer, rpc::get_block_response_for_hash};
+use rpc::{
+    getwork_server::SharedGetWorkServer,
+    rpc::get_block_response_for_hash
+};
 use xelis_common::{
     async_handler,
     config::{VERSION, XELIS_ASSET},
     context::Context,
-    crypto::{address::Address, hash::Hashable},
+    crypto::{
+        Address,Hashable
+    },
     difficulty::Difficulty,
     network::Network,
     prompt::{
         Prompt,
-        command::{CommandManager, CommandError, Command, CommandHandler},
+        command::{
+            CommandManager,
+            CommandError,
+            Command,
+            CommandHandler
+        },
         PromptError,
-        argument::{ArgumentManager, Arg, ArgType},
+        argument::{
+            ArgumentManager,
+            Arg,
+            ArgType
+        },
         LogLevel,
         self,
         ShareablePrompt
@@ -35,10 +49,20 @@ use xelis_common::{
 };
 use crate::{
     core::{
-        blockchain::{Config, Blockchain, get_block_reward},
-        storage::{Storage, SledStorage}
+        blockchain::{
+            Config,
+            Blockchain,
+            get_block_reward
+        },
+        storage::{
+            Storage,
+            SledStorage
+        }
     },
-    config::{BLOCK_TIME_MILLIS, MILLIS_PER_SECOND}
+    config::{
+        BLOCK_TIME_MILLIS,
+        MILLIS_PER_SECOND
+    }
 };
 use std::{
     sync::Arc,
@@ -46,7 +70,10 @@ use std::{
     time::Duration
 };
 use clap::Parser;
-use anyhow::{Result, Context as AnyContext};
+use anyhow::{
+    Result,
+    Context as AnyContext
+};
 
 #[derive(Parser)]
 #[clap(version = VERSION, about = "An innovate cryptocurrency with BlockDAG and Homomorphic Encryption enabling Smart Contracts")]
