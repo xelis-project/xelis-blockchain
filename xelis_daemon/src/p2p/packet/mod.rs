@@ -24,20 +24,20 @@ use xelis_common::{
 use super::EncryptionKey;
 
 // All registered packet ids
-const HANDSHAKE_ID: u8 = 0;
-const TX_PROPAGATION_ID: u8 = 1;
-const BLOCK_PROPAGATION_ID: u8 = 2;
-const CHAIN_REQUEST_ID: u8 = 3;
-const CHAIN_RESPONSE_ID: u8 = 4;
-const PING_ID: u8 = 5;
-const OBJECT_REQUEST_ID: u8 = 6;
-const OBJECT_RESPONSE_ID: u8 = 7;
-const NOTIFY_INV_REQUEST_ID: u8 = 8; 
-const NOTIFY_INV_RESPONSE_ID: u8 = 9;
-const BOOTSTRAP_CHAIN_REQUEST_ID: u8 = 10;
-const BOOTSTRAP_CHAIN_RESPONSE_ID: u8 = 11;
-const PEER_DISCONNECTED_ID: u8 = 12;
-const KEY_EXCHANGE_ID: u8 = 13;
+const KEY_EXCHANGE_ID: u8 = 0;
+const HANDSHAKE_ID: u8 = 1;
+const TX_PROPAGATION_ID: u8 = 2;
+const BLOCK_PROPAGATION_ID: u8 = 3;
+const CHAIN_REQUEST_ID: u8 = 4;
+const CHAIN_RESPONSE_ID: u8 = 5;
+const PING_ID: u8 = 6;
+const OBJECT_REQUEST_ID: u8 = 7;
+const OBJECT_RESPONSE_ID: u8 = 8;
+const NOTIFY_INV_REQUEST_ID: u8 = 9; 
+const NOTIFY_INV_RESPONSE_ID: u8 = 10;
+const BOOTSTRAP_CHAIN_REQUEST_ID: u8 = 11;
+const BOOTSTRAP_CHAIN_RESPONSE_ID: u8 = 12;
+const PEER_DISCONNECTED_ID: u8 = 13;
 
 // PacketWrapper allows us to link any Packet to a Ping
 #[derive(Debug)]
@@ -123,6 +123,7 @@ impl<'a> Serializer for Packet<'a> {
         let id = reader.read_u8()?;
         trace!("Packet ID received: {}, size: {}", id, reader.total_size());
         let packet = match id {
+            KEY_EXCHANGE_ID => Packet::KeyExchange(Cow::Owned(EncryptionKey::read(reader)?)),
             HANDSHAKE_ID => Packet::Handshake(Cow::Owned(Handshake::read(reader)?)),
             TX_PROPAGATION_ID => Packet::TransactionPropagation(PacketWrapper::read(reader)?),
             BLOCK_PROPAGATION_ID => Packet::BlockPropagation(PacketWrapper::read(reader)?),
@@ -136,7 +137,6 @@ impl<'a> Serializer for Packet<'a> {
             BOOTSTRAP_CHAIN_REQUEST_ID => Packet::BootstrapChainRequest(BootstrapChainRequest::read(reader)?),
             BOOTSTRAP_CHAIN_RESPONSE_ID => Packet::BootstrapChainResponse(BootstrapChainResponse::read(reader)?),
             PEER_DISCONNECTED_ID => Packet::PeerDisconnected(PacketPeerDisconnected::read(reader)?),
-            KEY_EXCHANGE_ID => Packet::KeyExchange(Cow::Owned(EncryptionKey::read(reader)?)),
             id => {
                 error!("invalid packet id received: {}", id);
                 return Err(ReaderError::InvalidValue)
@@ -152,6 +152,7 @@ impl<'a> Serializer for Packet<'a> {
 
     fn write(&self, writer: &mut Writer) {
         let (id, serializer): (u8, &dyn Serializer) = match self {
+            Packet::KeyExchange(key) => (KEY_EXCHANGE_ID, key),
             Packet::Handshake(handshake) => (HANDSHAKE_ID, handshake.as_ref()),
             Packet::TransactionPropagation(tx) => (TX_PROPAGATION_ID, tx),
             Packet::BlockPropagation(block) => (BLOCK_PROPAGATION_ID, block),
@@ -165,7 +166,6 @@ impl<'a> Serializer for Packet<'a> {
             Packet::BootstrapChainRequest(request) => (BOOTSTRAP_CHAIN_REQUEST_ID, request),
             Packet::BootstrapChainResponse(response) => (BOOTSTRAP_CHAIN_RESPONSE_ID, response),
             Packet::PeerDisconnected(disconnected) => (PEER_DISCONNECTED_ID, disconnected),
-            Packet::KeyExchange(key) => (KEY_EXCHANGE_ID, key),
         };
 
         let packet = serializer.to_bytes();

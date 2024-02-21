@@ -5,12 +5,9 @@ use thiserror::Error;
 // This symetric key is used to encrypt/decrypt the data
 pub type EncryptionKey = [u8; 32];
 
-
-// Two packets are created: Rekey and RekeyAck
-// Rekey is sent by the peer to rekey the connection
-// RekeyAck is sent by the other party to acknowledge the rekey
-// Each peer has its own symetric key
-// This is done so we can use same nonce and each peer can rotate its key
+// Each peer has its own key and can rotate as he want
+// The nonce is incremented by one on each encrypt/decrypt
+// This allows us to not send the generated nonce and reduce bandwidth usage
 pub struct Encryption {
     nonce_buffer: [u8; 12],
     // This is the symetric key used to encrypt the data
@@ -52,14 +49,17 @@ impl Encryption {
         }
     }
 
+    // Check if the encryption is ready to write (encrypt)
     pub fn is_write_ready(&self) -> bool {
         self.our_cipher.is_some()
     }
 
+    // Check if the encryption is ready to read (decrypt)
     pub fn is_read_ready(&self) -> bool {
         self.peer_cipher.is_some()
     }
 
+    // Generate a new random key
     pub fn generate_key(&self) -> EncryptionKey {
         ChaCha20Poly1305::generate_key(&mut OsRng).into()
     }
@@ -77,6 +77,7 @@ impl Encryption {
         // Encrypt the packet
         let res = cipher.encrypt(nonce_part.into(), input)
             .map_err(|_| EncryptionError::CipherError)?;
+
         // Increment the nonce so we don't use the same nonce twice
         self.our_nonce += 1;
 
@@ -97,6 +98,7 @@ impl Encryption {
         let res = cipher.decrypt(nonce_part.into(), buf.as_ref())
             .map_err(|_| EncryptionError::CipherError)?;
 
+        // Increment the nonce so we don't use the same nonce twice
         self.peer_nonce += 1;
 
         Ok(res)

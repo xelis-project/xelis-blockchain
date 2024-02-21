@@ -1,3 +1,4 @@
+use crate::config::PEER_TIMEOUT_INIT_CONNECTION;
 use super::{
     encryption::{Encryption, EncryptionError},
     error::P2pError,
@@ -102,46 +103,56 @@ impl Connection {
         }
     }
 
-    // TODO: Refactor
-    pub async fn send_our_key(&self) -> P2pResult<()> {
-        let mut encryption = Encryption::new();
-        let packet = self.rotate_key_packet(&mut encryption).await?;
-        self.send_bytes(&packet).await?;
-
-        let mut guard = self.encryption.lock().await;
-        *guard = Some(encryption);
-
-        Ok(())
-    }
-
-    // TODO: Refactor
+    // Do a key exchange with the peer
+    // If we are the client, we send our key first in plaintext
+    // We wait for the peer to send its key
+    // If we are the server, we send back our key
+    // NOTE: This doesn't prevent any MITM at this point
+    // Because a MITM could intercept the key and send its own key to the peer
+    // and play the role as a proxy.
+    // Afaik, there is no way to have a decentralized way to prevent MITM without trusting a third party
+    // (That's what TLS/SSL does with the CA, but it's not decentralized and it's not trustless)
+    // A potential idea would be to hardcode seed nodes keys,
+    // and each nodes share the key of other along the socket address
     pub async fn exchange_keys(&mut self) -> P2pResult<()> {
+        trace!("Exchanging keys with {}", self.addr);
+
+        // Update our state
         self.set_state(State::KeyHandshake);
+
+        // Generate our encryption state
+        let mut encryption = Encryption::new();
+
+        // Send our key if we initiated the connection
         if self.is_out() {
-            self.send_our_key().await?;
+            let packet = self.rotate_key_packet(&mut encryption).await?;
+            self.send_bytes(&packet).await?;
         }
 
+        // Wait for the peer to receive its key
         let mut buffer = [0; 256];
-        let Packet::KeyExchange(peer_key) = timeout(Duration::from_millis(5000), self.read_packet(&mut buffer, 256)).await?? else {
+        let Packet::KeyExchange(peer_key) = timeout(
+            Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION),
+            self.read_packet(&mut buffer, 256)
+        ).await?? else {
             error!("Expected KeyExchange packet");
             return Err(P2pError::InvalidPacket);
         };
 
-        let mut encryption = self.encryption.lock().await;
-        if let Some(encryption) = encryption.as_mut() {
-            encryption.rotate_key(peer_key.into_owned(), false)?;
-        } else {
-            drop(encryption);
+        // Now that we got the peer key, update our encryption state
+        encryption.rotate_key(peer_key.into_owned(), false)?;
 
-            let mut encryption = Encryption::new();
-            encryption.rotate_key(peer_key.into_owned(), false)?;
-
+        // Send back our key if we are the server
+        if !self.is_out() {
             let packet = self.rotate_key_packet(&mut encryption).await?;
             self.send_bytes(&packet).await?;
-
-            let mut guard = self.encryption.lock().await;
-            *guard = Some(encryption);
         }
+
+        // Store our encryption state
+        self.encryption.get_mut().replace(encryption);
+
+        trace!("Key exchange with {} successful", self.addr);
+
         Ok(())
     }
 
@@ -166,15 +177,22 @@ impl Connection {
 
     // This will send to the peer a packet to rotate the key
     async fn rotate_key_packet(&self, encryption: &mut Encryption) -> P2pResult<Bytes> {
+        // Generate a new key to use
         let new_key = encryption.generate_key();
-        let write_ready = encryption.is_write_ready();
-
-        encryption.rotate_key(new_key, true)?;
-
+        // Verify if we already have one set
+        
+        // Build the packet
         let mut packet = Bytes::from(Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes());
-        if write_ready {
+        
+        // This is used to determine if we need to encrypt the packet or not
+        // Check if we already had a key set, if so, encrypt it
+        if encryption.is_write_ready() {
+            // Encrypt with the our previous key our new key
             packet = encryption.encrypt_packet(&packet)?.into();
         }
+
+        // Rotate the key in our encryption state
+        encryption.rotate_key(new_key, true)?;
 
         Ok(packet)
     }
@@ -194,34 +212,46 @@ impl Connection {
         }
     }
 
+    // This function will send the packet to the peer without flushing the stream
+    // Packet length is ALWAYS sent in raw (not encrypted)
+    // Otherwise, we can't know how much bytes to read for each ciphertext/packet
+    async fn send_packet_bytes_internal(&self, stream: &mut OwnedWriteHalf, packet: &[u8]) -> P2pResult<()> {
+        let packet_len = packet.len() as u32;
+        stream.write_all(&packet_len.to_be_bytes()).await?;
+        stream.write_all(packet).await?;
+
+        Ok(())
+    }
     // Send bytes to the peer
-    // Encrypt must be used all time except for the handshake
+    // Encrypt must be used all time starting handshake
     pub async fn send_bytes(&self, packet: &[u8]) -> P2pResult<()> {
         let mut stream = self.write.lock().await;
 
         // Count the bytes sent
         let bytes_out = self.bytes_out.fetch_add(packet.len(), Ordering::Relaxed);
 
+        // Verify if we should encrypt the packet
         let mut guard = self.encryption.lock().await;
-        if let Some(encryption) = guard.as_mut().and_then(|e| e.is_write_ready().then(|| e)){
+        if let Some(encryption) = guard.as_mut().filter(|e| e.is_write_ready()) {
             let buffer = encryption.encrypt_packet(packet)?;
-            let buf_len = buffer.len() as u32;
-            stream.write(&buf_len.to_be_bytes()).await?;
-            stream.write_all(&buffer).await?;
+            // Send the bytes in encrypted format
+            self.send_packet_bytes_internal(&mut stream, &buffer).await?;
 
             // Rotate the key if necessary
             if bytes_out > 0 && bytes_out % ROTATE_EVERY_N_BYTES == 0 {
                 debug!("Rotating our key with peer {}", self.get_address());
                 let packet = self.rotate_key_packet(encryption).await?;
-                stream.write_all(&packet).await?;
+                // Send the new key to the peer
+                self.send_packet_bytes_internal(&mut stream, &packet).await?;
             }
         } else {
-            let packet_len = packet.len() as u32;
-            stream.write_all(&packet_len.to_be_bytes()).await?;
-            stream.write_all(packet).await?;
+            // Send the bytes in raw format
+            self.send_packet_bytes_internal(&mut stream, &packet).await?;
         }
 
+        // Flush the stream
         stream.flush().await?;
+
         Ok(())
     }
 
@@ -239,6 +269,7 @@ impl Connection {
         Ok(bytes)
     }
 
+    // Deserialize a packet from bytes and verify its integrity
     pub async fn read_packet_from_bytes(&self, bytes: &[u8]) -> P2pResult<Packet<'static>> {
         let mut reader = Reader::new(&bytes);
         let packet = Packet::read(&mut reader)?;
@@ -249,11 +280,15 @@ impl Connection {
         Ok(packet)
     }
 
+    // Read a packet and deserialize it
+    // This will read the packet size and then read the packet bytes
     pub async fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<Packet<'static>> {
         let bytes = self.read_packet_bytes(buf, max_size).await?;
         self.read_packet_from_bytes(&bytes).await
     }
 
+    // Read the packet size, this is always sent in raw (not encrypted)
+    // And packet size must be a u32 in big endian
     async fn read_packet_size(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<u32> {
         let read = self.read_bytes_from_stream(stream, &mut buf[0..4]).await?;
         if read != 4 {
@@ -266,6 +301,8 @@ impl Connection {
         Ok(size)
     }
 
+    // Read all bytes until the the buffer is full with the requested size
+    // This support fragmented packets and encryption
     async fn read_all_bytes(&self, stream: &mut OwnedReadHalf, buf: &mut [u8], mut left: u32) -> P2pResult<Vec<u8>> {
         let buf_size = buf.len() as u32;
         let mut bytes = Vec::new();
@@ -282,7 +319,7 @@ impl Connection {
 
         // If encryption is supported, use it
         let mut guard = self.encryption.lock().await;
-        if let Some(encryption) = guard.as_mut().and_then(|e| e.is_read_ready().then(|| e)) {
+        if let Some(encryption) = guard.as_mut().filter(|e| e.is_read_ready()) {
             let content = encryption.decrypt_packet(&bytes)?;
             Ok(content)
         } else {
@@ -313,6 +350,7 @@ impl Connection {
         Ok(read)
     }
 
+    // Close the connection
     pub async fn close(&self) -> P2pResult<()> {
         self.closed.store(true, Ordering::Relaxed);
         let tx = self.tx.lock().await;
@@ -322,31 +360,38 @@ impl Connection {
         Ok(())
     }
 
+    // Set the state of the connection
     pub fn set_state(&mut self, state: State) {
         self.state = state;
     }
 
+    // Get the socket address used for this connection
     pub fn get_address(&self) -> &SocketAddr {
         &self.addr
     }
 
+    // Get the total bytes sent
     pub fn bytes_out(&self) -> usize {
         self.bytes_out.load(Ordering::Relaxed)
     }
 
+    // Get the total bytes read
     pub fn bytes_in(&self) -> usize {
         self.bytes_in.load(Ordering::Relaxed)
     }
 
+    // Get the time when the connection was established
     pub fn connected_on(&self) -> TimestampSeconds {
         self.connected_on
     }
 
+    // Get the human readable uptime of the connection
     pub fn get_human_uptime(&self) -> String {
         let elapsed_seconds = get_current_time_in_seconds() - self.connected_on();
         format_duration(Duration::from_secs(elapsed_seconds)).to_string()
     }
 
+    // Verify if the connection is closed
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
     }
