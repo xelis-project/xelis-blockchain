@@ -185,14 +185,18 @@ Maximum data allowed is 1KB (same as transaction payload).
 
 Every data is integrated in the transaction payload when using an integrated address.
 
-## P2p
+## P2p (Encrypted Network)
 
 All transfered data are using a custom Serializer/Deserializer made by hand to transform a struct representation in raw bytes directly.
 This serialization is done using the fixed position of each fields and their corresponding bits size.
 
+Before sending a packet, we're encrypting it using ChaCha20-Poly1305 algorithm to prevent network traffic analysis and authenticate each transfered data.
+
 Every data transfered is done through the Packet system which allow easily to read & transfer data and doing the whole serialization itself.
 
-The connection for a new peer (took from the queue or a new incoming connections) is executed through a unique tokio task with the same allocated buffer for handshake. This prevents any DoS attack on creating multiple task and verifying connection.
+The connection for a new peer (took from the queue or a new incoming connections) is executed through a unique tokio task with the same allocated buffer for handshake.
+This prevents any DoS attack on creating multiple task and verifying connection.
+
 When the peer is verified and valid, we create him his own tasks. One for reading incoming packets and one for writing packets to him.
 By separating both directions in two differents task it prevents blocking the communication of opposed side.
 
@@ -234,9 +238,22 @@ This is the perfect mix between Fast sync and traditional chain sync, to have th
 
 This parts explains the most importants packets used in XELIS network to communicate over the P2p network.
 
+#### Key Exchange
+
+Key Exchange is the real first packet to be sent when creating a new connection.
+This allow to exchange symetric encryption keys between peer to establish an encrypted communication channel over TCP.
+
+Currently, we are using ChaCha20-Poly1305 algorithm to encrypt / decrypt every packets.
+
+This packet can be sent later to rotate the key of a peer.
+This is currently done every 1 GB of data sent.
+
+We're using two different symetric keys for encryption per Peer.
+One key is from us, to encrypt our packet, and the other key is to decrypt peer's packets.
+
 #### Handshake
 
-Handshake packet must be the first packet sent with the blockchain state inside when connecting to a peer.
+Handshake packet must be the first packet sent with the blockchain state inside to upgrade a connection to a peer.
 If valid, the peer will send the same packet with is own blockchain state.
 
 Except at beginning, this packet should never be sent again.
