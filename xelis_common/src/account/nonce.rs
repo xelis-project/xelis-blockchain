@@ -1,6 +1,11 @@
+use std::fmt::{self, Display, Formatter};
 use serde::{Deserialize, Serialize};
-
-use crate::serializer::{Reader, ReaderError, Serializer, Writer};
+use crate::serializer::{
+    Reader,
+    ReaderError,
+    Serializer,
+    Writer
+};
 
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -54,5 +59,11 @@ impl Serializer for VersionedNonce {
             nonce,
             previous_topoheight
         })
+    }
+}
+
+impl Display for VersionedNonce {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Nonce[{}, previous: {:?}", self.nonce, self.previous_topoheight)
     }
 }

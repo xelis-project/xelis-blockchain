@@ -1,14 +1,17 @@
 use std::fmt::Display;
-
 use serde::{Deserialize, Serialize};
 use xelis_he::{
-    DecryptHandle, ElGamalCiphertext, Identity, PedersenCommitment, RistrettoPoint
+    CompressedCiphertext,
+    DecryptHandle,
+    ElGamalCiphertext,
+    Identity,
+    PedersenCommitment,
+    RistrettoPoint
 };
-
 use crate::serializer::{Serializer, ReaderError, Reader, Writer};
 
 // Type used in case of future change, to have everything linked to the same type
-pub type BalanceRepresentation = ElGamalCiphertext;
+pub type BalanceRepresentation = CompressedCiphertext;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct VersionedBalance {
@@ -28,7 +31,7 @@ impl VersionedBalance {
         let zero = ElGamalCiphertext::new(
             PedersenCommitment::from_point(RistrettoPoint::identity()),
             DecryptHandle::from_point(RistrettoPoint::identity())
-        );
+        ).compress();
 
         Self {
             balance: zero,
@@ -69,8 +72,7 @@ impl Default for VersionedBalance {
 
 impl Display for VersionedBalance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let handle = self.balance.handle();
-        write!(f, "Balance[handle: {:?}, previous: {:?}", handle.as_point(), self.previous_topoheight)
+        write!(f, "Balance[ciphertext[{}, {}], previous: {:?}", hex::encode(self.balance.0[0]), hex::encode(self.balance.0[1]), self.previous_topoheight)
     }
 }
 
@@ -83,7 +85,7 @@ impl Serializer for VersionedBalance {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let balance = ElGamalCiphertext::read(reader)?;
+        let balance = BalanceRepresentation::read(reader)?;
         let previous_topoheight = if reader.size() == 0 {
             None
         } else {
