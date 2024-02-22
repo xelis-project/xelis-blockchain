@@ -41,6 +41,37 @@ impl Serializer for HashSet<Hash> {
     }
 }
 
+// Used for Tips storage
+impl Serializer for HashSet<Cow<'_, Hash>> {
+    fn write(&self, writer: &mut Writer) {
+        for hash in self {
+            writer.write_hash(hash);
+        }
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let total_size = reader.total_size();
+        if total_size % 32 != 0 {
+            error!("Invalid size: {}, expected a multiple of 32 for hashes", total_size);
+            return Err(ReaderError::InvalidSize)
+        }
+
+        let count = total_size / 32;
+        let mut tips = HashSet::with_capacity(count);
+        for _ in 0..count {
+            let hash = reader.read_hash()?;
+            tips.insert(Cow::Owned(hash));
+        }
+
+        if tips.len() != count {
+            error!("Invalid size: received {} elements while sending {}", tips.len(), count);
+            return Err(ReaderError::InvalidSize) 
+        }
+
+        Ok(tips)
+    }
+}
+
 // Implement Serializer for all unsigned numbers
 
 impl Serializer for u128 {
