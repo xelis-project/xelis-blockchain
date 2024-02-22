@@ -55,10 +55,10 @@ pub trait NonceProvider: BalanceProvider {
 
     // set the new nonce at exact topoheight for account
     // This will do like `set_nonce_at_topoheight` but will also update the pointer
-    async fn set_last_nonce_to(&mut self, key: &PublicKey, topoheight: u64, nonce: u64) -> Result<(), BlockchainError>;
+    async fn set_last_nonce_to(&mut self, key: &PublicKey, topoheight: u64, nonce: &VersionedNonce) -> Result<(), BlockchainError>;
 
     // set a new nonce at specific topoheight for account
-    async fn set_nonce_at_topoheight(&mut self, key: &PublicKey, nonce: u64, topoheight: u64) -> Result<(), BlockchainError>;
+    async fn set_nonce_at_topoheight(&mut self, key: &PublicKey, topoheight: u64, version: &VersionedNonce) -> Result<(), BlockchainError>;
 }
 
 impl SledStorage {
@@ -87,9 +87,9 @@ impl NonceProvider for SledStorage {
         Ok(self.accounts_count.load(Ordering::SeqCst))
     }
 
-    async fn set_last_nonce_to(&mut self, key: &PublicKey, topoheight: u64, nonce: u64) -> Result<(), BlockchainError> {
-        trace!("set last nonce {} for {} at topoheight {}", nonce, key, topoheight);
-        self.set_nonce_at_topoheight(key, nonce, topoheight).await?;
+    async fn set_last_nonce_to(&mut self, key: &PublicKey, topoheight: u64, version: &VersionedNonce) -> Result<(), BlockchainError> {
+        trace!("set last nonce {} for {} at topoheight {}", version.get_nonce(), key, topoheight);
+        self.set_nonce_at_topoheight(key, topoheight, version).await?;
         self.set_last_topoheight_for_nonce(key, topoheight).await?;
         Ok(())
     }
@@ -277,17 +277,10 @@ impl NonceProvider for SledStorage {
         Ok(false)
     }
 
-    async fn set_nonce_at_topoheight(&mut self, key: &PublicKey, nonce: u64, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("set nonce to {} for {} at topo {}", nonce, key, topoheight);
-        let previous_topoheight = if topoheight > 0 {
-            self.get_nonce_at_maximum_topoheight(key, topoheight - 1).await?.map(|(topo, _)| topo)
-        } else {
-            None
-        };
-
-        let versioned = VersionedNonce::new(nonce, previous_topoheight);
+    async fn set_nonce_at_topoheight(&mut self, key: &PublicKey, topoheight: u64, version: &VersionedNonce) -> Result<(), BlockchainError> {
+        trace!("set nonce to {} for {} at topo {}", version.get_nonce(), key, topoheight);
         let disk_key = self.get_versioned_nonce_key(key, topoheight);
-        self.versioned_nonces.insert(&disk_key, versioned.to_bytes())?;
+        self.versioned_nonces.insert(&disk_key, version.to_bytes())?;
         Ok(())
     }
 
