@@ -12,6 +12,7 @@ pub use encryption::EncryptionKey;
 use indexmap::IndexSet;
 use lru::LruCache;
 use xelis_common::{
+    account::VersionedNonce,
     api::daemon::{
         Direction,
         NotifyEvent,
@@ -2180,7 +2181,7 @@ impl<S: Storage> P2pServer<S> {
                         // save all nonces
                         for (key, nonce) in keys.iter().zip(nonces) {
                             debug!("Saving nonce {} for {}", nonce, key);
-                            storage.set_last_nonce_to(key, stable_topoheight, nonce).await?;
+                            storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, None)).await?;
                         }
                     }
 
