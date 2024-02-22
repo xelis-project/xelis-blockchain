@@ -1734,9 +1734,8 @@ impl<S: Storage> Blockchain<S> {
                 let mut local_nonces: HashMap<&PublicKey, u64> = HashMap::new();
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
-                    // TODO improve it (too much read/write that can be refactored)
-                    if !storage.has_block_linked_to_tx(&tx_hash, &hash)? {
-                        storage.add_block_for_tx(&tx_hash, &hash)?;
+                    // Link the transaction hash to this block
+                    if !storage.add_block_linked_to_tx_if_not_present(&tx_hash, &hash)? {
                         trace!("Block {} is now linked to tx {}", hash, tx_hash);
                     }
 

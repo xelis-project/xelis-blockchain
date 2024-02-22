@@ -1,3 +1,7 @@
+use std::{
+    borrow::Cow,
+    collections::HashSet
+};
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
@@ -28,6 +32,9 @@ pub trait ClientProtocolProvider {
 
     // Is the block linked to the transaction
     fn has_block_linked_to_tx(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError>;
+
+    // Same as has_block_linked_to_tx + add_block_for_tx but read only one time
+    fn add_block_linked_to_tx_if_not_present(&mut self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError>;
 
     // Get all blocks in which the transaction is included
     fn get_blocks_for_tx(&self, hash: &Hash) -> Result<Tips, BlockchainError>;
@@ -88,6 +95,22 @@ impl ClientProtocolProvider for SledStorage {
     fn has_block_linked_to_tx(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
         trace!("has block {} linked to tx {}", block, tx);
         Ok(self.has_tx_blocks(tx)? && self.get_blocks_for_tx(tx)?.contains(block))
+    }
+
+    fn add_block_linked_to_tx_if_not_present(&mut self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
+        trace!("add block {} linked to tx {} if not present", block, tx);
+        let mut hashes: HashSet<Cow<'_, Hash>> = if self.has_tx_blocks(tx)? {
+            self.load_from_disk(&self.tx_blocks, tx.as_bytes())?
+        } else {
+            HashSet::new()
+        };
+
+        let insert = hashes.insert(Cow::Borrowed(block));
+        if insert {
+            self.tx_blocks.insert(tx.as_bytes(), hashes.to_bytes())?;
+        }
+
+        Ok(insert)
     }
 
     fn get_blocks_for_tx(&self, hash: &Hash) -> Result<Tips, BlockchainError> {
