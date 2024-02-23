@@ -196,6 +196,35 @@ impl Serializer for Handshake<'_> {
 
         Ok(Handshake::new(Cow::Owned(version), network, Cow::Owned(node_tag), Cow::Owned(network_id), peer_id, local_port, utc_time, topoheight, height, pruned_topoheight, Cow::Owned(top_hash), Cow::Owned(genesis_hash), Cow::Owned(cumulative_difficulty)))
     }
+
+    fn size(&self) -> usize {
+        // daemon version
+        self.version.size() +
+        // network
+        self.network.size() +
+        // node tag
+        self.node_tag.size() +
+        // network ID
+        self.network_id.size() +
+        // peer ID
+        self.peer_id.size() +
+        // local port
+        self.local_port.size() +
+        // UTC Time
+        self.utc_time.size() +
+        // Topo height
+        self.topoheight.size() +
+        // Block Height
+        self.height.size() +
+        // Pruned Topo Height
+        self.pruned_topoheight.size() +
+        // Block Top Hash
+        self.top_hash.size() +
+        // Genesis Hash
+        self.genesis_hash.size() +
+        // Cumulative Difficulty
+        self.cumulative_difficulty.size()
+    }
 }
 
 const NO_NODE_TAG: &str = "None";

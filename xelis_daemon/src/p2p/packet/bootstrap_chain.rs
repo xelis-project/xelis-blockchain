@@ -65,6 +65,10 @@ impl Serializer for BlockMetadata {
         self.difficulty.write(writer);
         self.cumulative_difficulty.write(writer);
     }
+
+    fn size(&self) -> usize {
+        self.hash.size() + self.supply.size() + self.reward.size() + self.difficulty.size() + self.cumulative_difficulty.size()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
@@ -242,6 +246,19 @@ impl Serializer for StepRequest<'_> {
             },
         };
     }
+
+    fn size(&self) -> usize {
+        let size = match self {
+            Self::ChainInfo(blocks) => 1 + blocks.size(),
+            Self::Assets(min, max, page) => min.size() + max.size() + page.size(),
+            Self::Keys(min, max, page) => min.size() + max.size() + page.size(),
+            Self::Balances(topoheight, asset, accounts) => topoheight.size() + asset.size() + accounts.size(),
+            Self::Nonces(topoheight, nonces) => topoheight.size() + nonces.size(),
+            Self::BlocksMetadata(topoheight) => topoheight.size()
+        };
+        // 1 for the id
+        size + 1
+    }
 }
 
 #[derive(Debug)]
@@ -349,6 +366,31 @@ impl Serializer for StepResponse {
             }
         };
     }
+
+    fn size(&self) -> usize {
+        let size = match self {
+            Self::ChainInfo(common_point, topoheight, stable_height, hash) => {
+                common_point.size() + topoheight.size() + stable_height.size() + hash.size()
+            },
+            Self::Assets(assets, page) => {
+                assets.size() + page.size()
+            },
+            Self::Keys(keys, page) => {
+                keys.size() + page.size()
+            },
+            Self::Balances(balances) => {
+                balances.size()
+            },
+            Self::Nonces(nonces) => {
+                nonces.size()
+            },
+            Self::BlocksMetadata(blocks) => {
+                blocks.size()
+            }
+        };
+        // 1 for the id
+        size + 1
+    }
 }
 
 #[derive(Debug)]
@@ -380,6 +422,10 @@ impl Serializer for BootstrapChainRequest<'_> {
     fn write(&self, writer: &mut Writer) {
         self.step.write(writer);
     }
+
+    fn size(&self) -> usize {
+        self.step.size()
+    }
 }
 
 #[derive(Debug)]
@@ -410,5 +456,9 @@ impl Serializer for BootstrapChainResponse {
 
     fn write(&self, writer: &mut Writer) {
         self.response.write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.response.size()
     }
 }

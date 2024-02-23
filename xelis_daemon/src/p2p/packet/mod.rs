@@ -72,6 +72,10 @@ impl<'a, T: Serializer + Clone> Serializer for PacketWrapper<'a, T> {
         self.packet.write(writer);   
         self.ping.write(writer);
     }
+
+    fn size(&self) -> usize {
+        self.packet.size() + self.ping.size()
+    }
 }
 
 #[derive(Debug)]

@@ -185,6 +185,17 @@ impl Serializer for Ping<'_> {
 
         Ok(Self { top_hash, topoheight, height, pruned_topoheight, cumulative_difficulty, peer_list })
     }
+
+    fn size(&self) -> usize {
+        self.top_hash.size() +
+        self.topoheight.size() +
+        self.height.size() +
+        self.pruned_topoheight.size() +
+        self.cumulative_difficulty.size() +
+        // u8 for the length of the peer list
+        1 +
+        self.peer_list.iter().map(|p| p.size()).sum::<usize>()
+    }
 }
 
 impl Display for Ping<'_> {

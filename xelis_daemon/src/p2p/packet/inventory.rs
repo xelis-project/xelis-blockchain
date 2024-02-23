@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{
-    crypto::Hash,
+    crypto::{Hash, HASH_SIZE},
     serializer::{
         Serializer,
         ReaderError,
@@ -38,6 +38,10 @@ impl Serializer for NotifyInventoryRequest {
 
     fn write(&self, writer: &mut Writer) {
         writer.write_optional_non_zero_u8(self.page);
+    }
+
+    fn size(&self) -> usize {
+        1
     }
 }
 
@@ -88,5 +92,9 @@ impl<'a> Serializer for NotifyInventoryResponse<'a> {
         for tx in self.txs.iter() {
             writer.write_hash(tx);
         }
+    }
+
+    fn size(&self) -> usize {
+        1 + 2 + self.txs.len() * HASH_SIZE
     }
 }

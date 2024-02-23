@@ -68,6 +68,10 @@ impl Serializer for BlockId {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(Self::new(reader.read_hash()?, reader.read_u64()?))
     }
+
+    fn size(&self) -> usize {
+        self.hash.size() + self.topoheight.size()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -133,6 +137,10 @@ impl Serializer for ChainRequest {
 
         Ok(Self { blocks, accepted_response_size })
     }
+
+    fn size(&self) -> usize {
+        1 + self.blocks.len() + self.accepted_response_size.size()
+    }
 }
 
 #[derive(Debug)]
@@ -168,6 +176,10 @@ impl Serializer for CommonPoint {
         let hash = reader.read_hash()?;
         let topoheight = reader.read_u64()?;
         Ok(Self { hash, topoheight })
+    }
+
+    fn size(&self) -> usize {
+        self.hash.size() + self.topoheight.size()
     }
 }
 
@@ -277,5 +289,18 @@ impl Serializer for ChainResponse {
         }
 
         Ok(Self::new(common_point, Some(lowest_height), blocks, top_blocks))
+    }
+
+    fn size(&self) -> usize {
+        if self.common_point.is_none() {
+            return self.common_point.size()
+        }
+
+        let mut size = 0;
+        if let Some(lowest_height) = self.lowest_height {
+            size += lowest_height.size();
+        }
+
+        size + 2 + self.blocks.len() + 1 + self.top_blocks.len()
     }
 }
