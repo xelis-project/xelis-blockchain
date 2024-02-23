@@ -19,4 +19,8 @@ impl Serializer for CompressedCiphertext {
         let compress = CompressedCiphertext([left, right]);
         Ok(compress)
     }
+
+    fn size(&self) -> usize {
+        32 + 32
+    }
 }

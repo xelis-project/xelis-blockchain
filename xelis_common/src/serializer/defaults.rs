@@ -1,4 +1,4 @@
-use crate::crypto::Hash;
+use crate::crypto::{Hash, HASH_SIZE};
 use super::{Serializer, Writer, Reader, ReaderError};
 use std::{
     collections::{HashSet, BTreeSet, HashMap},
@@ -39,6 +39,10 @@ impl Serializer for HashSet<Hash> {
 
         Ok(tips)
     }
+
+    fn size(&self) -> usize {
+        self.len() * HASH_SIZE
+    }
 }
 
 // Used for Tips storage
@@ -70,6 +74,10 @@ impl Serializer for HashSet<Cow<'_, Hash>> {
 
         Ok(tips)
     }
+
+    fn size(&self) -> usize {
+        self.len() * HASH_SIZE
+    }
 }
 
 // Implement Serializer for all unsigned numbers
@@ -82,6 +90,11 @@ impl Serializer for u128 {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(reader.read_u128()?)
     }
+
+    fn size(&self) -> usize {
+        // u128::BITS as usize / 8
+        16
+    }
 }
 
 impl Serializer for u64 {
@@ -91,6 +104,11 @@ impl Serializer for u64 {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(reader.read_u64()?)
+    }
+
+    fn size(&self) -> usize {
+        // u64::BITS as usize / 8
+        8
     }
 }
 
@@ -102,6 +120,11 @@ impl Serializer for u32 {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(reader.read_u32()?)
     }
+
+    fn size(&self) -> usize {
+        // u32::BITS as usize / 8
+        4
+    }
 }
 
 impl Serializer for u16 {
@@ -111,6 +134,11 @@ impl Serializer for u16 {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(reader.read_u16()?)
+    }
+
+    fn size(&self) -> usize {
+        // u16::BITS as usize / 8
+        2
     }
 }
 
@@ -122,6 +150,11 @@ impl Serializer for u8 {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(reader.read_u8()?)
+    }
+
+    fn size(&self) -> usize {
+        // u8 is a single byte
+        1
     }
 }
 
@@ -152,6 +185,14 @@ impl<T: Serializer + std::hash::Hash + Ord> Serializer for BTreeSet<T> {
             el.write(writer);
         }
     }
+
+    fn size(&self) -> usize {
+        match self.first() {
+            Some(first) => 2 + self.len() * first.size(),
+            // If the set is empty, we still need to write the size (u16)
+            None => 2
+        }
+    }
 }
 
 impl<T: Serializer + std::hash::Hash + Eq> Serializer for IndexSet<T> {
@@ -179,6 +220,14 @@ impl<T: Serializer + std::hash::Hash + Eq> Serializer for IndexSet<T> {
             el.write(writer);
         }
     }
+
+    fn size(&self) -> usize {
+        match self.first() {
+            Some(first) => 2 + self.len() * first.size(),
+            // If the set is empty, we still need to write the size (u16)
+            None => 2
+        }
+    }
 }
 
 impl<T: Serializer + Clone> Serializer for Cow<'_, T> {
@@ -188,6 +237,10 @@ impl<T: Serializer + Clone> Serializer for Cow<'_, T> {
 
     fn write(&self, writer: &mut Writer) {
         self.as_ref().write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.as_ref().size()
     }
 }
 
@@ -204,6 +257,14 @@ impl<T: Serializer> Serializer for Option<T> {
         writer.write_bool(self.is_some());
         if let Some(value) = self {
             value.write(writer);
+        }
+    }
+
+    fn size(&self) -> usize {
+        // 1 is for the bool written as a full byte
+        match self {
+            Some(value) => 1 + value.size(),
+            None => 1
         }
     }
 }
@@ -230,6 +291,14 @@ impl<T: Serializer> Serializer for Vec<T> {
             el.write(writer);
         }
     }
+
+    fn size(&self) -> usize {
+        match self.first() {
+            Some(first) => 2 + self.len() * first.size(),
+            // If the vector is empty, we still need to write the size (u16)
+            None => 2
+        }
+    }
 }
 
 impl Serializer for String {
@@ -240,6 +309,11 @@ impl Serializer for String {
     fn write(&self, writer: &mut Writer) {
         writer.write_string(self);
     }
+
+    fn size(&self) -> usize {
+        // 1 for str len as byte + str len
+        1 + self.len()
+    }
 }
 
 impl Serializer for bool {
@@ -249,6 +323,11 @@ impl Serializer for bool {
 
     fn write(&self, writer: &mut Writer) {
         writer.write_bool(*self);
+    }
+
+    fn size(&self) -> usize {
+        // 1 for bool as byte
+        1
     }
 }
 
@@ -274,6 +353,15 @@ impl<K: Serializer + Eq + StdHash, V: Serializer + Eq + StdHash> Serializer for 
             value.write(writer);
         }
     }
+
+    fn size(&self) -> usize {
+        // 2 for the size of the map (u16)
+        let mut size = 2;
+        for (key, value) in self.iter() {
+            size += key.size() + value.size();
+        }
+        size
+    }
 }
 
 impl<const N: usize> Serializer for [u8; N] {
@@ -286,6 +374,10 @@ impl<const N: usize> Serializer for [u8; N] {
         Ok(
             bytes
         )
+    }
+
+    fn size(&self) -> usize {
+        N
     }
 }
 
@@ -326,6 +418,16 @@ impl Serializer for SocketAddr {
         };
         self.port().write(writer);
     }
+
+    fn size(&self) -> usize {
+        // 1 for the ip version
+        // 4 for ipv4 and 16 for ipv6
+        // 2 for the port (u16)
+        match self.ip() {
+            IpAddr::V4(_) => 1 + 4 + 2,
+            IpAddr::V6(_) => 1 + 16 + 2
+        }
+    }
 }
 
 impl Serializer for () {
@@ -334,5 +436,9 @@ impl Serializer for () {
     }
 
     fn write(&self, _writer: &mut Writer) {
+    }
+
+    fn size(&self) -> usize {
+        0
     }
 }

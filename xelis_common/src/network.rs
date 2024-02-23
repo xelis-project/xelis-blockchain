@@ -62,4 +62,8 @@ impl Serializer for Network {
         };
         writer.write_u8(id);
     }
+
+    fn size(&self) -> usize {
+        1
+    }
 }

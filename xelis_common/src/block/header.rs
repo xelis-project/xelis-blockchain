@@ -5,7 +5,7 @@ use log::debug;
 use crate::{
     block::{BLOCK_WORK_SIZE, HEADER_WORK_SIZE},
     config::TIPS_LIMIT,
-    crypto::{hash, Hash, Hashable, PublicKey},
+    crypto::{hash, Hash, Hashable, PublicKey, HASH_SIZE},
     serializer::{Reader, ReaderError, Serializer, Writer},
     time::TimestampMillis
 };
@@ -237,6 +237,17 @@ impl Serializer for BlockHeader {
                 txs_hashes
             }
         )
+    }
+
+    fn size(&self) -> usize {
+        // additional byte for tips count
+        let tips_size = 1 + self.tips.len() * HASH_SIZE;
+        // 2 bytes for txs count (u16)
+        let txs_size = 2 + self.txs_hashes.len() * HASH_SIZE;
+        // Version is u8
+        let version_size = 1;
+
+        EXTRA_NONCE_SIZE + tips_size + txs_size + version_size + self.miner.size() + self.timestamp.size() + self.height.size() + self.nonce.size()
     }
 }
 

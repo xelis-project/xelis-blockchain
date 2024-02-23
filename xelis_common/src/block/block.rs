@@ -80,6 +80,10 @@ impl Serializer for Block {
 
         Ok(Block::new(Immutable::Owned(block), txs))
     }
+
+    fn size(&self) -> usize {
+        self.header.size() + self.transactions.iter().map(|tx| tx.size()).sum::<usize>()
+    }
 }
 
 impl Hashable for Block {

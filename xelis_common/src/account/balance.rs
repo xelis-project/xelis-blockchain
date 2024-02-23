@@ -97,4 +97,8 @@ impl Serializer for VersionedBalance {
             previous_topoheight
         })
     }
+
+    fn size(&self) -> usize {
+        self.balance.size() + if let Some(topoheight) = self.previous_topoheight { topoheight.size() } else { 0 }
+    }
 }

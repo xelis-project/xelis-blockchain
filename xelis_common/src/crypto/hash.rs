@@ -48,6 +48,10 @@ impl Serializer for Hash {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(self);
     }
+
+    fn size(&self) -> usize {
+        HASH_SIZE
+    }
 }
 
 impl std::hash::Hash for Hash {

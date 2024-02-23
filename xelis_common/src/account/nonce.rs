@@ -60,6 +60,10 @@ impl Serializer for VersionedNonce {
             previous_topoheight
         })
     }
+
+    fn size(&self) -> usize {
+        self.nonce.size() + if let Some(topoheight) = self.previous_topoheight { topoheight.size() } else { 0 }
+    }
 }
 
 impl Display for VersionedNonce {

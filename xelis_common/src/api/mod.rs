@@ -228,6 +228,26 @@ impl Serializer for DataElement {
             }
         }
     }
+
+    fn size(&self) -> usize {
+        1 + match self {
+            Self::Value(value) => value.size(),
+            Self::Array(values) => {
+                let mut size = 1;
+                for value in values {
+                    size += value.size();
+                }
+                size
+            },
+            Self::Fields(fields) => {
+                let mut size = 1;
+                for (key, value) in fields {
+                    size += key.size() + value.size();
+                }
+                size
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
@@ -408,7 +428,7 @@ impl Serializer for DataValue {
             },
             Self::String(string) => {
                 writer.write_u8(1);
-                writer.write_string(string);
+                string.write(writer);
             },
             Self::U8(value) => {
                 writer.write_u8(2);
@@ -435,6 +455,21 @@ impl Serializer for DataValue {
                 writer.write_hash(hash);
             }
         };
+    }
+
+    fn size(&self) -> usize {
+        let size = match self {
+            Self::Bool(v) => v.size(),
+            Self::String(v) => v.size(),
+            Self::U8(v) => v.size(),
+            Self::U16(v) => v.size(),
+            Self::U32(v) => v.size(),
+            Self::U64(v) => v.size(),
+            Self::U128(v) => v.size(),
+            Self::Hash(hash) => hash.size()
+        };
+        // 1 byte for the type
+        size + 1
     }
 }
 

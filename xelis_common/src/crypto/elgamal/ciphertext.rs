@@ -40,6 +40,10 @@ impl Serializer for Ciphertext {
             right: CompressedRistretto::from_slice(&right_bytes).decompress().ok_or(ReaderError::InvalidValue)?,
         })
     }
+
+    fn size(&self) -> usize {
+        32 + 32
+    }
 }
 
 impl Add for Ciphertext {

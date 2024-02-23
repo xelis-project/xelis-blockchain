@@ -139,6 +139,10 @@ impl<'a> Serializer for BlockMiner<'a> {
             cache: None
         })
     }
+
+    fn size(&self) -> usize {
+        BLOCK_WORK_SIZE
+    }
 }
 
 // no need to override hash() as its already serialized in good format

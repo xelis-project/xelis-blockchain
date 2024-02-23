@@ -40,6 +40,10 @@ impl Serializer for AssetData {
             Self::new(reader.read_u64()?, reader.read_u8()?)
         )
     }
+
+    fn size(&self) -> usize {
+        self.topoheight.size() + self.decimals.size()
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -84,6 +88,10 @@ impl Serializer for AssetWithData {
         Ok(
             Self::new(reader.read_hash()?, AssetData::read(reader)?)
         )
+    }
+
+    fn size(&self) -> usize {
+        self.asset.size() + self.data.size()
     }
 }
 

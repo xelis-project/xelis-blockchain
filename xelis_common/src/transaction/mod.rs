@@ -165,6 +165,38 @@ impl Serializer for TransactionType {
             }
         })
     }
+
+    fn size(&self) -> usize {
+        match self {
+            TransactionType::Burn { asset, amount } => {
+                1 + asset.size() + amount.size()
+            },
+            TransactionType::Transfer(txs) => {
+                let mut size = 1;
+                for tx in txs {
+                    size += tx.asset.size() + 8 + tx.to.size() + 1; // 1 for bool
+                    if let Some(extra_data) = &tx.extra_data {
+                        size += 2 + extra_data.len();
+                    }
+                }
+                size
+            },
+            TransactionType::CallContract(tx) => {
+                let mut size = 1 + tx.contract.size() + 1;
+                for (asset, amount) in &tx.assets {
+                    size += asset.size() + amount.size();
+                }
+                size += 1;
+                for (key, value) in &tx.params {
+                    size += key.len() + value.len();
+                }
+                size
+            },
+            TransactionType::DeployContract(code) => {
+                1 + code.len()
+            }
+        }
+    }
 }
 
 impl Transaction {
@@ -243,6 +275,10 @@ impl Serializer for Transaction {
             nonce,
             signature
         })
+    }
+
+    fn size(&self) -> usize {
+        1 + self.owner.size() + self.data.size() + self.fee.size() + self.nonce.size() + self.signature.size()
     }
 }
 

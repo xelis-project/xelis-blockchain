@@ -198,6 +198,13 @@ impl Serializer for AddressType {
         };
         Ok(_type)
     }
+
+    fn size(&self) -> usize {
+        match self {
+            AddressType::Normal => 1,
+            AddressType::Data(data) => 1 + data.size()
+        }
+    }
 }
 
 impl serde::Serialize for Address {

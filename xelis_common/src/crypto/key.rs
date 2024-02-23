@@ -74,6 +74,10 @@ impl Serializer for PublicKey {
             Err(_) => return Err(ReaderError::ErrorTryInto)
         }
     }
+
+    fn size(&self) -> usize {
+        KEY_LENGTH
+    }
 }
 
 impl PartialEq for PublicKey {
@@ -140,6 +144,10 @@ impl Serializer for PrivateKey {
         let secret_key = ed25519_dalek::SecretKey::from_bytes(&bytes).expect("invalid private key bytes");
         Ok(PrivateKey(secret_key))
     }
+
+    fn size(&self) -> usize {
+        KEY_LENGTH
+    }
 }
 
 impl KeyPair {
@@ -196,6 +204,10 @@ impl Serializer for KeyPair {
 
         Ok(Self::from_keys(public_key, private_key))
     }
+
+    fn size(&self) -> usize {
+        self.public_key.size() + self.private_key.size()
+    }
 }
 
 impl Signature {
@@ -216,6 +228,10 @@ impl Serializer for Signature {
         };
         let signature = Signature(signature);
         Ok(signature)
+    }
+
+    fn size(&self) -> usize {
+        SIGNATURE_LENGTH
     }
 }
 

@@ -92,8 +92,8 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Reward a miner for the block mined
-    pub async fn reward_miner(&mut self, miner: &'a PublicKey, asset: &'a Hash, _reward: u64) -> Result<(), BlockchainError> {
-        let miner_balance = self.internal_get_account_balance(miner, asset).await?;
+    pub async fn reward_miner(&mut self, miner: &'a PublicKey, _reward: u64) -> Result<(), BlockchainError> {
+        let miner_balance = self.internal_get_account_balance(miner, &XELIS_ASSET).await?;
         // TODO add reward to miner balance
         self.internal_update_account_balance(miner, &XELIS_ASSET, miner_balance).await?;
         Ok(())

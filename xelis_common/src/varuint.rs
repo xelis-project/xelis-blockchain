@@ -85,6 +85,8 @@ impl Serializer for VarUint {
 
         Ok(Self(U256::from_big_endian(&buffer)))
     }
+
+    // no fast size impl as it's same as writing it
 }
 
 impl AsRef<U256> for VarUint {
