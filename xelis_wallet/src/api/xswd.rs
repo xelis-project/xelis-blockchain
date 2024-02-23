@@ -248,6 +248,15 @@ impl Serializer for ApplicationData {
             writer.write_u8(permission.get_id());
         }
     }
+
+    fn size(&self) -> usize {
+        self.id.size() +
+        self.name.size() +
+        self.description.size() +
+        self.url.size() +
+        1 +
+        self.permissions.iter().map(|(k, _)| k.size() + 1).sum::<usize>()
+    }
 }
 
 const PERMISSION_DENIED_ERROR: InternalRpcError = InternalRpcError::CustomStr("Permission denied");

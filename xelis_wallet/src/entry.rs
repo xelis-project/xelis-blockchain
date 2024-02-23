@@ -79,6 +79,10 @@ impl Serializer for Transfer {
 
         self.extra_data.write(writer);
     }
+
+    fn size(&self) -> usize {
+        self.key.size() + self.asset.size() + self.amount.size() + self.extra_data.size()
+    }
 }
 
 // TODO support SC call / SC Deploy
@@ -157,6 +161,19 @@ impl Serializer for EntryData {
             }
         }
     }
+
+    fn size(&self) -> usize {
+        1 + match &self {
+            Self::Coinbase { reward } => reward.size(),
+            Self::Burn { asset, amount } => asset.size() + amount.size(),
+            Self::Incoming { from, transfers } => {
+                from.size() + 2 + transfers.iter().map(|t| t.size()).sum::<usize>()
+            },
+            Self::Outgoing { transfers } => {
+                2 + transfers.iter().map(|t| t.size()).sum::<usize>()
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -231,6 +248,10 @@ impl Serializer for TransactionEntry {
         self.fee.write(writer);
         self.nonce.write(writer);
         self.entry.write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.hash.size() + self.topoheight.size() + self.fee.size() + self.nonce.size() + self.entry.size()
     }
 }
 
