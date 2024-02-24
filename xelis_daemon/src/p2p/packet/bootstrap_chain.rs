@@ -1,4 +1,7 @@
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    hash::{Hash as StdHash, Hasher}
+};
 use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{
@@ -40,6 +43,20 @@ pub struct BlockMetadata {
     pub difficulty: Difficulty,
     pub cumulative_difficulty: CumulativeDifficulty
 }
+
+impl StdHash for BlockMetadata {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+impl PartialEq for BlockMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl Eq for BlockMetadata {}
 
 impl Serializer for BlockMetadata {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -263,12 +280,18 @@ impl Serializer for StepRequest<'_> {
 
 #[derive(Debug)]
 pub enum StepResponse {
-    ChainInfo(Option<CommonPoint>, u64, u64, Hash), // common point, topoheight of stable hash, stable height, stable hash
-    Assets(IndexSet<AssetWithData>, Option<u64>), // Set of assets, pagination
-    Keys(IndexSet<PublicKey>, Option<u64>), // Set of keys, pagination
-    Balances(Vec<Option<BalanceRepresentation>>), // Balances requested
-    Nonces(Vec<u64>), // Nonces for requested accounts
-    BlocksMetadata(Vec<BlockMetadata>), // top blocks metadata
+    // common point, topoheight of stable hash, stable height, stable hash
+    ChainInfo(Option<CommonPoint>, u64, u64, Hash),
+    // Set of assets, pagination
+    Assets(IndexSet<AssetWithData>, Option<u64>),
+    // Set of keys, pagination
+    Keys(IndexSet<PublicKey>, Option<u64>),
+    // Balances requested
+    Balances(Vec<Option<BalanceRepresentation>>),
+    // Nonces for requested accounts
+    Nonces(Vec<u64>),
+    // top blocks metadata
+    BlocksMetadata(IndexSet<BlockMetadata>),
 }
 
 impl StepResponse {
@@ -324,7 +347,7 @@ impl Serializer for StepResponse {
                 Self::Nonces(Vec::<u64>::read(reader)?)
             },
             5 => {
-                Self::BlocksMetadata(Vec::<BlockMetadata>::read(reader)?)
+                Self::BlocksMetadata(IndexSet::read(reader)?)
             },
             id => {
                 debug!("Received invalid value for StepResponse: {}", id);

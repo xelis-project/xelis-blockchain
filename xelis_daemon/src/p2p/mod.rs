@@ -577,6 +577,14 @@ impl<S: Storage> P2pServer<S> {
                 if peer_topoheight < PRUNE_SAFETY_LIMIT || our_topoheight + PRUNE_SAFETY_LIMIT > peer_topoheight {
                     return false
                 }
+
+                if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
+                    // This shouldn't be possible if following the protocol,
+                    // But we may never know if a peer is not following the protocol strictly
+                    if peer_topoheight - pruned_topoheight < PRUNE_SAFETY_LIMIT {
+                        return false
+                    }
+                }
             } else {
                 // check that the pruned topoheight is less than our topoheight to sync
                 // so we can sync chain from pruned chains
@@ -2026,7 +2034,7 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::Keys(keys, page)
             },
             StepRequest::BlocksMetadata(topoheight) => {
-                let mut blocks = Vec::with_capacity(PRUNE_SAFETY_LIMIT as usize);
+                let mut blocks = IndexSet::with_capacity(PRUNE_SAFETY_LIMIT as usize);
                 // go from the lowest available point until the requested stable topoheight
                 let lower = if topoheight - PRUNE_SAFETY_LIMIT <= pruned_topoheight {
                     pruned_topoheight + 1
@@ -2041,7 +2049,7 @@ impl<S: Storage> P2pServer<S> {
                     let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
 
-                    blocks.push(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty });
+                    blocks.insert(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty });
                 }
                 StepResponse::BlocksMetadata(blocks)
             },
@@ -2216,6 +2224,11 @@ impl<S: Storage> P2pServer<S> {
                     }
                 },
                 StepResponse::BlocksMetadata(blocks) => {
+                    if blocks.len() != PRUNE_SAFETY_LIMIT as usize {
+                        error!("Received {} blocks metadata while expecting {}", blocks.len(), PRUNE_SAFETY_LIMIT);
+                        return Err(P2pError::InvalidPacket.into())
+                    }
+
                     let mut lowest_topoheight = stable_topoheight;
                     for (i, metadata) in blocks.into_iter().enumerate() {
                         // check that we don't already have this block in storage
