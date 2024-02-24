@@ -1,4 +1,4 @@
-use log::{debug, trace};
+use log::trace;
 use xelis_common::{
     difficulty::Difficulty,
     time::TimestampMillis,
@@ -8,6 +8,7 @@ use crate::config::{BLOCK_TIME_MILLIS, MINIMUM_DIFFICULTY};
 
 // Difficulty adjustment of at least 0.1% per block
 const DIFFICULTY_BOUND_DIVISOR: Difficulty = Difficulty::from_u64(1000);
+const BOOST_BLOCK_TIME: u64 = BLOCK_TIME_MILLIS * 2 / 3;
 
 // Difficulty algorithm from Ethereum, tweaked to fit our needs
 pub fn calculate_difficulty(tips_count: u64, average_solve_time: TimestampMillis, solve_time: TimestampMillis, previous_difficulty: Difficulty) -> Difficulty {
@@ -21,25 +22,27 @@ pub fn calculate_difficulty(tips_count: u64, average_solve_time: TimestampMillis
     // But average solve time already take in count the new solve time
     let avg_solve_time = (average_solve_time * 3 + solve_time) / 4;
     let mut x = avg_solve_time / BLOCK_TIME_MILLIS;
-    let c = if tips_count > 1 {
-        2
+    // We are lower than the expected block time
+    let neg = if x == 0 && avg_solve_time < BOOST_BLOCK_TIME {
+        // Let's boost adjustment factor based on steps
+        x = (BLOCK_TIME_MILLIS - avg_solve_time) / 100;
+        trace!("Boosting difficulty adjustment by {}", x);
+        false
     } else {
-        1
+        let c = if tips_count > 1 {
+            2
+        } else {
+            1
+        };
+
+        x >= c
     };
 
-    let neg = x >= c;
-    debug!("x: {x}, neg: {neg}, avg: {avg_solve_time} ms, solve time: {solve_time} ms, average solve time: {average_solve_time} ms, adjust: {}", format_difficulty(adjust));
-    if neg {
-        x = x - c;
-    } else {
-        x = c - x;
-    }
-
+    trace!("x: {x}, neg: {neg}, avg: {avg_solve_time} ms, solve time: {solve_time} ms, average solve time: {average_solve_time} ms, adjust: {}", format_difficulty(adjust));
     if x > 99 {
         x = 99;
     }
 
-    debug!("final x: {}", x);
     // Returns the previous difficulty if no adjustment is needed
     if x == 0 {
         return previous_difficulty
