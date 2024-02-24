@@ -54,7 +54,8 @@ use crate::{
         nonce_checker::NonceChecker,
         simulator::Simulator,
         storage::{DagOrderProvider, DifficultyProvider, Storage},
-        tx_selector::{TxSelector, TxSelectorEntry}
+        tx_selector::{TxSelector, TxSelectorEntry},
+        chain_state::ChainState
     },
     p2p::P2pServer,
     rpc::{
@@ -1501,6 +1502,8 @@ impl<S: Storage> Blockchain<S> {
         let difficulty = self.verify_proof_of_work(storage, &pow_hash, block.get_tips().iter()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
+        // Used for TX verifications
+        let stable_topoheight = self.get_stable_topoheight();
         let mut current_topoheight = self.get_topo_height();
         { // Transaction verification
             let hashes_len = block.get_txs_hashes().len();
@@ -1523,7 +1526,7 @@ impl<S: Storage> Blockchain<S> {
                 if tx_size > MAX_TRANSACTION_SIZE {
                     return Err(BlockchainError::TxTooBig(tx_size, MAX_TRANSACTION_SIZE))
                 }
-        
+
                 // verification that the real TX Hash is the same as in block header (and also check the correct order)
                 let tx_hash = tx.hash();
                 if tx_hash != *hash {
@@ -1781,33 +1784,12 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
+                let mut chain_state = ChainState::new(storage, highest_topo, stable_topoheight);
                 // reward the miner
-                self.reward_miner(storage, &block, block_reward, total_fees, &mut local_balances, highest_topo).await?;
+                chain_state.reward_miner(block.get_miner(), block_reward).await?;
 
-                // save balances for each topoheight
-                for (key, assets) in local_balances {
-                    for (asset, balance) in assets {
-                        trace!("Saving balance {:?} for {} at topo {}, previous: {:?}", balance.get_balance(), key, highest_topo, balance.get_previous_topoheight());
-                        // Save the balance for this topoheight
-                        storage.set_last_balance_to(key, asset, highest_topo, &balance).await?;
-                    }
-
-                    // No nonce update for this key
-                    if !local_nonces.contains_key(key) {
-                        // Check if its a known account, otherwise set nonce to 0
-                        if !storage.has_nonce(key).await? {
-                            // This public key is new, register it by setting 0
-                            trace!("{} has now balance but without any nonce registered, set default (0) nonce", key);
-                            storage.set_last_nonce_to(key, highest_topo, 0).await?;
-                        }
-                    }
-                }
-
-                // save nonces for each pubkey for new topoheight
-                for (key, nonce) in local_nonces {
-                    trace!("Saving nonce {} for {} at topoheight {}", nonce, key, highest_topo);
-                    storage.set_last_nonce_to(&key, highest_topo, nonce).await?;
-                }
+                // apply changes from Chain State
+                chain_state.apply_changes().await?;
 
                 if should_track_events.contains(&NotifyEvent::BlockOrdered) {
                     let value = json!(BlockOrderedEvent {

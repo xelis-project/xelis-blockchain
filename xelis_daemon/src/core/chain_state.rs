@@ -16,34 +16,40 @@ pub struct ChainState<'a, S: Storage> {
     nonces: HashMap<&'a PublicKey, VersionedNonce>,
     // Current topoheight of the snapshot
     topoheight: u64,
+    // Stable topoheight of the snapshot
+    // This is used to determine if the balance is stable or not
+    stable_topoheight: u64,
     // All fees collected from the transactions
     fees_collected: u64,
 }
 
+
+// TODO fix front running problem
 impl<'a, S: Storage> ChainState<'a, S> {
-    pub fn new(storage: &'a mut S, topoheight: u64) -> Self {
+    pub fn new(storage: &'a mut S, topoheight: u64, stable_topoheight: u64) -> Self {
         Self {
             storage,
             balances: HashMap::new(),
             nonces: HashMap::new(),
             topoheight,
+            stable_topoheight,
             fees_collected: 0,
         }
     }
 
+    // Retrieve a newly created versioned balance for current topoheight
+    // We store it in cache in case we need to retrieve it again or to update it
     async fn internal_get_account_balance(&mut self, account: &'a PublicKey, asset: &'a Hash) -> Result<BalanceRepresentation, BlockchainError> {
         match self.balances.entry(account).or_insert_with(HashMap::new).entry(asset) {
             Entry::Occupied(o) => Ok(*o.get().get_balance()),
             Entry::Vacant(e) => {
-                let (_, version) = self.storage
-                    .get_balance_at_maximum_topoheight(account, asset, self.topoheight).await?
-                    .ok_or_else(|| BlockchainError::AccountNotFound(account.clone()))?;
-
+                let version = self.storage.get_new_versioned_balance(account, asset, self.topoheight).await?;
                 Ok(*e.insert(version).get_balance())
             }
         }
     }
 
+    // Update the balance of an account
     async fn internal_update_account_balance(&mut self, account: &'a PublicKey, asset: &'a Hash, new_ct: BalanceRepresentation) -> Result<(), BlockchainError> {
         match self.balances.entry(account).or_insert_with(HashMap::new).entry(asset) {
             Entry::Occupied(mut o) => {
@@ -51,10 +57,8 @@ impl<'a, S: Storage> ChainState<'a, S> {
                 version.set_balance(new_ct);
             },
             Entry::Vacant(e) => {
-                let (_, version) = self.storage
-                    .get_balance_at_maximum_topoheight(account, asset, self.topoheight).await?
-                    .ok_or_else(|| BlockchainError::AccountNotFound(account.clone()))?;
-
+                // We must retrieve the version to get its previous topoheight
+                let version = self.storage.get_new_versioned_balance(account, asset, self.topoheight).await?;
                 e.insert(version).set_balance(new_ct);
             }
         }
