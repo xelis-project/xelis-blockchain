@@ -43,6 +43,10 @@ impl VersionedBalance {
         &self.balance
     }
 
+    pub fn get_mut_balance(&mut self) -> &mut BalanceRepresentation {
+        &mut self.balance
+    }
+
     pub fn take_balance(self) -> BalanceRepresentation {
         self.balance
     }
