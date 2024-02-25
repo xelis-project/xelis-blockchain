@@ -8,16 +8,29 @@ enum Role {
     Receiver
 }
 
-// struct Echange {
-//     version: VersionedBalance,
-//     change: BalanceRepresentation
-// }
+// Sender changes
+// This contains its expected next balance for next outgoing transactions
+// But also contains the ciphertext changes happening (so a sum of each spendings for transactions)
+// This is necessary to easily build the final user balance
+struct Echange {
+    version: VersionedBalance,
+    change: Option<BalanceRepresentation>
+}
 
-// impl Echange {
-//     fn get_balance(&self) -> &BalanceRepresentation {
-//         &self.version.get_balance()
-//     }
-// }
+impl Echange {
+    // Get the right balance to use for TX verification
+    // TODO verify also against the block hash
+    fn get_balance(&self) -> &BalanceRepresentation {
+        match self.version.get_output_balance() {
+            Some(balance) => balance,
+            None => self.version.get_balance()
+        }
+    }
+
+    fn set_balance(&mut self, value: BalanceRepresentation) {
+        self.version.set_balance(value);
+    }
+}
 
 struct Account<'a> {
     // Account nonce used to verify valid transaction
@@ -26,7 +39,7 @@ struct Account<'a> {
     // TODO: they must store also the ciphertext change
     // It will be added by next change at each TX
     // This is necessary to easily build the final user balance
-    assets: HashMap<&'a Hash, VersionedBalance>
+    assets: HashMap<&'a Hash, Echange>
 }
 
 // This struct is used to verify the transactions executed at a snapshot of the blockchain
@@ -94,14 +107,22 @@ impl<'a, S: Storage> ChainState<'a, S> {
                         Entry::Occupied(o) => Ok(*o.get().get_balance()),
                         Entry::Vacant(e) => {
                             let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                            Ok(*e.insert(version).get_balance())
+                            let echange = e.insert(Echange {
+                                version,
+                                change: None
+                            });
+                            Ok(*echange.get_balance())
                         }
                     }
                 },
                 Entry::Vacant(e) => {
                     let account = Self::create_sender_account(key, &self.storage, self.topoheight).await?;
                     let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                    Ok(*e.insert(account).assets.entry(asset).or_insert(version).get_balance())
+                    let echange = Echange {
+                        version,
+                        change: None
+                    };
+                    Ok(*e.insert(account).assets.entry(asset).or_insert(echange).get_balance())
                 }
             }
         }
@@ -132,14 +153,22 @@ impl<'a, S: Storage> ChainState<'a, S> {
                         Entry::Vacant(e) => {
                             // We must retrieve the version to get its previous topoheight
                             let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                            e.insert(version).set_balance(new_ct);
+                            let echange = Echange {
+                                version,
+                                change: None
+                            };
+                            e.insert(echange).set_balance(new_ct);
                         }
                     }
                 },
                 Entry::Vacant(e) => {
                     let account = Self::create_sender_account(key, &self.storage, self.topoheight).await?;
                     let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                    e.insert(account).assets.entry(asset).or_insert(version).set_balance(new_ct);
+                    let echange = Echange {
+                        version,
+                        change: None
+                    };
+                    e.insert(account).assets.entry(asset).or_insert(echange).set_balance(new_ct);
                 }
             }
         }
@@ -185,7 +214,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // This function is called after the verification of the transactions
     pub async fn apply_changes(mut self) -> Result<(), BlockchainError> {
         // Store every new nonce
-        for (key, account) in &self.accounts {
+        for (key, account) in &mut self.accounts {
             trace!("Saving versioned nonce {} for {} at topoheight {}", account.nonce, key, self.topoheight);
             self.storage.set_last_nonce_to(key, self.topoheight, &account.nonce).await?;
 
@@ -195,15 +224,30 @@ impl<'a, S: Storage> ChainState<'a, S> {
             // Otherwise, we could have a front running problem
             // Example: Alice sends 100 to Bob, Bob sends 100 to Charlie
             // But Bob built its ZK Proof with the balance before Alice's transaction
-            for (asset, _) in &account.assets {
+            for (asset, echange) in account.assets.drain() {
+                let Echange { version, change } = echange;
                 match balances.entry(asset) {
                     Entry::Occupied(mut o) => {
-                        let _version = o.get_mut();
-                        // TODO add echanges
+                        // We got incoming funds while spending some
+                        // We need to split the version in two
+                        // Output balance is the balance after outputs spent without incoming funds
+                        // Final balance is the balance after incoming funds + outputs spent
+                        // This is a necessary process for the following case:
+                        // Alice sends 100 to Bob in block 1000
+                        // But Bob build 2 txs before Alice, one to Charlie and one to David
+                        // First Tx of Blob is in block 1000, it will be valid
+                        // But because of Alice incoming, the second Tx of Bob will be invalid
+                        let final_version = o.get_mut();
+                        final_version.set_output_balance(version.take_balance());
+
+                        if let Some(change) = change {
+                            // TODO add it, not replace it
+                            final_version.set_balance(change);
+                        }
                     },
                     Entry::Vacant(e) => {
-                        let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                        // TODO add echanges
+                        // We have no incoming update for this key
+                        // We can set the new sender balance as it is
                         e.insert(version);
                     }
                 }
@@ -219,7 +263,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
             // If the account has no nonce set, set it to 0
             if !self.accounts.contains_key(account) && !self.storage.has_nonce(account).await? {
-                debug!("{} has now balance but without any nonce registered, set default (0) nonce", account);
+                debug!("{} has now a balance but without any nonce registered, set default (0) nonce", account);
                 self.storage.set_last_nonce_to(account, self.topoheight, &VersionedNonce::new(0, None)).await?;
             }
         }
