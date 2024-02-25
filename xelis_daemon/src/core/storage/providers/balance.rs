@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use log::{trace, error};
 use xelis_common::{
     account::{
-        BalanceRepresentation,
+        Ciphertext,
         VersionedBalance
     },
     crypto::{
@@ -39,7 +39,7 @@ pub trait BalanceProvider: AssetProvider {
     async fn get_last_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(u64, VersionedBalance), BlockchainError>;
 
     // Get the asset balances for multiple keys
-    async fn get_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<BalanceRepresentation>>, BlockchainError>;
+    async fn get_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<Ciphertext>>, BlockchainError>;
 
     // Set the last topoheight for this asset and key to the requested topoheight
     fn set_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
@@ -254,7 +254,7 @@ impl BalanceProvider for SledStorage {
         Ok((topoheight, version))
     }
 
-    async fn get_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<BalanceRepresentation>>, BlockchainError> {
+    async fn get_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<Ciphertext>>, BlockchainError> {
         let mut balances = Vec::new();
         for key in keys {
             if self.has_balance_for(key, asset).await? {

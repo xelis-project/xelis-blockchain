@@ -1,6 +1,6 @@
 use std::collections::{hash_map::Entry, HashMap};
 use log::{debug, trace};
-use xelis_common::{account::{BalanceRepresentation, VersionedBalance, VersionedNonce}, config::XELIS_ASSET, crypto::{Hash, PublicKey}};
+use xelis_common::{account::{Ciphertext, VersionedBalance, VersionedNonce}, config::XELIS_ASSET, crypto::{Hash, PublicKey}};
 use super::{error::BlockchainError, storage::Storage};
 
 enum Role {
@@ -14,20 +14,20 @@ enum Role {
 // This is necessary to easily build the final user balance
 struct Echange {
     version: VersionedBalance,
-    change: Option<BalanceRepresentation>
+    change: Option<Ciphertext>
 }
 
 impl Echange {
     // Get the right balance to use for TX verification
     // TODO verify also against the block hash
-    fn get_balance(&self) -> &BalanceRepresentation {
+    fn get_balance(&self) -> &Ciphertext {
         match self.version.get_output_balance() {
             Some(balance) => balance,
             None => self.version.get_balance()
         }
     }
 
-    fn set_balance(&mut self, value: BalanceRepresentation) {
+    fn set_balance(&mut self, value: Ciphertext) {
         self.version.set_balance(value);
     }
 }
@@ -91,27 +91,27 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Retrieve a newly created versioned balance for current topoheight
     // We store it in cache in case we need to retrieve it again or to update it
-    async fn internal_get_account_balance(&mut self, key: &'a PublicKey, asset: &'a Hash, role: Role) -> Result<BalanceRepresentation, BlockchainError> {
+    async fn internal_get_account_balance(&mut self, key: &'a PublicKey, asset: &'a Hash, role: Role) -> Result<Ciphertext, BlockchainError> {
         match role {
             Role::Receiver => match self.receiver_balances.entry(key).or_insert_with(HashMap::new).entry(asset) {
-                Entry::Occupied(o) => Ok(*o.get().get_balance()),
+                Entry::Occupied(o) => Ok(o.get().get_balance().clone()),
                 Entry::Vacant(e) => {
                     let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                    Ok(*e.insert(version).get_balance())
+                    Ok(e.insert(version).get_balance().clone())
                 }
             },
             Role::Sender => match self.accounts.entry(key) {
                 Entry::Occupied(mut o) => {
                     let account = o.get_mut();
                     match account.assets.entry(asset) {
-                        Entry::Occupied(o) => Ok(*o.get().get_balance()),
+                        Entry::Occupied(o) => Ok(o.get().get_balance().clone()),
                         Entry::Vacant(e) => {
                             let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
                             let echange = e.insert(Echange {
                                 version,
                                 change: None
                             });
-                            Ok(*echange.get_balance())
+                            Ok(echange.get_balance().clone())
                         }
                     }
                 },
@@ -122,14 +122,14 @@ impl<'a, S: Storage> ChainState<'a, S> {
                         version,
                         change: None
                     };
-                    Ok(*e.insert(account).assets.entry(asset).or_insert(echange).get_balance())
+                    Ok(e.insert(account).assets.entry(asset).or_insert(echange).get_balance().clone())
                 }
             }
         }
     }
 
     // Update the balance of an account
-    async fn internal_update_account_balance(&mut self, key: &'a PublicKey, asset: &'a Hash, new_ct: BalanceRepresentation, role: Role) -> Result<(), BlockchainError> {
+    async fn internal_update_account_balance(&mut self, key: &'a PublicKey, asset: &'a Hash, new_ct: Ciphertext, role: Role) -> Result<(), BlockchainError> {
         match role {
             Role::Receiver => match self.receiver_balances.entry(key).or_insert_with(HashMap::new).entry(asset) {
                 Entry::Occupied(mut o) => {
@@ -207,6 +207,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     pub async fn reward_miner(&mut self, miner: &'a PublicKey, _reward: u64) -> Result<(), BlockchainError> {
         let miner_balance = self.internal_get_account_balance(miner, &XELIS_ASSET, Role::Receiver).await?;
         // TODO add reward to miner balance
+        // *miner_balance.get_mut().map_err(|_| BlockchainError::InvalidCiphertext)? += Scalar::from(reward + self.fees_collected);
         self.internal_update_account_balance(miner, &XELIS_ASSET, miner_balance, Role::Receiver).await?;
         Ok(())
     }

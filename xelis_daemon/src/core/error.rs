@@ -204,6 +204,8 @@ pub enum BlockchainError {
     AutoPruneMode,
     #[error(transparent)]
     TryFromSliceError(#[from] std::array::TryFromSliceError),
+    #[error("Invalid ciphertext")]
+    InvalidCiphertext,
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {
