@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Display, Formatter},
-    ops::{Add, AddAssign, Div, Mul, Sub}
+    ops::{Add, AddAssign, Div, Mul, Shl, ShlAssign, Shr, ShrAssign, Sub}
 };
 use log::debug;
 use primitive_types::U256;
@@ -163,11 +163,27 @@ impl Div for VarUint {
     }
 }
 
+impl Div<u64> for VarUint {
+    type Output = Self;
+
+    fn div(self, rhs: u64) -> Self::Output {
+        Self(self.0 / rhs)
+    }
+}
+
 impl Mul for VarUint {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
         Self(self.0 * rhs.0)
+    }
+}
+
+impl Mul<u64> for VarUint {
+    type Output = Self;
+
+    fn mul(self, rhs: u64) -> Self::Output {
+        Self(self.0 * rhs)
     }
 }
 
@@ -184,6 +200,34 @@ impl Add for VarUint {
 
     fn add(self, rhs: Self) -> Self::Output {
         Self(self.0 + rhs.0)
+    }
+}
+
+impl Shr<u64> for VarUint {
+    type Output = Self;
+
+    fn shr(self, rhs: u64) -> Self::Output {
+        Self(self.0 >> rhs)
+    }
+}
+
+impl Shl<u64> for VarUint {
+    type Output = Self;
+
+    fn shl(self, rhs: u64) -> Self::Output {
+        Self(self.0 << rhs)
+    }
+}
+
+impl ShlAssign<u64> for VarUint {
+    fn shl_assign(&mut self, rhs: u64) {
+        self.0 <<= rhs;
+    }
+}
+
+impl ShrAssign<u64> for VarUint {
+    fn shr_assign(&mut self, rhs: u64) {
+        self.0 >>= rhs;
     }
 }
 
