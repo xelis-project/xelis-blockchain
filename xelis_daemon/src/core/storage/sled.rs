@@ -672,6 +672,15 @@ impl Storage for SledStorage {
 
         // new TIPS for chain
         let mut tips = self.get_tips().await?;
+
+        // Delete all orphaned blocks tips
+        for tip in tips.clone() {
+            if !self.is_block_topological_ordered(&tip).await {
+                debug!("Tip {} is not ordered, removing", tip);
+                tips.remove(&tip);
+            }
+        }
+
         // all txs to be rewinded
         let mut txs = Vec::new();
         let mut done = 0;
