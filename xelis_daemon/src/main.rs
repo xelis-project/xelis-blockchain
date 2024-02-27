@@ -64,9 +64,12 @@ use crate::{
         MILLIS_PER_SECOND
     }
 };
+use core::blockdag;
 use std::{
-    sync::Arc,
+    fs::File,
+    io::Write,
     net::{IpAddr, SocketAddr},
+    sync::Arc,
     time::Duration
 };
 use clap::Parser;
@@ -160,6 +163,8 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_required_arguments("kick_peer", "Kick a peer using its ip:port", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(kick_peer::<S>))))?;
     command_manager.add_command(Command::new("clear_caches", "Clear storage caches", CommandHandler::Async(async_handler!(clear_caches::<S>))))?;
     command_manager.add_command(Command::new("clear_rpc_connections", "Clear all WS connections from RPC", CommandHandler::Async(async_handler!(clear_rpc_connections::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("difficulty_dataset", "Create a dataset for difficulty from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(difficulty_dataset::<S>))))?;
+
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -682,6 +687,54 @@ async fn whitelist<S: Storage>(manager: &CommandManager, mut arguments: Argument
             manager.error("P2P is not enabled");
         }
     };
+
+    Ok(())
+}
+
+// Create a dataset from chain with solve time and difficulty at each block
+async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let output_path = if arguments.has_argument("output") {
+        arguments.get_value("output")?.to_string_value()?
+    } else {
+        "difficulty_dataset.csv".to_string()
+    };
+    
+    manager.message(format!("Creating file {}...", output_path));
+    let mut file = File::create(&output_path).context("Error while creating file")?;
+    file.write(b"topoheight,solve_time_ms,difficulty\n").context("Error while writing header to file")?;
+    
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    manager.message("Creating difficulty dataset...");
+    for topoheight in 0..=blockchain.get_topo_height() {
+        // Retrieve block hash and header
+        let (hash, header) = storage.get_block_header_at_topoheight(topoheight).await.context("Error while retrieving hash at topo")?;
+
+        // Block difficulty
+        let difficulty = storage.get_difficulty_for_block_hash(&hash).await.context("Error while retrieving difficulty")?;
+
+        let solve_time = if topoheight == 0 {
+            0            
+        } else {
+    
+            // Retrieve best tip timestamp
+            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty::<S, _>(&storage, header.get_tips().iter()).await.context("Error while finding best tip")?;
+            let tip_timestamp = storage.get_timestamp_for_block_hash(best_tip).await.context("Error while retrieving tip timestamp")?;
+    
+            let solve_time = header.get_timestamp() - tip_timestamp;
+    
+            solve_time
+        };
+
+        // Write to file
+        file.write(format!("{},{},{}\n", topoheight, solve_time, difficulty).as_bytes()).context("Error while writing to file")?;
+    }
+
+    manager.message("Flushing file...");
+    file.flush().context("Error while flushing file")?;
+    manager.message(format!("Dataset written to {}", output_path));
 
     Ok(())
 }
