@@ -68,6 +68,8 @@ pub struct SledStorage {
     pub(super) hash_at_topo: Tree,
     // cumulative difficulty for each block hash on disk
     pub(super) cumulative_difficulty: Tree,
+    // Difficulty estimated covariance (P)
+    pub(super) difficulty_covariance: Tree,
     // keep tracks of all available assets on network
     pub(super) assets: Tree,
     // account nonces to prevent TX replay attack
@@ -146,6 +148,7 @@ impl SledStorage {
             topo_by_hash: sled.open_tree("topo_at_hash")?,
             hash_at_topo: sled.open_tree("hash_at_topo")?,
             cumulative_difficulty: sled.open_tree("cumulative_difficulty")?,
+            difficulty_covariance: sled.open_tree("difficulty_covariance")?,
             assets: sled.open_tree("assets")?,
             nonces: sled.open_tree("nonces")?,
             rewards: sled.open_tree("rewards")?,

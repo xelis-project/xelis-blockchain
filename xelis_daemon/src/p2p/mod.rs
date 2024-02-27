@@ -2048,8 +2048,9 @@ impl<S: Storage> P2pServer<S> {
                     let reward = storage.get_block_reward_at_topo_height(topoheight)?;
                     let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+                    let p = storage.get_estimated_covariance_or_block_hash(&hash).await?;
 
-                    blocks.insert(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty });
+                    blocks.insert(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty, p });
                 }
                 StepResponse::BlocksMetadata(blocks)
             },
@@ -2274,7 +2275,7 @@ impl<S: Storage> P2pServer<S> {
                         storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
 
                         // save the block with its transactions, difficulty
-                        storage.save_block(Arc::new(header), &txs, metadata.difficulty, hash).await?;
+                        storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.p, hash).await?;
                     }
 
                     let mut storage = self.blockchain.get_storage().write().await;

@@ -20,22 +20,23 @@ use xelis_common::{
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE},
     config::{COIN_DECIMALS, MAX_TRANSACTION_SIZE, TIPS_LIMIT, XELIS_ASSET},
     crypto::{
-        HASH_SIZE,
-        Hashable,
         Hash,
-        PublicKey
+        Hashable,
+        PublicKey,
+        HASH_SIZE
     },
     difficulty::{check_difficulty, CumulativeDifficulty, Difficulty},
     immutable::Immutable,
     network::Network,
     serializer::Serializer,
-    transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
-    utils::format_xelis,
     time::{
         get_current_time_in_millis,
         get_current_time_in_seconds,
         TimestampMillis
-    }
+    },
+    transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
+    utils::format_xelis,
+    varuint::VarUint
 };
 use crate::{
     config::{
@@ -48,7 +49,7 @@ use crate::{
     },
     core::{
         blockdag,
-        difficulty::calculate_difficulty,
+        difficulty,
         error::BlockchainError,
         mempool::Mempool,
         nonce_checker::NonceChecker,
@@ -241,7 +242,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("Retrieving tips for computing current difficulty");
             let storage = blockchain.get_storage().read().await;
             let tips_set = storage.get_tips().await?;
-            let difficulty = blockchain.get_difficulty_at_tips(&*storage, tips_set.iter()).await?;
+            let (difficulty, _) = blockchain.get_difficulty_at_tips(&*storage, tips_set.iter()).await?;
             blockchain.set_difficulty(difficulty).await;
         }
 
@@ -369,7 +370,7 @@ impl<S: Storage> Blockchain<S> {
         self.stable_topoheight.store(stable_topoheight, Ordering::SeqCst);
 
         // Recompute the difficulty with new tips
-        let difficulty = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
+        let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
         self.set_difficulty(difficulty).await;
 
         // TXs in mempool may be outdated, clear them as they will be asked later again
@@ -430,7 +431,7 @@ impl<S: Storage> Blockchain<S> {
         let (mut header, difficulty) = {
             let storage = self.storage.read().await;
             let block = self.get_block_template_for_storage(&storage, key.clone()).await?;
-            let difficulty = self.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await?;
+            let (difficulty, _) = self.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await?;
             (block, difficulty)
         };
         let mut hash = header.hash();
@@ -1012,24 +1013,20 @@ impl<S: Storage> Blockchain<S> {
     // If tips is empty, returns genesis difficulty
     // Find the best tip (highest cumulative difficulty), then its difficulty, timestamp and its own tips
     // Same for its parent, then calculate the difficulty between the two timestamps
-    pub async fn get_difficulty_at_tips<'a, P, I>(&self, provider: &P, tips: I) -> Result<Difficulty, BlockchainError>
+    pub async fn get_difficulty_at_tips<'a, P, I>(&self, provider: &P, tips: I) -> Result<(Difficulty, VarUint), BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider,
         I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
         I::IntoIter: ExactSizeIterator
     {
         if tips.len() == 0 { // Genesis difficulty
-            return Ok(GENESIS_BLOCK_DIFFICULTY)
+            return Ok((GENESIS_BLOCK_DIFFICULTY, difficulty::P))
         }
 
         let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
-        if height < 3 {
-            return Ok(MINIMUM_DIFFICULTY)
-        }
-
         // Simulator is enabled, don't calculate difficulty
-        if self.is_simulator_enabled() {
-            return Ok(MINIMUM_DIFFICULTY)
+        if height <= 1 || self.is_simulator_enabled() {
+            return Ok((MINIMUM_DIFFICULTY, difficulty::P))
         }
 
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, tips.clone().into_iter()).await?;
@@ -1040,11 +1037,9 @@ impl<S: Storage> Blockchain<S> {
         let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, parent_tips.iter()).await?;
         let parent_best_tip_timestamp = provider.get_timestamp_for_block_hash(parent_best_tip).await?;
 
-        let solve_time = best_tip_timestamp - parent_best_tip_timestamp;
-        let average_solve_time = self.get_average_block_time(provider).await?;
-
-        let difficulty = calculate_difficulty(tips.len() as u64, average_solve_time, solve_time, biggest_difficulty);
-        Ok(difficulty)
+        let p = provider.get_estimated_covariance_or_block_hash(best_tip).await?;
+        let (difficulty, p_new) = difficulty::calculate_difficulty(parent_best_tip_timestamp, best_tip_timestamp, biggest_difficulty, p);
+        Ok((difficulty, p_new))
     }
 
     async fn set_difficulty(&self, difficulty: Difficulty) {
@@ -1060,17 +1055,17 @@ impl<S: Storage> Blockchain<S> {
     // pass in params the already computed block hash and its tips
     // check the difficulty calculated at tips
     // if the difficulty is valid, returns it (prevent to re-compute it)
-    pub async fn verify_proof_of_work<'a, P, I>(&self, provider: &P, hash: &Hash, tips: I) -> Result<Difficulty, BlockchainError>
+    pub async fn verify_proof_of_work<'a, P, I>(&self, provider: &P, hash: &Hash, tips: I) -> Result<(Difficulty, VarUint), BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider,
         I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
         I::IntoIter: ExactSizeIterator
     {
         trace!("Verifying proof of work for block {}", hash);
-        let difficulty = self.get_difficulty_at_tips(provider, tips).await?;
+        let (difficulty, p) = self.get_difficulty_at_tips(provider, tips).await?;
         trace!("Difficulty at tips: {}", difficulty);
         if self.is_simulator_enabled() || check_difficulty(hash, &difficulty)? {
-            Ok(difficulty)
+            Ok((difficulty, p))
         } else {
             Err(BlockchainError::InvalidDifficulty)
         }
@@ -1499,7 +1494,7 @@ impl<S: Storage> Blockchain<S> {
         // verify PoW and get difficulty for this block based on tips
         let pow_hash = block.get_pow_hash();
         debug!("POW hash: {}", pow_hash);
-        let difficulty = self.verify_proof_of_work(storage, &pow_hash, block.get_tips().iter()).await?;
+        let (difficulty, p) = self.verify_proof_of_work(storage, &pow_hash, block.get_tips().iter()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
         // Used for TX verifications
@@ -1586,7 +1581,7 @@ impl<S: Storage> Blockchain<S> {
         let block = block.to_arc();
         debug!("Saving block {} on disk", block_hash);
         // Add block to chain
-        storage.save_block(block.clone(), &txs, difficulty, block_hash.clone()).await?;
+        storage.save_block(block.clone(), &txs, difficulty, p, block_hash.clone()).await?;
 
         // Compute cumulative difficulty for block
         let cumulative_difficulty = {
@@ -1892,7 +1887,7 @@ impl<S: Storage> Blockchain<S> {
             self.stable_topoheight.store(stable_topoheight, Ordering::SeqCst);
 
             trace!("update difficulty in cache");
-            let difficulty = self.get_difficulty_at_tips(storage, tips.iter()).await?;
+            let (difficulty, _) = self.get_difficulty_at_tips(storage, tips.iter()).await?;
             self.set_difficulty(difficulty).await;
         }
 

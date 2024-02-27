@@ -329,7 +329,7 @@ async fn get_block_template<S: Storage>(context: Context, body: Value) -> Result
 
     let storage = blockchain.get_storage().read().await;
     let block = blockchain.get_block_template_for_storage(&storage, params.address.into_owned().to_public_key()).await.context("Error while retrieving block template")?;
-    let difficulty = blockchain.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
+    let (difficulty, _) = blockchain.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
     let height = block.height;
     Ok(json!(GetBlockTemplateResult { template: block.to_hex(), height, difficulty }))
 }

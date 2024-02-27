@@ -1,67 +1,89 @@
-use log::trace;
+use std::time::{Duration, Instant};
+use humantime::format_duration;
+use log::{info, trace};
 use xelis_common::{
     difficulty::Difficulty,
     time::TimestampMillis,
-    utils::format_difficulty
+    utils::format_difficulty,
+    varuint::VarUint
 };
 use crate::config::{BLOCK_TIME_MILLIS, MINIMUM_DIFFICULTY};
 
-// Difficulty adjustment of at least 0.1% per block
-const DIFFICULTY_BOUND_DIVISOR: Difficulty = Difficulty::from_u64(1000);
-const BOOST_BLOCK_TIME: u64 = BLOCK_TIME_MILLIS * 2 / 3;
+const SHIFT: u64 = 32;
+// This is equal to 2 ** 32
+const LEFT_SHIFT: VarUint = VarUint::from_u64(1 << SHIFT);
+// Process noise covariance: 5% of shift
+const PROCESS_NOISE_COVAR: VarUint = VarUint::from_u64((1 << SHIFT) / 100 * 5);
 
-// Difficulty algorithm from Ethereum, tweaked to fit our needs
-pub fn calculate_difficulty(tips_count: u64, average_solve_time: TimestampMillis, solve_time: TimestampMillis, previous_difficulty: Difficulty) -> Difficulty {
-    trace!("calculate difficulty from parent: {}", format_difficulty(previous_difficulty));
-    let mut adjust = previous_difficulty / DIFFICULTY_BOUND_DIVISOR;
-    // By how much we need to adjust the difficulty
-    // If we have a solve time of 30s and the block time is 15s, we need to adjust by 2
-    // With a bound divisor of 1000, we will adjust by 0.1% for each points in x
+// Initial estimate covariance
+// It is used by first blocks
+pub const P: VarUint = LEFT_SHIFT;
 
-    // Average solve time over 50 blocks take 3/4 of the weight
-    // But average solve time already take in count the new solve time
-    let avg_solve_time = (average_solve_time * 3 + solve_time) / 4;
-    let mut x = avg_solve_time / BLOCK_TIME_MILLIS;
-    // We are lower than the expected block time
-    let neg = if x == 0 && avg_solve_time < BOOST_BLOCK_TIME {
-        // Let's boost adjustment factor based on steps
-        x = (BLOCK_TIME_MILLIS - avg_solve_time) / 100;
-        trace!("Boosting difficulty adjustment by {}", x);
-        false
+// Kalman filter with unsigned integers only
+// z: The observed value (latest hashrate calculated on current block time).
+// x_est_prev: The previous hashrate estime.
+// p_prev: The previous estimate covariance.
+// Returns the new state estimate and covariance
+pub fn kalman_filter(z: VarUint, x_est_prev: VarUint, p_prev: VarUint) -> (VarUint, VarUint) {
+    trace!("z: {}, x_est_prev: {}, p_prev: {}", z, x_est_prev, p_prev);
+    // Scale up
+    let z = z * LEFT_SHIFT;
+    let x_est_prev = x_est_prev * LEFT_SHIFT;
+
+    // Prediction step
+    let p_pred = ((x_est_prev * PROCESS_NOISE_COVAR) >> SHIFT) + p_prev;
+
+    // Update step
+    let k = (p_pred << SHIFT) / (p_pred + z);
+    trace!("left: {}, right: {}", (p_pred << SHIFT), (p_pred + z));
+
+    // Ensure positive numbers only
+    let mut x_est_new = if z >= x_est_prev {
+        x_est_prev + ((k * (z - x_est_prev)) >> SHIFT)
     } else {
-        let c = if tips_count > 1 {
-            2
-        } else {
-            1
-        };
-
-        x >= c
+        x_est_prev - ((k * (x_est_prev - z)) >> SHIFT)
     };
 
-    trace!("x: {x}, neg: {neg}, avg: {avg_solve_time} ms, solve time: {solve_time} ms, average solve time: {average_solve_time} ms, adjust: {}", format_difficulty(adjust));
-    if x > 99 {
-        x = 99;
+    trace!("p pred: {}, noise covar: {}, p_prev: {}, k: {}", p_pred, PROCESS_NOISE_COVAR, p_prev, k);
+    let p_new = ((LEFT_SHIFT - k) * p_pred) >> SHIFT;
+
+    // Scale down
+    x_est_new >>= SHIFT;
+
+    (x_est_new, p_new)
+}
+
+// Calculate the required difficulty for the next block based on the solve time of the previous block
+// We are using a Kalman filter to estimate the hashrate and adjust the difficulty
+pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: TimestampMillis, previous_difficulty: Difficulty, p: VarUint) -> (Difficulty, VarUint) {
+    let solve_time = timestamp - parent_timestamp;
+    let z = previous_difficulty / solve_time;
+    info!("Calculating difficulty, solve time: {}, previous_difficulty: {}, z: {}, p: {}", format_duration(Duration::from_millis(solve_time)), format_difficulty(previous_difficulty), z, p);
+    let instant = Instant::now();
+    let (x_est_new, p_new) = kalman_filter(z, previous_difficulty / BLOCK_TIME_MILLIS, p);
+    info!("x_est_new: {}, p_new: {}, took: {:?}", x_est_new, p_new, instant.elapsed());
+
+    let difficulty = x_est_new * BLOCK_TIME_MILLIS;
+    if difficulty < MINIMUM_DIFFICULTY {
+        return (MINIMUM_DIFFICULTY, P);
     }
 
-    // Returns the previous difficulty if no adjustment is needed
-    if x == 0 {
-        return previous_difficulty
+    (difficulty, p_new)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kalman_filter() {
+        let z = MINIMUM_DIFFICULTY / VarUint::from_u64(1000);
+        let (x_est_new, p_new) = kalman_filter(z, VarUint::one(), P);
+        assert_eq!(x_est_new, VarUint::from_u64(2));
+        assert_eq!(p_new, VarUint::from_u64(4509399998));
+
+        let (x_est_new, p_new) = kalman_filter(MINIMUM_DIFFICULTY / VarUint::from_u64(2000), x_est_new, p_new);
+        assert_eq!(x_est_new, VarUint::from_u64(3));
+        assert_eq!(p_new, VarUint::from_u64(4938139585));
     }
-
-    let x: Difficulty = x.into();
-    // Compute the new diff based on the adjustement
-    adjust = adjust * x;
-    let new_diff = if neg {
-        previous_difficulty - adjust
-    } else {
-        previous_difficulty + adjust
-    };
-
-    trace!("previous diff: {} new diff: {}", previous_difficulty, new_diff);
-
-    if new_diff < MINIMUM_DIFFICULTY {
-        return MINIMUM_DIFFICULTY
-    }
-
-    new_diff
 }

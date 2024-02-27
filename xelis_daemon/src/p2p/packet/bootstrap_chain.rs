@@ -20,7 +20,8 @@ use xelis_common::{
         ReaderError,
         Serializer,
         Writer
-    }
+    },
+    varuint::VarUint
 };
 use super::chain::{BlockId, CommonPoint};
 use crate::config::CHAIN_SYNC_REQUEST_MAX_BLOCKS;
@@ -41,7 +42,8 @@ pub struct BlockMetadata {
     pub supply: u64,
     pub reward: u64,
     pub difficulty: Difficulty,
-    pub cumulative_difficulty: CumulativeDifficulty
+    pub cumulative_difficulty: CumulativeDifficulty,
+    pub p: VarUint
 }
 
 impl StdHash for BlockMetadata {
@@ -65,13 +67,15 @@ impl Serializer for BlockMetadata {
         let reward = reader.read_u64()?;
         let difficulty = Difficulty::read(reader)?;
         let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
+        let p = VarUint::read(reader)?;
 
         Ok(Self {
             hash,
             supply,
             reward,
             difficulty,
-            cumulative_difficulty
+            cumulative_difficulty,
+            p
         })
     }
 
@@ -81,6 +85,7 @@ impl Serializer for BlockMetadata {
         writer.write_u64(&self.reward);
         self.difficulty.write(writer);
         self.cumulative_difficulty.write(writer);
+        self.p.write(writer);
     }
 
     fn size(&self) -> usize {

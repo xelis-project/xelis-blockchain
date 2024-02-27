@@ -11,7 +11,8 @@ use xelis_common::{
     },
     immutable::Immutable,
     serializer::Serializer,
-    time::TimestampMillis
+    time::TimestampMillis,
+    varuint::VarUint
 };
 use crate::core::{
     error::BlockchainError,
@@ -38,6 +39,12 @@ pub trait DifficultyProvider {
 
     // Get a block header using its hash
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError>;
+
+    // Retrieve the estimated covariance (P) for a block hash
+    async fn get_estimated_covariance_or_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError>;
+
+    // Set the estimated covariance (P) for a block hash
+    async fn set_estimated_covariance_for_block_hash(&mut self, hash: &Hash, p: VarUint) -> Result<(), BlockchainError>;
 
     // Set the cumulative difficulty for a block hash
     async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: CumulativeDifficulty) -> Result<(), BlockchainError>;
@@ -97,6 +104,17 @@ impl DifficultyProvider for SledStorage {
     async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: CumulativeDifficulty) -> Result<(), BlockchainError> {
         trace!("set cumulative difficulty for hash {}", hash);
         self.cumulative_difficulty.insert(hash.as_bytes(), cumulative_difficulty.to_bytes())?;
+        Ok(())
+    }
+
+    async fn get_estimated_covariance_or_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
+        trace!("get p for hash {}", hash);
+        self.load_from_disk(&self.difficulty_covariance, hash.as_bytes())
+    }
+
+    async fn set_estimated_covariance_for_block_hash(&mut self, hash: &Hash, p: VarUint) -> Result<(), BlockchainError> {
+        trace!("set p for hash {}", hash);
+        self.difficulty_covariance.insert(hash.as_bytes(), p.to_bytes())?;
         Ok(())
     }
 }

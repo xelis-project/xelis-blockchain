@@ -10,7 +10,8 @@ use xelis_common::{
         Difficulty
     },
     immutable::Immutable,
-    time::TimestampMillis
+    time::TimestampMillis,
+    varuint::VarUint
 };
 use crate::core::{
     blockchain::Blockchain,
@@ -31,7 +32,8 @@ use log::{error, trace};
 struct BlockData {
     header: Arc<BlockHeader>,
     difficulty: Difficulty,
-    cumulative_difficulty: CumulativeDifficulty
+    cumulative_difficulty: CumulativeDifficulty,
+    p: VarUint
 }
 
 // Chain validator is used to validate the blocks received from the network
@@ -127,7 +129,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
 
         let pow_hash = header.get_pow_hash();
         trace!("POW hash: {}", pow_hash);
-        let difficulty = self.blockchain.verify_proof_of_work(self, &pow_hash, tips.iter()).await?;
+        let (difficulty, p) = self.blockchain.verify_proof_of_work(self, &pow_hash, tips.iter()).await?;
 
         // Find the cumulative difficulty for this block
         let (base, base_height) = self.blockchain.find_common_base(self, header.get_tips()).await?;
@@ -136,7 +138,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         // Store the block in both maps
         // One is for blocks at height and the other is for the block data
         self.blocks_at_height.entry(header.get_height()).or_insert_with(Tips::new).insert(hash.clone());
-        self.blocks.insert(hash, BlockData { header: Arc::new(header), difficulty, cumulative_difficulty });
+        self.blocks.insert(hash, BlockData { header: Arc::new(header), difficulty, cumulative_difficulty, p });
 
         Ok(())
     }
@@ -201,6 +203,19 @@ impl<S: Storage> DifficultyProvider for ChainValidator<'_, S> {
 
         let storage = self.blockchain.get_storage().read().await;
         Ok(storage.get_block_header_by_hash(hash).await?)
+    }
+
+    async fn get_estimated_covariance_or_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
+        if let Some(data) = self.blocks.get(hash) {
+            return Ok(data.p.clone())
+        }
+
+        let storage = self.blockchain.get_storage().read().await;
+        Ok(storage.get_estimated_covariance_or_block_hash(hash).await?)
+    }
+
+    async fn set_estimated_covariance_for_block_hash(&mut self, _: &Hash, _: VarUint) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
     }
 
     async fn set_cumulative_difficulty_for_block_hash(&mut self, _: &Hash, _: CumulativeDifficulty) -> Result<(), BlockchainError> {

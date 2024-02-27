@@ -249,7 +249,7 @@ impl<S: Storage> GetWorkServer<S> {
                 // generate a mining job
                 let storage = self.blockchain.get_storage().read().await;
                 let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await.context("Error while retrieving block template")?;
-                difficulty = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
+                (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
 
                 job = BlockMiner::new(header.get_work_hash(), get_current_time_in_millis());
                 height = header.height;
@@ -431,7 +431,7 @@ impl<S: Storage> GetWorkServer<S> {
         let (header, difficulty) = {
             let storage = self.blockchain.get_storage().read().await;
             let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await.context("Error while retrieving block template when notifying new job")?;
-            let difficulty = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips when notifying new job")?;
+            let (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips when notifying new job")?;
             (header, difficulty)
         };
 

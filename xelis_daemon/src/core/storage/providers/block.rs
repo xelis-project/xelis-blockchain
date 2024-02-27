@@ -8,11 +8,10 @@ use xelis_common::{
     difficulty::Difficulty,
     immutable::Immutable,
     serializer::Serializer,
-    transaction::Transaction
+    transaction::Transaction,
+    varuint::VarUint
 };
-
 use crate::core::{error::BlockchainError, storage::{sled::BLOCKS_COUNT, SledStorage}};
-
 use super::{BlocksAtHeightProvider, DifficultyProvider, TransactionProvider};
 
 #[async_trait]
@@ -30,7 +29,7 @@ pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeig
     async fn get_block_by_hash(&self, hash: &Hash) -> Result<Block, BlockchainError>;
 
     // Save a new block with its transactions and difficulty
-    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError>;
+    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, p: VarUint, hash: Hash) -> Result<(), BlockchainError>;
 }
 
 impl SledStorage {
@@ -59,7 +58,7 @@ impl BlockProvider for SledStorage {
         self.contains_data(&self.blocks, &self.blocks_cache, hash).await
     }
 
-    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, hash: Hash) -> Result<(), BlockchainError> {
+    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, p: VarUint, hash: Hash) -> Result<(), BlockchainError> {
         debug!("Storing new {} with hash: {}, difficulty: {}", block, hash, difficulty);
 
         // Store transactions
@@ -83,6 +82,8 @@ impl BlockProvider for SledStorage {
 
         // Store difficulty
         self.difficulty.insert(hash.as_bytes(), difficulty.to_bytes())?;
+        // Store P
+        self.difficulty_covariance.insert(hash.as_bytes(), p.to_bytes())?;
 
         self.add_block_hash_at_height(hash.clone(), block.get_height()).await?;
 
