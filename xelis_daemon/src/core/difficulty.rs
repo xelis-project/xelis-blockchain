@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use humantime::format_duration;
 use log::trace;
 use xelis_common::{
@@ -59,9 +59,8 @@ pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: Timest
     let solve_time = timestamp - parent_timestamp;
     let z = previous_difficulty / solve_time;
     trace!("Calculating difficulty, solve time: {}, previous_difficulty: {}, z: {}, p: {}", format_duration(Duration::from_millis(solve_time)), format_difficulty(previous_difficulty), z, p);
-    let instant = Instant::now();
     let (x_est_new, p_new) = kalman_filter(z, previous_difficulty / BLOCK_TIME_MILLIS, p);
-    trace!("x_est_new: {}, p_new: {}, took: {:?}", x_est_new, p_new, instant.elapsed());
+    trace!("x_est_new: {}, p_new: {}", x_est_new, p_new);
 
     let difficulty = x_est_new * BLOCK_TIME_MILLIS;
     if difficulty < MINIMUM_DIFFICULTY {

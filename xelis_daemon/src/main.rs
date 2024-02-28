@@ -698,7 +698,7 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
     } else {
         "difficulty_dataset.csv".to_string()
     };
-    
+
     manager.message(format!("Creating file {}...", output_path));
     let mut file = File::create(&output_path).context("Error while creating file")?;
     file.write(b"topoheight,solve_time_ms,difficulty\n").context("Error while writing header to file")?;
