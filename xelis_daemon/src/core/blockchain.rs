@@ -575,9 +575,10 @@ impl<S: Storage> Blockchain<S> {
 
         // if block is alone at its height, it is a sync block
         let tips_at_height = storage.get_blocks_at_height(block_height).await?;
-        if tips_at_height.len() == 1 {
-            return Ok(true)
-        }
+        // This may be an issue with orphaned blocks, we can't rely on this
+        // if tips_at_height.len() == 1 {
+        //     return Ok(true)
+        // }
 
         // if block is not alone at its height and they are ordered (not orphaned), it can't be a sync block
         let mut blocks_in_main_chain = 0;
@@ -606,12 +607,13 @@ impl<S: Storage> Blockchain<S> {
 
         let sync_block_cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(hash).await?;
         // if potential sync block has lower cumulative difficulty than one of past blocks, it is not a sync block
-        for hash in pre_blocks {
+        for pre_hash in pre_blocks {
             // We compare only against block ordered otherwise we can have desync between node which could lead to fork
             // This is rare event but can happen
-            if storage.is_block_topological_ordered(&hash).await {
-                let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+            if storage.is_block_topological_ordered(&pre_hash).await {
+                let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&pre_hash).await?;
                 if cumulative_difficulty >= sync_block_cumulative_difficulty {
+                    warn!("Block {} is not a sync block because of cumulative difficulty of {}", hash, pre_hash);
                     return Ok(false)
                 }
             }
