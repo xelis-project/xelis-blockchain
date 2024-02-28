@@ -1471,7 +1471,8 @@ impl<S: Storage> Blockchain<S> {
 
         for hash in block.get_tips() {
             let previous_timestamp = storage.get_timestamp_for_block_hash(hash).await?;
-            if previous_timestamp > block.get_timestamp() { // block timestamp can't be less than previous block.
+            // block timestamp can't be less than previous block.
+            if block.get_timestamp() < previous_timestamp {
                 error!("Invalid block timestamp, parent ({}) is less than new block {}", hash, block_hash);
                 return Err(BlockchainError::TimestampIsLessThanParent(block.get_timestamp()));
             }
