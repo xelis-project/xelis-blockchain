@@ -720,8 +720,8 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
         } else {
     
             // Retrieve best tip timestamp
-            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty::<S, _>(&storage, header.get_tips().iter()).await.context("Error while finding best tip")?;
-            let tip_timestamp = storage.get_timestamp_for_block_hash(best_tip).await.context("Error while retrieving tip timestamp")?;
+            let newest_tip = blockdag::find_newest_tip_by_timestamp::<S, _>(&storage, header.get_tips().iter()).await.context("Error while finding best tip")?;
+            let tip_timestamp = storage.get_timestamp_for_block_hash(newest_tip).await.context("Error while retrieving tip timestamp")?;
     
             let solve_time = header.get_timestamp() - tip_timestamp;
     

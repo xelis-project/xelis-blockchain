@@ -611,9 +611,6 @@ impl<S: Storage> Blockchain<S> {
 
         // if block is alone at its height, it is a sync block
         let tips_at_height = provider.get_blocks_at_height(block_height).await?;
-        if tips_at_height.len() == 1 {
-            return Ok(true)
-        }
 
         // if block is not alone at its height and they are ordered (not orphaned), it can't be a sync block
         let mut blocks_in_main_chain = 0;
@@ -648,6 +645,7 @@ impl<S: Storage> Blockchain<S> {
             if provider.is_block_topological_ordered(&hash).await {
                 let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(&hash).await?;
                 if cumulative_difficulty >= sync_block_cumulative_difficulty {
+                    warn!("Block {} at height {} is not a sync block, it has lower cumulative difficulty than block {} at height {}", hash, block_height, hash, i);
                     return Ok(false)
                 }
             }
@@ -1013,6 +1011,8 @@ impl<S: Storage> Blockchain<S> {
     // If tips is empty, returns genesis difficulty
     // Find the best tip (highest cumulative difficulty), then its difficulty, timestamp and its own tips
     // Same for its parent, then calculate the difficulty between the two timestamps
+    // For Block C, take the timestamp and difficulty from parent block B, and then from parent of B, take the timestamp
+    // We take the difficulty from the biggest tip, but compute the solve time from the newest tips
     pub async fn get_difficulty_at_tips<'a, P, I>(&self, provider: &P, tips: I) -> Result<(Difficulty, VarUint), BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider,
@@ -1029,19 +1029,25 @@ impl<S: Storage> Blockchain<S> {
             return Ok((MINIMUM_DIFFICULTY, difficulty::P))
         }
 
+        // Search the highest difficulty available
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, tips.clone().into_iter()).await?;
         let biggest_difficulty = provider.get_difficulty_for_block_hash(best_tip).await?;
-        let best_tip_timestamp = provider.get_timestamp_for_block_hash(best_tip).await?;
 
+        // Search the newest tip available to determine the real solve time
+        let newest_tip = blockdag::find_newest_tip_by_timestamp(provider, tips.clone().into_iter()).await?;
+        let newest_tip_timestamp = provider.get_timestamp_for_block_hash(newest_tip).await?;
+
+        // Find the newest tips parent timestamp
         let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
-        let parent_best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, parent_tips.iter()).await?;
-        let parent_best_tip_timestamp = provider.get_timestamp_for_block_hash(parent_best_tip).await?;
+        let parent_newest_tip = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
+        let parent_newest_tip_timestamp = provider.get_timestamp_for_block_hash(parent_newest_tip).await?;
 
         let p = provider.get_estimated_covariance_or_block_hash(best_tip).await?;
-        let (difficulty, p_new) = difficulty::calculate_difficulty(parent_best_tip_timestamp, best_tip_timestamp, biggest_difficulty, p);
+        let (difficulty, p_new) = difficulty::calculate_difficulty(parent_newest_tip_timestamp, newest_tip_timestamp, biggest_difficulty, p);
         Ok((difficulty, p_new))
     }
 
+    // Store the difficulty cache for the latest block
     async fn set_difficulty(&self, difficulty: Difficulty) {
         let mut lock = self.difficulty.lock().await;
         *lock = difficulty;
@@ -1849,6 +1855,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
+        // Store the new tips available
         storage.store_tips(&tips)?;
 
         let mut current_height = current_height;
@@ -1880,6 +1887,7 @@ impl<S: Storage> Blockchain<S> {
                     events.entry(NotifyEvent::StableHeightChanged).or_insert_with(Vec::new).push(value);
                 }
             }
+
             // Update caches
             self.stable_height.store(stable_height, Ordering::SeqCst);
             // Search the topoheight of the stable block
