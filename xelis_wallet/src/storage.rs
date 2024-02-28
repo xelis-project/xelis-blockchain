@@ -345,6 +345,11 @@ impl EncryptedStorage {
         self.load_from_disk(&self.balances, asset.as_bytes())
     }
 
+    // Determine if we have a balance for this asset
+    pub fn has_balance_for(&self, asset: &Hash) -> Result<bool> {
+        self.contains_data(&self.balances, asset.as_bytes())
+    }
+
     // Set the balance for this asset
     pub fn set_balance_for(&mut self, asset: &Hash, value: u64) -> Result<()> {
         self.save_to_disk(&self.balances, asset.as_bytes(), &value.to_be_bytes())

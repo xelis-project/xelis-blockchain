@@ -59,6 +59,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("split_address", async_handler!(split_address));
     handler.register_method("rescan", async_handler!(rescan));
     handler.register_method("get_balance", async_handler!(get_balance));
+    handler.register_method("has_balance", async_handler!(has_balance));
     handler.register_method("get_tracked_assets", async_handler!(get_tracked_assets));
     handler.register_method("get_asset_precision", async_handler!(get_asset_precision));
     handler.register_method("get_transaction", async_handler!(get_transaction));
@@ -160,14 +161,28 @@ async fn rescan(context: Context, body: Value) -> Result<Value, InternalRpcError
 }
 
 // Retrieve the balance of the wallet for a specific asset
+// By default, it will returns 0 if no balance is found on disk
 async fn get_balance(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBalanceParams = parse_params(body)?;
     let asset = params.asset.unwrap_or(XELIS_ASSET);
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
 
-    let balance = storage.get_balance_for(&asset)?;
+    // If the asset is not found, it will returns 0
+    // Use has_balance below to check if the wallet has a balance for a specific asset
+    let balance = storage.get_balance_for(&asset).unwrap_or(0);
     Ok(json!(balance))
+}
+
+// Check if the wallet has a balance for a specific asset
+async fn has_balance(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetBalanceParams = parse_params(body)?;
+    let asset = params.asset.unwrap_or(XELIS_ASSET);
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+
+    let exist = storage.has_balance_for(&asset).context("Error while checking if balance exists")?;
+    Ok(json!(exist))
 }
 
 // Retrieve all tracked assets by wallet
