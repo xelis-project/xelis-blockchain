@@ -13,22 +13,53 @@ enum Role {
 // But also contains the ciphertext changes happening (so a sum of each spendings for transactions)
 // This is necessary to easily build the final user balance
 struct Echange {
+    // Version balance of the account
     version: VersionedBalance,
-    change: Option<Ciphertext>
+    change: Option<Ciphertext>,
+    use_output: bool
 }
 
 impl Echange {
+    async fn new(version: VersionedBalance) -> Result<Self, BlockchainError> {
+        // TODO take TX block hash, and verify which balance to choose
+        let use_output = version.get_output_balance().is_some();
+
+        Ok(Self {
+            use_output,
+            version,
+            change: None,
+        })
+    }
+
     // Get the right balance to use for TX verification
-    // TODO verify also against the block hash
     fn get_balance(&self) -> &Ciphertext {
         match self.version.get_output_balance() {
-            Some(balance) => balance,
-            None => self.version.get_balance()
+            Some(balance) if self.use_output => balance,
+            _ => self.version.get_balance()
         }
     }
 
+    // Set the new balance of the account
     fn set_balance(&mut self, value: Ciphertext) {
-        self.version.set_balance(value);
+        match self.version.get_mut_output_balance() {
+            Some(balance) if self.use_output => *balance = value,
+            _ => self.version.set_balance(value)
+        }
+    }
+
+    // Add a change to the account
+    fn add_change(&mut self, change: Ciphertext) -> Result<(), BlockchainError> {
+        match self.change.as_mut() {
+            Some(c) => {
+                // TODO no unwrap
+                *c.get_mut().unwrap() += change.take().unwrap();
+            },
+            None => {
+                self.change = Some(change);
+            }
+        };
+
+        Ok(())
     }
 }
 
@@ -62,7 +93,6 @@ pub struct ChainState<'a, S: Storage> {
     fees_collected: u64,
 }
 
-
 // TODO fix front running problem
 impl<'a, S: Storage> ChainState<'a, S> {
     pub fn new(storage: &'a mut S, topoheight: u64, stable_topoheight: u64) -> Self {
@@ -76,12 +106,18 @@ impl<'a, S: Storage> ChainState<'a, S> {
         }
     }
 
+    // Create a sender echange
+    async fn create_sender_echange(storage: &S, key: &'a PublicKey, asset: &'a Hash, topoheight: u64) -> Result<Echange, BlockchainError> {
+        let version = storage.get_new_versioned_balance(key, asset, topoheight).await?;
+        Echange::new(version).await
+    }
+
     // Create a sender account by fetching its nonce and create a empty HashMap for balances,
     // those will be fetched lazily
     async fn create_sender_account(key: &PublicKey, storage: &S, topoheight: u64) -> Result<Account<'a>, BlockchainError> {
         let (_, version) = storage
-        .get_nonce_at_maximum_topoheight(key, topoheight).await?
-        .ok_or_else(|| BlockchainError::AccountNotFound(key.clone()))?;
+            .get_nonce_at_maximum_topoheight(key, topoheight).await?
+            .ok_or_else(|| BlockchainError::AccountNotFound(key.clone()))?;
 
         Ok(Account {
             nonce: version,
@@ -106,22 +142,18 @@ impl<'a, S: Storage> ChainState<'a, S> {
                     match account.assets.entry(asset) {
                         Entry::Occupied(o) => Ok(o.get().get_balance().clone()),
                         Entry::Vacant(e) => {
-                            let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                            let echange = e.insert(Echange {
-                                version,
-                                change: None
-                            });
-                            Ok(echange.get_balance().clone())
+                            let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
+                            Ok(e.insert(echange).get_balance().clone())
                         }
                     }
                 },
                 Entry::Vacant(e) => {
+                    // Create a new account for the sender
                     let account = Self::create_sender_account(key, &self.storage, self.topoheight).await?;
-                    let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                    let echange = Echange {
-                        version,
-                        change: None
-                    };
+
+                    // Create a new echange for the asset
+                    let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
+
                     Ok(e.insert(account).assets.entry(asset).or_insert(echange).get_balance().clone())
                 }
             }
@@ -151,23 +183,19 @@ impl<'a, S: Storage> ChainState<'a, S> {
                             version.set_balance(new_ct);
                         },
                         Entry::Vacant(e) => {
-                            // We must retrieve the version to get its previous topoheight
-                            let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                            let echange = Echange {
-                                version,
-                                change: None
-                            };
+                            // Build the echange for this asset
+                            let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
                             e.insert(echange).set_balance(new_ct);
                         }
                     }
                 },
                 Entry::Vacant(e) => {
+                    // Create a new account for the sender
                     let account = Self::create_sender_account(key, &self.storage, self.topoheight).await?;
-                    let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                    let echange = Echange {
-                        version,
-                        change: None
-                    };
+
+                    // Create a new echange for the asset
+                    let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
+
                     e.insert(account).assets.entry(asset).or_insert(echange).set_balance(new_ct);
                 }
             }
@@ -175,6 +203,21 @@ impl<'a, S: Storage> ChainState<'a, S> {
         Ok(())
     }
 
+    // Update the balance of an account
+    // Account must have been fetched before calling this function
+    async fn internal_update_sender_echange(&mut self, key: &'a PublicKey, asset: &'a Hash, new_ct: Ciphertext) -> Result<(), BlockchainError> {
+        let change = self.accounts.get_mut(key)
+            .and_then(|a| a.assets.get_mut(asset))
+            .ok_or_else(|| BlockchainError::NoTxSender(key.clone()))?;
+
+        // Increase the total output
+        change.add_change(new_ct)?;
+
+        Ok(())
+    }
+
+    // Retrieve the account nonce
+    // Only sender accounts should be used here
     async fn internal_get_account_nonce(&mut self, key: &'a PublicKey) -> Result<u64, BlockchainError> {
         match self.accounts.entry(key) {
             Entry::Occupied(o) => Ok(o.get().nonce.get_nonce()),
@@ -185,6 +228,9 @@ impl<'a, S: Storage> ChainState<'a, S> {
         }
     }
 
+    // Update the account nonce
+    // Only sender accounts should be used here
+    // For each TX, we must update the nonce by one
     async fn internal_update_account_nonce(&mut self, account: &'a PublicKey, new_nonce: u64) -> Result<(), BlockchainError> {
         match self.accounts.entry(account) {
             Entry::Occupied(mut o) => {
@@ -226,7 +272,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
             // Example: Alice sends 100 to Bob, Bob sends 100 to Charlie
             // But Bob built its ZK Proof with the balance before Alice's transaction
             for (asset, echange) in account.assets.drain() {
-                let Echange { version, change } = echange;
+                let Echange { version, change, .. } = echange;
                 match balances.entry(asset) {
                     Entry::Occupied(mut o) => {
                         // We got incoming funds while spending some
@@ -241,10 +287,12 @@ impl<'a, S: Storage> ChainState<'a, S> {
                         let final_version = o.get_mut();
                         final_version.set_output_balance(version.take_balance());
 
-                        if let Some(change) = change {
-                            // TODO add it, not replace it
-                            final_version.set_balance(change);
-                        }
+                        // Build the final balance
+                        // This include all output and all inputs
+                        let _change = change.ok_or(BlockchainError::NoSenderOutput)?;
+                        // TODO add the output changes to the final + no unwrap
+                        // let final_balance = final_version.get_mut_balance().get_mut().unwrap();
+                        // *final_balance += change.get_mut().unwrap();
                     },
                     Entry::Vacant(e) => {
                         // We have no incoming update for this key

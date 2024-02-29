@@ -206,6 +206,10 @@ pub enum BlockchainError {
     TryFromSliceError(#[from] std::array::TryFromSliceError),
     #[error("Invalid ciphertext")]
     InvalidCiphertext,
+    #[error("Invalid chain state, no sender output ?")]
+    NoSenderOutput,
+    #[error("Invalid chain state, sender {} account is not found", _0)]
+    NoTxSender(PublicKey)
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {
