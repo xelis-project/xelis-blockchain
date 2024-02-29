@@ -46,6 +46,8 @@ pub struct StoredPeer {
     last_connection_try: TimestampSeconds,
     fail_count: u8,
     local_port: u16,
+    // Until when the peer is banned
+    temp_ban_until: Option<u64>,
     state: StoredPeerState
 }
 
@@ -291,6 +293,17 @@ impl PeerList {
         self.addr_has_state(ip, StoredPeerState::Blacklist)
     }
 
+    // Verify that the peer is not blacklisted or temp banned
+    pub fn is_allowed(&self, ip: &IpAddr) -> bool {
+        if let Some(stored_peer) = self.stored_peers.get(&ip) {
+            return *stored_peer.get_state() != StoredPeerState::Blacklist
+            && stored_peer.get_temp_ban_until()
+                .map_or(false, |temp_ban_until| temp_ban_until > get_current_time_in_seconds());
+        }
+
+        true
+    }
+
     pub fn is_whitelisted(&self, ip: &IpAddr) -> bool {
         self.addr_has_state(ip, StoredPeerState::Whitelist)
     }
@@ -350,6 +363,24 @@ impl PeerList {
             if let Err(e) = peer.close().await {
                 error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
             }
+        }
+    }
+
+    // temp ban a peer for a duration in seconds
+    // this will also close the peer
+    pub async fn temp_ban_peer(&mut self, peer: &Peer, seconds: u64) {
+        self.temp_ban_address(&peer.get_connection().get_address().ip(), seconds).await;
+        if let Err(e) = peer.close().await {
+            error!("Error while trying to close peer {} for being temp banned: {}", peer.get_connection().get_address(), e);
+        }
+    }
+
+    // temp ban a peer address for a duration in seconds
+    pub async fn temp_ban_address(&mut self, ip: &IpAddr, seconds: u64) {
+        if let Some(stored_peer) = self.stored_peers.get_mut(ip) {
+            stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + seconds));
+        } else {
+            self.stored_peers.insert(ip.clone(), StoredPeer::new(0, StoredPeerState::Graylist));
         }
     }
 
@@ -422,6 +453,7 @@ impl StoredPeer {
             last_connection_try: 0,
             fail_count: 0,
             local_port,
+            temp_ban_until: None,
             state
         }
     }
@@ -444,6 +476,14 @@ impl StoredPeer {
 
     fn set_state(&mut self, state: StoredPeerState) {
         self.state = state;
+    }
+
+    fn get_temp_ban_until(&self) -> Option<u64> {
+        self.temp_ban_until
+    }
+
+    fn set_temp_ban_until(&mut self, temp_ban_until: Option<u64>) {
+        self.temp_ban_until = temp_ban_until;
     }
 
     fn get_fail_count(&self) -> u8 {
