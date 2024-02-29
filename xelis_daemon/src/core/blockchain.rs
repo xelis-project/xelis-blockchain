@@ -610,7 +610,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // if block is alone at its height, it is a sync block
-        let tips_at_height = storage.get_blocks_at_height(block_height).await?;
+        let tips_at_height = provider.get_blocks_at_height(block_height).await?;
         // This may be an issue with orphaned blocks, we can't rely on this
         // if tips_at_height.len() == 1 {
         //     return Ok(true)
