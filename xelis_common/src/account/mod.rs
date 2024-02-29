@@ -47,6 +47,14 @@ impl Ciphertext {
             Ciphertext::Decompressed(e) => Ok(Cow::Borrowed(e))
         }
     }
+
+    pub fn take(self) -> Result<ElGamalCiphertext, DecompressionError> {
+        let ct = match self {
+            Ciphertext::Compressed(c) => c.decompress()?,
+            Ciphertext::Decompressed(e) => e
+        };
+        Ok(ct)
+    }
 }
 
 impl Serializer for Ciphertext {

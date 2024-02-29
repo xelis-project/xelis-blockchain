@@ -64,6 +64,10 @@ impl VersionedBalance {
         self.output_balance.as_ref()
     }
 
+    pub fn get_mut_output_balance(&mut self) -> Option<&mut Ciphertext> {
+        self.output_balance.as_mut()
+    }
+
     pub fn set_balance(&mut self, value: Ciphertext) {
         self.final_balance = value;
     }
