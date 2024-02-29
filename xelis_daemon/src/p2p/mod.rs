@@ -1638,6 +1638,8 @@ impl<S: Storage> P2pServer<S> {
             } else {
                 // Verify that someone isn't trying to trick us
                 if pop_count > blocks_len as u64 {
+                    // TODO: maybe we could request its whole chain for comparison until chain validator has_higher_cumulative_difficulty ?
+                    // If after going through all its chain and we still have a higher cumulative difficulty, we should not rewind 
                     warn!("{} sent us a pop count of {} but only sent us {} blocks, ignoring", peer, pop_count, blocks_len);
                     return Err(P2pError::InvalidPopCount(pop_count, blocks_len as u64).into())
                 }
