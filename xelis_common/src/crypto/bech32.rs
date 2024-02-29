@@ -22,8 +22,8 @@ pub enum Bech32Error {
     HrpMixCase,
     #[error("Invalid value: {}, max is {}", _0, _1)]
     InvalidValue(u8, usize), // value, max
-    #[error("Separator '1' not found")]
-    Separator1NotFound,
+    #[error("Separator not found")]
+    SeparatorNotFound,
     #[error("Invalid separator position: {}", _0)]
     SeparatorInvalidPosition(usize), // position
     #[error(transparent)]
@@ -158,7 +158,7 @@ pub fn decode(bech: &String) -> Result<(String, Vec<u8>), Bech32Error> {
         return Err(Bech32Error::HrpMixCase)
     }
 
-    let pos = bech.rfind(SEPARATOR).ok_or(Bech32Error::Separator1NotFound)?;
+    let pos = bech.rfind(SEPARATOR).ok_or(Bech32Error::SeparatorNotFound)?;
     if pos < 1 || pos + 7 > bech.len() {
         return Err(Bech32Error::SeparatorInvalidPosition(pos))
     }
