@@ -559,7 +559,7 @@ impl<S: Storage> P2pServer<S> {
     // candidate peer should have a greater topoheight or a higher block height than us
     // if we are not in fast sync mode, we must verify its pruned topoheight to be sure
     // he have the blocks we need
-    async fn select_random_best_peer(&self, fast_sync: bool, previous_peer: Option<&Arc<Peer>>) -> Option<Arc<Peer>> {
+    async fn select_random_best_peer(&self, fast_sync: bool, previous_peer: Option<&(Arc<Peer>, bool)>) -> Option<Arc<Peer>> {
         trace!("select random best peer");
         let peer_list = self.peer_list.read().await;
         trace!("peer list locked for select random best peer");
@@ -599,9 +599,9 @@ impl<S: Storage> P2pServer<S> {
         }).collect();
 
         // Try to not reuse the same peer between each sync
-        if let Some(previous_peer) = previous_peer {
-            if peers.len() > 1 {
-                debug!("removing previous peer {} from random selection", previous_peer);
+        if let Some((previous_peer, err)) = previous_peer {
+            if peers.len() > 1 || *err {
+                debug!("removing previous peer {} from random selection, err: {}", previous_peer, err);
                 // We don't need to preserve the order
                 peers.swap_remove(previous_peer);
             }
@@ -639,7 +639,8 @@ impl<S: Storage> P2pServer<S> {
         let mut last_chain_sync = get_current_time_in_millis();
         let interval = Duration::from_secs(CHAIN_SYNC_DELAY);
         // Try to not reuse the same peer between each sync
-        let mut previous_peer: Option<Arc<Peer>> = None;
+        // Don't use it at all if its errored
+        let mut previous_peer: Option<(Arc<Peer>, bool)> = None;
         loop {
             // Detect exact time needed before next chain sync
             let current = get_current_time_in_millis();
@@ -671,16 +672,22 @@ impl<S: Storage> P2pServer<S> {
                 debug!("Selected for chain sync is {}", peer);
                 // check if we can maybe fast sync first
                 // otherwise, fallback on the normal chain sync
-                if fast_sync {
+                let err = if fast_sync {
                     if let Err(e) = self.bootstrap_chain(&peer).await {
                         warn!("Error occured while fast syncing with {}: {}", peer, e);
+                        true
+                    } else {
+                        false
                     }
                 } else {
                     if let Err(e) = self.request_sync_chain_for(&peer, &mut last_chain_sync).await {
                         warn!("Error occured on chain sync with {}: {}", peer, e);
+                        true
+                    } else {
+                        false
                     }
-                }
-                previous_peer = Some(peer);
+                };
+                previous_peer = Some((peer, err));
             } else {
                 trace!("No peer found for chain sync, waiting before next check");
                 sleep(interval).await;
@@ -1629,8 +1636,9 @@ impl<S: Storage> P2pServer<S> {
                 // User trust him as a priority node, rewind chain without checking, allow to go below stable height also
                 self.blockchain.rewind_chain(pop_count, false).await?;
             } else {
+                // Verify that someone isn't trying to trick us
                 if pop_count > blocks_len as u64 {
-                    warn!("{} sent us a pop count of {} but only sent us {} blocks, ignoring", peer, pop_count, blocks.len());
+                    warn!("{} sent us a pop count of {} but only sent us {} blocks, ignoring", peer, pop_count, blocks_len);
                     return Err(P2pError::InvalidPopCount(pop_count, blocks_len as u64).into())
                 }
 
