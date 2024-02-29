@@ -204,7 +204,7 @@ impl ChainResponse {
     }
 
     // Get the count of blocks received
-    pub fn size(&self) -> usize {
+    pub fn blocks_size(&self) -> usize {
         self.blocks.len()
     }
 

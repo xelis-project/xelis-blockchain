@@ -1506,12 +1506,12 @@ impl<S: Storage> P2pServer<S> {
     // NOTE: Only a priority node can rewind below the stable height 
     async fn handle_chain_response(&self, peer: &Arc<Peer>, mut response: ChainResponse, requested_max_size: usize) -> Result<(), BlockchainError> {
         trace!("handle chain response from {}", peer);
-        let response_size = response.size();
+        let response_size = response.blocks_size();
 
         let (Some(common_point), Some(lowest_height)) = (response.get_common_point(), response.get_lowest_height()) else {
             warn!("No common block was found with {}", peer);
-            if response.size() > 0 {
-                warn!("Peer have no common block but send us {} blocks!", response.size());
+            if response.blocks_size() > 0 {
+                warn!("Peer have no common block but send us {} blocks!", response.blocks_size());
                 return Err(P2pError::InvalidPacket.into())
             }
             return Ok(())
@@ -1555,8 +1555,9 @@ impl<S: Storage> P2pServer<S> {
         blocks.extend(top_blocks);
 
         // if node asks us to pop blocks, check that the peer's height/topoheight is in advance on us
+        let peer_topoheight = peer.get_topoheight();
         if pop_count > 0
-            && peer.get_topoheight() > our_previous_topoheight
+            && peer_topoheight > our_previous_topoheight
             && peer.get_height() >= our_previous_height
             // then, verify if it's a priority node, otherwise, check if we are connected to a priority node so only him can rewind us
             && (peer.is_priority() || !self.is_connected_to_a_synced_priority_node().await)
@@ -1567,6 +1568,11 @@ impl<S: Storage> P2pServer<S> {
                 // User trust him as a priority node, rewind chain without checking, allow to go below stable height also
                 self.blockchain.rewind_chain(pop_count, false).await?;
             } else {
+                if pop_count > blocks_len as u64 {
+                    warn!("{} sent us a pop count of {} but only sent us {} blocks, ignoring", peer, pop_count, blocks.len());
+                    return Err(P2pError::InvalidPopCount(pop_count, blocks_len as u64).into())
+                }
+
                 // request all blocks header and verify basic chain structure
                 let mut chain_validator = ChainValidator::new(self.blockchain.clone());
                 for hash in blocks {
@@ -2253,8 +2259,8 @@ impl<S: Storage> P2pServer<S> {
         let response = peer.request_sync_chain(packet).await?;
 
         // Check that the peer followed our requirements
-        if response.size() > requested_max_size {
-            return Err(P2pError::InvaliChainResponseSize(response.size(), requested_max_size).into())
+        if response.blocks_size() > requested_max_size {
+            return Err(P2pError::InvaliChainResponseSize(response.blocks_size(), requested_max_size).into())
         }
 
         // Update last chain sync time

@@ -18,6 +18,8 @@ use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Invalid pop count, got {} with only {} blocks", _0, _1)]
+    InvalidPopCount(u64, u64),
     #[error("Block id list is malformed")]
     InvalidBlockIdList,
     #[error("Incompatible direction received")]
