@@ -102,9 +102,13 @@ pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
 
 // Peer rules
 // number of seconds to reset the counter
-pub const PEER_FAIL_TIME_RESET: u64 = 60 * 5;
+// Set to 30 minutes
+pub const PEER_FAIL_TIME_RESET: u64 = 30 * 60;
 // number of fail to disconnect the peer
-pub const PEER_FAIL_LIMIT: u8 = 20;
+pub const PEER_FAIL_LIMIT: u8 = 50;
+// number of seconds to temp ban the peer in case of fail reached
+// Set to 1 hour
+pub const PEER_TEMP_BAN_TIME: u64 = 60 * 60;
 // millis until we timeout
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15000;
 // millis until we timeout

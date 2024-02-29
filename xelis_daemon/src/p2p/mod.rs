@@ -294,7 +294,7 @@ impl<S: Storage> P2pServer<S> {
                     } else {
                         // check that this incoming peer isn't blacklisted
                         let peer_list = self.peer_list.read().await;
-                        if peer_list.is_blacklisted(&addr.ip()) {
+                        if !peer_list.is_allowed(&addr.ip()) {
                             debug!("{} is blacklisted, rejecting connection", addr);
                             true
                         } else {
@@ -885,7 +885,7 @@ impl<S: Storage> P2pServer<S> {
                     // otherwise disconnect peer
                     if peer.get_fail_count() >= PEER_FAIL_LIMIT {
                         warn!("High fail count detected for {}! Closing connection...", peer);
-                        if let Err(e) = peer.close().await {
+                        if let Err(e) = peer.close_and_temp_ban().await {
                             error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
                         }
                         break;

@@ -1,6 +1,6 @@
 use crate::{
     config::{
-        PEER_FAIL_TIME_RESET, STABLE_LIMIT,
+        PEER_FAIL_TIME_RESET, STABLE_LIMIT, PEER_TEMP_BAN_TIME,
         PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT,
         CHAIN_SYNC_TIMEOUT_SECS
     },
@@ -40,7 +40,7 @@ use tokio::{
 };
 use lru::LruCache;
 use bytes::Bytes;
-use log::{debug, log_enabled, trace, warn, Level};
+use log::{debug, info, log_enabled, trace, warn, Level};
 
 // A RequestedObjects is a map of all objects requested from a peer
 // This is done to be awaitable with a timeout
@@ -508,6 +508,17 @@ impl Peer {
     // This represents the IP address of the peer and the port on which it is listening
     pub fn get_outgoing_address(&self) -> &SocketAddr {
         &self.outgoing_address
+    }
+
+    // Close the peer connection and remove it from the peer list
+    pub async fn close_and_temp_ban(&self) -> Result<(), P2pError> {
+        trace!("Tempban {}", self);
+        let mut peer_list = self.peer_list.write().await;
+        peer_list.temp_ban_address(&self.get_connection().get_address().ip(), PEER_TEMP_BAN_TIME).await;
+        peer_list.remove_peer(self.get_id()).await;
+        self.get_connection().close().await?;
+        info!("{} has been temp banned", self);
+        Ok(())
     }
 
     // Close the peer connection and remove it from the peer list
