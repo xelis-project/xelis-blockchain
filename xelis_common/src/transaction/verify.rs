@@ -55,6 +55,7 @@ pub trait BlockchainVerificationState {
 pub enum VerificationError<T> {
     State(T),
     InvalidNonce,
+    SenderIsReceiver,
     Proof(#[from] ProofVerificationError),
 }
 
@@ -194,6 +195,13 @@ impl Transaction {
         }
 
         let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
+            // Prevent sending to ourself
+            for transfer in transfers.iter() {
+                if transfer.destination == self.source {
+                    return Err(VerificationError::SenderIsReceiver);
+                }
+            }
+
             transfers
                 .iter()
                 .map(DecompressedTransferCt::decompress)

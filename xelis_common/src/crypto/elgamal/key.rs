@@ -4,6 +4,7 @@ use zeroize::Zeroize;
 use super::{
     ciphertext::Ciphertext,
     pedersen::{DecryptHandle, PedersenCommitment, PedersenOpening},
+    CompressedPublicKey,
     H
 };
 
@@ -52,6 +53,11 @@ impl PublicKey {
     // Create a new decrypt handle from a Pedersen opening
     pub fn decrypt_handle(&self, opening: &PedersenOpening) -> DecryptHandle {
         DecryptHandle::new(&self, opening)
+    }
+
+    // Get the public key as a compressed point
+    pub fn compress(&self) -> CompressedPublicKey {
+        CompressedPublicKey::new(self.0.compress())
     }
 
     // Get the public key as a point

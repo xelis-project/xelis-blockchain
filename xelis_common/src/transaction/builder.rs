@@ -25,6 +25,7 @@ pub enum GenerationError<T> {
     State(T),
     EmptyTransfers,
     MaxTransferCountReached,
+    SenderIsReceiver,
     Proof(#[from] ProofGenerationError),
 }
 
@@ -58,7 +59,7 @@ pub struct SmartContractCallBuilder {
 pub struct TransferBuilder {
     pub asset: Hash,
     pub amount: u64,
-    pub dest_pubkey: CompressedPublicKey,
+    pub destination: CompressedPublicKey,
     pub extra_data: Option<Vec<u8>>, // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
 }
 
@@ -187,27 +188,34 @@ impl TransactionBuilder {
                 return Err(GenerationError::MaxTransferCountReached);
             }
 
+            let pk = source_keypair.get_public_key().compress();
+            for transfer in transfers.iter() {
+                if transfer.destination == pk {
+                    return Err(GenerationError::SenderIsReceiver);
+                }
+            }
+
             transfers
                 .iter()
                 .map(|transfer| {
-                    let dest_pubkey = transfer
-                        .dest_pubkey
+                    let destination = transfer
+                        .destination
                         .decompress()
                         .map_err(|err| GenerationError::Proof(err.into()))?;
 
                     let amount_opening = PedersenOpening::generate_new();
-                    let amount_commitment =
+                    let commitment =
                         PedersenCommitment::new_with_opening(transfer.amount, &amount_opening);
-                    let amount_sender_handle =
+                    let sender_handle =
                         source_keypair.get_public_key().decrypt_handle(&amount_opening);
-                    let amount_receiver_handle = dest_pubkey.decrypt_handle(&amount_opening);
+                    let receiver_handle = destination.decrypt_handle(&amount_opening);
 
                     Ok(TransferWithCommitment {
                         inner: transfer.clone(),
-                        commitment: amount_commitment,
-                        sender_handle: amount_sender_handle,
-                        receiver_handle: amount_receiver_handle,
-                        destination: dest_pubkey,
+                        commitment,
+                        sender_handle,
+                        receiver_handle,
+                        destination,
                         amount_opening,
                     })
                 })
@@ -291,7 +299,7 @@ impl TransactionBuilder {
                     let receiver_handle = transfer.receiver_handle.compress();
 
                     transcript.transfer_proof_domain_separator();
-                    transcript.append_public_key(b"dest_pubkey", &transfer.inner.dest_pubkey);
+                    transcript.append_public_key(b"dest_pubkey", &transfer.inner.destination);
                     transcript.append_commitment(b"amount_commitment", &commitment);
                     transcript.append_handle(b"amount_sender_handle", &sender_handle);
                     transcript.append_handle(b"amount_receiver_handle", &receiver_handle);
@@ -310,7 +318,7 @@ impl TransactionBuilder {
                         commitment,
                         receiver_handle,
                         sender_handle,
-                        destination: transfer.inner.dest_pubkey,
+                        destination: transfer.inner.destination,
                         asset: transfer.inner.asset,
                         ct_validity_proof,
                         extra_data: transfer.inner.extra_data,
