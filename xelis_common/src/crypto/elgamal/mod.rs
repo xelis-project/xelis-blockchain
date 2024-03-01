@@ -11,7 +11,7 @@ mod key;
 mod signature;
 mod pedersen;
 
-pub use compressed::{CompressedCiphertext, CompressedCommitment, CompressedHandle, DecompressionError, RISTRETTO_COMPRESSED_SIZE};
+pub use compressed::{CompressedCiphertext, CompressedCommitment, CompressedHandle, CompressedPublicKey, DecompressionError, RISTRETTO_COMPRESSED_SIZE};
 pub use ciphertext::Ciphertext;
 pub use key::{KeyPair, PrivateKey, PublicKey};
 pub use pedersen::{DecryptHandle, PedersenCommitment, PedersenOpening};

@@ -1,3 +1,4 @@
+use std::array::TryFromSliceError;
 use thiserror::Error;
 
 use crate::crypto::Hash;
@@ -14,6 +15,8 @@ pub enum ReaderError {
     InvalidHex,
     #[error("Error on try into")]
     ErrorTryInto,
+    #[error(transparent)]
+    TryFromSliceError(#[from] TryFromSliceError),
     #[error(transparent)]
     Any(anyhow::Error)
 }

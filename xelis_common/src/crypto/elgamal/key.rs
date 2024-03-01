@@ -12,10 +12,14 @@ pub struct KeyPair {
 }
 
 impl PublicKey {
+    // Create a public key from a point
     pub fn from_point(p: RistrettoPoint) -> Self {
         Self(p)
     }
 
+    // Create a new public key from a private key
+    // The public key is H^(-1) * H
+    // Private key must not be zero
     pub fn new(secret: &PrivateKey) -> Self {
         let s = &secret.0;
         assert!(s != &Scalar::ZERO);
@@ -23,6 +27,7 @@ impl PublicKey {
         Self(s.invert() * *H)
     }
 
+    // Encrypt an amount to a Ciphertext
     pub fn encrypt<T: Into<Scalar>>(&self, amount: T) -> Ciphertext {
         let (commitment, opening) = PedersenCommitment::new(amount);
         let handle = self.decrypt_handle(&opening);
@@ -30,21 +35,20 @@ impl PublicKey {
         Ciphertext::new(commitment, handle)
     }
 
-    pub fn encrypt_with_opening<T: Into<Scalar>>(
-        &self,
-        amount: T,
-        opening: &PedersenOpening,
-    ) -> Ciphertext {
+    // Encrypt an amount to a Ciphertext with a given opening
+    pub fn encrypt_with_opening<T: Into<Scalar>>(&self, amount: T, opening: &PedersenOpening) -> Ciphertext {
         let commitment = PedersenCommitment::new_with_opening(amount, opening);
         let handle = self.decrypt_handle(opening);
 
         Ciphertext::new(commitment, handle)
     }
 
+    // Create a new decrypt handle from a Pedersen opening
     pub fn decrypt_handle(&self, opening: &PedersenOpening) -> DecryptHandle {
         DecryptHandle::new(&self, opening)
     }
 
+    // Get the public key as a point
     pub fn as_point(&self) -> &RistrettoPoint {
         &self.0
     }
@@ -61,6 +65,7 @@ impl PrivateKey {
         &self.0
     }
 
+    // Decrypt a Ciphertext to a point
     pub fn decrypt_to_point(&self, ciphertext: &Ciphertext) -> RistrettoPoint {
         let commitment = ciphertext.commitment().as_point();
         let handle = ciphertext.handle().as_point();
