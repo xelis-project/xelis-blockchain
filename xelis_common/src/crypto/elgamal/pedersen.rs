@@ -2,7 +2,7 @@ use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 use curve25519_dalek::{traits::MultiscalarMul, RistrettoPoint, Scalar};
 use rand::rngs::OsRng;
-use super::{key::PublicKey, G, H};
+use super::{key::PublicKey, CompressedCommitment, CompressedHandle, G, H};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PedersenOpening(Scalar);
@@ -46,22 +46,35 @@ impl PedersenCommitment {
     pub fn as_point(&self) -> &RistrettoPoint {
         &self.0
     }
+
+    // Compress the PedersenCommitment
+    pub fn compress(&self) -> CompressedCommitment {
+        CompressedCommitment::new(self.0.compress())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecryptHandle(RistrettoPoint);
 
 impl DecryptHandle {
+    // Create a new DecryptHandle using a point
     pub fn from_point(p: RistrettoPoint) -> Self {
         Self(p)
     }
 
+    // Create a new DecryptHandle using a public key and a PedersenOpening
     pub fn new(public: &PublicKey, opening: &PedersenOpening) -> Self {
         Self(public.as_point() * opening.as_scalar())
     }
 
+    // Get the point
     pub fn as_point(&self) -> &RistrettoPoint {
         &self.0
+    }
+
+    // Compress the DecryptHandle
+    pub fn compress(&self) -> CompressedHandle {
+        CompressedHandle::new(self.0.compress())
     }
 }
 

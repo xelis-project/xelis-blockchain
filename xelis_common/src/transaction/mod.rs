@@ -11,8 +11,8 @@ use bulletproofs::RangeProof;
 use log::debug;
 use serde::{Deserialize, Serialize};
 
-mod builder;
-mod verify;
+pub mod builder;
+pub mod verify;
 
 // Maximum size of payload per transfer
 pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
