@@ -4,21 +4,43 @@
 
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     iter,
 };
 use crate::{
     config::XELIS_ASSET,
     crypto::{
-        elgamal::{Ciphertext, CompressedCiphertext, CompressedPublicKey, DecryptHandle, KeyPair, PedersenCommitment, PedersenOpening, PublicKey},
-        proofs::{CiphertextValidityProof, CommitmentEqProof, ProofGenerationError, BP_GENS, PC_GENS},
-        Hash, ProtocolTranscript,
-    }
+        elgamal::{
+            Ciphertext,
+            CompressedCiphertext,
+            CompressedPublicKey,
+            DecryptHandle,
+            KeyPair,
+            PedersenCommitment,
+            PedersenOpening,
+            PublicKey,
+            RISTRETTO_COMPRESSED_SIZE,
+            SCALAR_SIZE
+        },
+        proofs::{
+            CiphertextValidityProof,
+            CommitmentEqProof,
+            ProofGenerationError,
+            BP_GENS,
+            PC_GENS
+        },
+        Hash,
+        ProtocolTranscript,
+        HASH_SIZE,
+    },
+    serializer::Serializer,
+    utils::calculate_tx_fee
 };
 use thiserror::Error;
 
-use super::{BurnPayload, Role, SourceCommitment, Transaction, TransactionType, TransferPayload, MAX_TRANSFER_COUNT};
+use super::{BurnPayload, Role, SourceCommitment, Transaction, TransactionType, TransferPayload, EXTRA_DATA_LIMIT_SIZE, MAX_TRANSFER_COUNT};
 
 #[derive(Error, Debug, Clone)]
 pub enum GenerationError<T> {
@@ -26,7 +48,22 @@ pub enum GenerationError<T> {
     EmptyTransfers,
     MaxTransferCountReached,
     SenderIsReceiver,
+    ExtraDataTooLarge,
     Proof(#[from] ProofGenerationError),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum FeeBuilder {
+    // calculate tx fees based on its size and multiply by this value
+    Multiplier(f64),
+    Value(u64) // set a direct value of how much fees you want to pay
+}
+
+impl Default for FeeBuilder {
+    fn default() -> Self {
+        FeeBuilder::Multiplier(1f64)
+    }
 }
 
 /// If the returned balance and ct do not match, the build function will panic and/or
@@ -38,10 +75,13 @@ pub trait GetBlockchainAccountBalance {
     fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error>;
 
     /// Get the balance ciphertext from the source
-    fn get_account_ct(&self, asset: &Hash) -> Result<CompressedCiphertext, Self::Error>;
+    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CompressedCiphertext, Self::Error>;
+
+    /// Verify if the account exists or if we should pay more fees for account creation
+    fn account_exists(&self, account: &CompressedPublicKey) -> Result<bool, Self::Error>;
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionTypeBuilder {
     Transfers(Vec<TransferBuilder>),
@@ -49,13 +89,7 @@ pub enum TransactionTypeBuilder {
     Burn(BurnPayload)
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct SmartContractCallBuilder {
-    pub contract: Hash,
-    pub assets: HashMap<Hash, u64>,
-    pub params: HashMap<String, String>, // TODO
-}
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TransferBuilder {
     pub asset: Hash,
     pub amount: u64,
@@ -63,13 +97,14 @@ pub struct TransferBuilder {
     pub extra_data: Option<Vec<u8>>, // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TransactionBuilder {
-    pub version: u8,
-    pub source: CompressedPublicKey,
-    pub data: TransactionTypeBuilder,
-    pub fee: u64,
-    pub nonce: u64,
+    version: u8,
+    source: CompressedPublicKey,
+    data: TransactionTypeBuilder,
+    fee_builder: FeeBuilder,
+    nonce: u64,
+    fee: u64,
 }
 
 // Internal struct for build
@@ -94,12 +129,83 @@ impl TransferWithCommitment {
 }
 
 impl TransactionBuilder {
-    fn get_new_source_ct(
-        &self,
-        mut ct: Ciphertext,
-        asset: &Hash,
-        transfers: &[TransferWithCommitment],
-    ) -> Ciphertext {
+    pub fn new(version: u8, source: CompressedPublicKey, data: TransactionTypeBuilder, fee_builder: FeeBuilder, nonce: u64) -> Self {
+        Self {
+            version,
+            source,
+            data,
+            fee_builder,
+            nonce,
+            fee: 0,
+        }
+    }
+
+    /// Estimate by hand the bytes size of a final TX
+    // Returns bytes size and transfers count
+    fn estimate_size(&self) -> (usize, usize) {
+        let assets_used = self.used_assets().len();
+        // Version byte
+        let mut size = 1
+        + self.source.size()
+        // Transaction type byte
+        + 1 
+        + self.fee.size()
+        + self.nonce.size()
+        // Commitments byte length
+        + 1
+        // We have one source commitment per asset spent
+        // (commitment, asset, proof)
+        +  assets_used * (RISTRETTO_COMPRESSED_SIZE + HASH_SIZE + (RISTRETTO_COMPRESSED_SIZE * 3 + SCALAR_SIZE * 3))
+        // Range Proof
+        + RISTRETTO_COMPRESSED_SIZE * 4 + SCALAR_SIZE * 3
+        ;
+
+        let transfers_count = match &self.data {
+            TransactionTypeBuilder::Transfers(transfers) => {
+                for transfer in transfers {
+                    size += transfer.asset.size()
+                    + transfer.destination.size()
+                    // Commitment, sender handle, receiver handle
+                    + RISTRETTO_COMPRESSED_SIZE * 3
+                    // Ct Validity Proof
+                    + (RISTRETTO_COMPRESSED_SIZE * 2 + SCALAR_SIZE * 2)
+                    // Extra data byte
+                    + 1;
+
+                    if let Some(extra_data) = &transfer.extra_data {
+                        size += extra_data.len();
+                    }
+                }
+                transfers.len()
+            }
+            TransactionTypeBuilder::Burn(payload) => {
+                size += payload.amount.size() + payload.asset.size();
+                0
+            }
+        };
+
+        // Inner Product Proof
+        size += SCALAR_SIZE * 2 + RISTRETTO_COMPRESSED_SIZE * 2 * (transfers_count + assets_used).next_power_of_two();
+
+        (size, transfers_count)
+    }
+
+    // Estimate the fees for this TX
+    pub fn estimate_fees(&self) -> u64 {
+        let calculated_fee = match self.fee_builder {
+            FeeBuilder::Multiplier(multiplier) => {
+                let (size, transfers) = self.estimate_size();
+                let expected_fee = calculate_tx_fee(size, transfers, 0);
+                (expected_fee as f64 * multiplier) as u64
+            },
+            // If the value is set, use it
+            FeeBuilder::Value(value) => value
+        };
+
+        calculated_fee
+    }
+
+    fn get_new_source_ct(&self, mut ct: Ciphertext, asset: &Hash, transfers: &[TransferWithCommitment]) -> Ciphertext {
         if asset == &XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
             ct -= Scalar::from(self.fee);
@@ -175,6 +281,9 @@ impl TransactionBuilder {
         state: &mut B,
         source_keypair: &KeyPair,
     ) -> Result<Transaction, GenerationError<B::Error>> {
+        // Compute the fees
+        self.fee = self.estimate_fees();
+
         // 0.a Create the commitments
 
         let used_assets = self.used_assets();
@@ -189,10 +298,18 @@ impl TransactionBuilder {
             }
 
             let pk = source_keypair.get_public_key().compress();
+            let mut extra_data_size = 0;
             for transfer in transfers.iter() {
                 if transfer.destination == pk {
                     return Err(GenerationError::SenderIsReceiver);
                 }
+                if let Some(extra_data) = &transfer.extra_data {
+                    extra_data_size += extra_data.len();
+                }
+            }
+
+            if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
+                return Err(GenerationError::ExtraDataTooLarge);
             }
 
             transfers
@@ -223,8 +340,7 @@ impl TransactionBuilder {
         } else {
             vec![]
         };
-        let mut transcript =
-            Transaction::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
+        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
 
         let mut range_proof_openings: Vec<_> =
             iter::repeat_with(|| PedersenOpening::generate_new().as_scalar())
@@ -253,7 +369,7 @@ impl TransactionBuilder {
                 let new_source_opening = PedersenOpening::from_scalar(*new_source_opening);
 
                 let source_current_ciphertext = state
-                    .get_account_ct(&asset)
+                    .get_account_ciphertext(&asset)
                     .map_err(GenerationError::State)?
                     .decompress()
                     .map_err(|err| GenerationError::Proof(err.into()))?;

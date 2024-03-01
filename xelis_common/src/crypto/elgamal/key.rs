@@ -1,6 +1,11 @@
 use curve25519_dalek::{ristretto::RistrettoPoint, Scalar};
 use rand::rngs::OsRng;
 use zeroize::Zeroize;
+use crate::{
+    api::DataElement,
+    crypto::{Address, AddressType},
+    serializer::{Reader, ReaderError, Serializer, Writer}
+};
 use super::{
     ciphertext::Ciphertext,
     pedersen::{DecryptHandle, PedersenCommitment, PedersenOpening},
@@ -64,11 +69,24 @@ impl PublicKey {
     pub fn as_point(&self) -> &RistrettoPoint {
         &self.0
     }
+
+    // Convert the public key to an address
+    pub fn to_address(&self, mainnet: bool) -> Address {
+        Address::new(mainnet, AddressType::Normal, self.compress())
+    }
+
+    // Convert the public key to an address with data integrated
+    pub fn to_address_with(&self, mainnet: bool, data: DataElement) -> Address {
+        Address::new(mainnet, AddressType::Data(data), self.compress())
+    }
 }
 
 impl PrivateKey {
     // Create a new private key from a scalar
+    // The scalar must not be zero
     pub fn from_scalar(scalar: Scalar) -> Self {
+        assert!(scalar != Scalar::ZERO);
+
         Self(scalar)
     }
 
@@ -120,6 +138,17 @@ impl KeyPair {
     // Get the private key of the KeyPair
     pub fn get_private_key(&self) -> &PrivateKey {
         &self.private_key
+    }
+}
+
+impl Serializer for PrivateKey {
+    fn write(&self, writer: &mut Writer) {
+        self.0.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let scalar = Scalar::read(reader)?;
+        Ok(PrivateKey::from_scalar(scalar))
     }
 }
 

@@ -1,7 +1,7 @@
 use curve25519_dalek::{ristretto::CompressedRistretto, Scalar};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use crate::serializer::{Reader, ReaderError, Serializer, Writer};
+use crate::{api::DataElement, crypto::{Address, AddressType}, serializer::{Reader, ReaderError, Serializer, Writer}};
 use super::{Ciphertext, DecryptHandle, PedersenCommitment, PublicKey};
 
 // Compressed point size in bytes
@@ -157,6 +157,16 @@ impl CompressedPublicKey {
     // Decompress it to a Public Key
     pub fn decompress(&self) -> Result<PublicKey, DecompressionError> {
         self.0.decompress().map(PublicKey::from_point).ok_or(DecompressionError)
+    }
+
+    // Convert it to an address
+    pub fn to_address(self, mainnet: bool) -> Address {
+        Address::new(mainnet, AddressType::Normal, self.clone())
+    }
+
+    // Convert it to an address with data integrated
+    pub fn to_address_with(self, mainnet: bool, data: DataElement) -> Address {
+        Address::new(mainnet, AddressType::Data(data), self)
     }
 }
 

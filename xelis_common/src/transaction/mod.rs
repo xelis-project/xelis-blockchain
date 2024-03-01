@@ -47,8 +47,8 @@ pub struct TransferPayload {
 // Burn is a public payload allowing to use it as a proof of burn
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BurnPayload {
-    asset: Hash,
-    amount: u64
+    pub asset: Hash,
+    pub amount: u64
 }
 
 // this enum represent all types of transaction available on XELIS Network
@@ -81,6 +81,21 @@ pub struct Transaction {
 }
 
 impl TransferPayload {
+    // Get the destination key
+    pub fn get_destination(&self) -> &CompressedPublicKey {
+        &self.destination
+    }
+
+    // Get the asset hash spent in this transfer
+    pub fn get_asset(&self) -> &Hash {
+        &self.asset
+    }
+
+    // Get the extra data if any
+    pub fn get_extra_data(&self) -> Option<&Vec<u8>> {
+        self.extra_data.as_ref()
+    }
+
     pub fn get_ciphertext(&self, role: Role) -> CompressedCiphertext {
         let handle = match role {
             Role::Receiver => self.receiver_handle.clone(),
@@ -88,6 +103,11 @@ impl TransferPayload {
         };
 
         CompressedCiphertext::new(self.commitment.clone(), handle)
+    }
+
+    // Take all data
+    pub fn consume(self) -> (Hash, CompressedPublicKey, Option<Vec<u8>>, CompressedCommitment, CompressedHandle, CompressedHandle) {
+        (self.asset, self.destination, self.extra_data, self.commitment, self.sender_handle, self.receiver_handle)
     }
 }
 

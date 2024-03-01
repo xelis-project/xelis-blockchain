@@ -1,13 +1,13 @@
 use crate::{
     config::{
         COIN_DECIMALS,
-        FEE_PER_KB
+        FEE_PER_ACCOUNT_CREATION,
+        FEE_PER_KB,
+        FEE_PER_TRANSFER
     },
     difficulty::Difficulty,
-    network::Network,
     varuint::VarUint
 };
-use std::sync::Mutex;
 
 #[macro_export]
 macro_rules! async_handler {
@@ -48,15 +48,18 @@ pub fn from_xelis(value: impl Into<String>) -> Option<u64> {
 
 // return the fee for a transaction based on its size in bytes
 // the fee is calculated in atomic units for XEL
-// This is a really simple function, plan to improve it later based on caracteristics of the transaction
-pub fn calculate_tx_fee(tx_size: usize) -> u64 {
+// Sending to a newly created address will increase the fee
+// Each transfers output will also increase the fee
+pub fn calculate_tx_fee(tx_size: usize, output_count: usize, new_addresses: usize) -> u64 {
     let mut size_in_kb = tx_size as u64 / 1024;
 
     if tx_size % 1024 != 0 { // we consume a full kb for fee
         size_in_kb += 1;
     }
-    
+
     size_in_kb * FEE_PER_KB
+    + output_count as u64 * FEE_PER_TRANSFER
+    + new_addresses as u64 * FEE_PER_ACCOUNT_CREATION
 }
 
 const HASHRATE_FORMATS: [&str; 7] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s"];
@@ -86,21 +89,4 @@ pub fn format_difficulty(mut difficulty: Difficulty) -> String {
     }
 
     return format!("{}{}", difficulty, DIFFICULTY_FORMATS[count]);
-}
-
-// by default it start in mainnet mode
-// it is mainly used by fmt::Display to display & Serde for the correct format of addresses / keys
-static NETWORK: Mutex<Network> = Mutex::new(Network::Mainnet);
-pub fn get_network() -> Network {
-    let network = NETWORK.lock().unwrap();
-    *network
-}
-
-// it should never be called later, only at launch!!
-// TODO Deprecated
-pub fn set_network_to(network: Network) {
-    // its already mainnet by default
-    if network != Network::Mainnet {
-        *NETWORK.lock().unwrap() = network;
-    }
 }

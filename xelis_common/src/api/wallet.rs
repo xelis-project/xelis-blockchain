@@ -1,23 +1,10 @@
 use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 use crate::{
-    transaction::{TransactionType, Transaction},
+    transaction::{TransactionType, Transaction, builder::FeeBuilder},
     crypto::{Hash, Address}
 };
 use super::{DataHash, DataElement, DataValue, query::Query};
-
-
-#[derive(Serialize, Deserialize)]
-pub enum FeeBuilder {
-    Multiplier(f64), // calculate tx fees based on its size and multiply by this value
-    Value(u64) // set a direct value of how much fees you want to pay
-}
-
-impl Default for FeeBuilder {
-    fn default() -> Self {
-        FeeBuilder::Multiplier(1f64)
-    }
-}
 
 #[derive(Serialize, Deserialize)]
 pub struct BuildTransactionParams {
