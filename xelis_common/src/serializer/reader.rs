@@ -50,7 +50,7 @@ impl<'a> Reader<'a> {
     }
 
     pub fn read_bytes<T>(&mut self, n: usize) -> Result<T, ReaderError>
-    where T: for<'b> std::convert::TryFrom<&'b[u8]> {
+    where T: for<'b> TryFrom<&'b [u8]> {
         if n > self.size() {
             return Err(ReaderError::InvalidSize)
         }

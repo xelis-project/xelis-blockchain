@@ -147,7 +147,7 @@ impl<T: SerializableCompressedPoint> Serializer for T {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let point = reader.read_bytes(RISTRETTO_COMPRESSED_SIZE)?;
+        let point = reader.read_bytes_ref(RISTRETTO_COMPRESSED_SIZE)?;
         let compress = CompressedRistretto::from_slice(point)?;
         Ok(Self::from_compressed_point(compress))
     }

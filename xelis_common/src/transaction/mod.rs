@@ -1,101 +1,156 @@
-use log::debug;
-
-use crate::crypto::{
-    SIGNATURE_LENGTH,
-    PublicKey,
-    Signature,
-    Hashable,
-    Hash,
-    hash,
+use crate::{
+    crypto::{
+        elgamal::{CompressedCommitment, CompressedHandle, CompressedPublicKey},
+        Signature,
+        Hashable,
+        Hash
+    },
+    serializer::{Serializer, Writer, Reader, ReaderError}
 };
-use crate::serializer::{Serializer, Writer, Reader, ReaderError};
-use std::collections::HashMap;
+use log::debug;
+use serde::{Deserialize, Serialize};
 
+// Maximum size of payload per transfer
 pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
+pub const MAX_TRANSFER_COUNT: usize = 255;
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct Transfer {
-    pub amount: u64,
-    pub asset: Hash,
-    pub to: PublicKey,
-    pub extra_data: Option<Vec<u8>> // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TransferPayload {
+    asset: Hash,
+    destination: CompressedPublicKey,
+    // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
+    extra_data: Option<Vec<u8>>,
+    /// Represents the ciphertext along with `sender_handle` and `receiver_handle`.
+    /// The opening is reused for both of the sender and receiver commitments.
+    commitment: CompressedCommitment,
+    sender_handle: CompressedHandle,
+    receiver_handle: CompressedHandle,
+    // ct_validity_proof: CiphertextValidityProof,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct SmartContractCall {
-    pub contract: Hash,
-    pub assets: HashMap<Hash, u64>,
-    pub params: HashMap<String, String> // TODO
+// Burn is a public payload allowing to use it as a proof of burn
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct BurnPayload {
+    asset: Hash,
+    amount: u64
 }
 
 // this enum represent all types of transaction available on XELIS Network
-// you're able to send multi assets in one TX to different addresses
-// you can burn one asset at a time (so the TX Hash can be used as unique proof)
-// Smart Contract system is not yet available but types are already there
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum TransactionType {
-    #[serde(rename = "transfers")]
-    Transfer(Vec<Transfer>),
-    #[serde(rename = "burn")]
-    Burn { asset: Hash, amount: u64 },
-    #[serde(rename = "call_contract")]
-    CallContract(SmartContractCall),
-    #[serde(rename = "deploy_contract")]
-    DeployContract(String), // represent the code to deploy
+    Transfers(Vec<TransferPayload>),
+    Burn(BurnPayload),
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+// Compressed transaction to be sent over the network
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Transaction {
+    // Version of the transaction
+    // This is for future use
     version: u8,
-    owner: PublicKey, // creator of this transaction
+    // source of the assets being sent
+    source: CompressedPublicKey,
+    // type of the transaction
     data: TransactionType,
-    fee: u64, // fees in XELIS for this tx
-    nonce: u64, // nonce must be equal to the one on account
-    signature: Signature // signature of this Transaction by the owner
+    // fees in XELIS
+    fee: u64,
+    // nonce must be equal to the one on chain account
+    // used to prevent replay attacks and have ordered transactions
+    nonce: u64,
+    // signature of this Transaction by the owner
+    // signature: Signature
+}
+
+impl Serializer for TransferPayload {
+    fn write(&self, writer: &mut Writer) {
+        self.asset.write(writer);
+        self.destination.write(writer);
+        writer.write_bool(self.extra_data.is_some());
+        if let Some(extra_data) = &self.extra_data {
+            writer.write_u16(extra_data.len() as u16);
+            writer.write_bytes(extra_data);
+        }
+        self.commitment.write(writer);
+        self.sender_handle.write(writer);
+        self.receiver_handle.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<TransferPayload, ReaderError> {
+        let asset = Hash::read(reader)?;
+        let destination = CompressedPublicKey::read(reader)?;
+        let has_extra_data = reader.read_bool()?;
+        let extra_data = if has_extra_data {
+            let extra_data_size = reader.read_u16()? as usize;
+            if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
+                return Err(ReaderError::InvalidSize)
+            }
+
+            Some(reader.read_bytes(extra_data_size)?)
+        } else {
+            None
+        };
+
+        let commitment = CompressedCommitment::read(reader)?;
+        let sender_handle = CompressedHandle::read(reader)?;
+        let receiver_handle = CompressedHandle::read(reader)?;
+
+        Ok(TransferPayload {
+            asset,
+            destination,
+            extra_data,
+            commitment,
+            sender_handle,
+            receiver_handle
+        })
+    }
+
+    fn size(&self) -> usize {
+        // + 1 for the bool
+        let mut size = self.asset.size() + self.destination.size() + 1 + self.commitment.size() + self.sender_handle.size() + self.receiver_handle.size();
+        if let Some(extra_data) = &self.extra_data {
+            // + 2 for the size of the extra data
+            size += 2 + extra_data.len();
+        }
+        size
+    }
+}
+
+impl Serializer for BurnPayload {
+    fn write(&self, writer: &mut Writer) {
+        self.asset.write(writer);
+        self.amount.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<BurnPayload, ReaderError> {
+        let asset = Hash::read(reader)?;
+        let amount = reader.read_u64()?;
+        Ok(BurnPayload {
+            asset,
+            amount
+        })
+    }
+
+    fn size(&self) -> usize {
+        self.asset.size() + self.amount.size()
+    }
 }
 
 impl Serializer for TransactionType {
     fn write(&self, writer: &mut Writer) {
         match self {
-            TransactionType::Burn { asset, amount } => {
+            TransactionType::Burn(payload) => {
                 writer.write_u8(0);
-                writer.write_hash(asset);
-                writer.write_u64(amount);
+                payload.write(writer);
             }
-            TransactionType::Transfer(txs) => {
+            TransactionType::Transfers(txs) => {
                 writer.write_u8(1);
-                let len: u8 = txs.len() as u8; // max 255 txs
+                // max 255 txs per transaction
+                let len: u8 = txs.len() as u8;
                 writer.write_u8(len);
                 for tx in txs {
-                    writer.write_hash(&tx.asset);
-                    writer.write_u64(&tx.amount);
-                    tx.to.write(writer);
-
-                    writer.write_bool(tx.extra_data.is_some());
-                    if let Some(extra_data) = &tx.extra_data {
-                        writer.write_u16(extra_data.len() as u16);
-                        writer.write_bytes(extra_data);
-                    }
+                    tx.write(writer);
                 }
-            }
-            TransactionType::CallContract(tx) => {
-                writer.write_u8(2);
-                writer.write_hash(&tx.contract);
-                writer.write_u8(tx.assets.len() as u8); // maximum 255 assets per call
-                for (asset, amount) in &tx.assets {
-                    writer.write_hash(asset);
-                    writer.write_u64(amount);
-                }
-
-                writer.write_u8(tx.params.len() as u8); // maximum 255 params supported
-                for (key, value) in &tx.params {
-                    writer.write_string(key);
-                    writer.write_string(value); // TODO real value type
-                }
-            }
-            TransactionType::DeployContract(code) => {
-                writer.write_u8(3);
-                writer.write_string(code);
             }
         };
     }
@@ -103,63 +158,21 @@ impl Serializer for TransactionType {
     fn read(reader: &mut Reader) -> Result<TransactionType, ReaderError> {
         Ok(match reader.read_u8()? {
             0 => {
-                let asset = reader.read_hash()?;
-                let amount = reader.read_u64()?;
-                TransactionType::Burn { asset, amount }
+                let payload = BurnPayload::read(reader)?;
+                TransactionType::Burn(payload)
             },
-            1 => { // Normal
+            1 => {
                 let txs_count = reader.read_u8()?;
+                if txs_count == 0 || txs_count > MAX_TRANSFER_COUNT as u8 {
+                    return Err(ReaderError::InvalidSize)
+                }
+
                 let mut txs = Vec::with_capacity(txs_count as usize);
                 for _ in 0..txs_count {
-                    let asset = reader.read_hash()?;
-                    let amount = reader.read_u64()?;
-                    let to = PublicKey::read(reader)?;
-
-                    // read any data transfered
-                    let has_extra_data = reader.read_bool()?;
-                    let extra_data = if has_extra_data {
-                        let extra_data_size = reader.read_u16()? as usize;
-                        if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
-                            return Err(ReaderError::InvalidSize)
-                        }
-
-                        Some(reader.read_bytes(extra_data_size)?)
-                    } else {
-                        None
-                    };
-
-                    txs.push(Transfer {
-                        asset,
-                        amount,
-                        to,
-                        extra_data
-                    });
+                    txs.push(TransferPayload::read(reader)?);
                 }
-                TransactionType::Transfer(txs)
+                TransactionType::Transfers(txs)
             },
-            2 => {
-                let contract = reader.read_hash()?;
-                let assets_count = reader.read_u8()?;
-                let mut assets = HashMap::with_capacity(assets_count as usize);
-                for _ in 0..assets_count {
-                    let asset = reader.read_hash()?;
-                    let amount = reader.read_u64()?;
-                    assets.insert(asset, amount);
-                }
-
-                let params_count = reader.read_u8()?;
-                let mut params = HashMap::with_capacity(params_count as usize);
-                for _ in 0..params_count {
-                    let key = reader.read_string()?;
-                    let value = reader.read_string()?;
-                    params.insert(key, value);
-                }
-
-                TransactionType::CallContract(SmartContractCall { contract, assets, params })
-            },
-            3 => {
-                TransactionType::DeployContract(reader.read_string()?)
-            }
             _ => {
                 return Err(ReaderError::InvalidValue)
             }
@@ -168,46 +181,29 @@ impl Serializer for TransactionType {
 
     fn size(&self) -> usize {
         match self {
-            TransactionType::Burn { asset, amount } => {
-                1 + asset.size() + amount.size()
+            TransactionType::Burn(payload) => {
+                1 + payload.size()
             },
-            TransactionType::Transfer(txs) => {
+            TransactionType::Transfers(txs) => {
                 let mut size = 1;
                 for tx in txs {
-                    size += tx.asset.size() + 8 + tx.to.size() + 1; // 1 for bool
-                    if let Some(extra_data) = &tx.extra_data {
-                        size += 2 + extra_data.len();
-                    }
+                    size += tx.size();
                 }
                 size
-            },
-            TransactionType::CallContract(tx) => {
-                let mut size = 1 + tx.contract.size() + 1;
-                for (asset, amount) in &tx.assets {
-                    size += asset.size() + amount.size();
-                }
-                size += 1;
-                for (key, value) in &tx.params {
-                    size += key.len() + value.len();
-                }
-                size
-            },
-            TransactionType::DeployContract(code) => {
-                1 + code.len()
             }
         }
     }
 }
 
 impl Transaction {
-    pub fn new(owner: PublicKey, data: TransactionType, fee: u64, nonce: u64, signature: Signature) -> Self {
+    pub fn new(source: CompressedPublicKey, data: TransactionType, fee: u64, nonce: u64, _signature: Signature) -> Self {
         Transaction {
             version: 0,
-            owner,
+            source,
             data,
             fee,
             nonce,
-            signature
+            // signature
         }
     }
 
@@ -215,8 +211,8 @@ impl Transaction {
         self.version
     }
 
-    pub fn get_owner(&self) -> &PublicKey {
-        &self.owner
+    pub fn get_source(&self) -> &CompressedPublicKey {
+        &self.source
     }
 
     pub fn get_data(&self) -> &TransactionType {
@@ -231,26 +227,26 @@ impl Transaction {
         self.nonce
     }
 
-    // verify the validity of the signature
-    pub fn verify_signature(&self) -> bool {
-        let bytes = self.to_bytes();
-        let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
-        self.get_owner().verify_signature(&hash(bytes), &self.signature)
-    }
+    // // verify the validity of the signature
+    // pub fn verify_signature(&self) -> bool {
+    //     let bytes = self.to_bytes();
+    //     let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
+    //     self.source.verify_signature(&hash(bytes), &self.signature)
+    // }
 
-    pub fn consume(self) -> (PublicKey, TransactionType) {
-        (self.owner, self.data)
+    pub fn consume(self) -> (CompressedPublicKey, TransactionType) {
+        (self.source, self.data)
     }
 }
 
 impl Serializer for Transaction {
     fn write(&self, writer: &mut Writer) {
         writer.write_u8(self.version);
-        self.owner.write(writer);
+        self.source.write(writer);
         self.data.write(writer);
         writer.write_u64(&self.fee);
         writer.write_u64(&self.nonce);
-        self.signature.write(writer);
+        // self.signature.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
@@ -261,24 +257,24 @@ impl Serializer for Transaction {
             return Err(ReaderError::InvalidValue)
         }
 
-        let owner = PublicKey::read(reader)?;
+        let source = CompressedPublicKey::read(reader)?;
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;
         let nonce = reader.read_u64()?;
-        let signature = Signature::read(reader)?;
+        // let signature = Signature::read(reader)?;
 
         Ok(Transaction {
             version,
-            owner,
+            source,
             data,
             fee,
             nonce,
-            signature
+            // signature
         })
     }
 
     fn size(&self) -> usize {
-        1 + self.owner.size() + self.data.size() + self.fee.size() + self.nonce.size() + self.signature.size()
+        1 + self.source.size() + self.data.size() + self.fee.size() + self.nonce.size() // + self.signature.size()
     }
 }
 
