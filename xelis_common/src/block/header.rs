@@ -5,7 +5,7 @@ use log::debug;
 use crate::{
     block::{BLOCK_WORK_SIZE, HEADER_WORK_SIZE},
     config::TIPS_LIMIT,
-    crypto::{hash, Hash, Hashable, PublicKey, HASH_SIZE},
+    crypto::{elgamal::CompressedPublicKey, hash, Hash, Hashable, HASH_SIZE},
     serializer::{Reader, ReaderError, Serializer, Writer},
     time::TimestampMillis
 };
@@ -35,13 +35,13 @@ pub struct BlockHeader {
     #[serde(serialize_with = "serialize_extra_nonce")]
     #[serde(deserialize_with = "deserialize_extra_nonce")]
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE],
-    pub miner: PublicKey,
+    pub miner: CompressedPublicKey,
     pub txs_hashes: IndexSet<Hash>
 }
 
 
 impl BlockHeader {
-    pub fn new(version: u8, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: PublicKey, txs_hashes: IndexSet<Hash>) -> Self {
+    pub fn new(version: u8, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
         BlockHeader {
             version,
             height,
@@ -58,7 +58,7 @@ impl BlockHeader {
         self.version
     }
 
-    pub fn set_miner(&mut self, key: PublicKey) {
+    pub fn set_miner(&mut self, key: CompressedPublicKey) {
         self.miner = key;
     }
 
@@ -92,7 +92,7 @@ impl BlockHeader {
         self.nonce
     }
 
-    pub fn get_miner(&self) -> &PublicKey {
+    pub fn get_miner(&self) -> &CompressedPublicKey {
         &self.miner
     }
 
@@ -224,7 +224,7 @@ impl Serializer for BlockHeader {
             }
         }
 
-        let miner = PublicKey::read(reader)?;
+        let miner = CompressedPublicKey::read(reader)?;
         Ok(
             BlockHeader {
                 version,
