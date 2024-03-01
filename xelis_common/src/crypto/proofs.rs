@@ -1,4 +1,4 @@
-use bulletproofs::{BulletproofGens, PedersenGens};
+use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
 use curve25519_dalek::{
     traits::{IsIdentity, MultiscalarMul, VartimeMultiscalarMul},
     ristretto::CompressedRistretto,
@@ -9,6 +9,8 @@ use merlin::Transcript;
 use rand::rngs::OsRng;
 use thiserror::Error;
 use std::iter;
+use crate::serializer::{Reader, ReaderError, Serializer, Writer};
+
 use super::{
     elgamal::{
         Ciphertext,
@@ -18,7 +20,9 @@ use super::{
         PedersenCommitment,
         PedersenOpening,
         PublicKey,
-        G, H
+        G, H,
+        RISTRETTO_COMPRESSED_SIZE,
+        SCALAR_SIZE
     },
     ProtocolTranscript,
     TranscriptError
@@ -344,5 +348,83 @@ impl CiphertextValidityProof {
         ]);
 
         Ok(())
+    }
+}
+
+#[allow(non_snake_case)]
+impl Serializer for CommitmentEqProof {
+    fn write(&self, writer: &mut Writer) {
+        self.Y_0.write(writer);
+        self.Y_1.write(writer);
+        self.Y_2.write(writer);
+        self.z_s.write(writer);
+        self.z_x.write(writer);
+        self.z_r.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let Y_0 = CompressedRistretto::read(reader)?;
+        let Y_1 = CompressedRistretto::read(reader)?;
+        let Y_2 = CompressedRistretto::read(reader)?;
+        let z_s = Scalar::read(reader)?;
+        let z_x = Scalar::read(reader)?;
+        let z_r = Scalar::read(reader)?;
+
+        Ok(Self { Y_0, Y_1, Y_2, z_s, z_x, z_r })
+    }
+
+    fn size(&self) -> usize {
+        RISTRETTO_COMPRESSED_SIZE * 3 + SCALAR_SIZE * 3
+    }    
+}
+
+#[allow(non_snake_case)]
+impl Serializer for CiphertextValidityProof {
+    fn write(&self, writer: &mut Writer) {
+        self.Y_0.write(writer);
+        self.Y_1.write(writer);
+        self.z_r.write(writer);
+        self.z_x.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let Y_0 = CompressedRistretto::read(reader)?;
+        let Y_1 = CompressedRistretto::read(reader)?;
+        let z_r = Scalar::read(reader)?;
+        let z_x = Scalar::read(reader)?;
+
+        Ok(Self { Y_0, Y_1, z_r, z_x })
+    }
+
+    fn size(&self) -> usize {
+        RISTRETTO_COMPRESSED_SIZE * 2 + SCALAR_SIZE * 2
+    }
+}
+
+#[allow(non_snake_case)]
+impl Serializer for RangeProof {
+    fn write(&self, writer: &mut Writer) {
+        let bytes = self.to_bytes();
+        writer.write_u16(bytes.len() as u16);
+        writer.write_bytes(&bytes);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let len = reader.read_u16()? as usize;
+        // 7 elements in Range Proof: 3 scalars and 4 points
+        // 2 scalars in InnerProductProof
+        // Each element is 32 bytes
+        let min_size = 7 * 32 + 2 * 32;
+        if len % 32 != 0 || len < min_size {
+            return Err(ReaderError::InvalidSize);
+        }
+
+        // Those are wrong points
+        if len - min_size % 32 != 0 {
+            return Err(ReaderError::InvalidSize);
+        }
+
+        let bytes = reader.read_bytes_ref(len)?;
+        RangeProof::from_bytes(&bytes).map_err(|_| ReaderError::InvalidValue)
     }
 }
