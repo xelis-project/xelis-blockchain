@@ -105,6 +105,18 @@ impl CompressedCiphertext {
         &self.handle
     }
 
+    // Ciphertext as 64 bytes
+    pub fn to_bytes(&self) -> [u8; 64] {
+        let mut bytes = [0u8; RISTRETTO_COMPRESSED_SIZE * 2];
+        let commitment = self.commitment.as_bytes();
+        let handle = self.handle.as_bytes();
+
+        bytes[0..RISTRETTO_COMPRESSED_SIZE].copy_from_slice(commitment);
+        bytes[RISTRETTO_COMPRESSED_SIZE..RISTRETTO_COMPRESSED_SIZE * 2].copy_from_slice(handle);
+
+        bytes
+    }
+
     // Decompress it to a Ciphertext
     pub fn decompress(&self) -> Result<Ciphertext, DecompressionError> {
         let commitment = self.commitment.decompress()?;

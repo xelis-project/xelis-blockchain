@@ -3194,6 +3194,7 @@ dependencies = [
  "indexmap 2.2.4",
  "lazy_static",
  "log",
+ "merlin",
  "num-bigint",
  "num-traits",
  "primitive-types",
