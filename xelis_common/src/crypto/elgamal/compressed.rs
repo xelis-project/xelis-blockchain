@@ -1,4 +1,4 @@
-use curve25519_dalek::ristretto::CompressedRistretto;
+use curve25519_dalek::{ristretto::CompressedRistretto, Scalar};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
@@ -6,10 +6,22 @@ use super::{Ciphertext, DecryptHandle, PedersenCommitment, PublicKey};
 
 // Compressed point size in bytes
 pub const RISTRETTO_COMPRESSED_SIZE: usize = 32;
+// Scalar size in bytes
+pub const SCALAR_SIZE: usize = 32;
 
 trait SerializableCompressedPoint {
     fn from_compressed_point(point: CompressedRistretto) -> Self;
     fn as_compressed_point(&self) -> &CompressedRistretto;
+}
+
+impl SerializableCompressedPoint for CompressedRistretto {
+    fn from_compressed_point(point: CompressedRistretto) -> Self {
+        point
+    }
+
+    fn as_compressed_point(&self) -> &CompressedRistretto {
+        self
+    }
 }
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
@@ -44,6 +56,11 @@ impl CompressedCommitment {
     // Commitment as 32 bytes
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0.as_bytes()
+    }
+
+    // Compressed commitment as a compressed point
+    pub fn as_point(&self) -> &CompressedRistretto {
+        &self.0
     }
 
     // Decompress it to a PedersenCommitment
@@ -185,6 +202,22 @@ impl Serializer for CompressedCiphertext {
 
     fn size(&self) -> usize {
         self.commitment.size() + self.handle.size()
+    }
+}
+
+impl Serializer for Scalar {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_bytes(self.as_bytes());
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let bytes = reader.read_bytes(SCALAR_SIZE)?;
+        let scalar: Option<Scalar> = Scalar::from_canonical_bytes(bytes).into();
+        scalar.ok_or(ReaderError::InvalidValue)
+    }
+
+    fn size(&self) -> usize {
+        SCALAR_SIZE
     }
 }
 
