@@ -296,6 +296,12 @@ impl Serializer for Transaction {
         self.data.write(writer);
         writer.write_u64(&self.fee);
         writer.write_u64(&self.nonce);
+
+        writer.write_u8(self.source_commitments.len() as u8);
+        for commitment in &self.source_commitments {
+            commitment.write(writer);
+        }
+
         self.range_proof.write(writer);
     }
 
@@ -311,8 +317,18 @@ impl Serializer for Transaction {
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;
         let nonce = reader.read_u64()?;
+
+        let commitments_len = reader.read_u8()?;
+        if commitments_len == 0 || commitments_len > MAX_TRANSFER_COUNT as u8 {
+            return Err(ReaderError::InvalidSize)
+        }
+
+        let mut source_commitments = Vec::with_capacity(commitments_len as usize);
+        for _ in 0..commitments_len {
+            source_commitments.push(SourceCommitment::read(reader)?);
+        }
+
         let range_proof = RangeProof::read(reader)?;
-        // let signature = Signature::read(reader)?;
 
         Ok(Transaction {
             version,
@@ -320,14 +336,22 @@ impl Serializer for Transaction {
             data,
             fee,
             nonce,
-            source_commitments: Vec::new(),
+            source_commitments,
             range_proof,
-            // signature
         })
     }
 
     fn size(&self) -> usize {
-        1 + self.source.size() + self.data.size() + self.fee.size() + self.nonce.size() // + self.signature.size()
+        // Version byte
+        1
+        + self.source.size()
+        + self.data.size()
+        + self.fee.size()
+        + self.nonce.size()
+        // Commitments length byte
+        + 1
+        + self.source_commitments.iter().map(|c| c.size()).sum::<usize>()
+        + self.range_proof.size()
     }
 }
 
