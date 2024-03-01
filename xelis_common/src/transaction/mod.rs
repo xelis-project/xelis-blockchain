@@ -1,18 +1,34 @@
 use crate::{
     crypto::{
-        elgamal::{CompressedCommitment, CompressedHandle, CompressedPublicKey},
-        Signature,
+        elgamal::{CompressedCiphertext, CompressedCommitment, CompressedHandle, CompressedPublicKey},
+        proofs::{CiphertextValidityProof, CommitmentEqProof},
+        Hash,
         Hashable,
-        Hash
     },
-    serializer::{Serializer, Writer, Reader, ReaderError}
+    serializer::{Reader, ReaderError, Serializer, Writer}
 };
+use bulletproofs::RangeProof;
 use log::debug;
 use serde::{Deserialize, Serialize};
+
+mod builder;
+mod verify;
 
 // Maximum size of payload per transfer
 pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
 pub const MAX_TRANSFER_COUNT: usize = 255;
+
+pub enum Role {
+    Sender,
+    Receiver,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct SourceCommitment {
+    commitment: CompressedCommitment,
+    proof: CommitmentEqProof,
+    asset: Hash,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TransferPayload {
@@ -25,7 +41,7 @@ pub struct TransferPayload {
     commitment: CompressedCommitment,
     sender_handle: CompressedHandle,
     receiver_handle: CompressedHandle,
-    // ct_validity_proof: CiphertextValidityProof,
+    ct_validity_proof: CiphertextValidityProof,
 }
 
 // Burn is a public payload allowing to use it as a proof of burn
@@ -44,22 +60,97 @@ pub enum TransactionType {
 }
 
 // Compressed transaction to be sent over the network
+// TODO add signature
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Transaction {
-    // Version of the transaction
-    // This is for future use
+    /// Version of the transaction
     version: u8,
-    // source of the assets being sent
+    // Source of the transaction
     source: CompressedPublicKey,
-    // type of the transaction
+    /// Type of the transaction
     data: TransactionType,
-    // fees in XELIS
+    /// Fees in XELIS
     fee: u64,
-    // nonce must be equal to the one on chain account
-    // used to prevent replay attacks and have ordered transactions
+    /// nonce must be equal to the one on chain account
+    /// used to prevent replay attacks and have ordered transactions
     nonce: u64,
-    // signature of this Transaction by the owner
-    // signature: Signature
+    /// We have one source commitment and equality proof per asset used in the tx.
+    source_commitments: Vec<SourceCommitment>,
+    /// The range proof is aggregated across all transfers and across all assets.
+    range_proof: RangeProof,
+}
+
+impl TransferPayload {
+    pub fn get_ciphertext(&self, role: Role) -> CompressedCiphertext {
+        let handle = match role {
+            Role::Receiver => self.receiver_handle.clone(),
+            Role::Sender => self.sender_handle.clone(),
+        };
+
+        CompressedCiphertext::new(self.commitment.clone(), handle)
+    }
+}
+
+impl Transaction {
+    pub fn new(source: CompressedPublicKey, data: TransactionType, fee: u64, nonce: u64, source_commitments: Vec<SourceCommitment>, range_proof: RangeProof) -> Self {
+        Transaction {
+            version: 0,
+            source,
+            data,
+            fee,
+            nonce,
+            source_commitments,
+            range_proof,
+        }
+    }
+
+    pub fn get_version(&self) -> u8 {
+        self.version
+    }
+
+    pub fn get_source(&self) -> &CompressedPublicKey {
+        &self.source
+    }
+
+    pub fn get_data(&self) -> &TransactionType {
+        &self.data
+    }
+
+    pub fn get_fee(&self) -> u64 {
+        self.fee
+    }
+
+    pub fn get_nonce(&self) -> u64 {
+        self.nonce
+    }
+
+    pub fn consume(self) -> (CompressedPublicKey, TransactionType) {
+        (self.source, self.data)
+    }
+}
+
+impl Serializer for SourceCommitment {
+    fn write(&self, writer: &mut Writer) {
+        self.commitment.write(writer);
+        self.proof.write(writer);
+        self.asset.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<SourceCommitment, ReaderError> {
+        let commitment = CompressedCommitment::read(reader)?;
+        let proof = CommitmentEqProof::read(reader)?;
+        let asset = Hash::read(reader)?;
+
+        Ok(SourceCommitment {
+            commitment,
+            proof,
+            asset
+        })
+    }
+
+    fn size(&self) -> usize {
+        self.commitment.size() + self.proof.size() + self.asset.size()
+    }
 }
 
 impl Serializer for TransferPayload {
@@ -74,6 +165,7 @@ impl Serializer for TransferPayload {
         self.commitment.write(writer);
         self.sender_handle.write(writer);
         self.receiver_handle.write(writer);
+        self.ct_validity_proof.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<TransferPayload, ReaderError> {
@@ -94,6 +186,7 @@ impl Serializer for TransferPayload {
         let commitment = CompressedCommitment::read(reader)?;
         let sender_handle = CompressedHandle::read(reader)?;
         let receiver_handle = CompressedHandle::read(reader)?;
+        let ct_validity_proof = CiphertextValidityProof::read(reader)?;
 
         Ok(TransferPayload {
             asset,
@@ -101,7 +194,8 @@ impl Serializer for TransferPayload {
             extra_data,
             commitment,
             sender_handle,
-            receiver_handle
+            receiver_handle,
+            ct_validity_proof
         })
     }
 
@@ -195,50 +289,6 @@ impl Serializer for TransactionType {
     }
 }
 
-impl Transaction {
-    pub fn new(source: CompressedPublicKey, data: TransactionType, fee: u64, nonce: u64, _signature: Signature) -> Self {
-        Transaction {
-            version: 0,
-            source,
-            data,
-            fee,
-            nonce,
-            // signature
-        }
-    }
-
-    pub fn get_version(&self) -> u8 {
-        self.version
-    }
-
-    pub fn get_source(&self) -> &CompressedPublicKey {
-        &self.source
-    }
-
-    pub fn get_data(&self) -> &TransactionType {
-        &self.data
-    }
-
-    pub fn get_fee(&self) -> u64 {
-        self.fee
-    }
-
-    pub fn get_nonce(&self) -> u64 {
-        self.nonce
-    }
-
-    // // verify the validity of the signature
-    // pub fn verify_signature(&self) -> bool {
-    //     let bytes = self.to_bytes();
-    //     let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
-    //     self.source.verify_signature(&hash(bytes), &self.signature)
-    // }
-
-    pub fn consume(self) -> (CompressedPublicKey, TransactionType) {
-        (self.source, self.data)
-    }
-}
-
 impl Serializer for Transaction {
     fn write(&self, writer: &mut Writer) {
         writer.write_u8(self.version);
@@ -246,7 +296,7 @@ impl Serializer for Transaction {
         self.data.write(writer);
         writer.write_u64(&self.fee);
         writer.write_u64(&self.nonce);
-        // self.signature.write(writer);
+        self.range_proof.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
@@ -261,6 +311,7 @@ impl Serializer for Transaction {
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;
         let nonce = reader.read_u64()?;
+        let range_proof = RangeProof::read(reader)?;
         // let signature = Signature::read(reader)?;
 
         Ok(Transaction {
@@ -269,6 +320,8 @@ impl Serializer for Transaction {
             data,
             fee,
             nonce,
+            source_commitments: Vec::new(),
+            range_proof,
             // signature
         })
     }

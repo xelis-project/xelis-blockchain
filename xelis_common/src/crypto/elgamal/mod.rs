@@ -11,10 +11,10 @@ mod key;
 mod signature;
 mod pedersen;
 
-pub use compressed::{CompressedCiphertext, CompressedCommitment, CompressedHandle, CompressedPublicKey, DecompressionError, RISTRETTO_COMPRESSED_SIZE};
+pub use compressed::*;
 pub use ciphertext::Ciphertext;
-pub use key::{KeyPair, PrivateKey, PublicKey};
-pub use pedersen::{DecryptHandle, PedersenCommitment, PedersenOpening};
+pub use key::*;
+pub use pedersen::*;
 
 pub use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT as G;
 
