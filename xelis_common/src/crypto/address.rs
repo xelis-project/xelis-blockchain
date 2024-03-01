@@ -10,7 +10,7 @@ use crate::{
 };
 use super::{
     bech32::{Bech32Error, encode, convert_bits, decode},
-    key::PublicKey
+    PublicKey
 };
 use core::fmt;
 use log::debug;
