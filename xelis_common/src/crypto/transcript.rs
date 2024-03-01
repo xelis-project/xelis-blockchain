@@ -13,7 +13,7 @@ pub enum TranscriptError {
 pub trait ProtocolTranscript {
     fn append_scalar(&mut self, label: &'static [u8], scalar: &Scalar);
     fn append_point(&mut self, label: &'static [u8], point: &CompressedRistretto);
-    fn append_pubkey(&mut self, label: &'static [u8], point: &CompressedPublicKey);
+    fn append_public_key(&mut self, label: &'static [u8], point: &CompressedPublicKey);
     fn append_ciphertext(&mut self, label: &'static [u8], point: &CompressedCiphertext);
     fn append_commitment(&mut self, label: &'static [u8], point: &CompressedCommitment);
     fn append_handle(&mut self, label: &'static [u8], point: &CompressedHandle);
@@ -45,7 +45,7 @@ impl ProtocolTranscript for Transcript {
         Scalar::from_bytes_mod_order_wide(&buf)
     }
 
-    fn append_pubkey(&mut self, label: &'static [u8], pubkey: &CompressedPublicKey) {
+    fn append_public_key(&mut self, label: &'static [u8], pubkey: &CompressedPublicKey) {
         self.append_message(label, pubkey.as_bytes());
     }
 
