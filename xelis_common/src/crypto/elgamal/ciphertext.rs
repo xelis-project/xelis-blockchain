@@ -1,282 +1,183 @@
-use curve25519_dalek::{ristretto::{RistrettoPoint, CompressedRistretto}, scalar::Scalar};
-use core::ops::{Add, Neg, Mul, Sub};
-use std::{ops::{AddAssign, SubAssign}, fmt::{Formatter, Display}};
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 
-use crate::serializer::{Serializer, Writer, ReaderError, Reader};
+use curve25519_dalek::{traits::Identity, RistrettoPoint, Scalar};
+use super::{pedersen::{DecryptHandle, PedersenCommitment}, CompressedCiphertext, CompressedCommitment};
 
-// Each ciphertext has a size of 64 bytes in compressed form.
-// Homomorphic properties can be used to add, subtract, and multiply ciphertexts.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ciphertext {
-    left: RistrettoPoint,
-    right: RistrettoPoint,
+    commitment: PedersenCommitment,
+    handle: DecryptHandle,
 }
 
 impl Ciphertext {
-    pub fn new(left: RistrettoPoint, right: RistrettoPoint) -> Self {
+    pub fn new(commitment: PedersenCommitment, handle: DecryptHandle) -> Self {
+        Self { commitment, handle }
+    }
+    
+    // Create a ciphertext with a zero value
+    pub fn zero() -> Self {
         Self {
-            left,
-            right,
+            commitment: PedersenCommitment::from_point(RistrettoPoint::identity()),
+            handle: DecryptHandle::from_point(RistrettoPoint::identity()),
         }
     }
 
-    pub fn points(&self) -> (RistrettoPoint, RistrettoPoint) {
-        (self.left, self.right)
+    pub fn commitment(&self) -> &PedersenCommitment {
+        &self.commitment
+    }
+
+    pub fn handle(&self) -> &DecryptHandle {
+        &self.handle
+    }
+
+    pub fn compress(&self) -> CompressedCiphertext {
+        CompressedCiphertext::new(
+            CompressedCommitment::new(self.commitment.as_point().compress()),
+            self.handle.as_point().compress()
+        )
     }
 }
 
-impl Serializer for Ciphertext {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_bytes(self.left.compress().as_bytes());
-        writer.write_bytes(self.right.compress().as_bytes());
-    }
-
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let left_bytes = reader.read_bytes_32()?;
-        let right_bytes = reader.read_bytes_32()?;
-
-        Ok(Self {
-            left: CompressedRistretto::from_slice(&left_bytes).decompress().ok_or(ReaderError::InvalidValue)?,
-            right: CompressedRistretto::from_slice(&right_bytes).decompress().ok_or(ReaderError::InvalidValue)?,
-        })
-    }
-
-    fn size(&self) -> usize {
-        32 + 32
-    }
-}
+// ADD TRAITS
 
 impl Add for Ciphertext {
     type Output = Self;
 
-    fn add(mut self, other: Self) -> Self::Output {
-        self.left += other.left;
-        self.right += other.right;
-        self
+    fn add(self, rhs: Self) -> Self {
+        Self {
+            commitment: self.commitment + rhs.commitment,
+            handle: self.handle + rhs.handle,
+        }
     }
 }
 
 impl Add<&Ciphertext> for Ciphertext {
     type Output = Self;
 
-    fn add(mut self, other: &Self) -> Self::Output {
-        self.left += other.left;
-        self.right += other.right;
-        self
+    fn add(self, rhs: &Self) -> Self {
+        Self {
+            commitment: self.commitment + &rhs.commitment,
+            handle: self.handle + &rhs.handle,
+        }
     }
 }
 
-impl Add<&Ciphertext> for &Ciphertext {
-    type Output = Ciphertext;
-
-    fn add(self, other: &Ciphertext) -> Self::Output {
-        Ciphertext::new(self.left + other.left, self.right + other.right)
+impl Add<Scalar> for Ciphertext {
+    type Output = Self;
+    fn add(self, rhs: Scalar) -> Self {
+        Self {
+            commitment: self.commitment + rhs,
+            handle: self.handle,
+        }
     }
 }
 
-impl Add<Ciphertext> for &Ciphertext {
-    type Output = Ciphertext;
-
-    fn add(self, mut other: Ciphertext) -> Self::Output {
-        other.left += self.left;
-        other.right += self.right;
-        other
+impl Add<&Scalar> for Ciphertext {
+    type Output = Self;
+    fn add(self, rhs: &Scalar) -> Self {
+        Self {
+            commitment: self.commitment + rhs,
+            handle: self.handle,
+        }
     }
 }
 
-impl AddAssign<Ciphertext> for Ciphertext {
-    fn add_assign(&mut self, rhs: Ciphertext) {
-        self.left += rhs.left;
-        self.right += rhs.right;
+// ADD ASSIGN TRAITS
+
+impl AddAssign for Ciphertext {
+    fn add_assign(&mut self, rhs: Self) {
+        self.commitment += rhs.commitment;
+        self.handle += rhs.handle;
     }
 }
 
 impl AddAssign<&Ciphertext> for Ciphertext {
-    fn add_assign(&mut self, rhs: &Ciphertext) {
-        self.left += rhs.left;
-        self.right += rhs.right;
+    fn add_assign(&mut self, rhs: &Self) {
+        self.commitment += &rhs.commitment;
+        self.handle += &rhs.handle;
     }
 }
 
-impl SubAssign<Ciphertext> for Ciphertext {
-    fn sub_assign(&mut self, rhs: Ciphertext) {
-        self.left -= rhs.left;
-        self.right -= rhs.right;
+impl AddAssign<Scalar> for Ciphertext {
+    fn add_assign(&mut self, rhs: Scalar) {
+        self.commitment += rhs;
     }
 }
 
-impl SubAssign<&Ciphertext> for Ciphertext {
-    fn sub_assign(&mut self, rhs: &Ciphertext) {
-        self.left -= rhs.left;
-        self.right -= rhs.right;
+impl AddAssign<&Scalar> for Ciphertext {
+    fn add_assign(&mut self, rhs: &Scalar) {
+        self.commitment += rhs;
     }
 }
 
-impl Add<RistrettoPoint> for Ciphertext {
-    type Output = Self;
-
-    fn add(mut self, other: RistrettoPoint) -> Self::Output {
-        self.right += other;
-        self
-    }
-}
-
-impl Add<&RistrettoPoint> for &Ciphertext {
-    type Output = Ciphertext;
-
-    fn add(self, other: &RistrettoPoint) -> Self::Output {
-        Ciphertext::new(self.left, self.right + other)
-    }
-}
-
-impl Add<&RistrettoPoint> for Ciphertext {
-    type Output = Self;
-
-    fn add(mut self, other: &RistrettoPoint) -> Self::Output {
-        self.right += other;
-        self
-    }
-}
-
-impl Add<RistrettoPoint> for &Ciphertext {
-    type Output = Ciphertext;
-
-    fn add(self, other: RistrettoPoint) -> Self::Output {
-        Ciphertext::new(self.left, self.right + other)
-    }
-}
+// SUB TRAITS
 
 impl Sub for Ciphertext {
     type Output = Self;
 
-    fn sub(mut self, other: Self) -> Self::Output {
-        self.left -= other.left;
-        self.right -= other.right;
-        self
+    fn sub(self, rhs: Self) -> Self {
+        Self {
+            commitment: self.commitment - rhs.commitment,
+            handle: self.handle - rhs.handle,
+        }
     }
 }
 
 impl Sub<&Ciphertext> for Ciphertext {
     type Output = Self;
 
-    fn sub(mut self, other: &Self) -> Self::Output {
-        self.left -= other.left;
-        self.right -= other.right;
-        self
+    fn sub(self, rhs: &Self) -> Self {
+        Self {
+            commitment: self.commitment - &rhs.commitment,
+            handle: self.handle - &rhs.handle,
+        }
     }
 }
 
-impl Sub<&Ciphertext> for &Ciphertext {
-    type Output = Ciphertext;
-
-    fn sub(self, other: &Ciphertext) -> Self::Output {
-        Ciphertext::new(self.left - other.left, self.right - other.right)
-    }
-}
-
-impl Sub<RistrettoPoint> for Ciphertext {
+impl Sub<Scalar> for Ciphertext {
     type Output = Self;
-
-    fn sub(mut self, other: RistrettoPoint) -> Self::Output {
-        self.right -= other;
-        self
+    fn sub(self, rhs: Scalar) -> Self {
+        Self {
+            commitment: self.commitment - rhs,
+            handle: self.handle,
+        }
     }
 }
 
-impl Sub<&RistrettoPoint> for &Ciphertext {
-    type Output = Ciphertext;
-
-    fn sub(self, other: &RistrettoPoint) -> Self::Output {
-        Ciphertext::new(self.left, self.right - other)
-    }
-}
-
-impl Sub<&RistrettoPoint> for Ciphertext {
+impl Sub<&Scalar> for Ciphertext {
     type Output = Self;
-
-    fn sub(mut self, other: &RistrettoPoint) -> Self::Output {
-        self.right -= other;
-        self
+    fn sub(self, rhs: &Scalar) -> Self {
+        Self {
+            commitment: self.commitment - rhs,
+            handle: self.handle,
+        }
     }
 }
 
-impl Sub<RistrettoPoint> for &Ciphertext {
-    type Output = Ciphertext;
+// SUB ASSIGN TRAITS
 
-    fn sub(self, other: RistrettoPoint) -> Self::Output {
-        Ciphertext::new(self.left, self.right - other)
+impl SubAssign for Ciphertext {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.commitment -= rhs.commitment;
+        self.handle -= rhs.handle;
     }
 }
 
-impl Neg for Ciphertext {
-    type Output = Self;
-
-    fn neg(mut self) -> Self::Output {
-        self.left = -self.left;
-        self.right = -self.right;
-        self
+impl SubAssign<&Ciphertext> for Ciphertext {
+    fn sub_assign(&mut self, rhs: &Self) {
+        self.commitment -= &rhs.commitment;
+        self.handle -= &rhs.handle;
     }
 }
 
-impl Neg for &Ciphertext {
-    type Output = Ciphertext;
-
-    fn neg(self) -> Self::Output {
-        Ciphertext::new(-self.left, -self.right)
+impl SubAssign<Scalar> for Ciphertext {
+    fn sub_assign(&mut self, rhs: Scalar) {
+        self.commitment -= rhs;
     }
 }
 
-impl Mul<Scalar> for Ciphertext {
-    type Output = Self;
-
-    fn mul(mut self, other: Scalar) -> Self::Output {
-        self.left *= other;
-        self.right *= other;
-        self
-    }
-}
-
-impl Mul<Scalar> for &Ciphertext {
-    type Output = Ciphertext;
-
-    fn mul(self, other: Scalar) -> Self::Output {
-        Ciphertext::new(self.left * other, self.right * other)
-    }
-}
-
-impl Mul<&Scalar> for Ciphertext {
-    type Output = Self;
-
-    fn mul(mut self, other: &Scalar) -> Self::Output {
-        self.left *= other;
-        self.right *= other;
-        self
-    }
-}
-
-impl Mul<&Scalar> for &Ciphertext {
-    type Output = Ciphertext;
-
-    fn mul(self, other: &Scalar) -> Self::Output {
-        Ciphertext::new(self.left * other, self.right * other)
-    }
-}
-
-impl serde::Serialize for Ciphertext {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
-        serializer.serialize_bytes(&self.to_bytes())
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for Ciphertext {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::Deserializer<'de> {
-        let bytes = <Vec<u8>>::deserialize(deserializer)?;
-        Ok(Self::from_bytes(&bytes).map_err(serde::de::Error::custom)?)
-    }
-}
-
-impl Display for Ciphertext {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Ciphertext({})", self.to_hex())
+impl SubAssign<&Scalar> for Ciphertext {
+    fn sub_assign(&mut self, rhs: &Scalar) {
+        self.commitment -= rhs;
     }
 }
