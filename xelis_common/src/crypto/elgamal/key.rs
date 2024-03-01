@@ -1,9 +1,15 @@
 use curve25519_dalek::{ristretto::RistrettoPoint, Scalar};
 use rand::rngs::OsRng;
-use super::{ciphertext::Ciphertext, pedersen::{DecryptHandle, PedersenCommitment, PedersenOpening}, H};
+use zeroize::Zeroize;
+use super::{
+    ciphertext::Ciphertext,
+    pedersen::{DecryptHandle, PedersenCommitment, PedersenOpening},
+    H
+};
 
 pub struct PublicKey(RistrettoPoint);
 
+#[derive(Zeroize)]
 pub struct PrivateKey(Scalar);
 
 pub struct KeyPair {
