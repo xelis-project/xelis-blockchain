@@ -1,8 +1,11 @@
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 use curve25519_dalek::{traits::Identity, RistrettoPoint, Scalar};
-use super::{pedersen::{DecryptHandle, PedersenCommitment}, CompressedCiphertext, CompressedCommitment};
+use super::{pedersen::{DecryptHandle, PedersenCommitment}, CompressedCiphertext, CompressedCommitment, CompressedHandle};
 
+// Represents a twisted ElGamal Ciphertext
+// One part is a Pedersen commitment to be bulletproofs compatible
+// The other part is a handle to be used for decryption
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ciphertext {
     commitment: PedersenCommitment,
@@ -10,6 +13,7 @@ pub struct Ciphertext {
 }
 
 impl Ciphertext {
+    // Create a new Ciphertext
     pub fn new(commitment: PedersenCommitment, handle: DecryptHandle) -> Self {
         Self { commitment, handle }
     }
@@ -22,18 +26,21 @@ impl Ciphertext {
         }
     }
 
+    // Get the commitment
     pub fn commitment(&self) -> &PedersenCommitment {
         &self.commitment
     }
 
+    // Get the handle
     pub fn handle(&self) -> &DecryptHandle {
         &self.handle
     }
 
+    // Compress the Ciphertext
     pub fn compress(&self) -> CompressedCiphertext {
         CompressedCiphertext::new(
             CompressedCommitment::new(self.commitment.as_point().compress()),
-            self.handle.as_point().compress()
+            CompressedHandle::new(self.handle.as_point().compress())
         )
     }
 }

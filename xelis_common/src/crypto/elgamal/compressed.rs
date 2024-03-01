@@ -1,4 +1,4 @@
-use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint};
+use curve25519_dalek::ristretto::CompressedRistretto;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
@@ -15,29 +15,54 @@ pub struct DecompressionError;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompressedCommitment(CompressedRistretto);
 
+// A decrypt handle compressed to 32 bytes
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompressedHandle(CompressedRistretto);
+
+// A compressed ciphertext that can be serialized and deserialized with only 64 bytes
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompressedCiphertext {
     commitment: CompressedCommitment,
-    handle: CompressedRistretto
+    handle: CompressedHandle
 }
 
-
 impl CompressedCommitment {
+    // Create a new compressed commitment
     pub fn new(point: CompressedRistretto) -> Self {
         Self(point)
     }
 
+    // Commitment as 32 bytes
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0.as_bytes()
     }
 
-    pub fn decompress(&self) -> Result<RistrettoPoint, DecompressionError> {
-        self.0.decompress().ok_or(DecompressionError)
+    // Decompress it to a PedersenCommitment
+    pub fn decompress(&self) -> Result<PedersenCommitment, DecompressionError> {
+        self.0.decompress().map(PedersenCommitment::from_point).ok_or(DecompressionError)
+    }
+}
+
+impl CompressedHandle {
+    // Create a new compressed handle
+    pub fn new(point: CompressedRistretto) -> Self {
+        Self(point)
+    }
+
+    // Handle as 32 bytes
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0.as_bytes()
+    }
+
+    // Decompress it to a DecryptHandle
+    pub fn decompress(&self) -> Result<DecryptHandle, DecompressionError> {
+        self.0.decompress().map(DecryptHandle::from_point).ok_or(DecompressionError)
     }
 }
 
 impl CompressedCiphertext {
-    pub fn new(commitment: CompressedCommitment, handle: CompressedRistretto) -> Self {
+    // Create a new compressed ciphertext
+    pub fn new(commitment: CompressedCommitment, handle: CompressedHandle) -> Self {
         Self { commitment, handle }
     }
 
@@ -47,15 +72,14 @@ impl CompressedCiphertext {
     }
 
     // Serialized handle
-    pub fn handle(&self) -> &CompressedRistretto {
+    pub fn handle(&self) -> &CompressedHandle {
         &self.handle
     }
 
     // Decompress it to a Ciphertext
     pub fn decompress(&self) -> Result<Ciphertext, DecompressionError> {
-        let point = self.commitment.decompress()?;
-        let commitment = PedersenCommitment::from_point(point);
-        let handle = DecryptHandle::from_point(self.handle.decompress().ok_or(DecompressionError)?);
+        let commitment = self.commitment.decompress()?;
+        let handle = self.handle.decompress()?;
 
         Ok(Ciphertext::new(commitment, handle))
     }
@@ -73,7 +97,7 @@ impl Serializer for CompressedCiphertext {
 
         let compress = CompressedCiphertext::new(
             CompressedCommitment::new(CompressedRistretto(commitment)),
-            CompressedRistretto(handle)
+            CompressedHandle::new(CompressedRistretto(handle))
         );
         Ok(compress)
     }
