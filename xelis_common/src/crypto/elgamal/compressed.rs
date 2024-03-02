@@ -44,7 +44,7 @@ pub struct CompressedCiphertext {
 }
 
 // A compressed public key using only 32 bytes
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompressedPublicKey(CompressedRistretto);
 
 impl CompressedCommitment {
@@ -159,9 +159,14 @@ impl CompressedPublicKey {
         self.0.decompress().map(PublicKey::from_point).ok_or(DecompressionError)
     }
 
+    // Clone the key to convert it to an address
+    pub fn as_address(&self, mainnet: bool) -> Address {
+        self.clone().to_address(mainnet)
+    }
+
     // Convert it to an address
     pub fn to_address(self, mainnet: bool) -> Address {
-        Address::new(mainnet, AddressType::Normal, self.clone())
+        Address::new(mainnet, AddressType::Normal, self)
     }
 
     // Convert it to an address with data integrated

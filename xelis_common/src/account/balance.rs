@@ -1,6 +1,6 @@
 use std::fmt::Display;
 use serde::{Deserialize, Serialize};
-use crate::crypto::elgamal::Ciphertext;
+use crate::crypto::elgamal::{Ciphertext, CompressedCiphertext};
 use crate::serializer::{Serializer, ReaderError, Reader, Writer};
 
 use super::CiphertextVariant;
@@ -58,6 +58,10 @@ impl VersionedBalance {
 
     pub fn get_mut_output_balance(&mut self) -> Option<&mut CiphertextVariant> {
         self.output_balance.as_mut()
+    }
+
+    pub fn set_compressed_balance(&mut self, value: CompressedCiphertext) {
+        self.final_balance = CiphertextVariant::Compressed(value);
     }
 
     pub fn set_balance(&mut self, value: CiphertextVariant) {

@@ -295,9 +295,8 @@ pub struct GetAccountHistoryParams {
 pub enum AccountHistoryType {
     Mining { reward: u64 },
     Burn { amount: u64 },
-    // TODO delete those two fields with upcoming privacy layer
-    Outgoing { amount: u64, to: Address },
-    Incoming { amount: u64, from: Address },
+    Outgoing { to: Address },
+    Incoming { from: Address },
 }
 
 #[derive(Serialize, Deserialize)]
