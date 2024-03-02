@@ -1,8 +1,7 @@
 use crate::{
     config::{
         BLOCK_TIME_MILLIS,
-        DEV_FEES,
-        MAXIMUM_SUPPLY
+        DEV_FEES
     },
     core::{
         blockchain::{
@@ -63,7 +62,8 @@ use xelis_common::{
     config::{
         MAX_TRANSACTION_SIZE,
         VERSION,
-        XELIS_ASSET
+        XELIS_ASSET,
+        MAXIMUM_SUPPLY
     },
     async_handler,
     block::{
