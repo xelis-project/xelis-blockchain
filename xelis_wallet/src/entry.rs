@@ -224,10 +224,10 @@ impl TransactionEntry {
                 let mut str = String::new();
                 for transfer in transfers {
                     if *transfer.get_asset() == XELIS_ASSET {
-                        str.push_str(&format!("Received {} XELIS from {}", format_xelis(transfer.get_amount()), from.clone().to_address(mainnet)));
+                        str.push_str(&format!("Received {} XELIS from {}", format_xelis(transfer.get_amount()), from.as_address(mainnet)));
                     } else {
                         let decimals = storage.get_asset_decimals(transfer.get_asset())?;
-                        str.push_str(&format!("Received {} {} from {}", format_coin(transfer.get_amount(), decimals), transfer.get_asset(), from.clone().to_address(mainnet)));
+                        str.push_str(&format!("Received {} {} from {}", format_coin(transfer.get_amount(), decimals), transfer.get_asset(), from.as_address(mainnet)));
                     }
                 }
                 str
@@ -236,10 +236,10 @@ impl TransactionEntry {
                 let mut str = String::new();
                 for transfer in transfers {
                     if *transfer.get_asset() == XELIS_ASSET {
-                        str.push_str(&format!("Sent {} XELIS to {}", format_xelis(transfer.get_amount()), transfer.get_key().clone().to_address(mainnet)));
+                        str.push_str(&format!("Sent {} XELIS to {}", format_xelis(transfer.get_amount()), transfer.get_key().as_address(mainnet)));
                     } else {
                         let decimals = storage.get_asset_decimals(transfer.get_asset())?;
-                        str.push_str(&format!("Sent {} {} to {}", format_coin(transfer.get_amount(), decimals), transfer.get_asset(), transfer.get_key().clone().to_address(mainnet)));
+                        str.push_str(&format!("Sent {} {} to {}", format_coin(transfer.get_amount(), decimals), transfer.get_asset(), transfer.get_key().as_address(mainnet)));
                     }
                 }
                 str
