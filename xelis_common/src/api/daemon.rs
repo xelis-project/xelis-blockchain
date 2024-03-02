@@ -3,10 +3,11 @@ use std::{
     collections::{HashSet, HashMap},
     net::SocketAddr
 };
-use serde::{Deserialize, Serialize};
+use indexmap::IndexSet;
+use serde::{Deserialize, Serialize, Serializer, Deserializer, de::Error};
 use crate::{
     account::{VersionedBalance, VersionedNonce},
-    block::Block,
+    block::EXTRA_NONCE_SIZE,
     crypto::{Address, Hash},
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
@@ -23,19 +24,47 @@ pub enum BlockType {
     Normal
 }
 
+// Serialize the extra nonce in a hexadecimal string
+pub fn serialize_extra_nonce<S: Serializer>(extra_nonce: &Cow<'_, [u8; EXTRA_NONCE_SIZE]>, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&hex::encode(extra_nonce.as_ref()))
+}
+
+// Deserialize the extra nonce from a hexadecimal string
+pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -> Result<Cow<'a, [u8; EXTRA_NONCE_SIZE]>, D::Error> {
+    let mut extra_nonce = [0u8; EXTRA_NONCE_SIZE];
+    let hex = String::deserialize(deserializer)?;
+    let decoded = hex::decode(hex).map_err(Error::custom)?;
+    extra_nonce.copy_from_slice(&decoded);
+    Ok(Cow::Owned(extra_nonce))
+}
+
+
 #[derive(Serialize, Deserialize)]
-pub struct BlockResponse<'a, T: Clone> {
+pub struct BlockResponseInner<'a, T: AsRef<Transaction> + Clone> {
+    pub hash: Cow<'a, Hash>,
     pub topoheight: Option<u64>,
     pub block_type: BlockType,
-    pub difficulty: Difficulty,
+    pub difficulty: Cow<'a, Difficulty>,
     pub supply: Option<u64>,
     pub reward: Option<u64>,
-    pub cumulative_difficulty: CumulativeDifficulty,
+    pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
     pub total_fees: Option<u64>,
     pub total_size_in_bytes: usize,
-    #[serde(flatten)]
-    pub data: DataHash<'a, T>
+    pub version: u8,
+    pub tips: Cow<'a, IndexSet<Hash>>,
+    pub timestamp: TimestampMillis,
+    pub height: u64,
+    pub nonce: u64,
+    #[serde(serialize_with = "serialize_extra_nonce")]
+    #[serde(deserialize_with = "deserialize_extra_nonce")]
+    pub extra_nonce: Cow<'a, [u8; EXTRA_NONCE_SIZE]>,
+    pub miner: Cow<'a, Address>,
+    pub txs_hashes: Cow<'a, IndexSet<Hash>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub transactions: Cow<'a, Vec<T>>
 }
+
+pub type BlockResponse = BlockResponseInner<'static, Transaction>;
 
 #[derive(Serialize, Deserialize)]
 pub struct GetTopBlockParams {
@@ -405,7 +434,7 @@ pub enum NotifyEvent {
 }
 
 // Value of NotifyEvent::NewBlock
-pub type NewBlockEvent = BlockResponse<'static, Block>;
+pub type NewBlockEvent = BlockResponse;
 
 // Value of NotifyEvent::BlockOrdered
 #[derive(Serialize, Deserialize)]
