@@ -53,9 +53,7 @@ use xelis_common::{
     },
     crypto::{
         Signature,
-        SIGNATURE_LENGTH,
-        PublicKey,
-        hash
+        PublicKey
     },
     serializer::{
         Serializer,
@@ -507,20 +505,21 @@ where
         }
 
         let wallet = self.handler.get_data();
+        // TODO
         // Verify the signature of the app data to validate permissions previously set
-        if let Some(signature) = &app_data.signature {
-            let bytes = app_data.to_bytes();
-            let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
-            let key = wallet.get_public_key().await
-                .map_err(|e| {
-                    error!("error while retrieving public key: {}", e);
-                    RpcResponseError::new(None, InternalRpcError::CustomStr("Error while retrieving public key"))
-                })?;
+        // if let Some(signature) = &app_data.signature {
+        //     let bytes = app_data.to_bytes();
+        //     let bytes = &bytes[0..bytes.len() - SIGNATURE_SIZE]; // remove signature bytes for verification
+        //     let key = wallet.get_public_key().await
+        //         .map_err(|e| {
+        //             error!("error while retrieving public key: {}", e);
+        //             RpcResponseError::new(None, InternalRpcError::CustomStr("Error while retrieving public key"))
+        //         })?;
 
-            if !key.verify_signature(&hash(&bytes), signature) {
-                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid signature for application data")));
-            }
-        }
+        //     if !key.verify_signature(&hash(&bytes), signature) {
+        //         return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid signature for application data")));
+        //     }
+        // }
 
         // Verify that this app ID is not already in use:
         if self.has_app_with_id(&app_data.id).await {

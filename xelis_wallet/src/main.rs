@@ -8,7 +8,6 @@ use fern::colors::Color;
 use log::{error, info};
 use clap::Parser;
 use xelis_common::{
-    api::wallet::FeeBuilder,
     async_handler,
     config::{
         COIN_DECIMALS,
@@ -40,13 +39,13 @@ use xelis_common::{
     },
     serializer::Serializer,
     transaction::{
-        Transaction,
-        TransactionType
+        builder::{FeeBuilder, TransactionTypeBuilder, TransferBuilder},
+        BurnPayload,
+        Transaction
     },
     utils::{
         format_coin,
-        format_xelis,
-        set_network_to
+        format_xelis
     }
 };
 use xelis_wallet::{
@@ -136,8 +135,6 @@ pub struct Config {
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
-    set_network_to(config.network);
-
     let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
 
     #[cfg(feature = "api_server")]
@@ -196,7 +193,7 @@ async fn main() -> Result<()> {
         command_manager.display_commands()?;
     }
 
-    if let Err(e) = prompt.start(Duration::from_millis(100), Box::new(async_handler!(prompt_message_builder)), Some(&command_manager)).await {
+    if let Err(e) = prompt.start(Duration::from_millis(1000), Box::new(async_handler!(prompt_message_builder)), Some(&command_manager)).await {
         error!("Error while running prompt: {}", e);
     }
 
@@ -388,7 +385,7 @@ async fn prompt_message_builder(_: &Prompt, command_manager: Option<&CommandMana
             let balance = format!(
                 "{}: {}",
                 prompt::colorize_str(Color::Yellow, "Balance"),
-                prompt::colorize_string(Color::Green, &format_xelis(storage.get_balance_for(&XELIS_ASSET).unwrap_or(0))),
+                prompt::colorize_string(Color::Green, &format_xelis(storage.get_plaintext_balance_for(&XELIS_ASSET).await.unwrap_or(0))),
             );
             let status = if wallet.is_online().await {
                 prompt::colorize_str(Color::Green, "Online")
@@ -601,7 +598,7 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
 
     let (max_balance, decimals) = {
         let storage = wallet.get_storage().read().await;
-        let balance = storage.get_balance_for(&asset).unwrap_or(0);
+        let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
         let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
         (balance, decimals)
     };
@@ -621,7 +618,7 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
 
     manager.message("Building transaction...");
 
-    let (key, address_type) = address.split();
+    let (destination, address_type) = address.split();
     let extra_data = match address_type {
         AddressType::Normal => None,
         AddressType::Data(data) => Some(data)
@@ -629,8 +626,13 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
 
     let tx = {
         let storage = wallet.get_storage().read().await;
-        let transfer = wallet.create_transfer(&storage, asset, key, extra_data, amount).context("Error while creating transfer")?;
-        wallet.create_transaction(&storage, TransactionType::Transfer(vec![transfer]), FeeBuilder::default()).context("Error while creating transaction")?
+        let transfer = TransferBuilder {
+            destination,
+            amount,
+            asset,
+            extra_data
+        };
+        wallet.create_transaction(&storage, TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default()).context("Error while creating transaction")?
     };
 
     broadcast_tx(wallet, manager, tx).await;
@@ -647,7 +649,11 @@ async fn burn(manager: &CommandManager, mut arguments: ArgumentManager) -> Resul
         let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
 
         manager.message(format!("Burning {} of {}", format_coin(amount, decimals), asset));
-        wallet.create_transaction(&storage, TransactionType::Burn { asset, amount }, FeeBuilder::Multiplier(1f64)).context("Error while creating transaction")?
+        let payload = BurnPayload {
+            amount,
+            asset
+        };
+        wallet.create_transaction(&storage, TransactionTypeBuilder::Burn(payload), FeeBuilder::Multiplier(1f64)).context("Error while creating transaction")?
     };
 
     broadcast_tx(wallet, manager, tx).await;
@@ -670,12 +676,12 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
 
     if arguments.has_argument("asset") {
         let asset = arguments.get_value("asset")?.to_hash()?;
-        let balance = storage.get_balance_for(&asset).unwrap_or(0);
+        let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
         let decimals = storage.get_asset_decimals(&asset).unwrap_or(0);
         manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, decimals)));
     } else {
         for (asset, decimals) in storage.get_assets_with_decimals()? {
-            let balance = storage.get_balance_for(&asset).unwrap_or(0);
+            let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
             if balance > 0 {
                 manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, decimals)));
             }
@@ -722,7 +728,7 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
 
     manager.message(format!("Transactions (total {}) page {}/{}:", transactions.len(), page, max_pages));
     for tx in transactions.iter().skip((page - 1) * TXS_PER_PAGE).take(TXS_PER_PAGE) {
-        manager.message(format!("- {}", tx));
+        manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage)?));
     }
 
     Ok(())

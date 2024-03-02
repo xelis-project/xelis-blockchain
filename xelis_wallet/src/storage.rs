@@ -1,29 +1,34 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, num::NonZeroUsize, sync::atomic::{AtomicU64, Ordering}};
 use indexmap::IndexMap;
 use log::trace;
+use lru::LruCache;
 use sled::{
     Tree,
     Db
 };
+use tokio::sync::Mutex;
 use xelis_common::{
+    account::CiphertextVariant,
+    api::{
+        query::{
+            Query,
+            QueryResult
+        },
+        DataElement,
+        DataValue
+    },
     crypto::{
         Hash,
-        KeyPair,
+        PrivateKey,
         PublicKey
     },
+    network::Network,
     serializer::{
         Reader,
-        Serializer
-    },
-    network::Network,
-    api::{
-        DataValue,
-        DataElement,
-        query::{
-            QueryResult,
-            Query
-        }
-    },
+        ReaderError,
+        Serializer,
+        Writer
+    }
 };
 use anyhow::{
     Context,
@@ -48,7 +53,7 @@ const SALT_KEY: &[u8] = b"SALT";
 const PASSWORD_SALT_KEY: &[u8] = b"PSALT";
 // Master key to encrypt/decrypt while interacting with the storage 
 const MASTER_KEY: &[u8] = b"MKEY";
-const KEY_PAIR: &[u8] = b"KPAIR";
+const PRIVATE_KEY: &[u8] = b"PKEY";
 
 // const used for online mode
 // represent the daemon topoheight
@@ -56,6 +61,40 @@ const TOPOHEIGHT_KEY: &[u8] = b"TOPH";
 // represent the daemon top block hash
 const TOP_BLOCK_HASH_KEY: &[u8] = b"TOPBH";
 const NETWORK: &[u8] = b"NET";
+
+// Default cache size
+const DEFAULT_CACHE_SIZE: usize = 100;
+
+#[derive(Debug, Clone)]
+pub struct Balance {
+    pub amount: u64,
+    pub ciphertext: CiphertextVariant
+}
+
+impl Balance {
+    pub fn new(amount: u64, ciphertext: CiphertextVariant) -> Self {
+        Self {
+            amount,
+            ciphertext
+        }
+    }
+}
+
+impl Serializer for Balance {
+    fn write(&self, writer: &mut Writer) {
+        self.amount.write(writer);
+        self.ciphertext.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let amount = u64::read(reader)?;
+        let ciphertext = CiphertextVariant::read(reader)?;
+        Ok(Self {
+            amount,
+            ciphertext
+        })
+    }
+}
 
 // Use this struct to get access to non-encrypted keys (such as salt for KDF and encrypted master key)
 pub struct Storage {
@@ -76,7 +115,11 @@ pub struct EncryptedStorage {
     assets: Tree,
     // This tree is used to store all topoheight where a change in the wallet occured
     changes_topoheight: Tree,
-    inner: Storage
+    // The inner storage
+    inner: Storage,
+    // Caches
+    balances_cache: Mutex<LruCache<Hash, Balance>>,
+    synced_topoheight: AtomicU64
 }
 
 impl EncryptedStorage {
@@ -89,7 +132,9 @@ impl EncryptedStorage {
             assets: inner.db.open_tree(&cipher.hash_key("assets"))?,
             changes_topoheight: inner.db.open_tree(&cipher.hash_key("changes_topoheight"))?,
             cipher,
-            inner
+            inner,
+            balances_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
+            synced_topoheight: AtomicU64::new(0)
         };
 
         if storage.has_network()? {
@@ -340,19 +385,50 @@ impl EncryptedStorage {
         self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())
     }
 
+    // Retrieve the plaintext balance for this asset
+    pub async fn get_plaintext_balance_for(&self, asset: &Hash) -> Result<u64> {
+        let mut cache = self.balances_cache.lock().await;
+        if let Some(balance) = cache.get(asset) {
+            return Ok(balance.amount);
+        }
+
+        let balance: Balance = self.load_from_disk(&self.balances, asset.as_bytes())?;
+        let plaintext_balance = balance.amount;
+        cache.put(asset.clone(), balance);
+
+        Ok(plaintext_balance)
+    }
+
     // Retrieve the balance for this asset
-    pub fn get_balance_for(&self, asset: &Hash) -> Result<u64> {
-        self.load_from_disk(&self.balances, asset.as_bytes())
+    pub async fn get_balance_for(&self, asset: &Hash) -> Result<Balance> {
+        let mut cache = self.balances_cache.lock().await;
+        if let Some(balance) = cache.get(asset) {
+            return Ok(balance.clone());
+        }
+
+        let balance: Balance = self.load_from_disk(&self.balances, asset.as_bytes())?;
+        cache.put(asset.clone(), balance.clone());
+
+        Ok(balance)
     }
 
     // Determine if we have a balance for this asset
-    pub fn has_balance_for(&self, asset: &Hash) -> Result<bool> {
+    pub async fn has_balance_for(&self, asset: &Hash) -> Result<bool> {
+        let cache = self.balances_cache.lock().await;
+        if cache.contains(asset) {
+            return Ok(true);
+        }
+
         self.contains_data(&self.balances, asset.as_bytes())
     }
 
     // Set the balance for this asset
-    pub fn set_balance_for(&mut self, asset: &Hash, value: u64) -> Result<()> {
-        self.save_to_disk(&self.balances, asset.as_bytes(), &value.to_be_bytes())
+    pub async fn set_balance_for(&mut self, asset: &Hash, balance: Balance) -> Result<()> {
+        let mut cache = self.balances_cache.lock().await;
+        self.save_to_disk(&self.balances, asset.as_bytes(), &balance.to_bytes())?;
+
+        cache.put(asset.clone(), balance);
+        Ok(())
     }
 
     // Retrieve a transaction saved in wallet using its hash
@@ -493,28 +569,36 @@ impl EncryptedStorage {
         self.save_to_disk(&self.extra, NONCE_KEY, &nonce.to_be_bytes())
     }
 
-    // Store the keypair
-    pub fn set_keypair(&mut self, keypair: &KeyPair) -> Result<()> {
-        trace!("set keypair");
-        self.save_to_disk(&self.extra, KEY_PAIR, &keypair.to_bytes())
+    // Store the private key
+    pub fn set_private_key(&mut self, private_key: &PrivateKey) -> Result<()> {
+        trace!("set private key");
+        self.save_to_disk(&self.extra, PRIVATE_KEY, &private_key.to_bytes())
     }
 
     // Retrieve the keypair of this wallet
-    pub fn get_keypair(&self) -> Result<KeyPair> {
-        trace!("get keypair");
-        self.load_from_disk(&self.extra, KEY_PAIR)
+    pub fn get_private_key(&self) -> Result<PrivateKey> {
+        trace!("get private key");
+        self.load_from_disk(&self.extra, PRIVATE_KEY)
     }
 
     // Set the topoheight until which the wallet is synchronized
     pub fn set_synced_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("set synced topoheight to {}", topoheight);
+        self.synced_topoheight.store(topoheight, Ordering::Relaxed);
         self.save_to_disk(&self.extra, TOPOHEIGHT_KEY, &topoheight.to_be_bytes())
     }
 
     // Get the topoheight until which the wallet is synchronized
     pub fn get_synced_topoheight(&self) -> Result<u64> {
         trace!("get synced topoheight");
-        self.load_from_disk(&self.extra, TOPOHEIGHT_KEY)
+        let cache = self.synced_topoheight.load(Ordering::Relaxed);
+        if cache > 0 {
+            return Ok(cache);
+        }
+
+        let synced_topoheight = self.load_from_disk(&self.extra, TOPOHEIGHT_KEY)?;
+        self.synced_topoheight.store(synced_topoheight, Ordering::Relaxed);
+        Ok(synced_topoheight)
     }
 
     // Delete the top block hash

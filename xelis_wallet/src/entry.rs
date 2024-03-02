@@ -1,24 +1,14 @@
-use std::fmt::{
-    self,
-    Display,
-    Formatter
-};
 use serde::Serialize;
 use xelis_common::{
-    crypto::{
+    api::DataElement, config::XELIS_ASSET, crypto::{
         Hash,
         PublicKey
-    },
-    serializer::{
-        Serializer,
-        ReaderError,
-        Reader,
-        Writer
-    },
-    utils::format_xelis,
-    api::DataElement,
-    config::XELIS_ASSET
+    }, serializer::{
+        Reader, ReaderError, Serializer, Writer
+    }, utils::{format_coin, format_xelis}
 };
+use anyhow::Result;
+use crate::storage::EncryptedStorage;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct Transfer {
@@ -222,6 +212,46 @@ impl TransactionEntry {
     pub fn get_mut_entry(&mut self) -> &mut EntryData {
         &mut self.entry
     }
+
+    pub fn summary(&self, mainnet: bool, storage: &EncryptedStorage) -> Result<String> {
+        let entry_str = match self.get_entry() {
+            EntryData::Coinbase { reward } => format!("Coinbase {} XELIS", format_xelis(*reward)),
+            EntryData::Burn { asset, amount } => {
+                let decimals = storage.get_asset_decimals(asset)?;
+                format!("Burn {} of {}", format_coin(*amount, decimals), asset)
+            },
+            EntryData::Incoming { from, transfers } => {
+                let mut str = String::new();
+                for transfer in transfers {
+                    if *transfer.get_asset() == XELIS_ASSET {
+                        str.push_str(&format!("Received {} XELIS from {}", format_xelis(transfer.get_amount()), from.clone().to_address(mainnet)));
+                    } else {
+                        let decimals = storage.get_asset_decimals(transfer.get_asset())?;
+                        str.push_str(&format!("Received {} {} from {}", format_coin(transfer.get_amount(), decimals), transfer.get_asset(), from.clone().to_address(mainnet)));
+                    }
+                }
+                str
+            },
+            EntryData::Outgoing { transfers } => {
+                let mut str = String::new();
+                for transfer in transfers {
+                    if *transfer.get_asset() == XELIS_ASSET {
+                        str.push_str(&format!("Sent {} XELIS to {}", format_xelis(transfer.get_amount()), transfer.get_key().clone().to_address(mainnet)));
+                    } else {
+                        let decimals = storage.get_asset_decimals(transfer.get_asset())?;
+                        str.push_str(&format!("Sent {} {} to {}", format_coin(transfer.get_amount(), decimals), transfer.get_asset(), transfer.get_key().clone().to_address(mainnet)));
+                    }
+                }
+                str
+            }
+        };
+
+        Ok(if let (Some(fee), Some(nonce)) = (self.fee, self.nonce) {
+            format!("Hash {} at TopoHeight {}, Nonce {}, Fee: {}, Data: {}", self.hash, self.topoheight, nonce, format_xelis(fee), entry_str)
+        } else { // mostly coinbase
+            format!("Hash {} at TopoHeight {}: {}", self.hash, self.topoheight, entry_str)
+        })
+    }
 }
 
 impl Serializer for TransactionEntry {
@@ -252,43 +282,5 @@ impl Serializer for TransactionEntry {
 
     fn size(&self) -> usize {
         self.hash.size() + self.topoheight.size() + self.fee.size() + self.nonce.size() + self.entry.size()
-    }
-}
-
-// TODO display values with correct decimals from asset
-impl Display for TransactionEntry {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let entry_str = match self.get_entry() {
-            EntryData::Coinbase { reward } => format!("Coinbase {} XELIS", format_xelis(*reward)),
-            EntryData::Burn { asset, amount } => format!("Burn {} of {}", amount, asset),
-            EntryData::Incoming { from, transfers } => {
-                let mut str = String::new();
-                for transfer in transfers {
-                    if *transfer.get_asset() == XELIS_ASSET {
-                        str.push_str(&format!("Received {} XELIS from {}", format_xelis(transfer.get_amount()), from));
-                    } else {
-                        str.push_str(&format!("Received {} {} from {}", transfer.get_amount(), transfer.get_asset(), from));
-                    }
-                }
-                str
-            },
-            EntryData::Outgoing { transfers } => {
-                let mut str = String::new();
-                for transfer in transfers {
-                    if *transfer.get_asset() == XELIS_ASSET {
-                        str.push_str(&format!("Sent {} XELIS to {}", format_xelis(transfer.get_amount()), transfer.get_key()));
-                    } else {
-                        str.push_str(&format!("Sent {} {} to {}", transfer.get_amount(), transfer.get_asset(), transfer.get_key()));
-                    }
-                }
-                str
-            }
-        };
-
-        if let (Some(fee), Some(nonce)) = (self.fee, self.nonce) {
-            write!(f, "Hash {} at TopoHeight {}, Nonce {}, Fee: {}, Data: {}", self.hash, self.topoheight, nonce, format_xelis(fee), entry_str)
-        } else { // mostly coinbase
-            write!(f, "Hash {} at TopoHeight {}: {}", self.hash, self.topoheight, entry_str)
-        }
     }
 }

@@ -1,4 +1,3 @@
-pub mod transaction_builder;
 pub mod storage;
 pub mod wallet;
 pub mod config;

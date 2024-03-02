@@ -1,41 +1,41 @@
 use std::{sync::Arc, borrow::Cow};
 use anyhow::Context as AnyContext;
 use xelis_common::{
-    rpc_server::{
-        RPCHandler,
-        InternalRpcError,
-        parse_params,
-        websocket::WebSocketSessionShared
-    },
-    config::{VERSION, XELIS_ASSET},
-    async_handler,
     api::{
         wallet::{
             BuildTransactionParams,
-            FeeBuilder,
-            TransactionResponse,
-            ListTransactionsParams,
-            GetAddressParams,
-            GetBalanceParams,
-            GetTransactionParams,
-            SplitAddressParams,
-            SplitAddressResult,
-            GetValueFromKeyParams,
-            StoreParams,
-            GetMatchingKeysParams,
-            GetAssetPrecisionParams,
-            RescanParams,
-            QueryDBParams,
-            HasKeyParams,
             DeleteParams,
             EstimateFeesParams,
+            GetAddressParams,
+            GetAssetPrecisionParams,
+            GetBalanceParams,
+            GetMatchingKeysParams,
+            GetTransactionParams,
+            GetValueFromKeyParams,
+            HasKeyParams,
+            ListTransactionsParams,
+            QueryDBParams,
+            RescanParams,
+            SplitAddressParams,
+            SplitAddressResult,
+            StoreParams,
+            TransactionResponse
         },
-        DataHash,
-        DataElement
+        DataElement,
+        DataHash
     },
+    async_handler,
+    config::{VERSION, XELIS_ASSET},
+    context::Context,
     crypto::Hashable,
+    rpc_server::{
+        parse_params,
+        websocket::WebSocketSessionShared,
+        InternalRpcError,
+        RPCHandler
+    },
     serializer::Serializer,
-    context::Context
+    transaction::builder::FeeBuilder
 };
 use serde_json::{Value, json};
 use crate::{
@@ -170,7 +170,7 @@ async fn get_balance(context: Context, body: Value) -> Result<Value, InternalRpc
 
     // If the asset is not found, it will returns 0
     // Use has_balance below to check if the wallet has a balance for a specific asset
-    let balance = storage.get_balance_for(&asset).unwrap_or(0);
+    let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
     Ok(json!(balance))
 }
 
@@ -181,7 +181,7 @@ async fn has_balance(context: Context, body: Value) -> Result<Value, InternalRpc
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
 
-    let exist = storage.has_balance_for(&asset).context("Error while checking if balance exists")?;
+    let exist = storage.has_balance_for(&asset).await.context("Error while checking if balance exists")?;
     Ok(json!(exist))
 }
 

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Error, Context};
@@ -13,38 +12,24 @@ use tokio::sync::{
 };
 use xelis_common::{
     api::{
-        DataElement,
         wallet::{
-            FeeBuilder,
-            NotifyEvent,
-            BalanceChanged
-        }
+            BalanceChanged,
+            NotifyEvent
+        },
+        DataElement
     },
     asset::AssetWithData,
-    config::{XELIS_ASSET, COIN_DECIMALS},
     crypto::{
-        Address,
-        AddressType,
-        Hash,
-        KeyPair,
-        PublicKey,
-        Signature,
-    },
-    utils::{
-        format_xelis,
-        format_coin
+        elgamal::CompressedCiphertext, Address, AddressType, Hash, KeyPair, PublicKey, Signature
     },
     network::Network,
-    serializer::{
-        Serializer,
-        Writer
-    },
     transaction::{
-        TransactionType,
-        Transfer,
-        Transaction,
-        EXTRA_DATA_LIMIT_SIZE
+        builder::{AccountState, FeeBuilder, TransactionBuilder, TransactionTypeBuilder, TransferBuilder},
+        Transaction
     },
+    utils::{
+        format_coin, format_xelis
+    }
 };
 use crate::{
     cipher::Cipher,
@@ -63,7 +48,6 @@ use crate::{
         EncryptedStorage,
         Storage
     },
-    transaction_builder::TransactionBuilder,
     mnemonics,
 };
 use chacha20poly1305::{
@@ -169,7 +153,7 @@ pub enum WalletError {
     #[error("No handler available for this request")]
     NoHandlerAvailable,
     #[error(transparent)]
-    NetworkError(#[from] NetworkError),
+    NetworkError(#[from] NetworkError)
 }
 
 #[derive(Serialize, Clone)]
@@ -221,6 +205,8 @@ pub struct Wallet {
     storage: RwLock<EncryptedStorage>,
     // Private & Public key linked for this wallet
     keypair: KeyPair,
+    // Compressed public key
+    public_key: PublicKey,
     // network handler for online mode to keep wallet synced
     network_handler: Mutex<Option<SharedNetworkHandler>>,
     // network on which we are connected
@@ -246,6 +232,7 @@ impl Wallet {
     fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network) -> Arc<Self> {
         let zelf = Self {
             storage: RwLock::new(storage),
+            public_key: keypair.get_public_key().compress(),
             keypair,
             network_handler: Mutex::new(None),
             network,
@@ -310,7 +297,8 @@ impl Wallet {
         debug!("Creating encrypted storage");
         let mut storage = EncryptedStorage::new(inner, &master_key, storage_salt, network)?;
 
-        storage.set_keypair(&keypair)?;
+        // Store the private key
+        storage.set_private_key(&keypair.get_private_key())?;
 
         Ok(Self::new(storage, keypair, network))
     }
@@ -351,8 +339,9 @@ impl Wallet {
 
         debug!("Creating encrypted storage");
         let storage = EncryptedStorage::new(storage, &master_key, salt, network)?;
-        debug!("Retrieving keypair from encrypted storage");
-        let keypair =  storage.get_keypair()?;
+        debug!("Retrieving private key from encrypted storage");
+        let private_key =  storage.get_private_key()?;
+        let keypair = KeyPair::from_private_key(private_key);
 
         Ok(Self::new(storage, keypair, network))
     }
@@ -557,82 +546,29 @@ impl Wallet {
             return Err(WalletError::InvalidAddressParams.into())
         }
 
-        let (key, data) = address.split();
+        let (destination, data) = address.split();
         let extra_data = match data {
             AddressType::Data(data) => Some(data),
             _ => None
         };
 
-        let transfer = self.create_transfer(storage, asset, key, extra_data, amount)?;
-        let transaction = self.create_transaction(storage, TransactionType::Transfer(vec![transfer]), FeeBuilder::default())?;
-        Ok(transaction)
-    }
-
-    // create a transfer from the wallet to the given address to send the given amount of the given asset
-    // and include extra data if present
-    // TODO encrypt all the extra data for the receiver
-    pub fn create_transfer(&self, storage: &EncryptedStorage, asset: Hash, key: PublicKey, extra_data: Option<DataElement>, amount: u64) -> Result<Transfer, WalletError> {
-        let balance = storage.get_balance_for(&asset).unwrap_or(0);
-        // check if we have enough funds for this asset
-        if amount > balance {
-            let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
-            return Err(WalletError::NotEnoughFunds(balance, amount, decimals, asset))
-        }
-        
-        // include all extra data in the TX
-        let extra_data = if let Some(data) = extra_data {
-            let mut writer = Writer::new();
-            data.write(&mut writer);
-
-            // TODO encrypt all the extra data for the receiver
-            // We can use XChaCha20 with 24 bytes 0 filled Nonce
-            // this allow us to prevent saving nonce in it and save space
-            // NOTE: We must be sure to have a different key each time
-
-            // Verify the size of the extra data
-            if writer.total_write() > EXTRA_DATA_LIMIT_SIZE {
-                return Err(WalletError::ExtraDataTooBig(EXTRA_DATA_LIMIT_SIZE, writer.total_write()))
-            }
-
-            Some(writer.bytes())
-        } else {
-            None
-        };
-
-        let transfer = Transfer {
-            amount,
+        let transfer = TransferBuilder {
             asset,
-            to: key,
+            amount,
+            destination,
             extra_data
         };
-        Ok(transfer)
+        let transaction = self.create_transaction(storage, TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default())?;
+        Ok(transaction)
     }
 
     // create the final transaction with calculated fees and signature
     // also check that we have enough funds for the transaction
-    pub fn create_transaction(&self, storage: &EncryptedStorage, transaction_type: TransactionType, fee: FeeBuilder) -> Result<Transaction, WalletError> {
+    pub fn create_transaction(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         let nonce = storage.get_nonce().unwrap_or(0);
-        let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), transaction_type, nonce, fee);
-        let assets_spent: HashMap<&Hash, u64> = builder.total_spent();
+        let builder = TransactionBuilder::new(0, self.public_key.clone(), transaction_type, fee, nonce);
 
-        // check that we have enough balance for every assets spent
-        for (asset, amount) in &assets_spent {
-            let asset: &Hash = *asset;
-            let balance = storage.get_balance_for(asset).unwrap_or(0);
-            if balance < *amount {
-                let decimals = storage.get_asset_decimals(asset).unwrap_or(COIN_DECIMALS);
-                return Err(WalletError::NotEnoughFunds(balance, *amount, decimals, asset.clone()))
-            }
-        }
-
-        // now we have to check that we have enough funds for spent + fees
-        let total_native_spent = assets_spent.get(&XELIS_ASSET).unwrap_or(&0) +  builder.estimate_fees();
-        let native_balance = storage.get_balance_for(&XELIS_ASSET).unwrap_or(0);
-        if total_native_spent > native_balance {
-            return Err(WalletError::NotEnoughFundsForFee(native_balance, total_native_spent))
-        }
-
-        Ok(builder.build(&self.keypair)?)
+        Ok(builder.build(self, &self.keypair).map_err(|e| WalletError::Any(e.into()))?)
     }
 
     // submit a transaction to the network through the connection to daemon
@@ -652,9 +588,10 @@ impl Wallet {
 
     // Estimate fees for a given transaction type
     // Estimated fees returned are the minimum required to be valid on chain
-    pub async fn estimate_fees(&self, tx_type: TransactionType) -> Result<u64, WalletError> {
+    pub async fn estimate_fees(&self, tx_type: TransactionTypeBuilder) -> Result<u64, WalletError> {
         let storage = self.storage.read().await;
-        let builder = TransactionBuilder::new(self.keypair.get_public_key().clone(), tx_type, storage.get_nonce().unwrap_or(0), FeeBuilder::default());
+        let nonce = storage.get_nonce().unwrap_or(0);
+        let builder = TransactionBuilder::new(0, self.public_key.clone(), tx_type, FeeBuilder::default(), nonce);
         Ok(builder.estimate_fees())
     }
 
@@ -752,13 +689,14 @@ impl Wallet {
     }
 
     // Create a signature of the given data
-    pub fn sign_data(&self, data: &[u8]) -> Signature {
-        self.keypair.sign(data)
+    pub fn sign_data(&self, _data: &[u8]) -> Signature {
+        // self.keypair.sign(data)
+        todo!("sign data")
     }
 
     // Get the public key of the wallet
     pub fn get_public_key(&self) -> &PublicKey {
-        self.keypair.get_public_key()
+        &self.public_key
     }
 
     // Get the address of the wallet using its network used
@@ -864,5 +802,21 @@ impl XSWDNodeMethodHandler for Arc<Wallet> {
         } else {
             Err(RpcResponseError::new(id, InternalRpcError::CustomStr("Wallet is not in online mode")))
         }
+    }
+}
+
+impl AccountState for Wallet {
+    type Error = WalletError;
+
+    fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error> {
+        todo!()
+    }
+
+    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CompressedCiphertext, Self::Error> {
+        todo!()
+    }
+
+    fn account_exists(&self, account: &PublicKey) -> Result<bool, Self::Error> {
+        Ok(true)
     }
 }

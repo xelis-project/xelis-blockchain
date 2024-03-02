@@ -117,7 +117,7 @@ pub fn words_to_key(words: Vec<String>) -> Result<PrivateKey> {
         dest.extend_from_slice(&val.to_le_bytes());
     }
 
-    Ok(PrivateKey::from_bytes(&dest))
+    Ok(PrivateKey::from_bytes(&dest)?)
 }
 
 pub fn key_to_words(key: &PrivateKey, language_index: usize) -> Result<Vec<String>> {
