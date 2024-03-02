@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Error, Context};
 use serde::Serialize;
@@ -11,6 +11,7 @@ use tokio::sync::{
     RwLock
 };
 use xelis_common::{
+    account::CiphertextVariant,
     api::{
         wallet::{
             BalanceChanged,
@@ -20,15 +21,26 @@ use xelis_common::{
     },
     asset::AssetWithData,
     crypto::{
-        elgamal::CompressedCiphertext, Address, AddressType, Hash, KeyPair, PublicKey, Signature
+        elgamal::Ciphertext,
+        Address,
+        Hash,
+        KeyPair,
+        PublicKey,
+        Signature
     },
     network::Network,
     transaction::{
-        builder::{AccountState, FeeBuilder, TransactionBuilder, TransactionTypeBuilder, TransferBuilder},
+        builder::{
+            AccountState,
+            FeeBuilder,
+            TransactionBuilder,
+            TransactionTypeBuilder
+        },
         Transaction
     },
     utils::{
-        format_coin, format_xelis
+        format_coin,
+        format_xelis
     }
 };
 use crate::{
@@ -39,16 +51,17 @@ use crate::{
         SALT_SIZE
     },
     entry::TransactionEntry,
+    mnemonics,
     network_handler::{
+        NetworkError,
         NetworkHandler,
-        SharedNetworkHandler,
-        NetworkError
+        SharedNetworkHandler
     },
     storage::{
+        Balance,
         EncryptedStorage,
         Storage
-    },
-    mnemonics,
+    }
 };
 use chacha20poly1305::{
     aead::OsRng,
@@ -153,7 +166,9 @@ pub enum WalletError {
     #[error("No handler available for this request")]
     NoHandlerAvailable,
     #[error(transparent)]
-    NetworkError(#[from] NetworkError)
+    NetworkError(#[from] NetworkError),
+    #[error("Balance for asset {} was not found", _0)]
+    BalanceNotFound(Hash)
 }
 
 #[derive(Serialize, Clone)]
@@ -539,36 +554,47 @@ impl Wallet {
         Ok(())
     }
 
-    // Simple function to make a transfer to the given address by including (if necessary) extra data from it
-    pub fn send_to(&self, storage: &EncryptedStorage, asset: Hash, address: Address, amount: u64) -> Result<Transaction, Error> {
-        // Verify that we are on the same network as address
-        if address.is_mainnet() != self.network.is_mainnet() {
-            return Err(WalletError::InvalidAddressParams.into())
-        }
-
-        let (destination, data) = address.split();
-        let extra_data = match data {
-            AddressType::Data(data) => Some(data),
-            _ => None
-        };
-
-        let transfer = TransferBuilder {
-            asset,
-            amount,
-            destination,
-            extra_data
-        };
-        let transaction = self.create_transaction(storage, TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default())?;
-        Ok(transaction)
+    // Create a transaction with the given transaction type and fee
+    pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
+        let mut storage = self.storage.write().await;
+        self.create_transaction_with_storage(&mut storage, transaction_type, fee).await
     }
 
     // create the final transaction with calculated fees and signature
     // also check that we have enough funds for the transaction
-    pub fn create_transaction(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
+    pub async fn create_transaction_with_storage(&self, storage: &mut EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         let nonce = storage.get_nonce().unwrap_or(0);
+
+        // Build the state for the builder
+        let used_assets = transaction_type.used_assets();
+        let mut balances = HashMap::with_capacity(used_assets.len());
+        // Get all balances used
+        for asset in used_assets {
+            let balance = storage.get_balance_for(&asset).await?;
+            balances.insert(asset, balance);
+        }
+
+        let mut state = TransactionBuilderState {
+            mainnet: self.network.is_mainnet(),
+            balances
+        };
+
+        // Create the transaction builder
         let builder = TransactionBuilder::new(0, self.public_key.clone(), transaction_type, fee, nonce);
 
-        Ok(builder.build(self, &self.keypair).map_err(|e| WalletError::Any(e.into()))?)
+        // Build the final transaction
+        let transaction = builder.build(&mut state, &self.keypair)
+            .map_err(|e| WalletError::Any(e.into()))?;
+
+        // Update our storage in case of next transaction
+        for (asset, balance) in state.balances {
+            // We store every balances used in the transaction
+            storage.set_balance_for(&asset, balance).await?;
+        }
+        // Increment the nonce
+        storage.set_nonce(nonce + 1)?;
+
+        Ok(transaction)
     }
 
     // submit a transaction to the network through the connection to daemon
@@ -578,8 +604,6 @@ impl Wallet {
         let network_handler = self.network_handler.lock().await;
         if let Some(network_handler) = network_handler.as_ref() {
             network_handler.get_api().submit_transaction(transaction).await?;
-            let mut storage = self.storage.write().await;
-            storage.set_nonce(transaction.get_nonce() + 1)?;
             Ok(())
         } else {
             Err(WalletError::NotOnlineMode)
@@ -805,18 +829,35 @@ impl XSWDNodeMethodHandler for Arc<Wallet> {
     }
 }
 
-impl AccountState for Wallet {
+struct TransactionBuilderState {
+    mainnet: bool,
+    balances: HashMap<Hash, Balance>
+}
+
+impl AccountState for TransactionBuilderState {
     type Error = WalletError;
 
+    fn is_mainnet(&self) -> bool {
+        self.mainnet
+    }
+
     fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error> {
-        todo!()
+        self.balances.get(asset).map(|b| b.amount).ok_or_else(|| WalletError::BalanceNotFound(asset.clone()))
     }
 
-    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CompressedCiphertext, Self::Error> {
-        todo!()
+    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CiphertextVariant, Self::Error> {
+        self.balances.get(asset).map(|b| b.ciphertext.clone()).ok_or_else(|| WalletError::BalanceNotFound(asset.clone()))
     }
 
-    fn account_exists(&self, account: &PublicKey) -> Result<bool, Self::Error> {
+    fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error> {
+        self.balances.insert(asset.clone(), Balance {
+            amount: new_balance,
+            ciphertext: CiphertextVariant::Decompressed(ciphertext)
+        });
+        Ok(())
+    }
+
+    fn account_exists(&self, _: &PublicKey) -> Result<bool, Self::Error> {
         Ok(true)
     }
 }

@@ -16,7 +16,6 @@ use xelis_common::{
     },
     crypto::{
         Address,
-        AddressType,
         Hashable
     },
     network::Network,
@@ -618,22 +617,14 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
 
     manager.message("Building transaction...");
 
-    let (destination, address_type) = address.split();
-    let extra_data = match address_type {
-        AddressType::Normal => None,
-        AddressType::Data(data) => Some(data)
+    let transfer = TransferBuilder {
+        destination: address,
+        amount,
+        asset,
+        extra_data: None
     };
-
-    let tx = {
-        let storage = wallet.get_storage().read().await;
-        let transfer = TransferBuilder {
-            destination,
-            amount,
-            asset,
-            extra_data
-        };
-        wallet.create_transaction(&storage, TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default()).context("Error while creating transaction")?
-    };
+    let tx = wallet.create_transaction(TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default()).await
+        .context("Error while creating transaction")?;
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
@@ -644,17 +635,18 @@ async fn burn(manager: &CommandManager, mut arguments: ArgumentManager) -> Resul
     let asset = arguments.get_value("asset")?.to_hash()?;
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
-    let tx = {
+    {
         let storage = wallet.get_storage().read().await;
         let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
 
         manager.message(format!("Burning {} of {}", format_coin(amount, decimals), asset));
-        let payload = BurnPayload {
-            amount,
-            asset
-        };
-        wallet.create_transaction(&storage, TransactionTypeBuilder::Burn(payload), FeeBuilder::Multiplier(1f64)).context("Error while creating transaction")?
+    }
+    let payload = BurnPayload {
+        amount,
+        asset
     };
+    let tx = wallet.create_transaction(TransactionTypeBuilder::Burn(payload), FeeBuilder::Multiplier(1f64)).await
+        .context("Error while creating transaction")?;
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
