@@ -13,16 +13,31 @@ use xelis_common::{
     account::CiphertextVariant,
     api::{
         daemon::{
-            BlockResponse, NewBlockEvent
-        }, wallet::BalanceChanged, DataElement
-    }, asset::AssetWithData, block::Block, crypto::{
-        Address, Hash
-    }, serializer::Serializer, transaction::TransactionType
+            BlockResponse,
+            NewBlockEvent
+        },
+        wallet::BalanceChanged,
+        DataElement
+    },
+    asset::AssetWithData,
+    block::Block,
+    crypto::{
+        Address,
+        Hash
+    },
+    serializer::Serializer,
+    transaction::TransactionType
 };
 use crate::{
-    daemon_api::DaemonAPI, entry::{
-        EntryData, TransactionEntry, Transfer
-    }, storage::Balance, wallet::{
+    daemon_api::DaemonAPI,
+    entry::{
+        EntryData,
+        TransactionEntry,
+        TransferIn,
+        TransferOut
+    },
+    storage::Balance,
+    wallet::{
         Event, Wallet
     }
 };
@@ -160,7 +175,7 @@ impl NetworkHandler {
         if *block.get_miner() == *address.get_public_key() {
             if let Some(reward) = block_response.reward {
                 let coinbase = EntryData::Coinbase { reward };
-                let entry = TransactionEntry::new(block_hash.clone(), topoheight, None, None, coinbase);
+                let entry = TransactionEntry::new(block_hash.clone(), topoheight, coinbase);
 
                 {
                     let mut storage = self.wallet.get_storage().write().await;
@@ -174,7 +189,7 @@ impl NetworkHandler {
                 }
 
                 // Propagate the event to the wallet
-                self.wallet.propagate_event(Event::NewTransaction(entry)).await;
+                self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
             } else {
                 warn!("No reward for block {} at topoheight {}", block_hash, topoheight);
             }
@@ -185,9 +200,9 @@ impl NetworkHandler {
         for (tx_hash, tx) in block.into_owned().take_txs_hashes().into_iter().zip(txs) {
             trace!("Checking transaction {}", tx_hash);
             let tx = tx.into_owned();
+            let fee = tx.get_fee();
+            let nonce = tx.get_nonce();
             let is_owner = *tx.get_source() == *address.get_public_key();
-            let fee = if is_owner { Some(tx.get_fee()) } else { None };
-            let nonce = if is_owner { Some(tx.get_nonce()) } else { None };
             let (owner, data) = tx.consume();
             let entry: Option<EntryData> = match data {
                 TransactionType::Burn(payload) => {
@@ -198,7 +213,8 @@ impl NetworkHandler {
                     }
                 },
                 TransactionType::Transfers(txs) => {
-                    let mut transfers: Vec<Transfer> = Vec::new();
+                    let mut transfers_in: Vec<TransferIn> = Vec::new();
+                    let mut transfers_out: Vec<TransferOut> = Vec::new();
                     for tx in txs {
                         let (
                             asset,
@@ -213,16 +229,21 @@ impl NetworkHandler {
                             let extra_data = extra_data.and_then(|bytes| DataElement::from_bytes(&bytes).ok());
 
                             // TODO decrypt the amount
-
-                            let transfer = Transfer::new(destination, asset, 0, extra_data);
-                            transfers.push(transfer);
+                            let amount = 0;
+                            if is_owner {
+                                let transfer = TransferOut::new(destination, asset, amount, extra_data);
+                                transfers_out.push(transfer);
+                            } else {
+                                let transfer = TransferIn::new(asset, amount, extra_data);
+                                transfers_in.push(transfer);
+                            }
                         }
                     }
 
                     if is_owner { // check that we are owner of this TX
-                        Some(EntryData::Outgoing { transfers })
-                    } else if !transfers.is_empty() { // otherwise, check that we received one or few transfers from it
-                        Some(EntryData::Incoming { from: owner, transfers })
+                        Some(EntryData::Outgoing { transfers: transfers_out, fee, nonce })
+                    } else if !transfers_in.is_empty() { // otherwise, check that we received one or few transfers from it
+                        Some(EntryData::Incoming { from: owner, transfers: transfers_in })
                     } else { // this TX has nothing to do with us, nothing to save
                         None
                     }
@@ -236,7 +257,7 @@ impl NetworkHandler {
                     continue;
                 }
 
-                let entry = TransactionEntry::new(tx_hash, topoheight, fee, nonce, entry);
+                let entry = TransactionEntry::new(tx_hash, topoheight, entry);
                 let propagate = {
                     let mut storage = self.wallet.get_storage().write().await;
                     let found = storage.has_transaction(entry.get_hash())?;
@@ -255,7 +276,7 @@ impl NetworkHandler {
 
                 if propagate {
                     // Propagate the event to the wallet
-                    self.wallet.propagate_event(Event::NewTransaction(entry)).await;
+                    self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
                 }
             }
         }

@@ -1,4 +1,11 @@
-use std::{collections::HashSet, num::NonZeroUsize, sync::atomic::{AtomicU64, Ordering}};
+use std::{
+    collections::HashSet,
+    num::NonZeroUsize,
+    sync::atomic::{
+        AtomicU64,
+        Ordering
+    }
+};
 use indexmap::IndexMap;
 use log::trace;
 use lru::LruCache;
@@ -36,13 +43,14 @@ use anyhow::{
     anyhow
 };
 use crate::{
-    config::SALT_SIZE,
     cipher::Cipher,
-    wallet::WalletError,
+    config::SALT_SIZE,
     entry::{
+        EntryData,
         TransactionEntry,
-        EntryData
-    }
+        Transfer
+    },
+    wallet::WalletError
 };
 use log::error;
 
@@ -477,13 +485,13 @@ impl EncryptedStorage {
                 EntryData::Coinbase { .. } if accept_coinbase => (true, None),
                 EntryData::Burn { .. } if accept_burn => (true, None),
                 EntryData::Incoming { from, transfers } if accept_incoming => match address {
-                    Some(key) => (*key == *from, Some(transfers)),
+                    Some(key) => (*key == *from, Some(transfers.into_iter().map(|t| Transfer::In(t)).collect::<Vec<_>>())),
                     None => (true, None)
                 },
-                EntryData::Outgoing { transfers } if accept_outgoing => match address {
+                EntryData::Outgoing { transfers, .. } if accept_outgoing => match address {
                     Some(filter_key) => (transfers.iter().find(|tx| {
-                        *tx.get_key() == *filter_key
-                    }).is_some(), Some(transfers)),
+                        *tx.get_destination() == *filter_key
+                    }).is_some(), Some(transfers.into_iter().map(|t| Transfer::Out(t)).collect::<Vec<_>>())),
                     None => (true, None),
                 },
                 _ => (false, None)

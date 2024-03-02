@@ -15,7 +15,8 @@ use xelis_common::{
     api::{
         wallet::{
             BalanceChanged,
-            NotifyEvent
+            NotifyEvent,
+            TransactionEntry
         },
         DataElement
     },
@@ -50,7 +51,6 @@ use crate::{
         PASSWORD_HASH_SIZE,
         SALT_SIZE
     },
-    entry::TransactionEntry,
     mnemonics,
     network_handler::{
         NetworkError,

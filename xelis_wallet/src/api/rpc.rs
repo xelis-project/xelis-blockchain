@@ -38,12 +38,9 @@ use xelis_common::{
     transaction::builder::FeeBuilder
 };
 use serde_json::{Value, json};
-use crate::{
-    wallet::{
-        Wallet,
-        WalletError
-    },
-    entry::TransactionEntry
+use crate::wallet::{
+    Wallet,
+    WalletError
 };
 use super::xswd::XSWDWebSocketHandler;
 use log::info;
@@ -216,8 +213,7 @@ async fn get_transaction(context: Context, body: Value) -> Result<Value, Interna
     let storage = wallet.get_storage().read().await;
     let transaction = storage.get_transaction(&params.hash)?;
 
-    let data: DataHash<'_, TransactionEntry> = DataHash { hash: Cow::Owned(params.hash), data: Cow::Owned(transaction) };
-    Ok(json!(data))
+    Ok(json!(transaction.serializable(wallet.get_network().is_mainnet())))
 }
 
 // Build a transaction and broadcast it if requested
@@ -277,7 +273,13 @@ async fn list_transactions(context: Context, body: Value) -> Result<Value, Inter
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
     let opt_key = params.address.map(|addr| addr.to_public_key());
-    let txs = storage.get_filtered_transactions(opt_key.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?;
+    
+    let mainnet = wallet.get_network().is_mainnet();
+    let txs = storage.get_filtered_transactions(opt_key.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?
+        .into_iter()
+        .map(|tx| tx.serializable(mainnet))
+        .collect::<Vec<_>>();
+
     Ok(json!(txs))
 }
 
