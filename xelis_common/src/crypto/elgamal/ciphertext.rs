@@ -47,6 +47,17 @@ impl Ciphertext {
 
 // ADD TRAITS
 
+impl Add<u64> for Ciphertext {
+    type Output = Self;
+
+    fn add(self, rhs: u64) -> Self {
+        Self {
+            commitment: self.commitment + Scalar::from(rhs),
+            handle: self.handle,
+        }
+    }
+}
+
 impl Add for Ciphertext {
     type Output = Self;
 
@@ -91,6 +102,12 @@ impl Add<&Scalar> for Ciphertext {
 
 // ADD ASSIGN TRAITS
 
+impl AddAssign<u64> for Ciphertext {
+    fn add_assign(&mut self, rhs: u64) {
+        self.commitment += Scalar::from(rhs);
+    }
+}
+
 impl AddAssign for Ciphertext {
     fn add_assign(&mut self, rhs: Self) {
         self.commitment += rhs.commitment;
@@ -118,6 +135,17 @@ impl AddAssign<&Scalar> for Ciphertext {
 }
 
 // SUB TRAITS
+
+impl Sub<u64> for Ciphertext {
+    type Output = Self;
+
+    fn sub(self, rhs: u64) -> Self {
+        Self {
+            commitment: self.commitment - Scalar::from(rhs),
+            handle: self.handle,
+        }
+    }
+}
 
 impl Sub for Ciphertext {
     type Output = Self;
@@ -162,6 +190,12 @@ impl Sub<&Scalar> for Ciphertext {
 }
 
 // SUB ASSIGN TRAITS
+
+impl SubAssign<u64> for Ciphertext {
+    fn sub_assign(&mut self, rhs: u64) {
+        self.commitment -= Scalar::from(rhs);
+    }
+}
 
 impl SubAssign for Ciphertext {
     fn sub_assign(&mut self, rhs: Self) {

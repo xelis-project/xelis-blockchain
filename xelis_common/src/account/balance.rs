@@ -1,6 +1,6 @@
 use std::fmt::Display;
 use serde::{Deserialize, Serialize};
-use crate::crypto::elgamal::{Ciphertext, CompressedCiphertext};
+use crate::crypto::elgamal::{Ciphertext, CompressedCiphertext, DecompressionError};
 use crate::serializer::{Serializer, ReaderError, Reader, Writer};
 
 use super::CiphertextVariant;
@@ -68,8 +68,9 @@ impl VersionedBalance {
         self.final_balance = value;
     }
 
-    pub fn add_plaintext_to_balance(&mut self, _value: u64) {
-        // self.balance + Scalar::from(value); 
+    pub fn add_plaintext_to_balance(&mut self, value: u64) -> Result<(), DecompressionError> {
+        *self.final_balance.get_mut()? += value;
+        Ok(())
     }
 
     pub fn get_previous_topoheight(&self) -> Option<u64> {
