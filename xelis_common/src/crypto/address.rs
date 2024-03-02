@@ -1,5 +1,6 @@
 use std::{
     fmt::{Display, Formatter},
+    mem,
     str::FromStr
 };
 use crate::{
@@ -17,7 +18,7 @@ use log::debug;
 use serde::de::Error as SerdeError;
 use anyhow::Error;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum AddressType {
     Normal,
     // Data variant allow to integrate data in address for easier communication / data transfered
@@ -25,7 +26,7 @@ pub enum AddressType {
     Data(DataElement)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Address {
     mainnet: bool,
     addr_type: AddressType,
@@ -59,6 +60,17 @@ impl Address {
     // Split the address into its components
     pub fn split(self) -> (PublicKey, AddressType) {
         (self.key, self.addr_type)
+    }
+
+    // Change internally the address type to extract the data
+    pub fn extract_data_only(&mut self) -> Option<DataElement> {
+        let mut addr_type = AddressType::Normal;
+        mem::swap(&mut addr_type, &mut self.addr_type);
+
+        match addr_type {
+            AddressType::Data(data) => Some(data),
+            AddressType::Normal => None
+        }
     }
 
     // Recreate a new address struct without the integrated data

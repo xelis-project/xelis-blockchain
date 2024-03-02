@@ -10,12 +10,12 @@ use std::{
     iter,
 };
 use crate::{
+    account::CiphertextVariant,
     api::DataElement,
     config::XELIS_ASSET,
     crypto::{
         elgamal::{
             Ciphertext,
-            CompressedCiphertext,
             CompressedPublicKey,
             DecryptHandle,
             KeyPair,
@@ -32,9 +32,10 @@ use crate::{
             BP_GENS,
             PC_GENS
         },
+        Address,
         Hash,
         ProtocolTranscript,
-        HASH_SIZE,
+        HASH_SIZE
     },
     serializer::Serializer,
     utils::calculate_tx_fee
@@ -55,6 +56,10 @@ pub enum GenerationError<T> {
     SenderIsReceiver,
     #[error("Extra data too large")]
     ExtraDataTooLarge,
+    #[error("Address is not on the same network as us")]
+    InvalidNetwork,
+    #[error("Extra data was provied with an integrated address")]
+    ExtraDataAndIntegratedAddress,
     #[error("Proof generation error: {0}")]
     Proof(#[from] ProofGenerationError),
 }
@@ -78,11 +83,17 @@ impl Default for FeeBuilder {
 pub trait AccountState {
     type Error;
 
+    /// Used to verify if the address is on the same chain
+    fn is_mainnet(&self) -> bool;
+
     /// Get the balance from the source
     fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error>;
 
     /// Get the balance ciphertext from the source
-    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CompressedCiphertext, Self::Error>;
+    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CiphertextVariant, Self::Error>;
+
+    /// Update the balance and the ciphertext
+    fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error>;
 
     /// Verify if the account exists or if we should pay more fees for account creation
     fn account_exists(&self, account: &CompressedPublicKey) -> Result<bool, Self::Error>;
@@ -100,7 +111,7 @@ pub enum TransactionTypeBuilder {
 pub struct TransferBuilder {
     pub asset: Hash,
     pub amount: u64,
-    pub destination: CompressedPublicKey,
+    pub destination: Address,
     // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
     pub extra_data: Option<DataElement>,
 }
@@ -136,6 +147,28 @@ impl TransferWithCommitment {
     }
 }
 
+impl TransactionTypeBuilder {
+    pub fn used_assets(&self) -> HashSet<Hash> {
+        let mut consumed = HashSet::new();
+
+        // Native asset is always used. (fees)
+        consumed.insert(XELIS_ASSET);
+
+        match &self {
+            TransactionTypeBuilder::Transfers(transfers) => {
+                for transfer in transfers {
+                    consumed.insert(transfer.asset.clone());
+                }
+            }
+            TransactionTypeBuilder::Burn(payload) => {
+                consumed.insert(payload.asset.clone());
+            }
+        }
+
+        consumed
+    }
+}
+
 impl TransactionBuilder {
     pub fn new(version: u8, source: CompressedPublicKey, data: TransactionTypeBuilder, fee_builder: FeeBuilder, nonce: u64) -> Self {
         Self {
@@ -151,7 +184,7 @@ impl TransactionBuilder {
     /// Estimate by hand the bytes size of a final TX
     // Returns bytes size and transfers count
     fn estimate_size(&self) -> (usize, usize) {
-        let assets_used = self.used_assets().len();
+        let assets_used = self.data.used_assets().len();
         // Version byte
         let mut size = 1
         + self.source.size()
@@ -172,7 +205,7 @@ impl TransactionBuilder {
             TransactionTypeBuilder::Transfers(transfers) => {
                 for transfer in transfers {
                     size += transfer.asset.size()
-                    + transfer.destination.size()
+                    + transfer.destination.get_public_key().size()
                     // Commitment, sender handle, receiver handle
                     + RISTRETTO_COMPRESSED_SIZE * 3
                     // Ct Validity Proof
@@ -264,29 +297,9 @@ impl TransactionBuilder {
         cost
     }
 
-    pub fn used_assets(&self) -> HashSet<Hash> {
-        let mut consumed = HashSet::new();
-
-        // Native asset is always used. (fees)
-        consumed.insert(XELIS_ASSET);
-
-        match &self.data {
-            TransactionTypeBuilder::Transfers(transfers) => {
-                for transfer in transfers {
-                    consumed.insert(transfer.asset.clone());
-                }
-            }
-            TransactionTypeBuilder::Burn(payload) => {
-                consumed.insert(payload.asset.clone());
-            }
-        }
-
-        consumed
-    }
-
     pub fn build<B: AccountState>(
         mut self,
-        state: &B,
+        state: &mut B,
         source_keypair: &KeyPair,
     ) -> Result<Transaction, GenerationError<B::Error>> {
         // Compute the fees
@@ -294,7 +307,7 @@ impl TransactionBuilder {
 
         // 0.a Create the commitments
 
-        let used_assets = self.used_assets();
+        let used_assets = self.data.used_assets();
 
         let transfers = if let TransactionTypeBuilder::Transfers(transfers) = &mut self.data {
             if transfers.len() == 0 {
@@ -307,10 +320,25 @@ impl TransactionBuilder {
 
             let pk = source_keypair.get_public_key().compress();
             let mut extra_data_size = 0;
-            for transfer in transfers.iter() {
-                if transfer.destination == pk {
+            for transfer in transfers.iter_mut() {
+                if *transfer.destination.get_public_key() == pk {
                     return Err(GenerationError::SenderIsReceiver);
                 }
+
+                if state.is_mainnet() != transfer.destination.is_mainnet() {
+                    return Err(GenerationError::InvalidNetwork);
+                }
+
+                // Either extra data provided or an integrated address, not both
+                if transfer.extra_data.is_some() == !transfer.destination.is_normal() {
+                    return Err(GenerationError::ExtraDataAndIntegratedAddress);
+                }
+
+                // Set the integrated data as extra data
+                if let Some(extra_data) = transfer.destination.extract_data_only() {
+                    transfer.extra_data = Some(extra_data);
+                }
+
                 if let Some(extra_data) = &transfer.extra_data {
                     extra_data_size += extra_data.size();
                 }
@@ -325,6 +353,7 @@ impl TransactionBuilder {
                 .map(|transfer| {
                     let destination = transfer
                         .destination
+                        .get_public_key()
                         .decompress()
                         .map_err(|err| GenerationError::Proof(err.into()))?;
 
@@ -379,7 +408,7 @@ impl TransactionBuilder {
                 let source_current_ciphertext = state
                     .get_account_ciphertext(&asset)
                     .map_err(GenerationError::State)?
-                    .decompress()
+                    .take()
                     .map_err(|err| GenerationError::Proof(err.into()))?;
 
                 let commitment =
@@ -403,6 +432,11 @@ impl TransactionBuilder {
                     &mut transcript,
                 );
 
+                // Store the new balance in preparation of next transaction
+                state
+                    .update_account_balance(&asset, source_new_balance, new_source_ciphertext)
+                    .map_err(GenerationError::State)?;
+
                 Ok(SourceCommitment {
                     asset,
                     commitment,
@@ -423,7 +457,7 @@ impl TransactionBuilder {
                     let receiver_handle = transfer.receiver_handle.compress();
 
                     transcript.transfer_proof_domain_separator();
-                    transcript.append_public_key(b"dest_pubkey", &transfer.inner.destination);
+                    transcript.append_public_key(b"dest_pubkey", transfer.inner.destination.get_public_key());
                     transcript.append_commitment(b"amount_commitment", &commitment);
                     transcript.append_handle(b"amount_sender_handle", &sender_handle);
                     transcript.append_handle(b"amount_receiver_handle", &receiver_handle);
@@ -442,7 +476,7 @@ impl TransactionBuilder {
                         commitment,
                         receiver_handle,
                         sender_handle,
-                        destination: transfer.inner.destination,
+                        destination: transfer.inner.destination.to_public_key(),
                         asset: transfer.inner.asset,
                         ct_validity_proof,
                         extra_data: transfer.inner.extra_data.map(|v| v.to_bytes()),
