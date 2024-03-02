@@ -1,7 +1,6 @@
 use lazy_static::lazy_static;
 use xelis_common::{
     api::daemon::DevFeeThreshold,
-    config::COIN_VALUE,
     crypto::{
         Address,
         Hash,
@@ -64,8 +63,6 @@ pub const DEV_FEES: [DevFeeThreshold; 3] = [
 // only 30% of reward for side block
 pub const SIDE_BLOCK_REWARD_PERCENT: u64 = 30;
 pub const EMISSION_SPEED_FACTOR: u64 = 20;
-// 18.4M full coin
-pub const MAXIMUM_SUPPLY: u64 = 18_400_000 * COIN_VALUE;
 
 // Developer address for paying dev fees until Smart Contracts integration
 // (testnet/mainnet format is converted lazily later)
