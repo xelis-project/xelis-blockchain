@@ -20,7 +20,6 @@ use xelis_common::{
         DataElement
     },
     asset::AssetWithData,
-    block::Block,
     crypto::{
         elgamal::Ciphertext,
         Address,
@@ -166,15 +165,20 @@ impl NetworkHandler {
 
     // Process a block by checking if it contains any transaction for us
     // Or that we mined it
-    async fn process_block(&self, address: &Address, block_response: BlockResponse<'_, Block>, topoheight: u64) -> Result<bool, Error> {
-        let block = block_response.data.data.into_owned();
-        let block_hash = block_response.data.hash.into_owned();
+    async fn process_block(&self, address: &Address, block: BlockResponse, topoheight: u64) -> Result<bool, Error> {
+        let block_hash = block.hash.into_owned();
         debug!("Processing block {} at topoheight {}", block_hash, topoheight);
 
+        if block.miner.is_mainnet() != self.wallet.get_network().is_mainnet() {
+            warn!("Block {} at topoheight {} is not on the same network as the wallet", block_hash, topoheight);
+            return Ok(false)
+        }
+
+        let miner = block.miner.into_owned().to_public_key();
         let mut changes_stored = false;
         // create Coinbase entry if its our address and we're looking for XELIS asset
-        if *block.get_miner() == *address.get_public_key() {
-            if let Some(reward) = block_response.reward {
+        if miner == *address.get_public_key() {
+            if let Some(reward) = block.reward {
                 let coinbase = EntryData::Coinbase { reward };
                 let entry = TransactionEntry::new(block_hash.clone(), topoheight, coinbase);
 
@@ -197,10 +201,8 @@ impl NetworkHandler {
         }
 
         // Verify all TXs one by one to find one for us
-        let (block, txs) = block.split();
-        for (tx_hash, tx) in block.into_owned().take_txs_hashes().into_iter().zip(txs) {
+        for (tx_hash, tx) in block.txs_hashes.into_owned().into_iter().zip(block.transactions.into_owned()) {
             trace!("Checking transaction {}", tx_hash);
-            let tx = tx.into_owned();
             let fee = tx.get_fee();
             let nonce = tx.get_nonce();
             let is_owner = *tx.get_source() == *address.get_public_key();
@@ -411,7 +413,7 @@ impl NetworkHandler {
                 if synced_topoheight > pruned_topoheight {
                     // Check if it's still a correct block
                     let header = self.api.get_block_at_topoheight(synced_topoheight).await?;
-                    let block_hash = header.data.hash.into_owned();
+                    let block_hash = header.hash.into_owned();
                     if block_hash == top_block_hash {
                         // topoheight and block hash are equal, we are still on right chain
                         return Ok((daemon_topoheight, daemon_block_hash, synced_topoheight, false))
@@ -453,7 +455,7 @@ impl NetworkHandler {
             // Check if we are on the same chain
             debug!("Checking if we are on the same chain at topoheight {}", maximum);
             let header = self.api.get_block_at_topoheight(maximum).await?;
-            let block_hash = header.data.hash.into_owned();
+            let block_hash = header.hash.into_owned();
             if block_hash == local_hash {
                 break Some(local_hash);
             }
@@ -467,7 +469,7 @@ impl NetworkHandler {
             block_hash
         } else {
             let response = self.api.get_block_at_topoheight(maximum).await?;
-            response.data.hash.into_owned()
+            response.hash.into_owned()
         };
 
         let mut storage = self.wallet.get_storage().write().await;        
@@ -595,7 +597,7 @@ impl NetworkHandler {
                     }
                 } else {
                     // It is a block that got directly orphaned by DAG, ignore it
-                    debug!("Block {} is not ordered, skipping it", block.data.hash);
+                    debug!("Block {} is not ordered, skipping it", block.hash);
                 }
                 // TODO handle block event
             } else {

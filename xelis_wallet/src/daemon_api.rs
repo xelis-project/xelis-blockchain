@@ -39,10 +39,6 @@ use xelis_common::{
     },
     transaction::Transaction,
     serializer::Serializer,
-    block::{
-        BlockHeader,
-        Block
-    },
     asset::{
         AssetWithData,
         AssetData
@@ -166,7 +162,7 @@ impl DaemonAPI {
         Ok(balance)
     }
 
-    pub async fn get_block_at_topoheight(&self, topoheight: u64) -> Result<BlockResponse<'_, BlockHeader>> {
+    pub async fn get_block_at_topoheight(&self, topoheight: u64) -> Result<BlockResponse> {
         let block = self.client.call_with("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
             topoheight,
             include_txs: false
@@ -174,7 +170,7 @@ impl DaemonAPI {
         Ok(block)
     }
 
-    pub async fn get_block_with_txs_at_topoheight(&self, topoheight: u64) -> Result<BlockResponse<'_, Block>> {
+    pub async fn get_block_with_txs_at_topoheight(&self, topoheight: u64) -> Result<BlockResponse> {
         let block = self.client.call_with("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
             topoheight,
             include_txs: true
