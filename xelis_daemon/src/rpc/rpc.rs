@@ -21,7 +21,7 @@ use xelis_common::{
         daemon::{
             AccountHistoryEntry,
             AccountHistoryType,
-            BlockResponse,
+            BlockResponseInner,
             BlockType,
             GetAccountAssetsParams,
             GetAccountHistoryParams,
@@ -143,8 +143,30 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
         }
     }
 
-    let data: DataHash<'_, Block> = DataHash { hash: Cow::Borrowed(hash), data: Cow::Borrowed(block) };
-    Ok(json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees: Some(total_fees), total_size_in_bytes, data }))
+    let mainnet = blockchain.get_network().is_mainnet();
+    let header = block.get_header();
+    let transactions = block.get_transactions();
+
+    Ok(json!(BlockResponseInner {
+        hash: Cow::Borrowed(hash),
+        topoheight,
+        block_type,
+        cumulative_difficulty: Cow::Borrowed(&cumulative_difficulty),
+        difficulty: Cow::Borrowed(&difficulty),
+        supply,
+        reward,
+        total_fees: Some(total_fees),
+        total_size_in_bytes,
+        extra_nonce: Cow::Borrowed(header.get_extra_nonce()),
+        timestamp: header.get_timestamp(),
+        nonce: header.get_nonce(),
+        height: header.get_height(),
+        version: header.get_version(),
+        miner: Cow::Owned(header.get_miner().as_address(mainnet)),
+        tips: Cow::Borrowed(header.get_tips()),
+        txs_hashes: Cow::Borrowed(header.get_txs_hashes()),
+        transactions: Cow::Borrowed(&transactions)
+    }))
 }
 
 // Get a block response based on data in chain and from parameters
@@ -159,15 +181,36 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
         get_block_response(blockchain, storage, hash, &block, total_size_in_bytes).await?
     } else {
         let (topoheight, supply, reward, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, storage, hash).await?;
-        let block = storage.get_block_header_by_hash(&hash).await.context("Error while retrieving full block")?;
+        let header = storage.get_block_header_by_hash(&hash).await.context("Error while retrieving full block")?;
 
-        let mut total_size_in_bytes = block.size();
-        for tx_hash in block.get_txs_hashes() {
+        // calculate total size in bytes
+        let mut total_size_in_bytes = header.size();
+        for tx_hash in header.get_txs_hashes() {
             total_size_in_bytes += storage.get_transaction_size(tx_hash).await.context(format!("Error while retrieving transaction {hash} size"))?;
         }
 
-        let data: DataHash<'_, Arc<BlockHeader>> = DataHash { hash: Cow::Borrowed(hash), data: Cow::Borrowed(&block) };
-        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees: None, total_size_in_bytes, data })
+        let mainnet = blockchain.get_network().is_mainnet();
+
+        json!(BlockResponseInner::<Arc<Transaction>> {
+            hash: Cow::Borrowed(hash),
+            topoheight,
+            block_type,
+            cumulative_difficulty: Cow::Owned(cumulative_difficulty),
+            difficulty: Cow::Owned(difficulty),
+            supply,
+            reward,
+            total_fees: None,
+            total_size_in_bytes,
+            extra_nonce: Cow::Borrowed(header.get_extra_nonce()),
+            timestamp: header.get_timestamp(),
+            nonce: header.get_nonce(),
+            height: header.get_height(),
+            version: header.get_version(),
+            miner: Cow::Owned(header.get_miner().as_address(mainnet)),
+            tips: Cow::Borrowed(header.get_tips()),
+            txs_hashes: Cow::Borrowed(header.get_txs_hashes()),
+            transactions: Cow::Owned(Vec::with_capacity(0)),
+        })
     };
 
     Ok(value)
