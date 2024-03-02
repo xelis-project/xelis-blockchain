@@ -17,6 +17,8 @@ pub const FEE_PER_TRANSFER: u64 = 5000;
 pub const COIN_DECIMALS: u8 = 8;
 // 100 000 000 to represent 1 XEL
 pub const COIN_VALUE: u64 = 10u64.pow(COIN_DECIMALS as u32);
+// 18.4M full coin
+pub const MAXIMUM_SUPPLY: u64 = 18_400_000 * COIN_VALUE;
 
 // Addresses format
 // mainnet prefix address

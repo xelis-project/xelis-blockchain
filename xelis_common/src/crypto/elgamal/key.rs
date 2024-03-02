@@ -1,10 +1,16 @@
-use curve25519_dalek::{ristretto::RistrettoPoint, Scalar};
+use curve25519_dalek::{ecdlp::{self, ECDLPArguments}, ristretto::RistrettoPoint, Scalar};
 use rand::rngs::OsRng;
 use zeroize::Zeroize;
 use crate::{
-    api::DataElement,
+    config::MAXIMUM_SUPPLY,
     crypto::{Address, AddressType},
-    serializer::{Reader, ReaderError, Serializer, Writer}
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    },
+    api::DataElement,
 };
 use super::{
     ciphertext::Ciphertext,
@@ -102,6 +108,13 @@ impl PrivateKey {
 
         commitment - &(self.0 * handle)
     }
+
+    // Decrypt a Ciphertext to a u64 with precomputed tables
+    pub fn decrypt<TS: ecdlp::PrecomputedECDLPTables>(&self, precomputed_tables: &TS, ciphertext: &Ciphertext) -> Option<u64> {
+        let point = self.decrypt_to_point(ciphertext);
+        ecdlp::decode(precomputed_tables, point, ECDLPArguments::new_with_range(0, MAXIMUM_SUPPLY as i64))
+            .map(|x| x as u64)
+    }
 }
 
 impl KeyPair {
@@ -128,6 +141,11 @@ impl KeyPair {
             public_key,
             private_key,
         }
+    }
+
+    // Decrypt a Ciphertext to a u64 with precomputed tables
+    pub fn decrypt<TS: ecdlp::PrecomputedECDLPTables>(&self, precomputed_tables: &TS, ciphertext: &Ciphertext) -> Option<u64> {
+        self.private_key.decrypt(precomputed_tables, ciphertext)
     }
 
     // Get the public key of the KeyPair
