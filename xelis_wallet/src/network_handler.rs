@@ -22,6 +22,7 @@ use xelis_common::{
     asset::AssetWithData,
     block::Block,
     crypto::{
+        elgamal::Ciphertext,
         Address,
         Hash
     },
@@ -228,8 +229,34 @@ impl NetworkHandler {
                         if is_owner || destination == *address.get_public_key() {
                             let extra_data = extra_data.and_then(|bytes| DataElement::from_bytes(&bytes).ok());
 
-                            // TODO decrypt the amount
-                            let amount = 0;
+                            // Get the right handle
+                            let handle = if is_owner {
+                                sender_handle
+                            } else {
+                                receiver_handle
+                            };
+
+                            // Decompress commitment it if possible
+                            let commitment = match commitment.decompress() {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    error!("Error while decompressing commitment of TX {}: {}", tx_hash, e);
+                                    continue;
+                                }
+                            };
+
+                            // Same for handle
+                            let handle = match handle.decompress() {
+                                Ok(h) => h,
+                                Err(e) => {
+                                    error!("Error while decompressing handle of TX {}: {}", tx_hash, e);
+                                    continue;
+                                }
+                            };
+
+                            let ciphertext = Ciphertext::new(commitment, handle);
+                            let amount = self.wallet.decrypt_ciphertext(&ciphertext).await?;
+
                             if is_owner {
                                 let transfer = TransferOut::new(destination, asset, amount, extra_data);
                                 transfers_out.push(transfer);
@@ -310,9 +337,9 @@ impl NetworkHandler {
                     let mut storage = self.wallet.get_storage().write().await;
                     let store = storage.get_balance_for(asset).await.map(|b| b.ciphertext != balance).unwrap_or(false);
                     if store {
-                        // TODO decrypt the balance
-                        // let new_balance = version.get_balance();
-                        let plaintext_balance = 0;
+                        let ciphertext = balance.decompress()?;
+                        let plaintext_balance = self.wallet.decrypt_ciphertext(&ciphertext).await?;
+
                         storage.set_balance_for(asset, Balance::new(plaintext_balance, balance)).await?;
                         // Propagate the event
                         self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {

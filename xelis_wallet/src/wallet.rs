@@ -168,7 +168,9 @@ pub enum WalletError {
     #[error(transparent)]
     NetworkError(#[from] NetworkError),
     #[error("Balance for asset {} was not found", _0)]
-    BalanceNotFound(Hash)
+    BalanceNotFound(Hash),
+    #[error("No result found for ciphertext")]
+    CiphertextDecode,
 }
 
 #[derive(Serialize, Clone)]
@@ -554,8 +556,16 @@ impl Wallet {
         Ok(())
     }
 
+    pub async fn decrypt_ciphertext(&self, _ciphertext: &Ciphertext) -> Result<u64, WalletError> {
+        trace!("Decrypting ciphertext");
+        // let encrypted_storage = self.storage.read().await;
+        // self.keypair.decrypt(&precomputed_tables, &ciphertext).ok_or(WalletError::CiphertextDecode)
+        todo!("decrypt ciphertext")
+    }
+
     // Create a transaction with the given transaction type and fee
     pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
+        trace!("create transaction");
         let mut storage = self.storage.write().await;
         self.create_transaction_with_storage(&mut storage, transaction_type, fee).await
     }
@@ -563,6 +573,7 @@ impl Wallet {
     // create the final transaction with calculated fees and signature
     // also check that we have enough funds for the transaction
     pub async fn create_transaction_with_storage(&self, storage: &mut EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
+        trace!("create transaction with storage");
         let nonce = storage.get_nonce().unwrap_or(0);
 
         // Build the state for the builder
@@ -601,6 +612,7 @@ impl Wallet {
     // It will increase the local nonce by 1 if the TX is accepted by the daemon
     // returns error if the wallet is in offline mode or if the TX is rejected
     pub async fn submit_transaction(&self, transaction: &Transaction) -> Result<(), WalletError> {
+        trace!("submit transaction");
         let network_handler = self.network_handler.lock().await;
         if let Some(network_handler) = network_handler.as_ref() {
             network_handler.get_api().submit_transaction(transaction).await?;
@@ -613,6 +625,7 @@ impl Wallet {
     // Estimate fees for a given transaction type
     // Estimated fees returned are the minimum required to be valid on chain
     pub async fn estimate_fees(&self, tx_type: TransactionTypeBuilder) -> Result<u64, WalletError> {
+        trace!("estimate fees");
         let storage = self.storage.read().await;
         let nonce = storage.get_nonce().unwrap_or(0);
         let builder = TransactionBuilder::new(0, self.public_key.clone(), tx_type, FeeBuilder::default(), nonce);
@@ -621,6 +634,7 @@ impl Wallet {
 
     // set wallet in online mode: start a communication task which will keep the wallet synced
     pub async fn set_online_mode(self: &Arc<Self>, daemon_address: &String) -> Result<(), WalletError> {
+        trace!("Set online mode");
         if self.is_online().await {
             // user have to set in offline mode himself first
             return Err(WalletError::AlreadyOnlineMode)
@@ -637,6 +651,7 @@ impl Wallet {
 
     // set wallet in offline mode: stop communication task if exists
     pub async fn set_offline_mode(&self) -> Result<(), WalletError> {
+        trace!("Set offline mode");
         let mut handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.take() {
             network_handler.stop().await?;
