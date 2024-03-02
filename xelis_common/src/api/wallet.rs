@@ -1,15 +1,18 @@
 use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 use crate::{
-    transaction::{TransactionType, Transaction, builder::FeeBuilder},
-    crypto::{Hash, Address}
+    crypto::{Address, Hash},
+    transaction::{
+        builder::{FeeBuilder, TransactionTypeBuilder},
+        Transaction
+    }
 };
 use super::{DataHash, DataElement, DataValue, query::Query};
 
 #[derive(Serialize, Deserialize)]
 pub struct BuildTransactionParams {
     #[serde(flatten)]
-    pub tx_type: TransactionType,
+    pub tx_type: TransactionTypeBuilder,
     pub fee: Option<FeeBuilder>,
     // Cannot be broadcasted if set to false
     pub broadcast: bool,
@@ -21,7 +24,7 @@ pub struct BuildTransactionParams {
 #[derive(Serialize, Deserialize)]
 pub struct EstimateFeesParams {
     #[serde(flatten)]
-    pub tx_type: TransactionType,
+    pub tx_type: TransactionTypeBuilder,
 }
 
 // :(

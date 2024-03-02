@@ -10,6 +10,7 @@ use std::{
     iter,
 };
 use crate::{
+    api::DataElement,
     config::XELIS_ASSET,
     crypto::{
         elgamal::{
@@ -44,11 +45,17 @@ use super::{BurnPayload, Role, SourceCommitment, Transaction, TransactionType, T
 
 #[derive(Error, Debug, Clone)]
 pub enum GenerationError<T> {
+    #[error("Error in the state: {0}")]
     State(T),
+    #[error("Empty transfers")]
     EmptyTransfers,
+    #[error("Max transfer count reached")]
     MaxTransferCountReached,
+    #[error("Sender is receiver")]
     SenderIsReceiver,
+    #[error("Extra data too large")]
     ExtraDataTooLarge,
+    #[error("Proof generation error: {0}")]
     Proof(#[from] ProofGenerationError),
 }
 
@@ -68,7 +75,7 @@ impl Default for FeeBuilder {
 
 /// If the returned balance and ct do not match, the build function will panic and/or
 /// the proof will be invalid.
-pub trait GetBlockchainAccountBalance {
+pub trait AccountState {
     type Error;
 
     /// Get the balance from the source
@@ -94,7 +101,8 @@ pub struct TransferBuilder {
     pub asset: Hash,
     pub amount: u64,
     pub destination: CompressedPublicKey,
-    pub extra_data: Option<Vec<u8>>, // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
+    // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
+    pub extra_data: Option<DataElement>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -173,7 +181,7 @@ impl TransactionBuilder {
                     + 1;
 
                     if let Some(extra_data) = &transfer.extra_data {
-                        size += extra_data.len();
+                        size += extra_data.size();
                     }
                 }
                 transfers.len()
@@ -276,9 +284,9 @@ impl TransactionBuilder {
         consumed
     }
 
-    pub fn build<B: GetBlockchainAccountBalance>(
+    pub fn build<B: AccountState>(
         mut self,
-        state: &mut B,
+        state: &B,
         source_keypair: &KeyPair,
     ) -> Result<Transaction, GenerationError<B::Error>> {
         // Compute the fees
@@ -304,7 +312,7 @@ impl TransactionBuilder {
                     return Err(GenerationError::SenderIsReceiver);
                 }
                 if let Some(extra_data) = &transfer.extra_data {
-                    extra_data_size += extra_data.len();
+                    extra_data_size += extra_data.size();
                 }
             }
 
@@ -437,7 +445,7 @@ impl TransactionBuilder {
                         destination: transfer.inner.destination,
                         asset: transfer.inner.asset,
                         ct_validity_proof,
-                        extra_data: transfer.inner.extra_data,
+                        extra_data: transfer.inner.extra_data.map(|v| v.to_bytes()),
                     }
                 })
                 .collect::<Vec<_>>();

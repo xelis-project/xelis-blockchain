@@ -9,8 +9,8 @@ use crate::crypto::elgamal::{Ciphertext, CompressedCiphertext, DecompressionErro
 
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 
-// Represents a Ciphertext
-#[derive(Clone, Debug)]
+// Represents a Ciphertext that can be lazily decompressed and compressed
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CiphertextVariant {
     Compressed(CompressedCiphertext),
     Decompressed(Ciphertext)

@@ -75,6 +75,10 @@ impl VersionedBalance {
     pub fn set_previous_topoheight(&mut self, previous_topoheight: Option<u64>) {
         self.previous_topoheight = previous_topoheight;
     }
+
+    pub fn consume(self) -> (CiphertextVariant, Option<u64>) {
+        (self.final_balance, self.previous_topoheight)
+    }
 }
 
 impl Default for VersionedBalance {

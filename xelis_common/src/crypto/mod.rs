@@ -11,4 +11,4 @@ pub use address::*;
 pub use transcript::*;
 
 pub type PublicKey = elgamal::CompressedPublicKey;
-pub use elgamal::{PrivateKey, KeyPair};
+pub use elgamal::{PrivateKey, KeyPair, Signature, SIGNATURE_SIZE};
