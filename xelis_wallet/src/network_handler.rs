@@ -493,9 +493,9 @@ impl NetworkHandler {
                 should_sync_blocks = true;
             }
 
-            for (asset, ciphertext) in balances {
+            for (asset, mut ciphertext) in balances {
                 let must_update = match storage.get_balance_for(&asset).await {
-                    Ok(previous) => previous.ciphertext != ciphertext,
+                    Ok(mut previous) => previous.ciphertext.get_mut()? != ciphertext.get_mut()?,
                     // If we don't have a balance for this asset, we should update it
                     Err(_) => true
                 };
