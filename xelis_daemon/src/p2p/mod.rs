@@ -93,6 +93,7 @@ use tokio::{
 };
 use log::{info, warn, error, debug, trace};
 use std::{
+    num::NonZeroUsize,
     borrow::Cow,
     sync::{
         Arc,
@@ -185,7 +186,7 @@ impl<S: Storage> P2pServer<S> {
             connections_sender,
             object_tracker,
             is_running: AtomicBool::new(true),
-            blocks_propagation_queue: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
+            blocks_propagation_queue: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).unwrap())),
             blocks_processor,
             allow_fast_sync_mode,
             allow_boost_sync_mode,
@@ -2205,7 +2206,7 @@ impl<S: Storage> P2pServer<S> {
                         let mut storage = self.blockchain.get_storage().write().await;
                         // save all nonces
                         for (key, nonce) in keys.iter().zip(nonces) {
-                            debug!("Saving nonce {} for {}", nonce, key);
+                            debug!("Saving nonce {} for {}", nonce, key.as_address(self.blockchain.get_network().is_mainnet()));
                             storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, None)).await?;
                         }
                     }
@@ -2225,7 +2226,7 @@ impl<S: Storage> P2pServer<S> {
                         for (key, balance) in keys.iter().zip(balances) {
                             // check that the account have balance for this asset
                             if let Some(balance) = balance {
-                                debug!("Saving balance {:?} for key {} at topoheight {}", balance, key, stable_topoheight);
+                                debug!("Saving balance {:?} for key {} at topoheight {}", balance, key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
                                 let mut versioned_balance = storage.get_new_versioned_balance(key, &asset, stable_topoheight).await?;
                                 versioned_balance.set_balance(balance);
                                 storage.set_last_balance_to(key, &asset, stable_topoheight, &versioned_balance).await?;

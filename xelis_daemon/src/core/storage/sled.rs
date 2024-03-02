@@ -17,7 +17,8 @@ use xelis_common::{
 use std::{
     collections::HashSet,
     hash::Hash as StdHash,
-    sync::{Arc, atomic::{AtomicU64, Ordering}}
+    sync::{Arc, atomic::{AtomicU64, Ordering}},
+    num::NonZeroUsize
 };
 use tokio::sync::Mutex;
 use lru::LruCache;
@@ -51,6 +52,8 @@ const ASSETS_COUNT: &[u8; 4] = b"CAST";
 pub(super) const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
 
 pub struct SledStorage {
+    // Network used by the storage
+    mainnet: bool,
     // All trees used to store data
     // all txs stored on disk
     pub(super) transactions: Tree,
@@ -129,7 +132,7 @@ pub struct SledStorage {
 macro_rules! init_cache {
     ($cache_size: expr) => {{
         if let Some(size) = &$cache_size {
-            Some(Mutex::new(LruCache::new(*size)))
+            Some(Mutex::new(LruCache::new(NonZeroUsize::new(*size).unwrap())))
         } else {
             None
         }
@@ -140,6 +143,7 @@ impl SledStorage {
     pub fn new(dir_path: String, cache_size: Option<usize>, network: Network) -> Result<Self, BlockchainError> {
         let sled = sled::open(dir_path)?;
         let mut storage = Self {
+            mainnet: network.is_mainnet(),
             transactions: sled.open_tree("transactions")?,
             txs_executed: sled.open_tree("txs_executed")?,
             blocks: sled.open_tree("blocks")?,
@@ -224,6 +228,10 @@ impl SledStorage {
         }
 
         Ok(storage)
+    }
+
+    pub fn is_mainnet(&self) -> bool {
+        self.mainnet
     }
 
     pub(super) fn load_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<T, BlockchainError> {
@@ -351,6 +359,10 @@ impl SledStorage {
 
 #[async_trait]
 impl Storage for SledStorage {
+    fn is_mainnet(&self) -> bool {
+        self.mainnet
+    }
+
     async fn clear_caches(&mut self) -> Result<(), BlockchainError> {
         if let Some(cache) = self.transactions_cache.as_ref() {
             let mut cache = cache.lock().await;
@@ -749,7 +761,7 @@ impl Storage for SledStorage {
                 while let Some(previous_topoheight) = version.get_previous_topoheight() {
                     if previous_topoheight < topoheight {
                         // we find the new highest version which is under new topoheight
-                        trace!("New highest version nonce for {} is at topoheight {}", pkey, previous_topoheight);
+                        trace!("New highest version nonce for {} is at topoheight {}", pkey.as_address(self.is_mainnet()), previous_topoheight);
                         if self.nonces.insert(&key, &previous_topoheight.to_be_bytes())?.is_none() {
                             self.store_accounts_count(self.count_accounts().await? + 1)?;
                         }
@@ -777,7 +789,7 @@ impl Storage for SledStorage {
                 while let Some(previous_topoheight) = version.get_previous_topoheight() {
                     if previous_topoheight < topoheight {
                         // we find the new highest version which is under new topoheight
-                        trace!("New highest version balance for {} is at topoheight {} with asset {}", pkey, previous_topoheight, asset);
+                        trace!("New highest version balance for {} is at topoheight {} with asset {}", pkey.as_address(self.is_mainnet()), previous_topoheight, asset);
                         self.balances.insert(&key, &previous_topoheight.to_be_bytes())?;
                         delete = false;
                         break;

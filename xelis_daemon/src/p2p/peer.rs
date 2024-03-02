@@ -39,6 +39,7 @@ use super::{
     error::P2pError
 };
 use std::{
+    num::NonZeroUsize,
     borrow::Cow,
     collections::{HashMap, HashSet},
     fmt::{Display, Error, Formatter},
@@ -158,8 +159,8 @@ impl Peer {
             last_ping: AtomicU64::new(0),
             last_ping_sent: AtomicU64::new(0),
             cumulative_difficulty: Mutex::new(cumulative_difficulty),
-            txs_cache: Mutex::new(LruCache::new(128)),
-            blocks_propagation: Mutex::new(LruCache::new(STABLE_LIMIT as usize * TIPS_LIMIT)),
+            txs_cache: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT * 128).unwrap())),
+            blocks_propagation: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).unwrap())),
             last_inventory: AtomicU64::new(0),
             requested_inventory: AtomicBool::new(false),
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),

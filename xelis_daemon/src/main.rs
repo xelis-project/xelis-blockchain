@@ -43,8 +43,9 @@ use xelis_common::{
     serializer::Serializer,
     transaction::Transaction,
     utils::{
-        format_hashrate, set_network_to,
-        format_xelis, format_difficulty
+        format_hashrate,
+        format_xelis,
+        format_difficulty
     }
 };
 use crate::{
@@ -111,7 +112,6 @@ async fn main() -> Result<()> {
         config.network = Network::Dev;
         warn!("Switching automatically to network {} because of simulator enabled", config.network);
     }
-    set_network_to(config.network);
 
     let blockchain_config = config.nested;
     let storage = {

@@ -92,7 +92,7 @@ impl<'a> TxSelector<'a> {
                 size
             };
 
-            match groups.entry(tx.get_owner()) {
+            match groups.entry(tx.get_source()) {
                 Entry::Occupied(mut e) => {
                     e.get_mut().push(entry);
                 },

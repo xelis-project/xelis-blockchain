@@ -16,7 +16,7 @@ use xelis_common::{
     transaction::{
         Transaction,
         TransactionType,
-        Transfer
+        TransferPayload
     },
     config::{
         FEE_PER_KB,
@@ -120,7 +120,7 @@ impl Simulator {
         for _ in 0..n {
             let index = rng.gen_range(0..keys.len());
             let selected_key = keys[index].get_public_key();
-            match blockchain.mine_block(selected_key).await {
+            match blockchain.mine_block(&selected_key.compress()).await {
                 Ok(block) => {
                     blocks.push(block);
                 },

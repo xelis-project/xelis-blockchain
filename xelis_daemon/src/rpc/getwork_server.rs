@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     fmt::Display,
+    num::NonZeroUsize,
     sync::{
         atomic::{
             AtomicU64,
@@ -84,6 +85,8 @@ impl TMessage for Response {
 }
 
 pub struct Miner {
+    // Used to display correctly its address
+    mainnet: bool,
     first_seen: TimestampMillis, // timestamp of first connection
     key: PublicKey, // public key of account (address)
     name: String, // worker name
@@ -92,8 +95,9 @@ pub struct Miner {
 }
 
 impl Miner {
-    pub fn new(key: PublicKey, name: String) -> Self {
+    pub fn new(mainnet: bool, key: PublicKey, name: String) -> Self {
         Self {
+            mainnet,
             first_seen: get_current_time_in_millis(),
             key,
             name,
@@ -121,7 +125,7 @@ impl Miner {
 
 impl Display for Miner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Miner[address={}, name={}, accepted={}, rejected={}]", self.key, self.name, self.blocks_accepted, self.blocks_rejected)
+        write!(f, "Miner[address={}, name={}, accepted={}, rejected={}]", self.key.as_address(self.mainnet), self.name, self.blocks_accepted, self.blocks_rejected)
     }
 }
 
@@ -213,7 +217,7 @@ impl<S: Storage> GetWorkServer<S> {
         Self {
             miners: Mutex::new(HashMap::new()),
             blockchain,
-            mining_jobs: Mutex::new(LruCache::new(STABLE_LIMIT as usize)),
+            mining_jobs: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize).unwrap())),
             last_header_hash: Mutex::new(None),
             last_notify: AtomicU64::new(0),
             notify_rate_limit_ms: 500 // maximum one time every 500ms
@@ -275,7 +279,7 @@ impl<S: Storage> GetWorkServer<S> {
     pub async fn add_miner(self: &Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, key: PublicKey, worker: String) {
         {
             let mut miners = self.miners.lock().await;
-            let miner = Miner::new(key.clone(), worker);
+            let miner = Miner::new(self.blockchain.get_network().is_mainnet(), key.clone(), worker);
             debug!("Adding new miner to GetWork server: {}", miner);
             miners.insert(addr.clone(), miner);
         }

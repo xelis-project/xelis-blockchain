@@ -7,6 +7,7 @@ use std::{collections::HashMap, mem};
 use std::sync::Arc;
 use indexmap::IndexSet;
 use log::{trace, debug, warn};
+use xelis_common::network::Network;
 use xelis_common::{
     account::VersionedBalance,
     time::{TimestampSeconds, get_current_time_in_seconds},
@@ -46,6 +47,8 @@ pub struct AccountCache {
 
 #[derive(serde::Serialize)]
 pub struct Mempool {
+    // Used for log purpose
+    mainnet: bool,
     // store all txs waiting to be included in a block
     txs: HashMap<Arc<Hash>, SortedTx>,
     // store all sender's nonce for faster finding
@@ -54,8 +57,9 @@ pub struct Mempool {
 
 impl Mempool {
     // Create a new empty mempool
-    pub fn new() -> Self {
+    pub fn new(network: Network) -> Self {
         Mempool {
+            mainnet: network.is_mainnet(),
             txs: HashMap::new(),
             caches: HashMap::new()
         }
@@ -67,9 +71,9 @@ impl Mempool {
         let nonce = tx.get_nonce();
         // update the cache for this owner
         let mut must_update = true;
-        if let Some(cache) = self.caches.get_mut(tx.get_owner()) {
+        if let Some(cache) = self.caches.get_mut(tx.get_source()) {
             // delete the TX if its in the range of already tracked nonces
-            trace!("Cache found for owner {} with nonce range {}-{}, nonce = {}", tx.get_owner(), cache.get_min(), cache.get_max(), nonce);
+            trace!("Cache found for owner {} with nonce range {}-{}, nonce = {}", tx.get_source().as_address(self.mainnet), cache.get_min(), cache.get_max(), nonce);
 
             // Support the case where the nonce is already used in cache
             // If a user want to cancel its TX, he can just resend a TX with same nonce and higher fee
@@ -108,7 +112,7 @@ impl Mempool {
                 txs,
                 balances
             };
-            self.caches.insert(tx.get_owner().clone(), cache);
+            self.caches.insert(tx.get_source().clone(), cache);
         }
 
         let sorted_tx = SortedTx {
@@ -128,7 +132,7 @@ impl Mempool {
     pub fn remove_tx(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
         let tx = self.txs.remove(hash).ok_or_else(|| BlockchainError::TxNotFound(hash.clone()))?;
         // remove the tx hash from sorted txs
-        let key = tx.get_tx().get_owner();
+        let key = tx.get_tx().get_source();
         let mut delete = false;
         if let Some(cache) = self.caches.get_mut(key) {
             // Shift remove is O(n) on average, but we need to preserve the order
@@ -173,11 +177,11 @@ impl Mempool {
                 }
             }
         } else {
-            warn!("No cache found for owner {} while deleting TX {}", tx.get_tx().get_owner(), hash);
+            warn!("No cache found for owner {} while deleting TX {}", tx.get_tx().get_source().as_address(self.mainnet), hash);
         }
 
         if delete {
-            trace!("Removing empty nonce cache for owner {}", key);
+            trace!("Removing empty nonce cache for owner {}", key.as_address(self.mainnet));
             self.caches.remove(key);
         }
 
@@ -267,7 +271,7 @@ impl Mempool {
                     // We get an error while retrieving the last nonce for this key,
                     // that means the key is not in storage anymore, so we can delete safely
                     // we just have to skip this iteration so it's not getting re-injected
-                    debug!("Error while getting nonce for owner {}, he maybe has no nonce anymore, skipping: {}", key, e);
+                    debug!("Error while getting nonce for owner {}, he maybe has no nonce anymore, skipping: {}", key.as_address(self.mainnet), e);
                     continue;
                 }
             };
@@ -278,7 +282,7 @@ impl Mempool {
             // or, check and delete txs if the nonce is lower than the new nonce
             // otherwise the cache is still up to date
             if cache.get_min() > nonce {
-                trace!("All TXs for key {} are orphaned, deleting them", key);
+                trace!("All TXs for key {} are orphaned, deleting them", key.as_address(self.mainnet));
                 // We can delete all these TXs as they got automatically orphaned
                 // Because of the suite being broked
                 for hash in cache.txs.iter() {
@@ -288,7 +292,7 @@ impl Mempool {
                 }
                 delete_cache = true;
             } else if cache.get_min() < nonce {
-                trace!("Deleting TXs for owner {} with nonce < {}", key, nonce);
+                trace!("Deleting TXs for owner {} with nonce < {}", key.as_address(self.mainnet), nonce);
                 // txs hashes to delete
                 let mut hashes: Vec<Arc<Hash>> = Vec::with_capacity(cache.txs.len());
 
@@ -400,7 +404,7 @@ impl Mempool {
             }
 
             if !delete_cache {
-                debug!("Re-injecting nonce cache for owner {}", key);
+                debug!("Re-injecting nonce cache for owner {}", key.as_address(self.mainnet));
                 self.caches.insert(key, cache);
             }
         }

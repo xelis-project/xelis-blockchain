@@ -1,6 +1,6 @@
 use std::collections::{hash_map::Entry, HashMap};
 use log::{debug, trace};
-use xelis_common::{account::{Ciphertext, VersionedBalance, VersionedNonce}, config::XELIS_ASSET, crypto::{Hash, PublicKey}};
+use xelis_common::{account::{CiphertextVariant, VersionedBalance, VersionedNonce}, config::XELIS_ASSET, crypto::{elgamal::Ciphertext, Hash, PublicKey}};
 use super::{error::BlockchainError, storage::Storage};
 
 enum Role {
@@ -32,15 +32,16 @@ impl Echange {
     }
 
     // Get the right balance to use for TX verification
-    fn get_balance(&self) -> &Ciphertext {
-        match self.version.get_output_balance() {
-            Some(balance) if self.use_output => balance,
-            _ => self.version.get_balance()
-        }
+    fn get_mut_balance(&mut self) -> &mut CiphertextVariant {
+        // match self.version.get_mut_output_balance() {
+        //     Some(balance) if self.use_output => return balance,
+        //     _ => {}
+        // }
+        self.version.get_mut_balance()
     }
 
     // Set the new balance of the account
-    fn set_balance(&mut self, value: Ciphertext) {
+    fn set_balance(&mut self, value: CiphertextVariant) {
         match self.version.get_mut_output_balance() {
             Some(balance) if self.use_output => *balance = value,
             _ => self.version.set_balance(value)
@@ -51,8 +52,7 @@ impl Echange {
     fn add_change(&mut self, change: Ciphertext) -> Result<(), BlockchainError> {
         match self.change.as_mut() {
             Some(c) => {
-                // TODO no unwrap
-                *c.get_mut().unwrap() += change.take().unwrap();
+                *c += change;
             },
             None => {
                 self.change = Some(change);
@@ -117,7 +117,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     async fn create_sender_account(key: &PublicKey, storage: &S, topoheight: u64) -> Result<Account<'a>, BlockchainError> {
         let (_, version) = storage
             .get_nonce_at_maximum_topoheight(key, topoheight).await?
-            .ok_or_else(|| BlockchainError::AccountNotFound(key.clone()))?;
+            .ok_or_else(|| BlockchainError::AccountNotFound(key.as_address(storage.is_mainnet())))?;
 
         Ok(Account {
             nonce: version,
@@ -130,20 +130,20 @@ impl<'a, S: Storage> ChainState<'a, S> {
     async fn internal_get_account_balance(&mut self, key: &'a PublicKey, asset: &'a Hash, role: Role) -> Result<Ciphertext, BlockchainError> {
         match role {
             Role::Receiver => match self.receiver_balances.entry(key).or_insert_with(HashMap::new).entry(asset) {
-                Entry::Occupied(o) => Ok(o.get().get_balance().clone()),
+                Entry::Occupied(mut o) => Ok(o.get_mut().get_mut_balance().get_mut()?.clone()),
                 Entry::Vacant(e) => {
                     let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                    Ok(e.insert(version).get_balance().clone())
+                    Ok(e.insert(version).get_mut_balance().get_mut()?.clone())
                 }
             },
             Role::Sender => match self.accounts.entry(key) {
                 Entry::Occupied(mut o) => {
                     let account = o.get_mut();
                     match account.assets.entry(asset) {
-                        Entry::Occupied(o) => Ok(o.get().get_balance().clone()),
+                        Entry::Occupied(mut o) => Ok(o.get_mut().get_mut_balance().get_mut()?.clone()),
                         Entry::Vacant(e) => {
                             let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
-                            Ok(e.insert(echange).get_balance().clone())
+                            Ok(e.insert(echange).get_mut_balance().get_mut()?.clone())
                         }
                     }
                 },
@@ -154,7 +154,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
                     // Create a new echange for the asset
                     let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
 
-                    Ok(e.insert(account).assets.entry(asset).or_insert(echange).get_balance().clone())
+                    Ok(e.insert(account).assets.entry(asset).or_insert(echange).get_mut_balance().get_mut()?.clone())
                 }
             }
         }
@@ -166,12 +166,12 @@ impl<'a, S: Storage> ChainState<'a, S> {
             Role::Receiver => match self.receiver_balances.entry(key).or_insert_with(HashMap::new).entry(asset) {
                 Entry::Occupied(mut o) => {
                     let version = o.get_mut();
-                    version.set_balance(new_ct);
+                    version.set_balance(CiphertextVariant::Decompressed(new_ct));
                 },
                 Entry::Vacant(e) => {
                     // We must retrieve the version to get its previous topoheight
                     let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                    e.insert(version).set_balance(new_ct);
+                    e.insert(version).set_balance(CiphertextVariant::Decompressed(new_ct));
                 }
             },
             Role::Sender => match self.accounts.entry(key) {
@@ -180,12 +180,12 @@ impl<'a, S: Storage> ChainState<'a, S> {
                     match account.assets.entry(asset) {
                         Entry::Occupied(mut o) => {
                             let version = o.get_mut();
-                            version.set_balance(new_ct);
+                            version.set_balance(CiphertextVariant::Decompressed(new_ct));
                         },
                         Entry::Vacant(e) => {
                             // Build the echange for this asset
                             let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
-                            e.insert(echange).set_balance(new_ct);
+                            e.insert(echange).set_balance(CiphertextVariant::Decompressed(new_ct));
                         }
                     }
                 },
@@ -196,7 +196,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
                     // Create a new echange for the asset
                     let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
 
-                    e.insert(account).assets.entry(asset).or_insert(echange).set_balance(new_ct);
+                    e.insert(account).assets.entry(asset).or_insert(echange).set_balance(CiphertextVariant::Decompressed(new_ct));
                 }
             }
         }
@@ -208,7 +208,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     async fn internal_update_sender_echange(&mut self, key: &'a PublicKey, asset: &'a Hash, new_ct: Ciphertext) -> Result<(), BlockchainError> {
         let change = self.accounts.get_mut(key)
             .and_then(|a| a.assets.get_mut(asset))
-            .ok_or_else(|| BlockchainError::NoTxSender(key.clone()))?;
+            .ok_or_else(|| BlockchainError::NoTxSender(key.as_address(self.storage.is_mainnet())))?;
 
         // Increase the total output
         change.add_change(new_ct)?;
@@ -250,10 +250,11 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Reward a miner for the block mined
-    pub async fn reward_miner(&mut self, miner: &'a PublicKey, _reward: u64) -> Result<(), BlockchainError> {
-        let miner_balance = self.internal_get_account_balance(miner, &XELIS_ASSET, Role::Receiver).await?;
+    pub async fn reward_miner(&mut self, miner: &'a PublicKey, reward: u64) -> Result<(), BlockchainError> {
+        // TODO prevent cloning
+        let mut miner_balance = self.internal_get_account_balance(miner, &XELIS_ASSET, Role::Receiver).await?;
         // TODO add reward to miner balance
-        // *miner_balance.get_mut().map_err(|_| BlockchainError::InvalidCiphertext)? += Scalar::from(reward + self.fees_collected);
+        miner_balance += reward + self.fees_collected;
         self.internal_update_account_balance(miner, &XELIS_ASSET, miner_balance, Role::Receiver).await?;
         Ok(())
     }
@@ -262,7 +263,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     pub async fn apply_changes(mut self) -> Result<(), BlockchainError> {
         // Store every new nonce
         for (key, account) in &mut self.accounts {
-            trace!("Saving versioned nonce {} for {} at topoheight {}", account.nonce, key, self.topoheight);
+            trace!("Saving versioned nonce {} for {} at topoheight {}", account.nonce, key.as_address(self.storage.is_mainnet()), self.topoheight);
             self.storage.set_last_nonce_to(key, self.topoheight, &account.nonce).await?;
 
             let balances = self.receiver_balances.entry(&key).or_insert_with(HashMap::new);
@@ -306,13 +307,13 @@ impl<'a, S: Storage> ChainState<'a, S> {
         // Apply all balances changes at topoheight
         for (account, balances) in self.receiver_balances {
             for (asset, version) in balances {
-                trace!("Saving versioned balance {} for {} at topoheight {}", version, account, self.topoheight);
+                trace!("Saving versioned balance {} for {} at topoheight {}", version, account.as_address(self.storage.is_mainnet()), self.topoheight);
                 self.storage.set_last_balance_to(account, asset, self.topoheight, &version).await?;
             }
 
             // If the account has no nonce set, set it to 0
             if !self.accounts.contains_key(account) && !self.storage.has_nonce(account).await? {
-                debug!("{} has now a balance but without any nonce registered, set default (0) nonce", account);
+                debug!("{} has now a balance but without any nonce registered, set default (0) nonce", account.as_address(self.storage.is_mainnet()));
                 self.storage.set_last_nonce_to(account, self.topoheight, &VersionedNonce::new(0, None)).await?;
             }
         }

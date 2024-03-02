@@ -5,11 +5,10 @@ use std::{
 use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{
-    account::Ciphertext,
+    account::CiphertextVariant,
     asset::AssetWithData,
     crypto::{
-        Hash,
-        PublicKey,
+        Hash, PublicKey
     },
     difficulty::{
         CumulativeDifficulty,
@@ -292,7 +291,7 @@ pub enum StepResponse {
     // Set of keys, pagination
     Keys(IndexSet<PublicKey>, Option<u64>),
     // Balances requested
-    Balances(Vec<Option<Ciphertext>>),
+    Balances(Vec<Option<CiphertextVariant>>),
     // Nonces for requested accounts
     Nonces(Vec<u64>),
     // top blocks metadata

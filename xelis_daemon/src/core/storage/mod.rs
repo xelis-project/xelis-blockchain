@@ -21,6 +21,9 @@ pub type Tips = HashSet<Hash>;
 
 #[async_trait]
 pub trait Storage: DagOrderProvider + PrunedTopoheightProvider + NonceProvider + ClientProtocolProvider + BlockDagProvider + Sync + Send + 'static {
+    // Is the chain running on mainnet
+    fn is_mainnet(&self) -> bool;
+
     // Clear caches if exists
     async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
 

@@ -829,18 +829,17 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
             for tx_hash in block_header.get_transactions() {
                 trace!("Searching tx {} in block {}", tx_hash, hash);
                 let tx = storage.get_transaction(tx_hash).await.context(format!("Error while retrieving transaction {tx_hash} from block {hash}"))?;
-                let is_sender = *tx.get_owner() == *key;
+                let is_sender = *tx.get_source() == *key;
                 match tx.get_data() {
-                    TransactionType::Transfer(transfers) => {
+                    TransactionType::Transfers(transfers) => {
                         for transfer in transfers {
-                            if transfer.asset == params.asset {
-                                if transfer.to == *key {
+                            if *transfer.get_asset() == params.asset {
+                                if *transfer.get_destination() == *key {
                                     history.push(AccountHistoryEntry {
                                         topoheight: topo,
                                         hash: tx_hash.clone(),
                                         history_type: AccountHistoryType::Incoming {
-                                            amount: transfer.amount,
-                                            from: tx.get_owner().to_address(blockchain.get_network().is_mainnet())
+                                            from: tx.get_source().as_address(blockchain.get_network().is_mainnet())
                                         },
                                         block_timestamp: block_header.get_timestamp()
                                     });
@@ -851,8 +850,7 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
                                         topoheight: topo,
                                         hash: tx_hash.clone(),
                                         history_type: AccountHistoryType::Outgoing {
-                                            amount: transfer.amount,
-                                            to: transfer.to.to_address(blockchain.get_network().is_mainnet())
+                                            to: transfer.get_destination().as_address(blockchain.get_network().is_mainnet())
                                         },
                                         block_timestamp: block_header.get_timestamp()
                                     });
@@ -860,19 +858,18 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
                             }
                         }
                     }
-                    TransactionType::Burn { asset, amount } => {
-                        if *asset == params.asset {
+                    TransactionType::Burn(payload) => {
+                        if payload.asset == params.asset {
                             if is_sender {
                                 history.push(AccountHistoryEntry {
                                     topoheight: topo,
                                     hash: tx_hash.clone(),
-                                    history_type: AccountHistoryType::Burn { amount: *amount },
+                                    history_type: AccountHistoryType::Burn { amount: payload.amount },
                                     block_timestamp: block_header.get_timestamp()
                                 });
                             }
                         }
-                    },
-                    _ => {}
+                    }
                 }
             }
 
@@ -946,7 +943,10 @@ async fn get_accounts<S: Storage>(context: Context, body: Value) -> Result<Value
     };
 
     let storage = blockchain.get_storage().read().await;
-    let accounts = storage.get_partial_keys(maximum, skip, minimum_topoheight, maximum_topoheight).await.context("Error while retrieving accounts")?;
+    let mainnet = storage.is_mainnet();
+    let accounts = storage.get_partial_keys(maximum, skip, minimum_topoheight, maximum_topoheight).await
+        .context("Error while retrieving accounts")?
+        .into_iter().map(|key| key.to_address(mainnet)).collect::<Vec<_>>();
 
     Ok(json!(accounts))
 }

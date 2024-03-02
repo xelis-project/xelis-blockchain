@@ -34,7 +34,7 @@ use xelis_common::{
         get_current_time_in_seconds,
         TimestampMillis
     },
-    transaction::{Transaction, TransactionType, EXTRA_DATA_LIMIT_SIZE},
+    transaction::Transaction,
     utils::format_xelis,
     varuint::VarUint
 };
@@ -68,18 +68,11 @@ use crate::{
     }
 };
 use std::{
-    sync::{
-        Arc,
-        atomic::{Ordering, AtomicU64},
-    },
-    net::SocketAddr,
-    collections::{
-        HashMap,
-        HashSet,
-        hash_map::Entry
-    },
-    time::Instant,
-    borrow::Cow
+    borrow::Cow, collections::{
+        hash_map::Entry, HashMap, HashSet
+    }, net::SocketAddr, num::NonZeroUsize, sync::{
+        atomic::{AtomicU64, Ordering}, Arc
+    }, time::Instant
 };
 use async_recursion::async_recursion;
 use tokio::sync::{Mutex, RwLock};
@@ -222,16 +215,16 @@ impl<S: Storage> Blockchain<S> {
             topoheight: AtomicU64::new(topoheight),
             stable_height: AtomicU64::new(0),
             stable_topoheight: AtomicU64::new(0),
-            mempool: RwLock::new(Mempool::new()),
+            mempool: RwLock::new(Mempool::new(network)),
             storage: RwLock::new(storage),
             p2p: RwLock::new(None),
             rpc: RwLock::new(None),
             difficulty: Mutex::new(GENESIS_BLOCK_DIFFICULTY),
             simulator: config.simulator,
             network,
-            tip_base_cache: Mutex::new(LruCache::new(1024)),
-            tip_work_score_cache: Mutex::new(LruCache::new(1024)),
-            full_order_cache: Mutex::new(LruCache::new(1024)),
+            tip_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
+            tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
+            full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks
         };
 
@@ -646,10 +639,10 @@ impl<S: Storage> Blockchain<S> {
         for pre_hash in pre_blocks {
             // We compare only against block ordered otherwise we can have desync between node which could lead to fork
             // This is rare event but can happen
-            if provider.is_block_topological_ordered(&hash).await {
-                let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(&hash).await?;
+            if provider.is_block_topological_ordered(&pre_hash).await {
+                let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(&pre_hash).await?;
                 if cumulative_difficulty >= sync_block_cumulative_difficulty {
-                    warn!("Block {} at height {} is not a sync block, it has lower cumulative difficulty than block {} at height {}", hash, block_height, hash, i);
+                    warn!("Block {} at height {} is not a sync block, it has lower cumulative difficulty than block {} at height {}", hash, block_height, pre_hash, i);
                     return Ok(false)
                 }
             }
@@ -1135,7 +1128,7 @@ impl<S: Storage> Blockchain<S> {
 
             let current_topoheight = self.get_topo_height();
             // get the highest nonce for this owner
-            let owner = tx.get_owner();
+            let owner = tx.get_source();
             // final balances of a user after the new TX being applied
             let mut final_balances: HashMap<Hash, VersionedBalance> = HashMap::new();
             // get the highest nonce available
@@ -1157,11 +1150,11 @@ impl<S: Storage> Blockchain<S> {
                 let mut balances = HashMap::new();
                 let mut nonces = HashMap::new();
                 // because we already verified the range of nonce
-                nonces.insert(tx.get_owner(), tx.get_nonce());
+                nonces.insert(tx.get_source(), tx.get_nonce());
                 // Insert expected balance from mempool TXs
 
                 // Now introduce all expected balances for this user from mempool cache
-                let user_balances = balances.entry(tx.get_owner()).or_insert_with(HashMap::new);
+                let user_balances = balances.entry(tx.get_source()).or_insert_with(HashMap::new);
                 let cached_balances = cache.get_balances();
                 // We are forced to clone the balance because we need to manipulate it in the next step
                 for (asset, balance) in cached_balances {
@@ -1173,7 +1166,7 @@ impl<S: Storage> Blockchain<S> {
                 self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, Some(&mut nonces), false, current_topoheight).await?;
 
                 // Store all balances changes
-                if let Some(user_balances) = balances.remove(tx.get_owner()) {
+                if let Some(user_balances) = balances.remove(tx.get_source()) {
                     for (asset, balance) in user_balances {
                         final_balances.insert(asset.clone(), balance);
                     }
@@ -1182,7 +1175,7 @@ impl<S: Storage> Blockchain<S> {
                 let mut balances = HashMap::new();
                 self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false, current_topoheight).await?;
                 // Store balances changes
-                if let Some(user_balances) = balances.remove(tx.get_owner()) {
+                if let Some(user_balances) = balances.remove(tx.get_source()) {
                     for (asset, balance) in user_balances {
                         final_balances.insert(asset.clone(), balance);
                     }
@@ -1358,10 +1351,10 @@ impl<S: Storage> Blockchain<S> {
             }
 
             // Check if the TX is valid for this potential block
-            trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_owner());
-            let owner = tx.get_owner();
+            trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_source().as_address(self.network.is_mainnet()));
+            let owner = tx.get_source();
             if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false, topoheight).await {
-                warn!("TX {} ({}) is not valid for mining: {}", hash, owner, e);
+                warn!("TX {} ({}) is not valid for mining: {}", hash, owner.as_address(self.network.is_mainnet()), e);
             } else {
                 trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()));
                 // TODO no clone
@@ -1754,14 +1747,14 @@ impl<S: Storage> Blockchain<S> {
                     } else {
                         // tx was not executed, but lets check that it is not a potential double spending
                         // check that the nonce is not already used
-                        if !nonce_checker.use_nonce(&*storage, tx.get_owner(), tx.get_nonce(), highest_topo).await? {
+                        if !nonce_checker.use_nonce(&*storage, tx.get_source(), tx.get_nonce(), highest_topo).await? {
                             warn!("Malicious TX {}, it is a potential double spending with same nonce {}, skipping...", tx_hash, tx.get_nonce());
                             // TX will be orphaned
                             continue;
                         }
 
-                        let next_nonce = nonce_checker.get_new_nonce(tx.get_owner())?;
-                        local_nonces.insert(tx.get_owner(), next_nonce);
+                        let next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
+                        local_nonces.insert(tx.get_source(), next_nonce);
 
                         // mark tx as executed
                         debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
@@ -2183,7 +2176,7 @@ impl<S: Storage> Blockchain<S> {
 
     // retrieve the already added balance with changes OR generate a new versioned balance
     async fn retrieve_balance<'a, 'b>(&self, storage: &S, balances: &'b mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, topoheight: u64) -> Result<&'b mut VersionedBalance, BlockchainError> {
-        trace!("retrieve balance {} for {} at topoheight {}", asset, key, topoheight);
+        trace!("retrieve balance {} for {} at topoheight {}", asset, key.as_address(storage.is_mainnet()), topoheight);
         let assets = balances.entry(key).or_insert_with(HashMap::new);
         Ok(match assets.entry(asset) {
             Entry::Occupied(v) => v.into_mut(),
@@ -2197,15 +2190,15 @@ impl<S: Storage> Blockchain<S> {
     // this function just add to balance
     // its used to centralize all computation
     async fn add_balance<'a>(&self, storage: &S, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, amount: u64, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("add balance {} for {} at topoheight {} with {}", asset, key, topoheight, amount);
+        trace!("add balance {} for {} at topoheight {} with {}", asset, key.as_address(storage.is_mainnet()), topoheight, amount);
         let version = self.retrieve_balance(storage, balances, key, asset, topoheight).await?;
-        version.add_plaintext_to_balance(amount);
+        version.add_plaintext_to_balance(amount)?;
         Ok(())
     }
 
     // reward block miner and dev fees if any.
     async fn reward_miner<'a>(&self, storage: &S, block: &'a BlockHeader, mut block_reward: u64, total_fees: u64, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, topoheight: u64) -> Result<(), BlockchainError> {
-        debug!("reward miner {} at topoheight {} with block reward = {}, total fees = {}", block.get_miner(), topoheight, block_reward, total_fees);
+        debug!("reward miner {} at topoheight {} with block reward = {}, total fees = {}", block.get_miner().as_address(storage.is_mainnet()), topoheight, block_reward, total_fees);
         let dev_fee_percentage = get_block_dev_fee(block.get_height());
         // if dev fee are enabled, give % from block reward only
         if dev_fee_percentage != 0 {

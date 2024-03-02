@@ -3,14 +3,12 @@ use std::sync::PoisonError;
 use thiserror::Error;
 use xelis_common::{
     crypto::{
-        Hash,
-        PublicKey,
-        bech32::Bech32Error
+        bech32::Bech32Error, elgamal::DecompressionError, Address, Hash
     },
-    serializer::ReaderError,
-    prompt::PromptError,
     difficulty::DifficultyError,
-    time::TimestampMillis,
+    prompt::PromptError,
+    serializer::ReaderError,
+    time::TimestampMillis
 };
 use human_bytes::human_bytes;
 
@@ -71,19 +69,19 @@ pub enum BlockchainError {
     #[error("Tx {} is already in block", _0)]
     TxAlreadyInBlock(Hash),
     #[error("Duplicate registration tx for address '{}' found in same block", _0)]
-    DuplicateRegistration(PublicKey), // address
+    DuplicateRegistration(Address), // address
     #[error("Invalid Tx fee, expected at least {}, got {}", _0, _1)]
     InvalidTxFee(u64, u64),
     #[error("Fees are lower for this TX than the overrided TX, expected at least {}, got {}", _0, _1)]
     FeesToLowToOverride(u64, u64),
     #[error("No account found for {}", _0)]
-    AccountNotFound(PublicKey),
+    AccountNotFound(Address),
     #[error("Address {} is not registered", _0)]
-    AddressNotRegistered(PublicKey),
+    AddressNotRegistered(Address),
     #[error("Address {} is already registered", _0)]
-    AddressAlreadyRegistered(PublicKey),
+    AddressAlreadyRegistered(Address),
     #[error("Address {} should have {} for {} but have {}", _0, _2, _1, _3)]
-    NotEnoughFunds(PublicKey, Hash, u64, u64), // address, asset, balance, expected
+    NotEnoughFunds(Address, Hash, u64, u64), // address, asset, balance, expected
     #[error("Coinbase Tx not allowed: {}", _0)]
     CoinbaseTxNotAllowed(Hash),
     #[error("Invalid block reward, expected {}, got {}", _0, _1)]
@@ -171,7 +169,7 @@ pub enum BlockchainError {
     #[error("Invalid genesis block hash")]
     InvalidGenesisHash,
     #[error("Invalid tx {} nonce (got {} expected {}) for {}", _0, _1, _2, _3)]
-    InvalidTxNonce(Hash, u64, u64, PublicKey),
+    InvalidTxNonce(Hash, u64, u64, Address),
     #[error("Invalid tx nonce {} for mempool cache, range: [{}-{}]", _0, _1, _2)]
     InvalidTxNonceMempoolCache(u64, u64, u64),
     #[error("Invalid asset ID: {}", _0)]
@@ -179,13 +177,13 @@ pub enum BlockchainError {
     #[error(transparent)]
     DifficultyError(#[from] DifficultyError),
     #[error("No balance found on disk for {}", _0)]
-    NoBalance(PublicKey),
+    NoBalance(Address),
     #[error("No balance changes for {} at topoheight {} and asset {}", _0, _1, _2)]
-    NoBalanceChanges(PublicKey, u64, Hash),
+    NoBalanceChanges(Address, u64, Hash),
     #[error("No nonce found on disk for {}", _0)]
-    NoNonce(PublicKey),
+    NoNonce(Address),
     #[error("No nonce changes for {} at specific topoheight", _0)]
-    NoNonceChanges(PublicKey),
+    NoNonceChanges(Address),
     #[error("Overflow detected")]
     Overflow,
     #[error("Error, block include a dead tx {}", _0)]
@@ -209,7 +207,9 @@ pub enum BlockchainError {
     #[error("Invalid chain state, no sender output ?")]
     NoSenderOutput,
     #[error("Invalid chain state, sender {} account is not found", _0)]
-    NoTxSender(PublicKey)
+    NoTxSender(Address),
+    #[error(transparent)]
+    DecompressionError(#[from] DecompressionError),
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {
