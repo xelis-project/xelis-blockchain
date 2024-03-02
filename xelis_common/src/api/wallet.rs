@@ -173,3 +173,59 @@ pub enum NotifyEvent {
     // Same here
     Offline,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferOut {
+    // Destination address
+    pub destination: Address,
+    // Asset spent
+    pub asset: Hash,
+    // Plaintext amount
+    pub amount: u64,
+    // extra data
+    pub extra_data: Option<DataElement>
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferIn {
+    // Asset spent
+    pub asset: Hash,
+    // Plaintext amount
+    pub amount: u64,
+    // extra data
+    pub extra_data: Option<DataElement>
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryType {
+    // Coinbase is only XELIS_ASSET
+    Coinbase {
+        reward: u64
+    },
+    Burn {
+        asset: Hash,
+        amount: u64
+    },
+    Incoming {
+        from: Address,
+        transfers: Vec<TransferIn>
+    },
+    Outgoing {
+        transfers: Vec<TransferOut>,
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
+    }
+}
+
+// This struct is used to represent a transaction entry like in wallet
+// But we replace every PublicKey to use Address instead
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionEntry {
+    pub hash: Hash,
+    pub topoheight: u64,
+    #[serde(flatten)]
+    pub entry: EntryType,
+}
