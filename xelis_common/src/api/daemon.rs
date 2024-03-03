@@ -38,6 +38,9 @@ pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -
     Ok(Cow::Owned(extra_nonce))
 }
 
+fn empty_cow_vec<'a, T: Clone>() -> Cow<'a, Vec<T>> {
+    Cow::Owned(Vec::with_capacity(0))
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct BlockResponseInner<'a, T: AsRef<Transaction> + Clone> {
@@ -61,6 +64,7 @@ pub struct BlockResponseInner<'a, T: AsRef<Transaction> + Clone> {
     pub miner: Cow<'a, Address>,
     pub txs_hashes: Cow<'a, IndexSet<Hash>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default = "empty_cow_vec")]
     pub transactions: Cow<'a, Vec<T>>
 }
 
