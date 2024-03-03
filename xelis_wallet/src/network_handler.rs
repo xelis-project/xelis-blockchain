@@ -7,7 +7,7 @@ use std::{
 };
 use thiserror::Error;
 use anyhow::Error;
-use log::{debug, error, warn, trace};
+use log::{debug, error, trace, warn};
 use tokio::{task::JoinHandle, sync::Mutex};
 use xelis_common::{
     account::CiphertextVariant,
@@ -170,14 +170,15 @@ impl NetworkHandler {
         debug!("Processing block {} at topoheight {}", block_hash, topoheight);
 
         if block.miner.is_mainnet() != self.wallet.get_network().is_mainnet() {
-            warn!("Block {} at topoheight {} is not on the same network as the wallet", block_hash, topoheight);
-            return Ok(false)
+            debug!("Block {} at topoheight {} is not on the same network as the wallet", block_hash, topoheight);
+            return Err(NetworkError::NetworkMismatch.into())
         }
 
         let miner = block.miner.into_owned().to_public_key();
         let mut changes_stored = false;
         // create Coinbase entry if its our address and we're looking for XELIS asset
         if miner == *address.get_public_key() {
+            debug!("Block {} at topoheight {} is mined by us", block_hash, topoheight);
             if let Some(reward) = block.reward {
                 let coinbase = EntryData::Coinbase { reward };
                 let entry = TransactionEntry::new(block_hash.clone(), topoheight, coinbase);
@@ -256,8 +257,9 @@ impl NetworkHandler {
                                 }
                             };
 
+                            debug!("Decrypting amount from TX {}", tx_hash);
                             let ciphertext = Ciphertext::new(commitment, handle);
-                            let amount = self.wallet.decrypt_ciphertext(&ciphertext).await?;
+                            let amount = self.wallet.decrypt_ciphertext(&ciphertext)?;
 
                             if is_owner {
                                 let transfer = TransferOut::new(destination, asset, amount, extra_data);
@@ -339,8 +341,9 @@ impl NetworkHandler {
                     let mut storage = self.wallet.get_storage().write().await;
                     let store = storage.get_balance_for(asset).await.map(|b| b.ciphertext != balance).unwrap_or(false);
                     if store {
+                        debug!("Storing balance for asset {}", asset);
                         let ciphertext = balance.decompress()?;
-                        let plaintext_balance = self.wallet.decrypt_ciphertext(&ciphertext).await?;
+                        let plaintext_balance = self.wallet.decrypt_ciphertext(&ciphertext)?;
 
                         storage.set_balance_for(asset, Balance::new(plaintext_balance, balance)).await?;
                         // Propagate the event
@@ -498,6 +501,7 @@ impl NetworkHandler {
 
     // Sync the latest version of our balances and nonces and determine if we should parse all blocks
     async fn sync_head_state(&self, address: &Address) -> Result<bool, Error> {
+        trace!("syncing head state");
         let versioned_nonce = match self.api.get_nonce(&address).await.map(|v| v.version) {
             Ok(v) => v,
             Err(e) => {
@@ -508,8 +512,11 @@ impl NetworkHandler {
         };
 
         let assets = self.api.get_account_assets(&address).await?;
+        trace!("assets: {}", assets.len());
+
         let mut balances: HashMap<&Hash, CiphertextVariant>  = HashMap::new();
         for asset in &assets {
+            trace!("asset: {}", asset);
             // check if we have this asset locally
             if !{
                 let storage = self.wallet.get_storage().read().await;
@@ -528,31 +535,37 @@ impl NetworkHandler {
             }
 
             // get the balance for this asset
-            let version = self.api.get_balance(&address, &asset).await.map(|v| v.version)?;
-            balances.insert(asset, version.take_balance());
+            let result = self.api.get_balance(&address, &asset).await?;
+            trace!("found balance at topoheight: {}", result.topoheight);
+            balances.insert(asset, result.version.take_balance());
         }
 
         let mut should_sync_blocks = false;
         // Apply changes
         {
-            let mut storage = self.wallet.get_storage().write().await;
             let new_nonce = versioned_nonce.get_nonce();
-            if new_nonce != storage.get_nonce().unwrap_or(0) {
-                // Store the new nonce
-                storage.set_nonce(new_nonce)?;
-                should_sync_blocks = true;
+            {
+                let mut storage = self.wallet.get_storage().write().await;
+                if new_nonce != storage.get_nonce().unwrap_or(0) {
+                    // Store the new nonce
+                    storage.set_nonce(new_nonce)?;
+                    should_sync_blocks = true;
+                }
             }
 
             for (asset, mut ciphertext) in balances {
-                let must_update = match storage.get_balance_for(&asset).await {
-                    Ok(mut previous) => previous.ciphertext.get_mut()? != ciphertext.get_mut()?,
-                    // If we don't have a balance for this asset, we should update it
-                    Err(_) => true
+                let must_update = {
+                    let storage = self.wallet.get_storage().read().await;
+                    match storage.get_balance_for(&asset).await {
+                        Ok(mut previous) => previous.ciphertext.get_mut()? != ciphertext.get_mut()?,
+                        // If we don't have a balance for this asset, we should update it
+                        Err(_) => true
+                    }
                 };
 
                 if must_update {
-                    // TODO decrypt the balance and compare it with the new one
-                    let value = 0;
+                    trace!("must update balance for asset: {}, ct: {:?}", asset, ciphertext.to_bytes());
+                    let value = self.wallet.decrypt_ciphertext(ciphertext.decompress()?.as_ref())?;
 
                     // Inform the change of the balance
                     self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
@@ -561,6 +574,7 @@ impl NetworkHandler {
                     })).await;
 
                     // Update the balance
+                    let mut storage = self.wallet.get_storage().write().await;
                     storage.set_balance_for(asset, Balance::new(value, ciphertext)).await?;
 
                     // We should sync new blocks to get the TXs
@@ -575,11 +589,13 @@ impl NetworkHandler {
     // Locate the highest valid topoheight we synced to, clean wallet storage
     // then sync again the head state
     async fn sync(&self, address: &Address, event: Option<NewBlockEvent>) -> Result<(), Error> {
+        trace!("sync");
         // First, locate the last topoheight valid for syncing
         let (daemon_topoheight, daemon_block_hash, wallet_topoheight, sync_back) = self.locate_sync_topoheight_and_clean().await?;
 
         // Sync back is requested, sync the head state again
         if sync_back {
+            trace!("sync back");
             // Now sync head state, this will helps us to determinate if we should sync blocks or not
             let should_sync_blocks = self.sync_head_state(&address).await?;
             // we have something that changed, sync transactions
@@ -587,11 +603,13 @@ impl NetworkHandler {
                 self.sync_new_blocks(&address, wallet_topoheight, false).await?;
             }
         } else if daemon_topoheight > wallet_topoheight {
+            trace!("daemon topoheight is greater than wallet topoheight");
             // We didn't had to resync, sync only necessary blocks
             if let Some(block) = event {
                 // We can safely handle it by hand by `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
                 if let Some(topoheight) = block.topoheight {
                     if self.process_block(address, block, topoheight).await? {
+                        trace!("We must sync head state");
                         // A change happened in this block, lets update balance and nonce
                         self.sync_head_state(&address).await?;
                     }

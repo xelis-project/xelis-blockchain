@@ -24,6 +24,7 @@ use xelis_common::{
     crypto::{
         elgamal::Ciphertext,
         Address,
+        ECDLPTablesFile,
         Hash,
         KeyPair,
         PublicKey,
@@ -235,7 +236,8 @@ pub struct Wallet {
     #[cfg(feature = "api_server")]
     xswd_channel: RwLock<Option<UnboundedSender<XSWDEvent>>>,
     // Event broadcaster
-    event_broadcaster: Mutex<Option<BroadcastSender<Event>>>
+    event_broadcaster: Mutex<Option<BroadcastSender<Event>>>,
+    precomputed_tables: ECDLPTablesFile<26>
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -247,6 +249,8 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 impl Wallet {
     // Create a new wallet with the specificed storage, keypair and its network
     fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network) -> Arc<Self> {
+        let precomputed_tables = ECDLPTablesFile::load_from_file("ecdlp_table_26.bin").unwrap();
+
         let zelf = Self {
             storage: RwLock::new(storage),
             public_key: keypair.get_public_key().compress(),
@@ -257,7 +261,8 @@ impl Wallet {
             api_server: Mutex::new(None),
             #[cfg(feature = "api_server")]
             xswd_channel: RwLock::new(None),
-            event_broadcaster: Mutex::new(None)
+            event_broadcaster: Mutex::new(None),
+            precomputed_tables
         };
 
         Arc::new(zelf)
@@ -556,11 +561,9 @@ impl Wallet {
         Ok(())
     }
 
-    pub async fn decrypt_ciphertext(&self, _ciphertext: &Ciphertext) -> Result<u64, WalletError> {
+    pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
         trace!("Decrypting ciphertext");
-        // let encrypted_storage = self.storage.read().await;
-        // self.keypair.decrypt(&precomputed_tables, &ciphertext).ok_or(WalletError::CiphertextDecode)
-        todo!("decrypt ciphertext")
+        tokio::task::block_in_place(|| self.keypair.decrypt(&self.precomputed_tables, &ciphertext).ok_or(WalletError::CiphertextDecode))
     }
 
     // Create a transaction with the given transaction type and fee
