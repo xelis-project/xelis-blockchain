@@ -21,7 +21,7 @@ use xelis_common::{
         daemon::{
             AccountHistoryEntry,
             AccountHistoryType,
-            BlockResponseInner,
+            RPCBlockResponse,
             BlockType,
             GetAccountAssetsParams,
             GetAccountHistoryParams,
@@ -57,29 +57,27 @@ use xelis_common::{
             SubmitTransactionParams,
             TransactionResponse
         },
-        DataHash
-    },
-    config::{
-        MAX_TRANSACTION_SIZE,
-        VERSION,
-        XELIS_ASSET,
-        MAXIMUM_SUPPLY
+        DataHash,
+        RPCTransaction,
+        RPCTransactionType as RPCTransactionType
     },
     async_handler,
     block::{
         Block,
         BlockHeader
     },
-    transaction::{
-        Transaction,
-        TransactionType
+    config::{
+        MAXIMUM_SUPPLY,
+        MAX_TRANSACTION_SIZE,
+        VERSION,
+        XELIS_ASSET
     },
+    context::Context,
+    crypto::Hash,
     difficulty::{
         CumulativeDifficulty,
         Difficulty
     },
-    crypto::Hash,
-    context::Context,
     immutable::Immutable,
     rpc_server::{
         parse_params,
@@ -87,6 +85,10 @@ use xelis_common::{
     },
     serializer::Serializer,
     time::TimestampSeconds,
+    transaction::{
+        Transaction,
+        TransactionType
+    }
 };
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
@@ -145,9 +147,21 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
 
     let mainnet = blockchain.get_network().is_mainnet();
     let header = block.get_header();
-    let transactions = block.get_transactions();
+    let transactions = block.get_transactions()
+        .iter().zip(block.get_txs_hashes()).map(|(tx, hash)| {
+            RPCTransaction {
+                hash: Cow::Borrowed(hash),
+                version: tx.get_version(),
+                source: tx.get_source().as_address(mainnet),
+                data: RPCTransactionType::from_type(tx.get_data(), mainnet),
+                fee: tx.get_fee(),
+                nonce: tx.get_nonce(),
+                source_commitments: Cow::Borrowed(tx.get_source_commitments()),
+                range_proof: Cow::Borrowed(tx.get_range_proof()),
+            }
+        }).collect::<Vec<RPCTransaction<'_>>>();
 
-    Ok(json!(BlockResponseInner {
+    Ok(json!(RPCBlockResponse {
         hash: Cow::Borrowed(hash),
         topoheight,
         block_type,
@@ -165,7 +179,7 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
         miner: Cow::Owned(header.get_miner().as_address(mainnet)),
         tips: Cow::Borrowed(header.get_tips()),
         txs_hashes: Cow::Borrowed(header.get_txs_hashes()),
-        transactions: Cow::Borrowed(&transactions)
+        transactions
     }))
 }
 
@@ -191,7 +205,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
 
         let mainnet = blockchain.get_network().is_mainnet();
 
-        json!(BlockResponseInner::<Arc<Transaction>> {
+        json!(RPCBlockResponse {
             hash: Cow::Borrowed(hash),
             topoheight,
             block_type,
@@ -209,7 +223,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
             miner: Cow::Owned(header.get_miner().as_address(mainnet)),
             tips: Cow::Borrowed(header.get_tips()),
             txs_hashes: Cow::Borrowed(header.get_txs_hashes()),
-            transactions: Cow::Owned(Vec::with_capacity(0)),
+            transactions: Vec::with_capacity(0),
         })
     };
 
