@@ -17,7 +17,8 @@ use xelis_common::{
             NewBlockEvent
         },
         wallet::BalanceChanged,
-        DataElement
+        DataElement,
+        RPCTransactionType
     },
     asset::AssetWithData,
     crypto::{
@@ -25,8 +26,7 @@ use xelis_common::{
         Address,
         Hash
     },
-    serializer::Serializer,
-    transaction::TransactionType
+    serializer::Serializer
 };
 use crate::{
     daemon_api::DaemonAPI,
@@ -202,48 +202,38 @@ impl NetworkHandler {
         }
 
         // Verify all TXs one by one to find one for us
-        for (tx_hash, tx) in block.txs_hashes.into_owned().into_iter().zip(block.transactions.into_owned()) {
-            trace!("Checking transaction {}", tx_hash);
-            let fee = tx.get_fee();
-            let nonce = tx.get_nonce();
-            let is_owner = *tx.get_source() == *address.get_public_key();
-            let (owner, data) = tx.consume();
-            let entry: Option<EntryData> = match data {
-                TransactionType::Burn(payload) => {
+        for tx in block.transactions.into_iter() {
+            trace!("Checking transaction {}", tx.hash);
+            let is_owner = *tx.source.get_public_key() == *address.get_public_key();
+            let entry: Option<EntryData> = match tx.data {
+                RPCTransactionType::Burn(payload) => {
+                    let payload = payload.into_owned();
                     if is_owner {
                         Some(EntryData::Burn { asset: payload.asset, amount: payload.amount })
                     } else {
                         None
                     }
                 },
-                TransactionType::Transfers(txs) => {
+                RPCTransactionType::Transfers(txs) => {
                     let mut transfers_in: Vec<TransferIn> = Vec::new();
                     let mut transfers_out: Vec<TransferOut> = Vec::new();
-                    for tx in txs {
-                        let (
-                            asset,
-                            destination,
-                            extra_data,
-                            commitment,
-                            sender_handle,
-                            receiver_handle
-                        ) = tx.consume();
-
+                    for transfer in txs {
+                        let destination = transfer.destination.to_public_key();
                         if is_owner || destination == *address.get_public_key() {
-                            let extra_data = extra_data.and_then(|bytes| DataElement::from_bytes(&bytes).ok());
+                            let extra_data = transfer.extra_data.into_owned().and_then(|bytes| DataElement::from_bytes(&bytes).ok());
 
                             // Get the right handle
                             let handle = if is_owner {
-                                sender_handle
+                                transfer.sender_handle
                             } else {
-                                receiver_handle
+                                transfer.receiver_handle
                             };
 
                             // Decompress commitment it if possible
-                            let commitment = match commitment.decompress() {
+                            let commitment = match transfer.commitment.decompress() {
                                 Ok(c) => c,
                                 Err(e) => {
-                                    error!("Error while decompressing commitment of TX {}: {}", tx_hash, e);
+                                    error!("Error while decompressing commitment of TX {}: {}", tx.hash, e);
                                     continue;
                                 }
                             };
@@ -252,29 +242,29 @@ impl NetworkHandler {
                             let handle = match handle.decompress() {
                                 Ok(h) => h,
                                 Err(e) => {
-                                    error!("Error while decompressing handle of TX {}: {}", tx_hash, e);
+                                    error!("Error while decompressing handle of TX {}: {}", tx.hash, e);
                                     continue;
                                 }
                             };
 
-                            debug!("Decrypting amount from TX {}", tx_hash);
+                            debug!("Decrypting amount from TX {}", tx.hash);
                             let ciphertext = Ciphertext::new(commitment, handle);
                             let amount = self.wallet.decrypt_ciphertext(&ciphertext)?;
 
                             if is_owner {
-                                let transfer = TransferOut::new(destination, asset, amount, extra_data);
+                                let transfer = TransferOut::new(destination, transfer.asset.into_owned(), amount, extra_data);
                                 transfers_out.push(transfer);
                             } else {
-                                let transfer = TransferIn::new(asset, amount, extra_data);
+                                let transfer = TransferIn::new(transfer.asset.into_owned(), amount, extra_data);
                                 transfers_in.push(transfer);
                             }
                         }
                     }
 
                     if is_owner { // check that we are owner of this TX
-                        Some(EntryData::Outgoing { transfers: transfers_out, fee, nonce })
+                        Some(EntryData::Outgoing { transfers: transfers_out, fee: tx.fee, nonce: tx.nonce })
                     } else if !transfers_in.is_empty() { // otherwise, check that we received one or few transfers from it
-                        Some(EntryData::Incoming { from: owner, transfers: transfers_in })
+                        Some(EntryData::Incoming { from: tx.source.to_public_key(), transfers: transfers_in })
                     } else { // this TX has nothing to do with us, nothing to save
                         None
                     }
@@ -283,12 +273,12 @@ impl NetworkHandler {
 
             if let Some(entry) = entry {
                 // New transaction entry that may be linked to us, check if TX was executed
-                if !self.api.is_tx_executed_in_block(&tx_hash, &block_hash).await? {
-                    debug!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx_hash, block_hash);
+                if !self.api.is_tx_executed_in_block(&tx.hash, &block_hash).await? {
+                    debug!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx.hash, block_hash);
                     continue;
                 }
 
-                let entry = TransactionEntry::new(tx_hash, topoheight, entry);
+                let entry = TransactionEntry::new(tx.hash.into_owned(), topoheight, entry);
                 let propagate = {
                     let mut storage = self.wallet.get_storage().write().await;
                     let found = storage.has_transaction(entry.get_hash())?;
