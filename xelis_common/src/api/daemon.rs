@@ -14,7 +14,7 @@ use crate::{
     transaction::Transaction,
     time::{TimestampSeconds, TimestampMillis}
 };
-use super::DataHash;
+use super::{DataHash, RPCTransaction};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockType {
@@ -38,12 +38,9 @@ pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -
     Ok(Cow::Owned(extra_nonce))
 }
 
-fn empty_cow_vec<'a, T: Clone>() -> Cow<'a, Vec<T>> {
-    Cow::Owned(Vec::with_capacity(0))
-}
-
+// Structure used to map the public key to a human readable address
 #[derive(Serialize, Deserialize)]
-pub struct BlockResponseInner<'a, T: AsRef<Transaction> + Clone> {
+pub struct RPCBlockResponse<'a> {
     pub hash: Cow<'a, Hash>,
     pub topoheight: Option<u64>,
     pub block_type: BlockType,
@@ -64,11 +61,10 @@ pub struct BlockResponseInner<'a, T: AsRef<Transaction> + Clone> {
     pub miner: Cow<'a, Address>,
     pub txs_hashes: Cow<'a, IndexSet<Hash>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[serde(default = "empty_cow_vec")]
-    pub transactions: Cow<'a, Vec<T>>
+    pub transactions: Vec<RPCTransaction<'a>>,
 }
 
-pub type BlockResponse = BlockResponseInner<'static, Transaction>;
+pub type BlockResponse = RPCBlockResponse<'static>;
 
 #[derive(Serialize, Deserialize)]
 pub struct GetTopBlockParams {

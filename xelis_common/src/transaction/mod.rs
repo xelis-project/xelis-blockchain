@@ -92,8 +92,28 @@ impl TransferPayload {
     }
 
     // Get the extra data if any
-    pub fn get_extra_data(&self) -> Option<&Vec<u8>> {
-        self.extra_data.as_ref()
+    pub fn get_extra_data(&self) -> &Option<Vec<u8>> {
+        &self.extra_data
+    }
+
+    // Get the ciphertext commitment
+    pub fn get_commitment(&self) -> &CompressedCommitment {
+        &self.commitment
+    }
+
+    // Get the ciphertext decrypt handle for receiver
+    pub fn get_receiver_handle(&self) -> &CompressedHandle {
+        &self.receiver_handle
+    }
+
+    // Get the ciphertext decrypt handle for sender
+    pub fn get_sender_handle(&self) -> &CompressedHandle {
+        &self.sender_handle
+    }
+
+    // Get the validity proof
+    pub fn get_proof(&self) -> &CiphertextValidityProof {
+        &self.ct_validity_proof
     }
 
     pub fn get_ciphertext(&self, role: Role) -> CompressedCiphertext {
@@ -142,6 +162,16 @@ impl Transaction {
 
     pub fn get_nonce(&self) -> u64 {
         self.nonce
+    }
+
+    // Get the source commitments
+    pub fn get_source_commitments(&self) -> &Vec<SourceCommitment> {
+        &self.source_commitments
+    }
+
+    // Get the range proof
+    pub fn get_range_proof(&self) -> &RangeProof {
+        &self.range_proof
     }
 
     pub fn consume(self) -> (CompressedPublicKey, TransactionType) {
