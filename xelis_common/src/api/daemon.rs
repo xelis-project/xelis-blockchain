@@ -11,7 +11,6 @@ use crate::{
     crypto::{Address, Hash},
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
-    transaction::Transaction,
     time::{TimestampSeconds, TimestampMillis}
 };
 use super::{DataHash, RPCTransaction};
@@ -61,6 +60,7 @@ pub struct RPCBlockResponse<'a> {
     pub miner: Cow<'a, Address>,
     pub txs_hashes: Cow<'a, IndexSet<Hash>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub transactions: Vec<RPCTransaction<'a>>,
 }
 
@@ -291,7 +291,7 @@ pub struct GetTransactionsParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct TransactionResponse<'a, T: Clone + AsRef<Transaction>> {
+pub struct TransactionResponse<'a> {
     // in which blocks it was included
     pub blocks: Option<HashSet<Hash>>,
     // in which blocks it was executed
@@ -303,7 +303,7 @@ pub struct TransactionResponse<'a, T: Clone + AsRef<Transaction>> {
     #[serde(default)]
     pub first_seen: Option<TimestampSeconds>,
     #[serde(flatten)]
-    pub data: DataHash<'a, T>
+    pub data: DataHash<'a, RPCTransaction<'a>>
 }
 
 fn default_xelis_asset() -> Hash {
@@ -462,9 +462,9 @@ pub struct StableHeightChangedEvent {
 }
 
 // Value of NotifyEvent::TransactionAddedInMempool
-pub type TransactionAddedInMempoolEvent = TransactionResponse<'static, Transaction>;
+pub type TransactionAddedInMempoolEvent = TransactionResponse<'static>;
 // Value of NotifyEvent::TransactionOrphaned
-pub type TransactionOrphanedEvent = TransactionResponse<'static, Transaction>;
+pub type TransactionOrphanedEvent = TransactionResponse<'static>;
 
 // Value of NotifyEvent::TransactionExecuted
 #[derive(Serialize, Deserialize)]
