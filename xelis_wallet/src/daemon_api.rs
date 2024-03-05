@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashSet};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -123,7 +123,7 @@ impl DaemonAPI {
         Ok(assets)
     }
 
-    pub async fn get_account_assets(&self, address: &Address) -> Result<Vec<Hash>> {
+    pub async fn get_account_assets(&self, address: &Address) -> Result<HashSet<Hash>> {
         let assets = self.client.call_with("get_account_assets", &GetAccountAssetsParams {
             address: Cow::Borrowed(address)
         }).await.context("Error while retrieving account assets")?;
