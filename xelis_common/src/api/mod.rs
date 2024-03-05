@@ -20,6 +20,7 @@ use crate::{
     transaction::{
         BurnPayload,
         SourceCommitment,
+        Transaction,
         TransactionType
     }
 };
@@ -570,6 +571,21 @@ pub struct RPCTransaction<'a> {
     pub source_commitments: Cow<'a, Vec<SourceCommitment>>,
     /// The range proof is aggregated across all transfers and across all assets.
     pub range_proof: Cow<'a, RangeProof>,
+}
+
+impl<'a> RPCTransaction<'a> {
+    pub fn from_tx(tx: &'a Transaction, hash: &'a Hash, mainnet: bool) -> Self {
+        Self {
+            hash: Cow::Borrowed(hash),
+            version: tx.get_version(),
+            source: tx.get_source().as_address(mainnet),
+            data: RPCTransactionType::from_type(tx.get_data(), mainnet),
+            fee: tx.get_fee(),
+            nonce: tx.get_nonce(),
+            source_commitments: Cow::Borrowed(tx.get_source_commitments()),
+            range_proof: Cow::Borrowed(tx.get_range_proof()),
+        }
+    }
 }
 
 // We create a type above it so for deserialize we can use this type directly

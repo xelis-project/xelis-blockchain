@@ -13,7 +13,7 @@ use crate::{
     network::Network,
     time::{TimestampSeconds, TimestampMillis}
 };
-use super::{DataHash, RPCTransaction};
+use super::RPCTransaction;
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockType {
@@ -303,7 +303,7 @@ pub struct TransactionResponse<'a> {
     #[serde(default)]
     pub first_seen: Option<TimestampSeconds>,
     #[serde(flatten)]
-    pub data: DataHash<'a, RPCTransaction<'a>>
+    pub data: RPCTransaction<'a>
 }
 
 fn default_xelis_asset() -> Hash {
