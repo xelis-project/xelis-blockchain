@@ -21,6 +21,7 @@ use xelis_common::{
         RPCTransactionType
     },
     asset::AssetWithData,
+    config::XELIS_ASSET,
     crypto::{
         elgamal::Ciphertext,
         Address,
@@ -165,7 +166,8 @@ impl NetworkHandler {
 
     // Process a block by checking if it contains any transaction for us
     // Or that we mined it
-    async fn process_block(&self, address: &Address, block: BlockResponse, topoheight: u64) -> Result<bool, Error> {
+    // Returns assets that changed and returns the highest nonce if we send a transaction
+    async fn process_block(&self, address: &Address, block: BlockResponse, topoheight: u64) -> Result<Option<(HashSet<Hash>, Option<u64>)>, Error> {
         let block_hash = block.hash.into_owned();
         debug!("Processing block {} at topoheight {}", block_hash, topoheight);
 
@@ -174,14 +176,21 @@ impl NetworkHandler {
             return Err(NetworkError::NetworkMismatch.into())
         }
 
+        let mut assets_changed = HashSet::new();
+        // Miner address to verify if we mined the block
         let miner = block.miner.into_owned().to_public_key();
+
+        // Prevent storing changes multiple times
         let mut changes_stored = false;
+
         // create Coinbase entry if its our address and we're looking for XELIS asset
         if miner == *address.get_public_key() {
             debug!("Block {} at topoheight {} is mined by us", block_hash, topoheight);
             if let Some(reward) = block.reward {
                 let coinbase = EntryData::Coinbase { reward };
                 let entry = TransactionEntry::new(block_hash.clone(), topoheight, coinbase);
+
+                assets_changed.insert(XELIS_ASSET);
 
                 {
                     let mut storage = self.wallet.get_storage().write().await;
@@ -200,6 +209,9 @@ impl NetworkHandler {
                 warn!("No reward for block {} at topoheight {}", block_hash, topoheight);
             }
         }
+
+        // Highest nonce we found in this block
+        let mut our_highest_nonce = None;
 
         // Verify all TXs one by one to find one for us
         for tx in block.transactions.into_iter() {
@@ -251,11 +263,14 @@ impl NetworkHandler {
                             let ciphertext = Ciphertext::new(commitment, handle);
                             let amount = self.wallet.decrypt_ciphertext(&ciphertext)?;
 
+                            let asset = transfer.asset.into_owned();
+                            assets_changed.insert(asset.clone());
+
                             if is_owner {
-                                let transfer = TransferOut::new(destination, transfer.asset.into_owned(), amount, extra_data);
+                                let transfer = TransferOut::new(destination, asset, amount, extra_data);
                                 transfers_out.push(transfer);
                             } else {
-                                let transfer = TransferIn::new(transfer.asset.into_owned(), amount, extra_data);
+                                let transfer = TransferIn::new(asset, amount, extra_data);
                                 transfers_in.push(transfer);
                             }
                         }
@@ -270,6 +285,11 @@ impl NetworkHandler {
                     }
                 }
             };
+
+            // Find the highest nonce
+            if is_owner && our_highest_nonce.map(|n| tx.nonce > n).unwrap_or(true) {
+                our_highest_nonce = Some(tx.nonce);
+            }
 
             if let Some(entry) = entry {
                 // New transaction entry that may be linked to us, check if TX was executed
@@ -302,7 +322,11 @@ impl NetworkHandler {
             }
         }
 
-        Ok(changes_stored)
+        if !changes_stored || assets_changed.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some((assets_changed, our_highest_nonce)))
+        }
     }
 
     // Scan the chain using a specific balance asset, this helps us to get a list of version to only requests blocks where changes happened
@@ -327,7 +351,7 @@ impl NetworkHandler {
                 let changes = self.process_block(address, response, topoheight).await?;
 
                 // Check if a change occured, we are the highest version and update balances is requested
-                if balances && highest_version && changes {
+                if balances && highest_version && changes.is_some() {
                     let mut storage = self.wallet.get_storage().write().await;
                     let store = storage.get_balance_for(asset).await.map(|b| b.ciphertext != balance).unwrap_or(false);
                     if store {
@@ -490,21 +514,37 @@ impl NetworkHandler {
     }
 
     // Sync the latest version of our balances and nonces and determine if we should parse all blocks
-    async fn sync_head_state(&self, address: &Address) -> Result<bool, Error> {
+    // If assets are provided, we'll only sync these assets
+    // TODO: this may bug with Smart Contract integration as we could receive a new asset and not detect it
+    // If nonce is not provided, we will fetch it from the daemon
+    async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>) -> Result<bool, Error> {
         trace!("syncing head state");
-        let versioned_nonce = match self.api.get_nonce(&address).await.map(|v| v.version) {
-            Ok(v) => v,
-            Err(e) => {
-                debug!("Error while fetching last nonce: {}", e);
-                // Account is not registered, we can return safely here
-                return Ok(false)
+        let new_nonce = if let Some(nonce) = nonce {
+            nonce
+        } else {
+            trace!("no nonce provided, fetching it from daemon");
+            match self.api.get_nonce(&address).await.map(|v| v.version) {
+                Ok(v) => v.get_nonce(),
+                Err(e) => {
+                    debug!("Error while fetching last nonce: {}", e);
+                    // Account is not registered, we can return safely here
+                    return Ok(false)
+                }
             }
         };
 
-        let assets = self.api.get_account_assets(&address).await?;
+        let assets = if let Some(assets) = assets {
+            assets
+        } else {
+            trace!("no assets provided, fetching all assets");
+            self.api.get_account_assets(address).await?
+        };
+
         trace!("assets: {}", assets.len());
 
         let mut balances: HashMap<&Hash, CiphertextVariant>  = HashMap::new();
+        // Store newly detected assets
+        // Get the final balance of each asset
         for asset in &assets {
             trace!("asset: {}", asset);
             // check if we have this asset locally
@@ -533,7 +573,6 @@ impl NetworkHandler {
         let mut should_sync_blocks = false;
         // Apply changes
         {
-            let new_nonce = versioned_nonce.get_nonce();
             {
                 let mut storage = self.wallet.get_storage().write().await;
                 if new_nonce != storage.get_nonce().unwrap_or(0) {
@@ -587,7 +626,7 @@ impl NetworkHandler {
         if sync_back {
             trace!("sync back");
             // Now sync head state, this will helps us to determinate if we should sync blocks or not
-            let should_sync_blocks = self.sync_head_state(&address).await?;
+            let should_sync_blocks = self.sync_head_state(&address, None, None).await?;
             // we have something that changed, sync transactions
             if should_sync_blocks {
                 self.sync_new_blocks(&address, wallet_topoheight, false).await?;
@@ -596,12 +635,12 @@ impl NetworkHandler {
             trace!("daemon topoheight is greater than wallet topoheight");
             // We didn't had to resync, sync only necessary blocks
             if let Some(block) = event {
-                // We can safely handle it by hand by `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
+                // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
                 if let Some(topoheight) = block.topoheight {
-                    if self.process_block(address, block, topoheight).await? {
+                    if let Some((assets, nonce)) = self.process_block(address, block, topoheight).await? {
                         trace!("We must sync head state");
                         // A change happened in this block, lets update balance and nonce
-                        self.sync_head_state(&address).await?;
+                        self.sync_head_state(&address, Some(assets), nonce).await?;
                     }
                 } else {
                     // It is a block that got directly orphaned by DAG, ignore it
