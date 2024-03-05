@@ -255,6 +255,8 @@ impl<'a, S: Storage> ChainState<'a, S> {
         let mut miner_balance = self.internal_get_account_balance(miner, &XELIS_ASSET, Role::Receiver).await?;
         // TODO add reward to miner balance
         miner_balance += reward + self.fees_collected;
+        debug!("Rewarding miner {} with {} XEL at topoheight {}, ct: {:?}", miner.as_address(self.storage.is_mainnet()), reward + self.fees_collected, self.topoheight, miner_balance.compress().to_bytes());
+
         self.internal_update_account_balance(miner, &XELIS_ASSET, miner_balance, Role::Receiver).await?;
         Ok(())
     }

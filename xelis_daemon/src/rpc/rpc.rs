@@ -57,7 +57,6 @@ use xelis_common::{
             SubmitTransactionParams,
             TransactionResponse
         },
-        DataHash,
         RPCTransaction,
         RPCTransactionType as RPCTransactionType
     },
@@ -238,7 +237,7 @@ pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transact
         None
     };
 
-    let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(tx) };
+    let data = RPCTransaction::from_tx(tx, hash, storage.is_mainnet());
     let executed_in_block = storage.get_block_executor_for_tx(hash).ok();
     Ok(json!(TransactionResponse { blocks, executed_in_block, data, in_mempool, first_seen }))
 }

@@ -14,7 +14,7 @@ use xelis_common::{
             TransactionExecutedEvent,
             TransactionResponse
         },
-        DataHash
+        RPCTransaction
     },
     asset::AssetData,
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE},
@@ -75,10 +75,15 @@ use crate::{
 };
 use std::{
     borrow::Cow, collections::{
-        hash_map::Entry, HashMap, HashSet
-    }, net::SocketAddr, num::NonZeroUsize, sync::{
-        atomic::{AtomicU64, Ordering}, Arc
-    }, time::Instant
+        HashMap, HashSet
+    },
+    net::SocketAddr,
+    num::NonZeroUsize,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc
+    },
+    time::Instant
 };
 use async_recursion::async_recursion;
 use tokio::sync::{Mutex, RwLock};
@@ -1207,12 +1212,13 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 if rpc.is_event_tracked(&NotifyEvent::TransactionAddedInMempool).await {
-                    let data: TransactionResponse<'_, Arc<Transaction>> = TransactionResponse {
+                    let data = RPCTransaction::from_tx(&tx, &hash, storage.is_mainnet());
+                    let data: TransactionResponse<'_> = TransactionResponse {
                         blocks: None,
                         executed_in_block: None,
                         in_mempool: true,
                         first_seen: Some(get_current_time_in_seconds()),
-                        data: DataHash { hash: Cow::Owned(hash), data: Cow::Borrowed(&tx) }
+                        data,
                     };
 
                     if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
@@ -1930,12 +1936,14 @@ impl<S: Storage> Blockchain<S> {
                         debug!("Error while adding back orphaned tx: {}, broadcasting event", e);
                         // We couldn't add it back to mempool, let's notify this event
                         if should_track_events.contains(&NotifyEvent::TransactionOrphaned) {
+                            let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
+
                             let data = TransactionResponse {
                                 blocks: None,
                                 executed_in_block: None,
                                 in_mempool: false,
                                 first_seen: None,
-                                data: DataHash { hash: Cow::Borrowed(&tx_hash), data: Cow::Borrowed(&tx) }
+                                data,
                             };
                             events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
                         }
@@ -2178,44 +2186,6 @@ impl<S: Storage> Blockchain<S> {
     // txs must be sorted in ascending order based on account nonce
     pub async fn verify_transaction_with_hash<'a>(&self, storage: &S, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool, topoheight: u64) -> Result<(), BlockchainError> {
         todo!("verify transaction with hash {}", hash)
-    }
-
-    // retrieve the already added balance with changes OR generate a new versioned balance
-    async fn retrieve_balance<'a, 'b>(&self, storage: &S, balances: &'b mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, topoheight: u64) -> Result<&'b mut VersionedBalance, BlockchainError> {
-        trace!("retrieve balance {} for {} at topoheight {}", asset, key.as_address(storage.is_mainnet()), topoheight);
-        let assets = balances.entry(key).or_insert_with(HashMap::new);
-        Ok(match assets.entry(asset) {
-            Entry::Occupied(v) => v.into_mut(),
-            Entry::Vacant(v) => {
-                let balance = storage.get_new_versioned_balance(key, asset, topoheight).await?;
-                v.insert(balance)
-            }
-        })
-    }
-
-    // this function just add to balance
-    // its used to centralize all computation
-    async fn add_balance<'a>(&self, storage: &S, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, key: &'a PublicKey, asset: &'a Hash, amount: u64, topoheight: u64) -> Result<(), BlockchainError> {
-        trace!("add balance {} for {} at topoheight {} with {}", asset, key.as_address(storage.is_mainnet()), topoheight, amount);
-        let version = self.retrieve_balance(storage, balances, key, asset, topoheight).await?;
-        version.add_plaintext_to_balance(amount)?;
-        Ok(())
-    }
-
-    // reward block miner and dev fees if any.
-    async fn reward_miner<'a>(&self, storage: &S, block: &'a BlockHeader, mut block_reward: u64, total_fees: u64, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, topoheight: u64) -> Result<(), BlockchainError> {
-        debug!("reward miner {} at topoheight {} with block reward = {}, total fees = {}", block.get_miner().as_address(storage.is_mainnet()), topoheight, block_reward, total_fees);
-        let dev_fee_percentage = get_block_dev_fee(block.get_height());
-        // if dev fee are enabled, give % from block reward only
-        if dev_fee_percentage != 0 {
-            let dev_fee = block_reward * dev_fee_percentage / 100;
-            debug!("adding {}% to dev address for dev fees", dev_fee_percentage);
-            block_reward -= dev_fee;
-            self.add_balance(storage, balances, &DEV_PUBLIC_KEY, &XELIS_ASSET, dev_fee, topoheight).await?;
-        }
-
-        // now we reward the miner with block reward and total fees
-        self.add_balance(storage, balances, block.get_miner(), &XELIS_ASSET, block_reward + total_fees, topoheight).await
     }
 
     // Execute the transaction by applying all its changes in the Storage

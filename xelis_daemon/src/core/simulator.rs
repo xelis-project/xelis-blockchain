@@ -3,26 +3,13 @@ use std::{
     fmt::{Display, Formatter},
     sync::Arc,
     time::Duration,
-    collections::{HashMap, hash_map::Entry}
 };
-use log::{info, error, debug};
+use log::{info, error};
 use rand::{rngs::OsRng, Rng};
 use tokio::time::interval;
 use xelis_common::{
-    crypto::{
-        KeyPair,
-        Hashable
-    },
-    transaction::{
-        Transaction,
-        TransactionType,
-        TransferPayload
-    },
-    config::{
-        FEE_PER_KB,
-        XELIS_ASSET,
-        TIPS_LIMIT
-    },
+    crypto::KeyPair,
+    config::TIPS_LIMIT,
     block::Block
 };
 use crate::config::BLOCK_TIME_MILLIS;
@@ -131,6 +118,7 @@ impl Simulator {
         blocks
     }
 
+    // TODO use transaction builder
     // async fn generate_txs_in_mempool(&self, max_txs: usize, max_transfers: usize, max_amount: u64, rng: &mut OsRng, keys: &Vec<KeyPair>, blockchain: &Arc<Blockchain<impl Storage>>) {
     //     info!("Adding simulated TXs in mempool");
     //     let n = rng.gen_range(0..max_txs);
