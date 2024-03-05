@@ -330,7 +330,7 @@ impl TransactionBuilder {
                 }
 
                 // Either extra data provided or an integrated address, not both
-                if transfer.extra_data.is_some() == !transfer.destination.is_normal() {
+                if transfer.extra_data.is_some() && !transfer.destination.is_normal() {
                     return Err(GenerationError::ExtraDataAndIntegratedAddress);
                 }
 

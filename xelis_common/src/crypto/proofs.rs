@@ -420,7 +420,7 @@ impl Serializer for RangeProof {
         }
 
         // Those are wrong points
-        if len - min_size % 32 != 0 {
+        if (len - min_size) % 32 != 0 {
             return Err(ReaderError::InvalidSize);
         }
 
