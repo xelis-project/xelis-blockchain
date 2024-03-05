@@ -649,15 +649,21 @@ impl NetworkHandler {
                 // Wait on a new block, we don't parse the block directly as it may
                 // have reorg the chain
                 res = receiver.next() => {
+                    trace!("on_new_block_event");
                     let event = res?;
                     self.sync(&address, Some(event)).await?;
                 },
                 // Detect network events
                 res = on_connection.recv() => {
+                    trace!("on_connection");
                     res?;
+                    // We are connected again, make sure we are still up-to-date with node 
+                    self.sync(&address, None).await?;
+
                     self.wallet.propagate_event(Event::Online).await;
                 },
                 res = on_connection_lost.recv() => {
+                    trace!("on_connection_lost");
                     res?;
                     self.wallet.propagate_event(Event::Offline).await;
                 }
