@@ -1,7 +1,7 @@
 use bulletproofs::RangeProof;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, RistrettoPoint, Scalar};
 use merlin::Transcript;
-use crate::{config::XELIS_ASSET, crypto::{elgamal::{Ciphertext, CompressedPublicKey, DecompressionError, DecryptHandle, PedersenCommitment}, proofs::{BatchCollector, ProofVerificationError, BP_GENS, PC_GENS}, Hash, ProtocolTranscript}};
+use crate::{config::XELIS_ASSET, crypto::{elgamal::{Ciphertext, CompressedPublicKey, DecompressionError, DecryptHandle, PedersenCommitment}, proofs::{BatchCollector, ProofVerificationError, BP_GENS, PC_GENS}, Hash, ProtocolTranscript, SIGNATURE_SIZE}, serializer::Serializer};
 use super::{Role, Transaction, TransactionType, TransferPayload};
 use thiserror::Error;
 use std::iter;
@@ -62,6 +62,7 @@ pub enum VerificationError<T> {
     State(T),
     InvalidNonce,
     SenderIsReceiver,
+    InvalidSignature,
     Proof(#[from] ProofVerificationError),
 }
 
@@ -233,7 +234,10 @@ impl Transaction {
             Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
 
         // 0. Verify Signature
-        // TODO
+        let bytes = self.to_bytes();
+        if !self.signature.verify(&bytes[..bytes.len() - SIGNATURE_SIZE], &owner) {
+            return Err(VerificationError::InvalidSignature);
+        }
 
         // 1. Verify CommitmentEqProofs
 

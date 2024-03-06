@@ -37,7 +37,7 @@ use crate::{
         ProtocolTranscript,
         HASH_SIZE
     },
-    serializer::Serializer,
+    serializer::{Reader, ReaderError, Serializer, Writer},
     utils::calculate_tx_fee
 };
 use thiserror::Error;
@@ -166,6 +166,36 @@ impl TransactionTypeBuilder {
         }
 
         consumed
+    }
+}
+
+// Used to build the final transaction
+// by signing it
+struct TransactionSigner {
+    version: u8,
+    source: CompressedPublicKey,
+    data: TransactionType,
+    fee: u64,
+    nonce: u64,
+    source_commitments: Vec<SourceCommitment>,
+    range_proof: RangeProof,
+}
+
+impl TransactionSigner {
+    pub fn sign(self, keypair: &KeyPair) -> Transaction {
+        let bytes = self.to_bytes();
+        let signature = keypair.sign(&bytes);
+
+        Transaction {
+            version: self.version,
+            source: self.source,
+            data: self.data,
+            fee: self.fee,
+            nonce: self.nonce,
+            source_commitments: self.source_commitments,
+            range_proof: self.range_proof,
+            signature,
+        }
     }
 }
 
@@ -517,7 +547,7 @@ impl TransactionBuilder {
         )
         .map_err(ProofGenerationError::from)?;
 
-        Ok(Transaction {
+        let transaction = TransactionSigner {
             version: self.version,
             source: self.source,
             data,
@@ -525,6 +555,25 @@ impl TransactionBuilder {
             nonce: self.nonce,
             source_commitments,
             range_proof,
-        })
+        }.sign(source_keypair);
+
+        Ok(transaction)
+    }
+}
+
+impl Serializer for TransactionSigner {
+    fn write(&self, writer: &mut Writer) {
+        self.version.write(writer);
+        self.source.write(writer);
+        self.data.write(writer);
+        self.fee.write(writer);
+        self.nonce.write(writer);
+        self.source_commitments.write(writer);
+        self.range_proof.write(writer);
+    }
+
+    // Should never be called
+    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
+        Err(ReaderError::InvalidValue)
     }
 }

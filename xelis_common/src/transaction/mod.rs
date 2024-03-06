@@ -4,6 +4,7 @@ use crate::{
         proofs::{CiphertextValidityProof, CommitmentEqProof},
         Hash,
         Hashable,
+        Signature,
     },
     serializer::{Reader, ReaderError, Serializer, Writer}
 };
@@ -59,8 +60,7 @@ pub enum TransactionType {
     Burn(BurnPayload),
 }
 
-// Compressed transaction to be sent over the network
-// TODO add signature
+// Transaction to be sent over the network
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Transaction {
     /// Version of the transaction
@@ -78,6 +78,8 @@ pub struct Transaction {
     source_commitments: Vec<SourceCommitment>,
     /// The range proof is aggregated across all transfers and across all assets.
     range_proof: RangeProof,
+    /// The signature of the source key
+    signature: Signature,
 }
 
 impl TransferPayload {
@@ -132,7 +134,7 @@ impl TransferPayload {
 }
 
 impl Transaction {
-    pub fn new(source: CompressedPublicKey, data: TransactionType, fee: u64, nonce: u64, source_commitments: Vec<SourceCommitment>, range_proof: RangeProof) -> Self {
+    pub fn new(source: CompressedPublicKey, data: TransactionType, fee: u64, nonce: u64, source_commitments: Vec<SourceCommitment>, range_proof: RangeProof, signature: Signature) -> Self {
         Transaction {
             version: 0,
             source,
@@ -141,25 +143,31 @@ impl Transaction {
             nonce,
             source_commitments,
             range_proof,
+            signature
         }
     }
 
+    // Get the transaction version
     pub fn get_version(&self) -> u8 {
         self.version
     }
 
+    // Get the source key
     pub fn get_source(&self) -> &CompressedPublicKey {
         &self.source
     }
 
+    // Get the transaction type
     pub fn get_data(&self) -> &TransactionType {
         &self.data
     }
 
+    // Get fees paid to miners
     pub fn get_fee(&self) -> u64 {
         self.fee
     }
 
+    // Get the nonce used
     pub fn get_nonce(&self) -> u64 {
         self.nonce
     }
@@ -172,6 +180,11 @@ impl Transaction {
     // Get the range proof
     pub fn get_range_proof(&self) -> &RangeProof {
         &self.range_proof
+    }
+
+    // Get the signature of source key
+    pub fn get_signature(&self) -> &Signature {
+        &self.signature
     }
 
     pub fn consume(self) -> (CompressedPublicKey, TransactionType) {
@@ -353,6 +366,7 @@ impl Serializer for Transaction {
         }
 
         self.range_proof.write(writer);
+        self.signature.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
@@ -379,6 +393,7 @@ impl Serializer for Transaction {
         }
 
         let range_proof = RangeProof::read(reader)?;
+        let signature = Signature::read(reader)?;
 
         Ok(Transaction {
             version,
@@ -388,6 +403,7 @@ impl Serializer for Transaction {
             nonce,
             source_commitments,
             range_proof,
+            signature
         })
     }
 
@@ -402,6 +418,7 @@ impl Serializer for Transaction {
         + 1
         + self.source_commitments.iter().map(|c| c.size()).sum::<usize>()
         + self.range_proof.size()
+        + self.signature.size()
     }
 }
 
