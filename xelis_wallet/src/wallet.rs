@@ -249,7 +249,7 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 impl Wallet {
     // Create a new wallet with the specificed storage, keypair and its network
     fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network) -> Arc<Self> {
-        let precomputed_tables = ECDLPTablesFile::load_from_file("ecdlp_table_26.bin").unwrap();
+        let precomputed_tables = ECDLPTablesFile::load_from_file("ecdlp_tables.bin").unwrap();
 
         let zelf = Self {
             storage: RwLock::new(storage),
@@ -731,9 +731,8 @@ impl Wallet {
     }
 
     // Create a signature of the given data
-    pub fn sign_data(&self, _data: &[u8]) -> Signature {
-        // self.keypair.sign(data)
-        todo!("sign data")
+    pub fn sign_data(&self, data: &[u8]) -> Signature {
+        self.keypair.sign(data)
     }
 
     // Get the public key of the wallet
