@@ -1,19 +1,40 @@
+use curve25519_dalek::{RistrettoPoint, Scalar};
 use serde::{de::Error, Serialize};
+use sha3::{Digest, Sha3_512};
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 
-pub const SIGNATURE_SIZE: usize = 64;
+use super::{CompressedPublicKey, PublicKey, H, SCALAR_SIZE};
+
+pub const SIGNATURE_SIZE: usize = SCALAR_SIZE * 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Signature([u8; SIGNATURE_SIZE]);
+pub struct Signature {
+    s: Scalar,
+    e: Scalar,
+}
 
 impl Signature {
-    pub fn from_bytes(bytes: [u8; SIGNATURE_SIZE]) -> Self {
-        Self(bytes)
+    pub fn new(s: Scalar, e: Scalar) -> Self {
+        Self { s, e }
     }
 
-    pub fn to_bytes(&self) -> &[u8; SIGNATURE_SIZE] {
-        &self.0
+    // Verify the signature using the Public Key and the hash of the message
+    pub fn verify(&self, message: &[u8], key: &PublicKey) -> bool {
+        let r = *H * &self.s + key.as_point() * -self.e;
+        let calculated = hash_and_point_to_scalar(&key.compress(), message, &r);
+        self.e == calculated
     }
+}
+
+// Create a Scalar from Public Key, Hash of the message, and selected point
+pub fn hash_and_point_to_scalar(key: &CompressedPublicKey, message: &[u8], point: &RistrettoPoint) -> Scalar {
+    let mut hasher = Sha3_512::new();
+    hasher.update(key.as_bytes());
+    hasher.update(message);
+    hasher.update(point.compress().as_bytes());
+
+    let hash = hasher.finalize();
+    Scalar::from_bytes_mod_order_wide(&hash.try_into().unwrap())
 }
 
 impl Serialize for Signature {
@@ -21,7 +42,7 @@ impl Serialize for Signature {
     where
         S: serde::Serializer
     {
-        serializer.serialize_str(&hex::encode(&self.0))
+        serializer.serialize_str(&hex::encode(&self.to_bytes()))
     }
 }
 
@@ -31,29 +52,20 @@ impl<'de> serde::Deserialize<'de> for Signature {
         D: serde::Deserializer<'de>
     {
         let s = String::deserialize(deserializer)?;
-        let bytes = hex::decode(&s).map_err(Error::custom)?;
-        if bytes.len() != SIGNATURE_SIZE {
-            return Err(Error::custom(format!(
-                "Invalid signature length: expected {}, got {}",
-                SIGNATURE_SIZE,
-                bytes.len()
-            )));
-        }
-
-        let mut arr = [0; SIGNATURE_SIZE];
-        arr.copy_from_slice(&bytes);
-        Ok(Self::from_bytes(arr))
+        Ok(Self::from_hex(s).map_err(D::Error::custom)?)
     }
 }
 
 impl Serializer for Signature {
     fn write(&self, writer: &mut Writer) {
-        writer.write_bytes(&self.0);
+        self.s.write(writer);
+        self.e.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let bytes = reader.read_bytes(SIGNATURE_SIZE)?;
-        Ok(Self::from_bytes(bytes))
+        let s = Scalar::read(reader)?;
+        let e = Scalar::read(reader)?;
+        Ok(Signature::new(s, e))
     }
 
     fn size(&self) -> usize {

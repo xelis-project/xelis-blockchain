@@ -1,7 +1,12 @@
-use curve25519_dalek::{ecdlp::{self, ECDLPArguments}, ristretto::RistrettoPoint, Scalar};
+use curve25519_dalek::{
+    ecdlp::{self, ECDLPArguments},
+    ristretto::RistrettoPoint,
+    Scalar
+};
 use rand::rngs::OsRng;
 use zeroize::Zeroize;
 use crate::{
+    api::DataElement,
     config::MAXIMUM_SUPPLY,
     crypto::{Address, AddressType},
     serializer::{
@@ -9,13 +14,14 @@ use crate::{
         ReaderError,
         Serializer,
         Writer
-    },
-    api::DataElement,
+    }
 };
 use super::{
     ciphertext::Ciphertext,
+    hash_and_point_to_scalar,
     pedersen::{DecryptHandle, PedersenCommitment, PedersenOpening},
     CompressedPublicKey,
+    Signature,
     H
 };
 
@@ -148,6 +154,15 @@ impl KeyPair {
         self.private_key.decrypt(precomputed_tables, ciphertext)
     }
 
+    // Sign a message with the private key
+    pub fn sign(&self, message: &[u8]) -> Signature {
+        let k = Scalar::random(&mut OsRng);
+        let r = k * *H;
+        let e = hash_and_point_to_scalar(&self.public_key.compress(), message, &r);
+        let s = self.private_key.as_scalar().invert() * e + k;
+        Signature::new(s, e)
+    }
+
     // Get the public key of the KeyPair
     pub fn get_public_key(&self) -> &PublicKey {
         &self.public_key
@@ -176,6 +191,16 @@ mod tests {
 
     use super::*;
     use super::super::G;
+
+    #[test]
+    fn test_signature() {
+        let keypair = KeyPair::new();
+        let public_key = keypair.get_public_key();
+
+        let message = b"Hello, world!";
+        let signature = keypair.sign(message);
+        assert!(signature.verify(message, public_key));
+    }
 
     #[test]
     fn test_encrypt_decrypt() {
