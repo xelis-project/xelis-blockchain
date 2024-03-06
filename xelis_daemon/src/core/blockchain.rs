@@ -301,7 +301,7 @@ impl<S: Storage> Blockchain<S> {
 
         // create RPC Server
         {
-            info!("Starting RPC server...");
+            info!("RPC Server will listen on: {}", config.rpc_bind_address);
             match DaemonRpcServer::new(config.rpc_bind_address, Arc::clone(&arc), config.disable_getwork_server).await {
                 Ok(server) => *arc.rpc.write().await = Some(server),
                 Err(e) => error!("Error while starting RPC server: {}", e)
