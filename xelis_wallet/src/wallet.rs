@@ -22,7 +22,7 @@ use xelis_common::{
     },
     asset::AssetWithData,
     crypto::{
-        elgamal::Ciphertext,
+        elgamal::{Ciphertext, PublicKey as DecompressedPublicKey},
         Address,
         ECDLPTablesFile,
         Hash,
@@ -821,8 +821,8 @@ impl XSWDPermissionHandler for Arc<Wallet> {
         Err(WalletError::NoHandlerAvailable.into())
     }
 
-    async fn get_public_key(&self) -> Result<&PublicKey, Error> {
-        Ok((self as &Wallet).get_public_key())
+    async fn get_public_key(&self) -> Result<&DecompressedPublicKey, Error> {
+        Ok(self.keypair.get_public_key())
     }
 }
 

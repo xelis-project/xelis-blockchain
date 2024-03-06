@@ -39,32 +39,34 @@ use tokio::sync::{
     Semaphore
 };
 use xelis_common::{
-    rpc_server::{
-        RPCHandler,
-        websocket::{
-            WebSocketHandler,
-            WebSocketSessionShared,
-            WebSocketServer
-        },
-        RpcRequest,
-        RpcResponseError,
-        InternalRpcError,
-        RpcResponse
-    },
-    crypto::{
-        Signature,
-        PublicKey
-    },
-    serializer::{
-        Serializer,
-        ReaderError,
-        Reader,
-        Writer
-    },
     api::{
         wallet::NotifyEvent,
         EventResult
-    }, context::Context
+    },
+    context::Context,
+    crypto::{
+        elgamal::PublicKey as DecompressedPublicKey,
+        Signature,
+        SIGNATURE_SIZE
+    },
+    rpc_server::{
+        websocket::{
+            WebSocketHandler,
+            WebSocketServer,
+            WebSocketSessionShared
+        },
+        InternalRpcError,
+        RPCHandler,
+        RpcRequest,
+        RpcResponse,
+        RpcResponseError
+    },
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    }
 };
 use serde::{Deserialize, Serialize};
 use crate::config::XSWD_BIND_ADDRESS;
@@ -104,7 +106,7 @@ pub trait XSWDPermissionHandler {
     // Handler function to cancel the request permission from app (app has disconnected)
     async fn cancel_request_permission(&self, app_state: &AppStateShared) -> Result<(), Error>;
     // Public key to use to verify the signature
-    async fn get_public_key(&self) -> Result<&PublicKey, Error>;
+    async fn get_public_key(&self) -> Result<&DecompressedPublicKey, Error>;
 }
 
 #[async_trait]
@@ -505,21 +507,21 @@ where
         }
 
         let wallet = self.handler.get_data();
-        // TODO
         // Verify the signature of the app data to validate permissions previously set
-        // if let Some(signature) = &app_data.signature {
-        //     let bytes = app_data.to_bytes();
-        //     let bytes = &bytes[0..bytes.len() - SIGNATURE_SIZE]; // remove signature bytes for verification
-        //     let key = wallet.get_public_key().await
-        //         .map_err(|e| {
-        //             error!("error while retrieving public key: {}", e);
-        //             RpcResponseError::new(None, InternalRpcError::CustomStr("Error while retrieving public key"))
-        //         })?;
+        if let Some(signature) = &app_data.signature {
+            let bytes = app_data.to_bytes();
+            // remove signature bytes for verification
+            let bytes = &bytes[0..bytes.len() - SIGNATURE_SIZE];
+            let key = wallet.get_public_key().await
+                .map_err(|e| {
+                    error!("error while retrieving public key: {}", e);
+                    RpcResponseError::new(None, InternalRpcError::CustomStr("Error while retrieving public key"))
+                })?;
 
-        //     if !key.verify_signature(&hash(&bytes), signature) {
-        //         return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid signature for application data")));
-        //     }
-        // }
+            if signature.verify(bytes, key) {
+                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid signature for application data")));
+            }
+        }
 
         // Verify that this app ID is not already in use:
         if self.has_app_with_id(&app_data.id).await {
