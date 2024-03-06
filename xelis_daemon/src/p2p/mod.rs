@@ -558,32 +558,51 @@ impl<S: Storage> P2pServer<S> {
 
     // select a random peer which is greater than us to sync chain
     // candidate peer should have a greater topoheight or a higher block height than us
+    // It must also have a greater cumulative difficulty than us
+    // Cumulative difficulty is used in case two chains are running at same speed
+    // We must determine which one has the most work done
     // if we are not in fast sync mode, we must verify its pruned topoheight to be sure
     // he have the blocks we need
-    async fn select_random_best_peer(&self, fast_sync: bool, previous_peer: Option<&(Arc<Peer>, bool)>) -> Option<Arc<Peer>> {
+    async fn select_random_best_peer(&self, fast_sync: bool, previous_peer: Option<&(Arc<Peer>, bool)>) -> Result<Option<Arc<Peer>>, BlockchainError> {
         trace!("select random best peer");
         let peer_list = self.peer_list.read().await;
         trace!("peer list locked for select random best peer");
         let our_height = self.blockchain.get_height();
         let our_topoheight = self.blockchain.get_topo_height();
+
+        // Search our cumulative difficulty
+        let our_cumulative_difficulty = {
+            debug!("locking storage to search our cumulative difficulty");
+            let storage = self.blockchain.get_storage().read().await;
+            let hash = storage.get_hash_at_topo_height(our_topoheight).await?;
+            storage.get_cumulative_difficulty_for_block_hash(&hash).await?
+        };
+
         // search for peers which are greater than us
         // and that are pruned but before our height so we can sync correctly
         let available_peers = peer_list.get_peers().values();
         // IndexSet is used to select by random index
-        let mut peers: IndexSet<&Arc<Peer>> = available_peers.filter(|p| {
+        let mut peers: IndexSet<&Arc<Peer>> = IndexSet::with_capacity(available_peers.len());
+
+        for p in available_peers {
             let peer_topoheight = p.get_topoheight();
             if fast_sync {
                 // if we want to fast sync, but this peer is not compatible, we skip it
                 // for this we check that the peer topoheight is not less than the prune safety limit
                 if peer_topoheight < PRUNE_SAFETY_LIMIT || our_topoheight + PRUNE_SAFETY_LIMIT > peer_topoheight {
-                    return false
+                    continue;
+                }
+
+                let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
+                if *cumulative_difficulty <= our_cumulative_difficulty {
+                    continue;
                 }
 
                 if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
                     // This shouldn't be possible if following the protocol,
                     // But we may never know if a peer is not following the protocol strictly
                     if peer_topoheight - pruned_topoheight < PRUNE_SAFETY_LIMIT {
-                        return false
+                        continue;
                     }
                 }
             } else {
@@ -591,13 +610,17 @@ impl<S: Storage> P2pServer<S> {
                 // so we can sync chain from pruned chains
                 if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
                     if pruned_topoheight > our_topoheight {
-                        return false
+                        continue;
                     }
                 }
             }
 
-            p.get_height() > our_height || peer_topoheight > our_topoheight
-        }).collect();
+            if !(p.get_height() > our_height || peer_topoheight > our_topoheight) {
+                continue;
+            }
+
+            peers.insert(p);
+        }
 
         // Try to not reuse the same peer between each sync
         if let Some((previous_peer, err)) = previous_peer {
@@ -611,14 +634,12 @@ impl<S: Storage> P2pServer<S> {
         let count = peers.len();
         trace!("peers available for random selection: {}", count);
         if count == 0 {
-            return None
+            return Ok(None)
         }
 
         let selected = rand::thread_rng().gen_range(0..count);
-        let peer = peers.get_index(selected)?;
-        trace!("selected peer for sync chain: ({}) {}", selected, peer);
         // clone the Arc to prevent the lock until the end of the sync request
-        Some(Arc::clone(peer))
+        Ok(peers.swap_remove_index(selected).map(|p| Arc::clone(p)))
     }
 
     // Check if user has allowed fast sync mode
@@ -669,7 +690,15 @@ impl<S: Storage> P2pServer<S> {
                 false
             };
 
-            if let Some(peer) = self.select_random_best_peer(fast_sync, previous_peer.as_ref()).await {
+            let peer_selected = match self.select_random_best_peer(fast_sync, previous_peer.as_ref()).await {
+                Ok(peer) => peer,
+                Err(e) => {
+                    error!("Error while selecting random best peer for chain sync: {}", e);
+                    None
+                }
+            };
+
+            if let Some(peer) = peer_selected {
                 debug!("Selected for chain sync is {}", peer);
                 // check if we can maybe fast sync first
                 // otherwise, fallback on the normal chain sync
@@ -2161,6 +2190,7 @@ impl<S: Storage> P2pServer<S> {
                             } else {
                                 our_topoheight - common_point.get_topoheight()
                             };
+                            warn!("We need to pop {} blocks for fast sync", pop_count);
                             our_topoheight = self.blockchain.rewind_chain_for_storage(&mut *storage, pop_count, true).await?;
                             debug!("New topoheight after rewind is now {}", our_topoheight);
                         }
