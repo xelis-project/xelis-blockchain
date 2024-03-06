@@ -1729,7 +1729,7 @@ impl<S: Storage> Blockchain<S> {
                     storage.get_supply_at_topo_height(highest_topo - 1).await?
                 };
 
-                let block_reward = self.get_block_reward(storage, &hash, past_supply).await?;
+                let mut block_reward = self.get_block_reward(storage, &hash, past_supply).await?;
 
                 trace!("set block reward to {} at {}", block_reward, highest_topo);
                 storage.set_block_reward_at_topo_height(highest_topo, block_reward)?;
@@ -1796,8 +1796,17 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 let mut chain_state = ChainState::new(storage, highest_topo, stable_topoheight);
+                let dev_fee_percentage = get_block_dev_fee(block.get_height());
+                // Dev fee are only applied on block reward
+                // Transaction fees are not affected by dev fee
+                if dev_fee_percentage != 0 {
+                    let dev_fee_part = block_reward * dev_fee_percentage / 100;
+                    chain_state.reward_miner(&DEV_PUBLIC_KEY, dev_fee_part).await?;
+                    block_reward -= dev_fee_part;    
+                }
+                
                 // reward the miner
-                chain_state.reward_miner(block.get_miner(), block_reward).await?;
+                chain_state.reward_miner(block.get_miner(), block_reward + total_fees).await?;
 
                 // apply changes from Chain State
                 chain_state.apply_changes().await?;
