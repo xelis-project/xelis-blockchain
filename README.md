@@ -18,6 +18,18 @@ We provide differents built-in network:
 - Testnet: Running
 - Devnet: this network is used for local development purpose where you want to create your own local chain. It has no peers
 
+## Acknowledgments
+
+[@cchudant](https://github.com/cchudant):
+- Optimized decoding RistrettoPoint implementation (ECDLP).
+- Twisted ElGamal implementation along ZK-Proofs integration for Confidential Transactions.
+- To read more, please see [XELIS-HE](https://github.com/xelis-project/xelis-he) framework created by him.
+
+[@deroholic](https://github.com/deroholic):
+- Difficulty adjustment algorithm using Kalman-Filter.
+
+Thank you to every people testing actively the code base, honest miners and every future contributors!
+
 ## Main features
 
 The main features of XELIS are the following:
