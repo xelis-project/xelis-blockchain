@@ -517,20 +517,22 @@ impl NetworkHandler {
     // If assets are provided, we'll only sync these assets
     // TODO: this may bug with Smart Contract integration as we could receive a new asset and not detect it
     // If nonce is not provided, we will fetch it from the daemon
-    async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>) -> Result<bool, Error> {
+    async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>, sync_nonce: bool) -> Result<bool, Error> {
         trace!("syncing head state");
-        let new_nonce = if let Some(nonce) = nonce {
+        let new_nonce = if nonce.is_some() {
             nonce
-        } else {
+        } else if sync_nonce {
             trace!("no nonce provided, fetching it from daemon");
             match self.api.get_nonce(&address).await.map(|v| v.version) {
-                Ok(v) => v.get_nonce(),
+                Ok(v) => Some(v.get_nonce()),
                 Err(e) => {
                     debug!("Error while fetching last nonce: {}", e);
                     // Account is not registered, we can return safely here
                     return Ok(false)
                 }
             }
+        } else {
+            None
         };
 
         let assets = if let Some(assets) = assets {
@@ -573,9 +575,9 @@ impl NetworkHandler {
         let mut should_sync_blocks = false;
         // Apply changes
         {
-            {
+            if let Some(new_nonce) = new_nonce {
                 let mut storage = self.wallet.get_storage().write().await;
-                if new_nonce != storage.get_nonce().unwrap_or(0) {
+                if storage.get_nonce().map(|n| n != new_nonce).unwrap_or(true) {
                     // Store the new nonce
                     storage.set_nonce(new_nonce)?;
                     should_sync_blocks = true;
@@ -626,7 +628,7 @@ impl NetworkHandler {
         if sync_back {
             trace!("sync back");
             // Now sync head state, this will helps us to determinate if we should sync blocks or not
-            let should_sync_blocks = self.sync_head_state(&address, None, None).await?;
+            let should_sync_blocks = self.sync_head_state(&address, None, None, true).await?;
             // we have something that changed, sync transactions
             if should_sync_blocks {
                 self.sync_new_blocks(&address, wallet_topoheight, false).await?;
@@ -640,7 +642,7 @@ impl NetworkHandler {
                     if let Some((assets, nonce)) = self.process_block(address, block, topoheight).await? {
                         trace!("We must sync head state");
                         // A change happened in this block, lets update balance and nonce
-                        self.sync_head_state(&address, Some(assets), nonce).await?;
+                        self.sync_head_state(&address, Some(assets), nonce, false).await?;
                     }
                 } else {
                     // It is a block that got directly orphaned by DAG, ignore it
