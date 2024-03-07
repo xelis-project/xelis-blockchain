@@ -28,14 +28,14 @@ pub fn kalman_filter(z: VarUint, x_est_prev: VarUint, p_prev: VarUint) -> (VarUi
     trace!("z: {}, x_est_prev: {}, p_prev: {}", z, x_est_prev, p_prev);
     // Scale up
     let z = z * LEFT_SHIFT;
+    let r = z * 2;
     let x_est_prev = x_est_prev * LEFT_SHIFT;
 
     // Prediction step
     let p_pred = ((x_est_prev * PROCESS_NOISE_COVAR) >> SHIFT) + p_prev;
 
     // Update step
-    let k = (p_pred << SHIFT) / (p_pred + z);
-    trace!("left: {}, right: {}", (p_pred << SHIFT), (p_pred + z));
+    let k = (p_pred << SHIFT) / (p_pred + r + VarUint::one());
 
     // Ensure positive numbers only
     let mut x_est_new = if z >= x_est_prev {
@@ -85,11 +85,11 @@ mod tests {
     fn test_kalman_filter() {
         let z = MINIMUM_DIFFICULTY / VarUint::from_u64(1000);
         let (x_est_new, p_new) = kalman_filter(z, VarUint::one(), P);
-        assert_eq!(x_est_new, VarUint::from_u64(2));
-        assert_eq!(p_new, VarUint::from_u64(4509399998));
+        assert_eq!(x_est_new, VarUint::one());
+        assert_eq!(p_new, VarUint::from_u64(4509557822));
 
         let (x_est_new, p_new) = kalman_filter(MINIMUM_DIFFICULTY / VarUint::from_u64(2000), x_est_new, p_new);
-        assert_eq!(x_est_new, VarUint::from_u64(3));
-        assert_eq!(p_new, VarUint::from_u64(4938139585));
+        assert_eq!(x_est_new, VarUint::one());
+        assert_eq!(p_new, VarUint::from_u64(4723959770));
     }
 }
