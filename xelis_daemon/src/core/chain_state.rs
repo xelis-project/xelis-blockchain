@@ -3,11 +3,6 @@ use log::{debug, trace};
 use xelis_common::{account::{CiphertextVariant, VersionedBalance, VersionedNonce}, config::XELIS_ASSET, crypto::{elgamal::Ciphertext, Hash, PublicKey}};
 use super::{error::BlockchainError, storage::Storage};
 
-enum Role {
-    Sender,
-    Receiver
-}
-
 // Sender changes
 // This contains its expected next balance for next outgoing transactions
 // But also contains the ciphertext changes happening (so a sum of each spendings for transactions)
@@ -89,8 +84,6 @@ pub struct ChainState<'a, S: Storage> {
     // Stable topoheight of the snapshot
     // This is used to determine if the balance is stable or not
     stable_topoheight: u64,
-    // All fees collected from the transactions
-    fees_collected: u64,
 }
 
 // TODO fix front running problem
@@ -102,7 +95,6 @@ impl<'a, S: Storage> ChainState<'a, S> {
             accounts: HashMap::new(),
             topoheight,
             stable_topoheight,
-            fees_collected: 0,
         }
     }
 
@@ -125,85 +117,46 @@ impl<'a, S: Storage> ChainState<'a, S> {
         })
     }
 
-    // Retrieve a newly created versioned balance for current topoheight
-    // We store it in cache in case we need to retrieve it again or to update it
-    async fn internal_get_account_balance(&mut self, key: &'a PublicKey, asset: &'a Hash, role: Role) -> Result<Ciphertext, BlockchainError> {
-        match role {
-            Role::Receiver => match self.receiver_balances.entry(key).or_insert_with(HashMap::new).entry(asset) {
-                Entry::Occupied(mut o) => Ok(o.get_mut().get_mut_balance().get_mut()?.clone()),
-                Entry::Vacant(e) => {
-                    let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                    Ok(e.insert(version).get_mut_balance().get_mut()?.clone())
-                }
-            },
-            Role::Sender => match self.accounts.entry(key) {
-                Entry::Occupied(mut o) => {
-                    let account = o.get_mut();
-                    match account.assets.entry(asset) {
-                        Entry::Occupied(mut o) => Ok(o.get_mut().get_mut_balance().get_mut()?.clone()),
-                        Entry::Vacant(e) => {
-                            let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
-                            Ok(e.insert(echange).get_mut_balance().get_mut()?.clone())
-                        }
-                    }
-                },
-                Entry::Vacant(e) => {
-                    // Create a new account for the sender
-                    let account = Self::create_sender_account(key, &self.storage, self.topoheight).await?;
-
-                    // Create a new echange for the asset
-                    let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
-
-                    Ok(e.insert(account).assets.entry(asset).or_insert(echange).get_mut_balance().get_mut()?.clone())
-                }
+    // Retrieve the receiver balance of an account
+    // This is mostly the final balance where everything is added (outputs and inputs)
+    async fn get_receiver_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut CiphertextVariant, BlockchainError> {
+        match self.receiver_balances.entry(key).or_insert_with(HashMap::new).entry(asset) {
+            Entry::Occupied(o) => Ok(o.into_mut().get_mut_balance()),
+            Entry::Vacant(e) => {
+                let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
+                Ok(e.insert(version).get_mut_balance())
             }
         }
     }
 
-    // Update the balance of an account
-    async fn internal_update_account_balance(&mut self, key: &'a PublicKey, asset: &'a Hash, new_ct: Ciphertext, role: Role) -> Result<(), BlockchainError> {
-        match role {
-            Role::Receiver => match self.receiver_balances.entry(key).or_insert_with(HashMap::new).entry(asset) {
-                Entry::Occupied(mut o) => {
-                    let version = o.get_mut();
-                    version.set_balance(CiphertextVariant::Decompressed(new_ct));
-                },
-                Entry::Vacant(e) => {
-                    // We must retrieve the version to get its previous topoheight
-                    let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                    e.insert(version).set_balance(CiphertextVariant::Decompressed(new_ct));
+    // Retrieve the sender balance of an account
+    // This is used for TX outputs verification
+    // This depends on the transaction and can be final balance or output balance
+    async fn get_sender_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut CiphertextVariant, BlockchainError> {
+        match self.accounts.entry(key) {
+            Entry::Occupied(o) => {
+                let account = o.into_mut();
+                match account.assets.entry(asset) {
+                    Entry::Occupied(o) => Ok(o.into_mut().get_mut_balance()),
+                    Entry::Vacant(e) => {
+                        let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
+                        Ok(e.insert(echange).get_mut_balance())
+                    }
                 }
             },
-            Role::Sender => match self.accounts.entry(key) {
-                Entry::Occupied(mut o) => {
-                    let account = o.get_mut();
-                    match account.assets.entry(asset) {
-                        Entry::Occupied(mut o) => {
-                            let version = o.get_mut();
-                            version.set_balance(CiphertextVariant::Decompressed(new_ct));
-                        },
-                        Entry::Vacant(e) => {
-                            // Build the echange for this asset
-                            let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
-                            e.insert(echange).set_balance(CiphertextVariant::Decompressed(new_ct));
-                        }
-                    }
-                },
-                Entry::Vacant(e) => {
-                    // Create a new account for the sender
-                    let account = Self::create_sender_account(key, &self.storage, self.topoheight).await?;
+            Entry::Vacant(e) => {
+                // Create a new account for the sender
+                let account = Self::create_sender_account(key, &self.storage, self.topoheight).await?;
 
-                    // Create a new echange for the asset
-                    let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
+                // Create a new echange for the asset
+                let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
 
-                    e.insert(account).assets.entry(asset).or_insert(echange).set_balance(CiphertextVariant::Decompressed(new_ct));
-                }
+                Ok(e.insert(account).assets.entry(asset).or_insert(echange).get_mut_balance())
             }
         }
-        Ok(())
     }
 
-    // Update the balance of an account
+    // Update the output echanges of an account
     // Account must have been fetched before calling this function
     async fn internal_update_sender_echange(&mut self, key: &'a PublicKey, asset: &'a Hash, new_ct: Ciphertext) -> Result<(), BlockchainError> {
         let change = self.accounts.get_mut(key)
@@ -251,17 +204,16 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Reward a miner for the block mined
     pub async fn reward_miner(&mut self, miner: &'a PublicKey, reward: u64) -> Result<(), BlockchainError> {
-        // TODO prevent cloning
-        let mut miner_balance = self.internal_get_account_balance(miner, &XELIS_ASSET, Role::Receiver).await?;
-        // TODO add reward to miner balance
-        miner_balance += reward + self.fees_collected;
-        debug!("Rewarding miner {} with {} XEL at topoheight {}, ct: {:?}", miner.as_address(self.storage.is_mainnet()), reward + self.fees_collected, self.topoheight, miner_balance.compress().to_bytes());
+        debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.storage.is_mainnet()), reward, self.topoheight);
+        let miner_balance = self.get_receiver_balance(miner, &XELIS_ASSET).await?;
+        *miner_balance.get_mut()? += reward;
 
-        self.internal_update_account_balance(miner, &XELIS_ASSET, miner_balance, Role::Receiver).await?;
         Ok(())
     }
 
-    // This function is called after the verification of the transactions
+    // This function is called after the verification of all needed transactions
+    // This will consume ChainState and apply all changes to the storage
+    // In case of incoming and outgoing transactions in same state, the final balance will be computed
     pub async fn apply_changes(mut self) -> Result<(), BlockchainError> {
         // Store every new nonce
         for (key, account) in &mut self.accounts {
