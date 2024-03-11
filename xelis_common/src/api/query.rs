@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use super::{DataValue, DataElement, DataType};
+use super::{DataElement, DataValue, ElementType, ValueType};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -64,6 +64,8 @@ pub enum QueryValue {
     StartsWith(DataValue),
     EndsWith(DataValue),
     ContainsValue(DataValue),
+    // Check if value type is the one researched
+    Type(ValueType),
     // Regex pattern on DataValue only
     #[serde(with = "serde_regex")]
     Pattern(Regex),
@@ -78,6 +80,7 @@ impl QueryValue {
             Self::StartsWith(value) => v.to_string().starts_with(&value.to_string()),
             Self::EndsWith(value) => v.to_string().starts_with(&value.to_string()),
             Self::ContainsValue(value) => v.to_string().contains(&value.to_string()),
+            Self::Type(expected) => v.kind() == *expected,
             Self::Pattern(pattern) => pattern.is_match(&v.to_string()),
             Self::NumberOp(query) => query.verify(v)
         }
@@ -90,11 +93,9 @@ pub enum Query {
     // !
     Not(Box<Query>),
     // &&
-    And(Vec<Box<Query>>),
+    And(Vec<Query>),
     // ||
-    Or(Vec<Box<Query>>),
-    // Check value type
-    Type(DataType),
+    Or(Vec<Query>),
     #[serde(untagged)]
     Element(QueryElement),
     #[serde(untagged)]
@@ -126,8 +127,7 @@ impl Query {
                     }
                 }
                 true
-            },
-            Self::Type(expected) => element.kind() == *expected,
+            }
         }
     }
 
@@ -151,8 +151,7 @@ impl Query {
                     }
                 }
                 true
-            },
-            Self::Type(expected) => value.kind() == *expected,
+            }
         }
     }
 
@@ -169,19 +168,26 @@ impl Query {
 #[serde(rename_all = "snake_case")] 
 pub enum QueryElement {
     // Check if DataElement::Fields has key and optional check on value
-    HasKey { key: DataValue, value: Option<Box<Query>> },
-    // check the array
-    ArrayLen(QueryNumber),
+    HasKey { key: DataValue, query: Option<Box<Query>> },
+    // Check query on the value of the key
+    AtKey { key: DataValue, query: Box<Query>},
+    // check the array or map length
+    Len(QueryNumber),
     // Only array supported
-    ContainsElement(DataElement)
+    ContainsElement(DataElement),
+    // Verify with query the element at position
+    // This is only for array
+    AtPosition { position: usize, query: Box<Query> },
+    // Check value type
+    Type(ElementType),
 }
 
 impl QueryElement {
     pub fn verify(&self, data: &DataElement) -> bool {
         match self {
-            Self::HasKey { key, value } => if let DataElement::Fields(fields) = data {
+            Self::HasKey { key, query } => if let DataElement::Fields(fields) = data {
                 fields.get(key).map(|v|
-                    if let Some(query) = value {
+                    if let Some(query) = query {
                         query.verify_element(v)
                     } else {
                         false
@@ -190,15 +196,30 @@ impl QueryElement {
             } else {
                 false
             },
-            Self::ArrayLen(query) => if let DataElement::Array(array) = data {
-                query.verify(&DataValue::U64(array.len() as u64))
+            Self::AtKey { key, query } => if let DataElement::Fields(fields) = data {
+                fields.get(key).map(|v| query.verify_element(v)).unwrap_or(false)
             } else {
                 false
+            },
+            Self::Len(query) => match data {
+                DataElement::Fields(fields) => query.verify(&DataValue::U8(fields.len() as u8)),
+                DataElement::Array(array) => query.verify(&DataValue::U8(array.len() as u8)),
+                _ => false
             },
             Self::ContainsElement(query) => match data {
                 DataElement::Array(array) => array.contains(query),
                 _ => false
-            }
+            },
+            Self::AtPosition { position, query } => if let DataElement::Array(array) = data {
+                if let Some(element) = array.get(*position) {
+                    query.verify_element(element)
+                } else {
+                    false
+                }
+            } else {
+                false
+            },
+            Self::Type(expected) => data.kind() == *expected
         }
     }
 }

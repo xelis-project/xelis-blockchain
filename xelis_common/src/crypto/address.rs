@@ -4,7 +4,7 @@ use std::{
     str::FromStr
 };
 use crate::{
-    api::{DataElement, DataType, DataValue},
+    api::{DataElement, ValueType, DataValue},
     serializer::{Serializer, Writer, Reader, ReaderError},
     config::{PREFIX_ADDRESS, TESTNET_PREFIX_ADDRESS},
     transaction::EXTRA_DATA_LIMIT_SIZE
@@ -116,10 +116,10 @@ impl Address {
     }
 
     // Search for a data value in the address
-    pub fn get_data(&self, name: String, data_type: DataType) -> Option<&DataValue> {
+    pub fn get_data(&self, name: String, value_type: ValueType) -> Option<&DataValue> {
         match &self.addr_type {
             AddressType::Normal => None,
-            AddressType::Data(data) => data.get_value_by_string_key(name, data_type)
+            AddressType::Data(data) => data.get_value_by_string_key(name, value_type)
         }
     }
 
