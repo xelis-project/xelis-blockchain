@@ -78,7 +78,7 @@ impl QueryValue {
         match self {
             Self::Equal(expected) => *v == *expected,
             Self::StartsWith(value) => v.to_string().starts_with(&value.to_string()),
-            Self::EndsWith(value) => v.to_string().starts_with(&value.to_string()),
+            Self::EndsWith(value) => v.to_string().ends_with(&value.to_string()),
             Self::ContainsValue(value) => v.to_string().contains(&value.to_string()),
             Self::Type(expected) => v.kind() == *expected,
             Self::Pattern(pattern) => pattern.is_match(&v.to_string()),
@@ -228,4 +228,58 @@ impl QueryElement {
 pub struct QueryResult {
     pub entries: IndexMap<DataValue, DataElement>,
     pub next: Option<usize>
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_query_number() {
+        let query = QueryNumber::Above(5);
+        assert!(query.verify(&DataValue::U8(6)));
+        assert!(!query.verify(&DataValue::U8(5)));
+
+        let query = QueryNumber::AboveOrEqual(5);
+        assert!(query.verify(&DataValue::U8(5)));
+        assert!(query.verify(&DataValue::U8(6)));
+        assert!(!query.verify(&DataValue::U8(4)));
+
+        let query = QueryNumber::Below(5);
+        assert!(query.verify(&DataValue::U8(4)));
+        assert!(!query.verify(&DataValue::U8(5)));
+        assert!(!query.verify(&DataValue::U8(6)));
+
+        let query = QueryNumber::BelowOrEqual(5);
+        assert!(query.verify(&DataValue::U8(4)));
+        assert!(query.verify(&DataValue::U8(5)));
+        assert!(!query.verify(&DataValue::U8(6)));
+    }
+
+    #[test]
+    fn test_query_value() {
+        let query = QueryValue::Equal(DataValue::U8(5));
+        assert!(query.verify(&DataValue::U8(5)));
+        assert!(!query.verify(&DataValue::U8(6)));
+
+        let query = QueryValue::StartsWith(DataValue::String("hello".to_string()));
+        assert!(query.verify(&DataValue::String("hello world".to_string())));
+        assert!(!query.verify(&DataValue::String("world".to_string())));
+
+        let query = QueryValue::EndsWith(DataValue::String("world".to_string()));
+        assert!(query.verify(&DataValue::String("hello world".to_string())));
+        assert!(!query.verify(&DataValue::String("hello".to_string())));
+
+        let query = QueryValue::ContainsValue(DataValue::String("world".to_string()));
+        assert!(query.verify(&DataValue::String("hello world".to_string())));
+        assert!(!query.verify(&DataValue::String("hello".to_string())));
+
+        let query = QueryValue::Type(ValueType::String);
+        assert!(query.verify(&DataValue::String("hello".to_string())));
+        assert!(!query.verify(&DataValue::U8(5)));
+
+        let query = QueryValue::Pattern(Regex::new(r"^\d{3}-\d{3}-\d{4}$").unwrap());
+        assert!(query.verify(&DataValue::String("123-456-7890".to_string())));
+        assert!(!query.verify(&DataValue::String("hello".to_string())));
+    }
 }
