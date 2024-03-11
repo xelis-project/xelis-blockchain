@@ -7,7 +7,7 @@ use super::{CompressedPublicKey, PublicKey, H, SCALAR_SIZE};
 
 pub const SIGNATURE_SIZE: usize = SCALAR_SIZE * 2;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Signature {
     s: Scalar,
     e: Scalar,
