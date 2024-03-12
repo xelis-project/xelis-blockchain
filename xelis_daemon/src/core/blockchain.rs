@@ -152,6 +152,7 @@ pub struct Config {
     /// Ask peers to not share our IP to others and/or through API
     /// This is useful for people that don't want that their IP is revealed in RPC API
     /// and/or shared to others nodes as a potential new peer to connect to
+    /// Note that it may prevent to have new incoming peers
     #[clap(long, default_value = "true")]
     pub disable_ip_sharing: bool
 }
