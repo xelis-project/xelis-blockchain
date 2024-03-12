@@ -32,9 +32,7 @@ pub enum ValueType {
     U32,
     U64,
     U128,
-    Hash,
-    // We count null as a value type
-    Null,
+    Hash
 }
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
@@ -71,7 +69,6 @@ impl Serializer for ValueType {
             5 => Self::U64,
             6 => Self::U128,
             7 => Self::Hash,
-            8 => Self::Null,
             _ => return Err(ReaderError::InvalidValue)
         })
     }
@@ -85,8 +82,7 @@ impl Serializer for ValueType {
             Self::U32 => 4,
             Self::U64 => 5,
             Self::U128 => 6,
-            Self::Hash => 7,
-            Self::Null => 8
+            Self::Hash => 7
         });
     }
 
@@ -100,8 +96,7 @@ impl Serializer for ValueType {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum DataElement {
-    // Value can be Optional to represent null in JSON
-    Value(Option<DataValue>),
+    Value(DataValue),
     // For two next variants, we support up to 255 (u8::MAX) elements maximum
     Array(Vec<DataElement>),
     Fields(HashMap<DataValue, DataElement>)
@@ -125,17 +120,13 @@ impl DataElement {
             return None;
         };
 
-        let Some(unwrapped) = &value else {
-            return None;
-        };
-
         if let Some(data_type) = value_type {
-            if unwrapped.kind() != data_type {
+            if value.kind() != data_type {
                 return None
             }
         }
 
-        value.as_ref()
+        Some(value)
     }
 
     pub fn get_value_by_string_key(&self, name: String, value_type: ValueType) -> Option<&DataValue> {
@@ -146,23 +137,13 @@ impl DataElement {
         match self {
             Self::Array(_) => ElementType::Array,
             Self::Fields(_) => ElementType::Fields,
-            Self::Value(value) => match value {
-                Some(v) => ElementType::Value(v.kind()),
-                None => ElementType::Value(ValueType::Null)
-            }
-        }
-    }
-
-    pub fn is_null(&self) -> bool {
-        match self {
-            Self::Value(None) => true,
-            _ => false
+            Self::Value(value) => ElementType::Value(value.kind()),
         }
     }
 
     pub fn to_value(self) -> Result<DataValue, DataConversionError> {
         match self {
-            Self::Value(Some(v)) => Ok(v),
+            Self::Value(v) => Ok(v),
             _ => Err(DataConversionError::ExpectedValue)
         }
     }
@@ -183,7 +164,7 @@ impl DataElement {
 
     pub fn as_value(&self) -> Result<&DataValue, DataConversionError> {
         match self {
-            Self::Value(Some(v)) => Ok(v),
+            Self::Value(v) => Ok(v),
             _ => Err(DataConversionError::ExpectedValue)
         }
     }
@@ -209,7 +190,7 @@ impl Serializer for DataElement {
     // which can create OOM on low devices
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(match reader.read_u8()? {
-            0 => Self::Value(Option::<DataValue>::read(reader)?),
+            0 => Self::Value(DataValue::read(reader)?),
             1 => {
                 let size = reader.read_u8()?;
                 let mut values = Vec::new();
@@ -425,8 +406,7 @@ impl DataValue {
             ValueType::U32 => Self::U32(reader.read_u32()?),
             ValueType::U64 => Self::U64(reader.read_u64()?),
             ValueType::U128 => Self::U128(reader.read_u128()?),
-            ValueType::Hash => Self::Hash(reader.read_hash()?),
-            ValueType::Null => return Err(ReaderError::InvalidValue)
+            ValueType::Hash => Self::Hash(reader.read_hash()?)
         })
     }
 
