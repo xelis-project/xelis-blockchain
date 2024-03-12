@@ -106,27 +106,27 @@ pub struct Config {
     /// Rpc bind address to listen for HTTP requests
     #[clap(short, long, default_value_t = String::from(DEFAULT_RPC_BIND_ADDRESS))]
     pub rpc_bind_address: String,
-    /// Add a priority node to connect when P2p is started
-    /// A priority node is connected only one time
+    /// Add a priority node to connect when P2p is started.
+    /// A priority node is connected only one time.
     #[clap(short = 'o', long)]
     pub priority_nodes: Vec<String>,
     /// An exclusive node is connected and its connection is maintained in case of disconnect
-    /// it also replaces seed nodes
+    /// it also replaces seed nodes.
     #[clap(short, long)]
     pub exclusive_nodes: Vec<String>,
-    /// Set dir path for blockchain storage
+    /// Set dir path for blockchain storage.
     #[clap(short = 's', long)]
     pub dir_path: Option<String>,
-    /// Set LRUCache size (0 = disabled)
+    /// Set LRUCache size (0 = disabled).
     #[clap(short, long, default_value_t = DEFAULT_CACHE_SIZE)]
     pub cache_size: usize,
-    /// Disable GetWork Server (WebSocket for miners)
+    /// Disable GetWork Server (WebSocket for miners).
     #[clap(short = 'g', long)]
     pub disable_getwork_server: bool,
-    /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME)
+    /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME).
     #[clap(long)]
     pub simulator: Option<Simulator>,
-    /// Disable the p2p connections
+    /// Disable the p2p connections.
     #[clap(long)]
     pub disable_p2p_server: bool,
     /// Enable the auto prune mode and prune the chain
@@ -135,24 +135,31 @@ pub struct Config {
     #[clap(long)]
     pub auto_prune_keep_n_blocks: Option<u64>,
     /// Sync a bootstrapped chain if your local copy is outdated.
+    /// 
     /// It will not store any blocks / TXs and will not verify the history locally.
-    /// Use it with extreme cautions and trusted nodes to have a valid bootstrapped chain
+    /// 
+    /// Use it with extreme cautions and trusted nodes to have a valid bootstrapped chain.
     #[clap(long)]
     pub allow_fast_sync: bool,
-    /// Allow boost chain sync mode
-    /// This will request in parallel all blocks instead of sequentially
-    /// It is not enabled by default because it will requests several blocks before validating each previous
+    /// Allow boost chain sync mode.
+    /// 
+    /// This will request in parallel all blocks instead of sequentially.
+    /// 
+    /// It is not enabled by default because it will requests several blocks before validating each previous.
     #[clap(long)]
     pub allow_boost_sync_mode: bool,
-    /// Configure the maximum chain response size
+    /// Configure the maximum chain response size.
+    /// 
     /// This is useful for low devices who want to reduce resources usage
-    /// And for high-end devices who want to (or help others to) sync faster
+    /// and for high-end devices who want to (or help others to) sync faster.
     #[clap(long)]
     pub max_chain_response_size: Option<usize>,
-    /// Ask peers to not share our IP to others and/or through API
+    /// Ask peers to not share our IP to others and/or through API.
+    /// 
     /// This is useful for people that don't want that their IP is revealed in RPC API
-    /// and/or shared to others nodes as a potential new peer to connect to
-    /// Note that it may prevent to have new incoming peers
+    /// and/or shared to others nodes as a potential new peer to connect to.
+    /// 
+    /// Note that it may prevent to have new incoming peers.
     #[clap(long, default_value = "true")]
     pub disable_ip_sharing: bool
 }
