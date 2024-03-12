@@ -81,11 +81,12 @@ use anyhow::{
 
 #[derive(Parser)]
 #[clap(version = VERSION, about = "An innovate cryptocurrency with BlockDAG and Homomorphic Encryption enabling Smart Contracts")]
+#[command(styles=xelis_common::get_cli_styles())]
 pub struct NodeConfig {
     #[structopt(flatten)]
     nested: Config,
     /// Set log level
-    #[clap(long, arg_enum, default_value_t = LogLevel::Info)]
+    #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
     /// Disable the log file
     #[clap(short = 'f', long)]
@@ -94,7 +95,7 @@ pub struct NodeConfig {
     #[clap(short = 'n', long, default_value_t = String::from("xelis.log"))]
     filename_log: String,
     /// Network selected for chain
-    #[clap(long, arg_enum, default_value_t = Network::Mainnet)]
+    #[clap(long, value_enum, default_value_t = Network::Mainnet)]
     network: Network
 }
 

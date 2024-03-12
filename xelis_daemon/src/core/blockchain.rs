@@ -92,7 +92,7 @@ use rand::Rng;
 
 use super::storage::{BlocksAtHeightProvider, PrunedTopoheightProvider};
 
-#[derive(Debug, clap::StructOpt)]
+#[derive(Debug, clap::Args)]
 pub struct Config {
     /// Optional node tag
     #[clap(short, long)]
