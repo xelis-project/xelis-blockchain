@@ -7,19 +7,19 @@ use super::{DataElement, DataValue, ElementType, ValueType};
 #[serde(rename_all = "snake_case")]
 pub enum QueryNumber {
     // >
-    Above(usize),
+    Greater(usize),
     // >=
-    AboveOrEqual(usize),
+    GreaterOrEqual(usize),
     // <
-    Below(usize),
+    Lesser(usize),
     // <=
-    BelowOrEqual(usize),
+    LesserOrEqual(usize),
 }
 
 impl QueryNumber {
     pub fn verify(&self, v: &DataValue) -> bool {
         match self {
-            Self::Above(value) => match v {
+            Self::Greater(value) => match v {
                 DataValue::U128(v) => *v > *value as u128,
                 DataValue::U64(v) => *v > *value as u64,
                 DataValue::U32(v) => *v > *value as u32,
@@ -27,7 +27,7 @@ impl QueryNumber {
                 DataValue::U8(v) => *v > *value as u8,
                 _ => false
             },
-            Self::AboveOrEqual(value) => match v {
+            Self::GreaterOrEqual(value) => match v {
                 DataValue::U128(v) => *v >= *value as u128,
                 DataValue::U64(v) => *v >= *value as u64,
                 DataValue::U32(v) => *v >= *value as u32,
@@ -35,7 +35,7 @@ impl QueryNumber {
                 DataValue::U8(v) => *v >= *value as u8,
                 _ => false
             },
-            Self::Below(value) => match v {
+            Self::Lesser(value) => match v {
                 DataValue::U128(v) => *v < *value as u128,
                 DataValue::U64(v) => *v < *value as u64,
                 DataValue::U32(v) => *v < *value as u32,
@@ -43,7 +43,7 @@ impl QueryNumber {
                 DataValue::U8(v) => *v < *value as u8,
                 _ => false
             },
-            Self::BelowOrEqual(value) => match v {
+            Self::LesserOrEqual(value) => match v {
                 DataValue::U128(v) => *v <= *value as u128,
                 DataValue::U64(v) => *v <= *value as u64,
                 DataValue::U32(v) => *v <= *value as u32,
@@ -65,10 +65,10 @@ pub enum QueryValue {
     EndsWith(DataValue),
     ContainsValue(DataValue),
     // Check if value type is the one researched
-    Type(ValueType),
+    IsOfType(ValueType),
     // Regex pattern on DataValue only
     #[serde(with = "serde_regex")]
-    Pattern(Regex),
+    Matches(Regex),
     #[serde(untagged)]
     NumberOp(QueryNumber)
 }
@@ -80,8 +80,8 @@ impl QueryValue {
             Self::StartsWith(value) => v.to_string().starts_with(&value.to_string()),
             Self::EndsWith(value) => v.to_string().ends_with(&value.to_string()),
             Self::ContainsValue(value) => v.to_string().contains(&value.to_string()),
-            Self::Type(expected) => v.kind() == *expected,
-            Self::Pattern(pattern) => pattern.is_match(&v.to_string()),
+            Self::IsOfType(expected) => v.kind() == *expected,
+            Self::Matches(pattern) => pattern.is_match(&v.to_string()),
             Self::NumberOp(query) => query.verify(v)
         }
     }
@@ -238,21 +238,21 @@ mod tests {
 
     #[test]
     fn test_query_number() {
-        let query = QueryNumber::Above(5);
+        let query = QueryNumber::Greater(5);
         assert!(query.verify(&DataValue::U8(6)));
         assert!(!query.verify(&DataValue::U8(5)));
 
-        let query = QueryNumber::AboveOrEqual(5);
+        let query = QueryNumber::GreaterOrEqual(5);
         assert!(query.verify(&DataValue::U8(5)));
         assert!(query.verify(&DataValue::U8(6)));
         assert!(!query.verify(&DataValue::U8(4)));
 
-        let query = QueryNumber::Below(5);
+        let query = QueryNumber::Lesser(5);
         assert!(query.verify(&DataValue::U8(4)));
         assert!(!query.verify(&DataValue::U8(5)));
         assert!(!query.verify(&DataValue::U8(6)));
 
-        let query = QueryNumber::BelowOrEqual(5);
+        let query = QueryNumber::LesserOrEqual(5);
         assert!(query.verify(&DataValue::U8(4)));
         assert!(query.verify(&DataValue::U8(5)));
         assert!(!query.verify(&DataValue::U8(6)));
@@ -276,11 +276,11 @@ mod tests {
         assert!(query.verify(&DataValue::String("hello world".to_string())));
         assert!(!query.verify(&DataValue::String("hello".to_string())));
 
-        let query = QueryValue::Type(ValueType::String);
+        let query = QueryValue::IsOfType(ValueType::String);
         assert!(query.verify(&DataValue::String("hello".to_string())));
         assert!(!query.verify(&DataValue::U8(5)));
 
-        let query = QueryValue::Pattern(Regex::new(r"^\d{3}-\d{3}-\d{4}$").unwrap());
+        let query = QueryValue::Matches(Regex::new(r"^\d{3}-\d{3}-\d{4}$").unwrap());
         assert!(query.verify(&DataValue::String("123-456-7890".to_string())));
         assert!(!query.verify(&DataValue::String("hello".to_string())));
     }
@@ -301,11 +301,11 @@ mod tests {
 
         let query = QueryElement::AtKey {
             key: DataValue::String("balance".to_string()),
-            query: Box::new(Query::Value(QueryValue::NumberOp(QueryNumber::Above(20))))
+            query: Box::new(Query::Value(QueryValue::NumberOp(QueryNumber::Greater(20))))
         };
         assert!(query.verify(&element));
 
-        let query = QueryElement::Len(QueryNumber::AboveOrEqual(2));
+        let query = QueryElement::Len(QueryNumber::GreaterOrEqual(2));
         assert!(query.verify(&DataElement::Fields(fields.clone())));
 
         let query = QueryElement::ContainsElement(DataElement::Value(DataValue::String("Slixe".to_string())));
@@ -336,7 +336,7 @@ mod tests {
             }),
             Query::Element(QueryElement::AtKey {
                 key: DataValue::String("balance".to_string()),
-                query: Box::new(Query::Value(QueryValue::NumberOp(QueryNumber::Above(20))))
+                query: Box::new(Query::Value(QueryValue::NumberOp(QueryNumber::Greater(20))))
             })
         ]);
         assert!(query.verify_element(&element));
@@ -348,7 +348,7 @@ mod tests {
             }),
             Query::Element(QueryElement::AtKey {
                 key: DataValue::String("balance".to_string()),
-                query: Box::new(Query::Value(QueryValue::NumberOp(QueryNumber::Above(30))))
+                query: Box::new(Query::Value(QueryValue::NumberOp(QueryNumber::Greater(30))))
             })
         ]);
         assert!(!query.verify_element(&element));
@@ -365,7 +365,7 @@ mod tests {
         let query = Query::Or(vec![
             Query::Element(QueryElement::AtKey {
                 key: DataValue::String("balance".to_string()),
-                query: Box::new(Query::Value(QueryValue::NumberOp(QueryNumber::Above(30))))
+                query: Box::new(Query::Value(QueryValue::NumberOp(QueryNumber::Greater(30))))
             }),
             Query::Element(QueryElement::HasKey {
                 key: DataValue::String("owner".to_string()),
@@ -377,7 +377,7 @@ mod tests {
         let query = Query::Or(vec![
             Query::Element(QueryElement::AtKey {
                 key: DataValue::String("balance".to_string()),
-                query: Box::new(Query::Value(QueryValue::NumberOp(QueryNumber::Above(30))))
+                query: Box::new(Query::Value(QueryValue::NumberOp(QueryNumber::Greater(30))))
             }),
             Query::Not(Box::new(Query::Element(QueryElement::HasKey {
                 key: DataValue::String("owner".to_string()),
