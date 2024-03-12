@@ -78,6 +78,7 @@ use lazy_static::lazy_static;
 
 #[derive(Parser)]
 #[clap(version = VERSION, about = "An innovate cryptocurrency with BlockDAG and Homomorphic Encryption enabling Smart Contracts")]
+#[command(styles=xelis_common::get_cli_styles())]
 pub struct MinerConfig {
     /// Wallet address to mine and receive block rewards on
     #[clap(short, long)]
@@ -86,7 +87,7 @@ pub struct MinerConfig {
     #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String,
     /// Set log level
-    #[clap(long, arg_enum, default_value_t = LogLevel::Info)]
+    #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
     /// Enable the benchmark mode
     #[clap(short, long)]
