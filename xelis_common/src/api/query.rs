@@ -22,33 +22,33 @@ impl QueryNumber {
             Self::Greater(value) => match v {
                 DataValue::U128(v) => *v > *value as u128,
                 DataValue::U64(v) => *v > *value as u64,
-                DataValue::U32(v) => *v > *value as u32,
-                DataValue::U16(v) => *v > *value as u16,
-                DataValue::U8(v) => *v > *value as u8,
+                DataValue::U32(v) => *v as usize > *value,
+                DataValue::U16(v) => *v as usize > *value,
+                DataValue::U8(v) => *v as usize > *value,
                 _ => false
             },
             Self::GreaterOrEqual(value) => match v {
                 DataValue::U128(v) => *v >= *value as u128,
                 DataValue::U64(v) => *v >= *value as u64,
-                DataValue::U32(v) => *v >= *value as u32,
-                DataValue::U16(v) => *v >= *value as u16,
-                DataValue::U8(v) => *v >= *value as u8,
+                DataValue::U32(v) => *v as usize >= *value,
+                DataValue::U16(v) => *v as usize >= *value,
+                DataValue::U8(v) => *v as usize >= *value,
                 _ => false
             },
             Self::Lesser(value) => match v {
                 DataValue::U128(v) => *v < *value as u128,
                 DataValue::U64(v) => *v < *value as u64,
-                DataValue::U32(v) => *v < *value as u32,
-                DataValue::U16(v) => *v < *value as u16,
-                DataValue::U8(v) => *v < *value as u8,
+                DataValue::U32(v) => (*v as usize) < *value,
+                DataValue::U16(v) => (*v as usize) < *value,
+                DataValue::U8(v) => (*v as usize) < *value,
                 _ => false
             },
             Self::LesserOrEqual(value) => match v {
                 DataValue::U128(v) => *v <= *value as u128,
                 DataValue::U64(v) => *v <= *value as u64,
-                DataValue::U32(v) => *v <= *value as u32,
-                DataValue::U16(v) => *v <= *value as u16,
-                DataValue::U8(v) => *v <= *value as u8,
+                DataValue::U32(v) => *v as usize <= *value,
+                DataValue::U16(v) => *v as usize <= *value,
+                DataValue::U8(v) => *v as usize <= *value,
                 _ => false
             }
         }
