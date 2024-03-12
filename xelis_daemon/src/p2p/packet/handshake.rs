@@ -50,12 +50,15 @@ pub struct Handshake<'a> {
     genesis_hash: Cow<'a, Hash>,
     // cumulative difficulty of its chain at top
     cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
+    // By default it's true, and peer allow to be shared to others and/or through API
+    // If false, we must not share it
+    can_be_shared: bool
 } // Server reply with his own list of peers, but we remove all already known by requester for the response.
 
 impl<'a> Handshake<'a> {
     pub const MAX_LEN: usize = 16;
 
-    pub fn new(version: Cow<'a, String>, network: Network, node_tag: Cow<'a, Option<String>>, network_id: Cow<'a, [u8; 16]>, peer_id: u64, local_port: u16, utc_time: TimestampSeconds, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, top_hash: Cow<'a, Hash>, genesis_hash: Cow<'a, Hash>, cumulative_difficulty: Cow<'a, CumulativeDifficulty>) -> Self {
+    pub fn new(version: Cow<'a, String>, network: Network, node_tag: Cow<'a, Option<String>>, network_id: Cow<'a, [u8; 16]>, peer_id: u64, local_port: u16, utc_time: TimestampSeconds, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, top_hash: Cow<'a, Hash>, genesis_hash: Cow<'a, Hash>, cumulative_difficulty: Cow<'a, CumulativeDifficulty>, can_be_shared: bool) -> Self {
         debug_assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN);
         // version cannot be greater than 16 chars
         if let Some(node_tag) = node_tag.as_ref() {
@@ -76,14 +79,15 @@ impl<'a> Handshake<'a> {
             pruned_topoheight,
             top_hash,
             genesis_hash,
-            cumulative_difficulty
+            cumulative_difficulty,
+            can_be_shared
         }
     }
 
     // Create a new peer using its connection and this handshake packet
     pub fn create_peer(self, connection: Connection, priority: bool, peer_list: SharedPeerList) -> Peer {
         let peers = HashSet::new();
-        Peer::new(connection, self.get_peer_id(), self.node_tag.into_owned(), self.local_port, self.version.into_owned(), self.top_hash.into_owned(), self.topoheight, self.height, self.pruned_topoheight, priority, self.cumulative_difficulty.into_owned(), peer_list, peers)
+        Peer::new(connection, self.get_peer_id(), self.node_tag.into_owned(), self.local_port, self.version.into_owned(), self.top_hash.into_owned(), self.topoheight, self.height, self.pruned_topoheight, priority, self.cumulative_difficulty.into_owned(), peer_list, peers, self.can_be_shared)
     }
 
     pub fn get_version(&self) -> &String {
@@ -132,7 +136,7 @@ impl<'a> Handshake<'a> {
 }
 
 impl Serializer for Handshake<'_> {
-    // 1 + MAX(16) + 1 + MAX(16) + 16 + 8 + 8 + 8 + 32 + 1 + 24 * 16
+    // 1 + MAX(16) + 1 + MAX(16) + 16 + 8 + 8 + 8 + 32 + 1 + 24 * 16 + 1
     fn write(&self, writer: &mut Writer) {
         // daemon version
         writer.write_string(&self.version);
@@ -153,6 +157,7 @@ impl Serializer for Handshake<'_> {
         writer.write_hash(&self.top_hash); // Block Top Hash (32 bytes)
         writer.write_hash(&self.genesis_hash); // Genesis Hash
         self.cumulative_difficulty.write(writer); // Cumulative Difficulty
+        writer.write_bool(self.can_be_shared); // Can be shared
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -193,8 +198,9 @@ impl Serializer for Handshake<'_> {
         let top_hash = reader.read_hash()?;
         let genesis_hash = reader.read_hash()?;
         let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
+        let can_be_shared = reader.read_bool()?;
 
-        Ok(Handshake::new(Cow::Owned(version), network, Cow::Owned(node_tag), Cow::Owned(network_id), peer_id, local_port, utc_time, topoheight, height, pruned_topoheight, Cow::Owned(top_hash), Cow::Owned(genesis_hash), Cow::Owned(cumulative_difficulty)))
+        Ok(Handshake::new(Cow::Owned(version), network, Cow::Owned(node_tag), Cow::Owned(network_id), peer_id, local_port, utc_time, topoheight, height, pruned_topoheight, Cow::Owned(top_hash), Cow::Owned(genesis_hash), Cow::Owned(cumulative_difficulty), can_be_shared))
     }
 
     fn size(&self) -> usize {
@@ -223,7 +229,9 @@ impl Serializer for Handshake<'_> {
         // Genesis Hash
         self.genesis_hash.size() +
         // Cumulative Difficulty
-        self.cumulative_difficulty.size()
+        self.cumulative_difficulty.size() +
+        // Can be shared
+        self.can_be_shared.size()
     }
 }
 

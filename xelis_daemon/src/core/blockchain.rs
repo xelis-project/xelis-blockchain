@@ -148,7 +148,12 @@ pub struct Config {
     /// This is useful for low devices who want to reduce resources usage
     /// And for high-end devices who want to (or help others to) sync faster
     #[clap(long)]
-    pub max_chain_response_size: Option<usize>
+    pub max_chain_response_size: Option<usize>,
+    /// Ask peers to not share our IP to others and/or through API
+    /// This is useful for people that don't want that their IP is revealed in RPC API
+    /// and/or shared to others nodes as a potential new peer to connect to
+    #[clap(long, default_value = "true")]
+    pub disable_ip_sharing: bool
 }
 
 pub struct Blockchain<S: Storage> {
@@ -264,7 +269,7 @@ impl<S: Storage> Blockchain<S> {
 
         let arc = Arc::new(blockchain);
         // create P2P Server
-        if !config.disable_p2p_server && arc.network != Network::Dev  {
+        if !config.disable_p2p_server && arc.network != Network::Dev {
             info!("Starting P2p server...");
             // setup exclusive nodes
             let mut exclusive_nodes: Vec<SocketAddr> = Vec::with_capacity(config.exclusive_nodes.len());
@@ -279,7 +284,7 @@ impl<S: Storage> Blockchain<S> {
                 exclusive_nodes.push(addr);
             }
 
-            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync_mode, config.max_chain_response_size) {
+            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync_mode, config.max_chain_response_size, !config.disable_ip_sharing) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {

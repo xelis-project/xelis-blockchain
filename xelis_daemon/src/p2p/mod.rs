@@ -152,10 +152,13 @@ pub struct P2pServer<S: Storage> {
     // Configured exclusive nodes
     // If not empty, no other peer than those listed can connect to this node
     exclusive_nodes: HashSet<SocketAddr>,
+    // Are we allowing others nodes to share us as a potential peer ?
+    // Also if we allows to be listed in get_peers RPC API
+    sharable: bool,
 }
 
 impl<S: Storage> P2pServer<S> {
-    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>) -> Result<Arc<Self>, P2pError> {
+    pub fn new(tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool) -> Result<Arc<Self>, P2pError> {
         if let Some(tag) = &tag {
             debug_assert!(tag.len() > 0 && tag.len() <= 16);
         }
@@ -191,7 +194,8 @@ impl<S: Storage> P2pServer<S> {
             allow_fast_sync_mode,
             allow_boost_sync_mode,
             max_chain_response_size: max_chain_response_size.unwrap_or(CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS),
-            exclusive_nodes: HashSet::from_iter(exclusive_nodes.into_iter())
+            exclusive_nodes: HashSet::from_iter(exclusive_nodes.into_iter()),
+            sharable
         };
 
         let arc = Arc::new(server);
@@ -421,7 +425,7 @@ impl<S: Storage> P2pServer<S> {
         let pruned_topoheight = storage.get_pruned_topoheight().await?;
         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&top_hash).await.unwrap_or_else(|_| CumulativeDifficulty::zero());
         let genesis_block = get_genesis_block_hash(self.blockchain.get_network());
-        let handshake = Handshake::new(Cow::Owned(VERSION.to_owned()), *self.blockchain.get_network(), Cow::Borrowed(self.get_tag()), Cow::Borrowed(&NETWORK_ID), self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, Cow::Borrowed(&top_hash), Cow::Borrowed(genesis_block), Cow::Borrowed(&cumulative_difficulty));
+        let handshake = Handshake::new(Cow::Owned(VERSION.to_owned()), *self.blockchain.get_network(), Cow::Borrowed(self.get_tag()), Cow::Borrowed(&NETWORK_ID), self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, Cow::Borrowed(&top_hash), Cow::Borrowed(genesis_block), Cow::Borrowed(&cumulative_difficulty), self.sharable);
         Ok(Packet::Handshake(Cow::Owned(handshake)).to_bytes())
     }
 
@@ -757,7 +761,8 @@ impl<S: Storage> P2pServer<S> {
                     // iterate through our peerlist to determinate which peers we have to send
                     for p in peer_list.get_peers().values() {
                         // don't send him itself
-                        if p.get_id() == peer.get_id() {
+                        // and don't share a peer that don't want to be shared
+                        if p.get_id() == peer.get_id() || !p.sharable() {
                             continue;
                         }
 

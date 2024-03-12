@@ -668,7 +668,7 @@ async fn get_peers<S: Storage>(context: Context, body: Value) -> Result<Value, I
         Some(p2p) => {
             let peer_list = p2p.get_peer_list().read().await;
             let mut peers = Vec::new();
-            for p in  peer_list.get_peers().values() {
+            for p in  peer_list.get_peers().values().filter(|p| p.sharable()) {
                 peers.push(get_peer_entry(p).await);
             }
             Ok(json!(peers))

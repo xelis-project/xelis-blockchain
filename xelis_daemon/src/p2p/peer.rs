@@ -126,11 +126,13 @@ pub struct Peer {
     // used to wait on chain response when syncing chain
     sync_chain: Mutex<Option<Sender<ChainResponse>>>,
     // IP address with local port
-    outgoing_address: SocketAddr
+    outgoing_address: SocketAddr,
+    // Determine if this peer allows to be shared to others and/or through API
+    sharable: bool
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>, sharable: bool) -> Self {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
 
@@ -167,7 +169,8 @@ impl Peer {
             is_pruned: AtomicBool::new(pruned_topoheight.is_some()),
             bootstrap_chain: Mutex::new(None),
             sync_chain: Mutex::new(None),
-            outgoing_address
+            outgoing_address,
+            sharable
         }
     }
 
@@ -285,6 +288,11 @@ impl Peer {
     // If the peer is a seed node or added manually by the user, it should be trusted
     pub fn is_priority(&self) -> bool {
         self.priority
+    }
+
+    // Get the sharable flag of the peer
+    pub fn sharable(&self) -> bool {
+        self.sharable
     }
 
     // Get the last time we got a fail from the peer
