@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fs::File, io::{Read, Write}, sync::Arc};
 
 use anyhow::{Error, Context};
 use serde::Serialize;
@@ -24,7 +24,7 @@ use xelis_common::{
     crypto::{
         elgamal::{Ciphertext, PublicKey as DecompressedPublicKey},
         Address,
-        ECDLPTablesFile,
+        ecdlp::{self, ECDLPTablesFileView},
         Hash,
         KeyPair,
         PublicKey,
@@ -218,6 +218,30 @@ impl Event {
 
 }
 
+pub struct PrecomputedTables {
+    content: Vec<u8>,
+    l1: usize
+}
+
+impl PrecomputedTables {
+    pub fn new(content: Vec<u8>, l1: usize) -> Self {
+        Self {
+            content,
+            l1
+        }
+    }
+
+    pub fn get(&self) -> &[u8] {
+        self.content.as_slice()
+    }
+
+    pub fn l1(&self) -> usize {
+        self.l1
+    }
+}
+
+pub const PRECOMPUTED_TABLES_L1: usize = 26;
+
 pub struct Wallet {
     // Encrypted Wallet Storage
     storage: RwLock<EncryptedStorage>,
@@ -237,7 +261,8 @@ pub struct Wallet {
     xswd_channel: RwLock<Option<UnboundedSender<XSWDEvent>>>,
     // Event broadcaster
     event_broadcaster: Mutex<Option<BroadcastSender<Event>>>,
-    precomputed_tables: ECDLPTablesFile<26>
+    // Precomputed tables byte array
+    precomputed_tables: PrecomputedTables
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -247,10 +272,24 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 }
 
 impl Wallet {
-    // Create a new wallet with the specificed storage, keypair and its network
-    fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network) -> Arc<Self> {
-        let precomputed_tables = ECDLPTablesFile::load_from_file("ecdlp_tables.bin").unwrap();
+    // This will read from file if exists, or generate and store it in file
+    pub fn read_or_generate_precomputed_tables<const N: usize>() -> Result<PrecomputedTables, Error> {
+        let mut bytes = vec![0; ecdlp::table_generation::table_file_len(N)];
 
+        // Try to read from file
+        if let Ok(mut file) = File::open(format!("precomputed_tables_{N}.bin")) {
+            file.read_exact(&mut bytes)?;
+        } else {
+            // File does not exists, generate and store it
+            ecdlp::table_generation::create_table_file(N, &mut bytes)?;
+            File::create(format!("precomputed_tables_{N}.bin"))?.write_all(&bytes)?;
+        }
+
+        Ok(PrecomputedTables::new(bytes, N))
+    }
+
+    // Create a new wallet with the specificed storage, keypair and its network
+    fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTables) -> Arc<Self> {
         let zelf = Self {
             storage: RwLock::new(storage),
             public_key: keypair.get_public_key().compress(),
@@ -322,7 +361,7 @@ impl Wallet {
         // Store the private key
         storage.set_private_key(&keypair.get_private_key())?;
 
-        Ok(Self::new(storage, keypair, network))
+        Ok(Self::new(storage, keypair, network, Self::read_or_generate_precomputed_tables::<PRECOMPUTED_TABLES_L1>()?))
     }
 
     // Open an existing wallet on disk
@@ -365,7 +404,7 @@ impl Wallet {
         let private_key =  storage.get_private_key()?;
         let keypair = KeyPair::from_private_key(private_key);
 
-        Ok(Self::new(storage, keypair, network))
+        Ok(Self::new(storage, keypair, network, Self::read_or_generate_precomputed_tables::<PRECOMPUTED_TABLES_L1>()?))
     }
 
     // Close the wallet
@@ -563,7 +602,7 @@ impl Wallet {
 
     pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
         trace!("Decrypting ciphertext");
-        tokio::task::block_in_place(|| self.keypair.decrypt(&self.precomputed_tables, &ciphertext).ok_or(WalletError::CiphertextDecode))
+        tokio::task::block_in_place(|| self.keypair.decrypt(&ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get()), &ciphertext).ok_or(WalletError::CiphertextDecode))
     }
 
     // Create a transaction with the given transaction type and fee

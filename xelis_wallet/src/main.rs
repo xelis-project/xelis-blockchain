@@ -78,7 +78,7 @@ use {
 // In case we want to enable it instead of starting
 // the XSWD Server
 #[cfg(feature = "api_server")]
-#[derive(Debug, clap::StructOpt)]
+#[derive(Debug, clap::Args)]
 pub struct RPCConfig {
     /// RPC Server bind address
     #[clap(long)]
@@ -93,6 +93,7 @@ pub struct RPCConfig {
 
 #[derive(Parser)]
 #[clap(version = VERSION, about = "An innovate cryptocurrency with BlockDAG and Homomorphic Encryption enabling Smart Contracts")]
+#[command(styles=xelis_common::get_cli_styles())]
 pub struct Config {
     /// Daemon address to use
     #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
@@ -101,7 +102,7 @@ pub struct Config {
     #[clap(short, long)]
     offline_mode: bool,
     /// Set log level
-    #[clap(long, arg_enum, default_value_t = LogLevel::Info)]
+    #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
     /// Disable the log file
     #[clap(short = 'f', long)]
@@ -119,7 +120,7 @@ pub struct Config {
     #[clap(short, long)]
     seed: Option<String>,
     /// Network selected for chain
-    #[clap(long, arg_enum, default_value_t = Network::Mainnet)]
+    #[clap(long, value_enum, default_value_t = Network::Mainnet)]
     network: Network,
     /// RPC Server configuration
     #[cfg(feature = "api_server")]
