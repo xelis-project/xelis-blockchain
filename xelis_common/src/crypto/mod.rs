@@ -13,4 +13,4 @@ pub use transcript::*;
 pub type PublicKey = elgamal::CompressedPublicKey;
 pub use elgamal::{PrivateKey, KeyPair, Signature, SIGNATURE_SIZE};
 
-pub use curve25519_dalek::ecdlp::{ECDLPTablesFile, ECDLPArguments};
+pub use curve25519_dalek::ecdlp;

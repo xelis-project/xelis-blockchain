@@ -24,3 +24,42 @@ pub mod prompt;
 
 #[cfg(feature = "rpc_server")]
 pub mod rpc_server;
+
+#[cfg(feature = "clap")]
+// If clap feature is enabled, build the correct style for CLI
+pub fn get_cli_styles() -> clap::builder::Styles {
+    use clap::builder::styling::*;
+
+    clap::builder::Styles::styled()
+        .usage(
+            Style::new()
+                .bold()
+                .fg_color(Some(Color::Ansi(AnsiColor::Yellow))),
+        )
+        .header(
+            Style::new()
+                .bold()
+                .fg_color(Some(Color::Ansi(AnsiColor::Yellow))),
+        )
+        .literal(
+            Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))),
+        )
+        .invalid(
+            Style::new()
+                .bold()
+                .fg_color(Some(Color::Ansi(AnsiColor::Red))),
+        )
+        .error(
+            Style::new()
+                .bold()
+                .fg_color(Some(Color::Ansi(AnsiColor::Red))),
+        )
+        .valid(
+            Style::new()
+                .bold()
+                .fg_color(Some(Color::Ansi(AnsiColor::Green))),
+        )
+        .placeholder(
+            Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))),
+        )
+}

@@ -8,42 +8,44 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-blake3 = "1.5.0"
+blake3 = "1.5.1"
 hex = "0.4.3"
-num-bigint = "0.4.0"
-num-traits = "0.2.14"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
-rand = "0.8.4"
+rand = "0.8.5"
 bulletproofs = { git = "https://github.com/cchudant/bulletproofs", branch = "batching-own-repo", version = "5.0.2" }
 curve25519-dalek = { version = "4.1.1", features = ["digest", "group", "rand_core", "serde"], git = "https://github.com/cchudant/curve25519-dalek", branch = "main" }
 merlin = "3.0.0"
 zeroize = "1.7.0"
 lazy_static = "1.4.0"
-sha3 = "0.9.1"
+sha3 = "0.10.8"
 
-thiserror = "1.0.57"
-anyhow = "1.0.57"
+thiserror = "1.0.58"
+anyhow = "1.0.81"
 log = "0.4"
 fern = { version = "0.6", features = ["colored", "date-based"] }
-chrono = "0.4.19"
-tokio = { version = "1.25", features = ["macros", "signal", "time", "sync"], optional = true }
-reqwest = { version = "0.11.10", default-features = false, features = ["json", "rustls"], optional = true }
-clap = { version = "3.1.18", features = ["derive"], optional = true }
-crossterm = "*"
-indexmap = { version = "2.0.0", features = ["serde"] }
-actix-rt = { version = "2.8.0", optional = true }
+chrono = "0.4.35"
+tokio = { version = "1.36", features = ["macros", "signal", "time", "sync"], optional = true }
+reqwest = { version = "0.11.25", default-features = false, features = ["json", "rustls"], optional = true }
+clap = { version = "4.5.2", features = ["derive"], optional = true }
+crossterm = "0.27.0"
+indexmap = { version = "2.2.5", features = ["serde"] }
+actix-rt = { version = "2.9.0", optional = true }
 actix-web = { version = "4", optional = true }
 actix-ws = { version = "0.2.5", optional = true }
-futures-util = { version = "0.3.28", optional = true }
-async-trait = { version = "0.1.64", optional = true }
+futures-util = { version = "0.3.30", optional = true }
+async-trait = "0.1.77"
+# Query system
 regex = "1"
+# Query system
 serde_regex = "1.1.0"
+# WebSocket clients using tokio
 tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
+# Used for U256
 primitive-types = { version = "0.12.2", features = ["serde"] }
 
 [features]
 json_rpc = ["dep:reqwest"]
 prompt = ["dep:tokio"]
 clap = ["dep:clap"]
-rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "dep:tokio", "dep:async-trait", "dep:reqwest"]
+rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "dep:tokio", "dep:reqwest"]

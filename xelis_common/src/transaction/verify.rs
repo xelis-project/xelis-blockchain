@@ -5,10 +5,12 @@ use crate::{config::XELIS_ASSET, crypto::{elgamal::{Ciphertext, CompressedPublic
 use super::{Role, Transaction, TransactionType, TransferPayload};
 use thiserror::Error;
 use std::iter;
+use async_trait::async_trait;
 
 /// This trait is used by the batch verification function.
 /// It is intended to represent a virtual snapshot of the current blockchain
 /// state, where the transactions can get applied in order.
+#[async_trait]
 pub trait BlockchainVerificationState {
     type Error;
 

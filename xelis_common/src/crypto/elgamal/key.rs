@@ -1,5 +1,5 @@
 use curve25519_dalek::{
-    ecdlp::{self, ECDLPArguments},
+    ecdlp::{self, ECDLPArguments, ECDLPTablesFileView},
     ristretto::RistrettoPoint,
     Scalar
 };
@@ -116,7 +116,7 @@ impl PrivateKey {
     }
 
     // Decrypt a Ciphertext to a u64 with precomputed tables
-    pub fn decrypt<TS: ecdlp::PrecomputedECDLPTables>(&self, precomputed_tables: &TS, ciphertext: &Ciphertext) -> Option<u64> {
+    pub fn decrypt<const L1: usize>(&self, precomputed_tables: &ECDLPTablesFileView<L1>, ciphertext: &Ciphertext) -> Option<u64> {
         let point = self.decrypt_to_point(ciphertext);
         ecdlp::decode(precomputed_tables, point, ECDLPArguments::new_with_range(0, MAXIMUM_SUPPLY as i64))
             .map(|x| x as u64)
@@ -150,7 +150,7 @@ impl KeyPair {
     }
 
     // Decrypt a Ciphertext to a u64 with precomputed tables
-    pub fn decrypt<TS: ecdlp::PrecomputedECDLPTables>(&self, precomputed_tables: &TS, ciphertext: &Ciphertext) -> Option<u64> {
+    pub fn decrypt<const L1: usize>(&self, precomputed_tables: &ECDLPTablesFileView<L1>, ciphertext: &Ciphertext) -> Option<u64> {
         self.private_key.decrypt(precomputed_tables, ciphertext)
     }
 
