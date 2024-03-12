@@ -755,6 +755,9 @@ impl<S: Storage> P2pServer<S> {
                     let new_peers = ping.get_mut_peers();
                     new_peers.clear();
 
+                    // Is it a peer from our local network
+                    let is_local_peer = is_local_address(peer.get_connection().get_address());
+
                     // all the peers we already shared with this peer
                     let mut shared_peers = peer.get_peers().lock().await;
 
@@ -769,9 +772,9 @@ impl<S: Storage> P2pServer<S> {
                         // if we haven't send him this peer addr and that he don't have him already, insert it
                         let addr = p.get_outgoing_address();
 
-                        // Don't share local network addresses
-                        if is_local_address(addr) {
-                            debug!("{} is a local address, skipping", addr);
+                        // Don't share local network addresses if it's external peer
+                        if is_local_address(addr) && !is_local_peer {
+                            debug!("{} is a local address but peer is external, skipping", addr);
                             continue;
                         }
 
@@ -1258,7 +1261,13 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
 
+                let is_local_peer = is_local_address(peer.get_connection().get_address());
                 for peer in ping.get_peers() {
+                    if is_local_address(peer) && !is_local_peer {
+                        error!("{} is a local address but peer is external", peer);
+                        return Err(P2pError::InvalidPeerlist)
+                    }
+
                     if !self.is_connected_to_addr(&peer).await? {
                         let peer = peer.clone();
                         self.try_to_connect_to_peer(peer, false).await;
