@@ -921,32 +921,36 @@ No parameters
 {
 	"id": 1,
 	"jsonrpc": "2.0",
-	"result": [
-		{
-			"addr": "255.255.255.255:2125",
-			"cumulative_difficulty": 15429361306853,
-			"height": 488400,
-			"id": 8185485348476293826,
-			"last_ping": 1697559833,
-			"pruned_topoheight": 488000,
-			"tag": null,
-			"top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
-			"topoheight": 489291,
-			"version": "1.5.0"
-		},
-		{
-			"addr": "192.168.55.43:2125",
-			"cumulative_difficulty": 15429361306853,
-			"height": 488400,
-			"id": 2491091954271682078,
-			"last_ping": 1697559834,
-			"pruned_topoheight": 489200,
-			"tag": null,
-			"top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
-			"topoheight": 489291,
-			"version": "1.5.0"
-		}
-	]
+	"result": {
+		"peers": [
+			{
+				"addr": "255.255.255.255:2125",
+				"cumulative_difficulty": 15429361306853,
+				"height": 488400,
+				"id": 8185485348476293826,
+				"last_ping": 1697559833,
+				"pruned_topoheight": 488000,
+				"tag": null,
+				"top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
+				"topoheight": 489291,
+				"version": "1.5.0"
+			},
+			{
+				"addr": "192.168.55.43:2125",
+				"cumulative_difficulty": 15429361306853,
+				"height": 488400,
+				"id": 2491091954271682078,
+				"last_ping": 1697559834,
+				"pruned_topoheight": 489200,
+				"tag": null,
+				"top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
+				"topoheight": 489291,
+				"version": "1.5.0"
+			}
+		],
+		"hidden_peers": 0,
+		"total_peers": 2
+	}
 }
 ```
 NOTE: Addresses displayed in this example are not real one and were replaced for privacy reasons.
