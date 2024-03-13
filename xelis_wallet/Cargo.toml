@@ -17,6 +17,7 @@ crc32fast = "1.3.2"
 actix = "0.13.0"
 actix-web = "4"
 hex = "0.4.3"
+bytemuck = "1.15.0"
 
 # common dependencies
 lru = "0.12.3"

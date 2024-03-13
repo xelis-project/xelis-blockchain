@@ -218,25 +218,44 @@ impl Event {
 
 }
 
+// This is a 32 bytes aligned struct
+// It is necessary for the precomputed tables points
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone)]
+#[repr(C, align(32))]
+struct Bytes32Alignment([u8; 32]);
+
 pub struct PrecomputedTables {
-    content: Vec<u8>,
-    l1: usize
+    bytes: Vec<Bytes32Alignment>,
+    l1: usize,
+    bytes_count: usize,
 }
 
 impl PrecomputedTables {
-    pub fn new(content: Vec<u8>, l1: usize) -> Self {
+    pub fn new(l1: usize) -> Self {
+        let bytes_count = ecdlp::table_generation::table_file_len(l1);
+        let bytes = vec![Bytes32Alignment([0; 32]); bytes_count / 2 + 1];
+
         Self {
-            content,
-            l1
+            bytes,
+            l1,
+            bytes_count
         }
     }
 
-    pub fn get(&self) -> &[u8] {
-        self.content.as_slice()
+    pub fn get<'a>(&'a self) -> &'a [u8] {
+       &bytemuck::cast_slice(self.bytes.as_slice())[..self.bytes_count]
+    }
+
+    pub fn get_mut<'a>(&'a mut self) -> &'a mut [u8] {
+        &mut bytemuck::cast_slice_mut(self.bytes.as_mut_slice())[..self.bytes_count]
     }
 
     pub fn l1(&self) -> usize {
         self.l1
+    }
+
+    pub fn bytes_count(&self) -> usize {
+        self.bytes_count
     }
 }
 
@@ -274,18 +293,18 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 impl Wallet {
     // This will read from file if exists, or generate and store it in file
     pub fn read_or_generate_precomputed_tables<const N: usize>() -> Result<PrecomputedTables, Error> {
-        let mut bytes = vec![0; ecdlp::table_generation::table_file_len(N)];
+        let mut precomputed_tables = PrecomputedTables::new(N);
 
         // Try to read from file
         if let Ok(mut file) = File::open(format!("precomputed_tables_{N}.bin")) {
-            file.read_exact(&mut bytes)?;
+            file.read_exact(precomputed_tables.get_mut())?;
         } else {
             // File does not exists, generate and store it
-            ecdlp::table_generation::create_table_file(N, &mut bytes)?;
-            File::create(format!("precomputed_tables_{N}.bin"))?.write_all(&bytes)?;
+            ecdlp::table_generation::create_table_file(N, precomputed_tables.get_mut())?;
+            File::create(format!("precomputed_tables_{N}.bin"))?.write_all(precomputed_tables.get())?;
         }
 
-        Ok(PrecomputedTables::new(bytes, N))
+        Ok(precomputed_tables)
     }
 
     // Create a new wallet with the specificed storage, keypair and its network
