@@ -246,19 +246,29 @@ impl Direction {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetPeersResponse<'a> {
+    // Peers that are connected and allows to be displayed
+    pub peers: Vec<PeerEntry<'a>>,
+    // All peers connected
+    pub total_peers: usize,
+    // Peers that asked to not be listed
+    pub hidden_peers: usize
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct PeerEntry<'a> {
     pub id: u64,
     pub addr: Cow<'a, SocketAddr>,
     pub local_port: u16,
     pub tag: Cow<'a, Option<String>>,
     pub version: Cow<'a, String>,
-    pub top_block_hash: Hash,
+    pub top_block_hash: Cow<'a, Hash>,
     pub topoheight: u64,
     pub height: u64,
     pub last_ping: TimestampSeconds,
     pub pruned_topoheight: Option<u64>,
-    pub peers: HashMap<SocketAddr, Direction>,
-    pub cumulative_difficulty: CumulativeDifficulty,
+    pub peers: Cow<'a, HashMap<SocketAddr, Direction>>,
+    pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
     pub connected_on: TimestampSeconds
 }
 
