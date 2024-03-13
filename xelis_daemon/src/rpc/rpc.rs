@@ -51,6 +51,7 @@ use xelis_common::{
             HasNonceResult,
             IsTxExecutedInBlockParams,
             P2pStatusResult,
+            GetPeersResponse,
             PeerEntry,
             SizeOnDiskResult,
             SubmitBlockParams,
@@ -264,13 +265,13 @@ pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
         local_port: peer.get_local_port(),
         tag: Cow::Borrowed(peer.get_node_tag()),
         version: Cow::Borrowed(peer.get_version()),
-        top_block_hash,
+        top_block_hash: Cow::Owned(top_block_hash),
         topoheight: peer.get_topoheight(),
         height: peer.get_height(),
         last_ping: peer.get_last_ping(),
-        peers,
+        peers: Cow::Owned(peers),
         pruned_topoheight: peer.get_pruned_topoheight(),
-        cumulative_difficulty: *cumulative_difficulty,
+        cumulative_difficulty: Cow::Owned(*cumulative_difficulty),
         connected_on: peer.get_connection().connected_on()
     }
 }
@@ -668,10 +669,18 @@ async fn get_peers<S: Storage>(context: Context, body: Value) -> Result<Value, I
         Some(p2p) => {
             let peer_list = p2p.get_peer_list().read().await;
             let mut peers = Vec::new();
-            for p in  peer_list.get_peers().values().filter(|p| p.sharable()) {
+            let peers_availables = peer_list.get_peers().values();
+            let total_peers = peers_availables.len();
+            let mut sharable_peers = 0;
+            for p in peers_availables.filter(|p| p.sharable()) {
                 peers.push(get_peer_entry(p).await);
+                sharable_peers += 1;
             }
-            Ok(json!(peers))
+            Ok(json!(GetPeersResponse {
+                peers,
+                total_peers,
+                hidden_peers: total_peers - sharable_peers,
+            }))
         },
         None => Err(InternalRpcError::AnyError(ApiError::NoP2p.into()))
     }
