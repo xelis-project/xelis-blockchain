@@ -176,7 +176,7 @@ impl<S: Storage> P2pServer<S> {
         let (blocks_processor, blocks_processor_receiver) = mpsc::channel(TIPS_LIMIT * STABLE_LIMIT as usize);
         let object_tracker = ObjectTracker::new(blockchain.clone());
 
-        let (sender, receiver) = unbounded_channel::<Arc<Peer>>(); 
+        let (sender, event_receiver) = unbounded_channel::<Arc<Peer>>(); 
         let peer_list = PeerList::new(max_peers, format!("peerlist-{}.json", blockchain.get_network().to_string().to_lowercase()), Some(sender));
 
         let server = Self {
@@ -202,22 +202,10 @@ impl<S: Storage> P2pServer<S> {
         {
             let zelf = Arc::clone(&arc);
             tokio::spawn(async move {
-                if let Err(e) = zelf.start(connections_receiver, use_peerlist).await {
+                if let Err(e) = zelf.start(connections_receiver, blocks_processor_receiver, event_receiver, use_peerlist).await {
                     error!("Unexpected error on P2p module: {}", e);
                 }
             });
-        }
-
-        // Start the blocks processing task to have a queued handler
-        {
-            let zelf = Arc::clone(&arc);
-            tokio::spawn(zelf.blocks_processing_task(blocks_processor_receiver));
-        }
-
-        // Start the event loop task to handle peer disconnect events
-        {
-            let zelf = Arc::clone(&arc);
-            tokio::spawn(zelf.event_loop(receiver));
         }
 
         Ok(arc)
@@ -278,7 +266,10 @@ impl<S: Storage> P2pServer<S> {
 
     // connect to seed nodes, start p2p server
     // and wait on all new connections
-    async fn start(self: &Arc<Self>, mut receiver: UnboundedReceiver<MessageChannel>, use_peerlist: bool) -> Result<(), P2pError> {
+    async fn start(self: &Arc<Self>, mut receiver: UnboundedReceiver<MessageChannel>, blocks_processor_receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>, event_receiver: UnboundedReceiver<Arc<Peer>>, use_peerlist: bool) -> Result<(), P2pError> {
+        let listener = TcpListener::bind(self.get_bind_address()).await?;
+        info!("P2p Server will listen on: {}", self.get_bind_address());
+
         let mut exclusive_nodes = self.exclusive_nodes.clone();
         if exclusive_nodes.is_empty() {
             debug!("No exclusive nodes available, using seed nodes...");
@@ -302,13 +293,18 @@ impl<S: Storage> P2pServer<S> {
         // start another task for ping loop
         tokio::spawn(Arc::clone(&self).ping_loop());
 
+        // start the blocks processing task to have a queued handler
+        tokio::spawn(Arc::clone(&self).blocks_processing_task(blocks_processor_receiver));
+
+        // start the event loop task to handle peer disconnect events
+        tokio::spawn(Arc::clone(&self).event_loop(event_receiver));
+
+
         // start another task for peerlist loop
         if use_peerlist {
             tokio::spawn(Arc::clone(&self).peerlist_loop());
         }
 
-        let listener = TcpListener::bind(self.get_bind_address()).await?;
-        info!("P2p Server will listen on: {}", self.get_bind_address());
         // only allocate one time the buffer for this packet
         let mut handshake_buffer = [0; 512];
         loop {
@@ -464,7 +460,7 @@ impl<S: Storage> P2pServer<S> {
             peer_list.add_peer(peer_id, peer)
         };
 
-        {
+        if peer.sharable() {
             trace!("Locking RPC Server to notify PeerConnected event");
             if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
                 if rpc.is_event_tracked(&NotifyEvent::PeerConnected).await {
@@ -868,10 +864,12 @@ impl<S: Storage> P2pServer<S> {
                 break;
             }
 
-            if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
-                if rpc.is_event_tracked(&NotifyEvent::PeerDisconnected).await {
-                    debug!("Notifying clients with PeerDisconnected event");
-                    rpc.notify_clients_with(&NotifyEvent::PeerDisconnected, get_peer_entry(&peer).await).await;
+            if peer.sharable() {
+                if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
+                    if rpc.is_event_tracked(&NotifyEvent::PeerDisconnected).await {
+                        debug!("Notifying clients with PeerDisconnected event");
+                        rpc.notify_clients_with(&NotifyEvent::PeerDisconnected, get_peer_entry(&peer).await).await;
+                    }
                 }
             }
         }
@@ -1458,17 +1456,19 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
 
-                trace!("Locking RPC Server to notify PeerDisconnected event");
-                if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
-                    if rpc.is_event_tracked(&NotifyEvent::PeerPeerDisconnected).await {
-                        let value = PeerPeerDisconnectedEvent {
-                            peer_id: peer.get_id(),
-                            peer_addr: addr
-                        };
-                        rpc.notify_clients_with(&NotifyEvent::PeerPeerDisconnected, value).await;
+                if peer.sharable() {
+                    trace!("Locking RPC Server to notify PeerDisconnected event");
+                    if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
+                        if rpc.is_event_tracked(&NotifyEvent::PeerPeerDisconnected).await {
+                            let value = PeerPeerDisconnectedEvent {
+                                peer_id: peer.get_id(),
+                                peer_addr: addr
+                            };
+                            rpc.notify_clients_with(&NotifyEvent::PeerPeerDisconnected, value).await;
+                        }
                     }
+                    trace!("End locking for PeerDisconnected event");
                 }
-                trace!("End locking for PeerDisconnected event");
             }
         };
         Ok(())

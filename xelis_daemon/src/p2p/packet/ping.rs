@@ -78,13 +78,15 @@ impl<'a> Ping<'a> {
         peer.set_pruned_topoheight(self.pruned_topoheight);
         peer.set_cumulative_difficulty(self.cumulative_difficulty).await;
 
-        trace!("Locking RPC Server to notify PeerStateUpdated event");
-        if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
-            if rpc.is_event_tracked(&NotifyEvent::PeerStateUpdated).await {
-                rpc.notify_clients_with(&NotifyEvent::PeerStateUpdated, get_peer_entry(peer).await).await;
+        if peer.sharable() {
+            trace!("Locking RPC Server to notify PeerStateUpdated event");
+            if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
+                if rpc.is_event_tracked(&NotifyEvent::PeerStateUpdated).await {
+                    rpc.notify_clients_with(&NotifyEvent::PeerStateUpdated, get_peer_entry(peer).await).await;
+                }
             }
+            trace!("End locking for PeerStateUpdated event");
         }
-        trace!("End locking for PeerStateUpdated event");
 
         if !self.peer_list.is_empty() {
             debug!("Received a peer list ({:?}) for {}", self.peer_list, peer.get_outgoing_address());
@@ -113,17 +115,19 @@ impl<'a> Ping<'a> {
                 }
             }
 
-            trace!("Locking RPC Server to notify PeerPeerListUpdated event");
-            if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
-                if rpc.is_event_tracked(&NotifyEvent::PeerPeerListUpdated).await {
-                    let value = PeerPeerListUpdatedEvent {
-                        peer_id: peer.get_id(),
-                        peerlist: self.peer_list
-                    };
-                    rpc.notify_clients_with(&NotifyEvent::PeerPeerListUpdated, value).await;
+            if peer.sharable() {
+                trace!("Locking RPC Server to notify PeerPeerListUpdated event");
+                if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
+                    if rpc.is_event_tracked(&NotifyEvent::PeerPeerListUpdated).await {
+                        let value = PeerPeerListUpdatedEvent {
+                            peer_id: peer.get_id(),
+                            peerlist: self.peer_list
+                        };
+                        rpc.notify_clients_with(&NotifyEvent::PeerPeerListUpdated, value).await;
+                    }
                 }
+                trace!("End locking for PeerPeerListUpdated event");
             }
-            trace!("End locking for PeerPeerListUpdated event");
         }
 
         Ok(())
