@@ -296,9 +296,14 @@ impl PeerList {
     // Verify that the peer is not blacklisted or temp banned
     pub fn is_allowed(&self, ip: &IpAddr) -> bool {
         if let Some(stored_peer) = self.stored_peers.get(&ip) {
+            // If peer is blacklisted, don't accept it
             return *stored_peer.get_state() != StoredPeerState::Blacklist
+            // If it's still temp banned, don't accept it
             && stored_peer.get_temp_ban_until()
-                .map_or(false, |temp_ban_until| temp_ban_until > get_current_time_in_seconds());
+                // Temp ban is lower than current time, he is not banned anymore
+                .map(|temp_ban_until| temp_ban_until < get_current_time_in_seconds())
+                // We don't have a temp ban, so he is not banned
+                .unwrap_or(true)
         }
 
         true
