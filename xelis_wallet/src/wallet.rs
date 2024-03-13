@@ -74,6 +74,7 @@ use log::{
     trace,
     debug,
     error,
+    info
 };
 
 #[cfg(feature = "api_server")]
@@ -297,9 +298,11 @@ impl Wallet {
 
         // Try to read from file
         if let Ok(mut file) = File::open(format!("precomputed_tables_{N}.bin")) {
+            info!("Reading precomputed tables from file");
             file.read_exact(precomputed_tables.get_mut())?;
         } else {
             // File does not exists, generate and store it
+            info!("Generating precomputed tables");
             ecdlp::table_generation::create_table_file(N, precomputed_tables.get_mut())?;
             File::create(format!("precomputed_tables_{N}.bin"))?.write_all(precomputed_tables.get())?;
         }
