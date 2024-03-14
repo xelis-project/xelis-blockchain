@@ -491,8 +491,8 @@ impl<S: Storage> P2pServer<S> {
         {
             let peer_list = self.peer_list.read().await;
             trace!("peer list locked for trying to connect to peer {}", addr);
-            if peer_list.is_blacklisted(&addr.ip()) {
-                debug!("{} is banned, we can't connect to it", addr);
+            if !peer_list.is_allowed(&addr.ip()) {
+                debug!("{} is not allowed, we can't connect to it", addr);
                 return;
             }
         }
