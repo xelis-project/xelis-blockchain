@@ -231,6 +231,9 @@ pub struct PrecomputedTables {
     bytes_count: usize,
 }
 
+// Allows to be used in several wallets at the same time
+pub type PrecomputedTablesShared = Arc<PrecomputedTables>;
+
 impl PrecomputedTables {
     pub fn new(l1: usize) -> Self {
         let bytes_count = ecdlp::table_generation::table_file_len(l1);
@@ -282,7 +285,7 @@ pub struct Wallet {
     // Event broadcaster
     event_broadcaster: Mutex<Option<BroadcastSender<Event>>>,
     // Precomputed tables byte array
-    precomputed_tables: PrecomputedTables
+    precomputed_tables: PrecomputedTablesShared
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -293,7 +296,7 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 
 impl Wallet {
     // This will read from file if exists, or generate and store it in file
-    pub fn read_or_generate_precomputed_tables<const N: usize>() -> Result<PrecomputedTables, Error> {
+    pub fn read_or_generate_precomputed_tables<const N: usize>() -> Result<PrecomputedTablesShared, Error> {
         let mut precomputed_tables = PrecomputedTables::new(N);
 
         // Try to read from file
@@ -307,11 +310,11 @@ impl Wallet {
             File::create(format!("precomputed_tables_{N}.bin"))?.write_all(precomputed_tables.get())?;
         }
 
-        Ok(precomputed_tables)
+        Ok(Arc::new(precomputed_tables))
     }
 
     // Create a new wallet with the specificed storage, keypair and its network
-    fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTables) -> Arc<Self> {
+    fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared) -> Arc<Self> {
         let zelf = Self {
             storage: RwLock::new(storage),
             public_key: keypair.get_public_key().compress(),
