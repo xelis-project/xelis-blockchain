@@ -14,19 +14,15 @@ use super::{error::BlockchainError, storage::Storage};
 struct Echange {
     // Version balance of the account
     version: VersionedBalance,
-    change: Option<Ciphertext>,
-    use_output: bool
+    // Sum of all transactions output
+    output_sum: Ciphertext
 }
 
 impl Echange {
     async fn new(version: VersionedBalance) -> Result<Self, BlockchainError> {
-        // TODO take TX block hash, and verify which balance to choose
-        let use_output = version.get_output_balance().is_some();
-
         Ok(Self {
-            use_output,
             version,
-            change: None,
+            output_sum: Ciphertext::zero(),
         })
     }
 
@@ -39,26 +35,9 @@ impl Echange {
         self.version.get_mut_balance()
     }
 
-    // Set the new balance of the account
-    fn set_balance(&mut self, value: CiphertextCache) {
-        match self.version.get_mut_output_balance() {
-            Some(balance) if self.use_output => *balance = value,
-            _ => self.version.set_balance(value)
-        }
-    }
-
     // Add a change to the account
-    fn add_change(&mut self, change: Ciphertext) -> Result<(), BlockchainError> {
-        match self.change.as_mut() {
-            Some(c) => {
-                *c += change;
-            },
-            None => {
-                self.change = Some(change);
-            }
-        };
-
-        Ok(())
+    fn add_output_to_sum(&mut self, output: Ciphertext) {
+        self.output_sum += output;
     }
 }
 
@@ -168,7 +147,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
             .ok_or_else(|| BlockchainError::NoTxSender(key.as_address(self.storage.is_mainnet())))?;
 
         // Increase the total output
-        change.add_change(new_ct)?;
+        change.add_output_to_sum(new_ct);
 
         Ok(())
     }
@@ -231,7 +210,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
             // Example: Alice sends 100 to Bob, Bob sends 100 to Charlie
             // But Bob built its ZK Proof with the balance before Alice's transaction
             for (asset, echange) in account.assets.drain() {
-                let Echange { version, change, .. } = echange;
+                let Echange { version, output_sum, .. } = echange;
                 match balances.entry(asset) {
                     Entry::Occupied(mut o) => {
                         // We got incoming funds while spending some
@@ -248,10 +227,8 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
                         // Build the final balance
                         // This include all output and all inputs
-                        let _change = change.ok_or(BlockchainError::NoSenderOutput)?;
-                        // TODO add the output changes to the final + no unwrap
-                        // let final_balance = final_version.get_mut_balance().get_mut().unwrap();
-                        // *final_balance += change.get_mut().unwrap();
+                        let final_balance = final_version.get_mut_balance().computable()?;
+                        *final_balance += output_sum;
                     },
                     Entry::Vacant(e) => {
                         // We have no incoming update for this key
