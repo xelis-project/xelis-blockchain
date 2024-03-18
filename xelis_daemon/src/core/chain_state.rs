@@ -1,6 +1,10 @@
 use std::collections::{hash_map::Entry, HashMap};
 use log::{debug, trace};
-use xelis_common::{account::{CiphertextVariant, VersionedBalance, VersionedNonce}, config::XELIS_ASSET, crypto::{elgamal::Ciphertext, Hash, PublicKey}};
+use xelis_common::{
+    account::{CiphertextCache, VersionedBalance, VersionedNonce},
+    config::XELIS_ASSET,
+    crypto::{elgamal::Ciphertext, Hash, PublicKey}
+};
 use super::{error::BlockchainError, storage::Storage};
 
 // Sender changes
@@ -27,7 +31,7 @@ impl Echange {
     }
 
     // Get the right balance to use for TX verification
-    fn get_mut_balance(&mut self) -> &mut CiphertextVariant {
+    fn get_mut_balance(&mut self) -> &mut CiphertextCache {
         // match self.version.get_mut_output_balance() {
         //     Some(balance) if self.use_output => return balance,
         //     _ => {}
@@ -36,7 +40,7 @@ impl Echange {
     }
 
     // Set the new balance of the account
-    fn set_balance(&mut self, value: CiphertextVariant) {
+    fn set_balance(&mut self, value: CiphertextCache) {
         match self.version.get_mut_output_balance() {
             Some(balance) if self.use_output => *balance = value,
             _ => self.version.set_balance(value)
@@ -119,7 +123,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Retrieve the receiver balance of an account
     // This is mostly the final balance where everything is added (outputs and inputs)
-    async fn get_receiver_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut CiphertextVariant, BlockchainError> {
+    async fn get_receiver_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut CiphertextCache, BlockchainError> {
         match self.receiver_balances.entry(key).or_insert_with(HashMap::new).entry(asset) {
             Entry::Occupied(o) => Ok(o.into_mut().get_mut_balance()),
             Entry::Vacant(e) => {
@@ -132,7 +136,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Retrieve the sender balance of an account
     // This is used for TX outputs verification
     // This depends on the transaction and can be final balance or output balance
-    async fn get_sender_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut CiphertextVariant, BlockchainError> {
+    async fn get_sender_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut CiphertextCache, BlockchainError> {
         match self.accounts.entry(key) {
             Entry::Occupied(o) => {
                 let account = o.into_mut();
@@ -206,7 +210,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     pub async fn reward_miner(&mut self, miner: &'a PublicKey, reward: u64) -> Result<(), BlockchainError> {
         debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.storage.is_mainnet()), reward, self.topoheight);
         let miner_balance = self.get_receiver_balance(miner, &XELIS_ASSET).await?;
-        *miner_balance.get_mut()? += reward;
+        *miner_balance.computable()? += reward;
 
         Ok(())
     }
