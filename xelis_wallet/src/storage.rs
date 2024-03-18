@@ -15,7 +15,7 @@ use sled::{
 };
 use tokio::sync::Mutex;
 use xelis_common::{
-    account::CiphertextVariant,
+    account::CiphertextCache,
     api::{
         query::{
             Query,
@@ -76,11 +76,11 @@ const DEFAULT_CACHE_SIZE: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Balance {
     pub amount: u64,
-    pub ciphertext: CiphertextVariant
+    pub ciphertext: CiphertextCache
 }
 
 impl Balance {
-    pub fn new(amount: u64, ciphertext: CiphertextVariant) -> Self {
+    pub fn new(amount: u64, ciphertext: CiphertextCache) -> Self {
         Self {
             amount,
             ciphertext
@@ -96,7 +96,7 @@ impl Serializer for Balance {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let amount = u64::read(reader)?;
-        let ciphertext = CiphertextVariant::read(reader)?;
+        let ciphertext = CiphertextCache::read(reader)?;
         Ok(Self {
             amount,
             ciphertext

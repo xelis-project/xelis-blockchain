@@ -11,7 +11,7 @@ use tokio::sync::{
     RwLock
 };
 use xelis_common::{
-    account::CiphertextVariant,
+    account::CiphertextCache,
     api::{
         wallet::{
             BalanceChanged,
@@ -22,9 +22,9 @@ use xelis_common::{
     },
     asset::AssetWithData,
     crypto::{
+        ecdlp::{self, ECDLPTablesFileView},
         elgamal::{Ciphertext, PublicKey as DecompressedPublicKey},
         Address,
-        ecdlp::{self, ECDLPTablesFileView},
         Hash,
         KeyPair,
         PublicKey,
@@ -38,6 +38,7 @@ use xelis_common::{
             TransactionBuilder,
             TransactionTypeBuilder
         },
+        Reference,
         Transaction
     },
     utils::{
@@ -654,7 +655,11 @@ impl Wallet {
 
         let mut state = TransactionBuilderState {
             mainnet: self.network.is_mainnet(),
-            balances
+            balances,
+            reference: Reference {
+                topoheight: storage.get_synced_topoheight()?,
+                hash: storage.get_top_block_hash()?
+            },
         };
 
         // Create the transaction builder
@@ -669,6 +674,7 @@ impl Wallet {
             // We store every balances used in the transaction
             storage.set_balance_for(&asset, balance).await?;
         }
+
         // Increment the nonce
         storage.set_nonce(nonce + 1)?;
 
@@ -912,7 +918,8 @@ impl XSWDNodeMethodHandler for Arc<Wallet> {
 
 struct TransactionBuilderState {
     mainnet: bool,
-    balances: HashMap<Hash, Balance>
+    balances: HashMap<Hash, Balance>,
+    reference: Reference,
 }
 
 impl AccountState for TransactionBuilderState {
@@ -922,18 +929,22 @@ impl AccountState for TransactionBuilderState {
         self.mainnet
     }
 
+    fn get_reference(&self) -> Reference {
+        self.reference.clone()
+    }
+
     fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error> {
         self.balances.get(asset).map(|b| b.amount).ok_or_else(|| WalletError::BalanceNotFound(asset.clone()))
     }
 
-    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CiphertextVariant, Self::Error> {
+    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CiphertextCache, Self::Error> {
         self.balances.get(asset).map(|b| b.ciphertext.clone()).ok_or_else(|| WalletError::BalanceNotFound(asset.clone()))
     }
 
     fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error> {
         self.balances.insert(asset.clone(), Balance {
             amount: new_balance,
-            ciphertext: CiphertextVariant::Decompressed(ciphertext)
+            ciphertext: CiphertextCache::Decompressed(ciphertext)
         });
         Ok(())
     }

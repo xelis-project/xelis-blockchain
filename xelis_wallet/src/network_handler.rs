@@ -10,7 +10,7 @@ use anyhow::Error;
 use log::{debug, error, trace, warn};
 use tokio::{task::JoinHandle, sync::Mutex};
 use xelis_common::{
-    account::CiphertextVariant,
+    account::CiphertextCache,
     api::{
         daemon::{
             BlockResponse,
@@ -343,7 +343,7 @@ impl NetworkHandler {
         // This is used to save the latest balance
         let mut highest_version = true;
         loop {
-            let (balance, previous_topoheight) = version.consume();
+            let (mut balance, previous_topoheight) = version.consume();
             // add this topoheight in cache to not re-process it (blocks are independant of asset to have faster sync)
             // if its not already processed, do it
             if topoheight_processed.insert(topoheight) {
@@ -356,7 +356,7 @@ impl NetworkHandler {
                     let store = storage.get_balance_for(asset).await.map(|b| b.ciphertext != balance).unwrap_or(false);
                     if store {
                         debug!("Storing balance for asset {}", asset);
-                        let ciphertext = balance.decompress()?;
+                        let ciphertext = balance.decompressed()?;
                         let plaintext_balance = self.wallet.decrypt_ciphertext(&ciphertext)?;
 
                         storage.set_balance_for(asset, Balance::new(plaintext_balance, balance)).await?;
@@ -544,7 +544,7 @@ impl NetworkHandler {
 
         trace!("assets: {}", assets.len());
 
-        let mut balances: HashMap<&Hash, CiphertextVariant>  = HashMap::new();
+        let mut balances: HashMap<&Hash, CiphertextCache>  = HashMap::new();
         // Store newly detected assets
         // Get the final balance of each asset
         for asset in &assets {
@@ -588,7 +588,7 @@ impl NetworkHandler {
                 let must_update = {
                     let storage = self.wallet.get_storage().read().await;
                     match storage.get_balance_for(&asset).await {
-                        Ok(mut previous) => previous.ciphertext.get_mut()? != ciphertext.get_mut()?,
+                        Ok(mut previous) => previous.ciphertext.compressed() != ciphertext.compressed(),
                         // If we don't have a balance for this asset, we should update it
                         Err(_) => true
                     }
@@ -596,7 +596,7 @@ impl NetworkHandler {
 
                 if must_update {
                     trace!("must update balance for asset: {}, ct: {:?}", asset, ciphertext.to_bytes());
-                    let value = self.wallet.decrypt_ciphertext(ciphertext.decompress()?.as_ref())?;
+                    let value = self.wallet.decrypt_ciphertext(ciphertext.decompressed()?)?;
 
                     // Inform the change of the balance
                     self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
