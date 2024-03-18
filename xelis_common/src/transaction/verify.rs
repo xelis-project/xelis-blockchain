@@ -11,36 +11,36 @@ use async_trait::async_trait;
 /// It is intended to represent a virtual snapshot of the current blockchain
 /// state, where the transactions can get applied in order.
 #[async_trait]
-pub trait BlockchainVerificationState {
+pub trait BlockchainVerificationState<'a> {
     type Error;
 
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance(
         &self,
-        account: &CompressedPublicKey,
-        asset: &Hash,
+        account: &'a CompressedPublicKey,
+        asset: &'a Hash,
     ) -> Result<Ciphertext, Self::Error>;
 
     /// Get the balance ciphertext for a sender account
     async fn get_sender_balance(
         &self,
-        account: &CompressedPublicKey,
-        asset: &Hash,
+        account: &'a CompressedPublicKey,
+        asset: &'a Hash,
     ) -> Result<Ciphertext, Self::Error>;
 
     /// Apply a new balance ciphertext to a receiver account
     async fn update_receiver_balance(
         &mut self,
-        account: &CompressedPublicKey,
-        asset: &Hash,
+        account: &'a CompressedPublicKey,
+        asset: &'a Hash,
         new_balance: Ciphertext,
     ) -> Result<(), Self::Error>;
 
     /// Apply new balance ciphertext to a sender account
     async fn update_sender_balance(
         &mut self,
-        account: &CompressedPublicKey,
-        asset: &Hash,
+        account: &'a CompressedPublicKey,
+        asset: &'a Hash,
         new_balance: Ciphertext,
         echange: Ciphertext,
     ) -> Result<(), Self::Error>;
@@ -48,13 +48,13 @@ pub trait BlockchainVerificationState {
     /// Get the nonce of an account
     async fn get_account_nonce(
         &self,
-        account: &CompressedPublicKey
+        account: &'a CompressedPublicKey
     ) -> Result<u64, Self::Error>;
 
     /// Apply a new nonce to an account
     async fn update_account_nonce(
         &mut self,
-        account: &CompressedPublicKey,
+        account: &'a CompressedPublicKey,
         new_nonce: u64
     ) -> Result<(), Self::Error>;
 }
@@ -179,15 +179,14 @@ impl Transaction {
 
     // internal, does not verify the range proof
     // returns (transcript, commitments for range proof)
-    async fn pre_verify<B: BlockchainVerificationState>(
-        &self,
+    async fn pre_verify<'a, B: BlockchainVerificationState<'a>>(
+        &'a self,
         state: &mut B,
         sigma_batch_collector: &mut BatchCollector,
     ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<B::Error>>
     {
         // First, check the nonce
-        let account_nonce = state
-            .get_account_nonce(&self.source).await
+        let account_nonce = state.get_account_nonce(&self.source).await
             .map_err(VerificationError::State)?;
 
         if account_nonce != self.nonce {
@@ -383,8 +382,8 @@ impl Transaction {
         Ok((transcript, value_commitments))
     }
 
-    pub async fn verify_batch<B: BlockchainVerificationState>(
-        txs: &[Transaction],
+    pub async fn verify_batch<'a, B: BlockchainVerificationState<'a>>(
+        txs: &'a [Transaction],
         state: &mut B,
     ) -> Result<(), VerificationError<B::Error>> {
         let mut sigma_batch_collector = BatchCollector::default();
@@ -414,8 +413,8 @@ impl Transaction {
     }
 
     /// Verify one transaction. Use `verify_batch` to verify a batch of transactions.
-    pub async fn verify<B: BlockchainVerificationState>(
-        &self,
+    pub async fn verify<'a, B: BlockchainVerificationState<'a>>(
+        &'a self,
         state: &mut B,
     ) -> Result<(), VerificationError<B::Error>> {
         let mut sigma_batch_collector = BatchCollector::default();
@@ -439,8 +438,8 @@ impl Transaction {
     }
 
     /// Assume the tx is valid, apply it to `state`. May panic if a ciphertext is ill-formed.
-    pub async fn apply_without_verify<B: BlockchainVerificationState>(
-        &self,
+    pub async fn apply_without_verify<'a, B: BlockchainVerificationState<'a>>(
+        &'a self,
         state: &mut B,
     ) -> Result<(), B::Error> {
         let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
