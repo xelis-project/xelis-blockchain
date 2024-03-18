@@ -3,22 +3,22 @@ use serde::{Deserialize, Serialize};
 use crate::crypto::elgamal::{Ciphertext, CompressedCiphertext, DecompressionError};
 use crate::serializer::{Serializer, ReaderError, Reader, Writer};
 
-use super::CiphertextVariant;
+use super::CiphertextCache;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct VersionedBalance {
     // Output balance is used in case of multi TXs not in same block
     // If you build several TXs at same time but are not in the same block,
     // and a incoming tx happen we need to keep track of the output balance
-    output_balance: Option<CiphertextVariant>,
+    output_balance: Option<CiphertextCache>,
     // Final user balance that contains outputs and inputs balance
     // This is the balance shown to a user and used to build TXs
-    final_balance: CiphertextVariant,
+    final_balance: CiphertextCache,
     previous_topoheight: Option<u64>,
 }
 
 impl VersionedBalance {
-    pub const fn new(final_balance: CiphertextVariant, previous_topoheight: Option<u64>) -> Self {
+    pub const fn new(final_balance: CiphertextCache, previous_topoheight: Option<u64>) -> Self {
         Self {
             output_balance: None,
             final_balance,
@@ -31,45 +31,45 @@ impl VersionedBalance {
 
         Self {
             output_balance: None,
-            final_balance: CiphertextVariant::Decompressed(zero),
+            final_balance: CiphertextCache::Decompressed(zero),
             previous_topoheight: None
         }
     }
 
-    pub fn get_balance(&self) -> &CiphertextVariant {
+    pub fn get_balance(&self) -> &CiphertextCache {
         &self.final_balance
     }
 
-    pub fn get_mut_balance(&mut self) -> &mut CiphertextVariant {
+    pub fn get_mut_balance(&mut self) -> &mut CiphertextCache {
         &mut self.final_balance
     }
 
-    pub fn take_balance(self) -> CiphertextVariant {
+    pub fn take_balance(self) -> CiphertextCache {
         self.final_balance
     }
 
-    pub fn set_output_balance(&mut self, value: CiphertextVariant) {
+    pub fn set_output_balance(&mut self, value: CiphertextCache) {
         self.output_balance = Some(value);
     }
 
-    pub fn get_output_balance(&self) -> Option<&CiphertextVariant> {
+    pub fn get_output_balance(&self) -> Option<&CiphertextCache> {
         self.output_balance.as_ref()
     }
 
-    pub fn get_mut_output_balance(&mut self) -> Option<&mut CiphertextVariant> {
+    pub fn get_mut_output_balance(&mut self) -> Option<&mut CiphertextCache> {
         self.output_balance.as_mut()
     }
 
     pub fn set_compressed_balance(&mut self, value: CompressedCiphertext) {
-        self.final_balance = CiphertextVariant::Compressed(value);
+        self.final_balance = CiphertextCache::Compressed(value);
     }
 
-    pub fn set_balance(&mut self, value: CiphertextVariant) {
+    pub fn set_balance(&mut self, value: CiphertextCache) {
         self.final_balance = value;
     }
 
     pub fn add_plaintext_to_balance(&mut self, value: u64) -> Result<(), DecompressionError> {
-        *self.final_balance.get_mut()? += value;
+        *self.final_balance.computable()? += value;
         Ok(())
     }
 
@@ -81,7 +81,7 @@ impl VersionedBalance {
         self.previous_topoheight = previous_topoheight;
     }
 
-    pub fn consume(self) -> (CiphertextVariant, Option<u64>) {
+    pub fn consume(self) -> (CiphertextCache, Option<u64>) {
         (self.final_balance, self.previous_topoheight)
     }
 }
@@ -110,14 +110,14 @@ impl Serializer for VersionedBalance {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let final_balance = CiphertextVariant::read(reader)?;
+        let final_balance = CiphertextCache::read(reader)?;
         let (previous_topoheight, output_balance) = if reader.size() == 0 {
             (None, None)
         } else {
             if reader.size() == 8 {
                 (Some(reader.read_u64()?), None)
             } else {
-                (Some(reader.read_u64()?), Some(CiphertextVariant::read(reader)?))
+                (Some(reader.read_u64()?), Some(CiphertextCache::read(reader)?))
             }
         };
 

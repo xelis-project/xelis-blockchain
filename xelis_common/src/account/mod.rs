@@ -2,6 +2,7 @@ mod balance;
 mod nonce;
 
 use std::borrow::Cow;
+
 pub use balance::VersionedBalance;
 pub use nonce::VersionedNonce;
 use serde::{Serialize, Deserialize};
@@ -11,53 +12,99 @@ use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 
 // Represents a Ciphertext that can be lazily decompressed and compressed
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CiphertextVariant {
+pub enum CiphertextCache {
     Compressed(CompressedCiphertext),
-    Decompressed(Ciphertext)
+    Decompressed(Ciphertext),
+    Both(CompressedCiphertext, Ciphertext)
 }
 
-impl CiphertextVariant {
-    // Get a reference to the inner ElGamalCiphertext for operations
-    pub fn get_mut<'a>(&'a mut self) -> Result<&'a mut Ciphertext, DecompressionError> {
-        match self {
+impl CiphertextCache {
+    pub fn computable(&mut self) -> Result<&mut Ciphertext, DecompressionError> {
+        Ok(match self {
             Self::Compressed(c) => {
                 let decompressed = c.decompress()?;
                 *self = Self::Decompressed(decompressed);
-                Ok(match self {
+                match self {
                     Self::Decompressed(e) => e,
                     _ => unreachable!()
-                })
+                }
             },
-            Self::Decompressed(c) => Ok(c)
-        }
+            Self::Decompressed(e) => e,
+            Self::Both(_, e) => e
+        })
     }
 
-    // Compress without changing the current state
     pub fn compress<'a>(&'a self) -> Cow<'a, CompressedCiphertext> {
         match self {
             Self::Compressed(c) => Cow::Borrowed(c),
-            Self::Decompressed(e) => Cow::Owned(e.compress())
+            Self::Decompressed(e) => Cow::Owned(e.compress()),
+            Self::Both(c, _) => Cow::Borrowed(c)
+        }
+    }
+
+    // Compress safely
+    pub fn compressed<'a>(&'a mut self) -> &'a CompressedCiphertext {
+        match self {
+            Self::Compressed(c) => c,
+            Self::Decompressed(e) => {
+                *self = Self::Both(e.compress(), e.clone());
+                match self {
+                    Self::Both(c, _) => c,
+                    _ => unreachable!()
+                }
+            },
+            Self::Both(c, _) => c
         }
     }
 
     // Decompress without changing the current state
-    pub fn decompress<'a>(&'a self) -> Result<Cow<'a, Ciphertext>, DecompressionError> {
+    pub fn decompressed<'a>(&'a mut self) -> Result<&'a Ciphertext, DecompressionError> {
         match self {
-            Self::Compressed(c) => Ok(Cow::Owned(c.decompress()?)),
-            Self::Decompressed(e) => Ok(Cow::Borrowed(e))
+            Self::Compressed(c) => {
+                let decompressed = c.decompress()?;
+                *self = Self::Both(c.clone(), decompressed);
+                match self {
+                    Self::Both(_, e) => Ok(e),
+                    _ => unreachable!()
+                }
+            },
+            Self::Decompressed(e) => Ok(e),
+            Self::Both(_, e) => Ok(e)
         }
     }
 
-    pub fn take(self) -> Result<Ciphertext, DecompressionError> {
-        let ct = match self {
+    pub fn both(&mut self) -> Result<(&CompressedCiphertext, &Ciphertext), DecompressionError> {
+        match self {
+            Self::Both(c, e) => Ok((c, e)),
+            Self::Compressed(c) => {
+                let decompressed = c.decompress()?;
+                *self = Self::Both(c.clone(), decompressed);
+                match self {
+                    Self::Both(c, e) => Ok((c, e)),
+                    _ => unreachable!()
+                }
+            },
+            Self::Decompressed(e) => {
+                let compressed = e.compress();
+                *self = Self::Both(compressed, e.clone());
+                match self {
+                    Self::Both(c, e) => Ok((c, e)),
+                    _ => unreachable!()
+                }
+            }
+        }
+    }
+
+    pub fn take_ciphertext(self) -> Result<Ciphertext, DecompressionError> {
+        Ok(match self {
             Self::Compressed(c) => c.decompress()?,
-            Self::Decompressed(e) => e
-        };
-        Ok(ct)
+            Self::Decompressed(e) => e,
+            Self::Both(_, e) => e
+        })
     }
 }
 
-impl Serializer for CiphertextVariant {
+impl Serializer for CiphertextCache {
     fn write(&self, writer: &mut Writer) {
         self.compress().write(writer);
     }
@@ -72,7 +119,7 @@ impl Serializer for CiphertextVariant {
     }
 }
 
-impl Serialize for CiphertextVariant {
+impl Serialize for CiphertextCache {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -81,7 +128,7 @@ impl Serialize for CiphertextVariant {
     }
 }
 
-impl<'de> Deserialize<'de> for CiphertextVariant {
+impl<'de> Deserialize<'de> for CiphertextCache {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,

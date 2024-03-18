@@ -19,6 +19,12 @@ pub mod verify;
 pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
 pub const MAX_TRANSFER_COUNT: usize = 255;
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Reference {
+    pub hash: Hash,
+    pub topoheight: u64,
+}
+
 pub enum Role {
     Sender,
     Receiver,
@@ -78,6 +84,8 @@ pub struct Transaction {
     source_commitments: Vec<SourceCommitment>,
     /// The range proof is aggregated across all transfers and across all assets.
     range_proof: RangeProof,
+    /// At which block the TX is built
+    reference: Reference,
     /// The signature of the source key
     signature: Signature,
 }
@@ -134,7 +142,7 @@ impl TransferPayload {
 }
 
 impl Transaction {
-    pub fn new(source: CompressedPublicKey, data: TransactionType, fee: u64, nonce: u64, source_commitments: Vec<SourceCommitment>, range_proof: RangeProof, signature: Signature) -> Self {
+    pub fn new(source: CompressedPublicKey, data: TransactionType, fee: u64, nonce: u64, source_commitments: Vec<SourceCommitment>, range_proof: RangeProof, reference: Reference, signature: Signature) -> Self {
         Transaction {
             version: 0,
             source,
@@ -143,6 +151,7 @@ impl Transaction {
             nonce,
             source_commitments,
             range_proof,
+            reference,
             signature
         }
     }
@@ -366,6 +375,7 @@ impl Serializer for Transaction {
         }
 
         self.range_proof.write(writer);
+        self.reference.write(writer);
         self.signature.write(writer);
     }
 
@@ -393,6 +403,7 @@ impl Serializer for Transaction {
         }
 
         let range_proof = RangeProof::read(reader)?;
+        let reference = Reference::read(reader)?;
         let signature = Signature::read(reader)?;
 
         Ok(Transaction {
@@ -403,7 +414,8 @@ impl Serializer for Transaction {
             nonce,
             source_commitments,
             range_proof,
-            signature
+            reference,
+            signature,
         })
     }
 
@@ -427,5 +439,25 @@ impl Hashable for Transaction {}
 impl AsRef<Transaction> for Transaction {
     fn as_ref(&self) -> &Transaction {
         self
+    }
+}
+
+impl Serializer for Reference {
+    fn write(&self, writer: &mut Writer) {
+        self.hash.write(writer);
+        writer.write_u64(&self.topoheight);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Reference, ReaderError> {
+        let hash = Hash::read(reader)?;
+        let topoheight = reader.read_u64()?;
+        Ok(Reference {
+            hash,
+            topoheight
+        })
+    }
+
+    fn size(&self) -> usize {
+        self.hash.size() + self.topoheight.size()
     }
 }

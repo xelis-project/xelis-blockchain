@@ -232,8 +232,7 @@ impl Transaction {
             .decompress()
             .map_err(|err| VerificationError::Proof(err.into()))?;
 
-        let mut transcript =
-            Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
+        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
 
         // 0. Verify Signature
         let bytes = self.to_bytes();

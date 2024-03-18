@@ -10,7 +10,7 @@ use std::{
     iter,
 };
 use crate::{
-    account::CiphertextVariant,
+    account::CiphertextCache,
     api::DataElement,
     config::XELIS_ASSET,
     crypto::{
@@ -42,7 +42,7 @@ use crate::{
 };
 use thiserror::Error;
 
-use super::{BurnPayload, Role, SourceCommitment, Transaction, TransactionType, TransferPayload, EXTRA_DATA_LIMIT_SIZE, MAX_TRANSFER_COUNT};
+use super::{BurnPayload, Reference, Role, SourceCommitment, Transaction, TransactionType, TransferPayload, EXTRA_DATA_LIMIT_SIZE, MAX_TRANSFER_COUNT};
 
 #[derive(Error, Debug, Clone)]
 pub enum GenerationError<T> {
@@ -89,8 +89,11 @@ pub trait AccountState {
     /// Get the balance from the source
     fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error>;
 
+    /// Block topoheight at which the transaction is being built
+    fn get_reference(&self) -> Reference;
+
     /// Get the balance ciphertext from the source
-    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CiphertextVariant, Self::Error>;
+    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CiphertextCache, Self::Error>;
 
     /// Update the balance and the ciphertext
     fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error>;
@@ -178,6 +181,7 @@ struct TransactionSigner {
     fee: u64,
     nonce: u64,
     source_commitments: Vec<SourceCommitment>,
+    reference: Reference,
     range_proof: RangeProof,
 }
 
@@ -194,6 +198,7 @@ impl TransactionSigner {
             nonce: self.nonce,
             source_commitments: self.source_commitments,
             range_proof: self.range_proof,
+            reference: self.reference,
             signature,
         }
     }
@@ -407,6 +412,8 @@ impl TransactionBuilder {
         } else {
             vec![]
         };
+
+        let reference = state.get_reference();
         let mut transcript = Transaction::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
 
         let mut range_proof_openings: Vec<_> =
@@ -438,7 +445,7 @@ impl TransactionBuilder {
                 let source_current_ciphertext = state
                     .get_account_ciphertext(&asset)
                     .map_err(GenerationError::State)?
-                    .take()
+                    .take_ciphertext()
                     .map_err(|err| GenerationError::Proof(err.into()))?;
 
                 let commitment =
@@ -554,6 +561,7 @@ impl TransactionBuilder {
             fee: self.fee,
             nonce: self.nonce,
             source_commitments,
+            reference,
             range_proof,
         }.sign(source_keypair);
 
@@ -570,6 +578,7 @@ impl Serializer for TransactionSigner {
         self.nonce.write(writer);
         self.source_commitments.write(writer);
         self.range_proof.write(writer);
+        self.reference.write(writer);
     }
 
     // Should never be called
