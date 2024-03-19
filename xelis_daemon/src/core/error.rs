@@ -3,12 +3,17 @@ use std::sync::PoisonError;
 use thiserror::Error;
 use xelis_common::{
     crypto::{
-        bech32::Bech32Error, elgamal::DecompressionError, Address, Hash
+        bech32::Bech32Error,
+        elgamal::DecompressionError,
+        proofs::ProofVerificationError,
+        Address,
+        Hash
     },
     difficulty::DifficultyError,
     prompt::PromptError,
     serializer::ReaderError,
-    time::TimestampMillis
+    time::TimestampMillis,
+    transaction::verify::VerificationError
 };
 use human_bytes::human_bytes;
 
@@ -210,10 +215,30 @@ pub enum BlockchainError {
     NoTxSender(Address),
     #[error(transparent)]
     DecompressionError(#[from] DecompressionError),
+    #[error(transparent)]
+    Any(#[from] anyhow::Error),
+    #[error("Invalid nonce")]
+    InvalidNonce,
+    #[error("Sender cannot be receiver")]
+    SenderIsReceiver,
+    #[error("Invalid transaction proof: {}", _0)]
+    TransactionProof(ProofVerificationError),
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {
     fn from(err: PoisonError<T>) -> Self {
         Self::PoisonError(format!("{}", err))
+    }
+}
+
+impl From<VerificationError<BlockchainError>> for BlockchainError {
+    fn from(value: VerificationError<BlockchainError>) -> Self {
+        match value {
+            VerificationError::InvalidNonce => BlockchainError::InvalidNonce,
+            VerificationError::SenderIsReceiver => BlockchainError::NoSenderOutput,
+            VerificationError::InvalidSignature => BlockchainError::InvalidTransactionSignature,
+            VerificationError::State(s) => s,
+            VerificationError::Proof(proof) => BlockchainError::TransactionProof(proof)
+        }
     }
 }
