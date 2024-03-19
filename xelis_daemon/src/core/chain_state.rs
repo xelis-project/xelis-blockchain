@@ -1,9 +1,11 @@
 use std::collections::{hash_map::Entry, HashMap};
+use async_trait::async_trait;
 use log::{debug, trace};
 use xelis_common::{
     account::{CiphertextCache, VersionedBalance, VersionedNonce},
     config::XELIS_ASSET,
-    crypto::{elgamal::Ciphertext, Hash, PublicKey}
+    crypto::{elgamal::Ciphertext, Hash, PublicKey},
+    transaction::{verify::BlockchainVerificationState, Reference}
 };
 use super::{error::BlockchainError, storage::Storage};
 
@@ -12,26 +14,31 @@ use super::{error::BlockchainError, storage::Storage};
 // But also contains the ciphertext changes happening (so a sum of each spendings for transactions)
 // This is necessary to easily build the final user balance
 struct Echange {
-    // Version balance of the account
+    // Reference at which the version is used
+    reference: Reference,
+    // Version balance of the account used for the verification
     version: VersionedBalance,
     // Sum of all transactions output
     output_sum: Ciphertext
 }
 
 impl Echange {
-    async fn new(version: VersionedBalance) -> Result<Self, BlockchainError> {
+    async fn new(reference: Reference, version: VersionedBalance) -> Result<Self, BlockchainError> {
         Ok(Self {
+            reference,
             version,
             output_sum: Ciphertext::zero(),
         })
     }
 
     // Get the right balance to use for TX verification
-    fn get_mut_balance(&mut self) -> &mut CiphertextCache {
-        // match self.version.get_mut_output_balance() {
-        //     Some(balance) if self.use_output => return balance,
-        //     _ => {}
-        // }
+    fn get_balance(&mut self, reference: &Reference) -> &mut CiphertextCache {
+        let output = *reference != self.reference; 
+        self.version.select_balance(output)
+    }
+
+    // Get the final balance 
+    fn get_final_balance(&mut self) -> &mut CiphertextCache {
         self.version.get_mut_balance()
     }
 
@@ -81,10 +88,18 @@ impl<'a, S: Storage> ChainState<'a, S> {
         }
     }
 
+    pub fn get_storage(&mut self) -> &mut S {
+        self.storage
+    }
     // Create a sender echange
     async fn create_sender_echange(storage: &S, key: &'a PublicKey, asset: &'a Hash, topoheight: u64) -> Result<Echange, BlockchainError> {
         let version = storage.get_new_versioned_balance(key, asset, topoheight).await?;
-        Echange::new(version).await
+        let hash = storage.get_hash_at_topo_height(topoheight).await?;
+        let reference = Reference {
+            topoheight,
+            hash
+        };
+        Echange::new(reference, version).await
     }
 
     // Create a sender account by fetching its nonce and create a empty HashMap for balances,
@@ -102,12 +117,12 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Retrieve the receiver balance of an account
     // This is mostly the final balance where everything is added (outputs and inputs)
-    async fn get_receiver_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut CiphertextCache, BlockchainError> {
+    async fn internal_get_receiver_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut Ciphertext, BlockchainError> {
         match self.receiver_balances.entry(key).or_insert_with(HashMap::new).entry(asset) {
-            Entry::Occupied(o) => Ok(o.into_mut().get_mut_balance()),
+            Entry::Occupied(o) => Ok(o.into_mut().get_mut_balance().computable()?),
             Entry::Vacant(e) => {
                 let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                Ok(e.insert(version).get_mut_balance())
+                Ok(e.insert(version).get_mut_balance().computable()?)
             }
         }
     }
@@ -115,15 +130,16 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Retrieve the sender balance of an account
     // This is used for TX outputs verification
     // This depends on the transaction and can be final balance or output balance
-    async fn get_sender_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash) -> Result<&'b mut CiphertextCache, BlockchainError> {
+    // TODO fix front running problem
+    async fn internal_get_sender_verification_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash, reference: &Reference) -> Result<&'b mut CiphertextCache, BlockchainError> {
         match self.accounts.entry(key) {
             Entry::Occupied(o) => {
                 let account = o.into_mut();
                 match account.assets.entry(asset) {
-                    Entry::Occupied(o) => Ok(o.into_mut().get_mut_balance()),
+                    Entry::Occupied(o) => Ok(o.into_mut().get_balance(reference)),
                     Entry::Vacant(e) => {
                         let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
-                        Ok(e.insert(echange).get_mut_balance())
+                        Ok(e.insert(echange).get_balance(reference))
                     }
                 }
             },
@@ -134,7 +150,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
                 // Create a new echange for the asset
                 let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
 
-                Ok(e.insert(account).assets.entry(asset).or_insert(echange).get_mut_balance())
+                Ok(e.insert(account).assets.entry(asset).or_insert(echange).get_balance(reference))
             }
         }
     }
@@ -188,8 +204,8 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Reward a miner for the block mined
     pub async fn reward_miner(&mut self, miner: &'a PublicKey, reward: u64) -> Result<(), BlockchainError> {
         debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.storage.is_mainnet()), reward, self.topoheight);
-        let miner_balance = self.get_receiver_balance(miner, &XELIS_ASSET).await?;
-        *miner_balance.computable()? += reward;
+        let miner_balance = self.internal_get_receiver_balance(miner, &XELIS_ASSET).await?;
+        *miner_balance += reward;
 
         Ok(())
     }
@@ -228,11 +244,15 @@ impl<'a, S: Storage> ChainState<'a, S> {
                         // Build the final balance
                         // This include all output and all inputs
                         let final_balance = final_version.get_mut_balance().computable()?;
-                        *final_balance += output_sum;
+                        *final_balance -= output_sum;
                     },
                     Entry::Vacant(e) => {
                         // We have no incoming update for this key
-                        // We can set the new sender balance as it is
+                        // We must fetch again the version to sum it with the output
+                        let mut version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
+                        // Substract the output sum
+                        *version.get_mut_balance().computable()? -= output_sum;
+
                         e.insert(version);
                     }
                 }
@@ -256,3 +276,55 @@ impl<'a, S: Storage> ChainState<'a, S> {
         Ok(())
     }
 }
+
+#[async_trait]
+impl<'a, S: Storage> BlockchainVerificationState<'a> for ChainState<'a, S> {
+    type Error = BlockchainError;
+
+    /// Get the balance ciphertext for a receiver account
+    async fn get_receiver_balance<'b>(
+        &'b mut self,
+        account: &'a PublicKey,
+        asset: &'a Hash,
+    ) -> Result<&'b mut Ciphertext, Self::Error> {
+        let ct = self.internal_get_receiver_balance(account, asset).await?;
+        Ok(ct)
+    }
+
+    /// Get the balance ciphertext for a sender account
+    async fn get_sender_verification_balance<'b>(
+        &'b mut self,
+        account: &'a PublicKey,
+        asset: &'a Hash,
+        reference: &Reference,
+    ) -> Result<&'b mut Ciphertext, Self::Error> {
+        Ok(self.internal_get_sender_verification_balance(account, asset, reference).await?.computable()?)
+    }
+
+    /// Apply new output to a sender account
+    async fn add_sender_output(
+        &mut self,
+        account: &'a PublicKey,
+        asset: &'a Hash,
+        output: Ciphertext,
+    ) -> Result<(), Self::Error> {
+        self.internal_update_sender_echange(account, asset, output).await
+    }
+
+    /// Get the nonce of an account
+    async fn get_account_nonce(
+        &mut self,
+        account: &'a PublicKey
+    ) -> Result<u64, Self::Error> {
+        self.internal_get_account_nonce(account).await
+    }
+
+    /// Apply a new nonce to an account
+    async fn update_account_nonce(
+        &mut self,
+        account: &'a PublicKey,
+        new_nonce: u64
+    ) -> Result<(), Self::Error> {
+        self.internal_update_account_nonce(account, new_nonce).await
+    }
+} 
