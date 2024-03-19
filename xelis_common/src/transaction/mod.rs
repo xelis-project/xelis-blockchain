@@ -25,6 +25,12 @@ pub struct Reference {
     pub topoheight: u64,
 }
 
+impl PartialEq for Reference {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash && self.topoheight == other.topoheight
+    }
+}
+
 pub enum Role {
     Sender,
     Receiver,
@@ -194,6 +200,11 @@ impl Transaction {
     // Get the signature of source key
     pub fn get_signature(&self) -> &Signature {
         &self.signature
+    }
+
+    // Get the block reference to determine which block the transaction is built
+    pub fn get_reference(&self) -> &Reference {
+        &self.reference
     }
 
     pub fn consume(self) -> (CompressedPublicKey, TransactionType) {

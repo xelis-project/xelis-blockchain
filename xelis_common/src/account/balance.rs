@@ -52,12 +52,11 @@ impl VersionedBalance {
         self.output_balance = Some(value);
     }
 
-    pub fn get_output_balance(&self) -> Option<&CiphertextCache> {
-        self.output_balance.as_ref()
-    }
-
-    pub fn get_mut_output_balance(&mut self) -> Option<&mut CiphertextCache> {
-        self.output_balance.as_mut()
+    pub fn select_balance(&mut self, output: bool) -> &mut CiphertextCache {
+        match self.output_balance {
+            Some(ref mut balance) if output => balance,
+            _ => &mut self.final_balance
+        }
     }
 
     pub fn set_compressed_balance(&mut self, value: CompressedCiphertext) {

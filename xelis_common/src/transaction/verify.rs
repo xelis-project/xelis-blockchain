@@ -2,7 +2,7 @@ use bulletproofs::RangeProof;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, RistrettoPoint, Scalar};
 use merlin::Transcript;
 use crate::{config::XELIS_ASSET, crypto::{elgamal::{Ciphertext, CompressedPublicKey, DecompressionError, DecryptHandle, PedersenCommitment}, proofs::{BatchCollector, ProofVerificationError, BP_GENS, PC_GENS}, Hash, ProtocolTranscript, SIGNATURE_SIZE}, serializer::Serializer};
-use super::{Role, Transaction, TransactionType, TransferPayload};
+use super::{Reference, Role, Transaction, TransactionType, TransferPayload};
 use thiserror::Error;
 use std::iter;
 use async_trait::async_trait;
@@ -15,39 +15,31 @@ pub trait BlockchainVerificationState<'a> {
     type Error;
 
     /// Get the balance ciphertext for a receiver account
-    async fn get_receiver_balance(
-        &self,
+    async fn get_receiver_balance<'b>(
+        &'b mut self,
         account: &'a CompressedPublicKey,
         asset: &'a Hash,
-    ) -> Result<Ciphertext, Self::Error>;
+    ) -> Result<&'b mut Ciphertext, Self::Error>;
 
-    /// Get the balance ciphertext for a sender account
-    async fn get_sender_balance(
-        &self,
+    /// Get the balance ciphertext used for verification of funds for the sender account
+    async fn get_sender_verification_balance<'b>(
+        &'b mut self,
         account: &'a CompressedPublicKey,
         asset: &'a Hash,
-    ) -> Result<Ciphertext, Self::Error>;
+        reference: &Reference,
+    ) -> Result<&'b mut Ciphertext, Self::Error>;
 
-    /// Apply a new balance ciphertext to a receiver account
-    async fn update_receiver_balance(
+    /// Apply new output to a sender account
+    async fn add_sender_output(
         &mut self,
         account: &'a CompressedPublicKey,
         asset: &'a Hash,
-        new_balance: Ciphertext,
-    ) -> Result<(), Self::Error>;
-
-    /// Apply new balance ciphertext to a sender account
-    async fn update_sender_balance(
-        &mut self,
-        account: &'a CompressedPublicKey,
-        asset: &'a Hash,
-        new_balance: Ciphertext,
-        echange: Ciphertext,
+        output: Ciphertext,
     ) -> Result<(), Self::Error>;
 
     /// Get the nonce of an account
     async fn get_account_nonce(
-        &self,
+        &mut self,
         account: &'a CompressedPublicKey
     ) -> Result<u64, Self::Error>;
 
@@ -60,11 +52,16 @@ pub trait BlockchainVerificationState<'a> {
 }
 
 #[derive(Error, Debug, Clone)]
-pub enum VerificationError<T> {
+pub enum VerificationError<T: anyhow::Error> {
+    #[error("State error: {0}")]
     State(T),
+    #[error("Invalid nonce")]
     InvalidNonce,
+    #[error("Sender is receiver")]
     SenderIsReceiver,
+    #[error("Invalid signature")]
     InvalidSignature,
+    #[error("Proof verification error: {0}")]
     Proof(#[from] ProofVerificationError),
 }
 
@@ -246,16 +243,17 @@ impl Transaction {
             .iter()
             .zip(&new_source_commitments_decompressed)
         {
-            let source_current_ciphertext = state
-                .get_sender_balance(&self.source, &commitment.asset).await
-                .map_err(VerificationError::State)?;
-
             // Ciphertext containing all the funds spent for this commitment
             let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed)
             .map_err(|err| VerificationError::Proof(err.into()))?;
 
+            // Retrieve the balance of the sender
+            let source_verification_ciphertext = state
+            .get_sender_verification_balance(&self.source, &commitment.asset, &self.reference).await
+            .map_err(VerificationError::State)?;
+
             // Compute the new final balance for account
-            let new_ct = source_current_ciphertext - &output;
+            *source_verification_ciphertext -= &output;
             transcript.new_commitment_eq_proof_domain_separator();
             transcript.append_hash(b"new_source_commitment_asset", &commitment.asset);
             transcript
@@ -263,7 +261,7 @@ impl Transaction {
 
             commitment.proof.pre_verify(
                 &owner,
-                &new_ct,
+                &source_verification_ciphertext,
                 &new_source_commitment,
                 &mut transcript,
                 sigma_batch_collector,
@@ -271,10 +269,9 @@ impl Transaction {
 
             // Update source balance
             state
-                .update_sender_balance(
+                .add_sender_output(
                     &self.source,
                     &commitment.asset,
-                    new_ct,
                     output,
                 ).await
                 .map_err(VerificationError::State)?;
@@ -298,15 +295,7 @@ impl Transaction {
                     .map_err(VerificationError::State)?;
 
                 let receiver_ct = decompressed.get_ciphertext(Role::Receiver);
-                let receiver_new_balance = current_balance + receiver_ct;
-
-                state
-                    .update_receiver_balance(
-                        &transfer.destination,
-                        &transfer.asset,
-                        receiver_new_balance,
-                    ).await
-                    .map_err(VerificationError::State)?;
+                *current_balance += receiver_ct;
 
                 // Validity proof
 
@@ -455,22 +444,17 @@ impl Transaction {
         for commitment in &self.source_commitments {
             let asset = &commitment.asset;
             let current_bal_sender = state
-                .get_sender_balance(
+                .get_sender_verification_balance(
                     &self.source,
-                    asset
+                    asset,
+                    &self.reference,
                 ).await?;
 
             let output = self.get_sender_output_ct(asset, &transfers_decompressed)
                 .expect("ill-formed ciphertext");
 
             // Compute the new final balance for account
-            let new_ct = current_bal_sender - &output;
-
-            state.update_sender_balance(
-                &self.source, asset,
-                new_ct,
-                output,
-            ).await?;
+            *current_bal_sender -= &output;
         }
 
         if let TransactionType::Transfers(transfers) = &self.data {
@@ -487,13 +471,7 @@ impl Transaction {
                     .decompress()
                     .expect("ill-formed ciphertext");
 
-                let receiver_new_balance = current_bal + receiver_ct;
-
-                state.update_receiver_balance(
-                    &transfer.destination,
-                    &transfer.asset,
-                    receiver_new_balance,
-                ).await?;
+                *current_bal += receiver_ct;
             }
         }
     
