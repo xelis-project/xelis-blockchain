@@ -52,7 +52,7 @@ pub trait BlockchainVerificationState<'a> {
 }
 
 #[derive(Error, Debug, Clone)]
-pub enum VerificationError<T: anyhow::Error> {
+pub enum VerificationError<T> {
     #[error("State error: {0}")]
     State(T),
     #[error("Invalid nonce")]
