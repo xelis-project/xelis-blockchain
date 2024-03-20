@@ -370,15 +370,14 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
                 Ok(msg) => msg,
                 Err(e) => {
                     // Try to reconnect to the server
-                    debug!("Error while reading from the WebSocket: {:?}", e);
+                    debug!("Error while reading from the websocket: {:?}", e);
                     self.clear_requests().await;
                     if let Some(new_read) = self.try_reconnect().await {
                         read = new_read;
                     }
                     else {
-                        error!("Error while reading from the WebSocket: {:?}", e);
                         self.clear_events().await;
-                        break;
+                        return Err(JsonRPCError::ConnectionError(e.to_string()));
                     }
                     continue;
                 }
