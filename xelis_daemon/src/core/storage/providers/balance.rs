@@ -29,7 +29,12 @@ pub trait BalanceProvider: AssetProvider {
     // Get the last topoheight that the account has a balance
     async fn get_last_topoheight_for_balance(&self, key: &PublicKey, asset: &Hash) -> Result<u64, BlockchainError>;
 
-    // Get a new versioned balance of the account, this is based on the requested topoheight - 1
+    // Get a new versioned balance of the account, this is based on the requested topoheight
+    // And is returning the versioned balance at maximum topoheight
+    // Versioned balance as the previous topoheight set also based on which height it is set
+    // So, if we are at topoheight 50 and we have a balance at topoheight 40, the previous topoheight will be 40
+    // But also if we have a balance at topoheight 50, the previous topoheight will also be 50
+    // This must be called only to create a new versioned balance for the next topoheight as it's keeping changes from the balance at same topo
     async fn get_new_versioned_balance(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError>;
 
     // Get the last balance of the account, this is based on the last topoheight (pointer) available
@@ -209,19 +214,11 @@ impl BalanceProvider for SledStorage {
     // We create a new versioned balance by taking the previous version and setting it as previous topoheight
     async fn get_new_versioned_balance(&self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<VersionedBalance, BlockchainError> {
         trace!("get new versioned balance {} for {} at {}", asset, key.as_address(self.is_mainnet()), topoheight);
-        if topoheight == 0 {
-            // if its the first balance, then we return a zero balance
-            return Ok(VersionedBalance::zero())
-        }
 
-        let version = match self.get_balance_at_maximum_topoheight(key, asset, topoheight - 1).await? {
+        let version = match self.get_balance_at_maximum_topoheight(key, asset, topoheight).await? {
             Some((topo, mut version)) => {
-                trace!("new versioned balance (balance at maximum topoheight) topo: {}, previous: {:?}", topo, version.get_previous_topoheight());
-                // if its not at exact topoheight, then we set it as "previous topoheight"
-                if topo != topoheight {
-                    trace!("topo {} != topoheight {}, set topo {} as previous topoheight", topo, topoheight, topo);
-                    version.set_previous_topoheight(Some(topo));
-                }
+                trace!("new versioned balance (balance at maximum topoheight) topo: {}, previous: {:?}, requested topo: {}", topo, version.get_previous_topoheight(), topo);
+                version.set_previous_topoheight(Some(topo));
                 version
             },
             // if its the first balance, then we return a zero balance
