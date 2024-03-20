@@ -26,7 +26,7 @@ pub trait BlockchainVerificationState<'a, E> {
     ) -> Result<&'b mut Ciphertext, E>;
 
     /// Get the balance ciphertext used for verification of funds for the sender account
-    async fn get_sender_verification_balance<'b>(
+    async fn get_sender_balance<'b>(
         &'b mut self,
         account: &'a CompressedPublicKey,
         asset: &'a Hash,
@@ -197,7 +197,7 @@ impl Transaction {
 
         // Nonce is valid, update it for next transactions if any
         state
-            .update_account_nonce(&self.source, self.nonce).await
+            .update_account_nonce(&self.source, self.nonce + 1).await
             .map_err(VerificationError::State)?;
 
         if !self.verify_commitment_assets() {
@@ -258,8 +258,8 @@ impl Transaction {
 
             // Retrieve the balance of the sender
             let source_verification_ciphertext = state
-            .get_sender_verification_balance(&self.source, &commitment.asset, &self.reference).await
-            .map_err(VerificationError::State)?;
+                .get_sender_balance(&self.source, &commitment.asset, &self.reference).await
+                .map_err(VerificationError::State)?;
 
             // Compute the new final balance for account
             *source_verification_ciphertext -= &output;
@@ -458,7 +458,7 @@ impl Transaction {
         for commitment in &self.source_commitments {
             let asset = &commitment.asset;
             let current_bal_sender = state
-                .get_sender_verification_balance(
+                .get_sender_balance(
                     &self.source,
                     asset,
                     &self.reference,

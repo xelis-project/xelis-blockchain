@@ -128,7 +128,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     }
 
     /// Get the balance ciphertext used for verification of funds for the sender account
-    async fn get_sender_verification_balance<'b>(
+    async fn get_sender_balance<'b>(
         &'b mut self,
         account: &'a PublicKey,
         asset: &'a Hash,
