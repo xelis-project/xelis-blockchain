@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::{collections::{hash_map::Entry, HashMap}, ops::{Deref, DerefMut}};
 use async_trait::async_trait;
 use log::{debug, trace};
 use xelis_common::{
@@ -63,12 +63,52 @@ struct Account<'a> {
     assets: HashMap<&'a Hash, Echange>
 }
 
+pub enum StorageReference<'a, S: Storage> {
+    Mutable(&'a mut S),
+    Immutable(&'a S)
+}
+
+impl<'a, S: Storage> AsRef<S> for StorageReference<'a, S> {
+    fn as_ref(&self) -> &S {
+        match self {
+            Self::Mutable(s) => *s,
+            Self::Immutable(s) => s
+        }
+    }
+}
+
+impl <'a, S: Storage> AsMut<S> for StorageReference<'a, S> {
+    fn as_mut(&mut self) -> &mut S {
+        match self {
+            Self::Mutable(s) => *s,
+            Self::Immutable(_) => panic!("Cannot mutably borrow immutable storage")
+        }
+    }
+}
+
+impl<'a, S: Storage> Deref for StorageReference<'a, S> {
+    type Target = S;
+
+    fn deref(&self) -> &S {
+        self.as_ref()
+    }
+}
+
+impl <'a, S: Storage> DerefMut for StorageReference<'a, S> {
+    fn deref_mut(&mut self) -> &mut S {
+        match self {
+            Self::Mutable(s) => *s,
+            Self::Immutable(_) => panic!("Cannot mutably borrow immutable storage")
+        }
+    }
+}
+
 // This struct is used to verify the transactions executed at a snapshot of the blockchain
 // It is read-only but write in memory the changes to the balances and nonces
 // Once the verification is done, the changes are written to the storage
 pub struct ChainState<'a, S: Storage> {
     // Storage to read and write the balances and nonces
-    storage: &'a mut S,
+    storage: StorageReference<'a, S>,
     // Balances of the receiver accounts
     receiver_balances: HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>,
     // Sender accounts
@@ -83,7 +123,7 @@ pub struct ChainState<'a, S: Storage> {
 
 // TODO fix front running problem
 impl<'a, S: Storage> ChainState<'a, S> {
-    pub fn new(storage: &'a mut S, topoheight: u64, stable_topoheight: u64) -> Self {
+    pub fn new(storage: StorageReference<'a, S>, topoheight: u64, stable_topoheight: u64) -> Self {
         Self {
             storage,
             receiver_balances: HashMap::new(),
@@ -94,8 +134,18 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Get the storage used by the chain state
-    pub fn get_storage(&mut self) -> &mut S {
-        self.storage
+    pub fn get_storage(&mut self) -> &S {
+        self.storage.as_ref()
+    }
+
+    // Get the storage used by the chain state
+    pub fn get_mut_storage(&mut self) -> &mut S {
+        self.storage.as_mut()
+    }
+
+    pub fn get_sender_balances(&self, key: &PublicKey) -> Option<HashMap<Hash, VersionedBalance>> {
+        let account = self.accounts.get(key)?;
+        Some(account.assets.iter().map(|(k, v)| (Hash::clone(k), v.version.clone())).collect())
     }
 
     // Create a sender echange

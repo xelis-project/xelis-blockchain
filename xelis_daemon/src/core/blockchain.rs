@@ -62,7 +62,7 @@ use crate::{
         simulator::Simulator,
         storage::{DagOrderProvider, DifficultyProvider, Storage},
         tx_selector::{TxSelector, TxSelectorEntry},
-        chain_state::ChainState
+        chain_state::{ChainState, StorageReference},
     },
     p2p::P2pServer,
     rpc::{
@@ -1196,13 +1196,19 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
             } else {
-                let mut balances = HashMap::new();
-                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, None, false, current_topoheight).await?;
+                let stable_topoheight = self.get_stable_topoheight();
+                let mut chain_state = ChainState::new(StorageReference::Immutable(storage), current_topoheight, stable_topoheight);
+                tx.verify(&mut chain_state).await?;
+
                 // Store balances changes
-                if let Some(user_balances) = balances.remove(tx.get_source()) {
+                if let Some(user_balances) = chain_state.get_sender_balances(tx.get_source()) {
                     for (asset, balance) in user_balances {
                         final_balances.insert(asset.clone(), balance);
                     }
+                } else {
+                    let address = tx.get_source().as_address(storage.is_mainnet());
+                    warn!("Account not found in chain state: {}", address);
+                    return Err(BlockchainError::AccountNotFound(address));
                 }
             }
 
@@ -1367,8 +1373,8 @@ impl<S: Storage> Blockchain<S> {
 
         // data used to verify txs
         let topoheight = self.get_topo_height();
-        let mut nonces: HashMap<&PublicKey, u64> = HashMap::new();
-        let mut balances = HashMap::new();
+        let stable_topoheight = self.get_stable_height();
+        let mut chain_state = ChainState::new(StorageReference::Immutable(storage), topoheight, stable_topoheight);
 
         while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
             if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
@@ -1378,7 +1384,7 @@ impl<S: Storage> Blockchain<S> {
             // Check if the TX is valid for this potential block
             trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_source().as_address(self.network.is_mainnet()));
             let owner = tx.get_source();
-            if let Err(e) = self.verify_transaction_with_hash(&storage, tx, hash, &mut balances, Some(&mut nonces), false, topoheight).await {
+            if let Err(e) = tx.verify(&mut chain_state).await {
                 warn!("TX {} ({}) is not valid for mining: {}", hash, owner.as_address(self.network.is_mainnet()), e);
             } else {
                 trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()));
@@ -1537,7 +1543,7 @@ impl<S: Storage> Blockchain<S> {
                 return Err(BlockchainError::InvalidBlockTxs(hashes_len, txs_len));
             }
 
-            let mut chain_state = ChainState::new(storage, current_topoheight, stable_topoheight);
+            let mut chain_state = ChainState::new(StorageReference::Immutable(storage), current_topoheight, stable_topoheight);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
@@ -1751,11 +1757,12 @@ impl<S: Storage> Blockchain<S> {
                 // All fees from the transactions executed in this block
                 let mut total_fees = 0;
                 // Chain State used for the verification
-                let mut chain_state = ChainState::new(storage, highest_topo, stable_topoheight);
+                let mut chain_state = ChainState::new(StorageReference::Mutable(storage), highest_topo, stable_topoheight);
+
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     // Link the transaction hash to this block
-                    if !chain_state.get_storage().add_block_linked_to_tx_if_not_present(&tx_hash, &hash)? {
+                    if !chain_state.get_mut_storage().add_block_linked_to_tx_if_not_present(&tx_hash, &hash)? {
                         trace!("Block {} is now linked to tx {}", hash, tx_hash);
                     }
 
@@ -1776,7 +1783,7 @@ impl<S: Storage> Blockchain<S> {
 
                         // mark tx as executed
                         debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
-                        chain_state.get_storage().set_tx_executed_in_block(tx_hash, &hash)?;
+                        chain_state.get_mut_storage().set_tx_executed_in_block(tx_hash, &hash)?;
 
                         // Execute the transaction by applying changes in storage
                         // self.execute_transaction(storage, &tx, &mut local_balances, highest_topo).await?;
@@ -2199,7 +2206,7 @@ impl<S: Storage> Blockchain<S> {
     // verify the transaction and returns fees available
     // nonces allow us to support multiples tx from same owner in the same block
     // txs must be sorted in ascending order based on account nonce
-    pub async fn verify_transaction_with_hash<'a>(&self, storage: &S, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool, topoheight: u64) -> Result<(), BlockchainError> {
+    pub async fn verify_transaction_with_hash<'a>(&self, _: &S, _: &'a Transaction, hash: &Hash, _: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, _: Option<&mut HashMap<&'a PublicKey, u64>>, _: bool, _: u64) -> Result<(), BlockchainError> {
         todo!("verify transaction with hash {}", hash)
     }
 
