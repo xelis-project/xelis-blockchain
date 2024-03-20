@@ -11,15 +11,18 @@ use async_trait::async_trait;
 /// It is intended to represent a virtual snapshot of the current blockchain
 /// state, where the transactions can get applied in order.
 #[async_trait]
-pub trait BlockchainVerificationState<'a> {
-    type Error;
+pub trait BlockchainVerificationState<'a, E> {
+    // This is giving a "implementation is not general enough"
+    // We replace it by a generic type in the trait definition
+    // See: https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=aaa6065daaab514e638b2333703765c7
+    // type Error;
 
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'b>(
         &'b mut self,
         account: &'a CompressedPublicKey,
         asset: &'a Hash,
-    ) -> Result<&'b mut Ciphertext, Self::Error>;
+    ) -> Result<&'b mut Ciphertext, E>;
 
     /// Get the balance ciphertext used for verification of funds for the sender account
     async fn get_sender_verification_balance<'b>(
@@ -27,7 +30,7 @@ pub trait BlockchainVerificationState<'a> {
         account: &'a CompressedPublicKey,
         asset: &'a Hash,
         reference: &Reference,
-    ) -> Result<&'b mut Ciphertext, Self::Error>;
+    ) -> Result<&'b mut Ciphertext, E>;
 
     /// Apply new output to a sender account
     async fn add_sender_output(
@@ -35,20 +38,20 @@ pub trait BlockchainVerificationState<'a> {
         account: &'a CompressedPublicKey,
         asset: &'a Hash,
         output: Ciphertext,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<(), E>;
 
     /// Get the nonce of an account
     async fn get_account_nonce(
         &mut self,
         account: &'a CompressedPublicKey
-    ) -> Result<u64, Self::Error>;
+    ) -> Result<u64, E>;
 
     /// Apply a new nonce to an account
     async fn update_account_nonce(
         &mut self,
         account: &'a CompressedPublicKey,
         new_nonce: u64
-    ) -> Result<(), Self::Error>;
+    ) -> Result<(), E>;
 }
 
 #[derive(Error, Debug, Clone)]
@@ -176,11 +179,11 @@ impl Transaction {
 
     // internal, does not verify the range proof
     // returns (transcript, commitments for range proof)
-    async fn pre_verify<'a, B: BlockchainVerificationState<'a>>(
+    async fn pre_verify<'a, E, B: BlockchainVerificationState<'a, E>>(
         &'a self,
         state: &mut B,
         sigma_batch_collector: &mut BatchCollector,
-    ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<B::Error>>
+    ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<E>>
     {
         // First, check the nonce
         let account_nonce = state.get_account_nonce(&self.source).await
@@ -371,10 +374,10 @@ impl Transaction {
         Ok((transcript, value_commitments))
     }
 
-    pub async fn verify_batch<'a, B: BlockchainVerificationState<'a>>(
+    pub async fn verify_batch<'a, E, B: BlockchainVerificationState<'a, E>>(
         txs: &'a [Transaction],
         state: &mut B,
-    ) -> Result<(), VerificationError<B::Error>> {
+    ) -> Result<(), VerificationError<E>> {
         let mut sigma_batch_collector = BatchCollector::default();
         let mut prepared = Vec::with_capacity(txs.len());
         for tx in txs {
@@ -402,10 +405,10 @@ impl Transaction {
     }
 
     /// Verify one transaction. Use `verify_batch` to verify a batch of transactions.
-    pub async fn verify<'a, B: BlockchainVerificationState<'a>>(
+    pub async fn verify<'a, E, B: BlockchainVerificationState<'a, E>>(
         &'a self,
         state: &mut B,
-    ) -> Result<(), VerificationError<B::Error>> {
+    ) -> Result<(), VerificationError<E>> {
         let mut sigma_batch_collector = BatchCollector::default();
         let (mut transcript, commitments) = self.pre_verify(state, &mut sigma_batch_collector).await?;
 
@@ -427,10 +430,10 @@ impl Transaction {
     }
 
     /// Assume the tx is valid, apply it to `state`. May panic if a ciphertext is ill-formed.
-    pub async fn apply_without_verify<'a, B: BlockchainVerificationState<'a>>(
+    pub async fn apply_without_verify<'a, E, B: BlockchainVerificationState<'a, E>>(
         &'a self,
         state: &mut B,
-    ) -> Result<(), B::Error> {
+    ) -> Result<(), E> {
         let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
             transfers
                 .iter()
