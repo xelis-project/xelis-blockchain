@@ -1500,6 +1500,7 @@ impl<S: Storage> Blockchain<S> {
             let mut chain_state = ChainState::new(StorageReference::Immutable(storage), current_topoheight, stable_topoheight);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
+            let mut batch = Vec::with_capacity(block.get_txs_count());
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
                 let tx_size = tx.size();
                 if tx_size > MAX_TRANSACTION_SIZE {
@@ -1556,8 +1557,11 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                tx.verify(&mut chain_state).await?;
+                batch.push(tx);
             }
+
+            // Verify all valid transactions in one batch
+            Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
         }
 
         // Save transactions & block
