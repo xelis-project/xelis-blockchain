@@ -1,5 +1,6 @@
 use bulletproofs::RangeProof;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, RistrettoPoint, Scalar};
+use log::{debug, trace};
 use merlin::Transcript;
 use crate::{config::XELIS_ASSET, crypto::{elgamal::{Ciphertext, CompressedPublicKey, DecompressionError, DecryptHandle, PedersenCommitment}, proofs::{BatchCollector, ProofVerificationError, BP_GENS, PC_GENS}, Hash, ProtocolTranscript, SIGNATURE_SIZE}, serializer::Serializer};
 use super::{Reference, Role, Transaction, TransactionType, TransferPayload};
@@ -185,6 +186,7 @@ impl Transaction {
         sigma_batch_collector: &mut BatchCollector,
     ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<E>>
     {
+        trace!("Pre-verifying transaction");
         // First, check the nonce
         let account_nonce = state.get_account_nonce(&self.source).await
             .map_err(VerificationError::State)?;
@@ -199,6 +201,7 @@ impl Transaction {
             .map_err(VerificationError::State)?;
 
         if !self.verify_commitment_assets() {
+            debug!("Invalid commitment assets");
             return Err(VerificationError::Proof(ProofVerificationError::Format));
         }
 
@@ -206,6 +209,7 @@ impl Transaction {
             // Prevent sending to ourself
             for transfer in transfers.iter() {
                 if transfer.destination == self.source {
+                    debug!("sender cannot be the receiver in the same TX");
                     return Err(VerificationError::SenderIsReceiver);
                 }
             }
@@ -236,10 +240,12 @@ impl Transaction {
         // 0. Verify Signature
         let bytes = self.to_bytes();
         if !self.signature.verify(&bytes[..bytes.len() - SIGNATURE_SIZE], &owner) {
+            debug!("transaction signature is invalid");
             return Err(VerificationError::InvalidSignature);
         }
 
         // 1. Verify CommitmentEqProofs
+        trace!("verifyong commitments eq proofs");
 
         for (commitment, new_source_commitment) in self
             .source_commitments
@@ -281,6 +287,8 @@ impl Transaction {
         }
 
         // 2. Verify every CtValidityProof
+        trace!("verifying transfers ciphertext validity proofs");
+
         if let TransactionType::Transfers(transfers) = &self.data {
             for (transfer, decompressed) in transfers.iter().zip(&transfers_decompressed) {
                 let receiver = transfer
@@ -368,6 +376,7 @@ impl Transaction {
         };
 
         // 3. Verify the aggregated RangeProof
+        trace!("verifying range proof");
 
         // range proof will be verified in batch by caller
 
@@ -412,10 +421,12 @@ impl Transaction {
         let mut sigma_batch_collector = BatchCollector::default();
         let (mut transcript, commitments) = self.pre_verify(state, &mut sigma_batch_collector).await?;
 
+        trace!("Verifying sigma proofs");
         sigma_batch_collector
             .verify()
             .map_err(|_| ProofVerificationError::GenericProof)?;
 
+        trace!("Verifying range proof");
         RangeProof::verify_multiple(
             &self.range_proof,
             &BP_GENS,
