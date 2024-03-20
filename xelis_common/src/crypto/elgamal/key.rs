@@ -25,11 +25,13 @@ use super::{
     H
 };
 
+#[derive(Clone)]
 pub struct PublicKey(RistrettoPoint);
 
-#[derive(Zeroize)]
+#[derive(Clone, Zeroize)]
 pub struct PrivateKey(Scalar);
 
+#[derive(Clone)]
 pub struct KeyPair {
     public_key: PublicKey,
     private_key: PrivateKey,

@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 pub mod builder;
 pub mod verify;
 
+#[cfg(test)]
+mod tests;
+
 // Maximum size of payload per transfer
 pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
 pub const MAX_TRANSFER_COUNT: usize = 255;

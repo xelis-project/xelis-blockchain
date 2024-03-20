@@ -44,6 +44,9 @@ tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
 # Used for U256
 primitive-types = { version = "0.12.2", features = ["serde"] }
 
+[dev-dependencies]
+tokio = { version = "1.36", features = ["full"] }
+
 [features]
 json_rpc = ["dep:reqwest"]
 prompt = ["dep:tokio"]
