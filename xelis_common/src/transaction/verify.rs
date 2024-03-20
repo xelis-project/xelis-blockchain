@@ -383,14 +383,15 @@ impl Transaction {
         Ok((transcript, value_commitments))
     }
 
-    pub async fn verify_batch<'a, E, B: BlockchainVerificationState<'a, E>>(
-        txs: &'a [Transaction],
+    pub async fn verify_batch<'a, T: AsRef<Transaction>, E, B: BlockchainVerificationState<'a, E>>(
+        txs: &'a [T],
         state: &mut B,
     ) -> Result<(), VerificationError<E>> {
+        trace!("Verifying batch of {} transactions", txs.len());
         let mut sigma_batch_collector = BatchCollector::default();
         let mut prepared = Vec::with_capacity(txs.len());
         for tx in txs {
-            let (transcript, commitments) = tx.pre_verify(state, &mut sigma_batch_collector).await?;
+            let (transcript, commitments) = tx.as_ref().pre_verify(state, &mut sigma_batch_collector).await?;
             prepared.push((transcript, commitments));
         }
 
@@ -402,7 +403,7 @@ impl Transaction {
             txs.iter()
                 .zip(&mut prepared)
                 .map(|(tx, (transcript, commitments))| {
-                    tx.range_proof
+                    tx.as_ref().range_proof
                         .verification_view(transcript, commitments, 64)
                 }),
             &BP_GENS,
