@@ -445,6 +445,9 @@ impl Transaction {
         &'a self,
         state: &mut B,
     ) -> Result<(), E> {
+        // Update nonce
+        state.update_account_nonce(self.get_source(), self.nonce + 1).await?;
+
         let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
             transfers
                 .iter()
