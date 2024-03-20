@@ -19,7 +19,9 @@ struct Echange {
     // Version balance of the account used for the verification
     version: VersionedBalance,
     // Sum of all transactions output
-    output_sum: Ciphertext
+    output_sum: Ciphertext,
+    // If we used the output balance or not
+    output_balance_used: bool,
 }
 
 impl Echange {
@@ -28,13 +30,21 @@ impl Echange {
             reference,
             version,
             output_sum: Ciphertext::zero(),
+            output_balance_used: false,
         })
     }
 
     // Get the right balance to use for TX verification
+    // TODO we may need to check previous balances and up to the last output balance made
+    // So if in block A we spent TX A, and block B we got some funds, then we spent TX B in block C
+    // We are still able to use it even if it was built at same time as TX A
     fn get_balance(&mut self, reference: &Reference) -> &mut CiphertextCache {
         let output = *reference != self.reference; 
-        self.version.select_balance(output)
+        let (ct, used) = self.version.select_balance(output);
+        if !self.output_balance_used {
+            self.output_balance_used = used;
+        }
+        ct
     }
 
     // Get the final balance 
@@ -226,7 +236,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
             // Example: Alice sends 100 to Bob, Bob sends 100 to Charlie
             // But Bob built its ZK Proof with the balance before Alice's transaction
             for (asset, echange) in account.assets.drain() {
-                let Echange { version, output_sum, .. } = echange;
+                let Echange { version, output_sum, output_balance_used, .. } = echange;
                 match balances.entry(asset) {
                     Entry::Occupied(mut o) => {
                         // We got incoming funds while spending some
@@ -239,19 +249,34 @@ impl<'a, S: Storage> ChainState<'a, S> {
                         // First Tx of Blob is in block 1000, it will be valid
                         // But because of Alice incoming, the second Tx of Bob will be invalid
                         let final_version = o.get_mut();
-                        final_version.set_output_balance(version.take_balance());
+
+                        // Determine which balance to use as next output balance
+                        let used_balance = if output_balance_used {
+                            version.take_output_balance().unwrap()
+                        } else {
+                            version.take_balance()
+                        };
+
+                        final_version.set_output_balance(used_balance);
 
                         // Build the final balance
-                        // This include all output and all inputs
+                        // All inputs are already added, we just need to substract the outputs
                         let final_balance = final_version.get_mut_balance().computable()?;
                         *final_balance -= output_sum;
                     },
                     Entry::Vacant(e) => {
                         // We have no incoming update for this key
-                        // We must fetch again the version to sum it with the output
-                        let mut version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
+                        let version = if output_balance_used {
+                            // We must fetch again the version to sum it with the output
+                            // This is necessary to build the final balance
+                            let mut version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
+                            *version.get_mut_balance().computable()? -= output_sum;
+                            version
+                        } else {
+                            // Version was based on final balance, all good, nothing to do
+                            version
+                        };
                         // Substract the output sum
-                        *version.get_mut_balance().computable()? -= output_sum;
 
                         e.insert(version);
                     }
