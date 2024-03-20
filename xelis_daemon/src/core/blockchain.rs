@@ -1537,12 +1537,7 @@ impl<S: Storage> Blockchain<S> {
                 return Err(BlockchainError::InvalidBlockTxs(hashes_len, txs_len));
             }
 
-            // Prevent using same nonces for different TXs or invalid nonces
-            // It also force the right order of TXs
-            let mut cache_nonces: HashMap<&PublicKey, u64> = HashMap::new();
-
-            // All assets spent for each Public Key
-            let mut balances = HashMap::new();
+            let mut chain_state = ChainState::new(storage, current_topoheight, stable_topoheight);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
@@ -1560,10 +1555,10 @@ impl<S: Storage> Blockchain<S> {
 
                 debug!("Verifying TX {}", tx_hash);
                 // check that the TX included is not executed in stable height or in block TIPS
-                if storage.is_tx_executed_in_a_block(hash)? {
-                    let block_executed = storage.get_block_executor_for_tx(hash)?;
+                if chain_state.get_storage().is_tx_executed_in_a_block(hash)? {
+                    let block_executed = chain_state.get_storage().get_block_executor_for_tx(hash)?;
                     debug!("Tx {} was executed in {}", hash, block_executed);
-                    let block_height = storage.get_height_for_block_hash(&block_executed).await?;
+                    let block_height = chain_state.get_storage().get_height_for_block_hash(&block_executed).await?;
                     // if the tx was executed below stable height, reject whole block!
                     if block_height <= stable_height {
                         error!("Block {} contains a dead tx {}", block_hash, tx_hash);
@@ -1574,7 +1569,7 @@ impl<S: Storage> Blockchain<S> {
                         // because that mean the miner was aware of the TX execution and still include it
                         if all_parents_txs.is_none() {
                             // load it only one time
-                            all_parents_txs = Some(self.get_all_executed_txs_until_height(storage, stable_height, block.get_tips().iter().map(Hash::clone)).await?);
+                            all_parents_txs = Some(self.get_all_executed_txs_until_height(chain_state.get_storage(), stable_height, block.get_tips().iter().map(Hash::clone)).await?);
                         }
 
                         // if its the case, we should reject the block
@@ -1601,7 +1596,7 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                self.verify_transaction_with_hash(storage, tx, &tx_hash, &mut balances, Some(&mut cache_nonces), false, current_topoheight).await?;
+                tx.verify(&mut chain_state).await?;
             }
         }
 
@@ -1755,38 +1750,37 @@ impl<S: Storage> Blockchain<S> {
                 let block = storage.get_block_by_hash(&hash).await?;
                 // All fees from the transactions executed in this block
                 let mut total_fees = 0;
-                // track all changes in balances for this block
-                let mut local_balances: HashMap<&PublicKey, HashMap<&Hash, VersionedBalance>> = HashMap::new();
-                // Highest nonces for each owner in this block
-                let mut local_nonces: HashMap<&PublicKey, u64> = HashMap::new();
+                // Chain State used for the verification
+                let mut chain_state = ChainState::new(storage, highest_topo, stable_topoheight);
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
                     // Link the transaction hash to this block
-                    if !storage.add_block_linked_to_tx_if_not_present(&tx_hash, &hash)? {
+                    if !chain_state.get_storage().add_block_linked_to_tx_if_not_present(&tx_hash, &hash)? {
                         trace!("Block {} is now linked to tx {}", hash, tx_hash);
                     }
 
                     // check that the tx was not yet executed in another tip branch
-                    if storage.is_tx_executed_in_a_block(tx_hash)? {
+                    if chain_state.get_storage().is_tx_executed_in_a_block(tx_hash)? {
                         trace!("Tx {} was already executed in a previous block, skipping...", tx_hash);
                     } else {
                         // tx was not executed, but lets check that it is not a potential double spending
                         // check that the nonce is not already used
-                        if !nonce_checker.use_nonce(&*storage, tx.get_source(), tx.get_nonce(), highest_topo).await? {
+                        if !nonce_checker.use_nonce(chain_state.get_storage(), tx.get_source(), tx.get_nonce(), highest_topo).await? {
                             warn!("Malicious TX {}, it is a potential double spending with same nonce {}, skipping...", tx_hash, tx.get_nonce());
                             // TX will be orphaned
                             continue;
                         }
 
-                        let next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
-                        local_nonces.insert(tx.get_source(), next_nonce);
+                        // let next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
+                        // local_nonces.insert(tx.get_source(), next_nonce);
 
                         // mark tx as executed
                         debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
-                        storage.set_tx_executed_in_block(tx_hash, &hash)?;
+                        chain_state.get_storage().set_tx_executed_in_block(tx_hash, &hash)?;
 
                         // Execute the transaction by applying changes in storage
-                        self.execute_transaction(storage, &tx, &mut local_balances, highest_topo).await?;
+                        // self.execute_transaction(storage, &tx, &mut local_balances, highest_topo).await?;
+                        tx.apply_without_verify(&mut chain_state).await?;
 
                         // Delete the transaction from  the list if it was marked as orphaned
                         if orphaned_transactions.remove(&tx_hash) {
@@ -1808,7 +1802,6 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                let mut chain_state = ChainState::new(storage, highest_topo, stable_topoheight);
                 let dev_fee_percentage = get_block_dev_fee(block.get_height());
                 // Dev fee are only applied on block reward
                 // Transaction fees are not affected by dev fee
@@ -2208,12 +2201,6 @@ impl<S: Storage> Blockchain<S> {
     // txs must be sorted in ascending order based on account nonce
     pub async fn verify_transaction_with_hash<'a>(&self, storage: &S, tx: &'a Transaction, hash: &Hash, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, nonces: Option<&mut HashMap<&'a PublicKey, u64>>, skip_nonces: bool, topoheight: u64) -> Result<(), BlockchainError> {
         todo!("verify transaction with hash {}", hash)
-    }
-
-    // Execute the transaction by applying all its changes in the Storage
-    // balances parameters are caches for faster execution (reduce IO operations)
-    async fn execute_transaction<'a>(&self, storage: &mut S, transaction: &'a Transaction, balances: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, topoheight: u64) -> Result<(), BlockchainError> {
-        todo!("execute transaction")
     }
 
     // Calculate the average block time on the last 50 blocks

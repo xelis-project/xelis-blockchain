@@ -47,11 +47,6 @@ impl Echange {
         ct
     }
 
-    // Get the final balance 
-    fn get_final_balance(&mut self) -> &mut CiphertextCache {
-        self.version.get_mut_balance()
-    }
-
     // Add a change to the account
     fn add_output_to_sum(&mut self, output: Ciphertext) {
         self.output_sum += output;
@@ -98,9 +93,11 @@ impl<'a, S: Storage> ChainState<'a, S> {
         }
     }
 
+    // Get the storage used by the chain state
     pub fn get_storage(&mut self) -> &mut S {
         self.storage
     }
+
     // Create a sender echange
     async fn create_sender_echange(storage: &S, key: &'a PublicKey, asset: &'a Hash, topoheight: u64) -> Result<Echange, BlockchainError> {
         let version = storage.get_new_versioned_balance(key, asset, topoheight).await?;
@@ -303,15 +300,14 @@ impl<'a, S: Storage> ChainState<'a, S> {
 }
 
 #[async_trait]
-impl<'a, S: Storage> BlockchainVerificationState<'a> for ChainState<'a, S> {
-    type Error = BlockchainError;
+impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainState<'a, S> {
 
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'b>(
         &'b mut self,
         account: &'a PublicKey,
         asset: &'a Hash,
-    ) -> Result<&'b mut Ciphertext, Self::Error> {
+    ) -> Result<&'b mut Ciphertext, BlockchainError> {
         let ct = self.internal_get_receiver_balance(account, asset).await?;
         Ok(ct)
     }
@@ -322,7 +318,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a> for ChainState<'a, S> {
         account: &'a PublicKey,
         asset: &'a Hash,
         reference: &Reference,
-    ) -> Result<&'b mut Ciphertext, Self::Error> {
+    ) -> Result<&'b mut Ciphertext, BlockchainError> {
         Ok(self.internal_get_sender_verification_balance(account, asset, reference).await?.computable()?)
     }
 
@@ -332,7 +328,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a> for ChainState<'a, S> {
         account: &'a PublicKey,
         asset: &'a Hash,
         output: Ciphertext,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), BlockchainError> {
         self.internal_update_sender_echange(account, asset, output).await
     }
 
@@ -340,7 +336,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a> for ChainState<'a, S> {
     async fn get_account_nonce(
         &mut self,
         account: &'a PublicKey
-    ) -> Result<u64, Self::Error> {
+    ) -> Result<u64, BlockchainError> {
         self.internal_get_account_nonce(account).await
     }
 
@@ -349,7 +345,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a> for ChainState<'a, S> {
         &mut self,
         account: &'a PublicKey,
         new_nonce: u64
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), BlockchainError> {
         self.internal_update_account_nonce(account, new_nonce).await
     }
 } 
