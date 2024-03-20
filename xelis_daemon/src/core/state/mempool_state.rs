@@ -122,16 +122,19 @@ impl<'a, S: Storage> MempoolState<'a, S> {
     async fn internal_get_account_nonce(&mut self, key: &'a PublicKey) -> Result<u64, BlockchainError> {
         match self.accounts.entry(key) {
             Entry::Occupied(o) => Ok(o.get().nonce),
-            Entry::Vacant(e) => {
-                let nonce = self.storage.get_nonce_at_maximum_topoheight(key, self.topoheight).await?
-                    .map(|(_, v)| v.get_nonce()).unwrap_or(0);
-
-                let account = Account {
-                    nonce,
-                    assets: HashMap::new()
-                };
-
-                Ok(e.insert(account).nonce)
+            Entry::Vacant(e) => match self.mempool.get_cache_for(key) {
+                Some(cache) => Ok(cache.get_next_nonce()),
+                None => {
+                    let nonce = self.storage.get_nonce_at_maximum_topoheight(key, self.topoheight).await?
+                        .map(|(_, v)| v.get_nonce()).unwrap_or(0);
+    
+                    let account = Account {
+                        nonce,
+                        assets: HashMap::new()
+                    };
+    
+                    Ok(e.insert(account).nonce)
+                }
             }
         }
     }

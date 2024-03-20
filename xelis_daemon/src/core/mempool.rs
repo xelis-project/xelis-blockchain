@@ -453,6 +453,12 @@ impl AccountCache {
         self.max
     }
 
+    // Get the next nonce for this cache
+    // This is necessary when we have several TXs
+    pub fn get_next_nonce(&self) -> u64 {
+        self.max + 1
+    }
+
     // Get all txs hashes for this cache
     pub fn get_txs(&self) -> &IndexSet<Arc<Hash>> {
         &self.txs
