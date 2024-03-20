@@ -7,7 +7,7 @@ use xelis_common::{
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{verify::BlockchainVerificationState, Reference}
 };
-use super::{error::BlockchainError, storage::Storage};
+use crate::core::{error::BlockchainError, storage::Storage};
 
 // Sender changes
 // This contains its expected next balance for next outgoing transactions
@@ -143,9 +143,9 @@ impl<'a, S: Storage> ChainState<'a, S> {
         self.storage.as_mut()
     }
 
-    pub fn get_sender_balances(&self, key: &PublicKey) -> Option<HashMap<Hash, VersionedBalance>> {
+    pub fn get_sender_balances<'b>(&'b self, key: &'b PublicKey) -> Option<HashMap<&'b Hash, &'b VersionedBalance>> {
         let account = self.accounts.get(key)?;
-        Some(account.assets.iter().map(|(k, v)| (Hash::clone(k), v.version.clone())).collect())
+        Some(account.assets.iter().map(|(k, v)| (*k, &v.version)).collect())
     }
 
     // Create a sender echange
@@ -162,9 +162,10 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Create a sender account by fetching its nonce and create a empty HashMap for balances,
     // those will be fetched lazily
     async fn create_sender_account(key: &PublicKey, storage: &S, topoheight: u64) -> Result<Account<'a>, BlockchainError> {
-        let (_, version) = storage
+        let (topo, mut version) = storage
             .get_nonce_at_maximum_topoheight(key, topoheight).await?
             .ok_or_else(|| BlockchainError::AccountNotFound(key.as_address(storage.is_mainnet())))?;
+        version.set_previous_topoheight(Some(topo));
 
         Ok(Account {
             nonce: version,
@@ -241,6 +242,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Only sender accounts should be used here
     // For each TX, we must update the nonce by one
     async fn internal_update_account_nonce(&mut self, account: &'a PublicKey, new_nonce: u64) -> Result<(), BlockchainError> {
+        trace!("Updating nonce for {} to {} at topoheight {}", account.as_address(self.storage.is_mainnet()), new_nonce, self.topoheight);
         match self.accounts.entry(account) {
             Entry::Occupied(mut o) => {
                 let account = o.get_mut();
@@ -273,7 +275,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     pub async fn apply_changes(mut self) -> Result<(), BlockchainError> {
         // Store every new nonce
         for (key, account) in &mut self.accounts {
-            trace!("Saving versioned nonce {} for {} at topoheight {}", account.nonce, key.as_address(self.storage.is_mainnet()), self.topoheight);
+            trace!("Saving {} for {} at topoheight {}", account.nonce, key.as_address(self.storage.is_mainnet()), self.topoheight);
             self.storage.set_last_nonce_to(key, self.topoheight, &account.nonce).await?;
 
             let balances = self.receiver_balances.entry(&key).or_insert_with(HashMap::new);
@@ -363,7 +365,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     }
 
     /// Get the balance ciphertext for a sender account
-    async fn get_sender_verification_balance<'b>(
+    async fn get_sender_balance<'b>(
         &'b mut self,
         account: &'a PublicKey,
         asset: &'a Hash,

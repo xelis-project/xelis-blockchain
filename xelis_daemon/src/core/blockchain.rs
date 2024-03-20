@@ -3,7 +3,6 @@ use indexmap::IndexSet;
 use lru::LruCache;
 use serde_json::{Value, json};
 use xelis_common::{
-    account::VersionedBalance,
     api::{
         daemon::{
             BlockOrderedEvent,
@@ -20,10 +19,10 @@ use xelis_common::{
     block::{Block, BlockHeader, EXTRA_NONCE_SIZE},
     config::{
         COIN_DECIMALS,
+        MAXIMUM_SUPPLY,
         MAX_TRANSACTION_SIZE,
         TIPS_LIMIT,
-        XELIS_ASSET,
-        MAXIMUM_SUPPLY
+        XELIS_ASSET
     },
     crypto::{
         Hash,
@@ -62,7 +61,7 @@ use crate::{
         simulator::Simulator,
         storage::{DagOrderProvider, DifficultyProvider, Storage},
         tx_selector::{TxSelector, TxSelectorEntry},
-        chain_state::{ChainState, StorageReference},
+        state::{ChainState, StorageReference},
     },
     p2p::P2pServer,
     rpc::{
@@ -1151,13 +1150,9 @@ impl<S: Storage> Blockchain<S> {
             }
 
             let current_topoheight = self.get_topo_height();
-            // get the highest nonce for this owner
-            let owner = tx.get_source();
-            // final balances of a user after the new TX being applied
-            let mut final_balances: HashMap<Hash, VersionedBalance> = HashMap::new();
             // get the highest nonce available
             // if presents, it means we have at least one tx from this owner in mempool
-            if let Some(cache) = mempool.get_cache_for(owner) {
+            if let Some(cache) = mempool.get_cache_for(tx.get_source()) {
                 // we accept to delete a tx from mempool if the new one has a higher fee
                 if let Some(hash) = cache.has_tx_with_same_nonce(tx.get_nonce()) {
                     // A TX with the same nonce is already in mempool
@@ -1169,50 +1164,9 @@ impl<S: Storage> Blockchain<S> {
                     debug!("TX {} nonce is not in the range of the pending TXs for this owner, received: {}, expected between {} and {}", hash, tx.get_nonce(), cache.get_min(), cache.get_max());
                     return Err(BlockchainError::InvalidTxNonceMempoolCache(tx.get_nonce(), cache.get_min(), cache.get_max()))
                 }
-
-                // we need to do it in two times because of the constraint of lifetime on &tx
-                let mut balances = HashMap::new();
-                let mut nonces = HashMap::new();
-                // because we already verified the range of nonce
-                nonces.insert(tx.get_source(), tx.get_nonce());
-                // Insert expected balance from mempool TXs
-
-                // Now introduce all expected balances for this user from mempool cache
-                let user_balances = balances.entry(tx.get_source()).or_insert_with(HashMap::new);
-                let cached_balances = cache.get_balances();
-                // We are forced to clone the balance because we need to manipulate it in the next step
-                for (asset, balance) in cached_balances {
-                    user_balances.insert(asset, balance.clone());
-                }
-
-                // Verify original TX
-                // We may have double spending in balances, but it is ok because miner check that all txs included are valid
-                self.verify_transaction_with_hash(&storage, &tx, &hash, &mut balances, Some(&mut nonces), false, current_topoheight).await?;
-
-                // Store all balances changes
-                if let Some(user_balances) = balances.remove(tx.get_source()) {
-                    for (asset, balance) in user_balances {
-                        final_balances.insert(asset.clone(), balance);
-                    }
-                }
-            } else {
-                let stable_topoheight = self.get_stable_topoheight();
-                let mut chain_state = ChainState::new(StorageReference::Immutable(storage), current_topoheight, stable_topoheight);
-                tx.verify(&mut chain_state).await?;
-
-                // Store balances changes
-                if let Some(user_balances) = chain_state.get_sender_balances(tx.get_source()) {
-                    for (asset, balance) in user_balances {
-                        final_balances.insert(asset.clone(), balance);
-                    }
-                } else {
-                    let address = tx.get_source().as_address(storage.is_mainnet());
-                    warn!("Account not found in chain state: {}", address);
-                    return Err(BlockchainError::AccountNotFound(address));
-                }
             }
 
-            mempool.add_tx(hash.clone(), tx.clone(), tx_size, final_balances)?;
+            mempool.add_tx(storage, current_topoheight, hash.clone(), tx.clone(), tx_size).await?;
         }
 
         if broadcast {
@@ -1936,7 +1890,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("Locking mempool write mode");
             let mut mempool = self.mempool.write().await;
             debug!("mempool write mode ok");
-            mempool.clean_up(&*storage, &self, highest_topo).await;
+            mempool.clean_up(&*storage, highest_topo).await;
         }
 
         // Check if the event is tracked
@@ -2201,13 +2155,6 @@ impl<S: Storage> Blockchain<S> {
         }
 
         Ok(new_topoheight)
-    }
-
-    // verify the transaction and returns fees available
-    // nonces allow us to support multiples tx from same owner in the same block
-    // txs must be sorted in ascending order based on account nonce
-    pub async fn verify_transaction_with_hash<'a>(&self, _: &S, _: &'a Transaction, hash: &Hash, _: &mut HashMap<&'a PublicKey, HashMap<&'a Hash, VersionedBalance>>, _: Option<&mut HashMap<&'a PublicKey, u64>>, _: bool, _: u64) -> Result<(), BlockchainError> {
-        todo!("verify transaction with hash {}", hash)
     }
 
     // Calculate the average block time on the last 50 blocks

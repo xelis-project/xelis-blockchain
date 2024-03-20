@@ -7,4 +7,4 @@ pub mod difficulty;
 pub mod simulator;
 pub mod nonce_checker;
 pub mod tx_selector;
-pub mod chain_state;
+pub mod state;
