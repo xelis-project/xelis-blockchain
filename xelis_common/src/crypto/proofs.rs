@@ -34,7 +34,6 @@ lazy_static! {
     pub static ref PC_GENS: PedersenGens = PedersenGens::default();
 }
 
-
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ProofGenerationError {
     #[error("invalid format")]
@@ -432,5 +431,80 @@ impl Serializer for RangeProof {
 
         let bytes = reader.read_bytes_ref(len)?;
         RangeProof::from_bytes(&bytes).map_err(|_| ReaderError::InvalidValue)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_commitment_eq_proof() {
+        let mut transcript = Transcript::new(b"test");
+        let keypair = KeyPair::new();
+        // Generate our initial balance
+        let balance = 100u64;
+        let source_balance = keypair.get_public_key().encrypt(balance);
+
+        // Generate the ciphertext representing the TX amount
+        let amount = 5;
+        let opening = PedersenOpening::generate_new();
+        let ciphertext = keypair.get_public_key().encrypt_with_opening(amount, &opening);
+
+        // Commitment of the final balance using the same Opening
+        let commitment = PedersenCommitment::new_with_opening(balance - amount, &opening);
+
+        // Compute the final balance
+        let final_balance = source_balance - ciphertext;
+
+        // Generate the proof
+        let proof = CommitmentEqProof::new(&keypair, &final_balance, &opening, balance - amount, &mut transcript);
+
+        // Generate a new transcript
+        let mut transcript = Transcript::new(b"test");
+        let mut batch_collector = BatchCollector::default();
+
+        // Verify the proof
+        let result = proof.pre_verify(
+            keypair.get_public_key(),
+            &final_balance,
+            &commitment,
+            &mut transcript,
+            &mut batch_collector,
+        );
+        assert!(result.is_ok());
+        assert!(batch_collector.verify().is_ok());
+    }
+
+    #[test]
+    fn test_ciphertext_validity_proof() {
+        let mut transcript = Transcript::new(b"test");
+        let keypair = KeyPair::new();
+
+        // Generate the commitment representing the transfer amount
+        let amount = 5u64;
+        let opening = PedersenOpening::generate_new();
+        let commitment = PedersenCommitment::new_with_opening(amount, &opening);
+
+        // Create the receiver handle
+        let receiver_handle = keypair.get_public_key().decrypt_handle(&opening);
+
+        // Generate the proof
+        let proof = CiphertextValidityProof::new(keypair.get_public_key(), amount, &opening, &mut transcript);
+
+        // Generate a new transcript
+        let mut transcript = Transcript::new(b"test");
+        let mut batch_collector = BatchCollector::default();
+
+        // Verify the proof
+        let result = proof.pre_verify(
+            &commitment,
+            keypair.get_public_key(),
+            &receiver_handle,
+            &mut transcript,
+            &mut batch_collector,
+        );
+        assert!(result.is_ok());
+        assert!(batch_collector.verify().is_ok());
     }
 }

@@ -374,11 +374,11 @@ impl Serializer for TransactionType {
 
 impl Serializer for Transaction {
     fn write(&self, writer: &mut Writer) {
-        writer.write_u8(self.version);
+        self.version.write(writer);
         self.source.write(writer);
         self.data.write(writer);
-        writer.write_u64(&self.fee);
-        writer.write_u64(&self.nonce);
+        self.fee.write(writer);
+        self.nonce.write(writer);
 
         writer.write_u8(self.source_commitments.len() as u8);
         for commitment in &self.source_commitments {

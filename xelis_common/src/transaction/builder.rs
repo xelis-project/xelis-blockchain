@@ -576,7 +576,12 @@ impl Serializer for TransactionSigner {
         self.data.write(writer);
         self.fee.write(writer);
         self.nonce.write(writer);
-        self.source_commitments.write(writer);
+
+        writer.write_u8(self.source_commitments.len() as u8);
+        for commitment in &self.source_commitments {
+            commitment.write(writer);
+        }
+
         self.range_proof.write(writer);
         self.reference.write(writer);
     }
