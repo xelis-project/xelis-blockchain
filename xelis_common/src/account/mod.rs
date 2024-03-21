@@ -2,8 +2,9 @@ mod balance;
 mod nonce;
 
 use std::borrow::Cow;
+use std::fmt::{self, Display, Formatter};
 
-pub use balance::VersionedBalance;
+pub use balance::{VersionedBalance, BalanceType};
 pub use nonce::VersionedNonce;
 use serde::{Serialize, Deserialize};
 use crate::crypto::elgamal::{Ciphertext, CompressedCiphertext, DecompressionError, RISTRETTO_COMPRESSED_SIZE};
@@ -134,5 +135,15 @@ impl<'de> Deserialize<'de> for CiphertextCache {
         D: serde::Deserializer<'de>,
     {
         CompressedCiphertext::deserialize(deserializer).map(Self::Compressed)
+    }
+}
+
+impl Display for CiphertextCache {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "CiphertextCache[{}]", match self {
+            Self::Compressed(c) => format!("Compressed({})", hex::encode(&c.to_bytes())),
+            Self::Decompressed(e) => format!("Decompressed({})", hex::encode(&e.compress().to_bytes())),
+            Self::Both(c, _) => format!("Both({})", hex::encode(&c.to_bytes()))
+        })
     }
 }
