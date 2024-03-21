@@ -3,7 +3,7 @@ pub mod p2p;
 pub mod core;
 pub mod config;
 
-use config::STABLE_LIMIT;
+use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
 use fern::colors::Color;
 use humantime::format_duration;
 use log::{info, error, warn};
@@ -165,6 +165,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("clear_caches", "Clear storage caches", CommandHandler::Async(async_handler!(clear_caches::<S>))))?;
     command_manager.add_command(Command::new("clear_rpc_connections", "Clear all WS connections from RPC", CommandHandler::Async(async_handler!(clear_rpc_connections::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("difficulty_dataset", "Create a dataset for difficulty from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(difficulty_dataset::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
 
 
     // Don't keep the lock for ever
@@ -737,5 +738,40 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
     file.flush().context("Error while flushing file")?;
     manager.message(format!("Dataset written to {}", output_path));
 
+    Ok(())
+}
+
+// Mine a block
+async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let count = if arguments.has_argument("count") {
+        arguments.get_value("count")?.to_number()?
+    } else {
+        1
+    };
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    // Prevent trying to mine a block on mainnet through this as it will keep busy the node for nothing
+    if *blockchain.get_network() == Network::Mainnet {
+        manager.error("This command is not allowed on mainnet");
+        return Ok(())
+    }
+
+    let prompt = manager.get_prompt();
+    manager.message(format!("Mining can take a while, are you sure you want to mine {} block(s)?", count));
+    if !prompt.ask_confirmation().await.context("Error while asking confirmation")? {
+        return Ok(())
+    }
+
+    manager.message(format!("Mining {} block(s)...", count));
+    for _ in 0..count {
+        let block = blockchain.mine_block(&DEV_PUBLIC_KEY).await.context("Error while mining block")?;
+        let block_hash = block.hash();
+        manager.message(format!("Block mined: {}", block_hash));
+
+        let mut storage = blockchain.get_storage().write().await;
+        blockchain.add_new_block_for_storage(&mut storage, block, true, true).await.context("Error while adding block to chain")?;
+    }
     Ok(())
 }
