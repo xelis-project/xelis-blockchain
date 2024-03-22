@@ -14,7 +14,9 @@ use crate::core::{error::BlockchainError, storage::Storage};
 // But also contains the ciphertext changes happening (so a sum of each spendings for transactions)
 // This is necessary to easily build the final user balance
 struct Echange {
+    // If we are allowed to use the output balance for verification
     allow_output_balance: bool,
+    // if the versioned balance below is new for the current topoheight
     new_version: bool,
     // Version balance of the account used for the verification
     version: VersionedBalance,
