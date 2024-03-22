@@ -289,7 +289,7 @@ impl NetworkHandler {
             // Find the highest nonce
             if is_owner && our_highest_nonce.map(|n| tx.nonce > n).unwrap_or(true) {
                 // Increase the nonce by one to get our new account nonce
-                our_highest_nonce = Some(tx.nonce + 1);
+                our_highest_nonce = Some(tx.nonce);
             }
 
             if let Some(entry) = entry {
@@ -326,7 +326,7 @@ impl NetworkHandler {
         if !changes_stored || assets_changed.is_empty() {
             Ok(None)
         } else {
-            Ok(Some((assets_changed, our_highest_nonce)))
+            Ok(Some((assets_changed, our_highest_nonce.map(|n| n + 1))))
         }
     }
 

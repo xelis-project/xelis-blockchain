@@ -649,6 +649,11 @@ impl Wallet {
         let mut balances = HashMap::with_capacity(used_assets.len());
         // Get all balances used
         for asset in used_assets {
+            trace!("Checking balance for asset {}", asset);
+            if !storage.has_balance_for(&asset).await? {
+                return Err(WalletError::BalanceNotFound(asset));
+            }
+
             let balance = storage.get_balance_for(&asset).await?;
             balances.insert(asset, balance);
         }
