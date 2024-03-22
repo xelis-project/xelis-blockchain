@@ -16,7 +16,8 @@ use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 pub enum CiphertextCache {
     Compressed(CompressedCiphertext),
     Decompressed(Ciphertext),
-    Both(CompressedCiphertext, Ciphertext)
+    // Bool represents the flag "dirty" to know if the decompressed ciphertext has been modified
+    Both(CompressedCiphertext, Ciphertext, bool)
 }
 
 impl CiphertextCache {
@@ -31,7 +32,7 @@ impl CiphertextCache {
                 }
             },
             Self::Decompressed(e) => e,
-            Self::Both(_, e) => e
+            Self::Both(_, e, _) => e
         })
     }
 
@@ -39,7 +40,11 @@ impl CiphertextCache {
         match self {
             Self::Compressed(c) => Cow::Borrowed(c),
             Self::Decompressed(e) => Cow::Owned(e.compress()),
-            Self::Both(c, _) => Cow::Borrowed(c)
+            Self::Both(c, e, dirty) => if *dirty {
+                Cow::Owned(e.compress())
+            } else {
+                Cow::Borrowed(c)
+            }
         }
     }
 
@@ -48,13 +53,18 @@ impl CiphertextCache {
         match self {
             Self::Compressed(c) => c,
             Self::Decompressed(e) => {
-                *self = Self::Both(e.compress(), e.clone());
+                *self = Self::Both(e.compress(), e.clone(), false);
                 match self {
-                    Self::Both(c, _) => c,
+                    Self::Both(c, _, _) => c,
                     _ => unreachable!()
                 }
             },
-            Self::Both(c, _) => c
+            Self::Both(c, d, dirty) => {
+                if *dirty {
+                    *c = d.compress();
+                }
+                c
+            }
         }
     }
 
@@ -63,33 +73,33 @@ impl CiphertextCache {
         match self {
             Self::Compressed(c) => {
                 let decompressed = c.decompress()?;
-                *self = Self::Both(c.clone(), decompressed);
+                *self = Self::Both(c.clone(), decompressed, false);
                 match self {
-                    Self::Both(_, e) => Ok(e),
+                    Self::Both(_, e, _) => Ok(e),
                     _ => unreachable!()
                 }
             },
             Self::Decompressed(e) => Ok(e),
-            Self::Both(_, e) => Ok(e)
+            Self::Both(_, e, _) => Ok(e)
         }
     }
 
     pub fn both(&mut self) -> Result<(&CompressedCiphertext, &Ciphertext), DecompressionError> {
         match self {
-            Self::Both(c, e) => Ok((c, e)),
+            Self::Both(c, e, _) => Ok((c, e)),
             Self::Compressed(c) => {
                 let decompressed = c.decompress()?;
-                *self = Self::Both(c.clone(), decompressed);
+                *self = Self::Both(c.clone(), decompressed, false);
                 match self {
-                    Self::Both(c, e) => Ok((c, e)),
+                    Self::Both(c, e, _) => Ok((c, e)),
                     _ => unreachable!()
                 }
             },
             Self::Decompressed(e) => {
                 let compressed = e.compress();
-                *self = Self::Both(compressed, e.clone());
+                *self = Self::Both(compressed, e.clone(), false);
                 match self {
-                    Self::Both(c, e) => Ok((c, e)),
+                    Self::Both(c, e, _) => Ok((c, e)),
                     _ => unreachable!()
                 }
             }
@@ -100,7 +110,7 @@ impl CiphertextCache {
         Ok(match self {
             Self::Compressed(c) => c.decompress()?,
             Self::Decompressed(e) => e,
-            Self::Both(_, e) => e
+            Self::Both(_, e, _) => e
         })
     }
 }
@@ -143,7 +153,7 @@ impl Display for CiphertextCache {
         write!(f, "CiphertextCache[{}]", match self {
             Self::Compressed(c) => format!("Compressed({})", hex::encode(&c.to_bytes())),
             Self::Decompressed(e) => format!("Decompressed({})", hex::encode(&e.compress().to_bytes())),
-            Self::Both(c, _) => format!("Both({})", hex::encode(&c.to_bytes()))
+            Self::Both(c, _, dirty) => format!("Both({}, dirty: {dirty})", hex::encode(&c.to_bytes()))
         })
     }
 }
