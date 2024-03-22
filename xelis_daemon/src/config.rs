@@ -14,7 +14,6 @@ use xelis_common::{
 // In case of potential forks, have a unique network id to not connect to others compatible chains
 pub const NETWORK_ID_SIZE: usize = 16;
 pub const NETWORK_ID: [u8; NETWORK_ID_SIZE] = [0x73, 0x6c, 0x69, 0x78, 0x65, 0x5f, 0x78, 0x65, 0x6c, 0x69, 0x73, 0x5f, 0x62, 0x6c, 0x6f, 0x63];
-pub const SEED_NODES: [&str; 2] = ["74.208.251.149:2125", "162.19.249.100:2125"];
 
 // bind addresses
 pub const DEFAULT_P2P_BIND_ADDRESS: &str = "0.0.0.0:2125";
