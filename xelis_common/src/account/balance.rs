@@ -71,6 +71,12 @@ impl VersionedBalance {
         Self::new(CiphertextCache::Decompressed(zero), None)
     }
 
+    pub fn prepare_new(&mut self, previous_topoheight: Option<u64>) {
+        self.previous_topoheight = previous_topoheight;
+        self.output_balance = None;
+        self.balance_type = BalanceType::Input;
+    }
+
     pub fn get_balance(&self) -> &CiphertextCache {
         &self.final_balance
     }
