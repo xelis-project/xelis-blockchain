@@ -604,7 +604,7 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
     };
 
     // read amount
-    let float_amount = prompt.read_f64(
+    let float_amount: f64 = prompt.read(
         prompt::colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
     ).await.context("Error while reading amount")?;
 
