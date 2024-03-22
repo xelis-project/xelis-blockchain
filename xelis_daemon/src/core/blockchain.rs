@@ -1327,8 +1327,7 @@ impl<S: Storage> Blockchain<S> {
 
         // data used to verify txs
         let topoheight = self.get_topo_height();
-        let stable_topoheight = self.get_stable_height();
-        let mut chain_state = ChainState::new(StorageReference::Immutable(storage), topoheight, stable_topoheight);
+        let mut chain_state = ChainState::new(StorageReference::Immutable(storage), topoheight);
 
         while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
             if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
@@ -1486,10 +1485,14 @@ impl<S: Storage> Blockchain<S> {
         let (difficulty, p) = self.verify_proof_of_work(storage, &pow_hash, block.get_tips().iter()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
-        // Used for TX verifications
-        let stable_topoheight = self.get_stable_topoheight();
         let mut current_topoheight = self.get_topo_height();
-        { // Transaction verification
+        // Transaction verification
+        // Here we are going to verify all TXs in the block
+        // For this, we must select TXs that are not doing collisions with other TXs in block
+        // TX already added in the same DAG branch (block tips) are rejected because miner should be aware of it
+        // TXs that are already executed in stable height are also rejected whatever DAG branch it is
+        // If the TX is executed by another branch, we skip the verification because DAG will choose which branch will execute the TX
+        {
             let hashes_len = block.get_txs_hashes().len();
             let txs_len = block.get_transactions().len();
             if  hashes_len != txs_len {
@@ -1497,7 +1500,7 @@ impl<S: Storage> Blockchain<S> {
                 return Err(BlockchainError::InvalidBlockTxs(hashes_len, txs_len));
             }
 
-            let mut chain_state = ChainState::new(StorageReference::Immutable(storage), current_topoheight, stable_topoheight);
+            let mut chain_state = ChainState::new(StorageReference::Immutable(storage), current_topoheight);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
             let mut batch = Vec::with_capacity(block.get_txs_count());
@@ -1715,7 +1718,7 @@ impl<S: Storage> Blockchain<S> {
                 // All fees from the transactions executed in this block
                 let mut total_fees = 0;
                 // Chain State used for the verification
-                let mut chain_state = ChainState::new(StorageReference::Mutable(storage), highest_topo, stable_topoheight);
+                let mut chain_state = ChainState::new(StorageReference::Mutable(storage), highest_topo);
 
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs

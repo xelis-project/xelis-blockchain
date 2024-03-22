@@ -1,8 +1,8 @@
 use std::{collections::{hash_map::Entry, HashMap}, ops::{Deref, DerefMut}};
 use async_trait::async_trait;
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use xelis_common::{
-    account::{CiphertextCache, VersionedBalance, VersionedNonce},
+    account::{BalanceType, CiphertextCache, VersionedBalance, VersionedNonce},
     config::XELIS_ASSET,
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{verify::BlockchainVerificationState, Reference}
@@ -14,8 +14,8 @@ use crate::core::{error::BlockchainError, storage::Storage};
 // But also contains the ciphertext changes happening (so a sum of each spendings for transactions)
 // This is necessary to easily build the final user balance
 struct Echange {
-    // Reference at which the version is used
-    reference: Reference,
+    allow_output_balance: bool,
+    new_version: bool,
     // Version balance of the account used for the verification
     version: VersionedBalance,
     // Sum of all transactions output
@@ -25,9 +25,10 @@ struct Echange {
 }
 
 impl Echange {
-    async fn new(reference: Reference, version: VersionedBalance) -> Result<Self, BlockchainError> {
+    async fn new(allow_output_balance: bool, new_version: bool, version: VersionedBalance) -> Result<Self, BlockchainError> {
         Ok(Self {
-            reference,
+            allow_output_balance,
+            new_version,
             version,
             output_sum: Ciphertext::zero(),
             output_balance_used: false,
@@ -38,8 +39,8 @@ impl Echange {
     // TODO we may need to check previous balances and up to the last output balance made
     // So if in block A we spent TX A, and block B we got some funds, then we spent TX B in block C
     // We are still able to use it even if it was built at same time as TX A
-    fn get_balance(&mut self, reference: &Reference) -> &mut CiphertextCache {
-        let output = *reference != self.reference; 
+    fn get_balance(&mut self) -> &mut CiphertextCache {
+        let output = self.output_balance_used || self.allow_output_balance || self.version.contains_input();
         let (ct, used) = self.version.select_balance(output);
         if !self.output_balance_used {
             self.output_balance_used = used;
@@ -115,21 +116,17 @@ pub struct ChainState<'a, S: Storage> {
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
     // Current topoheight of the snapshot
-    topoheight: u64,
-    // Stable topoheight of the snapshot
-    // This is used to determine if the balance is stable or not
-    stable_topoheight: u64,
+    topoheight: u64
 }
 
 // TODO fix front running problem
 impl<'a, S: Storage> ChainState<'a, S> {
-    pub fn new(storage: StorageReference<'a, S>, topoheight: u64, stable_topoheight: u64) -> Self {
+    pub fn new(storage: StorageReference<'a, S>, topoheight: u64) -> Self {
         Self {
             storage,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
-            topoheight,
-            stable_topoheight,
+            topoheight
         }
     }
 
@@ -149,14 +146,114 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Create a sender echange
-    async fn create_sender_echange(storage: &S, key: &'a PublicKey, asset: &'a Hash, topoheight: u64) -> Result<Echange, BlockchainError> {
-        let version = storage.get_new_versioned_balance(key, asset, topoheight).await?;
-        let hash = storage.get_hash_at_topo_height(topoheight).await?;
-        let reference = Reference {
-            topoheight,
-            hash
+    async fn create_sender_echange(storage: &S, key: &'a PublicKey, asset: &'a Hash, current_topoheight: u64, reference: &Reference) -> Result<Echange, BlockchainError> {
+        warn!("Creating sender echange for {} at topoheight {}, reference: {}", key.as_address(storage.is_mainnet()), current_topoheight, reference.topoheight);
+        // Scenario A
+        // TX A has reference topo 1000
+        // We are at block topo 1001
+        // Because TX A is based on previous block, it is built on final balance
+
+        // Scenario B
+        // TX A has reference topo 1000
+        // We are at block topo 1005
+        // We got some funds in topo 1003
+        // We must use the final balance of 1000
+
+        // Scenario C
+        // TX A has reference topo 1000
+        // We are at block topo 1005
+        // We sent another TX B at topo 1001
+        // We must use the output balance if available of TX B
+
+        // Scenario D
+        // TXs have reference topo 1000
+        // We are at block topo 1005
+        // We sent another TX B at topo 1003
+        // We sent another TX C at topo 1004
+        // We must use the output balance if available
+
+
+        let mut use_output_balance = false;
+        let mut version = None;
+        // We must verify the last "output" balance for the asset
+        // Search the last output balance
+        let last_output = storage.get_output_balance_at_maximum_topoheight(key, asset, current_topoheight).await?;
+        // We have a output balance
+        if let Some((topo, v)) = last_output {
+            warn!("Found output balance at topoheight {}", topo);
+            // Verify if the output balance topo is higher than our reference
+            let mut reference_block_topo = None;
+            if reference.topoheight < topo || {
+                // Search the topoheight of the reference block in case of reorg
+                let t = storage.get_topo_height_for_hash(&reference.hash).await?;
+                let under = t < topo;
+                reference_block_topo = Some(t);
+                under
+            } {
+                warn!("Scenario C");
+                // We must use the output balance if possible because this TX may be built after a previous TX at same reference
+                // see Scenario C
+                use_output_balance = true;
+                version = Some(v);
+            } else if topo < reference.topoheight || {
+                // Use cache if available
+                if let Some(t) = reference_block_topo {
+                    t < topo
+                } else {
+                    // Search the topoheight of the reference block in case of reorg
+                    let t = storage.get_topo_height_for_hash(&reference.hash).await?;
+                    let under = t < topo;
+                    reference_block_topo = Some(t);
+                    under
+                }
+            } {
+                warn!("Reference is above last output balance");
+                // Retrieve the block topoheight based on reference hash
+                let reference_block_topo = if let Some(t) = reference_block_topo {
+                    t
+                } else {
+                    storage.get_topo_height_for_hash(&reference.hash).await?
+                };
+
+                // There was no reorg, we can use the final balance of the reference block
+                if reference_block_topo == reference.topoheight {
+                    warn!("Scenario B");
+                    // We must use the final balance of the reference block
+                    // see Scenario B
+                    version = Some(storage.get_balance_at_exact_topoheight(key, asset, reference_block_topo).await?);
+                } else {
+                    warn!("Scenario Luck");
+                    // We got a reorg, lets assume the block has just its topoheight changed
+                    version = storage.get_balance_at_maximum_topoheight(key, asset, reference_block_topo).await?
+                        .map(|(_, v)| v);
+                }
+            }
+        } else {
+            warn!("No output balance found");
+            // Retrieve the block topoheight based on reference hash
+            let reference_block_topo = storage.get_topo_height_for_hash(&reference.hash).await?;
+
+            // There was no reorg, we can use the final balance of the reference block
+            if reference_block_topo == reference.topoheight {
+                warn!("Scenario B bis (no output balance)");
+                // We must use the final balance of the reference block
+                // see Scenario B
+                version = Some(storage.get_balance_at_exact_topoheight(key, asset, reference_block_topo).await?);
+            } else {
+                warn!("Scenario Luck bis (no output balance)");
+                version = Some(storage.get_balance_at_exact_topoheight(key, asset, reference.topoheight).await?);
+            }
+        }
+
+        let (new_version, version) = if let Some(version) = version {
+            (false, version)
+        } else {
+            // Scenario A
+            warn!("Scenario A");
+            (true, storage.get_new_versioned_balance(key, asset, current_topoheight).await?)
         };
-        Echange::new(reference, version).await
+
+        Echange::new(use_output_balance, new_version,  version).await
     }
 
     // Create a sender account by fetching its nonce and create a empty HashMap for balances,
@@ -194,10 +291,10 @@ impl<'a, S: Storage> ChainState<'a, S> {
             Entry::Occupied(o) => {
                 let account = o.into_mut();
                 match account.assets.entry(asset) {
-                    Entry::Occupied(o) => Ok(o.into_mut().get_balance(reference)),
+                    Entry::Occupied(o) => Ok(o.into_mut().get_balance()),
                     Entry::Vacant(e) => {
-                        let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
-                        Ok(e.insert(echange).get_balance(reference))
+                        let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight, reference).await?;
+                        Ok(e.insert(echange).get_balance())
                     }
                 }
             },
@@ -206,9 +303,9 @@ impl<'a, S: Storage> ChainState<'a, S> {
                 let account = Self::create_sender_account(key, &self.storage, self.topoheight).await?;
 
                 // Create a new echange for the asset
-                let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight).await?;
+                let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight, reference).await?;
 
-                Ok(e.insert(account).assets.entry(asset).or_insert(echange).get_balance(reference))
+                Ok(e.insert(account).assets.entry(asset).or_insert(echange).get_balance())
             }
         }
     }
@@ -285,7 +382,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
             // Example: Alice sends 100 to Bob, Bob sends 100 to Charlie
             // But Bob built its ZK Proof with the balance before Alice's transaction
             for (asset, echange) in account.assets.drain() {
-                let Echange { version, output_sum, output_balance_used, .. } = echange;
+                let Echange { version, output_sum, output_balance_used, new_version, .. } = echange;
                 match balances.entry(asset) {
                     Entry::Occupied(mut o) => {
                         // We got incoming funds while spending some
@@ -298,6 +395,9 @@ impl<'a, S: Storage> ChainState<'a, S> {
                         // First Tx of Blob is in block 1000, it will be valid
                         // But because of Alice incoming, the second Tx of Bob will be invalid
                         let final_version = o.get_mut();
+
+                        // We got input and output funds, mark it
+                        final_version.set_balance_type(BalanceType::Both);
 
                         // Determine which balance to use as next output balance
                         let used_balance = if output_balance_used {
@@ -315,17 +415,22 @@ impl<'a, S: Storage> ChainState<'a, S> {
                     },
                     Entry::Vacant(e) => {
                         // We have no incoming update for this key
-                        let version = if output_balance_used {
+                        // Select the right final version
+                        // For that, we must check if we used the output balance and/or if we are not on the last version 
+                        let mut version = if output_balance_used || !new_version {
                             // We must fetch again the version to sum it with the output
                             // This is necessary to build the final balance
                             let mut version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
+                            // Substract the output sum
                             *version.get_mut_balance().computable()? -= output_sum;
                             version
                         } else {
                             // Version was based on final balance, all good, nothing to do
                             version
                         };
-                        // Substract the output sum
+
+                        // We got output funds, mark it
+                        version.set_balance_type(BalanceType::Output);
 
                         e.insert(version);
                     }
