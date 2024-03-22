@@ -1,6 +1,6 @@
 use std::{collections::{hash_map::Entry, HashMap}, ops::{Deref, DerefMut}};
 use async_trait::async_trait;
-use log::{debug, trace, warn};
+use log::{debug, trace};
 use xelis_common::{
     account::{BalanceType, CiphertextCache, VersionedBalance, VersionedNonce},
     config::XELIS_ASSET,
@@ -25,14 +25,14 @@ struct Echange {
 }
 
 impl Echange {
-    async fn new(allow_output_balance: bool, new_version: bool, version: VersionedBalance) -> Result<Self, BlockchainError> {
-        Ok(Self {
+    fn new(allow_output_balance: bool, new_version: bool, version: VersionedBalance) -> Self {
+        Self {
             allow_output_balance,
             new_version,
             version,
             output_sum: Ciphertext::zero(),
             output_balance_used: false,
-        })
+        }
     }
 
     // Get the right balance to use for TX verification
@@ -119,7 +119,6 @@ pub struct ChainState<'a, S: Storage> {
     topoheight: u64
 }
 
-// TODO fix front running problem
 impl<'a, S: Storage> ChainState<'a, S> {
     pub fn new(storage: StorageReference<'a, S>, topoheight: u64) -> Self {
         Self {
@@ -147,113 +146,8 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Create a sender echange
     async fn create_sender_echange(storage: &S, key: &'a PublicKey, asset: &'a Hash, current_topoheight: u64, reference: &Reference) -> Result<Echange, BlockchainError> {
-        warn!("Creating sender echange for {} at topoheight {}, reference: {}", key.as_address(storage.is_mainnet()), current_topoheight, reference.topoheight);
-        // Scenario A
-        // TX A has reference topo 1000
-        // We are at block topo 1001
-        // Because TX A is based on previous block, it is built on final balance
-
-        // Scenario B
-        // TX A has reference topo 1000
-        // We are at block topo 1005
-        // We got some funds in topo 1003
-        // We must use the final balance of 1000
-
-        // Scenario C
-        // TX A has reference topo 1000
-        // We are at block topo 1005
-        // We sent another TX B at topo 1001
-        // We must use the output balance if available of TX B
-
-        // Scenario D
-        // TXs have reference topo 1000
-        // We are at block topo 1005
-        // We sent another TX B at topo 1003
-        // We sent another TX C at topo 1004
-        // We must use the output balance if available
-
-
-        let mut use_output_balance = false;
-        let mut version = None;
-        // We must verify the last "output" balance for the asset
-        // Search the last output balance
-        let last_output = storage.get_output_balance_at_maximum_topoheight(key, asset, current_topoheight).await?;
-        // We have a output balance
-        if let Some((topo, v)) = last_output {
-            warn!("Found output balance at topoheight {}", topo);
-            // Verify if the output balance topo is higher than our reference
-            let mut reference_block_topo = None;
-            if reference.topoheight < topo || {
-                // Search the topoheight of the reference block in case of reorg
-                let t = storage.get_topo_height_for_hash(&reference.hash).await?;
-                let under = t < topo;
-                reference_block_topo = Some(t);
-                under
-            } {
-                warn!("Scenario C");
-                // We must use the output balance if possible because this TX may be built after a previous TX at same reference
-                // see Scenario C
-                use_output_balance = true;
-                version = Some(v);
-            } else if topo < reference.topoheight || {
-                // Use cache if available
-                if let Some(t) = reference_block_topo {
-                    t < topo
-                } else {
-                    // Search the topoheight of the reference block in case of reorg
-                    let t = storage.get_topo_height_for_hash(&reference.hash).await?;
-                    let under = t < topo;
-                    reference_block_topo = Some(t);
-                    under
-                }
-            } {
-                warn!("Reference is above last output balance");
-                // Retrieve the block topoheight based on reference hash
-                let reference_block_topo = if let Some(t) = reference_block_topo {
-                    t
-                } else {
-                    storage.get_topo_height_for_hash(&reference.hash).await?
-                };
-
-                // There was no reorg, we can use the final balance of the reference block
-                if reference_block_topo == reference.topoheight {
-                    warn!("Scenario B");
-                    // We must use the final balance of the reference block
-                    // see Scenario B
-                    version = Some(storage.get_balance_at_exact_topoheight(key, asset, reference_block_topo).await?);
-                } else {
-                    warn!("Scenario Luck");
-                    // We got a reorg, lets assume the block has just its topoheight changed
-                    version = storage.get_balance_at_maximum_topoheight(key, asset, reference_block_topo).await?
-                        .map(|(_, v)| v);
-                }
-            }
-        } else {
-            warn!("No output balance found");
-            // Retrieve the block topoheight based on reference hash
-            let reference_block_topo = storage.get_topo_height_for_hash(&reference.hash).await?;
-
-            // There was no reorg, we can use the final balance of the reference block
-            if reference_block_topo == reference.topoheight {
-                warn!("Scenario B bis (no output balance)");
-                // We must use the final balance of the reference block
-                // see Scenario B
-                version = Some(storage.get_balance_at_exact_topoheight(key, asset, reference_block_topo).await?);
-            } else {
-                warn!("Scenario Luck bis (no output balance)");
-                version = Some(storage.get_balance_at_exact_topoheight(key, asset, reference.topoheight).await?);
-            }
-        }
-
-        let (new_version, version) = if let Some(version) = version {
-            (false, version)
-        } else {
-            // Scenario A
-            warn!("Scenario A");
-            (true, storage.get_new_versioned_balance(key, asset, current_topoheight).await?)
-        };
-
-        Echange::new(use_output_balance, new_version,  version).await
+        let (use_output_balance, new_version, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference).await?;
+        Ok(Echange::new(use_output_balance, new_version,  version))
     }
 
     // Create a sender account by fetching its nonce and create a empty HashMap for balances,
@@ -285,8 +179,8 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Retrieve the sender balance of an account
     // This is used for TX outputs verification
     // This depends on the transaction and can be final balance or output balance
-    // TODO fix front running problem
     async fn internal_get_sender_verification_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash, reference: &Reference) -> Result<&'b mut CiphertextCache, BlockchainError> {
+        trace!("getting sender verification balance for {} at topoheight {}, reference: {}", key.as_address(self.storage.is_mainnet()), self.topoheight, reference.topoheight);
         match self.accounts.entry(key) {
             Entry::Occupied(o) => {
                 let account = o.into_mut();

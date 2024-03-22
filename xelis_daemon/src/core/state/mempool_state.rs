@@ -52,9 +52,10 @@ impl<'a, S: Storage> MempoolState<'a, S> {
         }
     }
 
-    pub fn get_sender_balances<'b>(&'b self, key: &'b PublicKey) -> Option<&HashMap<&Hash, Ciphertext>> {
-        let account = self.accounts.get(key)?;
-        Some(&account.assets)
+    // Retrieve the sender balances
+    pub fn get_sender_balances(&mut self, key: &PublicKey) -> Option<HashMap<&Hash, Ciphertext>> {
+        let account = self.accounts.remove(key)?;
+        Some(account.assets)
     }
 
     // Retrieve the receiver balance
@@ -70,12 +71,23 @@ impl<'a, S: Storage> MempoolState<'a, S> {
         }
     }
 
+    // Retrieve the versioned balance based on the TX reference 
+    async fn get_versioned_balance_for_reference(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: u64, reference: &Reference) -> Result<Ciphertext, BlockchainError> {
+        let (output, _, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference).await?;
+
+        Ok(if output {
+            version.take_output_balance().unwrap().take_ciphertext()?
+        } else {
+            version.take_balance().take_ciphertext()?
+        })
+    }
+
     // Retrieve the sender balance
     // For this, we first look in our internal cache,
     // If not found, we check in mempool cache,
     // If still not present, we check in storage and determine using reference
     // Which version to use
-    async fn internal_get_sender_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash, _reference: &Reference) -> Result<&'b mut Ciphertext, BlockchainError> {
+    async fn internal_get_sender_balance<'b>(&'b mut self, key: &'a PublicKey, asset: &'a Hash, reference: &Reference) -> Result<&'b mut Ciphertext, BlockchainError> {
         match self.accounts.entry(key) {
             Entry::Occupied(o) => {
                 let account = o.into_mut();
@@ -86,13 +98,13 @@ impl<'a, S: Storage> MempoolState<'a, S> {
                             if let Some(version) = cache.get_balances().get(asset) {
                                 Ok(entry.insert(version.clone()))
                             } else {
-                                let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                                Ok(entry.insert(version.take_balance().take_ciphertext()?))
+                                let ct = Self::get_versioned_balance_for_reference(&self.storage, key, asset, self.topoheight, reference).await?;
+                                Ok(entry.insert(ct))
                             }
                         },
                         None => {
-                            let version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                            Ok(entry.insert(version.take_balance().take_ciphertext()?))
+                            let ct = Self::get_versioned_balance_for_reference(&self.storage, key, asset, self.topoheight, reference).await?;
+                            Ok(entry.insert(ct))
                         }
                     }
                 }

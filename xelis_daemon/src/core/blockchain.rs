@@ -1327,6 +1327,7 @@ impl<S: Storage> Blockchain<S> {
 
         // data used to verify txs
         let topoheight = self.get_topo_height();
+        trace!("build chain state for block template");
         let mut chain_state = ChainState::new(StorageReference::Immutable(storage), topoheight);
 
         while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
@@ -1500,6 +1501,7 @@ impl<S: Storage> Blockchain<S> {
                 return Err(BlockchainError::InvalidBlockTxs(hashes_len, txs_len));
             }
 
+            trace!("verifying {} TXs in block {}", txs_len, block_hash);
             let mut chain_state = ChainState::new(StorageReference::Immutable(storage), current_topoheight);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
@@ -1563,6 +1565,7 @@ impl<S: Storage> Blockchain<S> {
                 batch.push(tx);
             }
 
+            trace!("proof verifications of {} TXs in block {}", batch.len(), block_hash);
             // Verify all valid transactions in one batch
             Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
         }
@@ -1619,6 +1622,8 @@ impl<S: Storage> Blockchain<S> {
 
         // order the DAG (up to TOP_HEIGHT - STABLE_LIMIT)
         let mut highest_topo = 0;
+        // Tells if the new block added is ordered in DAG or not
+        let block_is_ordered = full_order.contains(&block_hash);
         {
             let mut is_written = base_topo_height == 0;
             let mut skipped = 0;
@@ -1718,6 +1723,7 @@ impl<S: Storage> Blockchain<S> {
                 // All fees from the transactions executed in this block
                 let mut total_fees = 0;
                 // Chain State used for the verification
+                trace!("building chain state to execute TXs in block {}", block_hash);
                 let mut chain_state = ChainState::new(StorageReference::Mutable(storage), highest_topo);
 
                 // compute rewards & execute txs
@@ -1935,7 +1941,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        info!("Processed block {} at height {} in {} ms with {} txs", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count());
+        info!("Processed block {} at height {} in {:?} with {} txs (DAG: {})", block_hash, block.get_height(), start.elapsed(), block.get_txs_count(), block_is_ordered);
 
         // Broadcast to p2p nodes
         if broadcast {

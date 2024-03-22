@@ -379,7 +379,7 @@ impl Mempool {
 
                     // Update balances cache
                     if let Some(balances) = state.get_sender_balances(&key) {
-                        cache.set_balances(balances.iter().map(|(asset, ciphertext)| (Hash::clone(*asset), ciphertext.clone())).collect());
+                        cache.set_balances(balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect());
                     }
 
                     if invalid_txs.len() == cache.txs.len() {
