@@ -473,6 +473,13 @@ impl Transaction {
 
             // Compute the new final balance for account
             *current_bal_sender -= &output;
+
+            // Update source balance
+            state.add_sender_output(
+                &self.source,
+                &commitment.asset,
+                output,
+            ).await?;
         }
 
         if let TransactionType::Transfers(transfers) = &self.data {

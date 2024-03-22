@@ -32,7 +32,10 @@ impl CiphertextCache {
                 }
             },
             Self::Decompressed(e) => e,
-            Self::Both(_, e, _) => e
+            Self::Both(_, e, dirty) => {
+                *dirty = true;
+                e
+            }
         })
     }
 
@@ -86,7 +89,12 @@ impl CiphertextCache {
 
     pub fn both(&mut self) -> Result<(&CompressedCiphertext, &Ciphertext), DecompressionError> {
         match self {
-            Self::Both(c, e, _) => Ok((c, e)),
+            Self::Both(c, e, dirty) => {
+                if *dirty {
+                    *c = e.compress();
+                }
+                Ok((c, e))
+            },
             Self::Compressed(c) => {
                 let decompressed = c.decompress()?;
                 *self = Self::Both(c.clone(), decompressed, false);
