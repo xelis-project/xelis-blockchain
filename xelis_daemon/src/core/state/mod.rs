@@ -1,7 +1,7 @@
 mod mempool_state;
 mod chain_state;
 
-use log::trace;
+use log::{trace, debug};
 pub use mempool_state::MempoolState;
 pub use chain_state::{ChainState, StorageReference};
 use xelis_common::{account::VersionedBalance, crypto::{Hash, PublicKey}, transaction::Reference};
@@ -58,7 +58,7 @@ pub (super) async fn search_versioned_balance_for_reference<S: Storage>(storage:
             reference_block_topo = Some(t);
             under
         } {
-            trace!("Scenario C");
+            debug!("Scenario C");
             // We must use the output balance if possible because this TX may be built after a previous TX at same reference
             // see Scenario C
             use_output_balance = true;
@@ -76,6 +76,8 @@ pub (super) async fn search_versioned_balance_for_reference<S: Storage>(storage:
             }
         } {
             trace!("Reference is above last output balance");
+            debug!("Scenario B");
+
             // Retrieve the block topoheight based on reference hash
             let reference_block_topo = if let Some(t) = reference_block_topo {
                 t
@@ -83,18 +85,8 @@ pub (super) async fn search_versioned_balance_for_reference<S: Storage>(storage:
                 storage.get_topo_height_for_hash(&reference.hash).await?
             };
 
-            // There was no reorg, we can use the final balance of the reference block
-            if reference_block_topo == reference.topoheight {
-                trace!("Scenario B");
-                // We must use the final balance of the reference block
-                // see Scenario B
-                version = Some(storage.get_balance_at_exact_topoheight(key, asset, reference_block_topo).await?);
-            } else {
-                trace!("Scenario Luck");
-                // We got a reorg, lets assume the block has just its topoheight changed
-                version = storage.get_balance_at_maximum_topoheight(key, asset, reference_block_topo).await?
-                    .map(|(_, v)| v);
-            }
+            version = storage.get_balance_at_maximum_topoheight(key, asset, reference.topoheight.max(reference_block_topo)).await?
+                .map(|(_, v)| v);
         }
     } else {
         trace!("No output balance found");
@@ -103,13 +95,14 @@ pub (super) async fn search_versioned_balance_for_reference<S: Storage>(storage:
 
         // There was no reorg, we can use the final balance of the reference block
         if reference_block_topo == reference.topoheight {
-            trace!("Scenario B bis (no output balance)");
+            debug!("Scenario B bis (no output balance)");
             // We must use the final balance of the reference block
             // see Scenario B
             version = Some(storage.get_balance_at_exact_topoheight(key, asset, reference_block_topo).await?);
         } else {
-            trace!("Scenario Luck bis (no output balance)");
-            version = Some(storage.get_balance_at_exact_topoheight(key, asset, reference.topoheight).await?);
+            debug!("Scenario Luck bis (no output balance)");
+            version = storage.get_balance_at_maximum_topoheight(key, asset, reference.topoheight).await?
+                .map(|(_, v)| v);
         }
     }
 
@@ -117,7 +110,7 @@ pub (super) async fn search_versioned_balance_for_reference<S: Storage>(storage:
         (false, version)
     } else {
         // Scenario A
-        trace!("Scenario A");
+        debug!("Scenario A");
         (true, storage.get_new_versioned_balance(key, asset, current_topoheight).await?)
     };
 

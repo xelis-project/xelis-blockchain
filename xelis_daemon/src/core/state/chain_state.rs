@@ -5,7 +5,7 @@ use xelis_common::{
     account::{BalanceType, CiphertextCache, VersionedBalance, VersionedNonce},
     config::XELIS_ASSET,
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
-    transaction::{verify::BlockchainVerificationState, Reference}
+    transaction::{verify::BlockchainVerificationState, Reference},
 };
 use crate::core::{error::BlockchainError, storage::Storage};
 
@@ -264,7 +264,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // This will consume ChainState and apply all changes to the storage
     // In case of incoming and outgoing transactions in same state, the final balance will be computed
     pub async fn apply_changes(mut self) -> Result<(), BlockchainError> {
-        // Store every new nonce
+        // Apply changes for sender accounts
         for (key, account) in &mut self.accounts {
             trace!("Saving {} for {} at topoheight {}", account.nonce, key.as_address(self.storage.is_mainnet()), self.topoheight);
             self.storage.set_last_nonce_to(key, self.topoheight, &account.nonce).await?;
@@ -276,9 +276,11 @@ impl<'a, S: Storage> ChainState<'a, S> {
             // Example: Alice sends 100 to Bob, Bob sends 100 to Charlie
             // But Bob built its ZK Proof with the balance before Alice's transaction
             for (asset, echange) in account.assets.drain() {
+                trace!("{} {} updated for {} at topoheight {}", echange.version, asset, key.as_address(self.storage.is_mainnet()), self.topoheight);
                 let Echange { version, output_sum, output_balance_used, new_version, .. } = echange;
                 match balances.entry(asset) {
                     Entry::Occupied(mut o) => {
+                        trace!("{} already has a balance for {} at topoheight {}", key.as_address(self.storage.is_mainnet()), asset, self.topoheight);
                         // We got incoming funds while spending some
                         // We need to split the version in two
                         // Output balance is the balance after outputs spent without incoming funds
@@ -293,14 +295,15 @@ impl<'a, S: Storage> ChainState<'a, S> {
                         // We got input and output funds, mark it
                         final_version.set_balance_type(BalanceType::Both);
 
-                        // Determine which balance to use as next output balance
-                        let used_balance = if output_balance_used {
-                            version.take_output_balance().unwrap()
-                        } else {
-                            version.take_balance()
-                        };
+                        // We must build output balance correctly
+                        // For that, we use the same balance before any inputs
+                        // And deduct outputs
+                        let clean_version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
+                        let mut output_balance = clean_version.take_balance();
+                        *output_balance.computable()? -= &output_sum;
 
-                        final_version.set_output_balance(used_balance);
+                        // Set to our final version the new output balance
+                        final_version.set_output_balance(output_balance);
 
                         // Build the final balance
                         // All inputs are already added, we just need to substract the outputs
@@ -308,6 +311,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
                         *final_balance -= output_sum;
                     },
                     Entry::Vacant(e) => {
+                        trace!("{} has no balance for {} at topoheight {}", key.as_address(self.storage.is_mainnet()), asset, self.topoheight);
                         // We have no incoming update for this key
                         // Select the right final version
                         // For that, we must check if we used the output balance and/or if we are not on the last version 
@@ -316,6 +320,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
                             // This is necessary to build the final balance
                             let mut version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
                             // Substract the output sum
+                            trace!("{} has no balance for {} at topoheight {}, substract output sum", key.as_address(self.storage.is_mainnet()), asset, self.topoheight);
                             *version.get_mut_balance().computable()? -= output_sum;
                             version
                         } else {
@@ -323,7 +328,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
                             version
                         };
 
-                        // We got output funds, mark it
+                        // We have some output, mark it
                         version.set_balance_type(BalanceType::Output);
 
                         e.insert(version);
