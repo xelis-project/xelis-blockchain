@@ -364,7 +364,11 @@ impl Mempool {
                             // If not, delete it
                             let tx = sorted_tx.get_tx();
 
-                            if let Err(e) = tx.verify(&mut state).await {
+                            // Because are linked to each other, if one is invalid, all next are invalid
+                            if !invalid_txs.is_empty() {
+                                warn!("TX {} is deleted because previous TX was invalid", tx_hash);
+                                invalid_txs.push(tx_hash.clone());
+                            } else if let Err(e) = tx.verify(&mut state).await {
                                 warn!("TX {} is not valid anymore, deleting it: {}", tx_hash, e);
                                 // Clone is needed as we can't remove a value from a map while iterating over it
                                 invalid_txs.push(tx_hash.clone());

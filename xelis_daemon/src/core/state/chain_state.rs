@@ -207,6 +207,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     // Update the output echanges of an account
     // Account must have been fetched before calling this function
     async fn internal_update_sender_echange(&mut self, key: &'a PublicKey, asset: &'a Hash, new_ct: Ciphertext) -> Result<(), BlockchainError> {
+        trace!("update sender echange: {:?}", new_ct.compress());
         let change = self.accounts.get_mut(key)
             .and_then(|a| a.assets.get_mut(asset))
             .ok_or_else(|| BlockchainError::NoTxSender(key.as_address(self.storage.is_mainnet())))?;
@@ -278,6 +279,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
             for (asset, echange) in account.assets.drain() {
                 trace!("{} {} updated for {} at topoheight {}", echange.version, asset, key.as_address(self.storage.is_mainnet()), self.topoheight);
                 let Echange { version, output_sum, output_balance_used, new_version, .. } = echange;
+                trace!("sender output sum: {:?}", output_sum.compress());
                 match balances.entry(asset) {
                     Entry::Occupied(mut o) => {
                         trace!("{} already has a balance for {} at topoheight {}", key.as_address(self.storage.is_mainnet()), asset, self.topoheight);
@@ -298,9 +300,19 @@ impl<'a, S: Storage> ChainState<'a, S> {
                         // We must build output balance correctly
                         // For that, we use the same balance before any inputs
                         // And deduct outputs
-                        let clean_version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                        let mut output_balance = clean_version.take_balance();
-                        *output_balance.computable()? -= &output_sum;
+                        // let clean_version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
+                        // let mut output_balance = clean_version.take_balance();
+                        // *output_balance.computable()? -= &output_sum;
+
+                        // Determine which balance to use as next output balance
+                        // This is used in case TXs that are built at same reference, but
+                        // executed in differents topoheights have the output balance reported
+                        // to the next topoheight each time to stay valid during ZK Proof verification
+                        let output_balance = if output_balance_used {
+                            version.take_output_balance().unwrap()
+                        } else {
+                            version.take_balance()
+                        };
 
                         // Set to our final version the new output balance
                         final_version.set_output_balance(output_balance);
