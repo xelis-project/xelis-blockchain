@@ -339,7 +339,7 @@ impl TransactionEntry {
                 str
             },
             EntryData::Outgoing { transfers, fee, nonce } => {
-                let mut str = format!("Fee: {}, Nonce: {} ", fee, nonce);
+                let mut str = format!("Fee: {}, Nonce: {} ", format_xelis(*fee), nonce);
                 for transfer in transfers {
                     if *transfer.get_asset() == XELIS_ASSET {
                         str.push_str(&format!("Sent {} XELIS to {}", format_xelis(transfer.get_amount()), transfer.get_destination().as_address(mainnet)));
