@@ -42,3 +42,10 @@ pub fn check_difficulty_against_target(hash: &Hash, target: &U256) -> bool {
     let hash_work = U256::from_big_endian(hash.as_bytes());
     hash_work <= *target
 }
+
+// Convert a hash to a difficulty value
+// This is only used by miner
+#[inline(always)]
+pub fn difficulty_from_hash(hash: &Hash) -> Difficulty {
+    (U256::max_value() / U256::from_big_endian(hash.as_bytes())).into()
+}
