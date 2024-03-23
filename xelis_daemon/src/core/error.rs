@@ -169,6 +169,8 @@ pub enum BlockchainError {
     InvalidTips,
     #[error("Invalid block version")]
     InvalidBlockVersion,
+    #[error("Invalid tx version")]
+    InvalidTxVersion,
     #[error("Block is already in chain")]
     AlreadyInChain,
     #[error("Block has an invalid reachability")]

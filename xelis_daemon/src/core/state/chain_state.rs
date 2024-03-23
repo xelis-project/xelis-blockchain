@@ -5,7 +5,7 @@ use xelis_common::{
     account::{BalanceType, CiphertextCache, VersionedBalance, VersionedNonce},
     config::XELIS_ASSET,
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
-    transaction::{verify::BlockchainVerificationState, Reference},
+    transaction::{verify::BlockchainVerificationState, Reference, Transaction},
 };
 use crate::core::{error::BlockchainError, storage::Storage};
 
@@ -415,11 +415,18 @@ impl<'a, S: Storage> ChainState<'a, S> {
 #[async_trait]
 impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainState<'a, S> {
 
-    /// Verify the TX reference
-    async fn verify_tx_reference<'b>(
+    /// Verify the TX version and reference
+    async fn pre_verify_tx<'b>(
         &'b mut self,
-        reference: &Reference,
+        tx: &Transaction,
     ) -> Result<(), BlockchainError> {
+        // Check the version
+        if tx.get_version() != 0 {
+            debug!("Invalid version: {}", tx.get_version());
+            return Err(BlockchainError::InvalidTxVersion);
+        }
+
+        let reference = tx.get_reference();
         // Verify that the block he is built upon exists
         if !self.storage.has_block_with_hash(&reference.hash).await? {
             debug!("Invalid reference: block {} not found", reference.hash);
