@@ -2,7 +2,7 @@ use bulletproofs::RangeProof;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, RistrettoPoint, Scalar};
 use log::{debug, trace};
 use merlin::Transcript;
-use crate::{config::XELIS_ASSET, crypto::{elgamal::{Ciphertext, CompressedPublicKey, DecompressionError, DecryptHandle, PedersenCommitment}, proofs::{BatchCollector, ProofVerificationError, BP_GENS, PC_GENS}, Hash, ProtocolTranscript, SIGNATURE_SIZE}, serializer::Serializer};
+use crate::{config::XELIS_ASSET, crypto::{elgamal::{Ciphertext, CompressedPublicKey, DecompressionError, DecryptHandle, PedersenCommitment}, proofs::{BatchCollector, ProofVerificationError, BP_GENS, PC_GENS}, Hash, ProtocolTranscript, SIGNATURE_SIZE}, serializer::Serializer, transaction::{EXTRA_DATA_LIMIT_SIZE, MAX_TRANSFER_COUNT}};
 use super::{Reference, Role, Transaction, TransactionType, TransferPayload};
 use thiserror::Error;
 use std::iter;
@@ -18,10 +18,10 @@ pub trait BlockchainVerificationState<'a, E> {
     // See: https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=aaa6065daaab514e638b2333703765c7
     // type Error;
 
-    /// Verify the TX reference
-    async fn verify_tx_reference<'b>(
+    /// Pre-verify the TX
+    async fn pre_verify_tx<'b>(
         &'b mut self,
-        reference: &Reference,
+        tx: &Transaction,
     ) -> Result<(), E>;
 
     /// Get the balance ciphertext for a receiver account
@@ -193,7 +193,7 @@ impl Transaction {
     ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<E>>
     {
         trace!("Pre-verifying transaction");
-        state.verify_tx_reference(&self.reference).await
+        state.pre_verify_tx(&self).await
             .map_err(VerificationError::State)?;
 
         // First, check the nonce
@@ -215,12 +215,27 @@ impl Transaction {
         }
 
         let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
+            if transfers.len() > MAX_TRANSFER_COUNT {
+                debug!("too many transfers");
+                return Err(VerificationError::Proof(ProofVerificationError::Format));
+            }
+
+            let mut extra_data_size = 0;
             // Prevent sending to ourself
             for transfer in transfers.iter() {
                 if transfer.destination == self.source {
                     debug!("sender cannot be the receiver in the same TX");
                     return Err(VerificationError::SenderIsReceiver);
                 }
+
+                if let Some(extra_data) = transfer.extra_data.as_ref() {
+                    extra_data_size += extra_data.size();
+                }
+            }
+
+            if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
+                debug!("extra data size is too large");
+                return Err(VerificationError::Proof(ProofVerificationError::Format));
             }
 
             transfers

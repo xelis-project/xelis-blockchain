@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use async_trait::async_trait;
-use crate::{account::CiphertextCache, config::{COIN_VALUE, XELIS_ASSET}, crypto::{elgamal::Ciphertext, Address, Hash, KeyPair, PublicKey}};
-use super::{builder::{AccountState, FeeBuilder, TransactionBuilder, TransactionTypeBuilder, TransferBuilder}, verify::BlockchainVerificationState, Reference, Transaction};
+use crate::{account::CiphertextCache, config::{COIN_VALUE, XELIS_ASSET}, crypto::{elgamal::Ciphertext, Address, Hash, KeyPair, PublicKey}, transaction::MAX_TRANSFER_COUNT};
+use super::{builder::{AccountState, FeeBuilder, TransactionBuilder, TransactionTypeBuilder, TransferBuilder}, verify::BlockchainVerificationState, BurnPayload, Reference, Transaction};
 
 struct AccountChainState {
     balances: HashMap<Hash, Ciphertext>,
@@ -47,14 +47,14 @@ impl Account {
     }
 }
 
-struct AccountStateImpl<'a> {
-    balances: &'a mut HashMap<Hash, Balance>,
+struct AccountStateImpl {
+    balances: HashMap<Hash, Balance>,
     reference: Reference,
 }
 
-fn create_tx_for(account: &mut Account, destination: Address, amount: u64) -> Transaction {
+fn create_tx_for(account: Account, destination: Address, amount: u64) -> Transaction {
     let mut state = AccountStateImpl {
-        balances: &mut account.balances,
+        balances: account.balances,
         reference: Reference {
             topoheight: 0,
             hash: Hash::zero(),
@@ -84,7 +84,7 @@ async fn test_tx_verify() {
     bob.set_balance(XELIS_ASSET, 0);
 
     // Alice account is cloned to not be updated as it is used for verification and need current state
-    let tx = create_tx_for(&mut alice.clone(), bob.address(), 50);
+    let tx = create_tx_for(alice.clone(), bob.address(), 50);
 
     let mut state = ChainState {
         accounts: HashMap::new(),
@@ -116,8 +116,136 @@ async fn test_tx_verify() {
     tx.verify(&mut state).await.unwrap();
 }
 
+#[tokio::test]
+async fn test_burn_tx_verify() {
+    let mut alice = Account::new();
+    let mut bob = Account::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            reference: Reference {
+                topoheight: 0,
+                hash: Hash::zero(),
+            },
+        };
+    
+        let data = TransactionTypeBuilder::Burn(BurnPayload {
+            amount: 50 * COIN_VALUE,
+            asset: XELIS_ASSET,
+        });
+        let builder = TransactionBuilder::new(0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64), 0);
+        builder.build(&mut state, &alice.keypair).unwrap()
+    };
+
+    let mut state = ChainState {
+        accounts: HashMap::new(),
+    };
+
+    // Create the chain state
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &bob.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    tx.verify(&mut state).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_max_transfers() {
+    let mut alice = Account::new();
+    let mut bob = Account::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    let tx = {
+        let mut transfers = Vec::new();
+        for _ in 0..MAX_TRANSFER_COUNT {
+            transfers.push(TransferBuilder {
+                amount: 1,
+                destination: bob.address(),
+                asset: XELIS_ASSET,
+                extra_data: None,
+            });
+        }
+
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            reference: Reference {
+                topoheight: 0,
+                hash: Hash::zero(),
+            },
+        };
+    
+        let data = TransactionTypeBuilder::Transfers(transfers);
+        let builder = TransactionBuilder::new(0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64), 0);
+        builder.build(&mut state, &alice.keypair).unwrap()
+    };
+
+    // Create the chain state
+    let mut state = ChainState {
+        accounts: HashMap::new(),
+    };
+
+    // Alice
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in alice.balances {
+            balances.insert(asset, balance.ciphertext.take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    // Bob
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in bob.balances {
+            balances.insert(asset, balance.ciphertext.take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), AccountChainState {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    assert!(tx.verify(&mut state).await.is_ok());
+}
+
 #[async_trait]
 impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
+
+    /// Pre-verify the TX
+    async fn pre_verify_tx<'b>(
+        &'b mut self,
+        _: &Transaction,
+    ) -> Result<(), ()> {
+        Ok(())
+    }
+
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'b>(
         &'b mut self,
@@ -165,7 +293,7 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     }
 }
 
-impl<'a> AccountState for AccountStateImpl<'a> {
+impl AccountState for AccountStateImpl {
     type Error = ();
 
     fn is_mainnet(&self) -> bool {
