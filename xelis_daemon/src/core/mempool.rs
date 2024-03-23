@@ -400,7 +400,7 @@ impl Mempool {
 
                 // now delete all necessary txs
                 for hash in hashes {
-                    trace!("Deleting TX {} for owner {}", hash, key.as_address(self.mainnet));
+                    debug!("Deleting TX {} for owner {}", hash, key.as_address(self.mainnet));
                     if let Some(sorted_tx) = self.txs.remove(&hash) {
                         deleted_transactions.push((hash, sorted_tx));
                     } else {

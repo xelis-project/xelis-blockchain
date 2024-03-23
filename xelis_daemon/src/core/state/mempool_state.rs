@@ -189,7 +189,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         }
 
         // Verify that it is not a fake topoheight
-        if self.topoheight > reference.topoheight {
+        if self.topoheight < reference.topoheight {
             debug!("Invalid reference: topoheight {} is higher than chain", reference.topoheight);
             return Err(BlockchainError::InvalidReferenceTopoheight);
         }

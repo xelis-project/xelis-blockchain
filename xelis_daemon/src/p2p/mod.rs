@@ -1929,7 +1929,7 @@ impl<S: Storage> P2pServer<S> {
     // This is used so we don't overload the network during spam or high transactions count
     // We simply share its hash to nodes and others nodes can check if they have it already or not
     pub async fn broadcast_tx_hash(&self, tx: Hash) {
-        info!("Broadcasting tx hash {}", tx);
+        debug!("Broadcasting tx hash {}", tx);
         let ping = self.build_generic_ping_packet().await;
         trace!("Ping packet has been generated for tx broadcast");
         let current_topoheight = ping.get_topoheight();
