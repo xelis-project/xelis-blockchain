@@ -46,6 +46,7 @@ use xelis_common::{
     difficulty::{
         check_difficulty_against_target,
         compute_difficulty_target,
+        difficulty_from_hash,
         Difficulty
     },
     prompt::{
@@ -310,7 +311,7 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
             debug!("new message from daemon: {}", text);
             match serde_json::from_slice::<SocketMessage>(text.as_bytes())? {
                 SocketMessage::NewJob(job) => {
-                    info!("New job received from daemon: difficulty = {} and height = {}", job.difficulty, job.height);
+                    info!("New job received: difficulty {} at height {}", format_difficulty(job.difficulty), job.height);
                     let block = BlockMiner::from_hex(job.template).context("Error while decoding new job received from daemon")?;
                     CURRENT_HEIGHT.store(job.height, Ordering::SeqCst);
 
@@ -412,7 +413,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
 
                     // compute the reference hash for easier finding of the block
                     let block_hash = job.hash();
-                    info!("Mining Thread #{}: block {} found at height {} with difficulty {}", id, block_hash, height, format_difficulty(expected_difficulty));
+                    info!("Thread #{}: block {} found at height {} with difficulty {}", id, block_hash, height, format_difficulty(difficulty_from_hash(&hash)));
                     if let Err(_) = block_sender.blocking_send(job) {
                         error!("Mining Thread #{}: error while sending block found with hash {}", id, block_hash);
                         continue 'main;
