@@ -1864,13 +1864,6 @@ impl<S: Storage> Blockchain<S> {
             self.height.store(block.get_height(), Ordering::Release);
             current_height = block.get_height();
         }
-        if storage.is_block_topological_ordered(&block_hash).await {
-            let topoheight = storage.get_topo_height_for_hash(&block_hash).await?;
-            debug!("Adding new '{}' {} at topoheight {}", block_hash, block, topoheight);
-        } else {
-            // this means the block is considered as orphaned yet
-            debug!("Adding new '{}' {} with no topoheight (not ordered)!", block_hash, block);
-        }
 
         // update stable height and difficulty in cache
         {
@@ -1898,23 +1891,56 @@ impl<S: Storage> Blockchain<S> {
             self.set_difficulty(difficulty).await;
         }
 
-        // Clean all old txs
-        {
+        // Check if the event is tracked
+        let orphan_event_tracked = should_track_events.contains(&NotifyEvent::TransactionOrphaned);
+
+        // Clean mempool from old txs
+        let mempool_deleted_txs = {
             debug!("Locking mempool write mode");
             let mut mempool = self.mempool.write().await;
             debug!("mempool write mode ok");
-            mempool.clean_up(&*storage, highest_topo).await;
+            mempool.clean_up(&*storage, highest_topo).await
+        };
+
+        if orphan_event_tracked {
+            for (tx_hash, sorted_tx) in mempool_deleted_txs {
+                // Delete it from our orphaned transactions list
+                // This save some performances as it will not try to add it back and
+                // consume resources for verifying the ZK Proof if we already know the answer
+                if orphaned_transactions.remove(&tx_hash) {
+                    trace!("Transaction {} was marked as orphaned, but got deleted from mempool. Prevent adding it back", tx_hash);
+                }
+                // Verify that the TX was not executed in a block
+                if storage.is_tx_executed_in_a_block(&tx_hash)? {
+                    continue;
+                }
+
+                let data = RPCTransaction::from_tx(&sorted_tx.get_tx(), &tx_hash, storage.is_mainnet());
+                let data = TransactionResponse {
+                    blocks: None,
+                    executed_in_block: None,
+                    in_mempool: false,
+                    first_seen: Some(sorted_tx.get_first_seen()),
+                    data,
+                };
+                events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
+            }
         }
 
-        // Check if the event is tracked
-        let orphan_event_tracked = should_track_events.contains(&NotifyEvent::TransactionOrphaned);
         // Now we can try to add back all transactions
         for tx_hash in orphaned_transactions {
             debug!("Adding back orphaned tx {}", tx_hash);
             // It is verified in add_tx_to_mempool function too
             // But to prevent loading the TX from storage and to fire wrong event
             if !storage.is_tx_executed_in_a_block(&tx_hash)? {
-                let tx = storage.get_transaction(&tx_hash).await?;
+                let tx = match storage.get_transaction(&tx_hash).await {
+                    Ok(tx) => tx,
+                    Err(e) => {
+                        warn!("Error while loading orphaned tx: {}", e);
+                        continue;
+                    }
+                };
+
                 // Clone only if its necessary
                 if !orphan_event_tracked {
                     if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, tx_hash, false).await {

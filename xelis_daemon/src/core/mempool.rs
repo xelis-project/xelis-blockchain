@@ -3,6 +3,7 @@ use super::{
     error::BlockchainError,
     storage::Storage
 };
+use std::collections::HashSet;
 use std::{collections::HashMap, mem};
 use std::sync::Arc;
 use indexmap::IndexSet;
@@ -262,8 +263,11 @@ impl Mempool {
     // Because of DAG reorg, we can't only check updated keys from new block,
     // as a block could be orphaned and the nonce order would change
     // So we need to check all keys from mempool and compare it from storage
-    pub async fn clean_up<S: Storage>(&mut self, storage: &S, topoheight: u64) {
+    pub async fn clean_up<S: Storage>(&mut self, storage: &S, topoheight: u64) -> Vec<(Arc<Hash>, SortedTx)> {
         trace!("Cleaning up mempool...");
+
+        // All deleted sorted txs with their hashes
+        let mut deleted_transactions: Vec<(Arc<Hash>, SortedTx)> = Vec::new();
 
         let mut cache = HashMap::new();
         // Swap the nonces_cache with cache, so we iterate over cache and reinject it in nonces_cache
@@ -301,7 +305,7 @@ impl Mempool {
             } else if cache.get_min() < nonce {
                 trace!("Deleting TXs for owner {} with nonce < {}", key.as_address(self.mainnet), nonce);
                 // txs hashes to delete
-                let mut hashes: Vec<Arc<Hash>> = Vec::with_capacity(cache.txs.len());
+                let mut hashes: HashSet<Arc<Hash>> = HashSet::with_capacity(cache.txs.len());
 
                 // filter all txs hashes which are not found
                 // or where its nonce is smaller than the new nonce
@@ -338,7 +342,7 @@ impl Mempool {
 
                     // Add hash in list if we delete it
                     if delete {
-                        hashes.push(Arc::clone(hash));
+                        hashes.insert(Arc::clone(hash));
                     }
                     !delete
                 });
@@ -356,61 +360,52 @@ impl Mempool {
                 // TODO: there may be a way to optimize this even more, by checking if deleted TXs are those who got mined
                 // Which mean, expected balances are still up to date with chain state
                 if !delete_cache && !hashes.is_empty() {
-                    let mut invalid_txs = Vec::new();
                     let mut state = MempoolState::new(&self, storage, topoheight);
+                    let mut txs = Vec::with_capacity(cache.txs.len());
                     for tx_hash in &cache.txs {
                         if let Some(sorted_tx) = self.txs.get(tx_hash) {
-                            // Verify if the TX is still valid
-                            // If not, delete it
-                            let tx = sorted_tx.get_tx();
-
-                            // Because are linked to each other, if one is invalid, all next are invalid
-                            if !invalid_txs.is_empty() {
-                                warn!("TX {} is deleted because previous TX was invalid", tx_hash);
-                                invalid_txs.push(tx_hash.clone());
-                            } else if let Err(e) = tx.verify(&mut state).await {
-                                warn!("TX {} is not valid anymore, deleting it: {}", tx_hash, e);
-                                // Clone is needed as we can't remove a value from a map while iterating over it
-                                invalid_txs.push(tx_hash.clone());
-                            } else {
-                                trace!("TX {} is still valid", tx_hash);
-                            }
+                            txs.push(sorted_tx.get_tx());
                         } else {
                             // Shouldn't happen
-                            warn!("TX {} not found in mempool while verifying", tx_hash);
+                            warn!("TX {} not found in mempool while verifying, deleting whole cache", tx_hash);
+                            delete_cache = true;
+                            break;
                         }
                     }
 
-                    // Update balances cache
-                    if let Some(balances) = state.get_sender_balances(&key) {
-                        cache.set_balances(balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect());
-                    }
-
-                    if invalid_txs.len() == cache.txs.len() {
-                        // All txs are invalid, delete the cache
+                    // Instead of verifiying each TX one by one, we verify them all at once
+                    // This is much faster and is basically the same because:
+                    // If one TX is invalid, all next TXs are invalid
+                    // NOTE: this can be revert easily in case we are deleting valid TXs also,
+                    // But will be slower during high traffic
+                    if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
+                        warn!("Error while verifying TXs for sender {}: {}", key.as_address(self.mainnet), e);
+                        // We may have only one TX invalid, but because they are all linked to each others we delete the whole cache
                         delete_cache = true;
-
-                        // We empty the cache, so we can delete all txs
-                        let mut local_cache = IndexSet::new();
-                        mem::swap(&mut local_cache, &mut cache.txs);
-
-                        hashes.extend(local_cache);
                     } else {
-                        // Delete all invalid txs from cache
-                        for hash in invalid_txs {
-                            // We have to shift remove as we need to preserve the order
-                            // This in O(n) on average
-                            cache.txs.shift_remove(&hash);
-                            hashes.push(hash);
+                        // Update balances cache
+                        if let Some(balances) = state.get_sender_balances(&key) {
+                            cache.set_balances(balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect());
                         }
                     }
+                }
 
+                if delete_cache {
+                    // We empty the cache, so we can delete all txs
+                    let mut local_cache = IndexSet::new();
+                    mem::swap(&mut local_cache, &mut cache.txs);
+
+                    hashes.extend(local_cache);
                 }
 
                 // now delete all necessary txs
                 for hash in hashes {
                     trace!("Deleting TX {} for owner {}", hash, key.as_address(self.mainnet));
-                    if self.txs.remove(&hash).is_none() {
+                    if let Some(sorted_tx) = self.txs.remove(&hash) {
+                        deleted_transactions.push((hash, sorted_tx));
+                    } else {
+                        // This should never happen, but better to put a warning here
+                        // in case of a lurking bug
                         warn!("TX {} not found in mempool while deleting", hash);
                     }
                 }
@@ -421,6 +416,8 @@ impl Mempool {
                 self.caches.insert(key, cache);
             }
         }
+
+        deleted_transactions
     }
 }
 
