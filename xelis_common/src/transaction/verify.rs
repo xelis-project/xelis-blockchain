@@ -215,8 +215,8 @@ impl Transaction {
         }
 
         let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
-            if transfers.len() > MAX_TRANSFER_COUNT {
-                debug!("too many transfers");
+            if transfers.len() > MAX_TRANSFER_COUNT || transfers.is_empty() {
+                debug!("incorrect transfers size: {}", transfers.len());
                 return Err(VerificationError::Proof(ProofVerificationError::Format));
             }
 
