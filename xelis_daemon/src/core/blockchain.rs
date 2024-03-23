@@ -39,8 +39,8 @@ use xelis_common::{
         get_current_time_in_seconds,
         TimestampMillis
     },
-    transaction::Transaction,
-    utils::format_xelis,
+    transaction::{Transaction, TransactionType},
+    utils::{calculate_tx_fee, format_xelis},
     varuint::VarUint
 };
 use crate::{
@@ -2234,6 +2234,23 @@ impl<S: Storage> Blockchain<S> {
 
         let diff = now_timestamp - count_timestamp;
         Ok(diff / count)
+    }
+
+    // Estimate the required fees for a transaction
+    pub async fn estimate_required_tx_fees(_: &S, tx: &Transaction) -> Result<u64, BlockchainError> {
+        let mut output_count = 0;
+        let new_addresses = 0;
+        if let TransactionType::Transfers(transfers) = tx.get_data() {
+            output_count = transfers.len();
+            // TODO enable this when we are deleting nonce on storage
+            // for transfer in transfers {
+            //     if !storage.has_nonce(transfer.get_destination()).await? {
+            //         new_addresses += 1;
+            //     }
+            // }
+        }
+
+        Ok(calculate_tx_fee(tx.size(), output_count, new_addresses))
     }
 }
 
