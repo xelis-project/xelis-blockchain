@@ -35,7 +35,8 @@ use crate::{
         Address,
         Hash,
         ProtocolTranscript,
-        HASH_SIZE
+        HASH_SIZE,
+        SIGNATURE_SIZE
     },
     serializer::{Reader, ReaderError, Serializer, Writer},
     utils::calculate_tx_fee
@@ -227,17 +228,23 @@ impl TransactionBuilder {
         + 1 
         + self.fee.size()
         + self.nonce.size()
+        // Reference (hash, topo)
+        + HASH_SIZE + 8
         // Commitments byte length
         + 1
         // We have one source commitment per asset spent
         // (commitment, asset, proof)
         +  assets_used * (RISTRETTO_COMPRESSED_SIZE + HASH_SIZE + (RISTRETTO_COMPRESSED_SIZE * 3 + SCALAR_SIZE * 3))
+        // Signature
+        + SIGNATURE_SIZE
         // Range Proof
         + RISTRETTO_COMPRESSED_SIZE * 4 + SCALAR_SIZE * 3
         ;
 
         let transfers_count = match &self.data {
             TransactionTypeBuilder::Transfers(transfers) => {
+                // Transfers count byte
+                size += 1;
                 for transfer in transfers {
                     size += transfer.asset.size()
                     + transfer.destination.get_public_key().size()
@@ -245,7 +252,7 @@ impl TransactionBuilder {
                     + RISTRETTO_COMPRESSED_SIZE * 3
                     // Ct Validity Proof
                     + (RISTRETTO_COMPRESSED_SIZE * 2 + SCALAR_SIZE * 2)
-                    // Extra data byte
+                    // Extra data byte flag
                     + 1;
 
                     if let Some(extra_data) = &transfer.extra_data {
@@ -261,7 +268,7 @@ impl TransactionBuilder {
         };
 
         // Inner Product Proof
-        size += SCALAR_SIZE * 2 + RISTRETTO_COMPRESSED_SIZE * 2 * (transfers_count + assets_used).next_power_of_two();
+        size += SCALAR_SIZE * 2 + RISTRETTO_COMPRESSED_SIZE * 2 * (4 * transfers_count + assets_used).next_power_of_two();
 
         (size, transfers_count)
     }
