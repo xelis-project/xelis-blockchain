@@ -281,7 +281,7 @@ impl Mempool {
                     // We get an error while retrieving the last nonce for this key,
                     // that means the key is not in storage anymore, so we can delete safely
                     // we just have to skip this iteration so it's not getting re-injected
-                    debug!("Error while getting nonce for owner {}, he maybe has no nonce anymore, skipping: {}", key.as_address(self.mainnet), e);
+                    warn!("Error while getting nonce for owner {}, he maybe has no nonce anymore, skipping: {}", key.as_address(self.mainnet), e);
                     continue;
                 }
             };

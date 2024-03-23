@@ -415,6 +415,26 @@ impl<'a, S: Storage> ChainState<'a, S> {
 #[async_trait]
 impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainState<'a, S> {
 
+    /// Verify the TX reference
+    async fn verify_tx_reference<'b>(
+        &'b mut self,
+        reference: &Reference,
+    ) -> Result<(), BlockchainError> {
+        // Verify that the block he is built upon exists
+        if !self.storage.has_block_with_hash(&reference.hash).await? {
+            debug!("Invalid reference: block {} not found", reference.hash);
+            return Err(BlockchainError::InvalidReferenceHash);
+        }
+
+        // Verify that it is not a fake topoheight
+        if self.topoheight > reference.topoheight {
+            debug!("Invalid reference: topoheight {} is higher than chain", reference.topoheight);
+            return Err(BlockchainError::InvalidReferenceTopoheight);
+        }
+
+        Ok(())
+    }
+
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'b>(
         &'b mut self,

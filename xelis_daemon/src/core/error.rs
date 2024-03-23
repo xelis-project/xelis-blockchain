@@ -69,6 +69,10 @@ pub enum BlockchainError {
     TxAlreadyInMempool(Hash),
     #[error("Normal Tx {} is empty", _0)]
     TxEmpty(Hash),
+    #[error("Transaction has an invalid reference: block hash not found")]
+    InvalidReferenceHash,
+    #[error("Transaction has an invalid reference: topoheight is too high")]
+    InvalidReferenceTopoheight,
     #[error("Tx {} has too many output", _0)]
     TooManyOutputInTx(Hash),
     #[error("Tx {} is already in block", _0)]
