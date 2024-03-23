@@ -18,6 +18,12 @@ pub trait BlockchainVerificationState<'a, E> {
     // See: https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=aaa6065daaab514e638b2333703765c7
     // type Error;
 
+    /// Verify the TX reference
+    async fn verify_tx_reference<'b>(
+        &'b mut self,
+        reference: &Reference,
+    ) -> Result<(), E>;
+
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'b>(
         &'b mut self,
@@ -187,6 +193,9 @@ impl Transaction {
     ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<E>>
     {
         trace!("Pre-verifying transaction");
+        state.verify_tx_reference(&self.reference).await
+            .map_err(VerificationError::State)?;
+
         // First, check the nonce
         let account_nonce = state.get_account_nonce(&self.source).await
             .map_err(VerificationError::State)?;
