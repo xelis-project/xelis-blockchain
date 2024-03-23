@@ -61,7 +61,7 @@ use crate::{
         simulator::Simulator,
         storage::{DagOrderProvider, DifficultyProvider, Storage},
         tx_selector::{TxSelector, TxSelectorEntry},
-        state::{ChainState, StorageReference},
+        state::{ChainState, ApplicableChainState},
     },
     p2p::P2pServer,
     rpc::{
@@ -1328,7 +1328,7 @@ impl<S: Storage> Blockchain<S> {
         // data used to verify txs
         let topoheight = self.get_topo_height();
         trace!("build chain state for block template");
-        let mut chain_state = ChainState::new(StorageReference::Immutable(storage), topoheight);
+        let mut chain_state = ChainState::new(storage, topoheight);
 
         while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
             if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
@@ -1502,7 +1502,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("verifying {} TXs in block {}", txs_len, block_hash);
-            let mut chain_state = ChainState::new(StorageReference::Immutable(storage), current_topoheight);
+            let mut chain_state = ChainState::new(storage, current_topoheight);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
             let mut batch = Vec::with_capacity(block.get_txs_count());
@@ -1724,7 +1724,7 @@ impl<S: Storage> Blockchain<S> {
                 let mut total_fees = 0;
                 // Chain State used for the verification
                 trace!("building chain state to execute TXs in block {}", block_hash);
-                let mut chain_state = ChainState::new(StorageReference::Mutable(storage), highest_topo);
+                let mut chain_state = ApplicableChainState::new(storage, highest_topo);
 
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
@@ -1754,7 +1754,7 @@ impl<S: Storage> Blockchain<S> {
 
                         // Execute the transaction by applying changes in storage
                         // self.execute_transaction(storage, &tx, &mut local_balances, highest_topo).await?;
-                        tx.apply_without_verify(&mut chain_state).await?;
+                        tx.apply_without_verify(chain_state.as_mut()).await?;
 
                         // Delete the transaction from  the list if it was marked as orphaned
                         if orphaned_transactions.remove(&tx_hash) {

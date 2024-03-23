@@ -121,8 +121,157 @@ pub struct ChainState<'a, S: Storage> {
     topoheight: u64
 }
 
+// Chain State that can be applied to the mutable storage
+pub struct ApplicableChainState<'a, S: Storage> {
+    inner: ChainState<'a, S>
+}
+
+impl<'a, S: Storage> Deref for ApplicableChainState<'a, S> {
+    type Target = ChainState<'a, S>;
+
+    fn deref(&self) -> &ChainState<'a, S> {
+        &self.inner
+    }
+}
+
+impl<'a, S: Storage> DerefMut for ApplicableChainState<'a, S> {
+    fn deref_mut(&mut self) -> &mut ChainState<'a, S> {
+        &mut self.inner
+    }
+}
+
+impl<'a, S: Storage> AsRef<ChainState<'a, S>> for ApplicableChainState<'a, S> {
+    fn as_ref(&self) -> &ChainState<'a, S> {
+        &self.inner
+    }
+}
+
+impl<'a, S: Storage> AsMut<ChainState<'a, S>> for ApplicableChainState<'a, S> {
+    fn as_mut(&mut self) -> &mut ChainState<'a, S> {
+        &mut self.inner
+    }
+}
+
+impl<'a, S: Storage> ApplicableChainState<'a, S> {
+    pub fn new(storage: &'a mut S, topoheight: u64) -> Self {
+        Self {
+            inner: ChainState::with(StorageReference::Mutable(storage), topoheight)
+        }
+    }
+
+    // Get the storage used by the chain state
+    pub fn get_mut_storage(&mut self) -> &mut S {
+        self.inner.storage.as_mut()
+    }
+
+    // This function is called after the verification of all needed transactions
+    // This will consume ChainState and apply all changes to the storage
+    // In case of incoming and outgoing transactions in same state, the final balance will be computed
+    pub async fn apply_changes(mut self) -> Result<(), BlockchainError> {
+        // Apply changes for sender accounts
+        for (key, account) in &mut self.inner.accounts {
+            trace!("Saving {} for {} at topoheight {}", account.nonce, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
+            self.inner.storage.set_last_nonce_to(key, self.inner.topoheight, &account.nonce).await?;
+
+            let balances = self.inner.receiver_balances.entry(&key).or_insert_with(HashMap::new);
+            // Because account balances are only used to verify the validity of ZK Proofs, we can't store them
+            // We have to recompute the final balance for each asset using the existing current balance
+            // Otherwise, we could have a front running problem
+            // Example: Alice sends 100 to Bob, Bob sends 100 to Charlie
+            // But Bob built its ZK Proof with the balance before Alice's transaction
+            for (asset, echange) in account.assets.drain() {
+                trace!("{} {} updated for {} at topoheight {}", echange.version, asset, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
+                let Echange { version, output_sum, output_balance_used, new_version, .. } = echange;
+                trace!("sender output sum: {:?}", output_sum.compress());
+                match balances.entry(asset) {
+                    Entry::Occupied(mut o) => {
+                        trace!("{} already has a balance for {} at topoheight {}", key.as_address(self.inner.storage.is_mainnet()), asset, self.inner.topoheight);
+                        // We got incoming funds while spending some
+                        // We need to split the version in two
+                        // Output balance is the balance after outputs spent without incoming funds
+                        // Final balance is the balance after incoming funds + outputs spent
+                        // This is a necessary process for the following case:
+                        // Alice sends 100 to Bob in block 1000
+                        // But Bob build 2 txs before Alice, one to Charlie and one to David
+                        // First Tx of Blob is in block 1000, it will be valid
+                        // But because of Alice incoming, the second Tx of Bob will be invalid
+                        let final_version = o.get_mut();
+
+                        // We got input and output funds, mark it
+                        final_version.set_balance_type(BalanceType::Both);
+
+                        // We must build output balance correctly
+                        // For that, we use the same balance before any inputs
+                        // And deduct outputs
+                        // let clean_version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
+                        // let mut output_balance = clean_version.take_balance();
+                        // *output_balance.computable()? -= &output_sum;
+
+                        // Determine which balance to use as next output balance
+                        // This is used in case TXs that are built at same reference, but
+                        // executed in differents topoheights have the output balance reported
+                        // to the next topoheight each time to stay valid during ZK Proof verification
+                        let output_balance = if output_balance_used {
+                            version.take_output_balance().unwrap()
+                        } else {
+                            version.take_balance()
+                        };
+
+                        // Set to our final version the new output balance
+                        final_version.set_output_balance(output_balance);
+
+                        // Build the final balance
+                        // All inputs are already added, we just need to substract the outputs
+                        let final_balance = final_version.get_mut_balance().computable()?;
+                        *final_balance -= output_sum;
+                    },
+                    Entry::Vacant(e) => {
+                        trace!("{} has no balance for {} at topoheight {}", key.as_address(self.inner.storage.is_mainnet()), asset, self.inner.topoheight);
+                        // We have no incoming update for this key
+                        // Select the right final version
+                        // For that, we must check if we used the output balance and/or if we are not on the last version 
+                        let mut version = if output_balance_used || !new_version {
+                            // We must fetch again the version to sum it with the output
+                            // This is necessary to build the final balance
+                            let mut version = self.inner.storage.get_new_versioned_balance(key, asset, self.inner.topoheight).await?;
+                            // Substract the output sum
+                            trace!("{} has no balance for {} at topoheight {}, substract output sum", key.as_address(self.inner.storage.is_mainnet()), asset, self.inner.topoheight);
+                            *version.get_mut_balance().computable()? -= output_sum;
+                            version
+                        } else {
+                            // Version was based on final balance, all good, nothing to do
+                            version
+                        };
+
+                        // We have some output, mark it
+                        version.set_balance_type(BalanceType::Output);
+
+                        e.insert(version);
+                    }
+                }
+            }
+        }
+
+        // Apply all balances changes at topoheight
+        for (account, balances) in self.inner.receiver_balances {
+            for (asset, version) in balances {
+                trace!("Saving versioned balance {} for {} at topoheight {}", version, account.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
+                self.inner.storage.set_last_balance_to(account, asset, self.inner.topoheight, &version).await?;
+            }
+
+            // If the account has no nonce set, set it to 0
+            if !self.inner.accounts.contains_key(account) && !self.inner.storage.has_nonce(account).await? {
+                debug!("{} has now a balance but without any nonce registered, set default (0) nonce", account.as_address(self.inner.storage.is_mainnet()));
+                self.inner.storage.set_last_nonce_to(account, self.inner.topoheight, &VersionedNonce::new(0, None)).await?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl<'a, S: Storage> ChainState<'a, S> {
-    pub fn new(storage: StorageReference<'a, S>, topoheight: u64) -> Self {
+    fn with(storage: StorageReference<'a, S>, topoheight: u64) -> Self {
         Self {
             storage,
             receiver_balances: HashMap::new(),
@@ -131,14 +280,13 @@ impl<'a, S: Storage> ChainState<'a, S> {
         }
     }
 
-    // Get the storage used by the chain state
-    pub fn get_storage(&mut self) -> &S {
-        self.storage.as_ref()
+    pub fn new(storage: &'a S, topoheight: u64) -> Self {
+        Self::with(StorageReference::Immutable(storage), topoheight)
     }
 
     // Get the storage used by the chain state
-    pub fn get_mut_storage(&mut self) -> &mut S {
-        self.storage.as_mut()
+    pub fn get_storage(&mut self) -> &S {
+        self.storage.as_ref()
     }
 
     pub fn get_sender_balances<'b>(&'b self, key: &'b PublicKey) -> Option<HashMap<&'b Hash, &'b VersionedBalance>> {
@@ -259,111 +407,6 @@ impl<'a, S: Storage> ChainState<'a, S> {
         debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.storage.is_mainnet()), reward, self.topoheight);
         let miner_balance = self.internal_get_receiver_balance(miner, &XELIS_ASSET).await?;
         *miner_balance += reward;
-
-        Ok(())
-    }
-
-    // This function is called after the verification of all needed transactions
-    // This will consume ChainState and apply all changes to the storage
-    // In case of incoming and outgoing transactions in same state, the final balance will be computed
-    pub async fn apply_changes(mut self) -> Result<(), BlockchainError> {
-        // Apply changes for sender accounts
-        for (key, account) in &mut self.accounts {
-            trace!("Saving {} for {} at topoheight {}", account.nonce, key.as_address(self.storage.is_mainnet()), self.topoheight);
-            self.storage.set_last_nonce_to(key, self.topoheight, &account.nonce).await?;
-
-            let balances = self.receiver_balances.entry(&key).or_insert_with(HashMap::new);
-            // Because account balances are only used to verify the validity of ZK Proofs, we can't store them
-            // We have to recompute the final balance for each asset using the existing current balance
-            // Otherwise, we could have a front running problem
-            // Example: Alice sends 100 to Bob, Bob sends 100 to Charlie
-            // But Bob built its ZK Proof with the balance before Alice's transaction
-            for (asset, echange) in account.assets.drain() {
-                trace!("{} {} updated for {} at topoheight {}", echange.version, asset, key.as_address(self.storage.is_mainnet()), self.topoheight);
-                let Echange { version, output_sum, output_balance_used, new_version, .. } = echange;
-                trace!("sender output sum: {:?}", output_sum.compress());
-                match balances.entry(asset) {
-                    Entry::Occupied(mut o) => {
-                        trace!("{} already has a balance for {} at topoheight {}", key.as_address(self.storage.is_mainnet()), asset, self.topoheight);
-                        // We got incoming funds while spending some
-                        // We need to split the version in two
-                        // Output balance is the balance after outputs spent without incoming funds
-                        // Final balance is the balance after incoming funds + outputs spent
-                        // This is a necessary process for the following case:
-                        // Alice sends 100 to Bob in block 1000
-                        // But Bob build 2 txs before Alice, one to Charlie and one to David
-                        // First Tx of Blob is in block 1000, it will be valid
-                        // But because of Alice incoming, the second Tx of Bob will be invalid
-                        let final_version = o.get_mut();
-
-                        // We got input and output funds, mark it
-                        final_version.set_balance_type(BalanceType::Both);
-
-                        // We must build output balance correctly
-                        // For that, we use the same balance before any inputs
-                        // And deduct outputs
-                        // let clean_version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                        // let mut output_balance = clean_version.take_balance();
-                        // *output_balance.computable()? -= &output_sum;
-
-                        // Determine which balance to use as next output balance
-                        // This is used in case TXs that are built at same reference, but
-                        // executed in differents topoheights have the output balance reported
-                        // to the next topoheight each time to stay valid during ZK Proof verification
-                        let output_balance = if output_balance_used {
-                            version.take_output_balance().unwrap()
-                        } else {
-                            version.take_balance()
-                        };
-
-                        // Set to our final version the new output balance
-                        final_version.set_output_balance(output_balance);
-
-                        // Build the final balance
-                        // All inputs are already added, we just need to substract the outputs
-                        let final_balance = final_version.get_mut_balance().computable()?;
-                        *final_balance -= output_sum;
-                    },
-                    Entry::Vacant(e) => {
-                        trace!("{} has no balance for {} at topoheight {}", key.as_address(self.storage.is_mainnet()), asset, self.topoheight);
-                        // We have no incoming update for this key
-                        // Select the right final version
-                        // For that, we must check if we used the output balance and/or if we are not on the last version 
-                        let mut version = if output_balance_used || !new_version {
-                            // We must fetch again the version to sum it with the output
-                            // This is necessary to build the final balance
-                            let mut version = self.storage.get_new_versioned_balance(key, asset, self.topoheight).await?;
-                            // Substract the output sum
-                            trace!("{} has no balance for {} at topoheight {}, substract output sum", key.as_address(self.storage.is_mainnet()), asset, self.topoheight);
-                            *version.get_mut_balance().computable()? -= output_sum;
-                            version
-                        } else {
-                            // Version was based on final balance, all good, nothing to do
-                            version
-                        };
-
-                        // We have some output, mark it
-                        version.set_balance_type(BalanceType::Output);
-
-                        e.insert(version);
-                    }
-                }
-            }
-        }
-
-        // Apply all balances changes at topoheight
-        for (account, balances) in self.receiver_balances {
-            for (asset, version) in balances {
-                trace!("Saving versioned balance {} for {} at topoheight {}", version, account.as_address(self.storage.is_mainnet()), self.topoheight);
-                self.storage.set_last_balance_to(account, asset, self.topoheight, &version).await?;
-            }
-
-            // If the account has no nonce set, set it to 0
-            if !self.accounts.contains_key(account) && !self.storage.has_nonce(account).await? {
-                debug!("{} has now a balance but without any nonce registered, set default (0) nonce", account.as_address(self.storage.is_mainnet()));
-                self.storage.set_last_nonce_to(account, self.topoheight, &VersionedNonce::new(0, None)).await?;
-            }
-        }
 
         Ok(())
     }
