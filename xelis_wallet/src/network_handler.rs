@@ -1,25 +1,46 @@
-use std::{sync::Arc, collections::{HashMap, HashSet}};
+use std::{
+    sync::Arc,
+    collections::{
+        HashMap,
+        HashSet
+    }
+};
 use thiserror::Error;
 use anyhow::Error;
-use log::{debug, error, warn, trace};
+use log::{debug, error, trace, warn};
 use tokio::{task::JoinHandle, sync::Mutex};
 use xelis_common::{
-    crypto::{hash::Hash, address::Address},
-    block::Block,
-    transaction::TransactionType,
-    asset::AssetWithData,
-    serializer::Serializer,
+    account::CiphertextCache,
     api::{
-        DataElement,
+        daemon::{
+            BlockResponse,
+            NewBlockEvent
+        },
         wallet::BalanceChanged,
-        daemon::{NewBlockEvent, BlockResponse}
+        DataElement,
+        RPCTransactionType
     },
+    asset::AssetWithData,
+    config::XELIS_ASSET,
+    crypto::{
+        elgamal::Ciphertext,
+        Address,
+        Hash
+    },
+    serializer::Serializer
 };
-
 use crate::{
     daemon_api::DaemonAPI,
-    wallet::{Wallet, Event},
-    entry::{EntryData, Transfer, TransactionEntry}
+    entry::{
+        EntryData,
+        TransactionEntry,
+        TransferIn,
+        TransferOut
+    },
+    storage::Balance,
+    wallet::{
+        Event, Wallet
+    }
 };
 
 // NetworkHandler must be behind a Arc to be accessed from Wallet (to stop it) or from tokio task
@@ -36,9 +57,7 @@ pub enum NetworkError {
     #[error(transparent)]
     DaemonAPIError(#[from] Error),
     #[error("Network mismatch")]
-    NetworkMismatch,
-    #[error("Daemon is not synced, we are higher than daemon")]
-    DaemonNotSynced
+    NetworkMismatch
 }
 
 pub struct NetworkHandler {
@@ -66,11 +85,14 @@ impl NetworkHandler {
 
     // Start the internal loop to sync all missed blocks and all newly added blocks
     pub async fn start(self: &Arc<Self>) -> Result<(), NetworkError> {
+        trace!("Starting network handler");
+
         if self.is_running().await {
             return Err(NetworkError::AlreadyRunning)
         }
 
         if !self.api.is_online() {
+            debug!("API is offline, trying to reconnect");
             if !self.api.reconnect().await? {
                 error!("Couldn't reconnect to server");
                 return Err(NetworkError::NotRunning)
@@ -144,17 +166,31 @@ impl NetworkHandler {
 
     // Process a block by checking if it contains any transaction for us
     // Or that we mined it
-    async fn process_block(&self, address: &Address, block_response: BlockResponse<'_, Block>, topoheight: u64) -> Result<bool, Error> {
-        let block = block_response.data.data.into_owned();
-        let block_hash = block_response.data.hash.into_owned();
+    // Returns assets that changed and returns the highest nonce if we send a transaction
+    async fn process_block(&self, address: &Address, block: BlockResponse, topoheight: u64) -> Result<Option<(HashSet<Hash>, Option<u64>)>, Error> {
+        let block_hash = block.hash.into_owned();
         debug!("Processing block {} at topoheight {}", block_hash, topoheight);
 
+        if block.miner.is_mainnet() != self.wallet.get_network().is_mainnet() {
+            debug!("Block {} at topoheight {} is not on the same network as the wallet", block_hash, topoheight);
+            return Err(NetworkError::NetworkMismatch.into())
+        }
+
+        let mut assets_changed = HashSet::new();
+        // Miner address to verify if we mined the block
+        let miner = block.miner.into_owned().to_public_key();
+
+        // Prevent storing changes multiple times
         let mut changes_stored = false;
+
         // create Coinbase entry if its our address and we're looking for XELIS asset
-        if *block.get_miner() == *address.get_public_key() {
-            if let Some(reward) = block_response.reward {
+        if miner == *address.get_public_key() {
+            debug!("Block {} at topoheight {} is mined by us", block_hash, topoheight);
+            if let Some(reward) = block.reward {
                 let coinbase = EntryData::Coinbase { reward };
-                let entry = TransactionEntry::new(block_hash.clone(), topoheight, None, None, coinbase);
+                let entry = TransactionEntry::new(block_hash.clone(), topoheight, coinbase);
+
+                assets_changed.insert(XELIS_ASSET);
 
                 {
                     let mut storage = self.wallet.get_storage().write().await;
@@ -168,61 +204,102 @@ impl NetworkHandler {
                 }
 
                 // Propagate the event to the wallet
-                self.wallet.propagate_event(Event::NewTransaction(entry)).await;
+                self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
             } else {
                 warn!("No reward for block {} at topoheight {}", block_hash, topoheight);
             }
         }
 
+        // Highest nonce we found in this block
+        let mut our_highest_nonce = None;
+
         // Verify all TXs one by one to find one for us
-        let (block, txs) = block.split();
-        for (tx_hash, tx) in block.into_owned().take_txs_hashes().into_iter().zip(txs) {
-            trace!("Checking transaction {}", tx_hash);
-            let tx = tx.into_owned();
-            let is_owner = *tx.get_owner() == *address.get_public_key();
-            let fee = if is_owner { Some(tx.get_fee()) } else { None };
-            let nonce = if is_owner { Some(tx.get_nonce()) } else { None };
-            let (owner, data) = tx.consume();
-            let entry: Option<EntryData> = match data {
-                TransactionType::Burn { asset, amount } => {
+        for tx in block.transactions.into_iter() {
+            trace!("Checking transaction {}", tx.hash);
+            let is_owner = *tx.source.get_public_key() == *address.get_public_key();
+            let entry: Option<EntryData> = match tx.data {
+                RPCTransactionType::Burn(payload) => {
+                    let payload = payload.into_owned();
                     if is_owner {
-                        Some(EntryData::Burn { asset, amount })
+                        Some(EntryData::Burn { asset: payload.asset, amount: payload.amount })
                     } else {
                         None
                     }
                 },
-                TransactionType::Transfer(txs) => {
-                    let mut transfers: Vec<Transfer> = Vec::new();
-                    for tx in txs {
-                        if is_owner || tx.to == *address.get_public_key() {
-                            let extra_data = tx.extra_data.and_then(|bytes| DataElement::from_bytes(&bytes).ok());
-                            let transfer = Transfer::new(tx.to, tx.asset, tx.amount, extra_data);
-                            transfers.push(transfer);
+                RPCTransactionType::Transfers(txs) => {
+                    let mut transfers_in: Vec<TransferIn> = Vec::new();
+                    let mut transfers_out: Vec<TransferOut> = Vec::new();
+                    for transfer in txs {
+                        let destination = transfer.destination.to_public_key();
+                        if is_owner || destination == *address.get_public_key() {
+                            let extra_data = transfer.extra_data.into_owned().and_then(|bytes| DataElement::from_bytes(&bytes).ok());
+
+                            // Get the right handle
+                            let handle = if is_owner {
+                                transfer.sender_handle
+                            } else {
+                                transfer.receiver_handle
+                            };
+
+                            // Decompress commitment it if possible
+                            let commitment = match transfer.commitment.decompress() {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    error!("Error while decompressing commitment of TX {}: {}", tx.hash, e);
+                                    continue;
+                                }
+                            };
+
+                            // Same for handle
+                            let handle = match handle.decompress() {
+                                Ok(h) => h,
+                                Err(e) => {
+                                    error!("Error while decompressing handle of TX {}: {}", tx.hash, e);
+                                    continue;
+                                }
+                            };
+
+                            debug!("Decrypting amount from TX {}", tx.hash);
+                            let ciphertext = Ciphertext::new(commitment, handle);
+                            let amount = self.wallet.decrypt_ciphertext(&ciphertext)?;
+
+                            let asset = transfer.asset.into_owned();
+                            assets_changed.insert(asset.clone());
+
+                            if is_owner {
+                                let transfer = TransferOut::new(destination, asset, amount, extra_data);
+                                transfers_out.push(transfer);
+                            } else {
+                                let transfer = TransferIn::new(asset, amount, extra_data);
+                                transfers_in.push(transfer);
+                            }
                         }
                     }
 
                     if is_owner { // check that we are owner of this TX
-                        Some(EntryData::Outgoing { transfers })
-                    } else if !transfers.is_empty() { // otherwise, check that we received one or few transfers from it
-                        Some(EntryData::Incoming { from: owner, transfers })
+                        Some(EntryData::Outgoing { transfers: transfers_out, fee: tx.fee, nonce: tx.nonce })
+                    } else if !transfers_in.is_empty() { // otherwise, check that we received one or few transfers from it
+                        Some(EntryData::Incoming { from: tx.source.to_public_key(), transfers: transfers_in })
                     } else { // this TX has nothing to do with us, nothing to save
                         None
                     }
-                },
-                _ => {
-                    error!("Transaction type not supported");
-                    None
                 }
             };
 
             if let Some(entry) = entry {
                 // New transaction entry that may be linked to us, check if TX was executed
-                if !self.api.is_tx_executed_in_block(&tx_hash, &block_hash).await? {
-                    debug!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx_hash, block_hash);
+                if !self.api.is_tx_executed_in_block(&tx.hash, &block_hash).await? {
+                    debug!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx.hash, block_hash);
                     continue;
                 }
 
-                let entry = TransactionEntry::new(tx_hash, topoheight, fee, nonce, entry);
+                // Find the highest nonce
+                if is_owner && our_highest_nonce.map(|n| tx.nonce > n).unwrap_or(true) {
+                    // Increase the nonce by one to get our new account nonce
+                    our_highest_nonce = Some(tx.nonce);
+                }
+
+                let entry = TransactionEntry::new(tx.hash.into_owned(), topoheight, entry);
                 let propagate = {
                     let mut storage = self.wallet.get_storage().write().await;
                     let found = storage.has_transaction(entry.get_hash())?;
@@ -241,12 +318,16 @@ impl NetworkHandler {
 
                 if propagate {
                     // Propagate the event to the wallet
-                    self.wallet.propagate_event(Event::NewTransaction(entry)).await;
+                    self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
                 }
             }
         }
 
-        Ok(changes_stored)
+        if !changes_stored || assets_changed.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some((assets_changed, our_highest_nonce.map(|n| n + 1))))
+        }
     }
 
     // Scan the chain using a specific balance asset, this helps us to get a list of version to only requests blocks where changes happened
@@ -263,6 +344,7 @@ impl NetworkHandler {
         // This is used to save the latest balance
         let mut highest_version = true;
         loop {
+            let (mut balance, previous_topoheight) = version.consume();
             // add this topoheight in cache to not re-process it (blocks are independant of asset to have faster sync)
             // if its not already processed, do it
             if topoheight_processed.insert(topoheight) {
@@ -270,23 +352,26 @@ impl NetworkHandler {
                 let changes = self.process_block(address, response, topoheight).await?;
 
                 // Check if a change occured, we are the highest version and update balances is requested
-                if balances && highest_version && changes {
+                if balances && highest_version && changes.is_some() {
                     let mut storage = self.wallet.get_storage().write().await;
-                    let previous_balance = storage.get_balance_for(asset).unwrap_or(0);
-                    let new_balance = version.get_balance();
-                    if previous_balance != new_balance {
-                        storage.set_balance_for(asset, new_balance)?;
+                    let store = storage.get_balance_for(asset).await.map(|b| b.ciphertext != balance).unwrap_or(false);
+                    if store {
+                        debug!("Storing balance for asset {}", asset);
+                        let ciphertext = balance.decompressed()?;
+                        let plaintext_balance = self.wallet.decrypt_ciphertext(&ciphertext)?;
+
+                        storage.set_balance_for(asset, Balance::new(plaintext_balance, balance)).await?;
                         // Propagate the event
                         self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
                             asset: asset.clone(),
-                            balance: new_balance
+                            balance: plaintext_balance
                         })).await;
                     }
                 }
             }
 
             // Prepare a new iteration
-            if let Some(previous) = version.get_previous_topoheight() {
+            if let Some(previous) = previous_topoheight {
                 // don't sync already synced blocks
                 if min_topoheight >= previous {
                     return Ok(())
@@ -338,14 +423,15 @@ impl NetworkHandler {
                 }
 
                 // Verify we are not above the daemon chain
-                if synced_topoheight > info.topoheight {
-                    return Err(NetworkError::DaemonNotSynced)
+                if synced_topoheight > daemon_topoheight {
+                    warn!("We are above the daemon chain, we should sync from scratch");
+                    return Ok((daemon_topoheight, daemon_block_hash, 0, true))
                 }
 
                 if synced_topoheight > pruned_topoheight {
                     // Check if it's still a correct block
                     let header = self.api.get_block_at_topoheight(synced_topoheight).await?;
-                    let block_hash = header.data.hash.into_owned();
+                    let block_hash = header.hash.into_owned();
                     if block_hash == top_block_hash {
                         // topoheight and block hash are equal, we are still on right chain
                         return Ok((daemon_topoheight, daemon_block_hash, synced_topoheight, false))
@@ -387,7 +473,7 @@ impl NetworkHandler {
             // Check if we are on the same chain
             debug!("Checking if we are on the same chain at topoheight {}", maximum);
             let header = self.api.get_block_at_topoheight(maximum).await?;
-            let block_hash = header.data.hash.into_owned();
+            let block_hash = header.hash.into_owned();
             if block_hash == local_hash {
                 break Some(local_hash);
             }
@@ -401,7 +487,7 @@ impl NetworkHandler {
             block_hash
         } else {
             let response = self.api.get_block_at_topoheight(maximum).await?;
-            response.data.hash.into_owned()
+            response.hash.into_owned()
         };
 
         let mut storage = self.wallet.get_storage().write().await;        
@@ -429,19 +515,41 @@ impl NetworkHandler {
     }
 
     // Sync the latest version of our balances and nonces and determine if we should parse all blocks
-    async fn sync_head_state(&self, address: &Address) -> Result<bool, Error> {
-        let versioned_nonce = match self.api.get_nonce(&address).await.map(|v| v.version) {
-            Ok(v) => v,
-            Err(e) => {
-                debug!("Error while fetching last nonce: {}", e);
-                // Account is not registered, we can return safely here
-                return Ok(false)
+    // If assets are provided, we'll only sync these assets
+    // TODO: this may bug with Smart Contract integration as we could receive a new asset and not detect it
+    // If nonce is not provided, we will fetch it from the daemon
+    async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>, sync_nonce: bool) -> Result<bool, Error> {
+        trace!("syncing head state");
+        let new_nonce = if nonce.is_some() {
+            nonce
+        } else if sync_nonce {
+            trace!("no nonce provided, fetching it from daemon");
+            match self.api.get_nonce(&address).await.map(|v| v.version) {
+                Ok(v) => Some(v.get_nonce()),
+                Err(e) => {
+                    debug!("Error while fetching last nonce: {}", e);
+                    // Account is not registered, we can return safely here
+                    return Ok(false)
+                }
             }
+        } else {
+            None
         };
 
-        let assets = self.api.get_account_assets(&address).await?;
-        let mut balances = HashMap::new();
+        let assets = if let Some(assets) = assets {
+            assets
+        } else {
+            trace!("no assets provided, fetching all assets");
+            self.api.get_account_assets(address).await?
+        };
+
+        trace!("assets: {}", assets.len());
+
+        let mut balances: HashMap<&Hash, CiphertextCache>  = HashMap::new();
+        // Store newly detected assets
+        // Get the final balance of each asset
         for asset in &assets {
+            trace!("asset: {}", asset);
             // check if we have this asset locally
             if !{
                 let storage = self.wallet.get_storage().read().await;
@@ -460,29 +568,37 @@ impl NetworkHandler {
             }
 
             // get the balance for this asset
-            let balance = self.api.get_balance(&address, &asset).await.map(|v| v.version)?;
-            balances.insert(asset, balance.get_balance());
+            let result = self.api.get_balance(&address, &asset).await?;
+            trace!("found balance at topoheight: {}", result.topoheight);
+            balances.insert(asset, result.version.take_balance());
         }
 
         let mut should_sync_blocks = false;
         // Apply changes
         {
-            let mut storage = self.wallet.get_storage().write().await;
-            let new_nonce = versioned_nonce.get_nonce();
-            if new_nonce != storage.get_nonce().unwrap_or(0) {
-                // Store the new nonce
-                storage.set_nonce(new_nonce)?;
-                should_sync_blocks = true;
+            if let Some(new_nonce) = new_nonce {
+                let mut storage = self.wallet.get_storage().write().await;
+                if storage.get_nonce().map(|n| n != new_nonce).unwrap_or(true) {
+                    // Store the new nonce
+                    storage.set_nonce(new_nonce)?;
+                    should_sync_blocks = true;
+                }
             }
 
-            for (asset, value) in balances {
-                let must_update = match storage.get_balance_for(&asset) {
-                    Ok(previous) => previous != value,
-                    // If we don't have a balance for this asset, we should update it
-                    Err(_) => true
+            for (asset, mut ciphertext) in balances {
+                let must_update = {
+                    let storage = self.wallet.get_storage().read().await;
+                    match storage.get_balance_for(&asset).await {
+                        Ok(mut previous) => previous.ciphertext.compressed() != ciphertext.compressed(),
+                        // If we don't have a balance for this asset, we should update it
+                        Err(_) => true
+                    }
                 };
 
                 if must_update {
+                    trace!("must update balance for asset: {}, ct: {:?}", asset, ciphertext.to_bytes());
+                    let value = self.wallet.decrypt_ciphertext(ciphertext.decompressed()?)?;
+
                     // Inform the change of the balance
                     self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
                         asset: asset.clone(),
@@ -490,7 +606,8 @@ impl NetworkHandler {
                     })).await;
 
                     // Update the balance
-                    storage.set_balance_for(asset, value)?;
+                    let mut storage = self.wallet.get_storage().write().await;
+                    storage.set_balance_for(asset, Balance::new(value, ciphertext)).await?;
 
                     // We should sync new blocks to get the TXs
                     should_sync_blocks = true;
@@ -504,29 +621,33 @@ impl NetworkHandler {
     // Locate the highest valid topoheight we synced to, clean wallet storage
     // then sync again the head state
     async fn sync(&self, address: &Address, event: Option<NewBlockEvent>) -> Result<(), Error> {
+        trace!("sync");
         // First, locate the last topoheight valid for syncing
         let (daemon_topoheight, daemon_block_hash, wallet_topoheight, sync_back) = self.locate_sync_topoheight_and_clean().await?;
 
         // Sync back is requested, sync the head state again
         if sync_back {
+            trace!("sync back");
             // Now sync head state, this will helps us to determinate if we should sync blocks or not
-            let should_sync_blocks = self.sync_head_state(&address).await?;
+            let should_sync_blocks = self.sync_head_state(&address, None, None, true).await?;
             // we have something that changed, sync transactions
             if should_sync_blocks {
                 self.sync_new_blocks(&address, wallet_topoheight, false).await?;
             }
         } else if daemon_topoheight > wallet_topoheight {
+            trace!("daemon topoheight is greater than wallet topoheight");
             // We didn't had to resync, sync only necessary blocks
             if let Some(block) = event {
-                // We can safely handle it by hand by `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
+                // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
                 if let Some(topoheight) = block.topoheight {
-                    if self.process_block(address, block, topoheight).await? {
+                    if let Some((assets, nonce)) = self.process_block(address, block, topoheight).await? {
+                        trace!("We must sync head state");
                         // A change happened in this block, lets update balance and nonce
-                        self.sync_head_state(&address).await?;
+                        self.sync_head_state(&address, Some(assets), nonce, false).await?;
                     }
                 } else {
                     // It is a block that got directly orphaned by DAG, ignore it
-                    debug!("Block {} is not ordered, skipping it", block.data.hash);
+                    debug!("Block {} is not ordered, skipping it", block.hash);
                 }
                 // TODO handle block event
             } else {
@@ -570,15 +691,21 @@ impl NetworkHandler {
                 // Wait on a new block, we don't parse the block directly as it may
                 // have reorg the chain
                 res = receiver.next() => {
+                    trace!("on_new_block_event");
                     let event = res?;
                     self.sync(&address, Some(event)).await?;
                 },
                 // Detect network events
                 res = on_connection.recv() => {
+                    trace!("on_connection");
                     res?;
+                    // We are connected again, make sure we are still up-to-date with node 
+                    self.sync(&address, None).await?;
+
                     self.wallet.propagate_event(Event::Online).await;
                 },
                 res = on_connection_lost.recv() => {
+                    trace!("on_connection_lost");
                     res?;
                     self.wallet.propagate_event(Event::Offline).await;
                 }

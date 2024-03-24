@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use log::trace;
-use xelis_common::crypto::key::PublicKey;
+use xelis_common::crypto::PublicKey;
 
 use super::{storage::Storage, error::BlockchainError};
 
@@ -52,7 +52,7 @@ impl NonceChecker {
     // Key may be cloned on first entry
     // Returns false if nonce is already used
     pub async fn use_nonce<S: Storage>(&mut self, storage: &S, key: &PublicKey, nonce: u64, topoheight: u64) -> Result<bool, BlockchainError> {
-        trace!("use_nonce {} for {} at topoheight {}", nonce, key, topoheight);
+        trace!("use_nonce {} for {} at topoheight {}", nonce, key.as_address(storage.is_mainnet()), topoheight);
 
         match self.cache.get_mut(key) {
             Some(entry) => {
@@ -62,7 +62,7 @@ impl NonceChecker {
             },
             None => {
                 // Nonce must follows in increasing order
-                let (_, version) = storage.get_nonce_at_maximum_topoheight(key, topoheight).await?.ok_or_else(|| BlockchainError::AccountNotFound(key.clone()))?;
+                let (_, version) = storage.get_nonce_at_maximum_topoheight(key, topoheight).await?.ok_or_else(|| BlockchainError::AccountNotFound(key.as_address(storage.is_mainnet())))?;
                 let stored_nonce = version.get_nonce();
 
                 let mut entry = AccountEntry::new(stored_nonce);
@@ -79,8 +79,8 @@ impl NonceChecker {
         Ok(true)
     }
 
-    pub fn get_new_nonce(&self, key: &PublicKey) -> Result<u64, BlockchainError> {
-        let entry = self.cache.get(key).ok_or_else(|| BlockchainError::AccountNotFound(key.clone()))?;
+    pub fn get_new_nonce(&self, key: &PublicKey, mainnet: bool) -> Result<u64, BlockchainError> {
+        let entry = self.cache.get(key).ok_or_else(|| BlockchainError::AccountNotFound(key.as_address(mainnet)))?;
         Ok(entry.expected_nonce)
     }
 }

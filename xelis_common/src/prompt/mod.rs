@@ -2,7 +2,7 @@ pub mod command;
 pub mod argument;
 
 use crate::{
-    crypto::hash::Hash,
+    crypto::Hash,
     serializer::{Serializer, ReaderError},
 };
 use std::{
@@ -10,7 +10,6 @@ use std::{
     fmt::{Display, Formatter, self},
     fs::create_dir,
     io::{Write, stdout, Error as IOError},
-    num::ParseFloatError,
     path::Path,
     pin::Pin,
     str::FromStr,
@@ -43,7 +42,7 @@ use thiserror::Error;
 
 // used for launch param
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "clap", derive(clap::ArgEnum))]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum LogLevel {
     Off,
     Error,
@@ -113,12 +112,12 @@ pub enum PromptError {
     NotRunning,
     #[error("No command manager found")]
     NoCommandManager,
-    #[error(transparent)]
-    ParseFloatError(#[from] ParseFloatError),
+    #[error("Error while parsing: {}", _0)]
+    ParseInputError(String),
     #[error(transparent)]
     ReaderError(#[from] ReaderError),
     #[error(transparent)]
-    CommandError(#[from] CommandError)
+    CommandError(#[from] CommandError),
 }
 
 impl<T> From<PoisonError<T>> for PromptError {
@@ -593,10 +592,12 @@ impl Prompt {
         Ok(res == "y")
     }
 
-    pub async fn read_f64(&self, prompt: String) -> Result<f64, PromptError> {
+    pub async fn read<F: FromStr>(&self, prompt: String) -> Result<F, PromptError>
+    where
+        <F as FromStr>::Err: Display
+    {
         let value = self.read_input(prompt, false).await?;
-        let float_value = value.parse()?;
-        Ok(float_value)
+        value.parse().map_err(|e: F::Err| PromptError::ParseInputError(e.to_string()))
     }
 
     pub async fn read_hash(&self, prompt: String) -> Result<Hash, PromptError> {

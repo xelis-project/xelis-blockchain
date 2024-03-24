@@ -1,12 +1,18 @@
-use std::{str::FromStr, fmt::{Display, Formatter}, sync::Arc, time::Duration, collections::{HashMap, hash_map::Entry}};
-
-use log::{info, error, debug};
+use std::{
+    str::FromStr,
+    fmt::{Display, Formatter},
+    sync::Arc,
+    time::Duration,
+};
+use log::{info, error};
 use rand::{rngs::OsRng, Rng};
 use tokio::time::interval;
-use xelis_common::{crypto::{key::KeyPair, hash::Hashable}, transaction::{Transaction, TransactionType, Transfer}, config::{FEE_PER_KB, XELIS_ASSET, TIPS_LIMIT}, block::Block};
-
+use xelis_common::{
+    crypto::KeyPair,
+    config::TIPS_LIMIT,
+    block::Block
+};
 use crate::config::BLOCK_TIME_MILLIS;
-
 use super::{blockchain::Blockchain, storage::Storage};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -84,11 +90,13 @@ impl Simulator {
                 }
             }
 
-            let max_txs = match self {
-                Self::Stress => 200,
-                _ => 15
-            };
-            self.generate_txs_in_mempool(max_txs, 15, 50, &mut rng, &keys, &blockchain).await;
+            // TODO
+            // let max_txs = match self {
+            //     Self::Stress => 200,
+            //     _ => 15
+            // };
+
+            // self.generate_txs_in_mempool(max_txs, 15, 50, &mut rng, &keys, &blockchain).await;
         }
     }
 
@@ -99,7 +107,7 @@ impl Simulator {
         for _ in 0..n {
             let index = rng.gen_range(0..keys.len());
             let selected_key = keys[index].get_public_key();
-            match blockchain.mine_block(selected_key).await {
+            match blockchain.mine_block(&selected_key.compress()).await {
                 Ok(block) => {
                     blocks.push(block);
                 },
@@ -110,97 +118,98 @@ impl Simulator {
         blocks
     }
 
-    async fn generate_txs_in_mempool(&self, max_txs: usize, max_transfers: usize, max_amount: u64, rng: &mut OsRng, keys: &Vec<KeyPair>, blockchain: &Arc<Blockchain<impl Storage>>) {
-        info!("Adding simulated TXs in mempool");
-        let n = rng.gen_range(0..max_txs);
-        let mut local_nonces = HashMap::new();
-        let mut local_balances = HashMap::new();
-        for _ in 0..n {
-            let index = rng.gen_range(0..keys.len());
-            let keypair = &keys[index];
+    // TODO use transaction builder
+    // async fn generate_txs_in_mempool(&self, max_txs: usize, max_transfers: usize, max_amount: u64, rng: &mut OsRng, keys: &Vec<KeyPair>, blockchain: &Arc<Blockchain<impl Storage>>) {
+    //     info!("Adding simulated TXs in mempool");
+    //     let n = rng.gen_range(0..max_txs);
+    //     let mut local_nonces = HashMap::new();
+    //     let mut local_balances = HashMap::new();
+    //     for _ in 0..n {
+    //         let index = rng.gen_range(0..keys.len());
+    //         let keypair = &keys[index];
 
-            let storage = blockchain.get_storage().read().await;
-            if let Ok(true) = storage.has_nonce(keypair.get_public_key()).await {
-                let mut transfers = Vec::new();
-                // Total XEL spend for this tx
-                let mut total_amount = FEE_PER_KB;
-                // Generate all transfers
-                for _ in 0..rng.gen_range(1..=max_transfers) {
+    //         let storage = blockchain.get_storage().read().await;
+    //         if let Ok(true) = storage.has_nonce(keypair.get_public_key()).await {
+    //             let mut transfers = Vec::new();
+    //             // Total XEL spend for this tx
+    //             let mut total_amount = FEE_PER_KB;
+    //             // Generate all transfers
+    //             for _ in 0..rng.gen_range(1..=max_transfers) {
 
-                    // Prevent to send to ourself
-                    let mut n = rng.gen_range(0..keys.len());
-                    while n == index {
-                        n = rng.gen_range(0..keys.len());
-                    }
+    //                 // Prevent to send to ourself
+    //                 let mut n = rng.gen_range(0..keys.len());
+    //                 while n == index {
+    //                     n = rng.gen_range(0..keys.len());
+    //                 }
 
-                    let amount = rng.gen_range(1..=max_amount);
-                    total_amount += amount;
+    //                 let amount = rng.gen_range(1..=max_amount);
+    //                 total_amount += amount;
 
-                    transfers.push(Transfer {
-                        to: keys[n].get_public_key().clone(),
-                        asset: XELIS_ASSET,
-                        amount,
-                        extra_data: None
-                    });
-                }
+    //                 transfers.push(Transfer {
+    //                     to: keys[n].get_public_key().clone(),
+    //                     asset: XELIS_ASSET,
+    //                     amount,
+    //                     extra_data: None
+    //                 });
+    //             }
 
-                // Check if we have enough balance
-                match local_balances.entry(keypair.get_public_key()) {
-                    Entry::Occupied(mut e) => {
-                        let balance = e.get_mut();
-                        if *balance < total_amount {
-                            continue;
-                        }
-                        *balance -= total_amount;
-                    },
-                    Entry::Vacant(e) => {
-                        let balance = storage.get_last_balance(keypair.get_public_key(), &XELIS_ASSET).await.map(|(_, v)| v.get_balance()).unwrap();
-                        let balance = e.insert(balance);
-                        if *balance < total_amount {
-                            continue;
-                        }
-                        *balance -= total_amount;
-                    }
-                };
+    //             // Check if we have enough balance
+    //             match local_balances.entry(keypair.get_public_key()) {
+    //                 Entry::Occupied(mut e) => {
+    //                     let balance = e.get_mut();
+    //                     if *balance < total_amount {
+    //                         continue;
+    //                     }
+    //                     *balance -= total_amount;
+    //                 },
+    //                 Entry::Vacant(e) => {
+    //                     let balance = storage.get_last_balance(keypair.get_public_key(), &XELIS_ASSET).await.map(|(_, v)| v.get_balance()).unwrap();
+    //                     let balance = e.insert(balance);
+    //                     if *balance < total_amount {
+    //                         continue;
+    //                     }
+    //                     *balance -= total_amount;
+    //                 }
+    //             };
 
-                let data = TransactionType::Transfer(transfers);
+    //             let data = TransactionType::Transfer(transfers);
 
-                // Get the last nonce for the key, it allow to have several txs from same sender
-                let nonce = match local_nonces.entry(keypair.get_public_key()) {
-                    Entry::Occupied(mut e) => {
-                        let nonce = e.get_mut();
-                        *nonce += 1;
-                        *nonce
-                    },
-                    Entry::Vacant(e) => {
-                        let (topo, version) = storage.get_last_nonce(keypair.get_public_key()).await.unwrap();
-                        let nonce = version.get_nonce();
-                        debug!("Loaded nonce from last nonce for {} is {} at topo {}", keypair.get_public_key(), nonce, topo);
-                        e.insert(nonce);
-                        nonce
-                    }
-                };
+    //             // Get the last nonce for the key, it allow to have several txs from same sender
+    //             let nonce = match local_nonces.entry(keypair.get_public_key()) {
+    //                 Entry::Occupied(mut e) => {
+    //                     let nonce = e.get_mut();
+    //                     *nonce += 1;
+    //                     *nonce
+    //                 },
+    //                 Entry::Vacant(e) => {
+    //                     let (topo, version) = storage.get_last_nonce(keypair.get_public_key()).await.unwrap();
+    //                     let nonce = version.get_nonce();
+    //                     debug!("Loaded nonce from last nonce for {} is {} at topo {}", keypair.get_public_key(), nonce, topo);
+    //                     e.insert(nonce);
+    //                     nonce
+    //                 }
+    //             };
 
-                // Check if this nonce is not already used
-                {
-                    let mempool = blockchain.get_mempool().read().await;
-                    if mempool.is_nonce_used(&keypair.get_public_key(), nonce) {
-                        debug!("Nonce {} already used for key {}", nonce, keypair.get_public_key());
-                        continue;
-                    }
-                }
+    //             // Check if this nonce is not already used
+    //             {
+    //                 let mempool = blockchain.get_mempool().read().await;
+    //                 if mempool.is_nonce_used(&keypair.get_public_key(), nonce) {
+    //                     debug!("Nonce {} already used for key {}", nonce, keypair.get_public_key());
+    //                     continue;
+    //                 }
+    //             }
 
-                let key = keypair.get_public_key().clone();
-                // We create a fake signature because it is skipped in simulator mode
-                let signature = keypair.sign(b"invalid");
-                let tx = Transaction::new(key, data, FEE_PER_KB, nonce, signature);
-                let hash = tx.hash();
+    //             let key = keypair.get_public_key().clone();
+    //             // We create a fake signature because it is skipped in simulator mode
+    //             let signature = keypair.sign(b"invalid");
+    //             let tx = Transaction::new(key, data, FEE_PER_KB, nonce, signature);
+    //             let hash = tx.hash();
 
-                debug!("Simulated tx: {}, key: {}, nonce: {}, fee: {}", hash, tx.get_owner(), tx.get_nonce(), tx.get_fee());
-                if let Err(e) = blockchain.add_tx_to_mempool_with_hash(tx, hash, false).await {
-                    error!("Error while adding simulated tx to mempool: {}, key: {}", e, keypair.get_public_key());
-                }
-            }
-        }
-    }
+    //             debug!("Simulated tx: {}, key: {}, nonce: {}, fee: {}", hash, tx.get_owner(), tx.get_nonce(), tx.get_fee());
+    //             if let Err(e) = blockchain.add_tx_to_mempool_with_hash(tx, hash, false).await {
+    //                 error!("Error while adding simulated tx to mempool: {}, key: {}", e, keypair.get_public_key());
+    //             }
+    //         }
+    //     }
+    // }
 }

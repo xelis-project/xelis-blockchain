@@ -1,28 +1,18 @@
 use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 use crate::{
-    transaction::{TransactionType, Transaction},
-    crypto::{hash::Hash, address::Address}
+    crypto::{Address, Hash},
+    transaction::{
+        builder::{FeeBuilder, TransactionTypeBuilder},
+        Transaction
+    }
 };
 use super::{DataHash, DataElement, DataValue, query::Query};
-
-
-#[derive(Serialize, Deserialize)]
-pub enum FeeBuilder {
-    Multiplier(f64), // calculate tx fees based on its size and multiply by this value
-    Value(u64) // set a direct value of how much fees you want to pay
-}
-
-impl Default for FeeBuilder {
-    fn default() -> Self {
-        FeeBuilder::Multiplier(1f64)
-    }
-}
 
 #[derive(Serialize, Deserialize)]
 pub struct BuildTransactionParams {
     #[serde(flatten)]
-    pub tx_type: TransactionType,
+    pub tx_type: TransactionTypeBuilder,
     pub fee: Option<FeeBuilder>,
     // Cannot be broadcasted if set to false
     pub broadcast: bool,
@@ -34,7 +24,7 @@ pub struct BuildTransactionParams {
 #[derive(Serialize, Deserialize)]
 pub struct EstimateFeesParams {
     #[serde(flatten)]
-    pub tx_type: TransactionType,
+    pub tx_type: TransactionTypeBuilder,
 }
 
 // :(
@@ -182,4 +172,60 @@ pub enum NotifyEvent {
     Online,
     // Same here
     Offline,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferOut {
+    // Destination address
+    pub destination: Address,
+    // Asset spent
+    pub asset: Hash,
+    // Plaintext amount
+    pub amount: u64,
+    // extra data
+    pub extra_data: Option<DataElement>
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferIn {
+    // Asset spent
+    pub asset: Hash,
+    // Plaintext amount
+    pub amount: u64,
+    // extra data
+    pub extra_data: Option<DataElement>
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryType {
+    // Coinbase is only XELIS_ASSET
+    Coinbase {
+        reward: u64
+    },
+    Burn {
+        asset: Hash,
+        amount: u64
+    },
+    Incoming {
+        from: Address,
+        transfers: Vec<TransferIn>
+    },
+    Outgoing {
+        transfers: Vec<TransferOut>,
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
+    }
+}
+
+// This struct is used to represent a transaction entry like in wallet
+// But we replace every PublicKey to use Address instead
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionEntry {
+    pub hash: Hash,
+    pub topoheight: u64,
+    #[serde(flatten)]
+    pub entry: EntryType,
 }

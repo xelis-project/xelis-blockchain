@@ -1,6 +1,6 @@
 [package]
 name = "xelis_daemon"
-version = "1.7.0"
+version = "1.8.0"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 
@@ -8,18 +8,19 @@ authors = ["Slixe <slixeprivate@gmail.com>"]
 
 [dependencies]
 xelis_common = { path = "../xelis_common", features = ["prompt", "clap", "rpc_server"] }
-clap = { version = "3.1.18", features = ["derive"] }
+clap = { version = "4.5.2", features = ["derive"] }
 bytes = "1"
 actix = "0.13.0"
 actix-web = "4"
 actix-web-actors = "4"
 sled = "0.34.7"
-lru = "0.7.8"
+lru = "0.12.3"
 async-recursion = "1"
 async-trait = "0.1.64"
 humantime = "2.1.0"
 human_bytes = "0.4.2"
 lazy_static = "1.4.0"
+chacha20poly1305 = "0.10.1"
 
 # Common dependencies
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "time", "macros", "sync", "net"] }

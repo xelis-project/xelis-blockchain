@@ -1,11 +1,26 @@
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    hash::{Hash as StdHash, Hasher}
+};
 use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{
-    crypto::{hash::Hash, key::PublicKey},
-    serializer::{Serializer, ReaderError, Reader, Writer},
-    difficulty::Difficulty,
-    asset::AssetWithData
+    account::CiphertextCache,
+    asset::AssetWithData,
+    crypto::{
+        Hash, PublicKey
+    },
+    difficulty::{
+        CumulativeDifficulty,
+        Difficulty
+    },
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    },
+    varuint::VarUint
 };
 use super::chain::{BlockId, CommonPoint};
 use crate::config::CHAIN_SYNC_REQUEST_MAX_BLOCKS;
@@ -26,8 +41,23 @@ pub struct BlockMetadata {
     pub supply: u64,
     pub reward: u64,
     pub difficulty: Difficulty,
-    pub cumulative_difficulty: Difficulty
+    pub cumulative_difficulty: CumulativeDifficulty,
+    pub p: VarUint
 }
+
+impl StdHash for BlockMetadata {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+impl PartialEq for BlockMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl Eq for BlockMetadata {}
 
 impl Serializer for BlockMetadata {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -35,14 +65,16 @@ impl Serializer for BlockMetadata {
         let supply = reader.read_u64()?;
         let reward = reader.read_u64()?;
         let difficulty = Difficulty::read(reader)?;
-        let cumulative_difficulty = Difficulty::read(reader)?;
+        let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
+        let p = VarUint::read(reader)?;
 
         Ok(Self {
             hash,
             supply,
             reward,
             difficulty,
-            cumulative_difficulty
+            cumulative_difficulty,
+            p
         })
     }
 
@@ -52,6 +84,11 @@ impl Serializer for BlockMetadata {
         writer.write_u64(&self.reward);
         self.difficulty.write(writer);
         self.cumulative_difficulty.write(writer);
+        self.p.write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.hash.size() + self.supply.size() + self.reward.size() + self.difficulty.size() + self.cumulative_difficulty.size()
     }
 }
 
@@ -230,16 +267,35 @@ impl Serializer for StepRequest<'_> {
             },
         };
     }
+
+    fn size(&self) -> usize {
+        let size = match self {
+            Self::ChainInfo(blocks) => 1 + blocks.size(),
+            Self::Assets(min, max, page) => min.size() + max.size() + page.size(),
+            Self::Keys(min, max, page) => min.size() + max.size() + page.size(),
+            Self::Balances(topoheight, asset, accounts) => topoheight.size() + asset.size() + accounts.size(),
+            Self::Nonces(topoheight, nonces) => topoheight.size() + nonces.size(),
+            Self::BlocksMetadata(topoheight) => topoheight.size()
+        };
+        // 1 for the id
+        size + 1
+    }
 }
 
 #[derive(Debug)]
 pub enum StepResponse {
-    ChainInfo(Option<CommonPoint>, u64, u64, Hash), // common point, topoheight of stable hash, stable height, stable hash
-    Assets(IndexSet<AssetWithData>, Option<u64>), // Set of assets, pagination
-    Keys(IndexSet<PublicKey>, Option<u64>), // Set of keys, pagination
-    Balances(Vec<Option<u64>>), // Balances requested
-    Nonces(Vec<u64>), // Nonces for requested accounts
-    BlocksMetadata(Vec<BlockMetadata>), // top blocks metadata
+    // common point, topoheight of stable hash, stable height, stable hash
+    ChainInfo(Option<CommonPoint>, u64, u64, Hash),
+    // Set of assets, pagination
+    Assets(IndexSet<AssetWithData>, Option<u64>),
+    // Set of keys, pagination
+    Keys(IndexSet<PublicKey>, Option<u64>),
+    // Balances requested
+    Balances(Vec<Option<CiphertextCache>>),
+    // Nonces for requested accounts
+    Nonces(Vec<u64>),
+    // top blocks metadata
+    BlocksMetadata(IndexSet<BlockMetadata>),
 }
 
 impl StepResponse {
@@ -289,13 +345,13 @@ impl Serializer for StepResponse {
                 Self::Keys(keys, page)
             },
             3 => {
-                Self::Balances(Vec::<Option<u64>>::read(reader)?)
+                Self::Balances(Vec::read(reader)?)
             },
             4 => {
                 Self::Nonces(Vec::<u64>::read(reader)?)
             },
             5 => {
-                Self::BlocksMetadata(Vec::<BlockMetadata>::read(reader)?)
+                Self::BlocksMetadata(IndexSet::read(reader)?)
             },
             id => {
                 debug!("Received invalid value for StepResponse: {}", id);
@@ -337,6 +393,31 @@ impl Serializer for StepResponse {
             }
         };
     }
+
+    fn size(&self) -> usize {
+        let size = match self {
+            Self::ChainInfo(common_point, topoheight, stable_height, hash) => {
+                common_point.size() + topoheight.size() + stable_height.size() + hash.size()
+            },
+            Self::Assets(assets, page) => {
+                assets.size() + page.size()
+            },
+            Self::Keys(keys, page) => {
+                keys.size() + page.size()
+            },
+            Self::Balances(balances) => {
+                balances.size()
+            },
+            Self::Nonces(nonces) => {
+                nonces.size()
+            },
+            Self::BlocksMetadata(blocks) => {
+                blocks.size()
+            }
+        };
+        // 1 for the id
+        size + 1
+    }
 }
 
 #[derive(Debug)]
@@ -368,6 +449,10 @@ impl Serializer for BootstrapChainRequest<'_> {
     fn write(&self, writer: &mut Writer) {
         self.step.write(writer);
     }
+
+    fn size(&self) -> usize {
+        self.step.size()
+    }
 }
 
 #[derive(Debug)]
@@ -398,5 +483,9 @@ impl Serializer for BootstrapChainResponse {
 
     fn write(&self, writer: &mut Writer) {
         self.response.write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.response.size()
     }
 }

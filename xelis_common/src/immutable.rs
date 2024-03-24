@@ -32,6 +32,12 @@ impl<T: Clone> Immutable<T> {
     }
 }
 
+impl<T: Clone> AsRef<T> for Immutable<T> {
+    fn as_ref(&self) -> &T {
+        self.get_inner()
+    }
+}
+
 impl<T: Clone> Deref for Immutable<T> {
     type Target = T;
 

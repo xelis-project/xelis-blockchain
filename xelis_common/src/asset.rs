@@ -1,6 +1,8 @@
 use std::hash::{Hash as StdHash, Hasher};
-
-use crate::{serializer::{Serializer, Writer, Reader, ReaderError}, crypto::hash::Hash};
+use crate::{
+    serializer::{Serializer, Writer, Reader, ReaderError},
+    crypto::Hash
+};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct AssetData {
@@ -37,6 +39,10 @@ impl Serializer for AssetData {
         Ok(
             Self::new(reader.read_u64()?, reader.read_u8()?)
         )
+    }
+
+    fn size(&self) -> usize {
+        self.topoheight.size() + self.decimals.size()
     }
 }
 
@@ -82,6 +88,10 @@ impl Serializer for AssetWithData {
         Ok(
             Self::new(reader.read_hash()?, AssetData::read(reader)?)
         )
+    }
+
+    fn size(&self) -> usize {
+        self.asset.size() + self.data.size()
     }
 }
 

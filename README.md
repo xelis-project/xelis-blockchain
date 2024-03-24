@@ -18,6 +18,18 @@ We provide differents built-in network:
 - Testnet: Running
 - Devnet: this network is used for local development purpose where you want to create your own local chain. It has no peers
 
+## Acknowledgments
+
+[@cchudant](https://github.com/cchudant):
+- Optimized decoding RistrettoPoint implementation (ECDLP).
+- Twisted ElGamal implementation along ZK-Proofs integration for Confidential Transactions.
+- To read more, please see [XELIS-HE](https://github.com/xelis-project/xelis-he) framework created by him.
+
+[@deroholic](https://github.com/deroholic):
+- Difficulty adjustment algorithm using Kalman-Filter.
+
+Thank you to every people testing actively the code base, honest miners and every future contributors!
+
 ## Main features
 
 The main features of XELIS are the following:
@@ -111,13 +123,13 @@ Each job send to a miner is a `BlockMiner` instance in hex format.
 
 The `BlockMiner` is in following format:
 - header work hash: 32 bytes
-- timestamp (u128 for milliseconds): 16 bytes (BigEndian)
+- timestamp (u64 for milliseconds): 8 bytes (BigEndian)
 - nonce (u64): 8 bytes (BigEndian)
 - extra nonce: 32 bytes
 - miner public key: 32 bytes
 
 The total block work size should be equal to 120 bytes.
-Header work hash is the immutable part of a block work, its a hash calculated using `Keccak256` hashing algorithm with the following format as input:
+Header work hash is the immutable part of a block work, its a hash calculated using `Blake3` hashing algorithm with the following format as input:
 - block version: 1 byte
 - block height (u64): 8 bytes (BigEndian)
 - Hash of the tips: 32 bytes
@@ -127,7 +139,7 @@ The header work has to be equal to 73 bytes exactly and its hash to 32 bytes.
 
 **NOTE**: Miner key is not included in the immutable of the block work to be have generic block template that can be compatible with any miner. 
 
-All hashes are calculated using the `Keccak256` hashing algorithm except the Proof-Of-Work hash.
+All hashes are calculated using the `Blake3` hashing algorithm except the Proof-Of-Work hash.
 
 POW Hash should be calculated from the `BlockMiner` format and compared against the target difficulty.
 
@@ -136,7 +148,7 @@ NOTE: It is recommended to use the GetWork WebSocket server to be notified of ne
 Mining jobs are send only when a new block is found or when a new TX is added in mempool.
 Miners software are recommended to update themselves the block timestamp (or at least every 500ms) for best network difficulty calculation.
 
-Actually, the POW Hashing algorithm is `Keccak256` which is until we develop (or choose) our own algorithm.
+Actually, the POW Hashing algorithm is `Blake3` which is until we develop (or choose) our own algorithm.
 
 ## Client Protocol
 
@@ -185,14 +197,18 @@ Maximum data allowed is 1KB (same as transaction payload).
 
 Every data is integrated in the transaction payload when using an integrated address.
 
-## P2p
+## P2p (Encrypted Network)
 
 All transfered data are using a custom Serializer/Deserializer made by hand to transform a struct representation in raw bytes directly.
 This serialization is done using the fixed position of each fields and their corresponding bits size.
 
+Before sending a packet, we're encrypting it using ChaCha20-Poly1305 algorithm to prevent network traffic analysis and authenticate each transfered data.
+
 Every data transfered is done through the Packet system which allow easily to read & transfer data and doing the whole serialization itself.
 
-The connection for a new peer (took from the queue or a new incoming connections) is executed through a unique tokio task with the same allocated buffer for handshake. This prevents any DoS attack on creating multiple task and verifying connection.
+The connection for a new peer (took from the queue or a new incoming connections) is executed through a unique tokio task with the same allocated buffer for handshake.
+This prevents any DoS attack on creating multiple task and verifying connection.
+
 When the peer is verified and valid, we create him his own tasks. One for reading incoming packets and one for writing packets to him.
 By separating both directions in two differents task it prevents blocking the communication of opposed side.
 
@@ -234,9 +250,22 @@ This is the perfect mix between Fast sync and traditional chain sync, to have th
 
 This parts explains the most importants packets used in XELIS network to communicate over the P2p network.
 
+#### Key Exchange
+
+Key Exchange is the real first packet to be sent when creating a new connection.
+This allow to exchange symetric encryption keys between peer to establish an encrypted communication channel over TCP.
+
+Currently, we are using ChaCha20-Poly1305 algorithm to encrypt / decrypt every packets.
+
+This packet can be sent later to rotate the key of a peer.
+This is currently done every 1 GB of data sent.
+
+We're using two different symetric keys for encryption per Peer.
+One key is from us, to encrypt our packet, and the other key is to decrypt peer's packets.
+
 #### Handshake
 
-Handshake packet must be the first packet sent with the blockchain state inside when connecting to a peer.
+Handshake packet must be the first packet sent with the blockchain state inside to upgrade a connection to a peer.
 If valid, the peer will send the same packet with is own blockchain state.
 
 Except at beginning, this packet should never be sent again.
@@ -301,10 +330,11 @@ All theses data are saved in plaintext.
 
 The database engine used is sled. It may changes in future.
 
-Current overhead per block is:
+Current overhead per block:
 - Tree `blocks` saving Block header (132 bytes with no TXs) value using Hash (32 bytes) key.
 - Trees `topo_by_hash` and `hash_by_topo` saving both Hash (32 bytes) <=> topoheight (8 bytes) pointers. (x2)
-- Tree `difficulty` saving Difficulty value of a block (8 bytes) using Hash (32 bytes) key.
+- Tree `difficulty` saving Difficulty value of a block (up to 33 bytes) using Hash (32 bytes) key.
+- Tree `cumulative_difficulty` saving the cumulative difficulty value (up to 33 bytes) of a topoheight (8 bytes).
 - Tree `rewards` saving block reward value (8 bytes) using topoheight (8 bytes) key.
 - Tree `supply` saving current circulating supply value (8 bytes) using topoheight (8 bytes) key.
 - Tree `versioned_balances` is updated at each block (for miner rewards), and also for each account that had interactions (transactions): 72 bytes for key and 16 bytes for value.
@@ -342,7 +372,7 @@ Wallet implement a fully-encrypted storage system with following features:
 
 Exception for assets list which has its key encrypted to be able to retrieve them later.
 
-Hash algorithm used is Keccak-256 for keys / tree names.
+Hash algorithm used is Blake3 for keys / tree names.
 The random salt generated is a 64 bytes length.
 This simple system prevent someone to read / use the data without the necessary secret key.
 

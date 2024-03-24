@@ -3,16 +3,17 @@ use std::{
     collections::{HashSet, HashMap},
     net::SocketAddr
 };
-use serde::{Deserialize, Serialize};
+use indexmap::IndexSet;
+use serde::{Deserialize, Serialize, Serializer, Deserializer, de::Error};
 use crate::{
-    crypto::{hash::Hash, address::Address},
     account::{VersionedBalance, VersionedNonce},
+    block::EXTRA_NONCE_SIZE,
+    crypto::{Address, Hash},
+    difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
-    block::Block,
-    difficulty::Difficulty,
-    transaction::Transaction
+    time::{TimestampSeconds, TimestampMillis}
 };
-use super::DataHash;
+use super::RPCTransaction;
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockType {
@@ -22,19 +23,48 @@ pub enum BlockType {
     Normal
 }
 
+// Serialize the extra nonce in a hexadecimal string
+pub fn serialize_extra_nonce<S: Serializer>(extra_nonce: &Cow<'_, [u8; EXTRA_NONCE_SIZE]>, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&hex::encode(extra_nonce.as_ref()))
+}
+
+// Deserialize the extra nonce from a hexadecimal string
+pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -> Result<Cow<'a, [u8; EXTRA_NONCE_SIZE]>, D::Error> {
+    let mut extra_nonce = [0u8; EXTRA_NONCE_SIZE];
+    let hex = String::deserialize(deserializer)?;
+    let decoded = hex::decode(hex).map_err(Error::custom)?;
+    extra_nonce.copy_from_slice(&decoded);
+    Ok(Cow::Owned(extra_nonce))
+}
+
+// Structure used to map the public key to a human readable address
 #[derive(Serialize, Deserialize)]
-pub struct BlockResponse<'a, T: Clone> {
+pub struct RPCBlockResponse<'a> {
+    pub hash: Cow<'a, Hash>,
     pub topoheight: Option<u64>,
     pub block_type: BlockType,
-    pub difficulty: Difficulty,
+    pub difficulty: Cow<'a, Difficulty>,
     pub supply: Option<u64>,
     pub reward: Option<u64>,
-    pub cumulative_difficulty: Difficulty,
+    pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
     pub total_fees: Option<u64>,
     pub total_size_in_bytes: usize,
-    #[serde(flatten)]
-    pub data: DataHash<'a, T>
+    pub version: u8,
+    pub tips: Cow<'a, IndexSet<Hash>>,
+    pub timestamp: TimestampMillis,
+    pub height: u64,
+    pub nonce: u64,
+    #[serde(serialize_with = "serialize_extra_nonce")]
+    #[serde(deserialize_with = "deserialize_extra_nonce")]
+    pub extra_nonce: Cow<'a, [u8; EXTRA_NONCE_SIZE]>,
+    pub miner: Cow<'a, Address>,
+    pub txs_hashes: Cow<'a, IndexSet<Hash>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub transactions: Vec<RPCTransaction<'a>>,
 }
+
+pub type BlockResponse = RPCBlockResponse<'static>;
 
 #[derive(Serialize, Deserialize)]
 pub struct GetTopBlockParams {
@@ -216,20 +246,30 @@ impl Direction {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetPeersResponse<'a> {
+    // Peers that are connected and allows to be displayed
+    pub peers: Vec<PeerEntry<'a>>,
+    // All peers connected
+    pub total_peers: usize,
+    // Peers that asked to not be listed
+    pub hidden_peers: usize
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct PeerEntry<'a> {
     pub id: u64,
     pub addr: Cow<'a, SocketAddr>,
     pub local_port: u16,
     pub tag: Cow<'a, Option<String>>,
     pub version: Cow<'a, String>,
-    pub top_block_hash: Hash,
+    pub top_block_hash: Cow<'a, Hash>,
     pub topoheight: u64,
     pub height: u64,
-    pub last_ping: u64,
+    pub last_ping: TimestampSeconds,
     pub pruned_topoheight: Option<u64>,
-    pub peers: HashMap<SocketAddr, Direction>,
-    pub cumulative_difficulty: Difficulty,
-    pub connected_on: u64
+    pub peers: Cow<'a, HashMap<SocketAddr, Direction>>,
+    pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
+    pub connected_on: TimestampSeconds
 }
 
 #[derive(Serialize, Deserialize)]
@@ -261,7 +301,7 @@ pub struct GetTransactionsParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct TransactionResponse<'a, T: Clone + AsRef<Transaction>> {
+pub struct TransactionResponse<'a> {
     // in which blocks it was included
     pub blocks: Option<HashSet<Hash>>,
     // in which blocks it was executed
@@ -271,9 +311,9 @@ pub struct TransactionResponse<'a, T: Clone + AsRef<Transaction>> {
     // if its a mempool tx, we add the timestamp when it was added
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
-    pub first_seen: Option<u64>,
+    pub first_seen: Option<TimestampSeconds>,
     #[serde(flatten)]
-    pub data: DataHash<'a, T>
+    pub data: RPCTransaction<'a>
 }
 
 fn default_xelis_asset() -> Hash {
@@ -294,9 +334,8 @@ pub struct GetAccountHistoryParams {
 pub enum AccountHistoryType {
     Mining { reward: u64 },
     Burn { amount: u64 },
-    // TODO delete those two fields with upcoming privacy layer
-    Outgoing { amount: u64, to: Address },
-    Incoming { amount: u64, from: Address },
+    Outgoing { to: Address },
+    Incoming { from: Address },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -305,7 +344,7 @@ pub struct AccountHistoryEntry {
     pub hash: Hash,
     #[serde(flatten)]
     pub history_type: AccountHistoryType,
-    pub block_timestamp: u128
+    pub block_timestamp: TimestampMillis
 }
 
 #[derive(Serialize, Deserialize)]
@@ -405,7 +444,7 @@ pub enum NotifyEvent {
 }
 
 // Value of NotifyEvent::NewBlock
-pub type NewBlockEvent = BlockResponse<'static, Block>;
+pub type NewBlockEvent = BlockResponse;
 
 // Value of NotifyEvent::BlockOrdered
 #[derive(Serialize, Deserialize)]
@@ -433,9 +472,9 @@ pub struct StableHeightChangedEvent {
 }
 
 // Value of NotifyEvent::TransactionAddedInMempool
-pub type TransactionAddedInMempoolEvent = TransactionResponse<'static, Transaction>;
+pub type TransactionAddedInMempoolEvent = TransactionResponse<'static>;
 // Value of NotifyEvent::TransactionOrphaned
-pub type TransactionOrphanedEvent = TransactionResponse<'static, Transaction>;
+pub type TransactionOrphanedEvent = TransactionResponse<'static>;
 
 // Value of NotifyEvent::TransactionExecuted
 #[derive(Serialize, Deserialize)]

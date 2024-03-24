@@ -1,18 +1,25 @@
 use xelis_common::{
-    crypto::hash::Hash,
+    api::daemon::{Direction, NotifyEvent, PeerPeerListUpdatedEvent},
+    crypto::Hash,
+    difficulty::CumulativeDifficulty,
     serializer::{
-        Writer,
-        Serializer,
+        Reader,
         ReaderError,
-        Reader
-    },
-    difficulty::Difficulty,
-    api::daemon::{NotifyEvent, PeerPeerListUpdatedEvent, Direction}
+        Serializer,
+        Writer
+    }
 };
 use crate::{
-    p2p::{peer::Peer, error::P2pError},
     config::P2P_PING_PEER_LIST_LIMIT,
-    core::{blockchain::Blockchain, storage::Storage},
+    core::{
+        blockchain::Blockchain,
+        storage::Storage
+    },
+    p2p::{
+        error::P2pError,
+        peer::Peer,
+        is_local_address,
+    },
     rpc::rpc::get_peer_entry
 };
 use std::{
@@ -23,19 +30,18 @@ use std::{
 };
 use log::{error, trace, debug};
 
-
 #[derive(Clone, Debug)]
 pub struct Ping<'a> {
     top_hash: Cow<'a, Hash>,
     topoheight: u64,
     height: u64,
     pruned_topoheight: Option<u64>,
-    cumulative_difficulty: Difficulty,
+    cumulative_difficulty: CumulativeDifficulty,
     peer_list: Vec<SocketAddr>
 }
 
 impl<'a> Ping<'a> {
-    pub fn new(top_hash: Cow<'a, Hash>, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, cumulative_difficulty: Difficulty, peer_list: Vec<SocketAddr>) -> Self {
+    pub fn new(top_hash: Cow<'a, Hash>, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, cumulative_difficulty: CumulativeDifficulty, peer_list: Vec<SocketAddr>) -> Self {
         Self {
             top_hash,
             topoheight,
@@ -70,25 +76,31 @@ impl<'a> Ping<'a> {
         }
 
         peer.set_pruned_topoheight(self.pruned_topoheight);
-        peer.set_cumulative_difficulty(self.cumulative_difficulty);
+        peer.set_cumulative_difficulty(self.cumulative_difficulty).await;
 
-        trace!("Locking RPC Server to notify PeerStateUpdated event");
-        if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
-            if rpc.is_event_tracked(&NotifyEvent::PeerStateUpdated).await {
-                rpc.notify_clients_with(&NotifyEvent::PeerStateUpdated, get_peer_entry(peer).await).await;
+        if peer.sharable() {
+            trace!("Locking RPC Server to notify PeerStateUpdated event");
+            if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
+                if rpc.is_event_tracked(&NotifyEvent::PeerStateUpdated).await {
+                    rpc.notify_clients_with(&NotifyEvent::PeerStateUpdated, get_peer_entry(peer).await).await;
+                }
             }
+            trace!("End locking for PeerStateUpdated event");
         }
-        trace!("End locking for PeerStateUpdated event");
 
         if !self.peer_list.is_empty() {
             debug!("Received a peer list ({:?}) for {}", self.peer_list, peer.get_outgoing_address());
             let mut shared_peers = peer.get_peers().lock().await;
             debug!("Our peer list is ({:?}) for {}", shared_peers, peer.get_outgoing_address());
             let peer_addr = peer.get_connection().get_address();
-            let peer_outgoing_addr = peer.get_outgoing_address();
             for addr in &self.peer_list {
-                if peer_addr == addr || peer_outgoing_addr == addr {
+                if peer_addr == addr {
                     return Err(P2pError::OwnSocketAddress(*addr))
+                }
+
+                // Local addresses are not allowed
+                if is_local_address(&addr) {
+                    return Err(P2pError::LocalSocketAddress(*addr))
                 }
 
                 debug!("Adding {} for {} in ping packet", addr, peer.get_outgoing_address());
@@ -103,17 +115,19 @@ impl<'a> Ping<'a> {
                 }
             }
 
-            trace!("Locking RPC Server to notify PeerPeerListUpdated event");
-            if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
-                if rpc.is_event_tracked(&NotifyEvent::PeerPeerListUpdated).await {
-                    let value = PeerPeerListUpdatedEvent {
-                        peer_id: peer.get_id(),
-                        peerlist: self.peer_list
-                    };
-                    rpc.notify_clients_with(&NotifyEvent::PeerPeerListUpdated, value).await;
+            if peer.sharable() {
+                trace!("Locking RPC Server to notify PeerPeerListUpdated event");
+                if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
+                    if rpc.is_event_tracked(&NotifyEvent::PeerPeerListUpdated).await {
+                        let value = PeerPeerListUpdatedEvent {
+                            peer_id: peer.get_id(),
+                            peerlist: self.peer_list
+                        };
+                        rpc.notify_clients_with(&NotifyEvent::PeerPeerListUpdated, value).await;
+                    }
                 }
+                trace!("End locking for PeerPeerListUpdated event");
             }
-            trace!("End locking for PeerPeerListUpdated event");
         }
 
         Ok(())
@@ -160,7 +174,7 @@ impl Serializer for Ping<'_> {
                 return Err(ReaderError::InvalidValue)
             }
         }
-        let cumulative_difficulty = Difficulty::read(reader)?;
+        let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
         let peers_len = reader.read_u8()? as usize;
         if peers_len > P2P_PING_PEER_LIST_LIMIT {
             debug!("Too much peers sent in this ping packet: received {} while max is {}", peers_len, P2P_PING_PEER_LIST_LIMIT);
@@ -174,6 +188,17 @@ impl Serializer for Ping<'_> {
         }
 
         Ok(Self { top_hash, topoheight, height, pruned_topoheight, cumulative_difficulty, peer_list })
+    }
+
+    fn size(&self) -> usize {
+        self.top_hash.size() +
+        self.topoheight.size() +
+        self.height.size() +
+        self.pruned_topoheight.size() +
+        self.cumulative_difficulty.size() +
+        // u8 for the length of the peer list
+        1 +
+        self.peer_list.iter().map(|p| p.size()).sum::<usize>()
     }
 }
 

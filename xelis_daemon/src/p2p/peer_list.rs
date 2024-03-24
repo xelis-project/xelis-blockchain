@@ -7,7 +7,10 @@ use std::{collections::HashMap, net::{SocketAddr, IpAddr}, fs, fmt::{Formatter, 
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
 use tokio::sync::{RwLock, mpsc::UnboundedSender};
-use xelis_common::{serializer::Serializer, utils::get_current_time_in_seconds, api::daemon::Direction};
+use xelis_common::{
+    serializer::Serializer,
+    time::{TimestampSeconds, get_current_time_in_seconds},
+    api::daemon::Direction};
 use std::sync::Arc;
 use bytes::Bytes;
 use log::{info, debug, trace, error, warn};
@@ -38,9 +41,9 @@ enum StoredPeerState {
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredPeer {
-    first_seen: u64,
-    last_seen: u64,
-    last_connection_try: u64,
+    first_seen: TimestampSeconds,
+    last_seen: TimestampSeconds,
+    last_connection_try: TimestampSeconds,
     fail_count: u8,
     local_port: u16,
     // Until when the peer is banned
@@ -413,7 +416,7 @@ impl PeerList {
 
     // find among stored peers a peer to connect to with the requested StoredPeerState
     // we check that we're not already connected to this peer and that we didn't tried to connect to it recently
-    fn find_peer_to_connect_to_with_state(&mut self, current_time: u64, state: StoredPeerState) -> Option<SocketAddr> {
+    fn find_peer_to_connect_to_with_state(&mut self, current_time: TimestampSeconds, state: StoredPeerState) -> Option<SocketAddr> {
         for (ip, stored_peer) in &mut self.stored_peers {
             let addr = SocketAddr::new(*ip, stored_peer.get_local_port());
             if *stored_peer.get_state() == state && stored_peer.get_last_connection_try() + (stored_peer.get_fail_count() as u64 * P2P_EXTEND_PEERLIST_DELAY) <= current_time && Self::internal_get_peer_by_addr(&self.peers, &addr).is_none() {
@@ -460,7 +463,7 @@ impl StoredPeer {
         }
     }
 
-    fn get_last_connection_try(&self) -> u64 {
+    fn get_last_connection_try(&self) -> TimestampSeconds {
         self.last_connection_try
     }
 
@@ -468,11 +471,11 @@ impl StoredPeer {
         &self.state
     }
 
-    fn set_last_seen(&mut self, last_seen: u64) {
+    fn set_last_seen(&mut self, last_seen: TimestampSeconds) {
         self.last_seen = last_seen;
     }
 
-    fn set_last_connection_try(&mut self, last_connection_try: u64) {
+    fn set_last_connection_try(&mut self, last_connection_try: TimestampSeconds) {
         self.last_connection_try = last_connection_try;
     }
 

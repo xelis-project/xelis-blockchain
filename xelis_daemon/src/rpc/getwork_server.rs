@@ -1,35 +1,83 @@
-use std::{sync::Arc, collections::HashMap, fmt::Display, borrow::Cow};
-use actix::{Actor, AsyncContext, Handler, Message as TMessage, StreamHandler, Addr};
-use actix_web_actors::ws::{ProtocolError, Message, WebsocketContext};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    fmt::Display,
+    num::NonZeroUsize,
+    sync::{
+        atomic::{
+            AtomicU64,
+            Ordering
+        },
+        Arc
+    }
+};
+use actix::{
+    Actor,
+    AsyncContext,
+    Handler,
+    Message as TMessage,
+    StreamHandler,
+    Addr
+};
+use actix_web_actors::ws::{
+    ProtocolError,
+    Message,
+    WebsocketContext
+};
 use anyhow::Context;
 use log::{debug, warn, error};
 use lru::LruCache;
-use rand::{rngs::OsRng, RngCore};
+use rand::{
+    rngs::OsRng,
+    RngCore
+};
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 use xelis_common::{
-    crypto::{key::PublicKey, hash::Hash},
-    utils::get_current_time_in_millis,
-    api::daemon::{GetBlockTemplateResult, SubmitBlockParams},
+    crypto::{
+        PublicKey,
+        Hash
+    },
+    time::{
+        TimestampMillis,
+        get_current_time_in_millis
+    },
+    api::daemon::{
+        GetBlockTemplateResult,
+        SubmitBlockParams
+    },
     serializer::Serializer,
-    block::{BlockHeader, BlockMiner},
+    block::{
+        BlockHeader,
+        BlockMiner
+    },
     difficulty::Difficulty,
     immutable::Immutable,
-    rpc_server::{RpcResponseError, InternalRpcError}
+    rpc_server::{
+        RpcResponseError,
+        InternalRpcError
+    }
 };
 use crate::{
-    core::{blockchain::Blockchain, storage::Storage},
-    config::{DEV_PUBLIC_KEY, STABLE_LIMIT}
+    core::{
+        blockchain::Blockchain,
+        storage::Storage
+    },
+    config::{
+        DEV_PUBLIC_KEY,
+        STABLE_LIMIT
+    }
 };
 
 pub type SharedGetWorkServer<S> = Arc<GetWorkServer<S>>;
 
 #[derive(Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")] 
 pub enum Response {
     NewJob(GetBlockTemplateResult),
     BlockAccepted,
-    BlockRejected
+    BlockRejected(String)
 }
 
 impl TMessage for Response {
@@ -37,7 +85,9 @@ impl TMessage for Response {
 }
 
 pub struct Miner {
-    first_seen: u128, // timestamp of first connection
+    // Used to display correctly its address
+    mainnet: bool,
+    first_seen: TimestampMillis, // timestamp of first connection
     key: PublicKey, // public key of account (address)
     name: String, // worker name
     blocks_accepted: usize, // blocks accepted by us since he is connected
@@ -45,8 +95,9 @@ pub struct Miner {
 }
 
 impl Miner {
-    pub fn new(key: PublicKey, name: String) -> Self {
+    pub fn new(mainnet: bool, key: PublicKey, name: String) -> Self {
         Self {
+            mainnet,
             first_seen: get_current_time_in_millis(),
             key,
             name,
@@ -55,7 +106,7 @@ impl Miner {
         }
     }
 
-    pub fn first_seen(&self) -> u128 {
+    pub fn first_seen(&self) -> u64 {
         self.first_seen
     }
 
@@ -74,7 +125,7 @@ impl Miner {
 
 impl Display for Miner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Miner[address={}, name={}, accepted={}, rejected={}]", self.key, self.name, self.blocks_accepted, self.blocks_rejected)
+        write!(f, "Miner[address={}, name={}, accepted={}, rejected={}]", self.key.as_address(self.mainnet), self.name, self.blocks_accepted, self.blocks_rejected)
     }
 }
 
@@ -157,8 +208,8 @@ pub struct GetWorkServer<S: Storage> {
     mining_jobs: Mutex<LruCache<Hash, (BlockHeader, Difficulty)>>,
     last_header_hash: Mutex<Option<Hash>>,
     // used only when a new TX is received in mempool
-    last_notify: Mutex<u128>,
-    notify_rate_limit_ms: u128
+    last_notify: AtomicU64,
+    notify_rate_limit_ms: u64
 }
 
 impl<S: Storage> GetWorkServer<S> {
@@ -166,9 +217,9 @@ impl<S: Storage> GetWorkServer<S> {
         Self {
             miners: Mutex::new(HashMap::new()),
             blockchain,
-            mining_jobs: Mutex::new(LruCache::new(STABLE_LIMIT as usize)),
+            mining_jobs: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize).unwrap())),
             last_header_hash: Mutex::new(None),
-            last_notify: Mutex::new(0),
+            last_notify: AtomicU64::new(0),
             notify_rate_limit_ms: 500 // maximum one time every 500ms
         }
     }
@@ -202,22 +253,23 @@ impl<S: Storage> GetWorkServer<S> {
                 // generate a mining job
                 let storage = self.blockchain.get_storage().read().await;
                 let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await.context("Error while retrieving block template")?;
-                difficulty = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
+                (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
 
                 job = BlockMiner::new(header.get_work_hash(), get_current_time_in_millis());
                 height = header.height;
 
                 // save the mining job, and set it as last job
-                *hash = Some(job.header_work_hash.clone());
-                mining_jobs.put(job.header_work_hash.clone(), (header, difficulty));
+                let header_work_hash = job.get_header_work_hash();
+                *hash = Some(header_work_hash.clone());
+                mining_jobs.put(header_work_hash.clone(), (header, difficulty));
             }
 
             (job, height, difficulty)
         };
 
         // set miner key and random extra nonce
-        job.miner = Some(Cow::Owned(key));
-        OsRng.fill_bytes(&mut job.extra_nonce);
+        job.set_miner(Cow::Owned(key));
+        OsRng.fill_bytes(job.get_extra_nonce());
 
         debug!("Sending job to new miner");
         addr.send(Response::NewJob(GetBlockTemplateResult { template: job.to_hex(), height, difficulty })).await.context("error while sending block template")??;
@@ -227,7 +279,7 @@ impl<S: Storage> GetWorkServer<S> {
     pub async fn add_miner(self: &Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, key: PublicKey, worker: String) {
         {
             let mut miners = self.miners.lock().await;
-            let miner = Miner::new(key.clone(), worker);
+            let miner = Miner::new(self.blockchain.get_network().is_mainnet(), key.clone(), worker);
             debug!("Adding new miner to GetWork server: {}", miner);
             miners.insert(addr.clone(), miner);
         }
@@ -254,23 +306,24 @@ impl<S: Storage> GetWorkServer<S> {
     // its used to check that the job come from our server
     // when it's found, we merge the miner job inside the block header
     async fn accept_miner_job(&self, job: BlockMiner<'_>) -> Result<Response, InternalRpcError> {
-        if job.miner.is_none() {
+        if job.get_miner().is_none() {
             return Err(InternalRpcError::InvalidRequest);
         }
 
         let mut miner_header;
         {
             let mining_jobs = self.mining_jobs.lock().await;
-            if let Some((header, _)) = mining_jobs.peek(&job.header_work_hash) {
+            if let Some((header, _)) = mining_jobs.peek(job.get_header_work_hash()) {
                 // job is found in cache, clone it and put miner data inside
                 miner_header = header.clone();
-                miner_header.nonce = job.nonce;
-                miner_header.extra_nonce = job.extra_nonce;
-                miner_header.set_miner(job.miner.ok_or(InternalRpcError::InvalidRequest)?.into_owned());
-                miner_header.timestamp = job.timestamp;
+                let (_, timestamp, nonce, miner, extra_nonce) = job.take();
+                miner_header.nonce = nonce;
+                miner_header.extra_nonce = extra_nonce;
+                miner_header.set_miner(miner.ok_or(InternalRpcError::InvalidRequest)?.into_owned());
+                miner_header.timestamp = timestamp;
             } else {
                 // really old job, or miner send invalid job
-                debug!("Job {} was not found in cache", job.header_work_hash);
+                debug!("Job {} was not found in cache", job.get_header_work_hash());
                 return Err(InternalRpcError::InvalidRequest)
             };
         }
@@ -280,7 +333,7 @@ impl<S: Storage> GetWorkServer<S> {
             Ok(_) => Response::BlockAccepted,
             Err(e) => {
                 debug!("Error while accepting miner block: {}", e);
-                Response::BlockRejected
+                Response::BlockRejected(e.to_string())
             }
         })
     }
@@ -294,7 +347,7 @@ impl<S: Storage> GetWorkServer<S> {
             Ok(response) => response,
             Err(e) => {
                 debug!("Error while accepting miner job: {}", e);
-                Response::BlockRejected
+                Response::BlockRejected(e.to_string())
             }
         };
 
@@ -307,7 +360,7 @@ impl<S: Storage> GetWorkServer<S> {
                         debug!("Miner {} found a block!", miner);
                         miner.blocks_accepted += 1;
                     },
-                    Response::BlockRejected => {
+                    Response::BlockRejected(_) => {
                         debug!("Miner {} sent an invalid block", miner);
                         miner.blocks_rejected += 1;
                     },
@@ -317,7 +370,10 @@ impl<S: Storage> GetWorkServer<S> {
         }
 
         tokio::spawn(async move {
-            let resend_job = response == Response::BlockRejected;
+            let resend_job = match response {
+                Response::BlockRejected(_) => true,
+                _ => false
+            };
             debug!("Sending response to the miner");
             if let Err(e) = addr.send(response).await {
                 error!("Error while sending block rejected response: {}", e);
@@ -351,12 +407,12 @@ impl<S: Storage> GetWorkServer<S> {
     pub async fn notify_new_job_rate_limited(&self) -> Result<(), InternalRpcError> {
         {
             let now = get_current_time_in_millis();
-            let mut last_notify = self.last_notify.lock().await;
-            if now - *last_notify < self.notify_rate_limit_ms {
+            let last_notify = self.last_notify.load(Ordering::SeqCst);
+            if now - last_notify < self.notify_rate_limit_ms {
                 debug!("Rate limit reached, not notifying miners");
                 return Ok(());
             }
-            *last_notify = now;
+            self.last_notify.store(now, Ordering::SeqCst);
         }
 
         self.notify_new_job().await
@@ -373,13 +429,13 @@ impl<S: Storage> GetWorkServer<S> {
                 debug!("No miners connected, no need to notify them");
                 return Ok(());
             }
-        }    
+        }
     
         debug!("Notify all miners for a new job");
         let (header, difficulty) = {
             let storage = self.blockchain.get_storage().read().await;
             let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await.context("Error while retrieving block template when notifying new job")?;
-            let difficulty = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips when notifying new job")?;
+            let (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips when notifying new job")?;
             (header, difficulty)
         };
 
@@ -388,10 +444,11 @@ impl<S: Storage> GetWorkServer<S> {
 
         // save the header used for job in cache
         {
+            let header_work_hash = job.get_header_work_hash();
             let mut last_header_hash = self.last_header_hash.lock().await;
-            *last_header_hash = Some(job.header_work_hash.clone());
+            *last_header_hash = Some(header_work_hash.clone());
             let mut mining_jobs = self.mining_jobs.lock().await;
-            mining_jobs.put(job.header_work_hash.clone(), (header, difficulty));
+            mining_jobs.put(header_work_hash.clone(), (header, difficulty));
         }
 
         // now let's send the job to every miner
@@ -402,8 +459,8 @@ impl<S: Storage> GetWorkServer<S> {
             debug!("Notifying {} for new job", miner);
             let addr = addr.clone();
 
-            job.miner = Some(Cow::Borrowed(miner.get_public_key()));
-            OsRng.fill_bytes(&mut job.extra_nonce);
+            job.set_miner(Cow::Borrowed(miner.get_public_key()));
+            OsRng.fill_bytes(job.get_extra_nonce());
             let template = job.to_hex();
 
             // New task for each miner in case a miner is slow

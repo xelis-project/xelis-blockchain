@@ -33,4 +33,8 @@ impl Serializer for PacketPeerDisconnected {
     fn write(&self, writer: &mut Writer) {
         self.addr.write(writer);
     }
+
+    fn size(&self) -> usize {
+        self.addr.size()
+    }
 }

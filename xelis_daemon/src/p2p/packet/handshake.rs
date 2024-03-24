@@ -1,45 +1,69 @@
 use log::debug;
 use xelis_common::{
-    serializer::{Serializer, Writer, ReaderError, Reader},
-    crypto::hash::Hash,
+    crypto::Hash,
+    difficulty::CumulativeDifficulty,
     network::Network,
-    difficulty::Difficulty
+    serializer::{Reader, ReaderError, Serializer, Writer},
+    time::TimestampSeconds
 };
-
-use crate::p2p::peer_list::SharedPeerList;
-use crate::p2p::connection::Connection;
-use crate::p2p::peer::Peer;
-use std::collections::HashSet;
-use std::fmt::{Display, Error, Formatter};
+use crate::p2p::{
+    peer_list::SharedPeerList,
+    peer::Peer,
+    connection::Connection
+};
+use std::{
+    borrow::Cow,
+    collections::HashSet,
+    fmt::{Display, Error, Formatter}
+};
 
 // this Handshake is the first data sent when connecting to the server
 // If handshake is valid, server reply with his own handshake
 // We just have to repeat this request to all peers until we reach max connection
 // Network ID, Block Height & block top hash is to verify that we are on the same network & chain.
 #[derive(Clone, Debug)]
-pub struct Handshake {
-    version: String, // daemon version
+pub struct Handshake<'a> {
+    // daemon version
+    version: Cow<'a, String>,
+    // Network type on which it relies
+    // Mainnet, testnet...
     network: Network,
-    node_tag: Option<String>, // node tag
-    network_id: [u8; 16],
-    peer_id: u64, // unique peer id randomly generated
-    local_port: u16, // local P2p Server port
-    utc_time: u64, // current time in seconds
-    topoheight: u64, // current topo height
-    height: u64, // current block height
-    pruned_topoheight: Option<u64>, // until when the node is pruned (if it is)
-    top_hash: Hash, // current block top hash
-    genesis_hash: Hash, // genesis hash
-    cumulative_difficulty: Difficulty,
+    // node tag set
+    node_tag: Cow<'a, Option<String>>,
+    // Which network id it relies on
+    network_id: Cow<'a, [u8; 16]>,
+    // unique peer id randomly generated
+    peer_id: u64,
+    // local P2p Server port
+    local_port: u16,
+    // current time in seconds
+    utc_time: TimestampSeconds,
+    // current topo height
+    topoheight: u64,
+    // current block height
+    height: u64,
+    // until which topoheight the node is pruned
+    pruned_topoheight: Option<u64>,
+    // current top block hash
+    top_hash: Cow<'a, Hash>,
+    // genesis hash
+    genesis_hash: Cow<'a, Hash>,
+    // cumulative difficulty of its chain at top
+    cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
+    // By default it's true, and peer allow to be shared to others and/or through API
+    // If false, we must not share it
+    can_be_shared: bool
 } // Server reply with his own list of peers, but we remove all already known by requester for the response.
 
-impl Handshake {
+impl<'a> Handshake<'a> {
     pub const MAX_LEN: usize = 16;
 
-    pub fn new(version: String, network: Network, node_tag: Option<String>, network_id: [u8; 16], peer_id: u64, local_port: u16, utc_time: u64, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, top_hash: Hash, genesis_hash: Hash, cumulative_difficulty: Difficulty) -> Self {
-        debug_assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN); // version cannot be greater than 16 chars
-        if let Some(node_tag) = &node_tag {
-            debug_assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN); // node tag cannot be greater than 16 chars
+    pub fn new(version: Cow<'a, String>, network: Network, node_tag: Cow<'a, Option<String>>, network_id: Cow<'a, [u8; 16]>, peer_id: u64, local_port: u16, utc_time: TimestampSeconds, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, top_hash: Cow<'a, Hash>, genesis_hash: Cow<'a, Hash>, cumulative_difficulty: Cow<'a, CumulativeDifficulty>, can_be_shared: bool) -> Self {
+        debug_assert!(version.len() > 0 && version.len() <= Handshake::MAX_LEN);
+        // version cannot be greater than 16 chars
+        if let Some(node_tag) = node_tag.as_ref() {
+            // node tag cannot be greater than 16 chars
+            debug_assert!(node_tag.len() > 0 && node_tag.len() <= Handshake::MAX_LEN);
         }
 
         Self {
@@ -55,13 +79,15 @@ impl Handshake {
             pruned_topoheight,
             top_hash,
             genesis_hash,
-            cumulative_difficulty
+            cumulative_difficulty,
+            can_be_shared
         }
     }
 
-    pub fn create_peer(self, connection: Connection, out: bool, priority: bool, peer_list: SharedPeerList) -> Peer {
+    // Create a new peer using its connection and this handshake packet
+    pub fn create_peer(self, connection: Connection, priority: bool, peer_list: SharedPeerList) -> Peer {
         let peers = HashSet::new();
-        Peer::new(connection, self.get_peer_id(), self.node_tag, self.local_port, self.version, self.top_hash, self.topoheight, self.height, self.pruned_topoheight, out, priority, self.cumulative_difficulty, peer_list, peers)
+        Peer::new(connection, self.get_peer_id(), self.node_tag.into_owned(), self.local_port, self.version.into_owned(), self.top_hash.into_owned(), self.topoheight, self.height, self.pruned_topoheight, priority, self.cumulative_difficulty.into_owned(), peer_list, peers, self.can_be_shared)
     }
 
     pub fn get_version(&self) -> &String {
@@ -84,7 +110,7 @@ impl Handshake {
         self.peer_id
     }
 
-    pub fn get_utc_time(&self) -> u64 {
+    pub fn get_utc_time(&self) -> TimestampSeconds {
         self.utc_time
     }
 
@@ -109,8 +135,8 @@ impl Handshake {
     }
 }
 
-impl Serializer for Handshake {
-    // 1 + MAX(16) + 1 + MAX(16) + 16 + 8 + 8 + 8 + 32 + 1 + 24 * 16
+impl Serializer for Handshake<'_> {
+    // 1 + MAX(16) + 1 + MAX(16) + 16 + 8 + 8 + 8 + 32 + 1 + 24 * 16 + 1
     fn write(&self, writer: &mut Writer) {
         // daemon version
         writer.write_string(&self.version);
@@ -121,7 +147,7 @@ impl Serializer for Handshake {
         // node tag
         writer.write_optional_string(&self.node_tag);
 
-        writer.write_bytes(&self.network_id); // network ID
+        writer.write_bytes(self.network_id.as_ref()); // network ID
         writer.write_u64(&self.peer_id); // transform peer ID to bytes
         writer.write_u16(self.local_port); // local port
         writer.write_u64(&self.utc_time); // UTC Time
@@ -131,6 +157,7 @@ impl Serializer for Handshake {
         writer.write_hash(&self.top_hash); // Block Top Hash (32 bytes)
         writer.write_hash(&self.genesis_hash); // Genesis Hash
         self.cumulative_difficulty.write(writer); // Cumulative Difficulty
+        writer.write_bool(self.can_be_shared); // Can be shared
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -170,15 +197,47 @@ impl Serializer for Handshake {
         }
         let top_hash = reader.read_hash()?;
         let genesis_hash = reader.read_hash()?;
-        let cumulative_difficulty = Difficulty::read(reader)?;
+        let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
+        let can_be_shared = reader.read_bool()?;
 
-        Ok(Handshake::new(version, network, node_tag, network_id, peer_id, local_port, utc_time, topoheight, height, pruned_topoheight, top_hash, genesis_hash, cumulative_difficulty))
+        Ok(Handshake::new(Cow::Owned(version), network, Cow::Owned(node_tag), Cow::Owned(network_id), peer_id, local_port, utc_time, topoheight, height, pruned_topoheight, Cow::Owned(top_hash), Cow::Owned(genesis_hash), Cow::Owned(cumulative_difficulty), can_be_shared))
+    }
+
+    fn size(&self) -> usize {
+        // daemon version
+        self.version.size() +
+        // network
+        self.network.size() +
+        // node tag
+        self.node_tag.size() +
+        // network ID
+        self.network_id.size() +
+        // peer ID
+        self.peer_id.size() +
+        // local port
+        self.local_port.size() +
+        // UTC Time
+        self.utc_time.size() +
+        // Topo height
+        self.topoheight.size() +
+        // Block Height
+        self.height.size() +
+        // Pruned Topo Height
+        self.pruned_topoheight.size() +
+        // Block Top Hash
+        self.top_hash.size() +
+        // Genesis Hash
+        self.genesis_hash.size() +
+        // Cumulative Difficulty
+        self.cumulative_difficulty.size() +
+        // Can be shared
+        self.can_be_shared.size()
     }
 }
 
 const NO_NODE_TAG: &str = "None";
 
-impl Display for Handshake {
+impl Display for Handshake<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         let node_tag: &dyn Display = if let Some(tag) = self.get_node_tag() {
             tag

@@ -6,7 +6,7 @@ use std::{
 };
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
-use sha3::{Keccak256, Digest};
+use blake3::hash as blake3_hash;
 
 pub const HASH_SIZE: usize = 32; // 32 bytes / 256 bits
 
@@ -47,6 +47,10 @@ impl Serializer for Hash {
 
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(self);
+    }
+
+    fn size(&self) -> usize {
+        HASH_SIZE
     }
 }
 
@@ -100,7 +104,7 @@ pub trait Hashable: Serializer {
 
 #[inline(always)]
 pub fn hash(value: &[u8]) -> Hash {
-    let result: [u8; HASH_SIZE] = Keccak256::digest(value)[..].try_into().unwrap();
+    let result: [u8; HASH_SIZE] = blake3_hash(value).into();
     Hash(result)
 }
 

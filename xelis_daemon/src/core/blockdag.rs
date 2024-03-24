@@ -1,14 +1,23 @@
 use indexmap::IndexSet;
-use xelis_common::difficulty::Difficulty;
-use xelis_common::crypto::hash::Hash;
-use super::storage::Storage;
-use super::{error::BlockchainError, storage::DifficultyProvider};
+use log::trace;
+use xelis_common::{
+    difficulty::CumulativeDifficulty,
+    crypto::Hash,
+};
+use super::{    
+    storage::{
+        Storage,
+        DifficultyProvider
+    },
+    error::BlockchainError,
+};
 
 // sort the scores by cumulative difficulty and, if equals, by hash value
-pub fn sort_descending_by_cumulative_difficulty<T>(scores: &mut Vec<(T, Difficulty)>)
+pub fn sort_descending_by_cumulative_difficulty<T>(scores: &mut Vec<(T, CumulativeDifficulty)>)
 where
     T: AsRef<Hash>,
 {
+    trace!("sort descending by cumulative difficulty");
     scores.sort_by(|(a_hash, a), (b_hash, b)| {
         if a != b {
             b.cmp(a)
@@ -22,17 +31,21 @@ where
     }
 }
 
+// Sort the TIPS by cumulative difficulty
+// If the cumulative difficulty is the same, the hash value is used to sort
+// Hashes are sorted in descending order
 pub async fn sort_tips<S, I>(storage: &S, tips: I) -> Result<IndexSet<Hash>, BlockchainError>
 where
     S: Storage,
     I: Iterator<Item = Hash> + ExactSizeIterator,
 {
+    trace!("sort tips");
     let tips_len = tips.len();
     match tips_len {
         0 => Err(BlockchainError::ExpectedTips),
         1 => Ok(tips.into_iter().collect()),
         _ => {
-            let mut scores: Vec<(Hash, Difficulty)> = Vec::with_capacity(tips_len);
+            let mut scores: Vec<(Hash, CumulativeDifficulty)> = Vec::with_capacity(tips_len);
             for hash in tips {
                 let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
                 scores.push((hash, cumulative_difficulty));
@@ -50,6 +63,7 @@ where
     D: DifficultyProvider,
     I: Iterator<Item = &'a Hash> + ExactSizeIterator
 {
+    trace!("calculate height at tips");
     let mut height = 0;
     let tips_len = tips.len();
     for hash in tips {
@@ -71,20 +85,51 @@ where
     D: DifficultyProvider,
     I: Iterator<Item = &'a Hash> + ExactSizeIterator
 {
+    trace!("find best tip by cumulative difficulty");
     let tips_len = tips.len();
     match tips_len {
         0 => Err(BlockchainError::ExpectedTips),
         1 => Ok(tips.into_iter().next().unwrap()),
         _ => {
-            let mut scores = Vec::with_capacity(tips_len);
+            let mut highest_cumulative_difficulty = CumulativeDifficulty::zero();
+            let mut selected_tip = None;
             for hash in tips {
                 let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash).await?;
-                scores.push((hash, cumulative_difficulty));
+                if highest_cumulative_difficulty < cumulative_difficulty {
+                    highest_cumulative_difficulty = cumulative_difficulty;
+                    selected_tip = Some(hash);
+                }
             }
 
-            sort_descending_by_cumulative_difficulty(&mut scores);
-            let (best_tip, _) = scores[0];
-            Ok(best_tip)
+            selected_tip.ok_or(BlockchainError::ExpectedTips)
+        }
+    }
+}
+
+// Find the newest tip based on the timestamp of the blocks
+pub async fn find_newest_tip_by_timestamp<'a, D, I>(provider: &D, tips: I) -> Result<&'a Hash, BlockchainError>
+where
+    D: DifficultyProvider,
+    I: Iterator<Item = &'a Hash> + ExactSizeIterator
+{
+    trace!("find newest tip by timestamp");
+    let tips_len = tips.len();
+    match tips_len {
+        0 => Err(BlockchainError::ExpectedTips),
+        1 => Ok(tips.into_iter().next().unwrap()),
+        _ => {
+            let mut timestamp = 0;
+            let mut newest_tip = None;
+            for hash in tips.into_iter() {
+                let tip_timestamp = provider.get_timestamp_for_block_hash(hash).await?;
+                if timestamp < tip_timestamp {
+                    timestamp = tip_timestamp;
+                    newest_tip = Some(hash);
+                
+                }
+            }
+
+            newest_tip.ok_or(BlockchainError::ExpectedTips)
         }
     }
 }

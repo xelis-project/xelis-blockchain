@@ -1,8 +1,19 @@
-use std::{collections::{VecDeque, BinaryHeap, HashMap, hash_map::Entry}, sync::Arc, cmp::Ordering};
-
+use std::{
+    collections::{
+        VecDeque,
+        BinaryHeap,
+        HashMap,
+        hash_map::Entry
+    },
+    sync::Arc,
+    cmp::Ordering
+};
 use xelis_common::{
     transaction::Transaction,
-    crypto::{hash::Hash, key::PublicKey}
+    crypto::{
+        Hash,
+        PublicKey
+    }
 };
 
 // this struct is used to store transaction with its hash and its size in bytes
@@ -81,7 +92,7 @@ impl<'a> TxSelector<'a> {
                 size
             };
 
-            match groups.entry(tx.get_owner()) {
+            match groups.entry(tx.get_source()) {
                 Entry::Occupied(mut e) => {
                     e.get_mut().push(entry);
                 },

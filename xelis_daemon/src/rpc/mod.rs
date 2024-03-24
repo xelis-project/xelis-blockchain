@@ -1,28 +1,66 @@
 pub mod rpc;
 pub mod getwork_server;
 
-use crate::core::storage::Storage;
-use crate::core::{error::BlockchainError, blockchain::Blockchain};
-use crate::rpc::getwork_server::GetWorkServer;
-use actix_web::dev::ServerHandle;
-use actix_web::{
-    get, HttpServer, App, HttpResponse, Responder, HttpRequest, web::{
-        self, Path, Data, Payload
+use crate::{
+    core::{
+        storage::Storage,
+        error::BlockchainError,
+        blockchain::Blockchain
     },
+    rpc::getwork_server::GetWorkServer,
+};
+use actix_web::{
+    get,
+    HttpServer,
+    App,
+    HttpResponse,
+    Responder,
+    HttpRequest,
+    web::{
+        self,
+        Path,
+        Data,
+        Payload
+    },
+    dev::ServerHandle,
     error::Error
 };
 use actix_web_actors::ws::WsResponseBuilder;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use xelis_common::api::daemon::NotifyEvent;
-use xelis_common::config;
-use xelis_common::crypto::address::Address;
-use xelis_common::rpc_server::websocket::{EventWebSocketHandler, WebSocketServerShared, WebSocketServer};
-use xelis_common::rpc_server::{InternalRpcError, RPCHandler, RPCServerHandler, json_rpc, websocket, WebSocketServerHandler};
-use std::collections::HashSet;
-use std::sync::Arc;
-use log::{trace, info, error, debug, warn};
-use self::getwork_server::{GetWorkWebSocketHandler, SharedGetWorkServer};
+use xelis_common::{
+    api::daemon::NotifyEvent,
+    config,
+    crypto::Address,
+    rpc_server::{
+        websocket::{
+            EventWebSocketHandler,
+            WebSocketServerShared,
+            WebSocketServer
+        },
+        InternalRpcError,
+        RPCHandler,
+        RPCServerHandler,
+        json_rpc,
+        websocket,
+        WebSocketServerHandler,
+    },
+};
+use std::{
+    collections::HashSet,
+    sync::Arc,
+};
+use log::{
+    trace,
+    debug,
+    info,
+    warn,
+    error,
+};
+use self::getwork_server::{
+    GetWorkWebSocketHandler,
+    SharedGetWorkServer
+};
 
 pub type SharedDaemonRpcServer<S> = Arc<DaemonRpcServer<S>>;
 

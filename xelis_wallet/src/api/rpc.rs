@@ -1,28 +1,49 @@
 use std::{sync::Arc, borrow::Cow};
-
 use anyhow::Context as AnyContext;
-use log::info;
 use xelis_common::{
-    rpc_server::{
-        RPCHandler, InternalRpcError, parse_params, websocket::WebSocketSessionShared
-    },
-    config::{VERSION, XELIS_ASSET},
-    async_handler,
     api::{
         wallet::{
-            BuildTransactionParams, FeeBuilder, TransactionResponse, ListTransactionsParams, GetAddressParams,
-            GetBalanceParams, GetTransactionParams, SplitAddressParams, SplitAddressResult, GetValueFromKeyParams,
-            StoreParams, GetMatchingKeysParams, GetAssetPrecisionParams, RescanParams, QueryDBParams, HasKeyParams, DeleteParams, EstimateFeesParams
+            BuildTransactionParams,
+            DeleteParams,
+            EstimateFeesParams,
+            GetAddressParams,
+            GetAssetPrecisionParams,
+            GetBalanceParams,
+            GetMatchingKeysParams,
+            GetTransactionParams,
+            GetValueFromKeyParams,
+            HasKeyParams,
+            ListTransactionsParams,
+            QueryDBParams,
+            RescanParams,
+            SplitAddressParams,
+            SplitAddressResult,
+            StoreParams,
+            TransactionResponse
         },
-        DataHash, DataElement
+        DataElement,
+        DataHash
     },
-    crypto::hash::Hashable,
-    serializer::Serializer, context::Context
+    async_handler,
+    config::{VERSION, XELIS_ASSET},
+    context::Context,
+    crypto::Hashable,
+    rpc_server::{
+        parse_params,
+        websocket::WebSocketSessionShared,
+        InternalRpcError,
+        RPCHandler
+    },
+    serializer::Serializer,
+    transaction::builder::FeeBuilder
 };
 use serde_json::{Value, json};
-use crate::{wallet::{Wallet, WalletError}, entry::TransactionEntry};
-
+use crate::wallet::{
+    Wallet,
+    WalletError
+};
 use super::xswd::XSWDWebSocketHandler;
+use log::info;
 
 // Register all RPC methods
 pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
@@ -35,6 +56,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("split_address", async_handler!(split_address));
     handler.register_method("rescan", async_handler!(rescan));
     handler.register_method("get_balance", async_handler!(get_balance));
+    handler.register_method("has_balance", async_handler!(has_balance));
     handler.register_method("get_tracked_assets", async_handler!(get_tracked_assets));
     handler.register_method("get_asset_precision", async_handler!(get_asset_precision));
     handler.register_method("get_transaction", async_handler!(get_transaction));
@@ -136,14 +158,28 @@ async fn rescan(context: Context, body: Value) -> Result<Value, InternalRpcError
 }
 
 // Retrieve the balance of the wallet for a specific asset
+// By default, it will returns 0 if no balance is found on disk
 async fn get_balance(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBalanceParams = parse_params(body)?;
     let asset = params.asset.unwrap_or(XELIS_ASSET);
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
 
-    let balance = storage.get_balance_for(&asset)?;
+    // If the asset is not found, it will returns 0
+    // Use has_balance below to check if the wallet has a balance for a specific asset
+    let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
     Ok(json!(balance))
+}
+
+// Check if the wallet has a balance for a specific asset
+async fn has_balance(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetBalanceParams = parse_params(body)?;
+    let asset = params.asset.unwrap_or(XELIS_ASSET);
+    let wallet: &Arc<Wallet> = context.get()?;
+    let storage = wallet.get_storage().read().await;
+
+    let exist = storage.has_balance_for(&asset).await.context("Error while checking if balance exists")?;
+    Ok(json!(exist))
 }
 
 // Retrieve all tracked assets by wallet
@@ -177,8 +213,7 @@ async fn get_transaction(context: Context, body: Value) -> Result<Value, Interna
     let storage = wallet.get_storage().read().await;
     let transaction = storage.get_transaction(&params.hash)?;
 
-    let data: DataHash<'_, TransactionEntry> = DataHash { hash: Cow::Owned(params.hash), data: Cow::Owned(transaction) };
-    Ok(json!(data))
+    Ok(json!(transaction.serializable(wallet.get_network().is_mainnet())))
 }
 
 // Build a transaction and broadcast it if requested
@@ -195,10 +230,8 @@ async fn build_transaction(context: Context, body: Value) -> Result<Value, Inter
     }
 
     // create the TX
-    let tx = {
-        let storage = wallet.get_storage().read().await;
-        wallet.create_transaction(&storage, params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64))).context("Error while creating transaction")?
-    };
+    let tx = wallet.create_transaction(params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64))).await
+        .context("Error while creating transaction")?;
 
     // if requested, broadcast the TX ourself
     if params.broadcast {
@@ -240,7 +273,13 @@ async fn list_transactions(context: Context, body: Value) -> Result<Value, Inter
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
     let opt_key = params.address.map(|addr| addr.to_public_key());
-    let txs = storage.get_filtered_transactions(opt_key.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?;
+    
+    let mainnet = wallet.get_network().is_mainnet();
+    let txs = storage.get_filtered_transactions(opt_key.as_ref(), params.min_topoheight, params.max_topoheight, params.accept_incoming, params.accept_outgoing, params.accept_coinbase, params.accept_burn, params.query.as_ref())?
+        .into_iter()
+        .map(|tx| tx.serializable(mainnet))
+        .collect::<Vec<_>>();
+
     Ok(json!(txs))
 }
 

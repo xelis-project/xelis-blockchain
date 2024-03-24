@@ -1,23 +1,24 @@
 use std::{
     fmt::{Display, Formatter},
+    mem,
     str::FromStr
 };
 use crate::{
-    api::{DataElement, DataType, DataValue},
+    api::{DataElement, ValueType, DataValue},
     serializer::{Serializer, Writer, Reader, ReaderError},
     config::{PREFIX_ADDRESS, TESTNET_PREFIX_ADDRESS},
     transaction::EXTRA_DATA_LIMIT_SIZE
 };
 use super::{
     bech32::{Bech32Error, encode, convert_bits, decode},
-    key::PublicKey
+    PublicKey
 };
 use core::fmt;
 use log::debug;
 use serde::de::Error as SerdeError;
 use anyhow::Error;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum AddressType {
     Normal,
     // Data variant allow to integrate data in address for easier communication / data transfered
@@ -25,7 +26,7 @@ pub enum AddressType {
     Data(DataElement)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Address {
     mainnet: bool,
     addr_type: AddressType,
@@ -41,20 +42,35 @@ impl Address {
         }
     }
 
+    // Get the public key from the address
     pub fn get_public_key(&self) -> &PublicKey {
         &self.key
     }
 
+    // Take the public key from the address
     pub fn to_public_key(self) -> PublicKey {
         self.key
     }
 
+    // Get the address type
     pub fn get_type(&self) -> &AddressType {
         &self.addr_type
     }
 
+    // Split the address into its components
     pub fn split(self) -> (PublicKey, AddressType) {
         (self.key, self.addr_type)
+    }
+
+    // Change internally the address type to extract the data
+    pub fn extract_data_only(&mut self) -> Option<DataElement> {
+        let mut addr_type = AddressType::Normal;
+        mem::swap(&mut addr_type, &mut self.addr_type);
+
+        match addr_type {
+            AddressType::Data(data) => Some(data),
+            AddressType::Normal => None
+        }
     }
 
     // Recreate a new address struct without the integrated data
@@ -67,6 +83,7 @@ impl Address {
         }
     }
 
+    // Check if the address is a normal address (no data integrated)
     pub fn is_normal(&self) -> bool {
         match self.addr_type {
             AddressType::Normal => true,
@@ -74,19 +91,41 @@ impl Address {
         }
     }
 
+    // Check if the address is a mainnet address
     pub fn is_mainnet(&self) -> bool {
         self.mainnet
     }
 
-    pub fn get_data(&self, name: String, data_type: DataType) -> Option<&DataValue> {
+    // Compress the address to a byte array
+    // We don't use Serializer trait to avoid storing mainnet bool
+    fn compress(&self) -> Vec<u8> {
+        let mut writer = Writer::new();
+        self.key.write(&mut writer);
+        self.addr_type.write(&mut writer);
+        writer.bytes()
+    }
+
+    // Read the address from a byte array
+    // Hrp validity isn't checked here, it should be done before calling this function
+    fn decompress(bytes: &[u8], hrp: &str) -> Result<Self, ReaderError> {
+        let mut reader = Reader::new(bytes);
+        let mainnet = hrp == PREFIX_ADDRESS;
+        let key = PublicKey::read(&mut reader)?;
+        let addr_type = AddressType::read(&mut reader)?;
+        Ok(Self::new(mainnet, addr_type, key))
+    }
+
+    // Search for a data value in the address
+    pub fn get_data(&self, name: String, value_type: ValueType) -> Option<&DataValue> {
         match &self.addr_type {
             AddressType::Normal => None,
-            AddressType::Data(data) => data.get_value_by_string_key(name, data_type)
+            AddressType::Data(data) => data.get_value_by_string_key(name, value_type)
         }
     }
 
+    // Returns the address as a string (human readable format)
     pub fn as_string(&self) -> Result<String, Bech32Error> {
-        let bits = convert_bits(&self.to_bytes(), 8, 5, true)?;
+        let bits = convert_bits(&self.compress(), 8, 5, true)?;
         let hrp = if self.is_mainnet() {
             PREFIX_ADDRESS
         } else {
@@ -97,6 +136,7 @@ impl Address {
         Ok(result)
     }
 
+    // Parse an address from a string (human readable format)
     pub fn from_string(address: &String) -> Result<Self, Error> {
         let (hrp, decoded) = decode(address)?;
         // check that hrp is valid one
@@ -105,8 +145,7 @@ impl Address {
         }
 
         let bits = convert_bits(&decoded, 5, 8, false)?;
-        let mut reader = Reader::new(&bits);
-        let addr = Address::read(&mut reader)?;
+        let addr = Address::decompress(&bits, hrp.as_str())?;
 
         // now check that the hrp decoded is the one for the network state
         if (addr.is_mainnet() && hrp != PREFIX_ADDRESS) || (!addr.is_mainnet() && hrp != TESTNET_PREFIX_ADDRESS) {
@@ -171,25 +210,12 @@ impl Serializer for AddressType {
         };
         Ok(_type)
     }
-}
 
-impl<'a> Serializer for Address {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_bool(self.mainnet);
-        self.addr_type.write(writer);
-        self.key.write(writer);
-    }
-
-    fn read(reader: &mut Reader) -> Result<Address, ReaderError> {
-        let mainnet = reader.read_bool()?;
-        let addr_type = AddressType::read(reader)?;
-        let key = PublicKey::read(reader)?;
-
-        Ok(Address {
-            mainnet,
-            addr_type,
-            key
-        })
+    fn size(&self) -> usize {
+        match self {
+            AddressType::Normal => 1,
+            AddressType::Data(data) => 1 + data.size()
+        }
     }
 }
 
@@ -206,7 +232,7 @@ impl<'a> serde::Deserialize<'a> for Address {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where D: serde::Deserializer<'a> {
         let hex = String::deserialize(deserializer)?;
-        Address::from_string(&hex).map_err(|e| SerdeError::custom(e))
+        Address::from_string(&hex).map_err(SerdeError::custom)
     }
 }
 

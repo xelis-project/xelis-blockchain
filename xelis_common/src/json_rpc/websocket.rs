@@ -224,8 +224,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
     // This will stop the task keeping the connection with the node
     pub async fn disconnect(&self) -> Result<(), Error> {
         self.set_auto_reconnect(None).await;
-
-        self.online.store(false, Ordering::SeqCst);
+        self.set_online(false);
         {
             let mut ws = self.ws.lock().await;
             ws.close().await?;
@@ -243,6 +242,11 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
         self.clear_requests().await;
 
         Ok(())
+    }
+
+    // Set the online status
+    fn set_online(&self, online: bool) {
+        self.online.store(online, Ordering::SeqCst);
     }
 
     // Reconnect by starting again the background task
@@ -273,6 +277,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
             });
             *task = Some(handle);
         }
+        self.set_online(true);
 
         Ok(true)
     }
@@ -281,7 +286,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
     async fn try_reconnect(self: &Arc<Self>) -> Option<SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>> {
         trace!("try reconnect");
         // We are not online anymore
-        self.online.store(false, Ordering::SeqCst);
+        self.set_online(false);
 
         // Notify that we are offline
         self.notify_connection_channel(&self.offline_channel).await;
@@ -327,7 +332,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
             }
 
             // We are online again
-            self.online.store(true, Ordering::SeqCst);
+            self.set_online(true);
 
             // Notify that we are online again
             self.notify_connection_channel(&self.online_channel).await;
@@ -365,15 +370,14 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
                 Ok(msg) => msg,
                 Err(e) => {
                     // Try to reconnect to the server
-                    debug!("Error while reading from the WebSocket: {:?}", e);
+                    debug!("Error while reading from the websocket: {:?}", e);
                     self.clear_requests().await;
                     if let Some(new_read) = self.try_reconnect().await {
                         read = new_read;
                     }
                     else {
-                        error!("Error while reading from the WebSocket: {:?}", e);
                         self.clear_events().await;
-                        break;
+                        return Err(JsonRPCError::ConnectionError(e.to_string()));
                     }
                     continue;
                 }

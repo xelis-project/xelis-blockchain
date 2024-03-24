@@ -1,24 +1,48 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashSet};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::broadcast;
 use xelis_common::{
-    json_rpc::{WebSocketJsonRPCClient, WebSocketJsonRPCClientImpl, JsonRPCResult, EventReceiver},
+    json_rpc::{
+        WebSocketJsonRPCClient,
+        WebSocketJsonRPCClientImpl,
+        JsonRPCResult,
+        EventReceiver
+    },
     api::daemon::{
-        GetBalanceResult, GetBalanceAtTopoHeightParams, GetBalanceParams,
-        GetInfoResult, SubmitTransactionParams, BlockResponse,
-        GetBlockAtTopoHeightParams, GetTransactionParams, GetNonceParams,
-        GetNonceResult, GetAssetsParams, IsTxExecutedInBlockParams,
-        NotifyEvent, NewBlockEvent, BlockOrderedEvent, StableHeightChangedEvent, TransactionAddedInMempoolEvent, GetAccountAssetsParams, GetAssetParams
+        GetBalanceResult,
+        GetBalanceAtTopoHeightParams,
+        GetBalanceParams,
+        GetInfoResult,
+        SubmitTransactionParams,
+        BlockResponse,
+        GetBlockAtTopoHeightParams,
+        GetTransactionParams,
+        GetNonceParams,
+        GetNonceResult,
+        GetAssetsParams,
+        IsTxExecutedInBlockParams,
+        NotifyEvent,
+        NewBlockEvent,
+        BlockOrderedEvent,
+        StableHeightChangedEvent,
+        TransactionAddedInMempoolEvent,
+        GetAccountAssetsParams,
+        GetAssetParams
     },
     account::VersionedBalance,
-    crypto::{address::Address, hash::Hash},
+    crypto::{
+        Address,
+        Hash
+    },
     transaction::Transaction,
     serializer::Serializer,
-    block::{BlockHeader, Block},
-    asset::{AssetWithData, AssetData}
+    asset::{
+        AssetWithData,
+        AssetData
+    }
 };
 
 pub struct DaemonAPI {
@@ -99,7 +123,7 @@ impl DaemonAPI {
         Ok(assets)
     }
 
-    pub async fn get_account_assets(&self, address: &Address) -> Result<Vec<Hash>> {
+    pub async fn get_account_assets(&self, address: &Address) -> Result<HashSet<Hash>> {
         let assets = self.client.call_with("get_account_assets", &GetAccountAssetsParams {
             address: Cow::Borrowed(address)
         }).await.context("Error while retrieving account assets")?;
@@ -138,7 +162,7 @@ impl DaemonAPI {
         Ok(balance)
     }
 
-    pub async fn get_block_at_topoheight(&self, topoheight: u64) -> Result<BlockResponse<'_, BlockHeader>> {
+    pub async fn get_block_at_topoheight(&self, topoheight: u64) -> Result<BlockResponse> {
         let block = self.client.call_with("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
             topoheight,
             include_txs: false
@@ -146,7 +170,7 @@ impl DaemonAPI {
         Ok(block)
     }
 
-    pub async fn get_block_with_txs_at_topoheight(&self, topoheight: u64) -> Result<BlockResponse<'_, Block>> {
+    pub async fn get_block_with_txs_at_topoheight(&self, topoheight: u64) -> Result<BlockResponse> {
         let block = self.client.call_with("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
             topoheight,
             include_txs: true
