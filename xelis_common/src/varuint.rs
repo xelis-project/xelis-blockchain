@@ -12,8 +12,7 @@ use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 // In memory, it keeps using U256 (32 bytes)
 // On disk it can be as small as 1 byte and as big as 33 bytes
 // First byte written is the VarUint length (1 to 32)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
-#[serde(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct VarUint(U256);
 
 // Support up to 32 bytes for U256
@@ -231,6 +230,19 @@ impl ShrAssign<u64> for VarUint {
     }
 }
 
+impl Serialize for VarUint {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0.to_string())
+    }
+}
+
+impl <'de> Deserialize<'de> for VarUint {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(VarUint::new(U256::from_dec_str(&s).map_err(serde::de::Error::custom)?))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use primitive_types::U256;
@@ -267,5 +279,14 @@ mod tests {
         assert_eq!(bytes.len() - 1, expected_size); // - 1 for byte len
         let compact2 = VarUint::read(&mut Reader::new(&bytes)).unwrap();
         assert_eq!(compact.as_ref(), compact2.as_ref());
+    }
+
+    #[test]
+    fn test_json_serde() {
+        let compact: VarUint = U256::from(123456).into();
+        let json = serde_json::to_string(&compact).unwrap();
+        let compact2: VarUint = serde_json::from_str(&json).unwrap();
+        assert_eq!(compact.as_ref(), compact2.as_ref());
+        assert!(json.contains("123456"));
     }
 }
