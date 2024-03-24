@@ -14,7 +14,7 @@ use self::handshake::Handshake;
 use self::peer_disconnected::PacketPeerDisconnected;
 use self::ping::Ping;
 use std::borrow::Cow;
-use log::{trace, error};
+use log::{debug, trace};
 use xelis_common::{
     serializer::{Serializer, Reader, ReaderError, Writer},
     block::BlockHeader,
@@ -142,13 +142,13 @@ impl<'a> Serializer for Packet<'a> {
             BOOTSTRAP_CHAIN_RESPONSE_ID => Packet::BootstrapChainResponse(BootstrapChainResponse::read(reader)?),
             PEER_DISCONNECTED_ID => Packet::PeerDisconnected(PacketPeerDisconnected::read(reader)?),
             id => {
-                error!("invalid packet id received: {}", id);
+                debug!("invalid packet id received: {}", id);
                 return Err(ReaderError::InvalidValue)
             }
         };
 
         if reader.total_read() != reader.total_size() {
-            error!("Packet: {:?}", packet);
+            debug!("Packet: {:?}", packet);
         }
 
         Ok(packet)
