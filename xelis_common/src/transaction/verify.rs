@@ -2,7 +2,7 @@ use bulletproofs::RangeProof;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, RistrettoPoint, Scalar};
 use log::{debug, trace};
 use merlin::Transcript;
-use crate::{config::XELIS_ASSET, crypto::{elgamal::{Ciphertext, CompressedPublicKey, DecompressionError, DecryptHandle, PedersenCommitment}, proofs::{BatchCollector, ProofVerificationError, BP_GENS, PC_GENS}, Hash, ProtocolTranscript, SIGNATURE_SIZE}, serializer::Serializer, transaction::{EXTRA_DATA_LIMIT_SIZE, MAX_TRANSFER_COUNT}};
+use crate::{config::XELIS_ASSET, crypto::{elgamal::{Ciphertext, CompressedPublicKey, DecompressionError, DecryptHandle, PedersenCommitment}, proofs::{BatchCollector, ProofVerificationError, BP_GENS, BULLET_PROOF_SIZE, PC_GENS}, Hash, ProtocolTranscript, SIGNATURE_SIZE}, serializer::Serializer, transaction::{EXTRA_DATA_LIMIT_SIZE, MAX_TRANSFER_COUNT}};
 use super::{Reference, Role, Transaction, TransactionType, TransferPayload};
 use thiserror::Error;
 use std::iter;
@@ -458,7 +458,7 @@ impl Transaction {
             &PC_GENS,
             &mut transcript,
             &commitments,
-            64,
+            BULLET_PROOF_SIZE,
         )
         .map_err(ProofVerificationError::from)?;
 

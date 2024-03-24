@@ -30,7 +30,8 @@ use crate::{
             CommitmentEqProof,
             ProofGenerationError,
             BP_GENS,
-            PC_GENS
+            PC_GENS,
+            BULLET_PROOF_SIZE,
         },
         Address,
         Hash,
@@ -237,8 +238,6 @@ impl TransactionBuilder {
         +  assets_used * (RISTRETTO_COMPRESSED_SIZE + HASH_SIZE + (RISTRETTO_COMPRESSED_SIZE * 3 + SCALAR_SIZE * 3))
         // Signature
         + SIGNATURE_SIZE
-        // Range Proof
-        + RISTRETTO_COMPRESSED_SIZE * 4 + SCALAR_SIZE * 3
         ;
 
         let transfers_count = match &self.data {
@@ -267,8 +266,17 @@ impl TransactionBuilder {
             }
         };
 
+        // Range Proof
+        let lg_n = (BULLET_PROOF_SIZE * (transfers_count + assets_used)).next_power_of_two().trailing_zeros() as usize;
+        // Fixed size of the range proof
+        size += RISTRETTO_COMPRESSED_SIZE * 4 + SCALAR_SIZE * 3
+        // u16 bytes length
+        + 2
         // Inner Product Proof
-        size += SCALAR_SIZE * 2 + RISTRETTO_COMPRESSED_SIZE * 2 * (4 * transfers_count + assets_used).next_power_of_two();
+        // scalars
+        + SCALAR_SIZE * 2
+        // G_vec len
+        + 2 * RISTRETTO_COMPRESSED_SIZE * lg_n;
 
         (size, transfers_count)
     }
@@ -557,7 +565,7 @@ impl TransactionBuilder {
             &mut transcript,
             &range_proof_values,
             &range_proof_openings,
-            64,
+            BULLET_PROOF_SIZE,
         )
         .map_err(ProofGenerationError::from)?;
 
@@ -596,5 +604,30 @@ impl Serializer for TransactionSigner {
     // Should never be called
     fn read(_: &mut Reader) -> Result<Self, ReaderError> {
         Err(ReaderError::InvalidValue)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bulletproofs::RangeProof;
+
+    use crate::{crypto::{elgamal::{RISTRETTO_COMPRESSED_SIZE, SCALAR_SIZE}, proofs::BULLET_PROOF_SIZE}, serializer::Serializer};
+
+    #[test]
+    fn estimate_range_proof_size() {
+        let proof_hex = b"cc15f1b1e654ffd25bb89f4069303245d3c477ce93abb380eb4941096c06000006141de8f618c3392c5071bc3b76467bea32bc0d8fbf9257a3c44a59b596825f9a09332365fffdb56060d4fdfba8a513cbab3f607c0812aefec7124914cf796caa1a4263cdc0d3488e3e6b5bd04d524667e2b49bb8f55cf418fd8af8cd23ef667bd574ab23bf8c71b1bf9a5f52a2ca5a9320bf43a6be8bb2cc864a6745e6de07931382c2b90873b690e7da04b6fd9ddd3f22c060aed621da691bd54e0b6e9f0b3283b6fc7bcaa4ba06a7f3151a49ba5082462b8ba76b93b2934b6c99fe9e730572e026e9a85930896d0120d06115e60cb68bc6bd18335288ca01f8591924da7e563ac102237e476357b37ecd834715272c5eb705c5bc3799602d922cfa153665565926daf7df42276e834afe1fa444fabf17e7596f09936bcc27f913053fac3906ce8a10dbe1caf1c1e02428d8f2773fc307ae7c7d2fe63102e605c89efa730a4e217dd6b2481f49803efdc44b25d80236e0c10ecab006136ba423ec75bbf7532286a1d063e16e13903104e8274666169288cb9f65a414a04e3dacb7d368931e647a149554f3c78e326e111e5da221cb4e8152d3525f0b32ff2b814b7352647674f1a36e49f8603e3d3996910f52154b871c72138e288b00b471026638646f201c0c0b358872fa6bc81a2ce1c2f068b4513828eda4def4ae1c2e9c02ef58043412dd31411c5cec7acd9bfdcf5f8ead03f13801bc4bc529726e6b25f85b80db23fc8659a09b8c590a51ec015065d437e77d84b0d3c3d529d1c6301441d2dd335042f64b1ced343c32b25416bd5d43e4ff02d4382cc18f1f5cfc0144decc51ac0d9863f1124589ec6f0fe388b464db7db4d5f16ff101da37a3efed71a4d4514915eccc94dc7832bf4c0b52165ac937e5b0dff2d0a2e7b68802a8759e4bae58815f6e2ec7683006561f27f1855ad8840036c580c81ebadf36ddfdf7470996068c05f186a67cefb751e33b5624d577357372486bae3fd509aea9b6d4c72296afdd05";
+        let proof = RangeProof::from_bytes(&hex::decode(proof_hex).unwrap()).unwrap();
+        let transfers: usize = 1;
+        let assets: usize = 1;
+        // Range proof size has a fixed size 
+        let mut size: usize = RISTRETTO_COMPRESSED_SIZE * 4 + SCALAR_SIZE * 3;
+        // U16
+        size += 2;
+        // inner product scalars
+        size += SCALAR_SIZE * 2;
+        // G_vec len
+        let lg_n = (BULLET_PROOF_SIZE * (transfers + assets)).next_power_of_two().trailing_zeros() as usize;
+        size += 2 * RISTRETTO_COMPRESSED_SIZE * lg_n;
+        assert!(proof.size() == size);
     }
 }
