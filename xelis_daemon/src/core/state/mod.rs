@@ -3,7 +3,7 @@ mod chain_state;
 
 use log::{trace, debug};
 pub use mempool_state::MempoolState;
-pub use chain_state::{ChainState, StorageReference};
+pub use chain_state::{ChainState, ApplicableChainState, StorageReference};
 use xelis_common::{account::VersionedBalance, crypto::{Hash, PublicKey}, transaction::Reference};
 
 use super::{error::BlockchainError, storage::Storage};
