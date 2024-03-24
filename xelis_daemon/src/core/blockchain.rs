@@ -159,7 +159,7 @@ pub struct Config {
     /// and/or shared to others nodes as a potential new peer to connect to.
     /// 
     /// Note that it may prevent to have new incoming peers.
-    #[clap(long, default_value = "true")]
+    #[clap(long, default_value = "false")]
     pub disable_ip_sharing: bool
 }
 
