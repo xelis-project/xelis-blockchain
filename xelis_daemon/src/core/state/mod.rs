@@ -98,7 +98,8 @@ pub (super) async fn search_versioned_balance_for_reference<S: Storage>(storage:
             debug!("Scenario B bis (no output balance)");
             // We must use the final balance of the reference block
             // see Scenario B
-            version = Some(storage.get_balance_at_exact_topoheight(key, asset, reference_block_topo).await?);
+            version = storage.get_balance_at_maximum_topoheight(key, asset, reference_block_topo).await?
+                .map(|(_, v)| v);
         } else {
             debug!("Scenario Luck bis (no output balance)");
             version = storage.get_balance_at_maximum_topoheight(key, asset, reference.topoheight).await?
