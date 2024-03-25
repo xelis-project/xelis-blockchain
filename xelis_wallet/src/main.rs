@@ -122,7 +122,7 @@ pub struct Config {
     logs_path: String,
     /// Use name path for wallet storage
     #[clap(long)]
-    name: Option<String>,
+    wallet_path: Option<String>,
     /// Password used to open wallet
     #[clap(long)]
     password: Option<String>,
@@ -174,22 +174,20 @@ async fn main() -> Result<()> {
 
     command_manager.register_default_commands()?;
 
-    if let Some(name) = config.name {
-        let dir = format!("{}{}", DIR_PATH, name);
-
+    if let Some(path) = config.wallet_path {
         // read password from option or ask him
         let password = if let Some(password) = config.password {
             password
         } else {
-            prompt.read_input(format!("Enter Password for '{}': ", name), true).await?
+            prompt.read_input(format!("Enter Password for '{}': ", path), true).await?
         };
 
-        let wallet = if Path::new(&dir).is_dir() {
-            info!("Opening wallet {}", dir);
-            Wallet::open(dir, password, config.network)?
+        let wallet = if Path::new(&path).is_dir() {
+            info!("Opening wallet {}", path);
+            Wallet::open(path, password, config.network)?
         } else {
-            info!("Creating a new wallet at {}", dir);
-            Wallet::create(dir, password, config.seed, config.network)?
+            info!("Creating a new wallet at {}", path);
+            Wallet::create(path, password, config.seed, config.network)?
         };
 
         apply_config(&wallet, #[cfg(feature = "api_server")] &prompt).await;
