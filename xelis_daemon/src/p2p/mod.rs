@@ -2068,8 +2068,13 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::Assets(assets, page)
             },
             StepRequest::Balances(topoheight, asset, keys) => {
-                let balances = storage.get_balances(&asset, keys.iter(), topoheight).await?;
-                StepResponse::Balances(balances)
+                let balances = storage.get_versioned_balances(&asset, keys.iter(), topoheight).await?;
+                StepResponse::Balances(balances.into_iter().map(|v| {
+                    v.map(|v| {
+                        let (balance, output_balance, balance_type, _) = v.consume();
+                        (balance, output_balance, balance_type)
+                    })
+                }).collect())
             },
             StepRequest::Nonces(topoheight, keys) => {
                 let mut nonces = Vec::with_capacity(keys.len());
@@ -2270,10 +2275,12 @@ impl<S: Storage> P2pServer<S> {
                         let mut storage = self.blockchain.get_storage().write().await;
                         for (key, balance) in keys.iter().zip(balances) {
                             // check that the account have balance for this asset
-                            if let Some(balance) = balance {
+                            if let Some((balance, output_balance, balance_type)) = balance {
                                 debug!("Saving balance {:?} for key {} at topoheight {}", balance, key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
                                 let mut versioned_balance = storage.get_new_versioned_balance(key, &asset, stable_topoheight).await?;
                                 versioned_balance.set_balance(balance);
+                                versioned_balance.set_output_balance(output_balance);
+                                versioned_balance.set_balance_type(balance_type);
                                 versioned_balance.set_previous_topoheight(None);
                                 storage.set_last_balance_to(key, &asset, stable_topoheight, &versioned_balance).await?;
                             }

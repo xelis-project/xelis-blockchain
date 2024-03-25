@@ -5,7 +5,7 @@ use std::{
 use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{
-    account::CiphertextCache,
+    account::{BalanceType, CiphertextCache},
     asset::AssetWithData,
     crypto::{
         Hash, PublicKey
@@ -290,8 +290,9 @@ pub enum StepResponse {
     Assets(IndexSet<AssetWithData>, Option<u64>),
     // Set of keys, pagination
     Keys(IndexSet<PublicKey>, Option<u64>),
-    // Balances requested
-    Balances(Vec<Option<CiphertextCache>>),
+    // Balances requested (optional because not all accounts may have balances for requested asset)
+    // (CiphertextCache, Option<CiphertextCache>) (balance, output balance)
+    Balances(Vec<Option<(CiphertextCache, Option<CiphertextCache>, BalanceType)>>),
     // Nonces for requested accounts
     Nonces(Vec<u64>),
     // top blocks metadata

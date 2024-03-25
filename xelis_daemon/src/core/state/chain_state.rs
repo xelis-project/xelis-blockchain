@@ -212,14 +212,10 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                         // This is used in case TXs that are built at same reference, but
                         // executed in differents topoheights have the output balance reported
                         // to the next topoheight each time to stay valid during ZK Proof verification
-                        let output_balance = if output_balance_used {
-                            version.take_output_balance().unwrap()
-                        } else {
-                            version.take_balance()
-                        };
+                        let output_balance = version.take_balance_with(output_balance_used);
 
                         // Set to our final version the new output balance
-                        final_version.set_output_balance(output_balance);
+                        final_version.set_output_balance(Some(output_balance));
 
                         // Build the final balance
                         // All inputs are already added, we just need to substract the outputs

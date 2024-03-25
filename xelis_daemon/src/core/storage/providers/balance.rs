@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use log::{trace, error};
 use xelis_common::{
-    account::{CiphertextCache, VersionedBalance},
+    account::VersionedBalance,
     crypto::{
         Hash,
         PublicKey
@@ -43,8 +43,8 @@ pub trait BalanceProvider: AssetProvider {
     // Get the last balance of the account, this is based on the last topoheight (pointer) available
     async fn get_last_balance(&self, key: &PublicKey, asset: &Hash) -> Result<(u64, VersionedBalance), BlockchainError>;
 
-    // Get the asset balances for multiple keys
-    async fn get_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<CiphertextCache>>, BlockchainError>;
+    // Get the asset versioned balances for multiple keys
+    async fn get_versioned_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<VersionedBalance>>, BlockchainError>;
 
     // Set the last topoheight for this asset and key to the requested topoheight
     fn set_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash, topoheight: u64) -> Result<(), BlockchainError>;
@@ -278,15 +278,13 @@ impl BalanceProvider for SledStorage {
         Ok((topoheight, version))
     }
 
-    async fn get_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<CiphertextCache>>, BlockchainError> {
+    async fn get_versioned_balances<'a, I: Iterator<Item = &'a PublicKey> + Send>(&self, asset: &Hash, keys: I, maximum_topoheight: u64) -> Result<Vec<Option<VersionedBalance>>, BlockchainError> {
         trace!("get balances for asset {} at maximum topoheight {}", asset, maximum_topoheight);
         let mut balances = Vec::new();
         for key in keys {
             if self.has_balance_for(key, asset).await? {
-                let res = match self.get_balance_at_maximum_topoheight(key, asset, maximum_topoheight).await? {
-                    Some((_, version)) => Some(version.take_balance()),
-                    None => None
-                };
+                let res = self.get_balance_at_maximum_topoheight(key, asset, maximum_topoheight).await?
+                    .map(|(_, v)| v);
                 balances.push(res);
             } else {
                 balances.push(None);
