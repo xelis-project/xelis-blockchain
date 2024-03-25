@@ -431,7 +431,7 @@ type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, T2) -> LocalBoxFuture<'a, R> + 'a>;
 
 impl Prompt {
-    pub fn new(level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<ShareablePrompt, PromptError> {
+    pub fn new(level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool) -> Result<ShareablePrompt, PromptError> {
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
         let prompt = Self {
             state: Arc::new(State::new()),
@@ -439,7 +439,7 @@ impl Prompt {
             read_input_receiver: AsyncMutex::new(read_input_receiver),
             read_input_sender,
         };
-        prompt.setup_logger(level, filename_log, disable_file_logging)?;
+        prompt.setup_logger(level, dir_path, filename_log, disable_file_logging)?;
 
         if prompt.state.is_interactive() {
             let (input_sender, input_receiver) = mpsc::unbounded_channel::<String>();
@@ -680,7 +680,7 @@ impl Prompt {
     }
 
     // configure fern and print prompt message after each new output
-    fn setup_logger(&self, level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<(), fern::InitError> {
+    fn setup_logger(&self, level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool) -> Result<(), fern::InitError> {
         let colors = ColoredLevelConfig::new()
             .debug(Color::Green)
             .info(Color::Cyan)
@@ -715,11 +715,9 @@ impl Prompt {
 
         let mut base = base.chain(stdout_log);
         if !disable_file_logging {
-            let logs_path = Path::new("logs/");
+            let logs_path = Path::new(dir_path);
             if !logs_path.exists() {
-                if let Err(e) = create_dir(logs_path) {
-                    error!("Error while creating logs folder: {}", e);
-                };
+                create_dir(logs_path)?;
             }
 
             let file_log = fern::Dispatch::new()
