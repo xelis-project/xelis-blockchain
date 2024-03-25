@@ -535,7 +535,7 @@ impl<S: Storage> Blockchain<S> {
     // determine the topoheight of the nearest sync block until limit topoheight
     pub async fn locate_nearest_sync_block_for_topoheight<P>(&self, provider: &P, mut topoheight: u64, current_height: u64) -> Result<u64, BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider
+        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
     {
         while topoheight > 0 {
             let block_hash = provider.get_hash_at_topo_height(topoheight).await?;
@@ -619,7 +619,7 @@ impl<S: Storage> Blockchain<S> {
     // It is used to determine if the block is a stable block or not
     async fn is_sync_block_at_height<P>(&self, provider: &P, hash: &Hash, height: u64) -> Result<bool, BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider
+        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
     {
         trace!("is sync block {} at height {}", hash, height);
         let block_height = provider.get_height_for_block_hash(hash).await?;
@@ -630,6 +630,14 @@ impl<S: Storage> Blockchain<S> {
         // block must be ordered and in stable height
         if block_height + STABLE_LIMIT > height || !provider.is_block_topological_ordered(hash).await {
             return Ok(false)
+        }
+
+        // We are only pruning at sync block
+        if let Some(pruned_topo) = provider.get_pruned_topoheight().await? {
+            let topoheight = provider.get_topo_height_for_hash(hash).await?;
+            if pruned_topo == topoheight {
+                return Ok(true)
+            }
         }
 
         // if block is alone at its height, it is a sync block
@@ -684,7 +692,7 @@ impl<S: Storage> Blockchain<S> {
     #[async_recursion]
     async fn find_tip_base<P>(&self, provider: &P, hash: &Hash, height: u64, pruned_topoheight: u64) -> Result<(Hash, u64), BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + Send + Sync
+        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + Send + Sync
     {
         if pruned_topoheight > 0 && provider.is_block_topological_ordered(hash).await {
             let topoheight = provider.get_topo_height_for_hash(hash).await?;
@@ -717,7 +725,7 @@ impl<S: Storage> Blockchain<S> {
         for hash in tips.iter() {
             if pruned_topoheight > 0 && provider.is_block_topological_ordered(hash).await {
                 let topoheight = provider.get_topo_height_for_hash(hash).await?;
-                // Node is pruned, we only prune chain to stable height so we can return the hash
+                // Node is pruned, we only prune chain to stable height / sync block so we can return the hash
                 if topoheight <= pruned_topoheight {
                     let block_height = provider.get_height_for_block_hash(hash).await?;
                     debug!("Node is pruned, returns tip {} at {} as stable tip base", hash, block_height);
