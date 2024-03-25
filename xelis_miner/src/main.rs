@@ -101,9 +101,9 @@ pub struct MinerConfig {
     disable_file_logging: bool,
     /// Log filename
     /// 
-    /// By default filename is xelis-daemon.log.
+    /// By default filename is xelis-miner.log.
     /// File will be stored in logs directory, this is only the filename, not the full path.
-    /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-daemon.log.
+    /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-miner.log.
     #[clap(default_value_t = String::from("xelis-miner.log"))]
     filename_log: String,
     /// Logs directory
