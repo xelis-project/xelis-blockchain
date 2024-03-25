@@ -2274,6 +2274,7 @@ impl<S: Storage> P2pServer<S> {
                                 debug!("Saving balance {:?} for key {} at topoheight {}", balance, key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
                                 let mut versioned_balance = storage.get_new_versioned_balance(key, &asset, stable_topoheight).await?;
                                 versioned_balance.set_balance(balance);
+                                versioned_balance.set_previous_topoheight(None);
                                 storage.set_last_balance_to(key, &asset, stable_topoheight, &versioned_balance).await?;
                             }
                         }
@@ -2345,6 +2346,11 @@ impl<S: Storage> P2pServer<S> {
                     }
 
                     let mut storage = self.blockchain.get_storage().write().await;
+
+                    // Delete all old data
+                    storage.delete_versioned_balances_below_topoheight(lowest_topoheight).await?;
+                    storage.delete_versioned_nonces_below_topoheight(lowest_topoheight).await?;
+
                     storage.set_pruned_topoheight(lowest_topoheight).await?;
                     storage.set_top_topoheight(top_topoheight)?;
                     storage.set_top_height(top_height)?;
