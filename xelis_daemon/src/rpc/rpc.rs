@@ -158,6 +158,8 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
                 nonce: tx.get_nonce(),
                 source_commitments: Cow::Borrowed(tx.get_source_commitments()),
                 range_proof: Cow::Borrowed(tx.get_range_proof()),
+                reference: Cow::Borrowed(tx.get_reference()),
+                signature: Cow::Borrowed(tx.get_signature()),
             }
         }).collect::<Vec<RPCTransaction<'_>>>();
 
