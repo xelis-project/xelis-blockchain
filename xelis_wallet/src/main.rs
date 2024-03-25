@@ -673,7 +673,7 @@ async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
         let decimals = storage.get_asset_decimals(&asset).unwrap_or(0);
         manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, decimals)));
     } else {
-        for (asset, decimals) in storage.get_assets_with_decimals()? {
+        for (asset, decimals) in storage.get_assets_with_decimals().await? {
             let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
             if balance > 0 {
                 manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, decimals)));

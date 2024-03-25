@@ -127,6 +127,8 @@ pub struct EncryptedStorage {
     inner: Storage,
     // Caches
     balances_cache: Mutex<LruCache<Hash, Balance>>,
+    assets_cache: Mutex<LruCache<Hash, u8>>,
+    // Cache for the synced topoheight
     synced_topoheight: AtomicU64
 }
 
@@ -142,6 +144,7 @@ impl EncryptedStorage {
             cipher,
             inner,
             balances_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
+            assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: AtomicU64::new(0)
         };
 
@@ -347,45 +350,84 @@ impl EncryptedStorage {
 
     // this function is specific because we save the key in encrypted form (and not hashed as others)
     // returns all saved assets
-    pub fn get_assets(&self) -> Result<HashSet<Hash>> {
+    pub async fn get_assets(&self) -> Result<HashSet<Hash>> {
+        let mut cache = self.assets_cache.lock().await;
+
+        if cache.len() == self.assets.len() {
+            return Ok(cache.iter().map(|(k, _)| k.clone()).collect());
+        }
+
         let mut assets = HashSet::new();
         for res in self.assets.iter() {
-            let (key, _) = res?;
+            let (key, value) = res?;
             let raw_key = &self.cipher.decrypt_value(&key)?;
             let mut reader = Reader::new(raw_key);
             let asset = Hash::read(&mut reader)?;
-            assets.insert(asset);
+
+            let decimals = if let Some(decimals) = cache.get(&asset) {
+                *decimals
+            } else {
+                let raw_value = &self.cipher.decrypt_value(&value)?;
+                let mut reader = Reader::new(raw_value);
+                u8::read(&mut reader)?
+            };
+
+            assets.insert(asset.clone());
+            cache.put(asset, decimals);
         }
 
         Ok(assets)
     }
 
     // Retrieve all assets with their decimals
-    pub fn get_assets_with_decimals(&self) -> Result<Vec<(Hash, u8)>> {
+    pub async fn get_assets_with_decimals(&self) -> Result<Vec<(Hash, u8)>> {
+        let mut cache = self.assets_cache.lock().await;
+        if cache.len() == self.assets.len() {
+            return Ok(cache.iter().map(|(k, v)| (k.clone(), *v)).collect());
+        }
+
         let mut assets = Vec::new();
         for res in self.assets.iter() {
             let (key, value) = res?;
             let asset = Hash::from_bytes(&self.cipher.decrypt_value(&key)?)?;
-            let decimals = u8::from_bytes(&self.cipher.decrypt_value(&value)?)?;
+            let decimals = if let Some(decimals) = cache.get(&asset) {
+                *decimals
+            } else {
+                let raw_value = &self.cipher.decrypt_value(&value)?;
+                let mut reader = Reader::new(raw_value);
+                u8::read(&mut reader)?
+            };
 
-            assets.push((asset, decimals));
+            assets.push((asset.clone(), decimals));
+            cache.put(asset, decimals);
         }
 
         Ok(assets)
     }
 
     // Check if the asset is already registered
-    pub fn contains_asset(&self, asset: &Hash) -> Result<bool> {
+    pub async fn contains_asset(&self, asset: &Hash) -> Result<bool> {
+        {
+            let cache = self.assets_cache.lock().await;
+            if cache.contains(asset) {
+                return Ok(true);
+            }
+        }
+
         self.contains_encrypted_data(&self.assets, asset.as_bytes())
     }
 
     // save asset with its corresponding decimals
-    pub fn add_asset(&mut self, asset: &Hash, decimals: u8) -> Result<()> {
-        if self.contains_asset(asset)? {
+    pub async fn add_asset(&mut self, asset: &Hash, decimals: u8) -> Result<()> {
+        if self.contains_asset(asset).await? {
             return Err(WalletError::AssetAlreadyRegistered.into());
         }
 
-        self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &decimals.to_be_bytes())
+        self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &decimals.to_be_bytes())?;
+
+        let mut cache = self.assets_cache.lock().await;
+        cache.put(asset.clone(), decimals);
+        Ok(())
     }
 
     // Retrieve the stored decimals for this asset for better display
@@ -559,6 +601,13 @@ impl EncryptedStorage {
     pub async fn delete_balances(&mut self) -> Result<()> {
         self.balances.clear()?;
         self.balances_cache.lock().await.clear();
+        Ok(())
+    }
+
+    // Delete all assets from this wallet
+    pub async fn delete_assets(&mut self) -> Result<()> {
+        self.assets.clear()?;
+        self.assets_cache.lock().await.clear();
         Ok(())
     }
 

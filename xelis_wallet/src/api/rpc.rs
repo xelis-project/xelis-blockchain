@@ -190,7 +190,7 @@ async fn get_tracked_assets(context: Context, body: Value) -> Result<Value, Inte
 
     let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
-    let tracked_assets = storage.get_assets()?;
+    let tracked_assets = storage.get_assets().await?;
 
     Ok(json!(tracked_assets))
 }

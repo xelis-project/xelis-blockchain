@@ -533,6 +533,7 @@ impl NetworkHandler {
                         if storage.has_any_balance().await? {
                             warn!("We have balances but we couldn't fetch the nonce, deleting all balances");
                             storage.delete_balances().await?;
+                            storage.delete_assets().await?;
                         }
                     }
                     // Account is not registered, we can return safely here
@@ -560,14 +561,14 @@ impl NetworkHandler {
             // check if we have this asset locally
             if !{
                 let storage = self.wallet.get_storage().read().await;
-                storage.contains_asset(&asset)?
+                storage.contains_asset(&asset).await?
             } {
                 let data = self.api.get_asset(&asset).await?;
                 
                 // Add the asset to the storage
                 {
                     let mut storage = self.wallet.get_storage().write().await;
-                    storage.add_asset(&asset, data.get_decimals())?;
+                    storage.add_asset(&asset, data.get_decimals()).await?;
                 }
 
                 // New asset added to the wallet, inform listeners
@@ -724,7 +725,7 @@ impl NetworkHandler {
     async fn sync_new_blocks(&self, address: &Address, current_topoheight: u64, balances: bool) -> Result<(), Error> {
         let assets = {
             let storage = self.wallet.get_storage().read().await;
-            storage.get_assets()?
+            storage.get_assets().await?
         };
 
         // cache for all topoheight we already processed
