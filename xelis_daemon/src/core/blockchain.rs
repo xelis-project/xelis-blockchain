@@ -1276,9 +1276,11 @@ impl<S: Storage> Blockchain<S> {
         let tips_set = storage.get_tips().await?;
         let mut tips = Vec::with_capacity(tips_set.len());
         for hash in tips_set {
+            trace!("Tip found from storage: {}", hash);
             tips.push(hash);
         }
 
+        let current_height = self.get_height();
         if tips.len() > 1 {
             let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, tips.iter()).await?.clone();
             debug!("Best tip selected for this block template is {}", best_tip);
@@ -1289,10 +1291,22 @@ impl<S: Storage> Blockchain<S> {
                         debug!("Tip {} is invalid, not selecting it because difficulty can't be less than 91% of {}", hash, best_tip);
                         continue;
                     }
+
+                    let distance = self.calculate_distance_from_mainchain(storage, &hash).await?;
+                    debug!("Distance from mainchain for tip {} is {}", hash, distance);
+                    if distance <= current_height && current_height - distance >= STABLE_LIMIT {
+                        debug!("Tip {} is not selected for mining: too far from mainchain (distance: {}, height: {})", hash, distance, current_height);
+                        continue;
+                    }
                 }
                 selected_tips.push(hash);
             }
             tips = selected_tips;
+
+            if tips.is_empty() {
+                warn!("No valid tips found for block template, using best tip {}", best_tip);
+                tips.push(best_tip);
+            }
         }
 
         let mut sorted_tips = blockdag::sort_tips(storage, tips.into_iter()).await?;
