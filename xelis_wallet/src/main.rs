@@ -109,10 +109,10 @@ pub struct Config {
     disable_file_logging: bool,
     /// Log filename
     /// 
-    /// By default filename is xelis-daemon.log.
+    /// By default filename is xelis-wallet.log.
     /// File will be stored in logs directory, this is only the filename, not the full path.
-    /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-daemon.log.
-    #[clap(long, default_value_t = String::from("xelis-daemon.log"))]
+    /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-wallet.log.
+    #[clap(long, default_value_t = String::from("xelis-wallet.log"))]
     filename_log: String,
     /// Logs directory
     /// 
