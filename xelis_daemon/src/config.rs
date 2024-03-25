@@ -114,6 +114,11 @@ pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60000;
 pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 3000;
 // 16 additional bytes are for AEAD from ChaCha20Poly1305
 pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
+// Peer TX cache size
+// This is how many elements are stored in the LRU cache at maximum
+pub const PEER_TX_CACHE_SIZE: usize = 10240;
+// Peer Block cache size
+pub const PEER_BLOCK_CACHE_SIZE: usize = 1024;
 
 // Genesis block to have the same starting point for every nodes
 // Genesis block in hexadecimal format

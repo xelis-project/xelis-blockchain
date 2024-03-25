@@ -1,14 +1,13 @@
 use crate::{
     config::{
-        PEER_FAIL_TIME_RESET, STABLE_LIMIT, PEER_TEMP_BAN_TIME,
-        PEER_TIMEOUT_BOOTSTRAP_STEP, PEER_TIMEOUT_REQUEST_OBJECT,
-        CHAIN_SYNC_TIMEOUT_SECS
+        PEER_FAIL_TIME_RESET, PEER_BLOCK_CACHE_SIZE, PEER_TX_CACHE_SIZE,
+        PEER_TEMP_BAN_TIME, PEER_TIMEOUT_BOOTSTRAP_STEP,
+        PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS
     },
     p2p::packet::PacketWrapper
 };
 use xelis_common::{
     api::daemon::Direction,
-    config::TIPS_LIMIT,
     crypto::Hash,
     difficulty::CumulativeDifficulty,
     serializer::Serializer,
@@ -161,8 +160,8 @@ impl Peer {
             last_ping: AtomicU64::new(0),
             last_ping_sent: AtomicU64::new(0),
             cumulative_difficulty: Mutex::new(cumulative_difficulty),
-            txs_cache: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT * 128).unwrap())),
-            blocks_propagation: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).unwrap())),
+            txs_cache: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_TX_CACHE_SIZE).unwrap())),
+            blocks_propagation: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_BLOCK_CACHE_SIZE).unwrap())),
             last_inventory: AtomicU64::new(0),
             requested_inventory: AtomicBool::new(false),
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
