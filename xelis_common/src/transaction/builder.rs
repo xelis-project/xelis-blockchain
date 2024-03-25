@@ -224,18 +224,21 @@ impl TransactionBuilder {
         let assets_used = self.data.used_assets().len();
         // Version byte
         let mut size = 1
+        // Source Public Key
         + self.source.size()
         // Transaction type byte
-        + 1 
+        + 1
+        // Fee u64
         + self.fee.size()
+        // Nonce u64
         + self.nonce.size()
         // Reference (hash, topo)
         + HASH_SIZE + 8
         // Commitments byte length
         + 1
         // We have one source commitment per asset spent
-        // (commitment, asset, proof)
-        +  assets_used * (RISTRETTO_COMPRESSED_SIZE + HASH_SIZE + (RISTRETTO_COMPRESSED_SIZE * 3 + SCALAR_SIZE * 3))
+        // assets * (commitment, asset, proof)
+        + assets_used * (RISTRETTO_COMPRESSED_SIZE + HASH_SIZE + (RISTRETTO_COMPRESSED_SIZE * 3 + SCALAR_SIZE * 3))
         // Signature
         + SIGNATURE_SIZE
         ;
@@ -248,20 +251,22 @@ impl TransactionBuilder {
                     size += transfer.asset.size()
                     + transfer.destination.get_public_key().size()
                     // Commitment, sender handle, receiver handle
-                    + RISTRETTO_COMPRESSED_SIZE * 3
+                    + (RISTRETTO_COMPRESSED_SIZE * 3)
                     // Ct Validity Proof
                     + (RISTRETTO_COMPRESSED_SIZE * 2 + SCALAR_SIZE * 2)
                     // Extra data byte flag
                     + 1;
 
                     if let Some(extra_data) = &transfer.extra_data {
-                        size += extra_data.size();
+                        // 2 represents u16 length
+                        size += 2 + extra_data.size();
                     }
                 }
                 transfers.len()
             }
             TransactionTypeBuilder::Burn(payload) => {
-                size += payload.amount.size() + payload.asset.size();
+                // Payload size
+                size += payload.size();
                 0
             }
         };

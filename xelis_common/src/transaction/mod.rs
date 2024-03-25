@@ -292,7 +292,7 @@ impl Serializer for TransferPayload {
             // + 2 for the size of the extra data
             size += 2 + extra_data.len();
         }
-        size
+        size + self.ct_validity_proof.size()
     }
 }
 
@@ -444,6 +444,7 @@ impl Serializer for Transaction {
         + 1
         + self.source_commitments.iter().map(|c| c.size()).sum::<usize>()
         + self.range_proof.size()
+        + self.reference.size()
         + self.signature.size()
     }
 }
