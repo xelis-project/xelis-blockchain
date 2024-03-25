@@ -1783,7 +1783,8 @@ impl<S: Storage> P2pServer<S> {
                             }
                         }
 
-                        if let Some(blocker) = self.object_tracker.request_object_from_peer_with(Arc::clone(peer), ObjectRequest::Block(hash.clone()), group_id, blocks_iter.peek().is_none(), false).await? {
+                        let is_last = blocks_iter.peek().is_none();
+                        if let Some(blocker) = self.object_tracker.request_object_from_peer_with(Arc::clone(peer), ObjectRequest::Block(hash.clone()), group_id, is_last, is_last).await? {
                             final_blocker = Some(blocker);
                         }
                     } else {
@@ -1822,7 +1823,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
             }
-            debug!("we've synced {} on {} blocks and {} top blocks from {}", total_requested, blocks_len, top_len, peer);
+            info!("we've synced {} on {} blocks and {} top blocks from {}", total_requested, blocks_len, top_len, peer);
         }
 
         let peer_topoheight = peer.get_topoheight();

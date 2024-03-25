@@ -326,7 +326,8 @@ impl ObjectTracker {
                 blockchain.add_tx_to_mempool_with_hash(tx, hash, broadcast).await?;
             },
             OwnedObjectResponse::Block(block, _) => {
-                blockchain.add_new_block(block, false, false).await?;
+                // We don't broadcast it to others peers but we broadcast it to our miners in case
+                blockchain.add_new_block(block, broadcast, false).await?;
             }
             _ => {
                 warn!("ObjectTracker received an invalid object response");
