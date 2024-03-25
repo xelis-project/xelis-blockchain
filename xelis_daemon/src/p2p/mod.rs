@@ -2286,19 +2286,23 @@ impl<S: Storage> P2pServer<S> {
                     }
                 },
                 StepResponse::BlocksMetadata(blocks) => {
-                    if blocks.len() != PRUNE_SAFETY_LIMIT as usize {
-                        error!("Received {} blocks metadata while expecting {}", blocks.len(), PRUNE_SAFETY_LIMIT);
+                    // Last N blocks + stable block
+                    if blocks.len() != PRUNE_SAFETY_LIMIT as usize + 1 {
+                        error!("Received {} blocks metadata while expecting {}", blocks.len(), PRUNE_SAFETY_LIMIT + 1);
                         return Err(P2pError::InvalidPacket.into())
                     }
 
                     let mut lowest_topoheight = stable_topoheight;
                     for (i, metadata) in blocks.into_iter().enumerate() {
+                        let topoheight = stable_topoheight - i as u64;
+                        trace!("Processing block metadata {} at topoheight {}", metadata.hash, topoheight);
                         // check that we don't already have this block in storage
                         if self.blockchain.has_block(&metadata.hash).await? {
+                            warn!("Block {} at topo {} already in storage, skipping", metadata.hash, topoheight);
                             continue;
                         }
 
-                        lowest_topoheight = stable_topoheight - i as u64;
+                        lowest_topoheight = topoheight;
                         debug!("Saving block metadata {}", metadata.hash);
                         let OwnedObjectResponse::BlockHeader(header, hash) = peer.request_blocking_object(ObjectRequest::BlockHeader(metadata.hash)).await? else {
                             error!("Received an invalid requested object while fetching blocks metadata");
