@@ -442,3 +442,18 @@ impl Serializer for () {
         0
     }
 }
+
+impl<L: Serializer, R: Serializer> Serializer for (L, R) {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok((L::read(reader)?, R::read(reader)?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.0.write(writer);
+        self.1.write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.0.size() + self.1.size()
+    }
+}

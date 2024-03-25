@@ -85,6 +85,17 @@ impl VersionedBalance {
         &mut self.final_balance
     }
 
+    pub fn has_output_balance(&self) -> bool {
+        self.output_balance.is_some()
+    }
+
+    pub fn take_balance_with(self, output: bool) -> CiphertextCache {
+        match self.output_balance {
+            Some(balance) if output => balance,
+            _ => self.final_balance
+        }
+    }
+
     pub fn take_balance(self) -> CiphertextCache {
         self.final_balance
     }
@@ -93,8 +104,8 @@ impl VersionedBalance {
         self.output_balance
     }
 
-    pub fn set_output_balance(&mut self, value: CiphertextCache) {
-        self.output_balance = Some(value);
+    pub fn set_output_balance(&mut self, value: Option<CiphertextCache>) {
+        self.output_balance = value;
     }
 
     pub fn select_balance(&mut self, output: bool) -> (&mut CiphertextCache, bool) {
