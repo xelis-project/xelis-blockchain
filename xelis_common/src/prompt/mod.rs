@@ -7,19 +7,21 @@ use crate::{
 };
 use std::{
     collections::VecDeque,
-    fmt::{Display, Formatter, self},
-    fs::create_dir,
-    io::{Write, stdout, Error as IOError},
+    fmt::{self, Display, Formatter},
+    fs::create_dir_all,
+    future::Future,
+    io::{stdout, Error as IOError, Write},
     path::Path,
     pin::Pin,
     str::FromStr,
-    task::{Context, Poll},
     sync::{
-        {PoisonError, Arc, Mutex},
-        atomic::{AtomicBool, Ordering, AtomicUsize, AtomicU16},
+        atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering},
+        Arc,
+        Mutex,
+        PoisonError
     },
-    time::Duration,
-    future::Future
+    task::{Context, Poll},
+    time::Duration
 };
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers, KeyEventKind},
@@ -717,7 +719,7 @@ impl Prompt {
         if !disable_file_logging {
             let logs_path = Path::new(dir_path);
             if !logs_path.exists() {
-                create_dir(logs_path)?;
+                create_dir_all(logs_path)?;
             }
 
             let file_log = fern::Dispatch::new()
