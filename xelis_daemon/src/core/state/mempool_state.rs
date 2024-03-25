@@ -79,11 +79,7 @@ impl<'a, S: Storage> MempoolState<'a, S> {
     async fn get_versioned_balance_for_reference(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: u64, reference: &Reference) -> Result<Ciphertext, BlockchainError> {
         let (output, _, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference).await?;
 
-        Ok(if output {
-            version.take_output_balance().unwrap().take_ciphertext()?
-        } else {
-            version.take_balance().take_ciphertext()?
-        })
+        Ok(version.take_balance_with(output).take_ciphertext()?)
     }
 
     // Retrieve the sender balance
