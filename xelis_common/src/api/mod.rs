@@ -12,10 +12,12 @@ use crate::{
         elgamal::{CompressedCommitment, CompressedHandle},
         proofs::CiphertextValidityProof,
         Address,
-        Hash
+        Hash,
+        Signature
     },
     transaction::{
         BurnPayload,
+        Reference,
         SourceCommitment,
         Transaction,
         TransactionType
@@ -104,6 +106,10 @@ pub struct RPCTransaction<'a> {
     pub source_commitments: Cow<'a, Vec<SourceCommitment>>,
     /// The range proof is aggregated across all transfers and across all assets.
     pub range_proof: Cow<'a, RangeProof>,
+    /// Reference at which block the transaction was built
+    pub reference: Cow<'a, Reference>,
+    /// Signature of the transaction
+    pub signature: Cow<'a, Signature>,
 }
 
 impl<'a> RPCTransaction<'a> {
@@ -117,6 +123,8 @@ impl<'a> RPCTransaction<'a> {
             nonce: tx.get_nonce(),
             source_commitments: Cow::Borrowed(tx.get_source_commitments()),
             range_proof: Cow::Borrowed(tx.get_range_proof()),
+            reference: Cow::Borrowed(tx.get_reference()),
+            signature: Cow::Borrowed(tx.get_signature()),
         }
     }
 }
