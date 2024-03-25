@@ -92,8 +92,18 @@ pub struct NodeConfig {
     #[clap(short = 'f', long)]
     disable_file_logging: bool,
     /// Log filename
-    #[clap(short = 'n', long, default_value_t = String::from("xelis.log"))]
+    /// 
+    /// By default filename is xelis-daemon.log.
+    /// File will be stored in logs directory, this is only the filename, not the full path.
+    /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-daemon.log.
+    #[clap(short = 'n', long, default_value_t = String::from("xelis-daemon.log"))]
     filename_log: String,
+    /// Logs directory
+    /// 
+    /// By default it will be logs/ of the current directory.
+    /// It must end with a / to be a valid folder.
+    #[clap(long, default_value_t = String::from("logs/"))]
+    logs_path: String,
     /// Network selected for chain
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
     network: Network
@@ -105,7 +115,7 @@ const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_P
 async fn main() -> Result<()> {
     let mut config: NodeConfig = NodeConfig::parse();
 
-    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging)?;
     info!("XELIS Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
 
