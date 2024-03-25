@@ -96,23 +96,23 @@ pub struct RPCConfig {
 #[command(styles = xelis_common::get_cli_styles())]
 pub struct Config {
     /// Daemon address to use
-    #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
+    #[clap(long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String,
     /// Disable online mode
-    #[clap(short, long)]
+    #[clap(long)]
     offline_mode: bool,
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
     /// Disable the log file
-    #[clap(short = 'f', long)]
+    #[clap(long)]
     disable_file_logging: bool,
     /// Log filename
     /// 
     /// By default filename is xelis-daemon.log.
     /// File will be stored in logs directory, this is only the filename, not the full path.
     /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-daemon.log.
-    #[clap(short = 'n', long, default_value_t = String::from("xelis-daemon.log"))]
+    #[clap(long, default_value_t = String::from("xelis-daemon.log"))]
     filename_log: String,
     /// Logs directory
     /// 
@@ -121,13 +121,13 @@ pub struct Config {
     #[clap(long, default_value_t = String::from("logs/"))]
     logs_path: String,
     /// Use name path for wallet storage
-    #[clap(short, long)]
+    #[clap(long)]
     name: Option<String>,
     /// Password used to open wallet
-    #[clap(short, long)]
+    #[clap(long)]
     password: Option<String>,
     /// Restore wallet using seed
-    #[clap(short, long)]
+    #[clap(long)]
     seed: Option<String>,
     /// Network selected for chain
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
