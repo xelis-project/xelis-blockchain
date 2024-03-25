@@ -457,3 +457,19 @@ impl<L: Serializer, R: Serializer> Serializer for (L, R) {
         self.0.size() + self.1.size()
     }
 }
+
+impl<A: Serializer, B: Serializer, C: Serializer> Serializer for (A, B, C) {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok((A::read(reader)?, B::read(reader)?, C::read(reader)?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.0.write(writer);
+        self.1.write(writer);
+        self.2.write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.0.size() + self.1.size() + self.2.size()
+    }
+}

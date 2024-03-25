@@ -5,7 +5,7 @@ use crate::serializer::{Serializer, ReaderError, Reader, Writer};
 
 use super::CiphertextCache;
 
-#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BalanceType {
     // Only incoming funds were added
@@ -148,8 +148,8 @@ impl VersionedBalance {
         self.balance_type = balance_type;
     }
 
-    pub fn consume(self) -> (CiphertextCache, Option<u64>) {
-        (self.final_balance, self.previous_topoheight)
+    pub fn consume(self) -> (CiphertextCache, Option<CiphertextCache>, BalanceType, Option<u64>) {
+        (self.final_balance, self.output_balance, self.balance_type, self.previous_topoheight)
     }
 }
 
