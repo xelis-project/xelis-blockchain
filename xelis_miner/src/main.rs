@@ -100,8 +100,18 @@ pub struct MinerConfig {
     #[clap(short = 'f', long)]
     disable_file_logging: bool,
     /// Log filename
-    #[clap(short = 'l', long, default_value_t = String::from("xelis-miner.log"))]
+    /// 
+    /// By default filename is xelis-daemon.log.
+    /// File will be stored in logs directory, this is only the filename, not the full path.
+    /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-daemon.log.
+    #[clap(short = 'n', default_value_t = String::from("xelis-miner.log"))]
     filename_log: String,
+    /// Logs directory
+    /// 
+    /// By default it will be logs/ of the current directory.
+    /// It must end with a / to be a valid folder.
+    #[clap(long, default_value_t = String::from("logs/"))]
+    logs_path: String,
     /// Numbers of threads to use (at least 1, max: 255)
     #[clap(short, long, default_value_t = 0)]
     num_threads: u8,
@@ -157,7 +167,7 @@ async fn main() -> Result<()> {
         return Ok(())
     }
 
-    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging)?;
     if threads_count > u8::MAX as usize {
         warn!("Your CPU have more than 255 threads. This miner only support up to 255 threads used at once.");
     }
