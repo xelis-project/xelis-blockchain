@@ -123,6 +123,11 @@ pub struct Config {
     /// Set the path for wallet storage to open/create a wallet at this location
     #[clap(long)]
     wallet_path: Option<String>,
+    /// Set the path to use for precomputed tables
+    /// 
+    /// By default, it will be from current directory.
+    #[clap(long)]
+    precomputed_tables_path: Option<String>,
     /// Password used to open wallet
     #[clap(long)]
     password: Option<String>,
@@ -182,12 +187,13 @@ async fn main() -> Result<()> {
             prompt.read_input(format!("Enter Password for '{}': ", path), true).await?
         };
 
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(config.precomputed_tables_path)?;
         let wallet = if Path::new(&path).is_dir() {
             info!("Opening wallet {}", path);
-            Wallet::open(path, password, config.network)?
+            Wallet::open(path, password, config.network, precomputed_tables)?
         } else {
             info!("Creating a new wallet at {}", path);
-            Wallet::create(path, password, config.seed, config.network)?
+            Wallet::create(path, password, config.seed, config.network, precomputed_tables)?
         };
 
         apply_config(&wallet, #[cfg(feature = "api_server")] &prompt).await;
@@ -454,7 +460,8 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        Wallet::open(dir, password, *network)?
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None)?;
+        Wallet::open(dir, password, *network, precomputed_tables)?
     };
 
     manager.message("Wallet sucessfully opened");
@@ -498,7 +505,8 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        Wallet::create(dir, password, None, *network)?
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None)?;
+        Wallet::create(dir, password, None, *network, precomputed_tables)?
     };
  
     manager.message("Wallet sucessfully created");
@@ -553,7 +561,8 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        Wallet::create(dir, password, Some(seed), *network)?
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None)?;
+        Wallet::create(dir, password, Some(seed), *network, precomputed_tables)?
     };
 
     manager.message("Wallet sucessfully recovered");

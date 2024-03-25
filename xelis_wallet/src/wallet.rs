@@ -297,18 +297,21 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 
 impl Wallet {
     // This will read from file if exists, or generate and store it in file
-    pub fn read_or_generate_precomputed_tables<const N: usize>() -> Result<PrecomputedTablesShared, Error> {
+    // This must be call only one time, and can be cloned to be shared through differents wallets
+    pub fn read_or_generate_precomputed_tables(path: Option<String>) -> Result<PrecomputedTablesShared, Error> {
+        const N: usize = PRECOMPUTED_TABLES_L1;
         let mut precomputed_tables = PrecomputedTables::new(N);
 
+        let path = path.unwrap_or_default();
         // Try to read from file
-        if let Ok(mut file) = File::open(format!("precomputed_tables_{N}.bin")) {
+        if let Ok(mut file) = File::open(format!("{path}precomputed_tables_{N}.bin")) {
             info!("Reading precomputed tables from file");
             file.read_exact(precomputed_tables.get_mut())?;
         } else {
             // File does not exists, generate and store it
             info!("Generating precomputed tables");
             ecdlp::table_generation::create_table_file(N, precomputed_tables.get_mut())?;
-            File::create(format!("precomputed_tables_{N}.bin"))?.write_all(precomputed_tables.get())?;
+            File::create(format!("{path}precomputed_tables_{N}.bin"))?.write_all(precomputed_tables.get())?;
         }
 
         Ok(Arc::new(precomputed_tables))
@@ -334,7 +337,7 @@ impl Wallet {
     }
 
     // Create a new wallet on disk
-    pub fn create(name: String, password: String, seed: Option<String>, network: Network) -> Result<Arc<Self>, Error> {
+    pub fn create(name: String, password: String, seed: Option<String>, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
@@ -387,11 +390,11 @@ impl Wallet {
         // Store the private key
         storage.set_private_key(&keypair.get_private_key())?;
 
-        Ok(Self::new(storage, keypair, network, Self::read_or_generate_precomputed_tables::<PRECOMPUTED_TABLES_L1>()?))
+        Ok(Self::new(storage, keypair, network, precomputed_tables))
     }
 
     // Open an existing wallet on disk
-    pub fn open(name: String, password: String, network: Network) -> Result<Arc<Self>, Error> {
+    pub fn open(name: String, password: String, network: Network, precomputed_tables: PrecomputedTablesShared) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
@@ -430,7 +433,7 @@ impl Wallet {
         let private_key =  storage.get_private_key()?;
         let keypair = KeyPair::from_private_key(private_key);
 
-        Ok(Self::new(storage, keypair, network, Self::read_or_generate_precomputed_tables::<PRECOMPUTED_TABLES_L1>()?))
+        Ok(Self::new(storage, keypair, network, precomputed_tables))
     }
 
     // Close the wallet
