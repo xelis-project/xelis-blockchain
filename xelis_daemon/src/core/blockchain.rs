@@ -133,6 +133,8 @@ pub struct Config {
     /// before the top.
     #[clap(long)]
     pub auto_prune_keep_n_blocks: Option<u64>,
+    /// Allow fast sync mode.
+    /// 
     /// Sync a bootstrapped chain if your local copy is outdated.
     /// 
     /// It will not store any blocks / TXs and will not verify the history locally.
@@ -146,7 +148,7 @@ pub struct Config {
     /// 
     /// It is not enabled by default because it will requests several blocks before validating each previous.
     #[clap(long)]
-    pub allow_boost_sync_mode: bool,
+    pub allow_boost_sync: bool,
     /// Configure the maximum chain response size.
     /// 
     /// This is useful for low devices who want to reduce resources usage
@@ -221,6 +223,11 @@ impl<S: Storage> Blockchain<S> {
                     return Err(BlockchainError::ConfigMaxChainResponseSize.into())
                 }
             }
+
+            if config.allow_boost_sync && config.allow_fast_sync {
+                error!("Boost sync and fast sync can't be enabled at the same time!");
+                return Err(BlockchainError::ConfigSyncMode.into())
+            }
         }
 
         let on_disk = storage.has_blocks().await;
@@ -291,7 +298,7 @@ impl<S: Storage> Blockchain<S> {
                 exclusive_nodes.push(addr);
             }
 
-            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync_mode, config.max_chain_response_size, !config.disable_ip_sharing) {
+            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {

@@ -163,6 +163,8 @@ pub enum BlockchainError {
     NotFoundOnDisk(DiskContext),
     #[error("Invalid paramater: max chain response size isn't in range")]
     ConfigMaxChainResponseSize,
+    #[error("Invalid config sync mode")]
+    ConfigSyncMode,
     #[error("Expected at least one tips")]
     ExpectedTips,
     #[error("Block has invalid tips")]
