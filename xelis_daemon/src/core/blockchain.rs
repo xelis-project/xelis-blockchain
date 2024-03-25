@@ -94,33 +94,33 @@ use super::storage::{BlocksAtHeightProvider, PrunedTopoheightProvider};
 #[derive(Debug, clap::Args)]
 pub struct Config {
     /// Optional node tag
-    #[clap(short, long)]
+    #[clap(long)]
     pub tag: Option<String>,
     /// P2p bind address to listen for incoming connections
-    #[clap(short, long, default_value_t = String::from(DEFAULT_P2P_BIND_ADDRESS))]
+    #[clap(long, default_value_t = String::from(DEFAULT_P2P_BIND_ADDRESS))]
     pub p2p_bind_address: String,
     /// Number of maximums peers allowed
-    #[clap(short, long, default_value_t = P2P_DEFAULT_MAX_PEERS)]
+    #[clap(long, default_value_t = P2P_DEFAULT_MAX_PEERS)]
     pub max_peers: usize,
     /// Rpc bind address to listen for HTTP requests
-    #[clap(short, long, default_value_t = String::from(DEFAULT_RPC_BIND_ADDRESS))]
+    #[clap(long, default_value_t = String::from(DEFAULT_RPC_BIND_ADDRESS))]
     pub rpc_bind_address: String,
     /// Add a priority node to connect when P2p is started.
     /// A priority node is connected only one time.
-    #[clap(short = 'o', long)]
+    #[clap(long)]
     pub priority_nodes: Vec<String>,
     /// An exclusive node is connected and its connection is maintained in case of disconnect
     /// it also replaces seed nodes.
-    #[clap(short, long)]
+    #[clap(long)]
     pub exclusive_nodes: Vec<String>,
     /// Set dir path for blockchain storage.
-    #[clap(short = 's', long)]
+    #[clap(long)]
     pub dir_path: Option<String>,
     /// Set LRUCache size (0 = disabled).
-    #[clap(short, long, default_value_t = DEFAULT_CACHE_SIZE)]
+    #[clap(long, default_value_t = DEFAULT_CACHE_SIZE)]
     pub cache_size: usize,
     /// Disable GetWork Server (WebSocket for miners).
-    #[clap(short = 'g', long)]
+    #[clap(long)]
     pub disable_getwork_server: bool,
     /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME).
     #[clap(long)]
