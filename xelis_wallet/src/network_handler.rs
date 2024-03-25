@@ -344,7 +344,7 @@ impl NetworkHandler {
         // This is used to save the latest balance
         let mut highest_version = true;
         loop {
-            let (mut balance, previous_topoheight) = version.consume();
+            let (mut balance, _, _, previous_topoheight) = version.consume();
             // add this topoheight in cache to not re-process it (blocks are independant of asset to have faster sync)
             // if its not already processed, do it
             if topoheight_processed.insert(topoheight) {
