@@ -420,6 +420,16 @@ impl EncryptedStorage {
         Ok(balance)
     }
 
+    // Determine if we have any balance stored
+    pub async fn has_any_balance(&self) -> Result<bool> {
+        let cache = self.balances_cache.lock().await;
+        if !cache.is_empty() {
+            return Ok(true);
+        }
+
+        Ok(!self.balances.is_empty())
+    }
+
     // Determine if we have a balance for this asset
     pub async fn has_balance_for(&self, asset: &Hash) -> Result<bool> {
         let cache = self.balances_cache.lock().await;
@@ -432,9 +442,9 @@ impl EncryptedStorage {
 
     // Set the balance for this asset
     pub async fn set_balance_for(&mut self, asset: &Hash, balance: Balance) -> Result<()> {
-        let mut cache = self.balances_cache.lock().await;
         self.save_to_disk(&self.balances, asset.as_bytes(), &balance.to_bytes())?;
 
+        let mut cache = self.balances_cache.lock().await;
         cache.put(asset.clone(), balance);
         Ok(())
     }
@@ -546,8 +556,9 @@ impl EncryptedStorage {
     }
 
     // Delete all balances from this wallet
-    pub fn delete_balances(&mut self) -> Result<()> {
+    pub async fn delete_balances(&mut self) -> Result<()> {
         self.balances.clear()?;
+        self.balances_cache.lock().await.clear();
         Ok(())
     }
 

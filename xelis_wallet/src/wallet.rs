@@ -763,7 +763,7 @@ impl Wallet {
                 storage.set_synced_topoheight(topoheight)?;
                 storage.delete_top_block_hash()?;
                 // balances will be re-fetched from daemon
-                storage.delete_balances()?;
+                storage.delete_balances().await?;
 
                 debug!("Retrieve current wallet nonce");
                 let nonce_result = network_handler.get_api()

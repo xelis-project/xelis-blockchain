@@ -528,6 +528,13 @@ impl NetworkHandler {
                 Ok(v) => Some(v.get_nonce()),
                 Err(e) => {
                     debug!("Error while fetching last nonce: {}", e);
+                    {
+                        let mut storage = self.wallet.get_storage().write().await;
+                        if storage.has_any_balance().await? {
+                            warn!("We have balances but we couldn't fetch the nonce, deleting all balances");
+                            storage.delete_balances().await?;
+                        }
+                    }
                     // Account is not registered, we can return safely here
                     return Ok(false)
                 }
