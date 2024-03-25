@@ -85,26 +85,26 @@ pub struct MinerConfig {
     #[clap(short, long)]
     miner_address: Option<Address>,
     /// Daemon address to connect to for mining
-    #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
+    #[clap(long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String,
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
     /// Enable the benchmark mode
-    #[clap(short, long)]
+    #[clap(long)]
     benchmark: bool,
     /// Iterations to run the benchmark
-    #[clap(short, long, default_value_t = 10_000_000)]
+    #[clap(long, default_value_t = 10_000_000)]
     iterations: usize,
     /// Disable the log file
-    #[clap(short = 'f', long)]
+    #[clap(long)]
     disable_file_logging: bool,
     /// Log filename
     /// 
     /// By default filename is xelis-daemon.log.
     /// File will be stored in logs directory, this is only the filename, not the full path.
     /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-daemon.log.
-    #[clap(short = 'n', default_value_t = String::from("xelis-miner.log"))]
+    #[clap(default_value_t = String::from("xelis-miner.log"))]
     filename_log: String,
     /// Logs directory
     /// 
