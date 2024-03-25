@@ -120,7 +120,7 @@ pub struct Config {
     /// It must end with a / to be a valid folder.
     #[clap(long, default_value_t = String::from("logs/"))]
     logs_path: String,
-    /// Use name path for wallet storage
+    /// Set the path for wallet storage to open/create a wallet at this location
     #[clap(long)]
     wallet_path: Option<String>,
     /// Password used to open wallet
