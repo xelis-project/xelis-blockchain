@@ -43,7 +43,7 @@ impl Echange {
     // So if in block A we spent TX A, and block B we got some funds, then we spent TX B in block C
     // We are still able to use it even if it was built at same time as TX A
     fn get_balance(&mut self) -> &mut CiphertextCache {
-        let output = self.output_balance_used || self.allow_output_balance || self.version.contains_input();
+        let output = self.output_balance_used || self.allow_output_balance;
         let (ct, used) = self.version.select_balance(output);
         if !self.output_balance_used {
             self.output_balance_used = used;
