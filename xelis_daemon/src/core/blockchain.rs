@@ -1359,6 +1359,7 @@ impl<S: Storage> Blockchain<S> {
         trace!("build chain state for block template");
         let mut chain_state = ChainState::new(storage, topoheight);
 
+        let mut failed_sources = HashSet::new();
         while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
             if block_size + total_txs_size + size >= MAX_BLOCK_SIZE {
                 break;
@@ -1366,9 +1367,15 @@ impl<S: Storage> Blockchain<S> {
 
             // Check if the TX is valid for this potential block
             trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_source().as_address(self.network.is_mainnet()));
-            let owner = tx.get_source();
+            let source = tx.get_source();
+            if failed_sources.contains(&source) {
+                debug!("Skipping TX {} because its source has failed before", hash);
+                continue;
+            }
+
             if let Err(e) = tx.verify(&mut chain_state).await {
-                warn!("TX {} ({}) is not valid for mining: {}", hash, owner.as_address(self.network.is_mainnet()), e);
+                warn!("TX {} ({}) is not valid for mining: {}", hash, source.as_address(self.network.is_mainnet()), e);
+                failed_sources.insert(source);
             } else {
                 trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()));
                 // TODO no clone
