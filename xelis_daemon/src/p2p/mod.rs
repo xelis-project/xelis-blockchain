@@ -1720,7 +1720,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // peer chain looks correct, lets rewind our chain
                 warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
-                self.blockchain.rewind_chain(pop_count, true).await?;
+                self.blockchain.rewind_chain(pop_count, false).await?;
 
                 // now retrieve all txs from all blocks header and add block in chain
                 for (hash, header) in chain_validator.get_blocks() {
@@ -2211,7 +2211,7 @@ impl<S: Storage> P2pServer<S> {
                                 our_topoheight - common_point.get_topoheight()
                             };
                             warn!("We need to pop {} blocks for fast sync", pop_count);
-                            our_topoheight = self.blockchain.rewind_chain_for_storage(&mut *storage, pop_count, true).await?;
+                            our_topoheight = self.blockchain.rewind_chain_for_storage(&mut *storage, pop_count, !peer.is_priority()).await?;
                             debug!("New topoheight after rewind is now {}", our_topoheight);
                         }
                     } else {

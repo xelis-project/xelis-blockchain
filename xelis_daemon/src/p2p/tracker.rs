@@ -372,7 +372,7 @@ impl ObjectTracker {
                     Some(response) => {
                         let (_, request) = queue.pop().unwrap();
                         if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast()).await {
-                            error!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
+                            debug!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
                             self.clean_queue(&mut queue, request.get_peer().get_id(), request.get_group_id()).await;
                         }
                     },
@@ -504,7 +504,7 @@ impl ObjectTracker {
 
         // Delete all from the same group if one of them failed
         if let Some(group) = group {
-            warn!("Group {} failed", group);
+            debug!("Group {} failed", group);
             self.group.notify_group(group).await;
         }
 
