@@ -1,7 +1,8 @@
 use crate::{
     config::{
         BLOCK_TIME_MILLIS,
-        DEV_FEES
+        DEV_FEES,
+        DEV_PUBLIC_KEY
     },
     core::{
         blockchain::{
@@ -867,6 +868,7 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
 
     let mut history_count = 0;
     let mut history = Vec::new();
+    let is_dev_address = *key == *DEV_PUBLIC_KEY;
     loop {
         if let Some((topo, versioned_balance)) = version.take() {
             trace!("Searching history at topoheight {}", topo);
@@ -875,22 +877,33 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
             }
 
             let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
-            if params.asset == XELIS_ASSET && *block_header.get_miner() == *key {
-                let mut reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
-                // subtract dev fee if any
-                let dev_fee_percentage = get_block_dev_fee(block_header.get_height());
-                if dev_fee_percentage != 0 {
-                    let dev_fee = reward * dev_fee_percentage / 100;
-                    reward -= dev_fee;
+            // Block reward is only paid in XELIS
+            if params.asset == XELIS_ASSET {
+                if *block_header.get_miner() == *key || is_dev_address {
+                    let mut reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
+                    // subtract dev fee if any
+                    let dev_fee_percentage = get_block_dev_fee(block_header.get_height());
+                    if dev_fee_percentage != 0 {
+                        let dev_fee = reward * dev_fee_percentage / 100;
+                        if is_dev_address {
+                            history.push(AccountHistoryEntry {
+                                topoheight: topo,
+                                hash: hash.clone(),
+                                history_type: AccountHistoryType::DevFee { reward: dev_fee },
+                                block_timestamp: block_header.get_timestamp()
+                            });
+                        }
+                        reward -= dev_fee;
+                    }
+    
+                    let history_type = AccountHistoryType::Mining { reward };
+                    history.push(AccountHistoryEntry {
+                        topoheight: topo,
+                        hash: hash.clone(),
+                        history_type,
+                        block_timestamp: block_header.get_timestamp()
+                    });
                 }
-
-                let history_type = AccountHistoryType::Mining { reward };
-                history.push(AccountHistoryEntry {
-                    topoheight: topo,
-                    hash: hash.clone(),
-                    history_type,
-                    block_timestamp: block_header.get_timestamp()
-                });
             }
 
             for tx_hash in block_header.get_transactions() {
