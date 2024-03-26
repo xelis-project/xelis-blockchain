@@ -879,7 +879,8 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
             let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
             // Block reward is only paid in XELIS
             if params.asset == XELIS_ASSET {
-                if *block_header.get_miner() == *key || is_dev_address {
+                let is_miner = *block_header.get_miner() == *key;
+                if is_miner || is_dev_address {
                     let mut reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
                     // subtract dev fee if any
                     let dev_fee_percentage = get_block_dev_fee(block_header.get_height());
@@ -896,13 +897,15 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
                         reward -= dev_fee;
                     }
     
-                    let history_type = AccountHistoryType::Mining { reward };
-                    history.push(AccountHistoryEntry {
-                        topoheight: topo,
-                        hash: hash.clone(),
-                        history_type,
-                        block_timestamp: block_header.get_timestamp()
-                    });
+                    if is_miner {
+                        let history_type = AccountHistoryType::Mining { reward };
+                        history.push(AccountHistoryEntry {
+                            topoheight: topo,
+                            hash: hash.clone(),
+                            history_type,
+                            block_timestamp: block_header.get_timestamp()
+                        });
+                    }
                 }
             }
 
