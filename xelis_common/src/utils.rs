@@ -1,3 +1,5 @@
+use std::net::IpAddr;
+
 use crate::{
     config::{
         COIN_DECIMALS,
@@ -102,9 +104,15 @@ pub fn sanitize_daemon_address(target: &str) -> String {
         target.replace_range(..7, "ws://");
     }
     else if !target.starts_with("ws://") && !target.starts_with("wss://") {
-        target.insert_str(0, "ws://");
-    }
+        // use ws:// if it's a IP address, otherwise it may be a domain, use wss://
+        let prefix = if target.parse::<IpAddr>().is_ok() {
+            "ws://"
+        } else {
+            "wss://"
+        };
 
+        target.insert_str(0, prefix);
+    }
 
     if target.ends_with("/") {
         target.pop();
