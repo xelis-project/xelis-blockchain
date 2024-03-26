@@ -332,6 +332,7 @@ pub struct GetAccountHistoryParams {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")] 
 pub enum AccountHistoryType {
+    DevFee { reward: u64 },
     Mining { reward: u64 },
     Burn { amount: u64 },
     Outgoing { to: Address },
