@@ -60,7 +60,7 @@ use xelis_common::{
     time::get_current_time_in_millis,
     utils::{
         format_difficulty,
-        format_hashrate
+        format_hashrate, sanitize_daemon_address
     }
 };
 use clap::Parser;
@@ -240,13 +240,10 @@ fn benchmark(threads: usize, iterations: usize) {
 // It maintains a WebSocket connection with the daemon and notify all threads when it receive a new job.
 // Its also the task who have the job to send directly the new block found by one of the threads.
 // This allow mining threads to only focus on mining and receiving jobs through memory channels.
-async fn communication_task(mut daemon_address: String, job_sender: broadcast::Sender<ThreadNotification<'_>>, mut block_receiver: mpsc::Receiver<BlockMiner<'_>>, address: Address, worker: String) {
+async fn communication_task(daemon_address: String, job_sender: broadcast::Sender<ThreadNotification<'_>>, mut block_receiver: mpsc::Receiver<BlockMiner<'_>>, address: Address, worker: String) {
     info!("Starting communication task");
+    let daemon_address = sanitize_daemon_address(&daemon_address);
     'main: loop {
-        if !daemon_address.starts_with("ws://") && !daemon_address.starts_with("wss://") {
-            daemon_address = format!("ws://{}", daemon_address);
-        }
-
         info!("Trying to connect to {}", daemon_address);
         let client = match connect_async(format!("{}/getwork/{}/{}", daemon_address, address.to_string(), worker)).await {
             Ok((client, response)) => {
