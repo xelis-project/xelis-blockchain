@@ -585,6 +585,12 @@ impl<S: Storage> P2pServer<S> {
         let mut peers: IndexSet<&Arc<Peer>> = IndexSet::with_capacity(available_peers.len());
 
         for p in available_peers {
+            // Avoid selecting peers that have a weaker cumulative difficulty than us
+            let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
+            if *cumulative_difficulty <= our_cumulative_difficulty {
+                continue;
+            }
+
             let peer_topoheight = p.get_topoheight();
             if fast_sync {
                 // if we want to fast sync, but this peer is not compatible, we skip it
@@ -592,12 +598,6 @@ impl<S: Storage> P2pServer<S> {
                 if peer_topoheight < PRUNE_SAFETY_LIMIT || our_topoheight + PRUNE_SAFETY_LIMIT > peer_topoheight {
                     continue;
                 }
-
-                let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
-                if *cumulative_difficulty <= our_cumulative_difficulty {
-                    continue;
-                }
-
                 if let Some(pruned_topoheight) = p.get_pruned_topoheight() {
                     // This shouldn't be possible if following the protocol,
                     // But we may never know if a peer is not following the protocol strictly
@@ -1778,7 +1778,7 @@ impl<S: Storage> P2pServer<S> {
                         if let Some(notifier) = &mut notifier {
                             // Check if we don't have any message pending in the channel
                             if notifier.try_recv().is_ok() {
-                                error!("An error has occured in batch while requesting chain in boost mode");
+                                debug!("An error has occured in batch while requesting chain in boost mode");
                                 return Err(P2pError::BoostSyncModeError.into());
                             }
                         }
