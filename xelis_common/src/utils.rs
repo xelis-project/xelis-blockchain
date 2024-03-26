@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::net::SocketAddr;
 
 use crate::{
     config::{
@@ -105,7 +105,7 @@ pub fn sanitize_daemon_address(target: &str) -> String {
     }
     else if !target.starts_with("ws://") && !target.starts_with("wss://") {
         // use ws:// if it's a IP address, otherwise it may be a domain, use wss://
-        let prefix = if target.parse::<IpAddr>().is_ok() {
+        let prefix = if target.parse::<SocketAddr>().is_ok() {
             "ws://"
         } else {
             "wss://"
