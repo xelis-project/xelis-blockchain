@@ -19,7 +19,8 @@ use xelis_common::{
             SplitAddressParams,
             SplitAddressResult,
             StoreParams,
-            TransactionResponse
+            TransactionResponse,
+            SetOnlineModeParams,
         },
         DataElement,
         DataHash
@@ -63,6 +64,8 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("build_transaction", async_handler!(build_transaction));
     handler.register_method("list_transactions", async_handler!(list_transactions));
     handler.register_method("is_online", async_handler!(is_online));
+    handler.register_method("set_online_mode", async_handler!(set_online_mode));
+    handler.register_method("set_offline_mode", async_handler!(set_offline_mode));
     handler.register_method("sign_data", async_handler!(sign_data));
     handler.register_method("estimate_fees", async_handler!(estimate_fees));
 
@@ -292,6 +295,36 @@ async fn is_online(context: Context, body: Value) -> Result<Value, InternalRpcEr
     let wallet: &Arc<Wallet> = context.get()?;
     let is_connected = wallet.is_online().await;
     Ok(json!(is_connected))
+}
+
+// Connect the wallet to a daemon if not already connected
+async fn set_online_mode(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: SetOnlineModeParams = parse_params(body)?;
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    if wallet.is_online().await {
+        return Err(InternalRpcError::CustomStr("Wallet is already connected to a daemon"))
+    }
+
+    wallet.set_online_mode(&params.daemon_address).await.context("Error while setting online mode")?;
+
+    Ok(json!(true))
+}
+
+// Connect the wallet to a daemon if not already connected
+async fn set_offline_mode(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+
+    let wallet: &Arc<Wallet> = context.get()?;
+    if !wallet.is_online().await {
+        return Err(InternalRpcError::CustomStr("Wallet is already in offline mode"))
+    }
+
+    wallet.set_offline_mode().await.context("Error while setting offline mode")?;
+
+    Ok(json!(true))
 }
 
 // Sign any data converted in bytes format
