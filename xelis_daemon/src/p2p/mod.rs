@@ -1779,7 +1779,7 @@ impl<S: Storage> P2pServer<S> {
                             // Check if we don't have any message pending in the channel
                             if notifier.try_recv().is_ok() {
                                 debug!("An error has occured in batch while requesting chain in boost mode");
-                                return Err(P2pError::BoostSyncModeError.into());
+                                return Err(P2pError::BoostSyncModeFailed.into());
                             }
                         }
 
@@ -1814,11 +1814,15 @@ impl<S: Storage> P2pServer<S> {
                     res = blocker.recv() => match res {
                         Ok(()) => {
                             debug!("Final blocker finished");
-                            self.object_tracker.get_group_manager().unregister_group(group_id.unwrap()).await;
+                            if let Some(group_id) = group_id {
+                                self.object_tracker.get_group_manager().unregister_group(group_id).await;
+                            } else {
+                                warn!("Group ID is None while it should not be");
+                            }
                         },
                         Err(e) => {
                             error!("Error while waiting for final blocker: {}", e);
-                            return Err(P2pError::BoostSyncModeError.into());
+                            return Err(P2pError::BoostSyncModeBlockerError.into());
                         }
                     }
                 }
