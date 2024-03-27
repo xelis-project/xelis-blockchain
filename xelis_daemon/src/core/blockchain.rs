@@ -1429,46 +1429,46 @@ impl<S: Storage> Blockchain<S> {
         let block_hash = block.hash();
         debug!("Add new block {}", block_hash);
         if storage.has_block_with_hash(&block_hash).await? {
-            error!("Block {} is already in chain!", block_hash);
+            debug!("Block {} is already in chain!", block_hash);
             return Err(BlockchainError::AlreadyInChain)
         }
 
         let current_timestamp = get_current_time_in_millis(); 
         if block.get_timestamp() > current_timestamp + TIMESTAMP_IN_FUTURE_LIMIT { // accept 2s in future
-            error!("Block timestamp is too much in future!");
+            debug!("Block timestamp is too much in future!");
             return Err(BlockchainError::TimestampIsInFuture(current_timestamp, block.get_timestamp()));
         }
 
         let tips_count = block.get_tips().len();
         debug!("Tips count for this new {}: {}", block, tips_count);
         if tips_count > TIPS_LIMIT {
-            error!("Invalid tips count, got {} but maximum allowed is {}", tips_count, TIPS_LIMIT);
+            debug!("Invalid tips count, got {} but maximum allowed is {}", tips_count, TIPS_LIMIT);
             return Err(BlockchainError::InvalidTips) // only 3 tips are allowed
         }
 
         let current_height = self.get_height();
         if tips_count == 0 && current_height != 0 {
-            error!("Expected at least one previous block for this block {}", block_hash);
+            debug!("Expected at least one previous block for this block {}", block_hash);
             return Err(BlockchainError::ExpectedTips)
         }
 
         // block contains header and full TXs
         let block_size = block.size();
         if block_size > MAX_BLOCK_SIZE {
-            error!("Block size ({} bytes) is greater than the limit ({} bytes)", block.size(), MAX_BLOCK_SIZE);
+            debug!("Block size ({} bytes) is greater than the limit ({} bytes)", block.size(), MAX_BLOCK_SIZE);
             return Err(BlockchainError::InvalidBlockSize(MAX_BLOCK_SIZE, block.size()));
         }
 
         for tip in block.get_tips() {
             if !storage.has_block_with_hash(tip).await? {
-                error!("This block ({}) has a TIP ({}) which is not present in chain", block_hash, tip);
+                debug!("This block ({}) has a TIP ({}) which is not present in chain", block_hash, tip);
                 return Err(BlockchainError::InvalidTips)
             }
         }
 
         let block_height_by_tips = blockdag::calculate_height_at_tips(storage, block.get_tips().iter()).await?;
         if block_height_by_tips != block.get_height() {
-            error!("Invalid block height {}, expected {} for this block {}", block.get_height(), block_height_by_tips, block_hash);
+            debug!("Invalid block height {}, expected {} for this block {}", block.get_height(), block_height_by_tips, block_hash);
             return Err(BlockchainError::InvalidBlockHeight(block_height_by_tips, block.get_height()))
         }
 
@@ -1477,13 +1477,13 @@ impl<S: Storage> Blockchain<S> {
             debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
 
             if block_height_by_tips < stable_height {
-                error!("Invalid block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
+                debug!("Invalid block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
                 return Err(BlockchainError::InvalidBlockHeightStableHeight)
             }
         }
 
         if !self.verify_non_reachability(storage, &block).await? {
-            error!("{} with hash {} has an invalid reachability", block, block_hash);
+            debug!("{} with hash {} has an invalid reachability", block, block_hash);
             return Err(BlockchainError::InvalidReachability)
         }
 
@@ -1491,14 +1491,14 @@ impl<S: Storage> Blockchain<S> {
             let previous_timestamp = storage.get_timestamp_for_block_hash(hash).await?;
             // block timestamp can't be less than previous block.
             if block.get_timestamp() < previous_timestamp {
-                error!("Invalid block timestamp, parent ({}) is less than new block {}", hash, block_hash);
+                debug!("Invalid block timestamp, parent ({}) is less than new block {}", hash, block_hash);
                 return Err(BlockchainError::TimestampIsLessThanParent(block.get_timestamp()));
             }
 
             trace!("calculate distance from mainchain for tips: {}", hash);
             let distance = self.calculate_distance_from_mainchain(storage, hash).await?;
             if distance <= current_height && current_height - distance >= STABLE_LIMIT {
-                error!("{} with hash {} have deviated too much, maximum allowed is {} (current height: {}, distance: {})", block, block_hash, STABLE_LIMIT, current_height, distance);
+                debug!("{} with hash {} have deviated too much, maximum allowed is {} (current height: {}, distance: {})", block, block_hash, STABLE_LIMIT, current_height, distance);
                 return Err(BlockchainError::BlockDeviation)
             }
         }
@@ -1509,7 +1509,7 @@ impl<S: Storage> Blockchain<S> {
             for hash in block.get_tips() {
                 if best_tip != hash {
                     if !self.validate_tips(storage, best_tip, hash).await? {
-                        error!("Tip {} is invalid, difficulty can't be less than 91% of {}", hash, best_tip);
+                        debug!("Tip {} is invalid, difficulty can't be less than 91% of {}", hash, best_tip);
                         return Err(BlockchainError::InvalidTips)
                     }
                 }
@@ -1533,7 +1533,7 @@ impl<S: Storage> Blockchain<S> {
             let hashes_len = block.get_txs_hashes().len();
             let txs_len = block.get_transactions().len();
             if  hashes_len != txs_len {
-                error!("Block {} has an invalid block header, transaction count mismatch (expected {} got {})!", block_hash, txs_len, hashes_len);
+                debug!("Block {} has an invalid block header, transaction count mismatch (expected {} got {})!", block_hash, txs_len, hashes_len);
                 return Err(BlockchainError::InvalidBlockTxs(hashes_len, txs_len));
             }
 
@@ -1551,7 +1551,7 @@ impl<S: Storage> Blockchain<S> {
                 // verification that the real TX Hash is the same as in block header (and also check the correct order)
                 let tx_hash = tx.hash();
                 if tx_hash != *hash {
-                    error!("Invalid tx {} vs {} in block header", tx_hash, hash);
+                    debug!("Invalid tx {} vs {} in block header", tx_hash, hash);
                     return Err(BlockchainError::InvalidTxInBlock(tx_hash))
                 }
 
@@ -1563,7 +1563,7 @@ impl<S: Storage> Blockchain<S> {
                     let block_height = chain_state.get_storage().get_height_for_block_hash(&block_executed).await?;
                     // if the tx was executed below stable height, reject whole block!
                     if block_height <= stable_height {
-                        error!("Block {} contains a dead tx {}", block_hash, tx_hash);
+                        debug!("Block {} contains a dead tx {}", block_hash, tx_hash);
                         return Err(BlockchainError::DeadTx(tx_hash))
                     } else {
                         debug!("Tx {} was executed in block {} at height {} (stable height: {})", tx_hash, block, block_height, stable_height);
@@ -1579,7 +1579,7 @@ impl<S: Storage> Blockchain<S> {
                             // miner knows this tx was already executed because its present in block tips
                             // reject the whole block
                             if txs.contains(&tx_hash) {
-                                error!("Malicious Block {} formed, contains a dead tx {}", block_hash, tx_hash);
+                                debug!("Malicious Block {} formed, contains a dead tx {}", block_hash, tx_hash);
                                 return Err(BlockchainError::DeadTx(tx_hash))
                             } else {
                                 // otherwise, all looks good but because the TX was executed in another branch, we skip verification
