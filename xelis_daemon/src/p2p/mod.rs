@@ -1249,8 +1249,9 @@ impl<S: Storage> P2pServer<S> {
                     trace!("received peer list from {}: {}", peer, ping.get_peers().len());
                     let last_peer_list = peer.get_last_peer_list();
                     peer.set_last_peer_list(current_time);
-                    if last_peer_list != 0 && current_time - last_peer_list < P2P_PING_PEER_LIST_DELAY {
-                        return Err(P2pError::PeerInvalidPeerListCountdown)
+                    let diff = current_time - last_peer_list;
+                    if last_peer_list != 0 && diff < P2P_PING_PEER_LIST_DELAY {
+                        return Err(P2pError::PeerInvalidPeerListCountdown(diff))
                     }
                 }
 

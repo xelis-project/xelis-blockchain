@@ -125,8 +125,8 @@ pub enum P2pError {
     ExpectedBlock,
     #[error("Expected a transaction type")]
     ExpectedTransaction,
-    #[error("Peer sent us a peerlist faster than protocol rules")]
-    PeerInvalidPeerListCountdown,
+    #[error("Peer sent us a peerlist faster than protocol rules, expected to wait {} seconds more", _0)]
+    PeerInvalidPeerListCountdown(u64),
     #[error("Peer sent us a ping packet faster than protocol rules")]
     PeerInvalidPingCoutdown,
     #[error(transparent)]
