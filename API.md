@@ -536,12 +536,48 @@ Verify if address has a nonce on-chain registered.
 }
 ```
 
-#### Get Last Balance
+#### Get Nonce At TopoHeight
+Get nonce from address at exact topoheight
+
+##### Method `get_nonce_at_topoheight`
+
+##### Parameters
+|    Name    |   Type  | Required |                           Note                          |
+|:----------:|:-------:|:--------:|:-------------------------------------------------------:|
+|   address  | Address | Required |            Valid address registered on chain            |
+| topoheight | Integer | Required | Topoheight to retrieve a version (if exists) of balance |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_nonce_at_topoheight",
+	"params": {
+		"address": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
+		"topoheight": 30
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"nonce": 44,
+		"previous_topoheight": 29
+	}
+}
+```
+
+#### Get Balance
 Get up-to-date asset's balance for a specific address
 
 NOTE: Balance is returned in atomic units
 
-##### Method `get_last_balance`
+##### Method `get_balance`
 
 ##### Parameters
 |   Name  |   Type  | Required |                Note               |
@@ -568,11 +604,47 @@ NOTE: Balance is returned in atomic units
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": {
-		"balance": {
+		"version": {
 			"balance": 37726957,
 			"previous_topoheight": 41
 		},
 		"topoheight": 42
+	}
+}
+```
+
+#### Has Balance
+Verify if address has a balance on-chain registered for requested asset.
+
+##### Method `has_balance`
+
+##### Parameters
+|    Name    |   Type  | Required |                    Note                    |
+|:----------:|:-------:|:--------:|:------------------------------------------:|
+|   address  | Address | Required |      Valid address registered on chain     |
+|    asset   |   Hash  | Required |        Asset ID registered on chain        |
+| topoheight | Integer | Optional |        nonce at specified topoheight       |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "has_balance",
+	"params": {
+		"address": "xel1qyqxcfxdc8ywarcz3wx2leahnfn2pyp0ymvfm42waluq408j2x5680g05xfx5",
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"exist": true
 	}
 }
 ```
@@ -646,7 +718,7 @@ Get all assets available on network with its registered topoheight and necessary
 	"result": [
 		{
 			"asset": "0000000000000000000000000000000000000000000000000000000000000000",
-			"decimals": 5,
+			"decimals": 8,
 			"topoheight": 0
 		}
 	]
@@ -681,7 +753,7 @@ Get registered topoheight and decimals data from a specific asset.
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": {
-		"decimals": 5,
+		"decimals": 8,
 		"topoheight": 0
 	}
 }
@@ -849,32 +921,36 @@ No parameters
 {
 	"id": 1,
 	"jsonrpc": "2.0",
-	"result": [
-		{
-			"addr": "255.255.255.255:2125",
-			"cumulative_difficulty": 15429361306853,
-			"height": 488400,
-			"id": 8185485348476293826,
-			"last_ping": 1697559833,
-			"pruned_topoheight": 488000,
-			"tag": null,
-			"top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
-			"topoheight": 489291,
-			"version": "1.5.0"
-		},
-		{
-			"addr": "192.168.55.43:2125",
-			"cumulative_difficulty": 15429361306853,
-			"height": 488400,
-			"id": 2491091954271682078,
-			"last_ping": 1697559834,
-			"pruned_topoheight": 489200,
-			"tag": null,
-			"top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
-			"topoheight": 489291,
-			"version": "1.5.0"
-		}
-	]
+	"result": {
+		"peers": [
+			{
+				"addr": "255.255.255.255:2125",
+				"cumulative_difficulty": 15429361306853,
+				"height": 488400,
+				"id": 8185485348476293826,
+				"last_ping": 1697559833,
+				"pruned_topoheight": 488000,
+				"tag": null,
+				"top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
+				"topoheight": 489291,
+				"version": "1.5.0"
+			},
+			{
+				"addr": "192.168.55.43:2125",
+				"cumulative_difficulty": 15429361306853,
+				"height": 488400,
+				"id": 2491091954271682078,
+				"last_ping": 1697559834,
+				"pruned_topoheight": 489200,
+				"tag": null,
+				"top_block_hash": "0000006a04cccb82b11e68468be07e4a1da46de8b47dc41d66b2300ff494f80e",
+				"topoheight": 489291,
+				"version": "1.5.0"
+			}
+		],
+		"hidden_peers": 0,
+		"total_peers": 2
+	}
 }
 ```
 NOTE: Addresses displayed in this example are not real one and were replaced for privacy reasons.
@@ -1176,6 +1252,18 @@ Retrieve all assets for an account
 ##### Request
 ```json
 {
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_account_assets",
+	"params": {
+		"address": "xet1qqqyvh9vgkcurtj2la0e4jspnfsq7vkaqm863zcfdnej92xg4mpzz3suf96k4"
+	}
+}
+```
+
+##### Response
+```json
+{
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": [
@@ -1184,13 +1272,10 @@ Retrieve all assets for an account
 }
 ```
 
-##### Response
-```json
-
-```
-
 #### Submit Block
-Submit a block to the daemon
+Submit a block header in hexadecimal format to the daemon.
+
+
 
 ##### Method `submit_block`
 
@@ -1661,6 +1746,9 @@ TODO
 Get asset balance from wallet.
 When no parameter is set, default asset is XELIS.
 
+NOTE: By default, if no balance for the requested asset is found, it will returns 0.
+Use `has_balance` to determine if the wallet as an asset balance or not.
+
 ##### Method `get_balance`
 
 ##### Parameters
@@ -1682,6 +1770,34 @@ TODO
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": 8660741
+}
+```
+
+#### Has Balance
+Verify if wallet has the requested asset balance.
+When no parameter is set, default asset is XELIS.
+
+##### Method `has_balance`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "has_balance",
+	"id": 1,
+	"params": {}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
 }
 ```
 
@@ -1844,7 +1960,7 @@ TODO
 Search transactions based on various parameters.
 By default it accepts every TXs.
 
-##### Method `get_version`
+##### Method `list_transactions`
 
 ##### Parameters
 |       Name      |   Type  | Required |           Note           |
@@ -1897,5 +2013,70 @@ By default it accepts every TXs.
 			"topoheight": 69752
 		}
 	]
+}
+```
+
+#### Sign Data
+Generate a signature for the input data using your wallet key pair.
+
+##### Method `sign_data`
+
+##### Parameters
+Parameter value can be anything (object, value, array...)
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "estimate_fees",
+	"id": 1,
+	"params": {
+		"hello": "world"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": "5bb7a1f33c3c89e968be9f1c343aa15393ec98905976e38087d53595a3411bd0130f9414b7e5fe4e3bcdcad03e0c6d2cbee01c10514289ad3b2b5e3b2fe8fd03"
+}
+```
+
+#### Estimate Fees
+Estimate the minimum required fees for a future transaction.
+Returned fees are in atomic units.
+
+##### Method `estimate_fees`
+
+##### Parameters
+Paramater value can be anything (object, value, array...)
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "build_transaction",
+	"id": 1,
+	"params": {
+		"transfers": [
+			{
+				"amount": 1000,
+				"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+				"to": "xet1qqq8ar5gagvjhznhj59l3r4lqhe7edutendy6vd4y7jd59exl6u7xschfuhym"
+			}
+		]
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 10000
 }
 ```

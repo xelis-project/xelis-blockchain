@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use thiserror::Error;
-use crate::crypto::hash::Hash;
+use crate::crypto::Hash;
 use crate::serializer::Serializer;
 
 #[derive(Error, Debug)]

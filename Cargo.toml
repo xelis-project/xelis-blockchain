@@ -8,14 +8,10 @@ members = [
     "xelis_daemon"
 ]
 
-# cargo run --release
-[profile.release]
+# cargo run --profile release-with-lto
+[profile.release-with-lto]
+inherits = "release"
 opt-level = 3
 debug-assertions = false
 overflow-checks = false
 lto = true
-
-# cargo run --profile release-no-lto
-[profile.release-no-lto]
-inherits = "release"
-lto = false

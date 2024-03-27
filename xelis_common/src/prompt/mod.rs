@@ -1,39 +1,50 @@
 pub mod command;
 pub mod argument;
 
-use crate::crypto::hash::Hash;
-use crate::serializer::{Serializer, ReaderError};
-
+use crate::{
+    crypto::Hash,
+    serializer::{Serializer, ReaderError},
+};
+use std::{
+    collections::VecDeque,
+    fmt::{self, Display, Formatter},
+    fs::create_dir_all,
+    future::Future,
+    io::{stdout, Error as IOError, Write},
+    path::Path,
+    pin::Pin,
+    str::FromStr,
+    sync::{
+        atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering},
+        Arc,
+        Mutex,
+        PoisonError
+    },
+    task::{Context, Poll},
+    time::Duration
+};
+use crossterm::{
+    event::{self, Event, KeyCode, KeyModifiers, KeyEventKind},
+    terminal as crossterminal,
+};
+use tokio::{
+    sync::{
+        mpsc::{self, UnboundedSender, UnboundedReceiver, Sender, Receiver},
+        oneshot,
+        Mutex as AsyncMutex
+    },
+    time::{interval, timeout}
+};
 use self::command::{CommandError, CommandManager};
-use std::collections::VecDeque;
-use std::fmt::{Display, Formatter, self};
-use std::fs::create_dir;
-use std::io::{Write, stdout, Error as IOError};
-use std::num::ParseFloatError;
-use std::path::Path;
-use std::pin::Pin;
-use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering, AtomicUsize, AtomicU16};
 use anyhow::Error;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
-use crossterm::terminal;
 use fern::colors::{ColoredLevelConfig, Color};
 use regex::Regex;
-use tokio::sync::{
-    mpsc::{self, UnboundedSender, UnboundedReceiver, Sender, Receiver},
-    oneshot,
-    Mutex as AsyncMutex
-};
-use std::sync::{PoisonError, Arc, Mutex};
 use log::{info, error, Level, debug, LevelFilter, warn};
-use tokio::time::{interval, timeout};
-use std::time::Duration;
-use std::future::Future;
 use thiserror::Error;
 
 // used for launch param
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "clap", derive(clap::ArgEnum))]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum LogLevel {
     Off,
     Error,
@@ -103,12 +114,12 @@ pub enum PromptError {
     NotRunning,
     #[error("No command manager found")]
     NoCommandManager,
-    #[error(transparent)]
-    ParseFloatError(#[from] ParseFloatError),
+    #[error("Error while parsing: {}", _0)]
+    ParseInputError(String),
     #[error(transparent)]
     ReaderError(#[from] ReaderError),
     #[error(transparent)]
-    CommandError(#[from] CommandError)
+    CommandError(#[from] CommandError),
 }
 
 impl<T> From<PoisonError<T>> for PromptError {
@@ -120,6 +131,7 @@ impl<T> From<PoisonError<T>> for PromptError {
 // State used to be shared between stdin thread and Prompt instance
 struct State {
     prompt: Mutex<Option<String>>,
+    exit_channel: Mutex<Option<oneshot::Sender<()>>>,
     width: AtomicU16,
     previous_prompt_line: AtomicUsize,
     user_input: Mutex<String>,
@@ -127,29 +139,58 @@ struct State {
     prompt_sender: Mutex<Option<oneshot::Sender<String>>>,
     has_exited: AtomicBool,
     ascii_escape_regex: Regex,
+    interactive: bool
 }
 
 impl State {
     fn new() -> Self {
+        // enable the raw mode for terminal
+        // so we can read each event/action
+        let interactive = !crossterminal::enable_raw_mode().is_err();
+        if interactive {
+            warn!("Non-interactive mode enabled");
+        }
+
         Self {
             prompt: Mutex::new(None),
-            width: AtomicU16::new(crossterm::terminal::size().unwrap_or((80, 0)).0),
+            exit_channel: Mutex::new(None),
+            width: AtomicU16::new(crossterminal::size().unwrap_or((80, 0)).0),
             previous_prompt_line: AtomicUsize::new(0),
             user_input: Mutex::new(String::new()),
             mask_input: AtomicBool::new(false),
             prompt_sender: Mutex::new(None),
             has_exited: AtomicBool::new(false),
-            ascii_escape_regex: Regex::new("\x1B\\[[0-9;]*[A-Za-z]").unwrap()
+            ascii_escape_regex: Regex::new("\x1B\\[[0-9;]*[A-Za-z]").unwrap(),
+            interactive
         }
+    }
+
+    fn set_exit_channel(&self, sender: oneshot::Sender<()>) -> Result<(), PromptError> {
+        let mut exit = self.exit_channel.lock()?;
+        if exit.is_some() {
+            return Err(PromptError::AlreadyRunning)
+        }
+        *exit = Some(sender);
+        Ok(())
+    }
+
+    pub fn stop(&self) -> Result<(), PromptError> {
+        let mut exit = self.exit_channel.lock()?;
+        let sender = exit.take().ok_or(PromptError::NotRunning)?;
+
+        if sender.send(()).is_err() {
+            error!("Error while sending exit signal");
+        }
+
+        Ok(())
+    }
+
+    pub fn is_interactive(&self) -> bool {
+        self.interactive
     }
 
     fn ioloop(self: &Arc<Self>, sender: UnboundedSender<String>) -> Result<(), PromptError> {
         debug!("ioloop started");
-        // enable the raw mode for terminal
-        // so we can read each event/action
-        if let Err(e) = terminal::enable_raw_mode() {
-            error!("Error while enabling raw mode: {}", e);
-        }
 
         // all the history of commands
         let mut history: VecDeque<String> = VecDeque::new();
@@ -270,12 +311,16 @@ impl State {
         }
 
         if !self.has_exited.swap(true, Ordering::SeqCst) {
-            if let Err(e) = terminal::disable_raw_mode() {
-                error!("Error while disabling raw mode: {}", e);
+            if self.is_interactive() {
+                if let Err(e) = crossterminal::disable_raw_mode() {
+                    error!("Error while disabling raw mode: {}", e);
+                }
             }
         }
 
         info!("ioloop thread is now stopped");
+
+        // Send an empty message to the reader to unblock it
         let mut sender = self.prompt_sender.lock()?;
         if let Some(sender) = sender.take() {
             if let Err(e) = sender.send(String::new()) {
@@ -283,7 +328,7 @@ impl State {
             }
         }
 
-        Ok(())
+        self.stop()
     }
 
     fn should_mask_input(&self) -> bool {
@@ -318,7 +363,7 @@ impl State {
         let previous_count = self.previous_prompt_line.swap(current_count, Ordering::SeqCst);
 
         // > 1 because prompt line is already counted below
-        if previous_count > 1 {
+        if self.is_interactive() && previous_count > 1 {
             print!("\x1B[{}A\x1B[J", previous_count - 1);
         }
 
@@ -345,9 +390,37 @@ impl State {
     }
 }
 
+struct OptionReader {
+    reader: Option<UnboundedReceiver<String>>
+}
+
+impl OptionReader {
+    fn new(reader: Option<UnboundedReceiver<String>>) -> Self {
+        Self {
+            reader
+        }
+    }
+}
+
+impl Future for OptionReader {
+    type Output = Option<String>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.reader.as_mut() {
+            Some(reader) => {
+                match Pin::new(reader).poll_recv(cx) {
+                    Poll::Ready(Some(value)) => Poll::Ready(Some(value)),
+                    Poll::Ready(None) => Poll::Ready(None),
+                    Poll::Pending => Poll::Pending
+                }
+            },
+            None => Poll::Ready(None)
+        }
+    }
+}
+
 pub struct Prompt {
     state: Arc<State>,
-    exit_channel: Mutex<Option<oneshot::Sender<()>>>,
     input_receiver: Mutex<Option<UnboundedReceiver<String>>>,
     // This following channel is used to cancel the read_input method
     read_input_sender: Sender<()>,
@@ -357,58 +430,51 @@ pub struct Prompt {
 pub type ShareablePrompt = Arc<Prompt>;
 
 type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
-type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, &'a T2) -> LocalBoxFuture<'a, R> + 'a>;
+type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, T2) -> LocalBoxFuture<'a, R> + 'a>;
 
 impl Prompt {
-    pub fn new(level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<ShareablePrompt, PromptError> {
+    pub fn new(level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool) -> Result<ShareablePrompt, PromptError> {
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
-        let zelf = Self {
+        let prompt = Self {
             state: Arc::new(State::new()),
-            exit_channel: Mutex::new(None),
             input_receiver: Mutex::new(None),
             read_input_receiver: AsyncMutex::new(read_input_receiver),
             read_input_sender,
         };
-        zelf.setup_logger(level, filename_log, disable_file_logging)?;
+        prompt.setup_logger(level, dir_path, filename_log, disable_file_logging)?;
 
-        // spawn a thread to prevent IO blocking - https://github.com/tokio-rs/tokio/issues/2466
-        let (input_sender, input_receiver) = mpsc::unbounded_channel::<String>();
-        {
-            let state = Arc::clone(&zelf.state);
+        if prompt.state.is_interactive() {
+            let (input_sender, input_receiver) = mpsc::unbounded_channel::<String>();
+            let state = Arc::clone(&prompt.state);
+            // spawn a thread to prevent IO blocking - https://github.com/tokio-rs/tokio/issues/2466
             std::thread::spawn(move || {
                 if let Err(e) = state.ioloop(input_sender) {
                     error!("Error in ioloop: {}", e);
                 };
             });
-        }
-
-        {
-            let mut lock = zelf.input_receiver.lock()?;
+    
+            let mut lock = prompt.input_receiver.lock()?;
             *lock = Some(input_receiver);
         }
 
-        Ok(Arc::new(zelf))
+        Ok(Arc::new(prompt))
     }
 
     // Start the thread to read stdin and handle events
     // Execute commands if a commande manager is present
-    pub async fn start<'a, T>(&'a self, update_every: Duration, fn_message: AsyncF<'a, Self, Option<CommandManager<T>>, Result<String, PromptError>>, command_manager: &'a Option<CommandManager<T>>) -> Result<(), PromptError>
+    pub async fn start<'a>(&'a self, update_every: Duration, fn_message: AsyncF<'a, Self, Option<&'a CommandManager>, Result<String, PromptError>>, command_manager: Option<&'a CommandManager>) -> Result<(), PromptError>
     {
         // setup the exit channel
         let mut exit_receiver = {
-            let mut exit = self.exit_channel.lock()?;
-            if exit.is_some() {
-                return Err(PromptError::AlreadyRunning)
-            }
             let (sender, receiver) = oneshot::channel();
-            *exit = Some(sender);
+            self.state.set_exit_channel(sender)?;
             receiver
         };
 
-        let mut input_receiver = {
+        let mut input_receiver = OptionReader::new({
             let mut lock = self.input_receiver.lock()?;
-            lock.take().ok_or(PromptError::NotRunning)?
-        };
+            lock.take()
+        });
 
         let mut interval = interval(update_every);
         loop {
@@ -425,25 +491,17 @@ impl Prompt {
                     }
                     break;
                 },
-                res = input_receiver.recv() => {
-                    match res {
-                        Some(input) => {
-                            if let Some(command_manager) = command_manager.as_ref() {
-                                match command_manager.handle_command(input).await {
-                                    Err(CommandError::Exit) => break,
-                                    Err(e) => {
-                                        error!("Error while executing command: {}", e);
-                                    }
-                                    _ => {},
-                                }
-                            } else {
-                                debug!("You said '{}'", input);
+                Some(input) = &mut input_receiver => {
+                    if let Some(command_manager) = command_manager.as_ref() {
+                        match command_manager.handle_command(input).await {
+                            Err(CommandError::Exit) => break,
+                            Err(e) => {
+                                error!("Error while executing command: {}", e);
                             }
-                        },
-                        None => { // if None, it means the sender has been dropped (and so, the thread is stopped)
-                            debug!("Command Manager has been stopped");
-                            break;
+                            _ => {},
                         }
+                    } else {
+                        debug!("You said '{}'", input);
                     }
                 }
                 _ = interval.tick() => {
@@ -468,8 +526,10 @@ impl Prompt {
         }
 
         if !self.state.has_exited.swap(true, Ordering::SeqCst) {
-            if let Err(e) = terminal::disable_raw_mode() {
-                error!("Error while disabling raw mode: {}", e);
+            if self.state.is_interactive() {
+                if let Err(e) = crossterminal::disable_raw_mode() {
+                    error!("Error while disabling raw mode: {}", e);
+                }
             }
         }
 
@@ -479,14 +539,7 @@ impl Prompt {
     // Stop the prompt running
     // can only be called when it was already started
     pub fn stop(&self) -> Result<(), PromptError> {
-        let mut exit = self.exit_channel.lock()?;
-        let sender = exit.take().ok_or(PromptError::NotRunning)?;
-
-        if sender.send(()).is_err() {
-            error!("Error while sending exit signal");
-        }
-
-        Ok(())
+        self.state.stop()
     }
 
     pub fn update_prompt(&self, msg: String) -> Result<(), PromptError> {
@@ -541,10 +594,12 @@ impl Prompt {
         Ok(res == "y")
     }
 
-    pub async fn read_f64(&self, prompt: String) -> Result<f64, PromptError> {
+    pub async fn read<F: FromStr>(&self, prompt: String) -> Result<F, PromptError>
+    where
+        <F as FromStr>::Err: Display
+    {
         let value = self.read_input(prompt, false).await?;
-        let float_value = value.parse()?;
-        Ok(float_value)
+        value.parse().map_err(|e: F::Err| PromptError::ParseInputError(e.to_string()))
     }
 
     pub async fn read_hash(&self, prompt: String) -> Result<Hash, PromptError> {
@@ -627,7 +682,7 @@ impl Prompt {
     }
 
     // configure fern and print prompt message after each new output
-    fn setup_logger(&self, level: LogLevel, filename_log: String, disable_file_logging: bool) -> Result<(), fern::InitError> {
+    fn setup_logger(&self, level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool) -> Result<(), fern::InitError> {
         let colors = ColoredLevelConfig::new()
             .debug(Color::Green)
             .info(Color::Cyan)
@@ -662,11 +717,9 @@ impl Prompt {
 
         let mut base = base.chain(stdout_log);
         if !disable_file_logging {
-            let logs_path = Path::new("logs/");
+            let logs_path = Path::new(dir_path);
             if !logs_path.exists() {
-                if let Err(e) = create_dir(logs_path) {
-                    error!("Error while creating logs folder: {}", e);
-                };
+                create_dir_all(logs_path)?;
             }
 
             let file_log = fern::Dispatch::new()
@@ -702,11 +755,13 @@ impl Prompt {
 
 impl Drop for Prompt {
     fn drop(&mut self) {
-        if let Ok(true) = terminal::is_raw_mode_enabled() {
-            if let Err(e) = terminal::disable_raw_mode() {
-                error!("Error while forcing to disable raw mode: {}", e);
-            }
-        } 
+        if self.state.is_interactive() {
+            if let Ok(true) = crossterminal::is_raw_mode_enabled() {
+                if let Err(e) = crossterminal::disable_raw_mode() {
+                    error!("Error while forcing to disable raw mode: {}", e);
+                }
+            } 
+        }
     }
 }
 

@@ -1,28 +1,66 @@
 pub mod rpc;
 pub mod getwork_server;
 
-use crate::core::storage::Storage;
-use crate::core::{error::BlockchainError, blockchain::Blockchain};
-use crate::rpc::getwork_server::GetWorkServer;
-use actix_web::dev::ServerHandle;
-use actix_web::{
-    get, HttpServer, App, HttpResponse, Responder, HttpRequest, web::{
-        self, Path, Data, Payload
+use crate::{
+    core::{
+        storage::Storage,
+        error::BlockchainError,
+        blockchain::Blockchain
     },
+    rpc::getwork_server::GetWorkServer,
+};
+use actix_web::{
+    get,
+    HttpServer,
+    App,
+    HttpResponse,
+    Responder,
+    HttpRequest,
+    web::{
+        self,
+        Path,
+        Data,
+        Payload
+    },
+    dev::ServerHandle,
     error::Error
 };
 use actix_web_actors::ws::WsResponseBuilder;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use xelis_common::api::daemon::NotifyEvent;
-use xelis_common::config;
-use xelis_common::crypto::address::Address;
-use xelis_common::rpc_server::websocket::{EventWebSocketHandler, WebSocketServerShared, WebSocketServer};
-use xelis_common::rpc_server::{InternalRpcError, RPCHandler, RPCServerHandler, json_rpc, websocket, WebSocketServerHandler};
-use std::collections::HashSet;
-use std::sync::Arc;
-use log::{trace, info, error, debug, warn};
-use self::getwork_server::{GetWorkWebSocketHandler, SharedGetWorkServer};
+use xelis_common::{
+    api::daemon::NotifyEvent,
+    config,
+    crypto::Address,
+    rpc_server::{
+        websocket::{
+            EventWebSocketHandler,
+            WebSocketServerShared,
+            WebSocketServer
+        },
+        InternalRpcError,
+        RPCHandler,
+        RPCServerHandler,
+        json_rpc,
+        websocket,
+        WebSocketServerHandler,
+    },
+};
+use std::{
+    collections::HashSet,
+    sync::Arc,
+};
+use log::{
+    trace,
+    debug,
+    info,
+    warn,
+    error,
+};
+use self::getwork_server::{
+    GetWorkWebSocketHandler,
+    SharedGetWorkServer
+};
 
 pub type SharedDaemonRpcServer<S> = Arc<DaemonRpcServer<S>>;
 
@@ -71,8 +109,10 @@ impl<S: Storage> DaemonRpcServer<S> {
             let http_server = HttpServer::new(move || {
                 let server = Arc::clone(&clone);
                 App::new().app_data(web::Data::from(server))
+                    // Traditional HTTP
                     .route("/json_rpc", web::post().to(json_rpc::<Arc<Blockchain<S>>, DaemonRpcServer<S>>))
-                    .route("/ws", web::get().to(websocket::<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>, DaemonRpcServer<S>>))
+                    // WebSocket support
+                    .route("/json_rpc", web::get().to(websocket::<EventWebSocketHandler<Arc<Blockchain<S>>, NotifyEvent>, DaemonRpcServer<S>>))
                     .route("/getwork/{address}/{worker}", web::get().to(getwork_endpoint::<S>))
                     .service(index)
             })

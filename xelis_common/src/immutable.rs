@@ -1,4 +1,4 @@
-use std::{/*rc::Rc,*/ sync::Arc, ops::Deref};
+use std::{sync::Arc, ops::Deref};
 
 use serde::{Serialize, Deserialize};
 
@@ -6,8 +6,7 @@ use serde::{Serialize, Deserialize};
 #[serde(untagged)]
 pub enum Immutable<T: Clone> {
     Owned(T),
-    Arc(Arc<T>),
-    //Rc(Rc<T>),
+    Arc(Arc<T>)
 }
 
 impl<T: Clone> Immutable<T> {
@@ -30,6 +29,12 @@ impl<T: Clone> Immutable<T> {
             Immutable::Owned(v) => v,
             Immutable::Arc(v) => v.as_ref().clone()
         }
+    }
+}
+
+impl<T: Clone> AsRef<T> for Immutable<T> {
+    fn as_ref(&self) -> &T {
+        self.get_inner()
     }
 }
 

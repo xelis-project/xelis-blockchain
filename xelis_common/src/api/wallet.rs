@@ -1,28 +1,30 @@
 use std::borrow::Cow;
-
 use serde::{Deserialize, Serialize};
-
-use crate::{transaction::{TransactionType, Transaction}, crypto::{hash::Hash, address::Address}};
-
-use super::{DataHash, DataElement, DataValue, Query};
-
-
-#[derive(Serialize, Deserialize)]
-pub enum FeeBuilder {
-    Multiplier(f64), // calculate tx fees based on its size and multiply by this value
-    Value(u64) // set a direct value of how much fees you want to pay
-}
+use crate::{
+    crypto::{Address, Hash},
+    transaction::{
+        builder::{FeeBuilder, TransactionTypeBuilder},
+        Transaction
+    }
+};
+use super::{DataHash, DataElement, DataValue, query::Query};
 
 #[derive(Serialize, Deserialize)]
 pub struct BuildTransactionParams {
     #[serde(flatten)]
-    pub tx_type: TransactionType,
+    pub tx_type: TransactionTypeBuilder,
     pub fee: Option<FeeBuilder>,
     // Cannot be broadcasted if set to false
     pub broadcast: bool,
     // Returns the TX in HEX format also
     #[serde(default = "default_false_value")]
     pub tx_as_hex: bool
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EstimateFeesParams {
+    #[serde(flatten)]
+    pub tx_type: TransactionTypeBuilder,
 }
 
 // :(
@@ -92,6 +94,11 @@ pub struct RescanParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct SetOnlineModeParams {
+    pub daemon_address: String
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetBalanceParams {
     pub asset: Option<Hash>
 }
@@ -101,47 +108,59 @@ pub struct GetTransactionParams {
     pub hash: Hash
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct BalanceChanged<'a> {
-    pub asset: Cow<'a, Hash>,
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BalanceChanged {
+    pub asset: Hash,
     pub balance: u64
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetCustomDataParams {
+pub struct GetValueFromKeyParams {
     pub tree: String,
     pub key: DataValue
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetCustomTreeKeysParams {
+pub struct HasKeyParams {
+    pub tree: String,
+    pub key: DataValue
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMatchingKeysParams {
     pub tree: String,
     pub query: Option<Query>
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SetCustomDataParams {
+pub struct StoreParams {
     pub tree: String,
     pub key: DataValue,
     pub value: DataElement
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct DeleteParams {
+    pub tree: String,
+    pub key: DataValue
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct QueryDBParams {
     pub tree: String,
     pub key: Option<Query>,
-    pub value: Option<Query>
+    pub value: Option<Query>,
+    #[serde(default = "default_false_value")]
+    pub return_on_first: bool
 }
 
-
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
-    // When a new block is detected by wallet
-    // it contains Block struct as value
-    // NewBlock,
-    // When a a get_info request is made
-    // and we receive a different topoheight than previous one
-    NewChainInfo,
+    // When a new topoheight is detected by wallet
+    // it contains the topoheight (u64) as value
+    // It may be lower than the previous one, based on how the DAG reacts
+    NewTopoHeight,
     // When a new asset is added to wallet
     // Contains a Hash as value
     NewAsset,
@@ -151,4 +170,67 @@ pub enum NotifyEvent {
     // When a balance is changed
     // Contains a BalanceChanged as value
     BalanceChanged,
+    // When a rescan happened on the wallet
+    // Contains a topoheight as value to indicate until which topoheight transactions got deleted
+    Rescan,
+    // When network state changed
+    Online,
+    // Same here
+    Offline,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferOut {
+    // Destination address
+    pub destination: Address,
+    // Asset spent
+    pub asset: Hash,
+    // Plaintext amount
+    pub amount: u64,
+    // extra data
+    pub extra_data: Option<DataElement>
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferIn {
+    // Asset spent
+    pub asset: Hash,
+    // Plaintext amount
+    pub amount: u64,
+    // extra data
+    pub extra_data: Option<DataElement>
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryType {
+    // Coinbase is only XELIS_ASSET
+    Coinbase {
+        reward: u64
+    },
+    Burn {
+        asset: Hash,
+        amount: u64
+    },
+    Incoming {
+        from: Address,
+        transfers: Vec<TransferIn>
+    },
+    Outgoing {
+        transfers: Vec<TransferOut>,
+        // Fee paid
+        fee: u64,
+        // Nonce used
+        nonce: u64
+    }
+}
+
+// This struct is used to represent a transaction entry like in wallet
+// But we replace every PublicKey to use Address instead
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionEntry {
+    pub hash: Hash,
+    pub topoheight: u64,
+    #[serde(flatten)]
+    pub entry: EntryType,
 }

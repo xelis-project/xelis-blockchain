@@ -20,7 +20,7 @@ sudo systemctl start docker
 echo "Compiling binaries for all targets"
 for target in "${targets[@]}"; do
     for binary in "${binaries[@]}"; do
-        cross build --release --bin $binary --target $target
+        cross build --profile release-with-lto --bin $binary --target $target
     done
 done
 
@@ -36,7 +36,7 @@ for target in "${targets[@]}"; do
         if [[ "$target" == *"windows"* ]]; then
             binary="$binary.exe"
         fi
-        cp target/$target/release/$binary build/$target/$binary
+        cp target/$target/release-with-lto/$binary build/$target/$binary
     done
 
     # copy extra files

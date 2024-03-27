@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 use crate::serializer::{Serializer, Reader, ReaderError, Writer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "clap", derive(clap::ArgEnum))]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum Network {
     Mainnet,
     Testnet,
@@ -61,5 +61,9 @@ impl Serializer for Network {
           Self::Dev => 2 
         };
         writer.write_u8(id);
+    }
+
+    fn size(&self) -> usize {
+        1
     }
 }

@@ -1,59 +1,103 @@
-use crate::{core::{blockchain::{Blockchain, get_block_reward}, storage::Storage, error::BlockchainError, mempool::Mempool}, p2p::peer::Peer, config::{DEV_FEES, MAXIMUM_SUPPLY}};
+use crate::{
+    config::{
+        BLOCK_TIME_MILLIS,
+        DEV_FEES,
+        DEV_PUBLIC_KEY
+    },
+    core::{
+        blockchain::{
+            get_block_dev_fee,
+            get_block_reward,
+            Blockchain
+        },
+        error::BlockchainError,
+        mempool::Mempool,
+        storage::Storage
+    },
+    p2p::peer::Peer
+};
 use super::{InternalRpcError, ApiError};
+use xelis_common::{
+    api::{
+        daemon::{
+            AccountHistoryEntry,
+            AccountHistoryType,
+            RPCBlockResponse,
+            BlockType,
+            GetAccountAssetsParams,
+            GetAccountHistoryParams,
+            GetAccountsParams,
+            GetAssetParams,
+            GetAssetsParams,
+            GetBalanceAtTopoHeightParams,
+            GetBalanceParams,
+            GetBalanceResult,
+            GetBlockAtTopoHeightParams,
+            GetBlockByHashParams,
+            GetBlockTemplateParams,
+            GetBlockTemplateResult,
+            GetBlocksAtHeightParams,
+            GetHeightRangeParams,
+            GetInfoResult,
+            GetNonceAtTopoHeightParams,
+            GetNonceParams,
+            GetNonceResult,
+            GetTopBlockParams,
+            GetTopoHeightRangeParams,
+            GetTransactionParams,
+            GetTransactionsParams,
+            HasBalanceParams,
+            HasBalanceResult,
+            HasNonceParams,
+            HasNonceResult,
+            IsTxExecutedInBlockParams,
+            P2pStatusResult,
+            GetPeersResponse,
+            PeerEntry,
+            SizeOnDiskResult,
+            SubmitBlockParams,
+            SubmitTransactionParams,
+            TransactionResponse
+        },
+        RPCTransaction,
+        RPCTransactionType as RPCTransactionType
+    },
+    async_handler,
+    block::{
+        Block,
+        BlockHeader
+    },
+    config::{
+        MAXIMUM_SUPPLY,
+        MAX_TRANSACTION_SIZE,
+        VERSION,
+        XELIS_ASSET
+    },
+    context::Context,
+    crypto::Hash,
+    difficulty::{
+        CumulativeDifficulty,
+        Difficulty
+    },
+    immutable::Immutable,
+    rpc_server::{
+        parse_params,
+        RPCHandler
+    },
+    serializer::Serializer,
+    time::TimestampSeconds,
+    transaction::{
+        Transaction,
+        TransactionType
+    }
+};
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
 use serde_json::{json, Value};
-use xelis_common::{
-    api::{daemon::{
-        BlockType,
-        BlockResponse,
-        GetBlockAtTopoHeightParams,
-        GetBlockByHashParams,
-        GetBlockTemplateParams,
-        GetBlockTemplateResult,
-        SubmitBlockParams,
-        GetBalanceParams,
-        GetNonceParams,
-        SubmitTransactionParams,
-        GetTransactionParams,
-        P2pStatusResult,
-        GetBlocksAtHeightParams,
-        GetTopoHeightRangeParams,
-        GetBalanceAtTopoHeightParams,
-        GetLastBalanceResult,
-        GetInfoResult,
-        GetTopBlockParams,
-        GetTransactionsParams,
-        TransactionResponse,
-        GetHeightRangeParams,
-        GetNonceResult,
-        GetAssetsParams,
-        GetAccountsParams,
-        HasNonceResult,
-        HasNonceParams,
-        GetAssetParams,
-        GetAccountHistoryParams,
-        AccountHistoryEntry,
-        AccountHistoryType,
-        GetAccountAssetsParams,
-        PeerEntry,
-        IsTxExecutedInBlockParams,
-        SizeOnDiskResult
-    }, DataHash},
-    async_handler,
-    serializer::Serializer,
-    transaction::{Transaction, TransactionType},
-    crypto::hash::Hash,
-    block::{BlockHeader, Block},
-    config::{XELIS_ASSET, VERSION},
-    immutable::Immutable,
-    rpc_server::{RPCHandler, parse_params},
-    context::Context
-};
-use crate::config::BLOCK_TIME_MILLIS;
 use std::{sync::Arc, borrow::Cow};
 use log::{info, debug, trace};
 
+// Get the block type using the block hash and the blockchain current state
 pub async fn get_block_type_for_block<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<BlockType, InternalRpcError> {
     Ok(if blockchain.is_block_orphaned_for_storage(storage, hash).await {
         BlockType::Orphaned
@@ -66,12 +110,8 @@ pub async fn get_block_type_for_block<S: Storage>(blockchain: &Blockchain<S>, st
     })
 }
 
-pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: Hash, include_txs: bool) -> Result<Value, InternalRpcError> {
-    if !storage.has_block(&hash).await.context("Error while checking if block exist")? {
-        return Err(InternalRpcError::AnyError(BlockchainError::BlockNotFound(hash).into()))
-    }
-
-    let (topoheight, supply, reward) = if storage.is_block_topological_ordered(&hash).await {
+async fn get_block_data<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash) -> Result<(Option<u64>, Option<u64>, Option<u64>, BlockType, CumulativeDifficulty, Difficulty), InternalRpcError> {
+    let (topoheight, supply, reward) = if storage.is_block_topological_ordered(hash).await {
         let topoheight = storage.get_topo_height_for_hash(&hash).await.context("Error while retrieving topo height")?;
         (
             Some(topoheight),
@@ -86,48 +126,123 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
         )
     };
 
-    let block_type = get_block_type_for_block(&blockchain, &storage, &hash).await?;
-    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await.context("Error while retrieving cumulative difficulty")?;
+    let block_type = get_block_type_for_block(&blockchain, &storage, hash).await?;
+    let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(hash).await.context("Error while retrieving cumulative difficulty")?;
     let difficulty = storage.get_difficulty_for_block_hash(&hash).await.context("Error while retrieving difficulty")?;
-    let value: Value = if include_txs {
-        let block = storage.get_block(&hash).await.context("Error while retrieving full block")?;
 
-        let total_size_in_bytes = block.size();
-        let mut total_fees = 0;
+    Ok((topoheight, supply, reward, block_type, cumulative_difficulty, difficulty))
+}
+
+pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash, block: &Block, total_size_in_bytes: usize) -> Result<Value, InternalRpcError> {
+    let (topoheight, supply, reward, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, storage, hash).await?;
+    let mut total_fees = 0;
+    if block_type != BlockType::Orphaned {
         for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
             // check that the TX was correctly executed in this block
             // retrieve all fees for valid txs
             if storage.is_tx_executed_in_block(tx_hash, &hash).context("Error while checking if tx was executed")? {
-                    total_fees += tx.get_fee();
+                total_fees += tx.get_fee();
             }
         }
+    }
 
-        let data: DataHash<'_, Block> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Owned(block) };
-        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees: Some(total_fees), total_size_in_bytes, data })
+    let mainnet = blockchain.get_network().is_mainnet();
+    let header = block.get_header();
+    let transactions = block.get_transactions()
+        .iter().zip(block.get_txs_hashes()).map(|(tx, hash)| {
+            RPCTransaction {
+                hash: Cow::Borrowed(hash),
+                version: tx.get_version(),
+                source: tx.get_source().as_address(mainnet),
+                data: RPCTransactionType::from_type(tx.get_data(), mainnet),
+                fee: tx.get_fee(),
+                nonce: tx.get_nonce(),
+                source_commitments: Cow::Borrowed(tx.get_source_commitments()),
+                range_proof: Cow::Borrowed(tx.get_range_proof()),
+                reference: Cow::Borrowed(tx.get_reference()),
+                signature: Cow::Borrowed(tx.get_signature()),
+            }
+        }).collect::<Vec<RPCTransaction<'_>>>();
+
+    Ok(json!(RPCBlockResponse {
+        hash: Cow::Borrowed(hash),
+        topoheight,
+        block_type,
+        cumulative_difficulty: Cow::Borrowed(&cumulative_difficulty),
+        difficulty: Cow::Borrowed(&difficulty),
+        supply,
+        reward,
+        total_fees: Some(total_fees),
+        total_size_in_bytes,
+        extra_nonce: Cow::Borrowed(header.get_extra_nonce()),
+        timestamp: header.get_timestamp(),
+        nonce: header.get_nonce(),
+        height: header.get_height(),
+        version: header.get_version(),
+        miner: Cow::Owned(header.get_miner().as_address(mainnet)),
+        tips: Cow::Borrowed(header.get_tips()),
+        txs_hashes: Cow::Borrowed(header.get_txs_hashes()),
+        transactions
+    }))
+}
+
+// Get a block response based on data in chain and from parameters
+pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash, include_txs: bool) -> Result<Value, InternalRpcError> {
+    if !storage.has_block_with_hash(&hash).await.context("Error while checking if block exist")? {
+        return Err(InternalRpcError::AnyError(BlockchainError::BlockNotFound(hash.clone()).into()))
+    }
+
+    let value: Value = if include_txs {
+        let block = storage.get_block_by_hash(&hash).await.context("Error while retrieving full block")?;
+        let total_size_in_bytes = block.size();
+        get_block_response(blockchain, storage, hash, &block, total_size_in_bytes).await?
     } else {
-        let block = storage.get_block_header_by_hash(&hash).await.context("Error while retrieving full block")?;
+        let (topoheight, supply, reward, block_type, cumulative_difficulty, difficulty) = get_block_data(blockchain, storage, hash).await?;
+        let header = storage.get_block_header_by_hash(&hash).await.context("Error while retrieving full block")?;
 
-        let mut total_size_in_bytes = block.size();
-        for tx_hash in block.get_txs_hashes() {
+        // calculate total size in bytes
+        let mut total_size_in_bytes = header.size();
+        for tx_hash in header.get_txs_hashes() {
             total_size_in_bytes += storage.get_transaction_size(tx_hash).await.context(format!("Error while retrieving transaction {hash} size"))?;
         }
 
-        let data: DataHash<'_, Arc<BlockHeader>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(&block) };
-        json!(BlockResponse { topoheight, block_type, cumulative_difficulty, difficulty, supply, reward, total_fees: None, total_size_in_bytes, data })
+        let mainnet = blockchain.get_network().is_mainnet();
+
+        json!(RPCBlockResponse {
+            hash: Cow::Borrowed(hash),
+            topoheight,
+            block_type,
+            cumulative_difficulty: Cow::Owned(cumulative_difficulty),
+            difficulty: Cow::Owned(difficulty),
+            supply,
+            reward,
+            total_fees: None,
+            total_size_in_bytes,
+            extra_nonce: Cow::Borrowed(header.get_extra_nonce()),
+            timestamp: header.get_timestamp(),
+            nonce: header.get_nonce(),
+            height: header.get_height(),
+            version: header.get_version(),
+            miner: Cow::Owned(header.get_miner().as_address(mainnet)),
+            tips: Cow::Borrowed(header.get_tips()),
+            txs_hashes: Cow::Borrowed(header.get_txs_hashes()),
+            transactions: Vec::with_capacity(0),
+        })
     };
 
     Ok(value)
 }
 
-pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transaction>, hash: &Hash, in_mempool: bool, first_seen: Option<u64>) -> Result<Value, InternalRpcError> {
+// Transaction response based on data in chain/mempool and from parameters
+pub async fn get_transaction_response<S: Storage>(storage: &S, tx: &Arc<Transaction>, hash: &Hash, in_mempool: bool, first_seen: Option<TimestampSeconds>) -> Result<Value, InternalRpcError> {
     let blocks = if storage.has_tx_blocks(hash).context("Error while checking if tx in included in blocks")? {
         Some(storage.get_blocks_for_tx(hash).context("Error while retrieving in which blocks its included")?)
     } else {
         None
     };
 
-    let data: DataHash<'_, Arc<Transaction>> = DataHash { hash: Cow::Borrowed(&hash), data: Cow::Borrowed(tx) };
-    let executed_in_block = storage.get_block_executer_for_tx(hash).ok();
+    let data = RPCTransaction::from_tx(tx, hash, storage.is_mainnet());
+    let executed_in_block = storage.get_block_executor_for_tx(hash).ok();
     Ok(json!(TransactionResponse { blocks, executed_in_block, data, in_mempool, first_seen }))
 }
 
@@ -142,25 +257,29 @@ pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, mempool:
     }
 }
 
+// Get a Peer Entry based on peer data
 pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
     let top_block_hash = peer.get_top_block_hash().lock().await.clone();
     let peers = peer.get_peers().lock().await.clone();
+    let cumulative_difficulty = peer.get_cumulative_difficulty().lock().await;
     PeerEntry {
         id: peer.get_id(),
-        addr: Cow::Borrowed(peer.get_outgoing_address()),
+        addr: Cow::Borrowed(peer.get_connection().get_address()),
+        local_port: peer.get_local_port(),
         tag: Cow::Borrowed(peer.get_node_tag()),
         version: Cow::Borrowed(peer.get_version()),
-        top_block_hash,
+        top_block_hash: Cow::Owned(top_block_hash),
         topoheight: peer.get_topoheight(),
         height: peer.get_height(),
         last_ping: peer.get_last_ping(),
-        peers,
+        peers: Cow::Owned(peers),
         pruned_topoheight: peer.get_pruned_topoheight(),
-        cumulative_difficulty: peer.get_cumulative_difficulty(),
+        cumulative_difficulty: Cow::Owned(*cumulative_difficulty),
         connected_on: peer.get_connection().connected_on()
     }
 }
 
+// This function is used to register all the RPC methods
 pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>) {
     info!("Registering RPC methods...");
     handler.register_method("get_version", async_handler!(version::<S>));
@@ -173,11 +292,13 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_block_by_hash", async_handler!(get_block_by_hash::<S>));
     handler.register_method("get_top_block", async_handler!(get_top_block::<S>));
     handler.register_method("submit_block", async_handler!(submit_block::<S>));
-    handler.register_method("get_last_balance", async_handler!(get_last_balance::<S>));
+    handler.register_method("get_balance", async_handler!(get_balance::<S>));
+    handler.register_method("has_balance", async_handler!(has_balance::<S>));
     handler.register_method("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight::<S>));
     handler.register_method("get_info", async_handler!(get_info::<S>));
     handler.register_method("get_nonce", async_handler!(get_nonce::<S>));
     handler.register_method("has_nonce", async_handler!(has_nonce::<S>));
+    handler.register_method("get_nonce_at_topoheight", async_handler!(get_nonce_at_topoheight::<S>));
     handler.register_method("get_asset", async_handler!(get_asset::<S>));
     handler.register_method("get_assets", async_handler!(get_assets::<S>));
     handler.register_method("count_assets", async_handler!(count_assets::<S>));
@@ -237,14 +358,14 @@ async fn get_block_at_topoheight<S: Storage>(context: Context, body: Value) -> R
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let hash = storage.get_hash_at_topo_height(params.topoheight).await.context("Error while retrieving hash at topo height")?;
-    get_block_response_for_hash(&blockchain, &storage, hash, params.include_txs).await
+    get_block_response_for_hash(&blockchain, &storage, &hash, params.include_txs).await
 }
 
 async fn get_block_by_hash<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBlockByHashParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    get_block_response_for_hash(&blockchain, &storage, params.hash.into_owned(), params.include_txs).await
+    get_block_response_for_hash(&blockchain, &storage, &params.hash, params.include_txs).await
 }
 
 async fn get_top_block<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -252,7 +373,7 @@ async fn get_top_block<S: Storage>(context: Context, body: Value) -> Result<Valu
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
-    get_block_response_for_hash(&blockchain, &storage, hash, params.include_txs).await
+    get_block_response_for_hash(&blockchain, &storage, &hash, params.include_txs).await
 }
 
 async fn get_block_template<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -268,7 +389,7 @@ async fn get_block_template<S: Storage>(context: Context, body: Value) -> Result
 
     let storage = blockchain.get_storage().read().await;
     let block = blockchain.get_block_template_for_storage(&storage, params.address.into_owned().to_public_key()).await.context("Error while retrieving block template")?;
-    let difficulty = blockchain.get_difficulty_at_tips(&*storage, block.get_tips()).await.context("Error while retrieving difficulty at tips")?;
+    let (difficulty, _) = blockchain.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
     let height = block.height;
     Ok(json!(GetBlockTemplateResult { template: block.to_hex(), height, difficulty }))
 }
@@ -283,7 +404,7 @@ async fn submit_block<S: Storage>(context: Context, body: Value) -> Result<Value
     Ok(json!(true))
 }
 
-async fn get_last_balance<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_balance<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBalanceParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
@@ -291,11 +412,29 @@ async fn get_last_balance<S: Storage>(context: Context, body: Value) -> Result<V
     }
 
     let storage = blockchain.get_storage().read().await;
-    let (topoheight, balance) = storage.get_last_balance(params.address.get_public_key(), &params.asset).await.context("Error while retrieving last balance")?;
-    Ok(json!(GetLastBalanceResult {
-        balance,
+    let (topoheight, version) = storage.get_last_balance(params.address.get_public_key(), &params.asset).await.context("Error while retrieving last balance")?;
+    Ok(json!(GetBalanceResult {
+        version,
         topoheight
     }))
+}
+
+async fn has_balance<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: HasBalanceParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+    }
+
+    let key = params.address.get_public_key();
+    let storage = blockchain.get_storage().read().await;
+    let exist = if let Some(topoheight) = params.topoheight {
+        storage.has_balance_at_exact_topoheight(key, &params.asset, topoheight).await.context("Error while checking balance at topo for account")?
+    } else {
+        storage.has_balance_for(key, &params.asset).await.context("Error while checking balance for account")?
+    };
+
+    Ok(json!(HasBalanceResult { exist }))
 }
 
 async fn get_info<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -310,11 +449,11 @@ async fn get_info<S: Storage>(context: Context, body: Value) -> Result<Value, In
         let storage = blockchain.get_storage().read().await;
         let top_block_hash = storage.get_hash_at_topo_height(topoheight).await.context("Error while retrieving hash at topo height")?;
         let supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply at topo height")?;
-        let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?;
-        let average_block_time = blockchain.get_average_block_time_for_storage(&storage).await.context("Error while retrieving average block time")?;
+        let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
+        let average_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
         (top_block_hash, supply, pruned_topoheight, average_block_time)
     };
-    let difficulty = blockchain.get_difficulty();
+    let difficulty = blockchain.get_difficulty().await;
     let block_time_target = BLOCK_TIME_MILLIS;
     let block_reward = get_block_reward(circulating_supply);
     let mempool_size = blockchain.get_mempool_size().await;
@@ -392,11 +531,28 @@ async fn get_nonce<S: Storage>(context: Context, body: Value) -> Result<Value, I
     Ok(json!(GetNonceResult { topoheight, version }))
 }
 
+async fn get_nonce_at_topoheight<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetNonceAtTopoHeightParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let topoheight = blockchain.get_topo_height();
+    if params.topoheight > topoheight {
+        return Err(InternalRpcError::UnexpectedParams).context("Topoheight cannot be greater than current chain topoheight")?
+    }
+
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+    }
+
+    let storage = blockchain.get_storage().read().await;
+    let nonce = storage.get_nonce_at_exact_topoheight(params.address.get_public_key(), params.topoheight).await.context("Error while retrieving nonce at exact topo height")?;
+    Ok(json!(nonce))
+}
+
 async fn get_asset<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAssetParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let asset = storage.get_asset_data(&params.asset).context("Asset was not found")?;
+    let asset = storage.get_asset(&params.asset).await.context("Asset was not found")?;
     Ok(json!(asset))
 }
 
@@ -429,7 +585,7 @@ async fn count_assets<S: Storage>(context: Context, body: Value) -> Result<Value
     }
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let count = storage.count_assets().context("Error while retrieving assets count")?;
+    let count = storage.count_assets().await.context("Error while retrieving assets count")?;
     Ok(json!(count))
 }
 
@@ -439,7 +595,7 @@ async fn count_accounts<S: Storage>(context: Context, body: Value) -> Result<Val
     }
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let count = storage.count_accounts().context("Error while retrieving accounts count")?;
+    let count = storage.count_accounts().await.context("Error while retrieving accounts count")?;
     Ok(json!(count))
 }
 
@@ -449,12 +605,17 @@ async fn count_transactions<S: Storage>(context: Context, body: Value) -> Result
     }
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
-    let count = storage.count_transactions().context("Error while retrieving transactions count")?;
+    let count = storage.count_transactions().await.context("Error while retrieving transactions count")?;
     Ok(json!(count))
 }
 
 async fn submit_transaction<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SubmitTransactionParams = parse_params(body)?;
+    // x2 because of hex encoding
+    if params.data.len() > MAX_TRANSACTION_SIZE * 2 {
+        return Err(InternalRpcError::InvalidRequest).context(format!("Transaction size cannot be greater than {}", human_bytes(MAX_TRANSACTION_SIZE as f64)))?
+    }
+
     let transaction = Transaction::from_hex(params.data)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     blockchain.add_tx_to_mempool(transaction, true).await.map_err(|e| InternalRpcError::AnyError(e.into()))?;
@@ -511,10 +672,18 @@ async fn get_peers<S: Storage>(context: Context, body: Value) -> Result<Value, I
         Some(p2p) => {
             let peer_list = p2p.get_peer_list().read().await;
             let mut peers = Vec::new();
-            for p in  peer_list.get_peers().values() {
+            let peers_availables = peer_list.get_peers().values();
+            let total_peers = peers_availables.len();
+            let mut sharable_peers = 0;
+            for p in peers_availables.filter(|p| p.sharable()) {
                 peers.push(get_peer_entry(p).await);
+                sharable_peers += 1;
             }
-            Ok(json!(peers))
+            Ok(json!(GetPeersResponse {
+                peers,
+                total_peers,
+                hidden_peers: total_peers - sharable_peers,
+            }))
         },
         None => Err(InternalRpcError::AnyError(ApiError::NoP2p.into()))
     }
@@ -542,7 +711,7 @@ async fn get_blocks_at_height<S: Storage>(context: Context, body: Value) -> Resu
 
     let mut blocks = Vec::new();
     for hash in storage.get_blocks_at_height(params.height).await.context("Error while retrieving blocks at height")? {
-        blocks.push(get_block_response_for_hash(&blockchain, &storage, hash, params.include_txs).await?)
+        blocks.push(get_block_response_for_hash(&blockchain, &storage, &hash, params.include_txs).await?)
     }
     Ok(json!(blocks))
 }
@@ -617,7 +786,7 @@ async fn get_blocks_range_by_topoheight<S: Storage>(context: Context, body: Valu
     let mut blocks = Vec::with_capacity((end_topoheight - start_topoheight) as usize);
     for i in start_topoheight..=end_topoheight {
         let hash = storage.get_hash_at_topo_height(i).await.context("Error while retrieving hash at topo height")?;
-        let response = get_block_response_for_hash(&blockchain, &storage, hash, false).await?;
+        let response = get_block_response_for_hash(&blockchain, &storage, &hash, false).await?;
         blocks.push(response);
     }
 
@@ -638,7 +807,7 @@ async fn get_blocks_range_by_height<S: Storage>(context: Context, body: Value) -
     for i in start_height..=end_height {
         let blocks_at_height = storage.get_blocks_at_height(i).await.context("Error while retrieving blocks at height")?;
         for hash in blocks_at_height {
-            let response = get_block_response_for_hash(&blockchain, &storage, hash, false).await?;
+            let response = get_block_response_for_hash(&blockchain, &storage, &hash, false).await?;
             blocks.push(response);
         }
     }
@@ -687,7 +856,7 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
     let key = params.address.get_public_key();
     let minimum_topoheight = params.minimum_topoheight.unwrap_or(0);
     let storage = blockchain.get_storage().read().await;
-    let pruned_topoheight = storage.get_pruned_topoheight().context("Error while retrieving pruned topoheight")?.unwrap_or(0);
+    let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?.unwrap_or(0);
     let mut version = if let Some(topo) = params.maximum_topoheight {
         if topo < pruned_topoheight {
             return Err(InternalRpcError::CustomStr("Maximum topoheight is lower than pruned topoheight"));
@@ -699,6 +868,7 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
 
     let mut history_count = 0;
     let mut history = Vec::new();
+    let is_dev_address = *key == *DEV_PUBLIC_KEY;
     loop {
         if let Some((topo, versioned_balance)) = version.take() {
             trace!("Searching history at topoheight {}", topo);
@@ -707,32 +877,52 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
             }
 
             let (hash, block_header) = storage.get_block_header_at_topoheight(topo).await.context(format!("Error while retrieving block header at topo height {topo}"))?;
-            if params.asset == XELIS_ASSET && *block_header.get_miner() == *key {
-                let reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
-                let history_type = AccountHistoryType::Mining { reward };
-                history.push(AccountHistoryEntry {
-                    topoheight: topo,
-                    hash: hash.clone(),
-                    history_type,
-                    block_timestamp: block_header.get_timestamp()
-                });
+            // Block reward is only paid in XELIS
+            if params.asset == XELIS_ASSET {
+                let is_miner = *block_header.get_miner() == *key;
+                if is_miner || is_dev_address {
+                    let mut reward = storage.get_block_reward_at_topo_height(topo).context(format!("Error while retrieving reward at topo height {topo}"))?;
+                    // subtract dev fee if any
+                    let dev_fee_percentage = get_block_dev_fee(block_header.get_height());
+                    if dev_fee_percentage != 0 {
+                        let dev_fee = reward * dev_fee_percentage / 100;
+                        if is_dev_address {
+                            history.push(AccountHistoryEntry {
+                                topoheight: topo,
+                                hash: hash.clone(),
+                                history_type: AccountHistoryType::DevFee { reward: dev_fee },
+                                block_timestamp: block_header.get_timestamp()
+                            });
+                        }
+                        reward -= dev_fee;
+                    }
+    
+                    if is_miner {
+                        let history_type = AccountHistoryType::Mining { reward };
+                        history.push(AccountHistoryEntry {
+                            topoheight: topo,
+                            hash: hash.clone(),
+                            history_type,
+                            block_timestamp: block_header.get_timestamp()
+                        });
+                    }
+                }
             }
 
             for tx_hash in block_header.get_transactions() {
                 trace!("Searching tx {} in block {}", tx_hash, hash);
                 let tx = storage.get_transaction(tx_hash).await.context(format!("Error while retrieving transaction {tx_hash} from block {hash}"))?;
-                let is_sender = *tx.get_owner() == *key;
+                let is_sender = *tx.get_source() == *key;
                 match tx.get_data() {
-                    TransactionType::Transfer(transfers) => {
+                    TransactionType::Transfers(transfers) => {
                         for transfer in transfers {
-                            if transfer.asset == params.asset {
-                                if transfer.to == *key {
+                            if *transfer.get_asset() == params.asset {
+                                if *transfer.get_destination() == *key {
                                     history.push(AccountHistoryEntry {
                                         topoheight: topo,
                                         hash: tx_hash.clone(),
                                         history_type: AccountHistoryType::Incoming {
-                                            amount: transfer.amount,
-                                            from: tx.get_owner().to_address(blockchain.get_network().is_mainnet())
+                                            from: tx.get_source().as_address(blockchain.get_network().is_mainnet())
                                         },
                                         block_timestamp: block_header.get_timestamp()
                                     });
@@ -743,8 +933,7 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
                                         topoheight: topo,
                                         hash: tx_hash.clone(),
                                         history_type: AccountHistoryType::Outgoing {
-                                            amount: transfer.amount,
-                                            to: transfer.to.to_address(blockchain.get_network().is_mainnet())
+                                            to: transfer.get_destination().as_address(blockchain.get_network().is_mainnet())
                                         },
                                         block_timestamp: block_header.get_timestamp()
                                     });
@@ -752,19 +941,18 @@ async fn get_account_history<S: Storage>(context: Context, body: Value) -> Resul
                             }
                         }
                     }
-                    TransactionType::Burn { asset, amount } => {
-                        if *asset == params.asset {
+                    TransactionType::Burn(payload) => {
+                        if payload.asset == params.asset {
                             if is_sender {
                                 history.push(AccountHistoryEntry {
                                     topoheight: topo,
                                     hash: tx_hash.clone(),
-                                    history_type: AccountHistoryType::Burn { amount: *amount },
+                                    history_type: AccountHistoryType::Burn { amount: payload.amount },
                                     block_timestamp: block_header.get_timestamp()
                                 });
                             }
                         }
-                    },
-                    _ => {}
+                    }
                 }
             }
 
@@ -838,7 +1026,10 @@ async fn get_accounts<S: Storage>(context: Context, body: Value) -> Result<Value
     };
 
     let storage = blockchain.get_storage().read().await;
-    let accounts = storage.get_partial_keys(maximum, skip, minimum_topoheight, maximum_topoheight).await.context("Error while retrieving accounts")?;
+    let mainnet = storage.is_mainnet();
+    let accounts = storage.get_partial_keys(maximum, skip, minimum_topoheight, maximum_topoheight).await
+        .context("Error while retrieving accounts")?
+        .into_iter().map(|key| key.to_address(mainnet)).collect::<Vec<_>>();
 
     Ok(json!(accounts))
 }
@@ -860,7 +1051,7 @@ async fn get_dev_fee_thresholds<S: Storage>(_: Context, body: Value) -> Result<V
     Ok(json!(DEV_FEES))
 }
 
-// Get the configured dev fees
+// Get size on disk of the chain database
 async fn get_size_on_disk<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)

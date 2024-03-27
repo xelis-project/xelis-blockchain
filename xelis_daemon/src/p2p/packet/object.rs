@@ -1,14 +1,18 @@
 use xelis_common::{
-    crypto::hash::{
+    crypto::{
         Hash,
-        Hashable
+        Hashable,
+        HASH_SIZE
     },
-    block::{Block, BlockHeader},
+    block::{
+        Block,
+        BlockHeader
+    },
     transaction::Transaction,
     serializer::{
-        Serializer,
-        ReaderError,
         Reader,
+        ReaderError,
+        Serializer,
         Writer
     },
 };
@@ -57,6 +61,10 @@ impl Serializer for ObjectRequest {
             2 => ObjectRequest::Transaction(reader.read_hash()?),
             _ => return Err(ReaderError::InvalidValue)
         })
+    }
+
+    fn size(&self) -> usize {
+        1 + HASH_SIZE
     }
 }
 
@@ -167,5 +175,14 @@ impl<'a> Serializer for ObjectResponse<'a> {
             3 => Self::NotFound(ObjectRequest::read(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         })
+    }
+
+    fn size(&self) -> usize {
+        1 + match &self {
+            Self::Block(block) => block.size(),
+            Self::BlockHeader(header) => header.size(),
+            Self::Transaction(transaction) => transaction.size(),
+            Self::NotFound(obj) => obj.size()
+        }
     }
 }

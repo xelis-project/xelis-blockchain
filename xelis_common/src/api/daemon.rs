@@ -1,12 +1,21 @@
-use std::{borrow::Cow, collections::{HashSet, HashMap}, net::SocketAddr};
+use std::{
+    borrow::Cow,
+    collections::{HashSet, HashMap},
+    net::SocketAddr
+};
+use indexmap::IndexSet;
+use serde::{Deserialize, Serialize, Serializer, Deserializer, de::Error};
+use crate::{
+    account::{VersionedBalance, VersionedNonce},
+    block::EXTRA_NONCE_SIZE,
+    crypto::{Address, Hash},
+    difficulty::{CumulativeDifficulty, Difficulty},
+    network::Network,
+    time::{TimestampSeconds, TimestampMillis}
+};
+use super::RPCTransaction;
 
-use serde::{Deserialize, Serialize};
-
-use crate::{crypto::{hash::Hash, address::Address}, account::{VersionedBalance, VersionedNonce}, network::Network, block::Difficulty, transaction::Transaction};
-
-use super::DataHash;
-
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockType {
     Sync,
     Side,
@@ -14,19 +23,48 @@ pub enum BlockType {
     Normal
 }
 
+// Serialize the extra nonce in a hexadecimal string
+pub fn serialize_extra_nonce<S: Serializer>(extra_nonce: &Cow<'_, [u8; EXTRA_NONCE_SIZE]>, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&hex::encode(extra_nonce.as_ref()))
+}
+
+// Deserialize the extra nonce from a hexadecimal string
+pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -> Result<Cow<'a, [u8; EXTRA_NONCE_SIZE]>, D::Error> {
+    let mut extra_nonce = [0u8; EXTRA_NONCE_SIZE];
+    let hex = String::deserialize(deserializer)?;
+    let decoded = hex::decode(hex).map_err(Error::custom)?;
+    extra_nonce.copy_from_slice(&decoded);
+    Ok(Cow::Owned(extra_nonce))
+}
+
+// Structure used to map the public key to a human readable address
 #[derive(Serialize, Deserialize)]
-pub struct BlockResponse<'a, T: Clone> {
+pub struct RPCBlockResponse<'a> {
+    pub hash: Cow<'a, Hash>,
     pub topoheight: Option<u64>,
     pub block_type: BlockType,
-    pub difficulty: Difficulty,
+    pub difficulty: Cow<'a, Difficulty>,
     pub supply: Option<u64>,
     pub reward: Option<u64>,
-    pub cumulative_difficulty: Difficulty,
+    pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
     pub total_fees: Option<u64>,
     pub total_size_in_bytes: usize,
-    #[serde(flatten)]
-    pub data: DataHash<'a, T>
+    pub version: u8,
+    pub tips: Cow<'a, IndexSet<Hash>>,
+    pub timestamp: TimestampMillis,
+    pub height: u64,
+    pub nonce: u64,
+    #[serde(serialize_with = "serialize_extra_nonce")]
+    #[serde(deserialize_with = "deserialize_extra_nonce")]
+    pub extra_nonce: Cow<'a, [u8; EXTRA_NONCE_SIZE]>,
+    pub miner: Cow<'a, Address>,
+    pub txs_hashes: Cow<'a, IndexSet<Hash>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub transactions: Vec<RPCTransaction<'a>>,
 }
+
+pub type BlockResponse = RPCBlockResponse<'static>;
 
 #[derive(Serialize, Deserialize)]
 pub struct GetTopBlockParams {
@@ -78,6 +116,20 @@ pub struct GetBalanceParams<'a> {
     pub asset: Cow<'a, Hash>
 }
 
+
+#[derive(Serialize, Deserialize)]
+pub struct HasBalanceParams<'a> {
+    pub address: Cow<'a, Address>,
+    pub asset: Cow<'a, Hash>,
+    #[serde(default)]
+    pub topoheight: Option<u64>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HasBalanceResult {
+    pub exist: bool
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct GetBalanceAtTopoHeightParams<'a> {
     pub address: Cow<'a, Address>,
@@ -100,6 +152,12 @@ pub struct HasNonceParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetNonceAtTopoHeightParams<'a> {
+    pub address: Cow<'a, Address>,
+    pub topoheight: u64
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetNonceResult {
     pub topoheight: u64,
     #[serde(flatten)]
@@ -112,8 +170,8 @@ pub struct HasNonceResult {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetLastBalanceResult {
-    pub balance: VersionedBalance,
+pub struct GetBalanceResult {
+    pub version: VersionedBalance,
     pub topoheight: u64
 }
 
@@ -175,19 +233,6 @@ impl Direction {
                 },
                 _ => false
             },
-            _ => false
-        }
-    }
-
-    pub fn update_allow_in(&mut self, direction: Direction) -> bool {
-        match self {
-            Self::Out => match direction {
-                Self::In => {
-                    *self = Self::Both;
-                    true
-                },
-                _ => false
-            },
             Self::In => match direction {
                 Self::Out => {
                     *self = Self::Both;
@@ -201,19 +246,30 @@ impl Direction {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetPeersResponse<'a> {
+    // Peers that are connected and allows to be displayed
+    pub peers: Vec<PeerEntry<'a>>,
+    // All peers connected
+    pub total_peers: usize,
+    // Peers that asked to not be listed
+    pub hidden_peers: usize
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct PeerEntry<'a> {
     pub id: u64,
     pub addr: Cow<'a, SocketAddr>,
+    pub local_port: u16,
     pub tag: Cow<'a, Option<String>>,
     pub version: Cow<'a, String>,
-    pub top_block_hash: Hash,
+    pub top_block_hash: Cow<'a, Hash>,
     pub topoheight: u64,
     pub height: u64,
-    pub last_ping: u64,
+    pub last_ping: TimestampSeconds,
     pub pruned_topoheight: Option<u64>,
-    pub peers: HashMap<SocketAddr, Direction>,
-    pub cumulative_difficulty: Difficulty,
-    pub connected_on: u64
+    pub peers: Cow<'a, HashMap<SocketAddr, Direction>>,
+    pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
+    pub connected_on: TimestampSeconds
 }
 
 #[derive(Serialize, Deserialize)]
@@ -245,7 +301,7 @@ pub struct GetTransactionsParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct TransactionResponse<'a, T: Clone + AsRef<Transaction>> {
+pub struct TransactionResponse<'a> {
     // in which blocks it was included
     pub blocks: Option<HashSet<Hash>>,
     // in which blocks it was executed
@@ -255,9 +311,9 @@ pub struct TransactionResponse<'a, T: Clone + AsRef<Transaction>> {
     // if its a mempool tx, we add the timestamp when it was added
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
-    pub first_seen: Option<u64>,
+    pub first_seen: Option<TimestampSeconds>,
     #[serde(flatten)]
-    pub data: DataHash<'a, T>
+    pub data: RPCTransaction<'a>
 }
 
 fn default_xelis_asset() -> Hash {
@@ -276,11 +332,11 @@ pub struct GetAccountHistoryParams {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")] 
 pub enum AccountHistoryType {
+    DevFee { reward: u64 },
     Mining { reward: u64 },
     Burn { amount: u64 },
-    // TODO delete those two fields with upcoming privacy layer
-    Outgoing { amount: u64, to: Address },
-    Incoming { amount: u64, from: Address },
+    Outgoing { to: Address },
+    Incoming { from: Address },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -289,17 +345,17 @@ pub struct AccountHistoryEntry {
     pub hash: Hash,
     #[serde(flatten)]
     pub history_type: AccountHistoryType,
-    pub block_timestamp: u128
+    pub block_timestamp: TimestampMillis
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetAccountAssetsParams {
-    pub address: Address
+pub struct GetAccountAssetsParams<'a> {
+    pub address: Cow<'a, Address>
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetAssetParams {
-    pub asset: Hash
+pub struct GetAssetParams<'a> {
+    pub asset: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -341,18 +397,25 @@ pub struct SizeOnDiskResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
     // When a new block is accepted by chain
-    // it contains Block struct as value
+    // it contains NewBlockEvent as value
     NewBlock,
     // When a block (already in chain or not) is ordered (new topoheight)
     // it contains BlockOrderedEvent as value
     BlockOrdered,
+    // When a block that was ordered is not in the new DAG order
+    // it contains BlockOrphanedEvent that got orphaned
+    BlockOrphaned,
     // When stable height has changed (different than the previous one)
     // it contains StableHeightChangedEvent struct as value
     StableHeightChanged,
+    // When a transaction that was executed in a block is not reintroduced in mempool
+    // It contains TransactionOrphanedEvent as value
+    TransactionOrphaned,
     // When a new transaction is added in mempool
-    // it contains Transaction struct as value
+    // it contains TransactionAddedInMempoolEvent struct as value
     TransactionAddedInMempool,
     // When a transaction has been included in a valid block & executed on chain
     // it contains TransactionExecutedEvent struct as value
@@ -364,16 +427,16 @@ pub enum NotifyEvent {
     // TODO: Smart Contracts
     NewAsset,
     // When a new peer has connected to us
-    // It contains PeerEntry struct as value
+    // It contains PeerConnectedEvent struct as value
     PeerConnected,
     // When a peer has disconnected from us
-    // It contains PeerEntry struct as value
+    // It contains PeerDisconnectedEvent struct as value
     PeerDisconnected,
     // Peer peerlist updated, its all its connected peers
     // It contains PeerPeerListUpdatedEvent as value
     PeerPeerListUpdated,
     // Peer has been updated through a ping packet
-    // Contains PeerEntry as value
+    // Contains PeerStateUpdatedEvent as value
     PeerStateUpdated,
     // When a peer of a peer has disconnected
     // and that he notified us
@@ -381,6 +444,10 @@ pub enum NotifyEvent {
     PeerPeerDisconnected,
 }
 
+// Value of NotifyEvent::NewBlock
+pub type NewBlockEvent = BlockResponse;
+
+// Value of NotifyEvent::BlockOrdered
 #[derive(Serialize, Deserialize)]
 pub struct BlockOrderedEvent<'a> {
     // block hash in which this event was triggered
@@ -390,12 +457,27 @@ pub struct BlockOrderedEvent<'a> {
     pub topoheight: u64,
 }
 
+// Value of NotifyEvent::BlockOrphaned
+#[derive(Serialize, Deserialize)]
+pub struct BlockOrphanedEvent<'a> {
+    pub block_hash: Cow<'a, Hash>,
+    // Tpoheight of the block before being orphaned
+    pub old_topoheight: u64
+}
+
+// Value of NotifyEvent::StableHeightChanged
 #[derive(Serialize, Deserialize)]
 pub struct StableHeightChangedEvent {
     pub previous_stable_height: u64,
     pub new_stable_height: u64
 }
 
+// Value of NotifyEvent::TransactionAddedInMempool
+pub type TransactionAddedInMempoolEvent = TransactionResponse<'static>;
+// Value of NotifyEvent::TransactionOrphaned
+pub type TransactionOrphanedEvent = TransactionResponse<'static>;
+
+// Value of NotifyEvent::TransactionExecuted
 #[derive(Serialize, Deserialize)]
 pub struct TransactionExecutedEvent<'a> {
     pub block_hash: Cow<'a, Hash>,
@@ -403,6 +485,13 @@ pub struct TransactionExecutedEvent<'a> {
     pub topoheight: u64,
 }
 
+// Value of NotifyEvent::PeerConnected
+pub type PeerConnectedEvent = PeerEntry<'static>;
+
+// Value of NotifyEvent::PeerDisconnected
+pub type PeerDisconnectedEvent = PeerEntry<'static>;
+
+// Value of NotifyEvent::PeerPeerListUpdated
 #[derive(Serialize, Deserialize)]
 pub struct PeerPeerListUpdatedEvent {
     // Peer ID of the peer that sent us the new peer list
@@ -411,6 +500,10 @@ pub struct PeerPeerListUpdatedEvent {
     pub peerlist: Vec<SocketAddr>
 }
 
+// Value of NotifyEvent::PeerStateUpdated
+pub type PeerStateUpdatedEvent = PeerEntry<'static>;
+
+// Value of NotifyEvent::PeerPeerDisconnected
 #[derive(Serialize, Deserialize)]
 pub struct PeerPeerDisconnectedEvent {
     // Peer ID of the peer that sent us this notification

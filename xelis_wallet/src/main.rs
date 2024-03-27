@@ -1,26 +1,84 @@
-use std::{sync::Arc, time::Duration, path::Path};
-
+use std::{
+    sync::Arc,
+    time::Duration,
+    path::Path
+};
 use anyhow::{Result, Context};
-use xelis_wallet::config::DIR_PATH;
 use fern::colors::Color;
 use log::{error, info};
 use clap::Parser;
-use xelis_common::{config::{
-    VERSION, XELIS_ASSET, COIN_DECIMALS
-}, prompt::{Prompt, command::{CommandManager, Command, CommandHandler, CommandError}, argument::{Arg, ArgType, ArgumentManager}, LogLevel, self, ShareablePrompt, PromptError}, async_handler, crypto::{address::{Address, AddressType}, hash::Hashable}, transaction::{TransactionType, Transaction}, utils::{format_xelis, set_network_to, get_network, format_coin}, serializer::Serializer, network::Network, api::wallet::FeeBuilder};
+use xelis_common::{
+    async_handler,
+    config::{
+        COIN_DECIMALS,
+        VERSION,
+        XELIS_ASSET
+    },
+    crypto::{
+        Address,
+        Hashable
+    },
+    network::Network,
+    prompt::{
+        self,
+        argument::{
+            Arg,
+            ArgType,
+            ArgumentManager
+        },
+        command::{
+            Command,
+            CommandError,
+            CommandHandler,
+            CommandManager
+        },
+        LogLevel,
+        Prompt,
+        PromptError
+    },
+    serializer::Serializer,
+    transaction::{
+        builder::{FeeBuilder, TransactionTypeBuilder, TransferBuilder},
+        BurnPayload,
+        Transaction
+    },
+    utils::{
+        format_coin,
+        format_xelis
+    }
+};
 use xelis_wallet::{
     wallet::Wallet,
-    config::DEFAULT_DAEMON_ADDRESS
+    config::{DEFAULT_DAEMON_ADDRESS, DIR_PATH}
 };
 
 #[cfg(feature = "api_server")]
-use xelis_wallet::api::AuthConfig;
+use {
+    xelis_wallet::{
+        api::{
+            AuthConfig,
+            PermissionResult,
+            AppStateShared
+        },
+        wallet::XSWDEvent,
+    },
+    xelis_common::{
+        rpc_server::RpcRequest,
+        prompt::{
+            ShareablePrompt,
+            colorize_string,
+            colorize_str
+        }
+    },
+    anyhow::Error,
+    tokio::sync::mpsc::UnboundedReceiver
+};
 
 // This struct is used to configure the RPC Server
 // In case we want to enable it instead of starting
 // the XSWD Server
 #[cfg(feature = "api_server")]
-#[derive(Debug, clap::StructOpt)]
+#[derive(Debug, clap::Args)]
 pub struct RPCConfig {
     /// RPC Server bind address
     #[clap(long)]
@@ -34,34 +92,50 @@ pub struct RPCConfig {
 }
 
 #[derive(Parser)]
-#[clap(version = VERSION, about = "XELIS Wallet")]
+#[clap(version = VERSION, about = "XELIS: An innovate cryptocurrency with BlockDAG and Homomorphic Encryption enabling Smart Contracts")]
+#[command(styles = xelis_common::get_cli_styles())]
 pub struct Config {
     /// Daemon address to use
-    #[clap(short = 'a', long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
+    #[clap(long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String,
     /// Disable online mode
-    #[clap(short, long)]
+    #[clap(long)]
     offline_mode: bool,
     /// Set log level
-    #[clap(long, arg_enum, default_value_t = LogLevel::Info)]
+    #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
     /// Disable the log file
-    #[clap(short = 'f', long)]
+    #[clap(long)]
     disable_file_logging: bool,
     /// Log filename
-    #[clap(short = 'l', long, default_value_t = String::from("xelis-wallet.log"))]
+    /// 
+    /// By default filename is xelis-wallet.log.
+    /// File will be stored in logs directory, this is only the filename, not the full path.
+    /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-wallet.log.
+    #[clap(long, default_value_t = String::from("xelis-wallet.log"))]
     filename_log: String,
-    /// Use name path for wallet storage
-    #[clap(short, long)]
-    name: Option<String>,
+    /// Logs directory
+    /// 
+    /// By default it will be logs/ of the current directory.
+    /// It must end with a / to be a valid folder.
+    #[clap(long, default_value_t = String::from("logs/"))]
+    logs_path: String,
+    /// Set the path for wallet storage to open/create a wallet at this location
+    #[clap(long)]
+    wallet_path: Option<String>,
+    /// Set the path to use for precomputed tables
+    /// 
+    /// By default, it will be from current directory.
+    #[clap(long)]
+    precomputed_tables_path: Option<String>,
     /// Password used to open wallet
-    #[clap(short, long)]
+    #[clap(long)]
     password: Option<String>,
     /// Restore wallet using seed
-    #[clap(short, long)]
+    #[clap(long)]
     seed: Option<String>,
     /// Network selected for chain
-    #[clap(long, arg_enum, default_value_t = Network::Mainnet)]
+    #[clap(long, value_enum, default_value_t = Network::Mainnet)]
     network: Network,
     /// RPC Server configuration
     #[cfg(feature = "api_server")]
@@ -76,9 +150,7 @@ pub struct Config {
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
-    set_network_to(config.network);
-
-    let prompt = Prompt::new(config.log_level, config.filename_log, config.disable_file_logging)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging)?;
 
     #[cfg(feature = "api_server")]
     {
@@ -102,27 +174,30 @@ async fn main() -> Result<()> {
         }
     }
 
-    let command_manager = CommandManager::default(prompt.clone())?;
-    if let Some(name) = config.name {
-        let dir = format!("{}{}", DIR_PATH, name);
+    let command_manager = CommandManager::new(prompt.clone());
+    command_manager.store_in_context(config.network)?;
 
+    command_manager.register_default_commands()?;
+
+    if let Some(path) = config.wallet_path {
         // read password from option or ask him
         let password = if let Some(password) = config.password {
             password
         } else {
-            prompt.read_input(format!("Enter Password for '{}': ", name), true).await?
+            prompt.read_input(format!("Enter Password for '{}': ", path), true).await?
         };
 
-        let wallet = if Path::new(&dir).is_dir() {
-            info!("Opening wallet {}", dir);
-            Wallet::open(dir, password, config.network)?
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(config.precomputed_tables_path)?;
+        let wallet = if Path::new(&path).is_dir() {
+            info!("Opening wallet {}", path);
+            Wallet::open(path, password, config.network, precomputed_tables)?
         } else {
-            info!("Creating a new wallet at {}", dir);
-            Wallet::create(dir, password, config.seed, config.network)?
+            info!("Creating a new wallet at {}", path);
+            Wallet::create(path, password, config.seed, config.network, precomputed_tables)?
         };
 
-        apply_config(&wallet).await;
-        setup_wallet_command_manager(wallet, &command_manager, &prompt).await?;
+        apply_config(&wallet, #[cfg(feature = "api_server")] &prompt).await;
+        setup_wallet_command_manager(wallet, &command_manager).await?;
     } else {
         command_manager.add_command(Command::new("open", "Open a wallet", CommandHandler::Async(async_handler!(open_wallet))))?;
         command_manager.add_command(Command::new("create", "Create a new wallet", CommandHandler::Async(async_handler!(create_wallet))))?;
@@ -132,15 +207,90 @@ async fn main() -> Result<()> {
         command_manager.display_commands()?;
     }
 
-    if let Err(e) = prompt.start(Duration::from_millis(100), Box::new(async_handler!(prompt_message_builder)), &Some(command_manager)).await {
+    if let Err(e) = prompt.start(Duration::from_millis(1000), Box::new(async_handler!(prompt_message_builder)), Some(&command_manager)).await {
         error!("Error while running prompt: {}", e);
+    }
+
+    if let Ok(context) = command_manager.get_context().lock() {
+        if let Ok(wallet) = context.get::<Arc<Wallet>>() {
+            wallet.close().await;
+        }
     }
 
     Ok(())
 }
 
+#[cfg(feature = "api_server")]
+// This must be run in a separate task
+async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: ShareablePrompt) {
+    while let Some(event) = receiver.recv().await {
+        match event {
+            XSWDEvent::CancelRequest(_, callback) => {
+                let res = prompt.cancel_read_input().await;
+                if callback.send(res).is_err() {
+                    error!("Error while sending cancel response back to XSWD");
+                }
+            },
+            XSWDEvent::RequestApplication(app_state, signed, callback) => {
+                let prompt = prompt.clone();
+                tokio::spawn(async move {
+                    let res = xswd_handle_request_application(&prompt, app_state, signed).await;
+                    if callback.send(res).is_err() {
+                        error!("Error while sending application response back to XSWD");
+                    }
+                });
+            },
+            XSWDEvent::RequestPermission(app_state, request, callback) => {
+                let res = xswd_handle_request_permission(&prompt, app_state, request).await;
+                if callback.send(res).is_err() {
+                    error!("Error while sending permission response back to XSWD");
+                }
+            }
+        };
+    }
+}
+
+#[cfg(feature = "api_server")]
+async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: AppStateShared, signed: bool) -> Result<PermissionResult, Error> {
+    let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_state.get_name(), app_state.get_id());
+    if signed {
+        message = colorize_str(Color::BrightYellow, "NOTE: Application authorizaion was already approved previously.\r\n") + &message;
+    }
+    let accepted = prompt.read_valid_str_value(colorize_string(Color::Blue, &message), vec!["y", "n"]).await? == "y";
+    if accepted {
+        Ok(PermissionResult::Allow)
+    } else {
+        Ok(PermissionResult::Deny)
+    }
+}
+
+#[cfg(feature = "api_server")]
+async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: AppStateShared, request: RpcRequest) -> Result<PermissionResult, Error> {
+    let params = if let Some(params) = request.params {
+        params.to_string()
+    } else {
+        "".to_string()
+    };
+
+    let message = format!(
+        "XSWD: Request from {}: {}\r\nParams: {}\r\nDo you want to allow this request ?\r\n([A]llow / [D]eny / [AA] Always Allow / [AD] Always Deny): ",
+        app_state.get_name(),
+        request.method,
+        params
+    );
+
+    let answer = prompt.read_valid_str_value(colorize_string(Color::Blue, &message), vec!["a", "d", "aa", "ad"]).await?;
+    Ok(match answer.as_str() {
+        "a" => PermissionResult::Allow,
+        "d" => PermissionResult::Deny,
+        "aa" => PermissionResult::AlwaysAllow,
+        "ad" => PermissionResult::AlwaysDeny,
+        _ => unreachable!()
+    })
+}
+
 // Apply the config passed in params
-async fn apply_config(wallet: &Arc<Wallet>) {
+async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] prompt: &ShareablePrompt) {
     let config: Config = Config::parse();
 
     if !config.offline_mode {
@@ -175,15 +325,20 @@ async fn apply_config(wallet: &Arc<Wallet>) {
                 error!("Error while enabling RPC Server: {}", e);
             }
         } else if config.enable_xswd {
-            if let Err(e) = wallet.enable_xswd().await {
-                error!("Error while enabling XSWD Server: {}", e);
-            }
+            match wallet.enable_xswd().await {
+                Ok(receiver) => {
+                    // Only clone when its necessary
+                    let prompt = prompt.clone();
+                    tokio::spawn(xswd_handler(receiver, prompt));
+                },
+                Err(e) => error!("Error while enabling XSWD Server: {}", e)
+            };
         }
     }
 }
 
 // Function to build the CommandManager when a wallet is open
-async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &CommandManager<Arc<Wallet>>, prompt: &ShareablePrompt) -> Result<(), CommandError> {
+async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &CommandManager) -> Result<(), CommandError> {
     // Delete commands for opening a wallet
     command_manager.remove_command("open")?;
     command_manager.remove_command("recover")?;
@@ -215,19 +370,19 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
 
         // Stop API Server (RPC or XSWD)
         command_manager.add_command(Command::new("stop_api_server", "Stop the API (XSWD/RPC) Server", CommandHandler::Async(async_handler!(stop_api_server))))?;
-
-        // Save prompt in wallet
-        wallet.set_prompt(prompt.clone()).await;
     }
 
-    command_manager.set_data(Some(wallet))?;
+    let mut context = command_manager.get_context().lock()?;
+    context.store(wallet);
+
     command_manager.display_commands()
 }
 
 // Function passed as param to prompt to build the prompt message shown
-async fn prompt_message_builder(_: &Prompt, command_manager: &Option<CommandManager<Arc<Wallet>>>) -> Result<String, PromptError> {
+async fn prompt_message_builder(_: &Prompt, command_manager: Option<&CommandManager>) -> Result<String, PromptError> {
     if let Some(manager) = command_manager {
-        if let Some(wallet) = manager.get_data().lock()?.as_ref() {
+        let context = manager.get_context().lock()?;
+        if let Ok(wallet) = context.get::<Arc<Wallet>>() {
             let network = wallet.get_network();
 
             let addr_str = {
@@ -239,12 +394,12 @@ async fn prompt_message_builder(_: &Prompt, command_manager: &Option<CommandMana
             let topoheight_str = format!(
                 "{}: {}",
                 prompt::colorize_str(Color::Yellow, "TopoHeight"),
-                prompt::colorize_string(Color::Green, &format!("{}", storage.get_daemon_topoheight().unwrap_or(0)))
+                prompt::colorize_string(Color::Green, &format!("{}", storage.get_synced_topoheight().unwrap_or(0)))
             );
             let balance = format!(
                 "{}: {}",
                 prompt::colorize_str(Color::Yellow, "Balance"),
-                prompt::colorize_string(Color::Green, &format_xelis(storage.get_balance_for(&XELIS_ASSET).unwrap_or(0))),
+                prompt::colorize_string(Color::Green, &format_xelis(storage.get_plaintext_balance_for(&XELIS_ASSET).await.unwrap_or(0))),
             );
             let status = if wallet.is_online().await {
                 prompt::colorize_str(Color::Green, "Online")
@@ -283,7 +438,7 @@ async fn prompt_message_builder(_: &Prompt, command_manager: &Option<CommandMana
 }
 
 // Open a wallet based on the wallet name and its password
-async fn open_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
     let name = prompt.read_input("Wallet name: ".into(), false)
         .await.context("Error while reading wallet name")?;
@@ -302,17 +457,23 @@ async fn open_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) 
     let password = prompt.read_input("Password: ".into(), true)
         .await.context("Error while reading wallet password")?;
 
-    let wallet = Wallet::open(dir, password, get_network())?;
-    manager.message("Wallet sucessfully opened");
-    apply_config(&wallet).await;
+    let wallet = {
+        let context = manager.get_context().lock()?;
+        let network = context.get::<Network>()?;
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None)?;
+        Wallet::open(dir, password, *network, precomputed_tables)?
+    };
 
-    setup_wallet_command_manager(wallet, manager, prompt).await?;
+    manager.message("Wallet sucessfully opened");
+    apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
+
+    setup_wallet_command_manager(wallet, manager).await?;
 
     Ok(())
 }
 
 // Create a wallet by requesting name, password
-async fn create_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
 
     let name = prompt.read_input("Wallet name: ".into(), false)
@@ -341,9 +502,15 @@ async fn create_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager
         return Ok(())
     }
 
-    let wallet = Wallet::create(dir, password, None, get_network())?;
+    let wallet = {
+        let context = manager.get_context().lock()?;
+        let network = context.get::<Network>()?;
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None)?;
+        Wallet::create(dir, password, None, *network, precomputed_tables)?
+    };
+ 
     manager.message("Wallet sucessfully created");
-    apply_config(&wallet).await;
+    apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
 
     // Display the seed in prompt
     {
@@ -352,13 +519,13 @@ async fn create_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager
             .await.context("Error while displaying seed")?;
     }
 
-    setup_wallet_command_manager(wallet, manager, prompt).await?;
+    setup_wallet_command_manager(wallet, manager).await?;
 
     Ok(())
 }
 
 // Recover a wallet by requesting its seed, name and password
-async fn recover_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
 
     let seed = prompt.read_input("Seed: ".into(), false)
@@ -390,19 +557,26 @@ async fn recover_wallet(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManage
         return Ok(())
     }
 
-    let wallet = Wallet::create(dir, password, Some(seed), get_network())?;
-    manager.message("Wallet sucessfully recovered");
-    apply_config(&wallet).await;
 
-    setup_wallet_command_manager(wallet, manager, prompt).await?;
+    let wallet = {
+        let context = manager.get_context().lock()?;
+        let network = context.get::<Network>()?;
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None)?;
+        Wallet::create(dir, password, Some(seed), *network, precomputed_tables)?
+    };
+
+    manager.message("Wallet sucessfully recovered");
+    apply_config(&wallet, #[cfg(feature = "api_server")] prompt).await;
+
+    setup_wallet_command_manager(wallet, manager).await?;
 
     Ok(())
 }
 
 // Change wallet password
-async fn change_password(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn change_password(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
 
     let prompt = manager.get_prompt();
 
@@ -421,10 +595,10 @@ async fn change_password(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManag
 }
 
 // Create a new transfer to a specified address
-async fn transfer(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
+async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
 
     // read address
     let str_address = prompt.read_input(
@@ -441,13 +615,13 @@ async fn transfer(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> 
 
     let (max_balance, decimals) = {
         let storage = wallet.get_storage().read().await;
-        let balance = storage.get_balance_for(&asset).unwrap_or(0);
+        let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
         let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
         (balance, decimals)
     };
 
     // read amount
-    let float_amount = prompt.read_f64(
+    let float_amount: f64 = prompt.read(
         prompt::colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
     ).await.context("Error while reading amount")?;
 
@@ -461,61 +635,63 @@ async fn transfer(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> 
 
     manager.message("Building transaction...");
 
-    let (key, address_type) = address.split();
-    let extra_data = match address_type {
-        AddressType::Normal => None,
-        AddressType::Data(data) => Some(data)
+    let transfer = TransferBuilder {
+        destination: address,
+        amount,
+        asset,
+        extra_data: None
     };
-
-    let tx = {
-        let storage = wallet.get_storage().read().await;
-        let transfer = wallet.create_transfer(&storage, asset, key, extra_data, amount)?;
-        wallet.create_transaction(&storage, TransactionType::Transfer(vec![transfer]), FeeBuilder::Multiplier(1f64))?
-    };
+    let tx = wallet.create_transaction(TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default()).await
+        .context("Error while creating transaction")?;
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
 }
 
-async fn burn(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+async fn burn(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let amount = arguments.get_value("amount")?.to_number()?;
     let asset = arguments.get_value("asset")?.to_hash()?;
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
-    let tx = {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    {
         let storage = wallet.get_storage().read().await;
         let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
 
         manager.message(format!("Burning {} of {}", format_coin(amount, decimals), asset));
-        wallet.create_transaction(&storage, TransactionType::Burn { asset, amount }, FeeBuilder::Multiplier(1f64))?
+    }
+    let payload = BurnPayload {
+        amount,
+        asset
     };
+    let tx = wallet.create_transaction(TransactionTypeBuilder::Burn(payload), FeeBuilder::Multiplier(1f64)).await
+        .context("Error while creating transaction")?;
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
 }
 
 // Show current wallet address
-async fn display_address(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn display_address(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     manager.message(format!("Wallet address: {}", wallet.get_address()));
     Ok(())
 }
 
 // Show current balance for specified asset or list all non-zero balances
-async fn balance(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn balance(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
 
     if arguments.has_argument("asset") {
         let asset = arguments.get_value("asset")?.to_hash()?;
-        let balance = storage.get_balance_for(&asset).unwrap_or(0);
+        let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
         let decimals = storage.get_asset_decimals(&asset).unwrap_or(0);
         manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, decimals)));
     } else {
-        for (asset, decimals) in storage.get_assets_with_decimals()? {
-            let balance = storage.get_balance_for(&asset).unwrap_or(0);
+        for (asset, decimals) in storage.get_assets_with_decimals().await? {
+            let balance = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
             if balance > 0 {
                 manager.message(format!("Balance for asset {}: {}", asset, format_coin(balance, decimals)));
             }
@@ -527,7 +703,7 @@ async fn balance(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentM
 
 // Show all transactions
 const TXS_PER_PAGE: usize = 10;
-async fn history(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let page = if arguments.has_argument("page") {
         arguments.get_value("page")?.to_number()? as usize
     } else {
@@ -538,8 +714,8 @@ async fn history(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentM
         return Err(CommandError::InvalidArgument("Page must be greater than 0".to_string()));
     }
 
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let storage = wallet.get_storage().read().await;
     let mut transactions = storage.get_transactions()?;
 
@@ -562,16 +738,16 @@ async fn history(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentM
 
     manager.message(format!("Transactions (total {}) page {}/{}:", transactions.len(), page, max_pages));
     for tx in transactions.iter().skip((page - 1) * TXS_PER_PAGE).take(TXS_PER_PAGE) {
-        manager.message(format!("- {}", tx));
+        manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage)?));
     }
 
     Ok(())
 }
 
 // Set your wallet in online mode
-async fn online_mode(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn online_mode(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     if wallet.is_online().await {
         manager.error("Wallet is already online");
     } else {
@@ -588,9 +764,9 @@ async fn online_mode(manager: &CommandManager<Arc<Wallet>>, mut arguments: Argum
 }
 
 // Set your wallet in offline mode
-async fn offline_mode(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn offline_mode(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     if !wallet.is_online().await {
         manager.error("Wallet is already offline");
     } else {
@@ -601,9 +777,9 @@ async fn offline_mode(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager)
 }
 
 // Show current wallet address
-async fn rescan(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn rescan(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let topoheight = if arguments.has_argument("topoheight") {
         arguments.get_value("topoheight")?.to_number()?
     } else {
@@ -615,9 +791,9 @@ async fn rescan(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentMa
     Ok(())
 }
 
-async fn seed(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn seed(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let prompt =  manager.get_prompt();
 
     let password = prompt.read_input("Password: ".into(), true)
@@ -639,27 +815,27 @@ async fn seed(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentMana
     Ok(())
 }
 
-async fn nonce(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let nonce = wallet.get_nonce().await;
     manager.message(format!("Nonce: {}", nonce));
     Ok(())
 }
 
 #[cfg(feature = "api_server")]
-async fn stop_api_server(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn stop_api_server(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     wallet.stop_api_server().await.context("Error while stopping API Server")?;
     manager.message("API Server has been stopped");
     Ok(())
 }
 
 #[cfg(feature = "api_server")]
-async fn start_rpc_server(manager: &CommandManager<Arc<Wallet>>, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
+async fn start_rpc_server(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
     let bind_address = arguments.get_value("bind_address")?.to_string_value()?;
     let username = arguments.get_value("username")?.to_string_value()?;
     let password = arguments.get_value("password")?.to_string_value()?;
@@ -675,20 +851,24 @@ async fn start_rpc_server(manager: &CommandManager<Arc<Wallet>>, mut arguments: 
 }
 
 #[cfg(feature = "api_server")]
-async fn start_xswd(manager: &CommandManager<Arc<Wallet>>, _: ArgumentManager) -> Result<(), CommandError> {
-    let lock = manager.get_data().lock()?;
-    let wallet = lock.as_ref().ok_or(CommandError::NoData)?;
-    if let Err(e) = wallet.enable_xswd().await {
-        manager.error(format!("Error while enabling XSWD Server: {}", e));
-    } else {
-        manager.message("XSWD Server has been enabled");
-    }
+async fn start_xswd(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    match wallet.enable_xswd().await {
+        Ok(receiver) => {
+            let prompt = manager.get_prompt().clone();
+            tokio::spawn(xswd_handler(receiver, prompt));
+            manager.message("XSWD Server has been enabled");
+        },
+        Err(e) => manager.error(format!("Error while enabling XSWD Server: {}", e))
+    };
 
     Ok(())
 }
 
 // broadcast tx if possible
-async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager<Arc<Wallet>>, tx: Transaction) {
+// submit_transaction increase the local nonce in storage in case of success
+async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager, tx: Transaction) {
     let tx_hash = tx.hash();
     manager.message(format!("Transaction hash: {}", tx_hash));
 

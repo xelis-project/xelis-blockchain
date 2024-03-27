@@ -7,7 +7,10 @@ use std::{collections::HashMap, net::{SocketAddr, IpAddr}, fs, fmt::{Formatter, 
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
 use tokio::sync::{RwLock, mpsc::UnboundedSender};
-use xelis_common::{serializer::Serializer, utils::get_current_time, api::daemon::Direction};
+use xelis_common::{
+    serializer::Serializer,
+    time::{TimestampSeconds, get_current_time_in_seconds},
+    api::daemon::Direction};
 use std::sync::Arc;
 use bytes::Bytes;
 use log::{info, debug, trace, error, warn};
@@ -38,11 +41,13 @@ enum StoredPeerState {
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredPeer {
-    first_seen: u64,
-    last_seen: u64,
-    last_connection_try: u64,
+    first_seen: TimestampSeconds,
+    last_seen: TimestampSeconds,
+    last_connection_try: TimestampSeconds,
     fail_count: u8,
     local_port: u16,
+    // Until when the peer is banned
+    temp_ban_until: Option<u64>,
     state: StoredPeerState
 }
 
@@ -130,19 +135,20 @@ impl PeerList {
         let addr = peer.get_outgoing_address();
         let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
         for peer in self.peers.values() {
-            let mut peers = peer.get_peers().lock().await;
+            let mut shared_peers = peer.get_peers().lock().await;
             // check if it was a common peer (we sent it and we received it)
             // Because its a common peer, we can expect that he will send us the same packet
-            if let Some(direction) = peers.get(addr) {
-                if *direction == Direction::Both {
+            if let Some(direction) = shared_peers.get(addr) {
+                // If its a outgoing direction, send a packet to notify that the peer disconnected
+                if *direction != Direction::In {
                     trace!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
                     // we send the packet to notify the peer that we don't have it in common anymore
                     if let Err(e) = peer.send_bytes(packet.clone()).await {
                         error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
-                    } else {
-                        trace!("Deleting {} from {}", addr, peer);
-                        peers.remove(addr);
                     }
+
+                    // Maybe he only disconnected from us, delete it to stay synced
+                    shared_peers.remove(addr);
                 }
             }
         }
@@ -173,7 +179,7 @@ impl PeerList {
             debug!("Updating {} in stored peerlist", peer);
             // reset the fail count and update the last seen time
             stored_peer.set_fail_count(0);
-            stored_peer.set_last_seen(get_current_time());
+            stored_peer.set_last_seen(get_current_time_in_seconds());
             stored_peer.set_local_port(peer.get_local_port());
         } else {
             debug!("Saving {} in stored peerlist", peer);
@@ -287,6 +293,22 @@ impl PeerList {
         self.addr_has_state(ip, StoredPeerState::Blacklist)
     }
 
+    // Verify that the peer is not blacklisted or temp banned
+    pub fn is_allowed(&self, ip: &IpAddr) -> bool {
+        if let Some(stored_peer) = self.stored_peers.get(&ip) {
+            // If peer is blacklisted, don't accept it
+            return *stored_peer.get_state() != StoredPeerState::Blacklist
+            // If it's still temp banned, don't accept it
+            && stored_peer.get_temp_ban_until()
+                // Temp ban is lower than current time, he is not banned anymore
+                .map(|temp_ban_until| temp_ban_until < get_current_time_in_seconds())
+                // We don't have a temp ban, so he is not banned
+                .unwrap_or(true)
+        }
+
+        true
+    }
+
     pub fn is_whitelisted(&self, ip: &IpAddr) -> bool {
         self.addr_has_state(ip, StoredPeerState::Whitelist)
     }
@@ -349,6 +371,24 @@ impl PeerList {
         }
     }
 
+    // temp ban a peer for a duration in seconds
+    // this will also close the peer
+    pub async fn temp_ban_peer(&mut self, peer: &Peer, seconds: u64) {
+        self.temp_ban_address(&peer.get_connection().get_address().ip(), seconds).await;
+        if let Err(e) = peer.close().await {
+            error!("Error while trying to close peer {} for being temp banned: {}", peer.get_connection().get_address(), e);
+        }
+    }
+
+    // temp ban a peer address for a duration in seconds
+    pub async fn temp_ban_address(&mut self, ip: &IpAddr, seconds: u64) {
+        if let Some(stored_peer) = self.stored_peers.get_mut(ip) {
+            stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + seconds));
+        } else {
+            self.stored_peers.insert(ip.clone(), StoredPeer::new(0, StoredPeerState::Graylist));
+        }
+    }
+
     // whitelist a peer address
     // if this peer is already known, change its state to whitelist
     // otherwise create a new StoredPeer with state whitelist
@@ -360,7 +400,7 @@ impl PeerList {
         // remove all peers that have a high fail count
         self.stored_peers.retain(|_, stored_peer| *stored_peer.get_state() == StoredPeerState::Whitelist || stored_peer.get_fail_count() < PEER_FAIL_LIMIT);
 
-        let current_time = get_current_time();
+        let current_time = get_current_time_in_seconds();
         // first lets check in whitelist
         if let Some(addr) = self.find_peer_to_connect_to_with_state(current_time, StoredPeerState::Whitelist) {
             return Some(addr);
@@ -376,7 +416,7 @@ impl PeerList {
 
     // find among stored peers a peer to connect to with the requested StoredPeerState
     // we check that we're not already connected to this peer and that we didn't tried to connect to it recently
-    fn find_peer_to_connect_to_with_state(&mut self, current_time: u64, state: StoredPeerState) -> Option<SocketAddr> {
+    fn find_peer_to_connect_to_with_state(&mut self, current_time: TimestampSeconds, state: StoredPeerState) -> Option<SocketAddr> {
         for (ip, stored_peer) in &mut self.stored_peers {
             let addr = SocketAddr::new(*ip, stored_peer.get_local_port());
             if *stored_peer.get_state() == state && stored_peer.get_last_connection_try() + (stored_peer.get_fail_count() as u64 * P2P_EXTEND_PEERLIST_DELAY) <= current_time && Self::internal_get_peer_by_addr(&self.peers, &addr).is_none() {
@@ -411,18 +451,19 @@ impl PeerList {
 
 impl StoredPeer {
     fn new(local_port: u16, state: StoredPeerState) -> Self {
-        let current_time = get_current_time();
+        let current_time = get_current_time_in_seconds();
         Self {
             first_seen: current_time,
             last_seen: current_time,
             last_connection_try: 0,
             fail_count: 0,
             local_port,
+            temp_ban_until: None,
             state
         }
     }
 
-    fn get_last_connection_try(&self) -> u64 {
+    fn get_last_connection_try(&self) -> TimestampSeconds {
         self.last_connection_try
     }
 
@@ -430,16 +471,24 @@ impl StoredPeer {
         &self.state
     }
 
-    fn set_last_seen(&mut self, last_seen: u64) {
+    fn set_last_seen(&mut self, last_seen: TimestampSeconds) {
         self.last_seen = last_seen;
     }
 
-    fn set_last_connection_try(&mut self, last_connection_try: u64) {
+    fn set_last_connection_try(&mut self, last_connection_try: TimestampSeconds) {
         self.last_connection_try = last_connection_try;
     }
 
     fn set_state(&mut self, state: StoredPeerState) {
         self.state = state;
+    }
+
+    fn get_temp_ban_until(&self) -> Option<u64> {
+        self.temp_ban_until
+    }
+
+    fn set_temp_ban_until(&mut self, temp_ban_until: Option<u64>) {
+        self.temp_ban_until = temp_ban_until;
     }
 
     fn get_fail_count(&self) -> u8 {
@@ -461,7 +510,7 @@ impl StoredPeer {
 
 impl Display for StoredPeer {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let current_time = get_current_time();
+        let current_time = get_current_time_in_seconds();
         write!(f, "StoredPeer[first seen: {} ago, last seen: {} ago]", format_duration(Duration::from_secs(current_time - self.first_seen)), format_duration(Duration::from_secs(current_time - self.last_seen)))
     }
 }

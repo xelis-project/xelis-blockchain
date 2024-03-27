@@ -2,7 +2,8 @@ use crate::core::error::BlockchainError;
 use tokio::sync::AcquireError;
 use tokio::sync::mpsc::error::SendError as TSendError;
 use tokio::sync::oneshot::error::RecvError;
-use xelis_common::crypto::hash::Hash;
+use xelis_common::api::daemon::Direction;
+use xelis_common::crypto::Hash;
 use xelis_common::serializer::ReaderError;
 use std::array::TryFromSliceError;
 use std::net::{AddrParseError, SocketAddr};
@@ -12,23 +13,38 @@ use std::io::Error as IOError;
 use std::sync::PoisonError;
 use thiserror::Error;
 
+use super::encryption::EncryptionError;
 use super::packet::bootstrap_chain::StepKind;
 use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Invalid pop count, got {} with only {} blocks", _0, _1)]
+    InvalidPopCount(u64, u64),
+    #[error("Block id list is malformed")]
+    InvalidBlockIdList,
     #[error("Incompatible direction received")]
     InvalidDirection,
-    #[error("Invalid protocol rules")]
-    InvalidProtocolRules,
+    #[error("Duplicated peer {} received from {} received in ping packet (direction = {:?})", _0, _1, _2)]
+    DuplicatedPeer(SocketAddr, SocketAddr, Direction),
+    #[error("Pruned topoheight {} is greater than height {} in ping packet", _0, _1)]
+    InvalidPrunedTopoHeight(u64, u64),
+    #[error("Pruned topoheight {} is less than old pruned topoheight {} in ping packet", _0, _1)]
+    InvalidNewPrunedTopoHeight(u64, u64),
+    #[error("impossible to change the pruned state")]
+    InvalidPrunedTopoHeightChange,
+    #[error("Peer {} send us its own socket address", _0)]
+    OwnSocketAddress(SocketAddr),
+    #[error("Local socket address {} received from peer", _0)]
+    LocalSocketAddress(SocketAddr),
     #[error("Invalid list size in pagination with a next page")]
     InvalidInventoryPagination,
-    #[error("unknown common peer {} received: not found in list", _0)]
-    UnknownPeerReceived(SocketAddr),
+    #[error("unknown peer {} disconnected from {}", _0, _1)]
+    UnknownPeerReceived(SocketAddr, SocketAddr),
     #[error("Block {} at height {} propagated is under our stable height", _0, _1)]
     BlockPropagatedUnderStableHeight(Hash, u64),
-    #[error("Block {} propagated is already tracked", _0)]
-    AlreadyTrackedBlock(Hash),
+    #[error("Block {} propagated is already tracked with direction {:?}", _0, _1)]
+    AlreadyTrackedBlock(Hash, Direction),
     #[error("Transaction {} propagated is already tracked", _0)]
     AlreadyTrackedTx(Hash),
     #[error("Malformed chain request, received {} blocks id", _0)]
@@ -99,12 +115,18 @@ pub enum P2pError {
     InvalidObjectResponseType,
     #[error(transparent)]
     ObjectRequestError(#[from] RecvError),
+    #[error("Error while sending object request in boost sync mode")]
+    BoostSyncModeError,
+    #[error("Error while waiting on blocker in boost sync mode")]
+    BoostSyncModeBlockerError,
+    #[error("Boost sync mode failed")]
+    BoostSyncModeFailed,
     #[error("Expected a block type")]
     ExpectedBlock,
     #[error("Expected a transaction type")]
     ExpectedTransaction,
-    #[error("Peer sent us a peerlist faster than protocol rules")]
-    PeerInvalidPeerListCountdown,
+    #[error("Peer sent us a peerlist faster than protocol rules, expected to wait {} seconds more", _0)]
+    PeerInvalidPeerListCountdown(u64),
     #[error("Peer sent us a ping packet faster than protocol rules")]
     PeerInvalidPingCoutdown,
     #[error(transparent)]
@@ -116,7 +138,9 @@ pub enum P2pError {
     #[error("Error while serde JSON: {}", _0)]
     JsonError(#[from] serde_json::Error),
     #[error(transparent)]
-    SemaphoreAcquireError(#[from] AcquireError)
+    SemaphoreAcquireError(#[from] AcquireError),
+    #[error(transparent)]
+    EncryptionError(#[from] EncryptionError),
 }
 
 impl From<BlockchainError> for P2pError {

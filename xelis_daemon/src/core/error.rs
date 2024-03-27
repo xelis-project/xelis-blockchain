@@ -1,7 +1,21 @@
 use crate::p2p::error::P2pError;
 use std::sync::PoisonError;
 use thiserror::Error;
-use xelis_common::{crypto::{hash::Hash, key::PublicKey, bech32::Bech32Error}, serializer::ReaderError, prompt::PromptError, difficulty::DifficultyError};
+use xelis_common::{
+    crypto::{
+        bech32::Bech32Error,
+        elgamal::DecompressionError,
+        proofs::ProofVerificationError,
+        Address,
+        Hash
+    },
+    difficulty::DifficultyError,
+    prompt::PromptError,
+    serializer::ReaderError,
+    time::TimestampMillis,
+    transaction::verify::VerificationError
+};
+use human_bytes::human_bytes;
 
 #[derive(Error, Debug)]
 pub enum DiskContext {
@@ -21,16 +35,22 @@ pub enum DiskContext {
 
 #[derive(Error, Debug)]
 pub enum BlockchainError {
+    #[error("Block is not ordered")]
+    BlockNotOrdered,
+    #[error("Transaction size is {} while limit is {}", human_bytes(*_0 as f64), human_bytes(*_1 as f64))]
+    TxTooBig(usize, usize),
     #[error("Timestamp {} is less than parent", _0)]
-    TimestampIsLessThanParent(u128),
+    TimestampIsLessThanParent(TimestampMillis),
     #[error("Timestamp {} is greater than current time {}", _0, _1)]
-    TimestampIsInFuture(u128, u128), // left is expected, right is got
+    TimestampIsInFuture(TimestampMillis, TimestampMillis), // left is expected, right is got
     #[error("Block height mismatch, expected {}, got {}.", _0, _1)]
     InvalidBlockHeight(u64, u64),
     #[error("Block height is in stable height which is not allowed")]
     InvalidBlockHeightStableHeight,
     #[error("Invalid difficulty")]
     InvalidDifficulty,
+    #[error("Tx nonce {} already used by Tx {}", _0, _1)]
+    TxNonceAlreadyUsed(u64, Hash),
     #[error("Invalid hash, expected {}, got {}", _0, _1)]
     InvalidHash(Hash, Hash),
     #[error("Invalid previous block hash, expected {}, got {}", _0, _1)]
@@ -49,22 +69,28 @@ pub enum BlockchainError {
     TxAlreadyInMempool(Hash),
     #[error("Normal Tx {} is empty", _0)]
     TxEmpty(Hash),
+    #[error("Transaction has an invalid reference: block hash not found")]
+    InvalidReferenceHash,
+    #[error("Transaction has an invalid reference: topoheight is too high")]
+    InvalidReferenceTopoheight,
     #[error("Tx {} has too many output", _0)]
     TooManyOutputInTx(Hash),
     #[error("Tx {} is already in block", _0)]
     TxAlreadyInBlock(Hash),
     #[error("Duplicate registration tx for address '{}' found in same block", _0)]
-    DuplicateRegistration(PublicKey), // address
+    DuplicateRegistration(Address), // address
     #[error("Invalid Tx fee, expected at least {}, got {}", _0, _1)]
     InvalidTxFee(u64, u64),
     #[error("Fees are lower for this TX than the overrided TX, expected at least {}, got {}", _0, _1)]
     FeesToLowToOverride(u64, u64),
+    #[error("No account found for {}", _0)]
+    AccountNotFound(Address),
     #[error("Address {} is not registered", _0)]
-    AddressNotRegistered(PublicKey),
+    AddressNotRegistered(Address),
     #[error("Address {} is already registered", _0)]
-    AddressAlreadyRegistered(PublicKey),
+    AddressAlreadyRegistered(Address),
     #[error("Address {} should have {} for {} but have {}", _0, _2, _1, _3)]
-    NotEnoughFunds(PublicKey, Hash, u64, u64), // address, asset, balance, expected
+    NotEnoughFunds(Address, Hash, u64, u64), // address, asset, balance, expected
     #[error("Coinbase Tx not allowed: {}", _0)]
     CoinbaseTxNotAllowed(Hash),
     #[error("Invalid block reward, expected {}, got {}", _0, _1)]
@@ -89,6 +115,10 @@ pub enum BlockchainError {
     BlockNotFound(Hash),
     #[error("Error while retrieving block by height: {} not found", _0)]
     BlockHeightNotFound(u64),
+    #[error("Chain has a too low cumulative difficulty")]
+    LowerCumulativeDifficulty,
+    #[error("No cumulative difficulty found")]
+    NoCumulativeDifficulty,
     #[error(transparent)]
     ErrorStd(#[from] std::io::Error),
     #[error(transparent)]
@@ -127,12 +157,26 @@ pub enum BlockchainError {
     UnexpectedTransactionVariant,
     #[error("Unexpected error on database: {}", _0)]
     DatabaseError(#[from] sled::Error),
+    #[error("Unsupported operation")]
+    UnsupportedOperation,
     #[error("Data not found on disk: {}", _0)]
     NotFoundOnDisk(DiskContext),
+    #[error("Invalid paramater: max chain response size isn't in range")]
+    ConfigMaxChainResponseSize,
+    #[error("Invalid config sync mode")]
+    ConfigSyncMode,
     #[error("Expected at least one tips")]
     ExpectedTips,
-    #[error("Block has invalid tips")]
-    InvalidTips,
+    #[error("Block {0} has invalid tips count: {1}")]
+    InvalidTipsCount(Hash, usize),
+    #[error("Block {0} has an invalid tip {1} which is not present in chain")]
+    InvalidTipsNotFound(Hash, Hash),
+    #[error("Block {0} has invalid tips difficulty: {1}")]
+    InvalidTipsDifficulty(Hash, Hash),
+    #[error("Invalid block version")]
+    InvalidBlockVersion,
+    #[error("Invalid tx version")]
+    InvalidTxVersion,
     #[error("Block is already in chain")]
     AlreadyInChain,
     #[error("Block has an invalid reachability")]
@@ -142,21 +186,21 @@ pub enum BlockchainError {
     #[error("Invalid genesis block hash")]
     InvalidGenesisHash,
     #[error("Invalid tx {} nonce (got {} expected {}) for {}", _0, _1, _2, _3)]
-    InvalidTxNonce(Hash, u64, u64, PublicKey),
-    #[error("Invalid tx nonce for mempool cache")]
-    InvalidTxNonceMempoolCache,
+    InvalidTxNonce(Hash, u64, u64, Address),
+    #[error("Invalid tx nonce {} for mempool cache, range: [{}-{}]", _0, _1, _2)]
+    InvalidTxNonceMempoolCache(u64, u64, u64),
     #[error("Invalid asset ID: {}", _0)]
     AssetNotFound(Hash),
     #[error(transparent)]
     DifficultyError(#[from] DifficultyError),
     #[error("No balance found on disk for {}", _0)]
-    NoBalance(PublicKey),
+    NoBalance(Address),
     #[error("No balance changes for {} at topoheight {} and asset {}", _0, _1, _2)]
-    NoBalanceChanges(PublicKey, u64, Hash),
+    NoBalanceChanges(Address, u64, Hash),
     #[error("No nonce found on disk for {}", _0)]
-    NoNonce(PublicKey),
+    NoNonce(Address),
     #[error("No nonce changes for {} at specific topoheight", _0)]
-    NoNonceChanges(PublicKey),
+    NoNonceChanges(Address),
     #[error("Overflow detected")]
     Overflow,
     #[error("Error, block include a dead tx {}", _0)]
@@ -172,11 +216,41 @@ pub enum BlockchainError {
     #[error("Prune topoheight is lower or equal than previous pruned topoheight")]
     PruneLowerThanLastPruned,
     #[error("Auto prune mode is misconfigured")]
-    AutoPruneMode
+    AutoPruneMode,
+    #[error(transparent)]
+    TryFromSliceError(#[from] std::array::TryFromSliceError),
+    #[error("Invalid ciphertext")]
+    InvalidCiphertext,
+    #[error("Invalid chain state, no sender output ?")]
+    NoSenderOutput,
+    #[error("Invalid chain state, sender {} account is not found", _0)]
+    NoTxSender(Address),
+    #[error(transparent)]
+    DecompressionError(#[from] DecompressionError),
+    #[error(transparent)]
+    Any(#[from] anyhow::Error),
+    #[error("Invalid nonce")]
+    InvalidNonce,
+    #[error("Sender cannot be receiver")]
+    SenderIsReceiver,
+    #[error("Invalid transaction proof: {}", _0)]
+    TransactionProof(ProofVerificationError),
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {
     fn from(err: PoisonError<T>) -> Self {
         Self::PoisonError(format!("{}", err))
+    }
+}
+
+impl From<VerificationError<BlockchainError>> for BlockchainError {
+    fn from(value: VerificationError<BlockchainError>) -> Self {
+        match value {
+            VerificationError::InvalidNonce => BlockchainError::InvalidNonce,
+            VerificationError::SenderIsReceiver => BlockchainError::NoSenderOutput,
+            VerificationError::InvalidSignature => BlockchainError::InvalidTransactionSignature,
+            VerificationError::State(s) => s,
+            VerificationError::Proof(proof) => BlockchainError::TransactionProof(proof)
+        }
     }
 }

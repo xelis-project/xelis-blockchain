@@ -1,21 +1,22 @@
 use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{
-    crypto::hash::Hash,
+    crypto::Hash,
     serializer::{
         Serializer,
         Writer,
         ReaderError,
         Reader
     },
+    config::TIPS_LIMIT
 };
 use crate::config::{
     CHAIN_SYNC_REQUEST_MAX_BLOCKS,
     CHAIN_SYNC_RESPONSE_MAX_BLOCKS,
     CHAIN_SYNC_TOP_BLOCKS,
-    TIPS_LIMIT,
     CHAIN_SYNC_RESPONSE_MIN_BLOCKS
 };
+use std::hash::{Hash as StdHash, Hasher};
 
 #[derive(Clone, Debug)]
 pub struct BlockId {
@@ -44,6 +45,20 @@ impl BlockId {
     }
 }
 
+impl StdHash for BlockId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+impl PartialEq for BlockId {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl Eq for BlockId {}
+
 impl Serializer for BlockId {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(self.get_hash());
@@ -53,18 +68,22 @@ impl Serializer for BlockId {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(Self::new(reader.read_hash()?, reader.read_u64()?))
     }
+
+    fn size(&self) -> usize {
+        self.hash.size() + self.topoheight.size()
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct ChainRequest {
-    blocks: Vec<BlockId>,
+    blocks: IndexSet<BlockId>,
     // Number of maximum block responses allowed
     // This allow, directly in the protocol, to change the response param based on hardware resources
     accepted_response_size: u16
 }
 
 impl ChainRequest {
-    pub fn new(blocks: Vec<BlockId>, accepted_response_size: u16) -> Self {
+    pub fn new(blocks: IndexSet<BlockId>, accepted_response_size: u16) -> Self {
         Self {
             blocks,
             accepted_response_size
@@ -75,7 +94,7 @@ impl ChainRequest {
         self.blocks.len()
     }
 
-    pub fn get_blocks(self) -> Vec<BlockId> {
+    pub fn get_blocks(self) -> IndexSet<BlockId> {
         self.blocks
     }
 
@@ -101,9 +120,12 @@ impl Serializer for ChainRequest {
             return Err(ReaderError::InvalidValue)
         }
 
-        let mut blocks = Vec::with_capacity(len as usize);
+        let mut blocks = IndexSet::with_capacity(len as usize);
         for _ in 0..len {
-            blocks.push(BlockId::read(reader)?);
+            if !blocks.insert(BlockId::read(reader)?) {
+                debug!("Duplicated block id in chain request");
+                return Err(ReaderError::InvalidValue)
+            }
         }
 
         let accepted_response_size = reader.read_u16()?;
@@ -114,6 +136,10 @@ impl Serializer for ChainRequest {
         }
 
         Ok(Self { blocks, accepted_response_size })
+    }
+
+    fn size(&self) -> usize {
+        1 + self.blocks.len() + self.accepted_response_size.size()
     }
 }
 
@@ -151,32 +177,50 @@ impl Serializer for CommonPoint {
         let topoheight = reader.read_u64()?;
         Ok(Self { hash, topoheight })
     }
+
+    fn size(&self) -> usize {
+        self.hash.size() + self.topoheight.size()
+    }
 }
 
 #[derive(Debug)]
 pub struct ChainResponse {
+    // Common point between us and the peer
+    // This is based on the same DAG ordering for a block 
     common_point: Option<CommonPoint>,
+    // Lowest height of the blocks in the response
+    lowest_height: Option<u64>,
     blocks: IndexSet<Hash>,
     top_blocks: IndexSet<Hash>
 }
 
 impl ChainResponse {
-    pub fn new(common_point: Option<CommonPoint>, blocks: IndexSet<Hash>, top_blocks: IndexSet<Hash>) -> Self {
+    pub fn new(common_point: Option<CommonPoint>, lowest_height: Option<u64>, blocks: IndexSet<Hash>, top_blocks: IndexSet<Hash>) -> Self {
+        debug_assert!(common_point.is_some() == lowest_height.is_some());
         Self {
             common_point,
+            lowest_height,
             blocks,
             top_blocks
         }
     }
 
+    // Get the common point for this response
     pub fn get_common_point(&mut self) -> Option<CommonPoint> {
         self.common_point.take()
     }
 
-    pub fn size(&self) -> usize {
+    // Get the lowest height of the blocks in the response
+    pub fn get_lowest_height(&self) -> Option<u64> {
+        self.lowest_height
+    }
+
+    // Get the count of blocks received
+    pub fn blocks_size(&self) -> usize {
         self.blocks.len()
     }
 
+    // Take ownership of the blocks
     pub fn consume(self) -> (IndexSet<Hash>, IndexSet<Hash>) {
         (self.blocks, self.top_blocks)
     }
@@ -185,6 +229,16 @@ impl ChainResponse {
 impl Serializer for ChainResponse {
     fn write(&self, writer: &mut Writer) {
         self.common_point.write(writer);
+        // No need to write the blocks if we don't have a common point
+        if self.common_point.is_none() {
+            return
+        }
+
+        // Write the lowest height
+        if let Some(lowest_height) = self.lowest_height {
+            writer.write_u64(&lowest_height);
+        }
+
         writer.write_u16(self.blocks.len() as u16);
         for hash in &self.blocks {
             writer.write_hash(hash);
@@ -198,6 +252,12 @@ impl Serializer for ChainResponse {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let common_point = Option::read(reader)?;
+        // No need to read the blocks if we don't have a common point
+        if common_point.is_none() {
+            return Ok(Self::new(None, None, IndexSet::new(), IndexSet::new()))
+        }
+
+        let lowest_height = reader.read_u64()?;
         let len = reader.read_u16()?;
         if len > CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u16 {
             debug!("Invalid chain response length: {}", len);
@@ -228,6 +288,19 @@ impl Serializer for ChainResponse {
             }
         }
 
-        Ok(Self::new(common_point, blocks, top_blocks))
+        Ok(Self::new(common_point, Some(lowest_height), blocks, top_blocks))
+    }
+
+    fn size(&self) -> usize {
+        if self.common_point.is_none() {
+            return self.common_point.size()
+        }
+
+        let mut size = 0;
+        if let Some(lowest_height) = self.lowest_height {
+            size += lowest_height.size();
+        }
+
+        size + 2 + self.blocks.len() + 1 + self.top_blocks.len()
     }
 }

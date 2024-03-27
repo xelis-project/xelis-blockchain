@@ -1,7 +1,16 @@
 use anyhow::Result;
-use chacha20poly1305::{aead::Aead, XNonce, aead::OsRng, XChaCha20Poly1305, AeadCore, KeyInit};
-use xelis_common::crypto::hash::{HASH_SIZE, hash};
-
+use chacha20poly1305::{
+    aead::Aead,
+    XNonce,
+    aead::OsRng,
+    XChaCha20Poly1305,
+    AeadCore,
+    KeyInit
+};
+use xelis_common::crypto::{
+    HASH_SIZE,
+    hash
+};
 use crate::{wallet::WalletError, config::SALT_SIZE};
 
 

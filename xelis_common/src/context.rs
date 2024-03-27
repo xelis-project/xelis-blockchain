@@ -44,7 +44,7 @@ impl Context {
     }
 
     pub fn get<T: 'static>(&self) -> Result<&T> {
-        self.values.get(&TypeId::of::<T>()).and_then(|b| b.downcast_ref()).context("Requested type not found")
+        self.get_optional().context("Requested type not found")
     }
 }
 

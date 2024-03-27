@@ -1,34 +1,80 @@
-use std::{sync::{Arc, atomic::{AtomicBool, Ordering}}, collections::{HashMap, HashSet}, borrow::Cow};
+use std::{
+    sync::{
+        Arc,
+        atomic::{
+            AtomicBool,
+            Ordering
+        }
+    },
+    collections::{
+        HashMap,
+        HashSet
+    },
+    borrow::Cow
+};
 use anyhow::Error;
 use async_trait::async_trait;
-use actix_web::{get, web::{Data, Payload, self, Bytes}, HttpRequest, Responder, HttpServer, App, dev::ServerHandle, HttpResponse};
-use log::{info, error, debug};
-use serde_json::{Value, json};
-use tokio::sync::{Mutex, RwLock, Semaphore};
+use actix_web::{
+    get,
+    web::{
+        Data,
+        Payload,
+        self,
+        Bytes
+    },
+    HttpRequest,
+    Responder,
+    HttpServer,
+    App,
+    dev::ServerHandle,
+    HttpResponse
+};
+use serde_json::{
+    Value,
+    json
+};
+use tokio::sync::{
+    Mutex,
+    RwLock,
+    Semaphore
+};
 use xelis_common::{
-    rpc_server::{
-        RPCHandler,
-        websocket::{
-            WebSocketHandler, WebSocketSessionShared, WebSocketServer
-        },
-        RpcRequest, RpcResponseError, InternalRpcError, RpcResponse
-    },
-    crypto::{
-        key::{
-            Signature, SIGNATURE_LENGTH, PublicKey
-        },
-        hash::hash
-    },
-    serializer::{
-        Serializer, ReaderError, Reader, Writer
-    },
     api::{
         wallet::NotifyEvent,
         EventResult
-    }, context::Context
+    },
+    context::Context,
+    crypto::{
+        elgamal::PublicKey as DecompressedPublicKey,
+        Signature,
+        SIGNATURE_SIZE
+    },
+    rpc_server::{
+        websocket::{
+            WebSocketHandler,
+            WebSocketServer,
+            WebSocketSessionShared
+        },
+        InternalRpcError,
+        RPCHandler,
+        RpcRequest,
+        RpcResponse,
+        RpcResponseError
+    },
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    }
 };
 use serde::{Deserialize, Serialize};
 use crate::config::XSWD_BIND_ADDRESS;
+use log::{
+    debug,
+    info,
+    error,
+};
 
 // XSWD Protocol (XELIS Secure WebSocket DApp)
 // is a way to communicate with the XELIS Wallet
@@ -60,7 +106,7 @@ pub trait XSWDPermissionHandler {
     // Handler function to cancel the request permission from app (app has disconnected)
     async fn cancel_request_permission(&self, app_state: &AppStateShared) -> Result<(), Error>;
     // Public key to use to verify the signature
-    async fn get_public_key(&self) -> Result<&PublicKey, Error>;
+    async fn get_public_key(&self) -> Result<&DecompressedPublicKey, Error>;
 }
 
 #[async_trait]
@@ -202,6 +248,15 @@ impl Serializer for ApplicationData {
             writer.write_u8(permission.get_id());
         }
     }
+
+    fn size(&self) -> usize {
+        self.id.size() +
+        self.name.size() +
+        self.description.size() +
+        self.url.size() +
+        1 +
+        self.permissions.iter().map(|(k, _)| k.size() + 1).sum::<usize>()
+    }
 }
 
 const PERMISSION_DENIED_ERROR: InternalRpcError = InternalRpcError::CustomStr("Permission denied");
@@ -248,6 +303,7 @@ where
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum Permission {
     Ask,
     AcceptAlways,
@@ -440,6 +496,11 @@ where
                 return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application permissions are not signed")))
             }
 
+            if app_data.signature.is_some() {
+                // TODO: verify the signature
+                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application signature not supported yet")))
+            }
+
             if app_data.permissions.len() > 255 {
                 return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Too many permissions")))
             }
@@ -449,14 +510,15 @@ where
         // Verify the signature of the app data to validate permissions previously set
         if let Some(signature) = &app_data.signature {
             let bytes = app_data.to_bytes();
-            let bytes = &bytes[0..bytes.len() - SIGNATURE_LENGTH]; // remove signature bytes for verification
+            // remove signature bytes for verification
+            let bytes = &bytes[0..bytes.len() - SIGNATURE_SIZE];
             let key = wallet.get_public_key().await
                 .map_err(|e| {
                     error!("error while retrieving public key: {}", e);
                     RpcResponseError::new(None, InternalRpcError::CustomStr("Error while retrieving public key"))
                 })?;
 
-            if !key.verify_signature(&hash(&bytes), signature) {
+            if signature.verify(bytes, key) {
                 return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid signature for application data")));
             }
         }

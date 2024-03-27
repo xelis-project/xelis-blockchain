@@ -1,10 +1,15 @@
-use crate::block::Difficulty;
-use crate::network::Network;
-use crate::serializer::{Reader, ReaderError};
-use crate::config::{FEE_PER_KB, COIN_DECIMALS};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::SocketAddr;
+
+use crate::{
+    config::{
+        COIN_DECIMALS,
+        FEE_PER_ACCOUNT_CREATION,
+        FEE_PER_KB,
+        FEE_PER_TRANSFER
+    },
+    difficulty::Difficulty,
+    varuint::VarUint
+};
 
 #[macro_export]
 macro_rules! async_handler {
@@ -15,83 +20,51 @@ macro_rules! async_handler {
     };
 }
 
-// return timestamp in seconds
-pub fn get_current_time() -> u64 {
-    let start = SystemTime::now();
-    let time = start.duration_since(UNIX_EPOCH).expect("Incorrect time returned from get_current_time");
-    time.as_secs()
-}
-
-// return timestamp in milliseconds
-pub fn get_current_timestamp() -> u128 {
-    let start = SystemTime::now();
-    let time = start.duration_since(UNIX_EPOCH).expect("Incorrect time returned from get_current_timestamp");
-    time.as_millis()
-}
-
+// Format any coin value using the requested decimals count
 pub fn format_coin(value: u64, decimals: u8) -> String {
     format!("{:.1$}", value as f64 / 10usize.pow(decimals as u32) as f64, decimals as usize)
 }
 
+// Format value using XELIS decimals
 pub fn format_xelis(value: u64) -> String {
     format_coin(value, COIN_DECIMALS)
 }
 
-// format a IP:port to byte format
-pub fn ip_to_bytes(ip: &SocketAddr) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    match ip.ip() {
-        IpAddr::V4(addr) => {
-            bytes.push(0);
-            bytes.extend(addr.octets());
-        },
-        IpAddr::V6(addr) => {
-            bytes.push(1);
-            bytes.extend(addr.octets());
-        }
-    };
-    bytes.extend(ip.port().to_be_bytes());
-    bytes
-}
+// Convert a XELIS amount from string to a u64
+pub fn from_xelis(value: impl Into<String>) -> Option<u64> {
+    let value = value.into();
+    let mut split = value.split('.');
+    let xelis: u64 = split.next()?.parse::<u64>().ok()?;
+    let decimals = split.next().unwrap_or("0");
+    if decimals.len() > COIN_DECIMALS as usize {
+        return None;
+    }
 
-// bytes to ip
-pub fn ip_from_bytes(reader: &mut Reader) -> Result<SocketAddr, ReaderError> {
-    let is_v6 = reader.read_bool()?;
-    let ip: IpAddr = if !is_v6 {
-        let a = reader.read_u8()?;
-        let b = reader.read_u8()?;
-        let c = reader.read_u8()?;
-        let d = reader.read_u8()?;
-        IpAddr::V4(Ipv4Addr::new(a, b, c, d))
-    } else {
-        let a = reader.read_u16()?;
-        let b = reader.read_u16()?;
-        let c = reader.read_u16()?;
-        let d = reader.read_u16()?;
-        let e = reader.read_u16()?;
-        let f = reader.read_u16()?;
-        let g = reader.read_u16()?;
-        let h = reader.read_u16()?;
-        IpAddr::V6(Ipv6Addr::new(a, b, c, d, e, f, g, h))
-    };
-    let port = reader.read_u16()?;
-    Ok(SocketAddr::new(ip, port))
+    let mut decimals = decimals.parse::<u64>().ok()?;
+    while decimals > 0 && decimals % 10 == 0 {
+        decimals /= 10;
+    }
+
+    Some(xelis * 10u64.pow(COIN_DECIMALS as u32) + decimals)
 }
 
 // return the fee for a transaction based on its size in bytes
 // the fee is calculated in atomic units for XEL
-// This is a really simple function, plan to improve it later based on caracteristics of the transaction
-pub fn calculate_tx_fee(tx_size: usize) -> u64 {
+// Sending to a newly created address will increase the fee
+// Each transfers output will also increase the fee
+pub fn calculate_tx_fee(tx_size: usize, output_count: usize, new_addresses: usize) -> u64 {
     let mut size_in_kb = tx_size as u64 / 1024;
 
     if tx_size % 1024 != 0 { // we consume a full kb for fee
         size_in_kb += 1;
     }
-    
+
     size_in_kb * FEE_PER_KB
+    + output_count as u64 * FEE_PER_TRANSFER
+    + new_addresses as u64 * FEE_PER_ACCOUNT_CREATION
 }
 
-const HASHRATE_FORMATS: [&str; 5] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s"];
+const HASHRATE_FORMATS: [&str; 7] = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s"];
 
 // Format a hashrate in human-readable format
 pub fn format_hashrate(mut hashrate: f64) -> String {
@@ -105,32 +78,45 @@ pub fn format_hashrate(mut hashrate: f64) -> String {
     return format!("{:.2} {}", hashrate, HASHRATE_FORMATS[count]);
 }
 
-const DIFFICULTY_FORMATS: [&str; 6] = ["", "K", "M", "G", "T", "P"];
+const DIFFICULTY_FORMATS: [&str; 7] = ["", "K", "M", "G", "T", "P", "E"];
 
 // Format a difficulty in a human-readable format
 pub fn format_difficulty(mut difficulty: Difficulty) -> String {
     let max = HASHRATE_FORMATS.len() - 1;
     let mut count = 0;
-    while difficulty > 1000 && count < max {
+    let thousand = VarUint::from_u64(1000);
+    while difficulty > thousand && count < max {
         count += 1;
-        difficulty = difficulty / 1000;
+        difficulty = difficulty / thousand;
     }
 
     return format!("{}{}", difficulty, DIFFICULTY_FORMATS[count]);
 }
 
-// by default it start in mainnet mode
-// it is mainly used by fmt::Display to display & Serde for the correct format of addresses / keys
-static NETWORK: Mutex<Network> = Mutex::new(Network::Mainnet);
-pub fn get_network() -> Network {
-    let network = NETWORK.lock().unwrap();
-    *network
-}
-
-// it should never be called later, only at launch!!
-pub fn set_network_to(network: Network) {
-    // its already mainnet by default
-    if network != Network::Mainnet {
-        *NETWORK.lock().unwrap() = network;
+// Sanitize a daemon address to make sure it's a valid websocket address
+// By default, will use ws:// if no protocol is specified
+pub fn sanitize_daemon_address(target: &str) -> String {
+    let mut target = target.to_lowercase();
+    if target.starts_with("https://") {
+        target.replace_range(..8, "wss://");
     }
+    else if target.starts_with("http://") {
+        target.replace_range(..7, "ws://");
+    }
+    else if !target.starts_with("ws://") && !target.starts_with("wss://") {
+        // use ws:// if it's a IP address, otherwise it may be a domain, use wss://
+        let prefix = if target.parse::<SocketAddr>().is_ok() {
+            "ws://"
+        } else {
+            "wss://"
+        };
+
+        target.insert_str(0, prefix);
+    }
+
+    if target.ends_with("/") {
+        target.pop();
+    }
+
+    target
 }

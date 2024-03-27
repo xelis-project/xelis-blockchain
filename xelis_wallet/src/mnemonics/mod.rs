@@ -1,11 +1,13 @@
 pub mod languages;
 
 use std::collections::HashMap;
-
 use anyhow::{Result, Context, anyhow};
 use lazy_static::lazy_static;
 use log::debug;
-use xelis_common::{crypto::key::PrivateKey, serializer::Serializer};
+use xelis_common::{
+    crypto::PrivateKey,
+    serializer::Serializer
+};
 use languages::*;
 
 const KEY_SIZE: usize = 32;
@@ -115,7 +117,7 @@ pub fn words_to_key(words: Vec<String>) -> Result<PrivateKey> {
         dest.extend_from_slice(&val.to_le_bytes());
     }
 
-    Ok(PrivateKey::from_bytes(&dest))
+    Ok(PrivateKey::from_bytes(&dest)?)
 }
 
 pub fn key_to_words(key: &PrivateKey, language_index: usize) -> Result<Vec<String>> {
