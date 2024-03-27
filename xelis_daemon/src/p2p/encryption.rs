@@ -1,6 +1,9 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use chacha20poly1305::{aead::AeadMut, ChaCha20Poly1305, KeyInit};
 use rand::rngs::OsRng;
 use thiserror::Error;
+use tokio::sync::Mutex;
 
 // This symetric key is used to encrypt/decrypt the data
 pub type EncryptionKey = [u8; 32];
@@ -13,16 +16,21 @@ pub type EncryptionKey = [u8; 32];
 // Also, we rotate the keys every 1 GB of data to avoid any potential attack
 // We would reach 1 GB much before the nonce overflow
 // This is a simple implementation and we can improve it later
-pub struct Encryption {
+
+struct CipherState {
+    cipher: ChaCha20Poly1305,
+    nonce: u64,
     nonce_buffer: [u8; 12],
+}
+
+pub struct Encryption {
     // Cipher using our key to encrypt packets
-    our_cipher: Option<ChaCha20Poly1305>,
+    our_cipher: Mutex<Option<CipherState>>,
     // Cipher using the peer key to decrypt packets
-    peer_cipher: Option<ChaCha20Poly1305>,
-    // Nonce to use for the next outgoing packet
-    our_nonce: u64,
-    // Nonce to expect for the next incoming packet
-    peer_nonce: u64
+    peer_cipher: Mutex<Option<CipherState>>,
+    // This flag helps us to know if the encryption is ready
+    // In case we want to use it before the handshake is done
+    ready: AtomicBool,
 }
 
 #[derive(Error, Debug)]
@@ -46,22 +54,25 @@ pub enum EncryptionError {
 impl Encryption {
     pub fn new() -> Self {
         Self {
-            nonce_buffer: [0; 12],
-            our_cipher: None,
-            peer_cipher: None,
-            our_nonce: 0,
-            peer_nonce: 0
+            our_cipher: Mutex::new(None),
+            peer_cipher: Mutex::new(None),
+            ready: AtomicBool::new(false),
         }
     }
 
+    // Mark has ready because
+    pub fn mark_as_ready(&self) {
+        self.ready.store(true, Ordering::SeqCst);
+    }
+
     // Check if the encryption is ready to write (encrypt)
-    pub fn is_write_ready(&self) -> bool {
-        self.our_cipher.is_some()
+    pub async fn is_write_ready(&self) -> bool {
+        self.ready.load(Ordering::SeqCst) && self.our_cipher.lock().await.is_some()
     }
 
     // Check if the encryption is ready to read (decrypt)
-    pub fn is_read_ready(&self) -> bool {
-        self.peer_cipher.is_some()
+    pub async fn is_read_ready(&self) -> bool {
+        self.peer_cipher.lock().await.is_some()
     }
 
     // Generate a new random key
@@ -70,55 +81,66 @@ impl Encryption {
     }
 
     // Encrypt a packet using the shared symetric key
-    pub fn encrypt_packet(&mut self, input: &[u8]) -> Result<Vec<u8>, EncryptionError> {
-        let cipher = self.our_cipher.as_mut().ok_or(EncryptionError::WriteNotReady)?;
+    pub async fn encrypt_packet(&self, input: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        let mut lock = self.our_cipher.lock().await;
+        let cipher_state = lock.as_mut().ok_or(EncryptionError::WriteNotReady)?;
 
         // fill our buffer
-        self.nonce_buffer[0..8].copy_from_slice(&self.our_nonce.to_be_bytes());
-
-        let nonce_part: &[u8; 12] = self.nonce_buffer[0..12].try_into()
-            .map_err(|_| EncryptionError::InvalidNonce)?;
+        cipher_state.nonce_buffer[0..8].copy_from_slice(&cipher_state.nonce.to_be_bytes());
 
         // Encrypt the packet
-        let res = cipher.encrypt(nonce_part.into(), input)
+        let res = cipher_state.cipher.encrypt(&cipher_state.nonce_buffer.into(), input)
             .map_err(|_| EncryptionError::CipherError)?;
 
         // Increment the nonce so we don't use the same nonce twice
-        self.our_nonce += 1;
+        cipher_state.nonce += 1;
 
         Ok(res)
     }
 
     // Decrypt a packet using the shared symetric key
-    pub fn decrypt_packet(&mut self, buf: &[u8]) -> Result<Vec<u8>, EncryptionError> {
-        let cipher = self.peer_cipher.as_mut().ok_or(EncryptionError::ReadNotReady)?;
+    pub async fn decrypt_packet(&self, buf: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        let mut lock = self.peer_cipher.lock().await;
+        let cipher_state = lock.as_mut().ok_or(EncryptionError::WriteNotReady)?;
 
         // fill our buffer
-        self.nonce_buffer[0..8].copy_from_slice(&self.peer_nonce.to_be_bytes());
-
-        let nonce_part: &[u8; 12] = self.nonce_buffer[0..12].try_into()
-            .map_err(|_| EncryptionError::InvalidNonce)?;
+        cipher_state.nonce_buffer[0..8].copy_from_slice(&cipher_state.nonce.to_be_bytes());
 
         // Decrypt packet
-        let res = cipher.decrypt(nonce_part.into(), buf.as_ref())
+        let res = cipher_state.cipher.decrypt(&cipher_state.nonce_buffer.into(), buf.as_ref())
             .map_err(|_| EncryptionError::CipherError)?;
 
         // Increment the nonce so we don't use the same nonce twice
-        self.peer_nonce += 1;
+        cipher_state.nonce += 1;
 
         Ok(res)
     }
 
-    // Rotate the key with a new one
-    pub fn rotate_key(&mut self, new_key: EncryptionKey, our: bool) -> Result<(), EncryptionError> {
-        let cipher = Some(ChaCha20Poly1305::new_from_slice(&new_key).map_err(|_| EncryptionError::InvalidKey)?);
-        if our {
-            self.our_cipher = cipher;
-            self.our_nonce = 0;
+    fn create_or_update_state(state: &mut Option<CipherState>, key: EncryptionKey) -> Result<(), EncryptionError> {
+        let cipher = ChaCha20Poly1305::new_from_slice(&key).map_err(|_| EncryptionError::InvalidKey)?;
+        if let Some(cipher_state) = state.as_mut() {
+            cipher_state.cipher = cipher;
+            cipher_state.nonce = 0;
         } else {
-            self.peer_cipher = cipher;
-            self.peer_nonce = 0;
+            *state = Some(CipherState {
+                nonce_buffer: [0; 12],
+                cipher,
+                nonce: 0
+            });
         }
+        Ok(())
+    }
+
+    // Rotate the key with a new one
+    pub async fn rotate_key(&self, new_key: EncryptionKey, our: bool) -> Result<(), EncryptionError> {
+        if our {
+            let mut lock = self.our_cipher.lock().await;
+            Self::create_or_update_state(&mut lock, new_key)?;
+        } else {
+            let mut lock = self.peer_cipher.lock().await;
+            Self::create_or_update_state(&mut lock, new_key)?;
+        }
+
         Ok(())
     }
 }

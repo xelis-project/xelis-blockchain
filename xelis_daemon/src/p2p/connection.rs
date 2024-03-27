@@ -1,6 +1,6 @@
 use crate::config::PEER_TIMEOUT_INIT_CONNECTION;
 use super::{
-    encryption::{Encryption, EncryptionError},
+    encryption::Encryption,
     error::P2pError,
     packet::Packet,
     EncryptionKey
@@ -77,7 +77,7 @@ pub struct Connection {
     // if Connection#close() is called, close is set to true
     closed: AtomicBool,
     // Encryption state used for packets
-    encryption: Mutex<Option<Encryption>>
+    encryption: Encryption
 }
 
 // We are rotating every 1GB sent
@@ -99,7 +99,7 @@ impl Connection {
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
             closed: AtomicBool::new(false),
-            encryption: Mutex::new(None)
+            encryption: Encryption::new()
         }
     }
 
@@ -120,15 +120,15 @@ impl Connection {
         // Update our state
         self.set_state(State::KeyHandshake);
 
-        // Generate our encryption state
-        let mut encryption = Encryption::new();
-
         // Send our key if we initiated the connection
         if self.is_out() {
-            let packet = self.rotate_key_packet(&mut encryption).await?;
+            trace!("Sending our key to {}", self.addr);
+            let packet = self.rotate_key_packet().await?;
             self.send_bytes(&packet).await?;
+            self.encryption.mark_as_ready();
         }
 
+        trace!("Waiting for key from {}", self.addr);
         // Wait for the peer to receive its key
         let Packet::KeyExchange(peer_key) = timeout(
             Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION),
@@ -139,16 +139,15 @@ impl Connection {
         };
 
         // Now that we got the peer key, update our encryption state
-        encryption.rotate_key(peer_key.into_owned(), false)?;
+        self.encryption.rotate_key(peer_key.into_owned(), false).await?;
 
         // Send back our key if we are the server
         if !self.is_out() {
-            let packet = self.rotate_key_packet(&mut encryption).await?;
+            trace!("Replying with our key to {}", self.addr);
+            let packet = self.rotate_key_packet().await?;
             self.send_bytes(&packet).await?;
+            self.encryption.mark_as_ready();
         }
-
-        // Store our encryption state
-        self.encryption.get_mut().replace(encryption);
 
         trace!("Key exchange with {} successful", self.addr);
 
@@ -175,9 +174,9 @@ impl Connection {
     }
 
     // This will send to the peer a packet to rotate the key
-    async fn rotate_key_packet(&self, encryption: &mut Encryption) -> P2pResult<Bytes> {
+    async fn rotate_key_packet(&self) -> P2pResult<Bytes> {
         // Generate a new key to use
-        let new_key = encryption.generate_key();
+        let new_key = self.encryption.generate_key();
         // Verify if we already have one set
         
         // Build the packet
@@ -185,13 +184,13 @@ impl Connection {
         
         // This is used to determine if we need to encrypt the packet or not
         // Check if we already had a key set, if so, encrypt it
-        if encryption.is_write_ready() {
+        if self.encryption.is_write_ready().await {
             // Encrypt with the our previous key our new key
-            packet = encryption.encrypt_packet(&packet)?.into();
+            packet = self.encryption.encrypt_packet(&packet).await?.into();
         }
 
         // Rotate the key in our encryption state
-        encryption.rotate_key(new_key, true)?;
+        self.encryption.rotate_key(new_key, true).await?;
 
         Ok(packet)
     }
@@ -202,13 +201,8 @@ impl Connection {
     // We don't need to send a ACK to the peer to confirm the key rotation
     // as all next packets will be encrypted with the new key and we have updated it before
     pub async fn rotate_peer_key(&self, key: EncryptionKey) -> P2pResult<()> {
-        let mut encryption = self.encryption.lock().await;
-        if let Some(encryption) = encryption.as_mut() {
-            encryption.rotate_key(key, false)?;
-            Ok(())
-        } else {
-            Err(EncryptionError::NotSupported.into())
-        }
+        self.encryption.rotate_key(key, false).await?;
+        Ok(())
     }
 
     // This function will send the packet to the peer without flushing the stream
@@ -229,17 +223,15 @@ impl Connection {
         // Count the bytes sent
         let bytes_out = self.bytes_out.fetch_add(packet.len(), Ordering::Relaxed);
 
-        // Verify if we should encrypt the packet
-        let mut guard = self.encryption.lock().await;
-        if let Some(encryption) = guard.as_mut().filter(|e| e.is_write_ready()) {
-            let buffer = encryption.encrypt_packet(packet)?;
+        if self.encryption.is_write_ready().await {
+            let buffer = self.encryption.encrypt_packet(packet).await?;
             // Send the bytes in encrypted format
             self.send_packet_bytes_internal(&mut stream, &buffer).await?;
 
             // Rotate the key if necessary
             if bytes_out > 0 && bytes_out % ROTATE_EVERY_N_BYTES == 0 {
                 debug!("Rotating our key with peer {}", self.get_address());
-                let packet = self.rotate_key_packet(encryption).await?;
+                let packet = self.rotate_key_packet().await?;
                 // Send the new key to the peer
                 self.send_packet_bytes_internal(&mut stream, &packet).await?;
             }
@@ -323,9 +315,8 @@ impl Connection {
         }
 
         // If encryption is supported, use it
-        let mut guard = self.encryption.lock().await;
-        if let Some(encryption) = guard.as_mut().filter(|e| e.is_read_ready()) {
-            let content = encryption.decrypt_packet(&bytes)?;
+        if self.encryption.is_read_ready().await {
+            let content = self.encryption.decrypt_packet(&bytes).await?;
             Ok(content)
         } else {
             Ok(bytes)
