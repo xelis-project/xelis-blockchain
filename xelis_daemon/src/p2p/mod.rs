@@ -1129,15 +1129,10 @@ impl<S: Storage> P2pServer<S> {
                 trace!("Received a block propagation packet from {}", peer);
                 let (header, ping) = packet_wrapper.consume();
                 ping.into_owned().update_peer(peer, &self.blockchain).await?;
-                let block_height = header.get_height();
 
                 // check that the block height is valid
                 let header = header.into_owned();
                 let block_hash = header.hash();
-                if block_height < self.blockchain.get_stable_height() {
-                    error!("{} send us a block ({}) propagation packet which is under stable height (height = {})!", block_hash, peer, block_height);
-                    return Err(P2pError::BlockPropagatedUnderStableHeight(block_hash, block_height))
-                }
 
                 // verify that this block wasn't already sent by him
                 {
