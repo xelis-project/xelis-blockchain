@@ -167,8 +167,12 @@ pub enum BlockchainError {
     ConfigSyncMode,
     #[error("Expected at least one tips")]
     ExpectedTips,
-    #[error("Block has invalid tips")]
-    InvalidTips,
+    #[error("Block {0} has invalid tips count: {1}")]
+    InvalidTipsCount(Hash, usize),
+    #[error("Block {0} has an invalid tip {1} which is not present in chain")]
+    InvalidTipsNotFound(Hash, Hash),
+    #[error("Block {0} has invalid tips difficulty: {1}")]
+    InvalidTipsDifficulty(Hash, Hash),
     #[error("Invalid block version")]
     InvalidBlockVersion,
     #[error("Invalid tx version")]

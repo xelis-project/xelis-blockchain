@@ -1441,9 +1441,10 @@ impl<S: Storage> Blockchain<S> {
 
         let tips_count = block.get_tips().len();
         debug!("Tips count for this new {}: {}", block, tips_count);
+        // only 3 tips are allowed
         if tips_count > TIPS_LIMIT {
             debug!("Invalid tips count, got {} but maximum allowed is {}", tips_count, TIPS_LIMIT);
-            return Err(BlockchainError::InvalidTips) // only 3 tips are allowed
+            return Err(BlockchainError::InvalidTipsCount(block_hash, tips_count))
         }
 
         let current_height = self.get_height();
@@ -1462,7 +1463,7 @@ impl<S: Storage> Blockchain<S> {
         for tip in block.get_tips() {
             if !storage.has_block_with_hash(tip).await? {
                 debug!("This block ({}) has a TIP ({}) which is not present in chain", block_hash, tip);
-                return Err(BlockchainError::InvalidTips)
+                return Err(BlockchainError::InvalidTipsNotFound(block_hash, tip.clone()))
             }
         }
 
@@ -1510,7 +1511,7 @@ impl<S: Storage> Blockchain<S> {
                 if best_tip != hash {
                     if !self.validate_tips(storage, best_tip, hash).await? {
                         debug!("Tip {} is invalid, difficulty can't be less than 91% of {}", hash, best_tip);
-                        return Err(BlockchainError::InvalidTips)
+                        return Err(BlockchainError::InvalidTipsDifficulty(block_hash, hash.clone()))
                     }
                 }
             }

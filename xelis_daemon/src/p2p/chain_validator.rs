@@ -26,7 +26,7 @@ use crate::core::{
         Tips
     }
 };
-use log::{error, trace};
+use log::{debug, trace};
 
 // This struct is used to store the block data in the chain validator
 struct BlockData {
@@ -89,12 +89,12 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         trace!("Inserting block {} into chain validator", hash);
 
         if self.blocks.contains_key(&hash) {
-            error!("Block {} is already in validator chain!", hash);
+            debug!("Block {} is already in validator chain!", hash);
             return Err(BlockchainError::AlreadyInChain)
         }
 
         if self.blockchain.has_block(&hash).await? {
-            error!("Block {} is already in blockchain!", hash);
+            debug!("Block {} is already in blockchain!", hash);
             return Err(BlockchainError::AlreadyInChain)
         }
 
@@ -103,8 +103,8 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         
         // verify tips count
         if tips_count == 0 || tips_count > TIPS_LIMIT {
-            error!("Block {} contains {} tips while only {} is accepted", hash, tips_count, TIPS_LIMIT);
-            return Err(BlockchainError::InvalidTips)
+            debug!("Block {} contains {} tips while only {} is accepted", hash, tips_count, TIPS_LIMIT);
+            return Err(BlockchainError::InvalidTipsCount(hash, tips_count))
         }
 
         // verify that we have already all its tips
@@ -112,8 +112,8 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             for tip in tips {
                 trace!("Checking tip {} for block {}", tip, hash);
                 if !self.blocks.contains_key(tip) && !self.blockchain.has_block(tip).await? {
-                    error!("Block {} contains tip {} which is not present in chain validator", hash, tip);
-                    return Err(BlockchainError::InvalidTips)
+                    debug!("Block {} contains tip {} which is not present in chain validator", hash, tip);
+                    return Err(BlockchainError::InvalidTipsNotFound(hash, tip.clone()))
                 }
             }
         }
@@ -122,7 +122,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         {
             let height_by_tips = blockdag::calculate_height_at_tips(self, header.get_tips().iter()).await?;
             if height_by_tips != header.get_height() {
-                error!("Block {} has height {} while expected height is {}", hash, header.get_height(), height_by_tips);
+                debug!("Block {} has height {} while expected height is {}", hash, header.get_height(), height_by_tips);
                 return Err(BlockchainError::InvalidBlockHeight(height_by_tips, header.get_height()))
             }
         }
