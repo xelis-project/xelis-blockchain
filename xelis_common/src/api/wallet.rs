@@ -94,6 +94,11 @@ pub struct RescanParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct SetOnlineModeParams {
+    pub daemon_address: String
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetBalanceParams {
     pub asset: Option<Hash>
 }
