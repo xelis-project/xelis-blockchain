@@ -1,7 +1,8 @@
 use std::{
+    ops::ControlFlow,
+    path::Path,
     sync::Arc,
-    time::Duration,
-    path::Path
+    time::Duration
 };
 use anyhow::{Result, Context};
 use fern::colors::Color;
@@ -15,6 +16,7 @@ use xelis_common::{
         XELIS_ASSET
     },
     crypto::{
+        ecdlp,
         Address,
         Hashable
     },
@@ -147,6 +149,16 @@ pub struct Config {
     enable_xswd: bool
 }
 
+/// This struct is used to log the progress of the table generation
+struct LogProgressTableGenerationReportFunction;
+
+impl ecdlp::ProgressTableGenerationReportFunction for LogProgressTableGenerationReportFunction {
+    fn report(&self, progress: f64, step: ecdlp::ReportStep) -> ControlFlow<()> {
+        info!("Progress: {:.2}% on step {:?}", progress * 100.0, step);
+        ControlFlow::Continue(())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
@@ -187,7 +199,7 @@ async fn main() -> Result<()> {
             prompt.read_input(format!("Enter Password for '{}': ", path), true).await?
         };
 
-        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(config.precomputed_tables_path)?;
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(config.precomputed_tables_path, LogProgressTableGenerationReportFunction)?;
         let wallet = if Path::new(&path).is_dir() {
             info!("Opening wallet {}", path);
             Wallet::open(path, password, config.network, precomputed_tables)?
@@ -460,7 +472,7 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None)?;
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction)?;
         Wallet::open(dir, password, *network, precomputed_tables)?
     };
 
@@ -505,7 +517,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None)?;
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction)?;
         Wallet::create(dir, password, None, *network, precomputed_tables)?
     };
  
@@ -561,7 +573,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None)?;
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction)?;
         Wallet::create(dir, password, Some(seed), *network, precomputed_tables)?
     };
 

@@ -298,7 +298,7 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 impl Wallet {
     // This will read from file if exists, or generate and store it in file
     // This must be call only one time, and can be cloned to be shared through differents wallets
-    pub fn read_or_generate_precomputed_tables(path: Option<String>) -> Result<PrecomputedTablesShared, Error> {
+    pub fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared, Error> {
         const N: usize = PRECOMPUTED_TABLES_L1;
         let mut precomputed_tables = PrecomputedTables::new(N);
 
@@ -310,7 +310,7 @@ impl Wallet {
         } else {
             // File does not exists, generate and store it
             info!("Generating precomputed tables");
-            ecdlp::table_generation::create_table_file(N, precomputed_tables.get_mut())?;
+            ecdlp::table_generation::create_table_file_with_progress_report(N, precomputed_tables.get_mut(), progress_report)?;
             File::create(format!("{path}precomputed_tables_{N}.bin"))?.write_all(precomputed_tables.get())?;
         }
 
