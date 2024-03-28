@@ -1250,7 +1250,7 @@ impl<S: Storage> P2pServer<S> {
                     let last_peer_list = peer.get_last_peer_list();
                     let diff = current_time - last_peer_list;
                     if last_peer_list != 0 && diff < P2P_PING_PEER_LIST_DELAY {
-                        return Err(P2pError::PeerInvalidPeerListCountdown(diff))
+                        return Err(P2pError::PeerInvalidPeerListCountdown(P2P_PING_PEER_LIST_DELAY - diff))
                     }
                     peer.set_last_peer_list(current_time);
                 }
