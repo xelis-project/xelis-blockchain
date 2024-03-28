@@ -520,13 +520,8 @@ async fn get_nonce<S: Storage>(context: Context, body: Value) -> Result<Value, I
     }
 
     let storage = blockchain.get_storage().read().await;
-    let (topoheight, version) = if let Some(topoheight) = params.topoheight {
-        (topoheight, storage.get_nonce_at_exact_topoheight(params.address.get_public_key(), topoheight).await
-            .context("Error while retrieving nonce at topo for account")?)
-    } else {
-         storage.get_last_nonce(params.address.get_public_key()).await
-            .context("Error while retrieving nonce for account")?
-    };
+    let (topoheight, version) = storage.get_last_nonce(params.address.get_public_key()).await
+        .context("Error while retrieving nonce for account")?;
 
     Ok(json!(GetNonceResult { topoheight, version }))
 }
