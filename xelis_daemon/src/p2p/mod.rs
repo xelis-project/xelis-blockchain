@@ -2032,14 +2032,19 @@ impl<S: Storage> P2pServer<S> {
         let pruned_topoheight = storage.get_pruned_topoheight().await?.unwrap_or(0);
         if let Some(topoheight) = request.get_requested_topoheight() {
             let our_topoheight = self.blockchain.get_topo_height();
-            // verify that the topoheight asked is above the PRUNE_SAFETY_LIMIT
-            // TODO check that the block is stable
             if
                 pruned_topoheight >= topoheight
                 || topoheight > our_topoheight
                 || topoheight < PRUNE_SAFETY_LIMIT
             {
                 warn!("Invalid begin topoheight (received {}, our is {}, pruned: {}) received from {}", topoheight, our_topoheight, pruned_topoheight, peer);
+                return Err(P2pError::InvalidRequestedTopoheight.into())
+            }
+
+            // Check that the block is stable
+            let hash = storage.get_hash_at_topo_height(topoheight).await?;
+            if !self.blockchain.is_sync_block(&storage, &hash).await? {
+                warn!("Requested topoheight {} is not stable, ignoring", topoheight);
                 return Err(P2pError::InvalidRequestedTopoheight.into())
             }
         }
