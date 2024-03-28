@@ -238,7 +238,13 @@ pub type PrecomputedTablesShared = Arc<PrecomputedTables>;
 impl PrecomputedTables {
     pub fn new(l1: usize) -> Self {
         let bytes_count = ecdlp::table_generation::table_file_len(l1);
-        let bytes = vec![Bytes32Alignment([0; 32]); bytes_count / 2 + 1];
+        info!("Precomputed tables size: {} bytes", bytes_count);
+        let mut n = bytes_count / 32;
+        if bytes_count % 32 != 0 {
+            n += 1;
+        }
+
+        let bytes = vec![Bytes32Alignment([0; 32]); n];
 
         Self {
             bytes,
