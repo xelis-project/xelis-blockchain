@@ -1248,11 +1248,11 @@ impl<S: Storage> P2pServer<S> {
                 if !empty_peer_list {
                     trace!("received peer list from {}: {}", peer, ping.get_peers().len());
                     let last_peer_list = peer.get_last_peer_list();
-                    peer.set_last_peer_list(current_time);
                     let diff = current_time - last_peer_list;
                     if last_peer_list != 0 && diff < P2P_PING_PEER_LIST_DELAY {
                         return Err(P2pError::PeerInvalidPeerListCountdown(diff))
                     }
+                    peer.set_last_peer_list(current_time);
                 }
 
                 let is_local_peer = is_local_address(peer.get_connection().get_address());
