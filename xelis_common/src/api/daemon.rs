@@ -139,9 +139,7 @@ pub struct GetBalanceAtTopoHeightParams<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub struct GetNonceParams<'a> {
-    pub address: Cow<'a, Address>,
-    #[serde(default)]
-    pub topoheight: Option<u64>
+    pub address: Cow<'a, Address>
 }
 
 #[derive(Serialize, Deserialize)]
