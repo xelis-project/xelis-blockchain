@@ -1,5 +1,10 @@
-use std::{collections::HashMap, fs::File, io::{Read, Write}, sync::Arc};
-
+use std::{
+    collections::HashMap,
+    fs::{create_dir_all, File},
+    io::{Read, Write},
+    path::Path,
+    sync::Arc
+};
 use anyhow::{Error, Context};
 use serde::Serialize;
 use tokio::sync::{
@@ -308,7 +313,14 @@ impl Wallet {
         const N: usize = PRECOMPUTED_TABLES_L1;
         let mut precomputed_tables = PrecomputedTables::new(N);
 
+        if let Some(path) = path.as_ref() {
+            let path = Path::new(&path);
+            if !path.exists() {
+                create_dir_all(path)?;
+            }
+        }
         let path = path.unwrap_or_default();
+
         // Try to read from file
         if let Ok(mut file) = File::open(format!("{path}precomputed_tables_{N}.bin")) {
             info!("Reading precomputed tables from file");
