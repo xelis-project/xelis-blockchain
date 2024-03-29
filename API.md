@@ -5468,7 +5468,6 @@ No parameters
 }
 ```
 
-
 #### Get Network
 Retrieve network used by the wallet
 
@@ -5517,7 +5516,7 @@ No parameters
 {
 	"id": 1,
 	"jsonrpc": "2.0",
-	"result": 1
+	"result": 1462
 }
 ```
 
@@ -5551,31 +5550,47 @@ No parameters
 Retrieve wallet address with or without integrated data in it.
 Without parameters set, it returns the normal wallet address.
 
+NOTE: Integrated data can be useful for services like Exchanges to identify a user transaction
+by integrating an ID (or anything else) in the address (like PaymentID for Monero). 
+
+It is not mandatory and support any data formatted in JSON up to 1 KB in serialized format.
+
 ##### Method `get_address`
 
 ##### Parameters
-TODO integrated_data
+|       Name      | Type | Required |                       Note                       |
+|:---------------:|:----:|:--------:|:------------------------------------------------:|
+| integrated_data | JSON | Optional | Add data that will be integrated in the transfer |
 
 ##### Request
 ```json
 {
-	"jsonrpc": "2.0",
-	"method": "get_address",
-	"id": 1,
-	"params": {
-		"integrated_data": {
-			"hello": "world"
-		}
-	}
+    "jsonrpc": "2.0",
+    "method": "get_address",
+    "id": 1,
+    "params": {
+        "integrated_data": {
+            "hello": "world",
+            "words": [
+                "Hello",
+                "World",
+                "from",
+                "XELIS"
+            ],
+            "items": {
+                "sword": 5
+            }
+        }
+    }
 }
 ```
 
 ##### Response
 ```json
 {
-	"id": 1,
-	"jsonrpc": "2.0",
-	"result": "xet1qqqsyqgpq45x2mrvduqqzqg9wahhymrysrd48fdl3js2ss2hsu7d6w8rnuymz33fkyc5eth20dxv67g2a66s832qvr"
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32szqsrqyzkjar9d4esyqgpq4ehwmmjvsqqypgpq45x2mrvduqqzpthdaexceqpq4mk7unywvqsgqqpq4yx2mrvduqqzp2hdaexceqqqyzxvun0d5qqzp2cg4xyj5ct5udlg"
 }
 ```
 
@@ -5585,44 +5600,57 @@ Split address and integrated data in two differents fields.
 ##### Method `split_address`
 
 ##### Parameters
-TODO
+|   Name  |   Type  | Required |                                 Note                                 |
+|:-------:|:-------:|:--------:|:--------------------------------------------------------------------:|
+| address | Address | Required | Address to split in two parts: original address, and integrated data |
 
 ##### Request
 ```json
 {
-	"jsonrpc": "2.0",
-	"method": "split_address",
-	"id": 1,
-	"params": {
-		"address": "xet1qqqsyqgpq45x2mrvduqqzqg9wahhymrysrd48fdl3js2ss2hsu7d6w8rnuymz33fkyc5eth20dxv67g2a66s832qvr"
-	}
+    "jsonrpc": "2.0",
+    "method": "split_address",
+    "id": 1,
+    "params": {
+        "address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32szqsrqyzkjar9d4esyqgpq4ehwmmjvsqqypgpq45x2mrvduqqzpthdaexceqpq4mk7unywvqsgqqpq4yx2mrvduqqzp2hdaexceqqqyzxvun0d5qqzp2cg4xyj5ct5udlg"
+    }
 }
 ```
 
 ##### Response
 ```json
 {
-	"id": 1,
-	"jsonrpc": "2.0",
-	"result": {
-		"address": "xet1qqqgpk6n5klceg9gg9tcw0xa8r3e7zd3gc5mzv2v4m48knxd0y9wadg3mdp9t",
-		"integrated_data": {
-			"hello": "world"
-		}
-	}
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+        "integrated_data": {
+            "hello": "world",
+            "items": {
+                "sword": 5
+            },
+            "words": [
+                "Hello",
+                "World",
+                "from",
+                "XELIS"
+            ]
+        }
+    }
 }
 ```
 
 #### Rescan
 Request the wallet to rescan balances and transactions history until the specified topoheight.
-When no topoheight is set, it rescan until 0.
+When no topoheight is set, it rescan until topoheight 0.
 
 **WARNING**: All balances and transactions will be deleted from wallet storage to be up-to-date with the chain of the node connected to.
 
 ##### Method `rescan`
 
 ##### Parameters
-TODO
+|       Name       |   Type  | Required |                     Note                     |
+|:----------------:|:-------:|:--------:|:--------------------------------------------:|
+| until_topoheight | Integer | Optional | Until which topoheight wallet have to rescan |
 
 ##### Request
 ```json
@@ -5652,10 +5680,15 @@ When no parameter is set, default asset is XELIS.
 NOTE: By default, if no balance for the requested asset is found, it will returns 0.
 Use `has_balance` to determine if the wallet as an asset balance or not.
 
+Balance is returned in atomic units.
+
 ##### Method `get_balance`
 
 ##### Parameters
-TODO
+|  Name | Type | Required |                 Note                 |
+|:-----:|:----:|:--------:|:------------------------------------:|
+| asset | Hash | Optional | Asset to use to retrieve the balance |
+
 
 ##### Request
 ```json
@@ -5683,7 +5716,9 @@ When no parameter is set, default asset is XELIS.
 ##### Method `has_balance`
 
 ##### Parameters
-TODO
+|  Name | Type | Required |     Note     |
+|:-----:|:----:|:--------:|:------------:|
+| asset | Hash | Optional | Asset to use |
 
 ##### Request
 ```json
@@ -5735,10 +5770,14 @@ No parameters
 #### Get Asset Precision
 Retrieve the decimals precision for the selected asset.
 
+This is useful to format correctly the atomic units coins to human readable.
+
 ##### Method `get_asset_precision`
 
 ##### Parameters
-TODO
+|  Name | Type | Required |     Note     |
+|:-----:|:----:|:--------:|:------------:|
+| asset | Hash | Required | Asset to use |
 
 ##### Request
 ```json
@@ -5767,7 +5806,10 @@ Get transaction by hash from wallet.
 ##### Method `get_transaction`
 
 ##### Parameters
-TODO
+| Name | Type | Required |                   Note                   |
+|:----:|:----:|:--------:|:----------------------------------------:|
+| hash | Hash | Required | Transaction hash to retrieve from wallet |
+
 
 ##### Request
 ```json
@@ -5776,7 +5818,7 @@ TODO
 	"method": "get_transaction",
 	"id": 1,
 	"params": {
-		"hash": "c3ea4ce5c78d9c4f00c10cd43ce1f9886e28d23839a356c0f98a6bf107a4c040"
+		"hash": "6e4bbd77b305fb68e2cc7576b4846d2db3617e3cbc2eb851cb2ae69b879e9d0f"
 	}
 }
 ```
@@ -5784,22 +5826,24 @@ TODO
 ##### Response
 ```json
 {
-	"id": 1,
-	"jsonrpc": "2.0",
-	"result": {
-		"fee": 1000,
-		"hash": "c3ea4ce5c78d9c4f00c10cd43ce1f9886e28d23839a356c0f98a6bf107a4c040",
-		"nonce": 0,
-		"outgoing": [
-			{
-				"amount": 100000,
-				"asset": "0000000000000000000000000000000000000000000000000000000000000000",
-				"extra_data": null,
-				"key": "xet1qqq8ar5gagvjhznhj59l3r4lqhe7edutendy6vd4y7jd59exl6u7xschfuhym"
-			}
-		],
-		"topoheight": 69752
-	}
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "hash": "6e4bbd77b305fb68e2cc7576b4846d2db3617e3cbc2eb851cb2ae69b879e9d0f",
+        "outgoing": {
+            "fee": 25000,
+            "nonce": 1458,
+            "transfers": [
+                {
+                    "amount": 1,
+                    "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "destination": "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny",
+                    "extra_data": null
+                }
+            ]
+        },
+        "topoheight": 11982
+    }
 }
 ```
 
@@ -5807,12 +5851,17 @@ TODO
 Build a transaction to be send by the wallet.
 It can be broadcasted or not to the network.
 
-**NOTE**: Amount set are in atomic units, for XELIS it would `100000` to represents 1 XELIS because of 5 decimals precision.
+**NOTE**: Amount set are in atomic units, for XELIS it would be `100000000` to represents 1 XELIS because of 8 decimals precision.
 
 ##### Method `build_transaction`
 
 ##### Parameters
-TODO
+|        Name       |       Type      | Required |                         Note                         |
+|:-----------------:|:---------------:|:--------:|:----------------------------------------------------:|
+|        fee        |    FeeBuilder   | Optional |        Set an exact fee value or a multiplier        |
+|     broadcast     |     Boolean     | Optional |    Broadcast TX to daemon. By default set to true    |
+|     tx_as_hex     |     Boolean     | Optional | Serialize TX to hexadecimal. By default set to false |
+| transfers OR burn | TransactionType | Required |              Transaction Type parameters             |
 
 ##### Request
 ```json
@@ -5825,10 +5874,11 @@ TODO
 			{
 				"amount": 1000,
 				"asset": "0000000000000000000000000000000000000000000000000000000000000000",
-				"to": "xet1qqq8ar5gagvjhznhj59l3r4lqhe7edutendy6vd4y7jd59exl6u7xschfuhym"
+				"destination": "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny"
 			}
 		],
-		"broadcast": false
+		"broadcast": true,
+        "tx_as_hex": false,
 	}
 }
 ```
@@ -5842,18 +5892,1311 @@ TODO
         "data": {
             "transfers": [
                 {
-                    "amount": 1000,
                     "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "commitment": [
+                        238,
+                        30,
+                        130,
+                        122,
+                        67,
+                        194,
+                        32,
+                        246,
+                        200,
+                        80,
+                        46,
+                        141,
+                        222,
+                        187,
+                        208,
+                        43,
+                        46,
+                        241,
+                        237,
+                        203,
+                        213,
+                        205,
+                        144,
+                        205,
+                        106,
+                        244,
+                        151,
+                        18,
+                        159,
+                        206,
+                        225,
+                        27
+                    ],
+                    "ct_validity_proof": {
+                        "Y_0": [
+                            34,
+                            161,
+                            9,
+                            177,
+                            40,
+                            33,
+                            77,
+                            242,
+                            77,
+                            112,
+                            209,
+                            50,
+                            59,
+                            17,
+                            40,
+                            73,
+                            99,
+                            137,
+                            151,
+                            99,
+                            21,
+                            36,
+                            139,
+                            98,
+                            139,
+                            33,
+                            36,
+                            78,
+                            13,
+                            17,
+                            86,
+                            4
+                        ],
+                        "Y_1": [
+                            246,
+                            227,
+                            225,
+                            213,
+                            98,
+                            38,
+                            179,
+                            199,
+                            194,
+                            26,
+                            105,
+                            255,
+                            182,
+                            252,
+                            126,
+                            214,
+                            206,
+                            82,
+                            121,
+                            33,
+                            249,
+                            175,
+                            95,
+                            155,
+                            97,
+                            173,
+                            192,
+                            26,
+                            58,
+                            124,
+                            129,
+                            123
+                        ],
+                        "z_r": [
+                            132,
+                            174,
+                            99,
+                            68,
+                            255,
+                            98,
+                            219,
+                            211,
+                            53,
+                            25,
+                            171,
+                            58,
+                            186,
+                            21,
+                            19,
+                            48,
+                            70,
+                            10,
+                            247,
+                            124,
+                            34,
+                            175,
+                            32,
+                            199,
+                            39,
+                            33,
+                            244,
+                            190,
+                            111,
+                            50,
+                            226,
+                            12
+                        ],
+                        "z_x": [
+                            149,
+                            199,
+                            235,
+                            9,
+                            160,
+                            202,
+                            252,
+                            137,
+                            113,
+                            231,
+                            100,
+                            13,
+                            164,
+                            127,
+                            101,
+                            153,
+                            198,
+                            0,
+                            234,
+                            125,
+                            20,
+                            245,
+                            19,
+                            156,
+                            107,
+                            152,
+                            222,
+                            25,
+                            129,
+                            123,
+                            129,
+                            1
+                        ]
+                    },
+                    "destination": [
+                        90,
+                        162,
+                        227,
+                        132,
+                        37,
+                        120,
+                        161,
+                        39,
+                        214,
+                        1,
+                        160,
+                        226,
+                        50,
+                        194,
+                        65,
+                        20,
+                        88,
+                        15,
+                        12,
+                        216,
+                        117,
+                        200,
+                        212,
+                        208,
+                        75,
+                        253,
+                        181,
+                        148,
+                        222,
+                        124,
+                        134,
+                        71
+                    ],
                     "extra_data": null,
-                    "to": "xet1qqq8ar5gagvjhznhj59l3r4lqhe7edutendy6vd4y7jd59exl6u7xschfuhym"
+                    "receiver_handle": [
+                        70,
+                        92,
+                        163,
+                        71,
+                        45,
+                        166,
+                        111,
+                        10,
+                        214,
+                        112,
+                        178,
+                        2,
+                        248,
+                        12,
+                        74,
+                        222,
+                        198,
+                        149,
+                        232,
+                        169,
+                        122,
+                        187,
+                        32,
+                        80,
+                        209,
+                        254,
+                        33,
+                        215,
+                        53,
+                        36,
+                        64,
+                        49
+                    ],
+                    "sender_handle": [
+                        16,
+                        154,
+                        78,
+                        139,
+                        148,
+                        124,
+                        170,
+                        82,
+                        177,
+                        145,
+                        156,
+                        250,
+                        214,
+                        21,
+                        224,
+                        39,
+                        168,
+                        154,
+                        248,
+                        173,
+                        246,
+                        203,
+                        66,
+                        233,
+                        71,
+                        177,
+                        41,
+                        217,
+                        173,
+                        119,
+                        160,
+                        15
+                    ]
                 }
             ]
         },
-        "fee": 1000,
-        "hash": "6872c06e853fe35a3d936fc7281abc51018706ed36a54135e0dbbbb79a07fc25",
-        "nonce": 1,
-        "owner": "xet1qqqgpk6n5klceg9gg9tcw0xa8r3e7zd3gc5mzv2v4m48knxd0y9wadg3mdp9t",
-        "signature": "3c05e13f43283b75bb2ebae4d513d1a36bb1d86083164a50b03422ce2e8ed6c8446c34f12868df61335fb76e136be9068cb1940abf92690d513553079e6f770d",
+        "fee": 25000,
+        "hash": "f8bd7c15e3a94085f8130cc67e1fefd89192cdd208b68b10e1cc6e1a83afe5d6",
+        "nonce": 1463,
+        "range_proof": [
+            22,
+            154,
+            245,
+            17,
+            22,
+            208,
+            99,
+            27,
+            169,
+            112,
+            109,
+            130,
+            77,
+            251,
+            72,
+            194,
+            68,
+            177,
+            205,
+            118,
+            202,
+            20,
+            66,
+            168,
+            230,
+            82,
+            224,
+            178,
+            133,
+            230,
+            73,
+            42,
+            162,
+            133,
+            127,
+            92,
+            247,
+            143,
+            146,
+            34,
+            19,
+            71,
+            117,
+            36,
+            166,
+            127,
+            179,
+            225,
+            192,
+            214,
+            141,
+            98,
+            248,
+            164,
+            177,
+            235,
+            43,
+            182,
+            149,
+            226,
+            248,
+            228,
+            208,
+            53,
+            166,
+            208,
+            75,
+            155,
+            20,
+            215,
+            12,
+            110,
+            142,
+            132,
+            104,
+            74,
+            219,
+            10,
+            217,
+            184,
+            194,
+            132,
+            22,
+            219,
+            40,
+            38,
+            169,
+            88,
+            59,
+            88,
+            44,
+            63,
+            129,
+            207,
+            123,
+            34,
+            66,
+            118,
+            176,
+            170,
+            41,
+            117,
+            86,
+            129,
+            107,
+            27,
+            73,
+            84,
+            226,
+            206,
+            244,
+            220,
+            108,
+            180,
+            247,
+            202,
+            149,
+            134,
+            5,
+            69,
+            178,
+            101,
+            96,
+            71,
+            101,
+            198,
+            77,
+            106,
+            236,
+            217,
+            137,
+            137,
+            104,
+            1,
+            224,
+            19,
+            235,
+            233,
+            44,
+            87,
+            228,
+            163,
+            138,
+            206,
+            92,
+            134,
+            236,
+            65,
+            165,
+            12,
+            111,
+            110,
+            215,
+            80,
+            21,
+            240,
+            3,
+            59,
+            85,
+            4,
+            36,
+            103,
+            129,
+            196,
+            218,
+            71,
+            143,
+            227,
+            201,
+            249,
+            69,
+            165,
+            110,
+            219,
+            41,
+            137,
+            155,
+            229,
+            133,
+            186,
+            64,
+            150,
+            196,
+            33,
+            43,
+            146,
+            66,
+            95,
+            228,
+            204,
+            89,
+            5,
+            207,
+            65,
+            4,
+            86,
+            219,
+            33,
+            223,
+            8,
+            126,
+            235,
+            206,
+            190,
+            49,
+            211,
+            124,
+            28,
+            81,
+            75,
+            115,
+            205,
+            86,
+            31,
+            99,
+            50,
+            20,
+            146,
+            27,
+            237,
+            57,
+            63,
+            206,
+            4,
+            252,
+            238,
+            201,
+            65,
+            147,
+            132,
+            12,
+            172,
+            249,
+            11,
+            55,
+            92,
+            65,
+            35,
+            92,
+            171,
+            252,
+            86,
+            99,
+            95,
+            65,
+            100,
+            246,
+            247,
+            23,
+            219,
+            83,
+            140,
+            60,
+            194,
+            142,
+            86,
+            226,
+            32,
+            66,
+            234,
+            17,
+            118,
+            206,
+            20,
+            65,
+            169,
+            213,
+            119,
+            150,
+            203,
+            74,
+            39,
+            132,
+            154,
+            113,
+            163,
+            11,
+            122,
+            174,
+            233,
+            128,
+            2,
+            176,
+            214,
+            59,
+            185,
+            128,
+            36,
+            218,
+            59,
+            36,
+            169,
+            84,
+            240,
+            142,
+            21,
+            46,
+            184,
+            255,
+            132,
+            51,
+            79,
+            255,
+            11,
+            130,
+            113,
+            228,
+            211,
+            181,
+            154,
+            206,
+            48,
+            174,
+            178,
+            27,
+            127,
+            210,
+            107,
+            121,
+            56,
+            46,
+            6,
+            72,
+            33,
+            26,
+            74,
+            236,
+            120,
+            234,
+            152,
+            68,
+            230,
+            11,
+            246,
+            167,
+            48,
+            183,
+            145,
+            132,
+            172,
+            55,
+            44,
+            184,
+            213,
+            215,
+            239,
+            200,
+            195,
+            180,
+            71,
+            172,
+            60,
+            28,
+            96,
+            156,
+            78,
+            71,
+            138,
+            187,
+            236,
+            245,
+            159,
+            221,
+            219,
+            180,
+            102,
+            81,
+            1,
+            115,
+            167,
+            1,
+            221,
+            224,
+            80,
+            149,
+            56,
+            19,
+            242,
+            85,
+            141,
+            61,
+            28,
+            72,
+            92,
+            138,
+            116,
+            194,
+            31,
+            252,
+            122,
+            107,
+            212,
+            54,
+            19,
+            60,
+            82,
+            25,
+            202,
+            246,
+            75,
+            211,
+            146,
+            92,
+            71,
+            254,
+            159,
+            129,
+            165,
+            54,
+            210,
+            116,
+            94,
+            209,
+            240,
+            112,
+            19,
+            28,
+            208,
+            80,
+            141,
+            56,
+            122,
+            138,
+            152,
+            204,
+            230,
+            27,
+            171,
+            155,
+            180,
+            112,
+            142,
+            164,
+            144,
+            228,
+            131,
+            190,
+            96,
+            234,
+            195,
+            98,
+            119,
+            69,
+            142,
+            209,
+            214,
+            186,
+            119,
+            108,
+            13,
+            167,
+            66,
+            79,
+            194,
+            200,
+            136,
+            241,
+            38,
+            66,
+            73,
+            243,
+            24,
+            86,
+            84,
+            70,
+            141,
+            31,
+            52,
+            68,
+            112,
+            207,
+            243,
+            119,
+            108,
+            15,
+            80,
+            113,
+            245,
+            0,
+            101,
+            202,
+            56,
+            58,
+            11,
+            104,
+            86,
+            29,
+            29,
+            159,
+            187,
+            75,
+            98,
+            192,
+            82,
+            231,
+            19,
+            145,
+            81,
+            18,
+            44,
+            18,
+            27,
+            208,
+            230,
+            103,
+            164,
+            50,
+            12,
+            115,
+            114,
+            53,
+            109,
+            210,
+            5,
+            158,
+            77,
+            255,
+            79,
+            249,
+            131,
+            193,
+            122,
+            85,
+            209,
+            198,
+            69,
+            168,
+            185,
+            132,
+            18,
+            115,
+            249,
+            182,
+            151,
+            14,
+            90,
+            118,
+            174,
+            16,
+            205,
+            203,
+            44,
+            123,
+            44,
+            140,
+            191,
+            1,
+            52,
+            243,
+            154,
+            17,
+            186,
+            167,
+            8,
+            226,
+            162,
+            215,
+            97,
+            215,
+            33,
+            80,
+            103,
+            205,
+            97,
+            187,
+            40,
+            46,
+            237,
+            166,
+            81,
+            21,
+            154,
+            60,
+            24,
+            37,
+            10,
+            42,
+            153,
+            62,
+            249,
+            156,
+            196,
+            80,
+            197,
+            10,
+            29,
+            191,
+            7,
+            15,
+            136,
+            38,
+            25,
+            171,
+            130,
+            46,
+            53,
+            6,
+            179,
+            3,
+            145,
+            40,
+            222,
+            163,
+            182,
+            33,
+            6,
+            38,
+            61,
+            34,
+            23,
+            83,
+            209,
+            148,
+            107,
+            120,
+            108,
+            73,
+            214,
+            224,
+            166,
+            119,
+            189,
+            213,
+            18,
+            215,
+            197,
+            2,
+            166,
+            71,
+            167,
+            242,
+            199,
+            28,
+            3,
+            115,
+            210,
+            37,
+            89,
+            62,
+            46,
+            18,
+            174,
+            181,
+            14,
+            90,
+            74,
+            152,
+            73,
+            102,
+            45,
+            155,
+            9,
+            143,
+            134,
+            20,
+            90,
+            167,
+            66,
+            182,
+            1,
+            175,
+            164,
+            133,
+            148,
+            94,
+            107,
+            15,
+            243,
+            77,
+            113,
+            163,
+            95,
+            48,
+            57,
+            129,
+            209,
+            29,
+            122,
+            222,
+            5,
+            2,
+            32,
+            206,
+            75,
+            228,
+            144,
+            68,
+            232,
+            121,
+            51,
+            121,
+            195,
+            143,
+            18,
+            10,
+            145,
+            54,
+            245,
+            214,
+            77,
+            166,
+            27,
+            44,
+            2,
+            243,
+            13,
+            48,
+            110,
+            17,
+            195,
+            80,
+            81,
+            244,
+            71,
+            64,
+            99,
+            173,
+            26,
+            170,
+            44,
+            209,
+            181,
+            153,
+            209,
+            172,
+            62,
+            214,
+            12,
+            134,
+            184,
+            174,
+            183,
+            175,
+            1,
+            70,
+            4
+        ],
+        "reference": {
+            "hash": "000000000c1845717b0820bd32b57d1928af1b4ae80bdec71b73ab8d60f9eb74",
+            "topoheight": 25770
+        },
+        "signature": "6731b973cb5c06c7e4e6fa9135acf4ea7c1b2e2bd0a63e41110aad3b39174204067bf7de87f3c3e2042cbcf6899a307e480d80e7c7f96638eabbf1fe6cfded09",
+        "source": [
+            214,
+            122,
+            209,
+            57,
+            52,
+            51,
+            123,
+            133,
+            195,
+            73,
+            133,
+            73,
+            28,
+            67,
+            115,
+            134,
+            201,
+            93,
+            224,
+            217,
+            112,
+            23,
+            19,
+            16,
+            136,
+            114,
+            76,
+            251,
+            237,
+            235,
+            220,
+            85
+        ],
+        "source_commitments": [
+            {
+                "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                "commitment": [
+                    52,
+                    95,
+                    172,
+                    42,
+                    119,
+                    170,
+                    29,
+                    153,
+                    85,
+                    23,
+                    13,
+                    26,
+                    36,
+                    222,
+                    194,
+                    109,
+                    96,
+                    244,
+                    155,
+                    201,
+                    205,
+                    213,
+                    116,
+                    191,
+                    230,
+                    215,
+                    173,
+                    208,
+                    191,
+                    1,
+                    106,
+                    68
+                ],
+                "proof": {
+                    "Y_0": [
+                        28,
+                        207,
+                        136,
+                        127,
+                        215,
+                        121,
+                        118,
+                        217,
+                        44,
+                        139,
+                        232,
+                        122,
+                        84,
+                        126,
+                        16,
+                        61,
+                        165,
+                        22,
+                        126,
+                        190,
+                        74,
+                        156,
+                        153,
+                        231,
+                        65,
+                        146,
+                        81,
+                        115,
+                        141,
+                        195,
+                        182,
+                        67
+                    ],
+                    "Y_1": [
+                        254,
+                        133,
+                        105,
+                        79,
+                        0,
+                        96,
+                        176,
+                        204,
+                        205,
+                        119,
+                        165,
+                        52,
+                        240,
+                        129,
+                        8,
+                        193,
+                        54,
+                        137,
+                        213,
+                        145,
+                        25,
+                        113,
+                        100,
+                        80,
+                        249,
+                        35,
+                        79,
+                        206,
+                        228,
+                        248,
+                        221,
+                        47
+                    ],
+                    "Y_2": [
+                        232,
+                        233,
+                        143,
+                        111,
+                        74,
+                        214,
+                        200,
+                        95,
+                        19,
+                        223,
+                        120,
+                        103,
+                        12,
+                        146,
+                        107,
+                        226,
+                        4,
+                        59,
+                        183,
+                        93,
+                        210,
+                        97,
+                        4,
+                        129,
+                        108,
+                        10,
+                        50,
+                        181,
+                        79,
+                        0,
+                        247,
+                        21
+                    ],
+                    "z_r": [
+                        137,
+                        168,
+                        98,
+                        243,
+                        57,
+                        141,
+                        18,
+                        165,
+                        185,
+                        78,
+                        29,
+                        176,
+                        134,
+                        205,
+                        226,
+                        140,
+                        144,
+                        60,
+                        242,
+                        58,
+                        241,
+                        53,
+                        23,
+                        137,
+                        118,
+                        236,
+                        221,
+                        220,
+                        237,
+                        97,
+                        115,
+                        6
+                    ],
+                    "z_s": [
+                        240,
+                        97,
+                        50,
+                        134,
+                        174,
+                        27,
+                        207,
+                        100,
+                        147,
+                        139,
+                        180,
+                        62,
+                        221,
+                        59,
+                        227,
+                        43,
+                        246,
+                        94,
+                        88,
+                        22,
+                        235,
+                        132,
+                        68,
+                        161,
+                        36,
+                        64,
+                        19,
+                        236,
+                        28,
+                        211,
+                        62,
+                        3
+                    ],
+                    "z_x": [
+                        193,
+                        64,
+                        130,
+                        188,
+                        169,
+                        56,
+                        213,
+                        79,
+                        187,
+                        77,
+                        229,
+                        110,
+                        54,
+                        171,
+                        40,
+                        6,
+                        217,
+                        124,
+                        86,
+                        255,
+                        39,
+                        147,
+                        70,
+                        35,
+                        13,
+                        44,
+                        107,
+                        19,
+                        12,
+                        11,
+                        203,
+                        12
+                    ]
+                }
+            }
+        ],
+        "tx_as_hex": "00d67ad13934337b85c34985491c437386c95de0d97017131088724cfbedebdc55010100000000000000000000000000000000000000000000000000000000000000005aa2e3842578a127d601a0e232c24114580f0cd875c8d4d04bfdb594de7c864700ee1e827a43c220f6c8502e8ddebbd02b2ef1edcbd5cd90cd6af497129fcee11b109a4e8b947caa52b1919cfad615e027a89af8adf6cb42e947b129d9ad77a00f465ca3472da66f0ad670b202f80c4adec695e8a97abb2050d1fe21d73524403122a109b128214df24d70d1323b1128496389976315248b628b21244e0d115604f6e3e1d56226b3c7c21a69ffb6fc7ed6ce527921f9af5f9b61adc01a3a7c817b84ae6344ff62dbd33519ab3aba151330460af77c22af20c72721f4be6f32e20c95c7eb09a0cafc8971e7640da47f6599c600ea7d14f5139c6b98de19817b810100000000000061a800000000000005b701345fac2a77aa1d9955170d1a24dec26d60f49bc9cdd574bfe6d7add0bf016a441ccf887fd77976d92c8be87a547e103da5167ebe4a9c99e7419251738dc3b643fe85694f0060b0cccd77a534f08108c13689d59119716450f9234fcee4f8dd2fe8e98f6f4ad6c85f13df78670c926be2043bb75dd26104816c0a32b54f00f715f0613286ae1bcf64938bb43edd3be32bf65e5816eb8444a1244013ec1cd33e03c14082bca938d54fbb4de56e36ab2806d97c56ff279346230d2c6b130c0bcb0c89a862f3398d12a5b94e1db086cde28c903cf23af135178976ecdddced617306000000000000000000000000000000000000000000000000000000000000000002e0169af51116d0631ba9706d824dfb48c244b1cd76ca1442a8e652e0b285e6492aa2857f5cf78f922213477524a67fb3e1c0d68d62f8a4b1eb2bb695e2f8e4d035a6d04b9b14d70c6e8e84684adb0ad9b8c28416db2826a9583b582c3f81cf7b224276b0aa297556816b1b4954e2cef4dc6cb4f7ca95860545b265604765c64d6aecd989896801e013ebe92c57e4a38ace5c86ec41a50c6f6ed75015f0033b5504246781c4da478fe3c9f945a56edb29899be585ba4096c4212b92425fe4cc5905cf410456db21df087eebcebe31d37c1c514b73cd561f633214921bed393fce04fceec94193840cacf90b375c41235cabfc56635f4164f6f717db538c3cc28e56e22042ea1176ce1441a9d57796cb4a27849a71a30b7aaee98002b0d63bb98024da3b24a954f08e152eb8ff84334fff0b8271e4d3b59ace30aeb21b7fd26b79382e0648211a4aec78ea9844e60bf6a730b79184ac372cb8d5d7efc8c3b447ac3c1c609c4e478abbecf59fdddbb466510173a701dde050953813f2558d3d1c485c8a74c21ffc7a6bd436133c5219caf64bd3925c47fe9f81a536d2745ed1f070131cd0508d387a8a98cce61bab9bb4708ea490e483be60eac36277458ed1d6ba776c0da7424fc2c888f1264249f3185654468d1f344470cff3776c0f5071f50065ca383a0b68561d1d9fbb4b62c052e7139151122c121bd0e667a4320c7372356dd2059e4dff4ff983c17a55d1c645a8b9841273f9b6970e5a76ae10cdcb2c7b2c8cbf0134f39a11baa708e2a2d761d7215067cd61bb282eeda651159a3c18250a2a993ef99cc450c50a1dbf070f882619ab822e3506b3039128dea3b62106263d221753d1946b786c49d6e0a677bdd512d7c502a647a7f2c71c0373d225593e2e12aeb50e5a4a9849662d9b098f86145aa742b601afa485945e6b0ff34d71a35f303981d11d7ade050220ce4be49044e8793379c38f120a9136f5d64da61b2c02f30d306e11c35051f4474063ad1aaa2cd1b599d1ac3ed60c86b8aeb7af014604000000000c1845717b0820bd32b57d1928af1b4ae80bdec71b73ab8d60f9eb7400000000000064aa6731b973cb5c06c7e4e6fa9135acf4ea7c1b2e2bd0a63e41110aad3b39174204067bf7de87f3c3e2042cbcf6899a307e480d80e7c7f96638eabbf1fe6cfded09",
         "version": 0
     }
 }
@@ -5863,18 +7206,21 @@ TODO
 Search transactions based on various parameters.
 By default it accepts every TXs.
 
+For `address` param, it is compared to the sender if it's an incoming TX, and to destination address for outgoing TX.
+
 ##### Method `list_transactions`
 
 ##### Parameters
-|       Name      |   Type  | Required |           Note           |
-|:---------------:|:-------:|:--------:|:------------------------:|
-|  min_topoheight | Integer | Optional | Start from specific topo |
-|  max_topoheight | Integer | Optional |   End at specific topo   |
-|     address     |  String | Optional |    Filter with address   |
-| accept_incoming | Boolean | Optional |      Filter incoming     |
-| accept_outgoing | Boolean | Optional |      Filter outgoing     |
-| accept_coinbase | Boolean | Optional |      Filter coinbase     |
-|   accept_burn   | Boolean | Optional |        Filter burn       |
+|       Name      |   Type  | Required |              Note             |
+|:---------------:|:-------:|:--------:|:-----------------------------:|
+|  min_topoheight | Integer | Optional |    Start from specific topo   |
+|  max_topoheight | Integer | Optional |      End at specific topo     |
+|     address     |  String | Optional |      Filter with address      |
+| accept_incoming | Boolean | Optional |        Filter incoming        |
+| accept_outgoing | Boolean | Optional |        Filter outgoing        |
+| accept_coinbase | Boolean | Optional |        Filter coinbase        |
+|   accept_burn   | Boolean | Optional |          Filter burn          |
+|      query      |  Query  | Optional | Allow to filter on extra data |
 
 ##### Request
 ```json
@@ -5883,9 +7229,9 @@ By default it accepts every TXs.
 	"method": "list_transactions",
 	"id": 1,
 	"params": {
-		"accept_coinbase": true,
-		"accept_outgoing": true,
-		"accept_incoming": false
+		"accept_coinbase": false,
+		"accept_outgoing": false,
+		"accept_incoming": true
 	}
 }
 ```
@@ -5893,29 +7239,24 @@ By default it accepts every TXs.
 ##### Response
 ```json
 {
-	"id": 1,
-	"jsonrpc": "2.0",
-	"result": [
-		{
-			"coinbase": 146175,
-			"hash": "000000077f636b4fc259c41b9ab04a52ceb4b6b0acfb7f5aaf7c6184f2144fcd",
-			"topoheight": 4741
-		},
-		{
-			"fee": 1000,
-			"hash": "c3ea4ce5c78d9c4f00c10cd43ce1f9886e28d23839a356c0f98a6bf107a4c040",
-			"nonce": 0,
-			"outgoing": [
-				{
-					"amount": 100000,
-					"asset": "0000000000000000000000000000000000000000000000000000000000000000",
-					"extra_data": null,
-					"key": "xet1qqq8ar5gagvjhznhj59l3r4lqhe7edutendy6vd4y7jd59exl6u7xschfuhym"
-				}
-			],
-			"topoheight": 69752
-		}
-	]
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "hash": "dd693bad09cb03ba0bf9a6fa7b787f918748db869c1463b7fa16e20b498dea88",
+            "incoming": {
+                "from": "xet:dn3x9yspqtuzhm874m267a3g9fkdztr3uztyx534wdx3p9rkdspqqhpss5d",
+                "transfers": [
+                    {
+                        "amount": 100000000,
+                        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                        "extra_data": null
+                    }
+                ]
+            },
+            "topoheight": 10657
+        }
+    ]
 }
 ```
 
@@ -5961,14 +7302,14 @@ Paramater value can be anything (object, value, array...)
 ```json
 {
 	"jsonrpc": "2.0",
-	"method": "build_transaction",
+	"method": "estimate_fees",
 	"id": 1,
 	"params": {
 		"transfers": [
 			{
 				"amount": 1000,
 				"asset": "0000000000000000000000000000000000000000000000000000000000000000",
-				"to": "xet1qqq8ar5gagvjhznhj59l3r4lqhe7edutendy6vd4y7jd59exl6u7xschfuhym"
+				"destination": "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny"
 			}
 		]
 	}
@@ -5978,8 +7319,8 @@ Paramater value can be anything (object, value, array...)
 ##### Response
 ```json
 {
-	"id": 1,
-	"jsonrpc": "2.0",
-	"result": 10000
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": 25000
 }
 ```
