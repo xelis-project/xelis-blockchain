@@ -238,7 +238,7 @@ pub type PrecomputedTablesShared = Arc<PrecomputedTables>;
 impl PrecomputedTables {
     pub fn new(l1: usize) -> Self {
         let bytes_count = ecdlp::table_generation::table_file_len(l1);
-        info!("Precomputed tables size: {} bytes", bytes_count);
+        debug!("Precomputed tables size: {} bytes", bytes_count);
         let mut n = bytes_count / 32;
         if bytes_count % 32 != 0 {
             n += 1;
@@ -635,9 +635,15 @@ impl Wallet {
         Ok(())
     }
 
-    pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
-        trace!("Decrypting ciphertext");
-        tokio::task::block_in_place(|| self.keypair.decrypt(&ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get()), &ciphertext).ok_or(WalletError::CiphertextDecode))
+    // Wallet has to be under a Arc to be shared to the spawn_blocking function
+    pub async fn decrypt_ciphertext(self: Arc<Self>, ciphertext: Ciphertext) -> Result<u64, WalletError> {
+        trace!("decrypt ciphertext");
+        tokio::task::spawn_blocking(move || {
+            let view = ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get());
+            self.keypair.get_private_key()
+                .decrypt(&view, &ciphertext)
+                .ok_or(WalletError::CiphertextDecode)
+        }).await.context("Error while decrypting ciphertext")?
     }
 
     // Create a transaction with the given transaction type and fee

@@ -263,7 +263,7 @@ impl NetworkHandler {
 
                             debug!("Decrypting amount from TX {}", tx.hash);
                             let ciphertext = Ciphertext::new(commitment, handle);
-                            let amount = self.wallet.decrypt_ciphertext(&ciphertext)?;
+                            let amount = Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext).await?;
 
                             let asset = transfer.asset.into_owned();
                             assets_changed.insert(asset.clone());
@@ -360,7 +360,7 @@ impl NetworkHandler {
                     if store {
                         debug!("Storing balance for asset {}", asset);
                         let ciphertext = balance.decompressed()?;
-                        let plaintext_balance = self.wallet.decrypt_ciphertext(&ciphertext)?;
+                        let plaintext_balance = Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.clone()).await?;
 
                         storage.set_balance_for(asset, Balance::new(plaintext_balance, balance)).await?;
                         // Propagate the event
@@ -607,7 +607,7 @@ impl NetworkHandler {
 
                 if must_update {
                     trace!("must update balance for asset: {}, ct: {:?}", asset, ciphertext.to_bytes());
-                    let value = self.wallet.decrypt_ciphertext(ciphertext.decompressed()?)?;
+                    let value = Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.decompressed()?.clone()).await?;
 
                     // Inform the change of the balance
                     self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
