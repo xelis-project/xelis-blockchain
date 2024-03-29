@@ -33,7 +33,7 @@ fn default_true_value() -> bool {
 }
 
 fn default_false_value() -> bool {
-    true
+    false
 }
 
 #[derive(Serialize, Deserialize)]
