@@ -9,7 +9,6 @@ authors = ["Slixe <slixeprivate@gmail.com>"]
 [dependencies]
 xelis_common = { path = "../xelis_common", features = ["prompt", "clap"] }
 clap = { version = "4.5.2", features = ["derive"] }
-num_cpus = "1.15.0"
 tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3.30"
 lazy_static = "1.4.0"
