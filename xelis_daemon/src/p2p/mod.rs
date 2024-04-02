@@ -1637,7 +1637,7 @@ impl<S: Storage> P2pServer<S> {
             let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
             trace!("block height: {}, stable height: {}, topoheight: {}, hash: {}", block_height, self.blockchain.get_stable_height(), topoheight, common_point.get_hash());
             // We are under the stable height, rewind is necessary
-            if lowest_height <= self.blockchain.get_stable_height() {
+            let mut count = if lowest_height <= self.blockchain.get_stable_height() {
                 let our_topoheight = self.blockchain.get_topo_height();
                 if our_topoheight > topoheight {
                     our_topoheight - topoheight
@@ -1646,7 +1646,17 @@ impl<S: Storage> P2pServer<S> {
                 }
             } else {
                 0
+            };
+
+            if let Some(pruned_topo) = storage.get_pruned_topoheight().await? {
+                let available_diff = self.blockchain.get_topo_height() - pruned_topo;
+                if count > available_diff {
+                    warn!("Peer sent us a pop count of {} but we only have {} blocks available", count, available_diff);
+                    count = available_diff;
+                }
             }
+
+            count
         };
 
         // Packet verification ended, handle the chain response now
