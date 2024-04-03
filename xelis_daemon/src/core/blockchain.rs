@@ -1882,6 +1882,15 @@ impl<S: Storage> Blockchain<S> {
             current_topoheight = highest_topo;
         }
 
+        // If block is directly orphaned
+        // Mark all TXs ourself as linked to it
+        if !block_is_ordered {
+            trace!("Block {} is orphaned, marking all TXs as linked to it", block_hash);
+            for tx_hash in block.get_txs_hashes() {
+                storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash)?;
+            }
+        }
+
         // auto prune mode
         if extended {
             if let Some(keep_only) = self.auto_prune_keep_n_blocks {
