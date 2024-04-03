@@ -130,24 +130,27 @@ impl PeerList {
     pub async fn remove_peer(&mut self, peer_id: u64) -> Result<(), P2pError> {
         let peer = self.peers.remove(&peer_id).ok_or(P2pError::PeerNotFoundById(peer_id))?;
     
-        // now remove this peer from all peers that tracked it
-        let addr = peer.get_outgoing_address();
-        let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
-        for peer in self.peers.values() {
-            let mut shared_peers = peer.get_peers().lock().await;
-            // check if it was a common peer (we sent it and we received it)
-            // Because its a common peer, we can expect that he will send us the same packet
-            if let Some(direction) = shared_peers.get(addr) {
-                // If its a outgoing direction, send a packet to notify that the peer disconnected
-                if *direction != Direction::In {
-                    trace!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
-                    // we send the packet to notify the peer that we don't have it in common anymore
-                    if let Err(e) = peer.send_bytes(packet.clone()).await {
-                        error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
+        // If peer allows us to share it, we have to notify all peers that have this peer in common
+        if peer.sharable() {
+            // now remove this peer from all peers that tracked it
+            let addr = peer.get_outgoing_address();
+            let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
+            for peer in self.peers.values() {
+                let mut shared_peers = peer.get_peers().lock().await;
+                // check if it was a common peer (we sent it and we received it)
+                // Because its a common peer, we can expect that he will send us the same packet
+                if let Some(direction) = shared_peers.get(addr) {
+                    // If its a outgoing direction, send a packet to notify that the peer disconnected
+                    if *direction != Direction::In {
+                        trace!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
+                        // we send the packet to notify the peer that we don't have it in common anymore
+                        if let Err(e) = peer.send_bytes(packet.clone()).await {
+                            error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
+                        }
+    
+                        // Maybe he only disconnected from us, delete it to stay synced
+                        shared_peers.remove(addr);
                     }
-
-                    // Maybe he only disconnected from us, delete it to stay synced
-                    shared_peers.remove(addr);
                 }
             }
         }
