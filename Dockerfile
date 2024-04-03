@@ -1,24 +1,34 @@
-# syntax=docker/dockerfile-upstream:master-labs
-
-FROM rust:1.74-bookworm as builder
-
-ARG app
-ARG commit_hash
+FROM lukemathwalker/cargo-chef:0.1.66-rust-1.77.1-slim-bookworm AS chef
 
 ENV BUILD_DIR /tmp/xelis-build
 
 RUN mkdir -p $BUILD_DIR
 WORKDIR $BUILD_DIR
 
+# ---
+
+FROM chef AS planner
+
+ARG app
+
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json --bin $app
+
+# ---
+
+FROM chef AS builder
+
+ARG app
+ARG commit_hash
+
+COPY --from=planner /tmp/xelis-build/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json --bin $app
+
 COPY Cargo.toml Cargo.lock ./
-COPY --parents xelis_common/src xelis_common/Cargo.toml xelis_common/build.rs ./
-COPY --parents xelis_daemon/src xelis_daemon/Cargo.toml ./
-COPY --parents xelis_miner/src xelis_miner/Cargo.toml ./
-COPY --parents xelis_wallet/src xelis_wallet/Cargo.toml ./
+COPY xelis_common ./xelis_common
+COPY $app ./$app
 
-WORKDIR ${BUILD_DIR}/$app
-
-RUN XELIS_COMMIT_HASH=${commit_hash} cargo build --release
+RUN XELIS_COMMIT_HASH=${commit_hash} cargo build --release --bin $app
 
 # ---
 

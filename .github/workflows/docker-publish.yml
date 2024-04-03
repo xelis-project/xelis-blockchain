@@ -64,8 +64,8 @@ jobs:
           push: ${{ env.SHOULD_PUSH }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=xelis/${{ matrix.app }}:buildcache
+          cache-to: type=registry,ref=xelis/${{ matrix.app }}:buildcache,mode=max
           build-args: |
             app=xelis_${{ matrix.app }}
             commit_hash=${{ github.sha }}
