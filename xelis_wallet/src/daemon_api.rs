@@ -30,7 +30,9 @@ use xelis_common::{
         StableHeightChangedEvent,
         TransactionAddedInMempoolEvent,
         GetAccountAssetsParams,
-        GetAssetParams
+        GetAssetParams,
+        GetMempoolCacheParams,
+        GetMempoolCacheResult
     },
     account::VersionedBalance,
     crypto::{
@@ -205,5 +207,12 @@ impl DaemonAPI {
             block_hash: Cow::Borrowed(block_hash)
         }).await.context(format!("Error while checking if tx {} is executed in block {}", tx_hash, block_hash))?;
         Ok(is_executed)
+    }
+
+    pub async fn get_mempool_cache(&self, address: &Address) -> Result<GetMempoolCacheResult> {
+        let cache = self.client.call_with("get_mempool_cache", &GetMempoolCacheParams {
+            address: Cow::Borrowed(address)
+        }).await.context("Error while fetching mempool cache")?;
+        Ok(cache)
     }
 }
