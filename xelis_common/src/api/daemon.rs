@@ -6,12 +6,12 @@ use std::{
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize, Serializer, Deserializer, de::Error};
 use crate::{
-    account::{VersionedBalance, VersionedNonce},
+    account::{CiphertextCache, VersionedBalance, VersionedNonce},
     block::EXTRA_NONCE_SIZE,
     crypto::{Address, Hash},
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
-    time::{TimestampSeconds, TimestampMillis}
+    time::{TimestampMillis, TimestampSeconds}
 };
 use super::RPCTransaction;
 
@@ -392,6 +392,23 @@ pub struct DevFeeThreshold {
 pub struct SizeOnDiskResult {
     pub size_bytes: u64,
     pub size_formatted: String
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMempoolCacheParams {
+    pub address: Address
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetMempoolCacheResult {
+    // lowest nonce used
+    min: u64,
+    // highest nonce used
+    max: u64,
+    // all txs ordered by nonce
+    txs: Vec<Hash>,
+    // All "final" cached balances used
+    balances: HashMap<Hash, CiphertextCache>
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
