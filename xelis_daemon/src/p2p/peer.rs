@@ -33,7 +33,7 @@ use super::{
         },
         Packet
     },
-    peer_list::SharedPeerList,
+    peer_list::{PeerList, SharedPeerList},
     connection::Connection,
     error::P2pError
 };
@@ -543,9 +543,15 @@ impl Peer {
         } else {
             warn!("{} is a priority peer, closing only", self);
         }
-        peer_list.remove_peer(self.get_id()).await;
+        self.close_with_peerlist(&mut peer_list).await
+    }
+
+    // Close peer connection and delete it from the peer list
+    pub async fn close_with_peerlist(&self, peer_list: &mut PeerList) -> Result<(), P2pError> {
+        trace!("Closing connection with {}", self);
+        peer_list.remove_peer(self.get_id()).await?;
         self.get_connection().close().await?;
-        warn!("{} has been temp banned", self);
+        trace!("{} has been disconnected", self);
         Ok(())
     }
 
@@ -553,10 +559,7 @@ impl Peer {
     pub async fn close(&self) -> Result<(), P2pError> {
         trace!("Closing connection with {}", self);
         let mut peer_list = self.peer_list.write().await;
-        peer_list.remove_peer(self.get_id()).await;
-        self.get_connection().close().await?;
-        trace!("{} has been disconnected", self);
-        Ok(())
+        self.close_with_peerlist(&mut peer_list).await
     }
 
     // Send a packet to the peer

@@ -19,6 +19,8 @@ use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Peer not found by id {}", _0)]
+    PeerNotFoundById(u64),
     #[error("Invalid pop count, got {} with only {} blocks", _0, _1)]
     InvalidPopCount(u64, u64),
     #[error("Block id list is malformed")]

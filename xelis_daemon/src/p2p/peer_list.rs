@@ -125,12 +125,11 @@ impl PeerList {
         )
     }
 
-    pub async fn remove_peer(&mut self, peer_id: u64) {
-        let Some(peer) = self.peers.remove(&peer_id) else {
-            warn!("Trying to remove an unknown peer: {}", peer_id);
-            return;
-        };
-
+    // Remove a peer from the list
+    // We will notify all peers that have this peer in common
+    pub async fn remove_peer(&mut self, peer_id: u64) -> Result<(), P2pError> {
+        let peer = self.peers.remove(&peer_id).ok_or(P2pError::PeerNotFoundById(peer_id))?;
+    
         // now remove this peer from all peers that tracked it
         let addr = peer.get_outgoing_address();
         let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
@@ -160,6 +159,8 @@ impl PeerList {
                 error!("Error while sending peer disconnect notification: {}", e);
             }
         }
+
+        Ok(())
     }
 
     pub fn add_peer(&mut self, id: u64, peer: Peer) -> Arc<Peer> {
@@ -365,7 +366,9 @@ impl PeerList {
         self.set_state_to_address(ip, StoredPeerState::Blacklist);
 
         if let Some(peer) = self.peers.values().find(|peer| peer.get_connection().get_address().ip() == *ip) {
-            if let Err(e) = peer.close().await {
+            // We have to clone because we're holding a immutable reference from self
+            let peer = Arc::clone(peer);
+            if let Err(e) = peer.close_with_peerlist(self).await {
                 error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
             }
         }
@@ -375,8 +378,8 @@ impl PeerList {
     // this will also close the peer
     pub async fn temp_ban_peer(&mut self, peer: &Peer, seconds: u64) {
         self.temp_ban_address(&peer.get_connection().get_address().ip(), seconds).await;
-        if let Err(e) = peer.close().await {
-            error!("Error while trying to close peer {} for being temp banned: {}", peer.get_connection().get_address(), e);
+        if let Err(e) = peer.close_with_peerlist(self).await {
+            error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
         }
     }
 
