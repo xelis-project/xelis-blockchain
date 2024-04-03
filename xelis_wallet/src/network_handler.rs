@@ -337,6 +337,7 @@ impl NetworkHandler {
         if !changes_stored || assets_changed.is_empty() {
             Ok(None)
         } else {
+            // Increase by one to get the new nonce
             Ok(Some((assets_changed, our_highest_nonce.map(|n| n + 1))))
         }
     }
@@ -363,15 +364,27 @@ impl NetworkHandler {
                 let changes = self.process_block(address, response, topoheight).await?;
 
                 // Check if a change occured, we are the highest version and update balances is requested
-                if balances && highest_version && changes.is_some() {
+                if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
                     let mut storage = self.wallet.get_storage().write().await;
-                    let store = storage.get_balance_for(asset).await.map(|b| b.ciphertext != balance).unwrap_or(false);
+
+                    // Store only the highest nonce
+                    // Because if we are building queued transactions, it may break our queue
+                    // Our we couldn't submit new txs before they get removed from mempool
+                    let stored_nonce = storage.get_nonce().unwrap_or(0);
+                    if let Some(nonce) = nonce.filter(|n| *n > stored_nonce) {
+                        storage.set_nonce(nonce)?;
+                    }
+
+                    // If we have no balance in storage OR the stored ciphertext isn't the same, we should store it
+                    let store = storage.get_balance_for(asset).await.map(|b| b.ciphertext != balance).unwrap_or(true);
                     if store {
                         debug!("Storing balance for asset {}", asset);
                         let ciphertext = balance.decompressed()?;
                         let plaintext_balance = Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.clone()).await?;
 
+                        // Store the new balance
                         storage.set_balance_for(asset, Balance::new(plaintext_balance, balance)).await?;
+
                         // Propagate the event
                         self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
                             asset: asset.clone(),
@@ -659,8 +672,18 @@ impl NetworkHandler {
             if let Some(block) = event {
                 // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
                 if let Some(topoheight) = block.topoheight {
-                    if let Some((assets, nonce)) = self.process_block(address, block, topoheight).await? {
+                    if let Some((assets, mut nonce)) = self.process_block(address, block, topoheight).await? {
                         trace!("We must sync head state");
+                        {
+                            let storage = self.wallet.get_storage().read().await;
+                            // Verify that its a higher nonce than our locally stored
+                            // Because if we are building queued transactions, it may break our queue
+                            // Our we couldn't submit new txs before they get removed from mempool
+                            let stored_nonce = storage.get_nonce().unwrap_or(0);
+                            if nonce.is_some_and(|n| n <= stored_nonce) {
+                                nonce = None;
+                            }
+                        }
                         // A change happened in this block, lets update balance and nonce
                         self.sync_head_state(&address, Some(assets), nonce, false).await?;
                     }
@@ -668,7 +691,6 @@ impl NetworkHandler {
                     // It is a block that got directly orphaned by DAG, ignore it
                     debug!("Block {} is not ordered, skipping it", block.hash);
                 }
-                // TODO handle block event
             } else {
                 // No event, sync blocks by hand
                 self.sync_new_blocks(address, wallet_topoheight, true).await?;
