@@ -1,17 +1,20 @@
-use super::state::MempoolState;
 use super::{
+    state::MempoolState,
     error::BlockchainError,
     storage::Storage
 };
-use std::collections::HashSet;
-use std::{collections::HashMap, mem};
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    mem,
+};
+use serde::{Serialize, Deserialize};
 use indexmap::IndexSet;
 use log::{trace, debug, warn};
-use xelis_common::crypto::elgamal::Ciphertext;
-use xelis_common::network::Network;
 use xelis_common::{
     time::{TimestampSeconds, get_current_time_in_seconds},
+    crypto::elgamal::Ciphertext,
+    network::Network,
     crypto::{
         Hash,
         PublicKey
@@ -33,6 +36,7 @@ pub struct SortedTx {
 // and a "expected balance" for this key
 // Min/max bounds are used to compute the index of the tx in the sorted list based on its nonce
 // You can get the TX at nonce N by computing the index with (N - min) % (max + 1 - min)
+#[derive(Serialize, Deserialize)]
 pub struct AccountCache {
     // lowest nonce used
     min: u64,

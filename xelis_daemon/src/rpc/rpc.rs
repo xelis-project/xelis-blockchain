@@ -57,7 +57,8 @@ use xelis_common::{
             SizeOnDiskResult,
             SubmitBlockParams,
             SubmitTransactionParams,
-            TransactionResponse
+            TransactionResponse,
+            GetMempoolCacheParams
         },
         RPCTransaction,
         RPCTransactionType as RPCTransactionType
@@ -320,6 +321,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
     handler.register_method("get_dev_fee_thresholds", async_handler!(get_dev_fee_thresholds::<S>));
     handler.register_method("get_size_on_disk", async_handler!(get_size_on_disk::<S>));
+    handler.register_method("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
 }
 
 async fn version<S: Storage>(_: Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -1060,4 +1062,23 @@ async fn get_size_on_disk<S: Storage>(context: Context, body: Value) -> Result<V
         size_bytes,
         size_formatted
     }))
+}
+
+// Retrieve the mempool cache for an account
+async fn get_mempool_cache<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetMempoolCacheParams = parse_params(body)?;
+    if !params.address.is_normal() {
+        return Err(InternalRpcError::AnyError(ApiError::ExpectedNormalAddress.into()))    
+    }
+    
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+    }
+
+    let mempool = blockchain.get_mempool().read().await;
+    let cache = mempool.get_cache_for(params.address.get_public_key())
+        .context("Account not found while retrieving mempool cache")?;
+
+    Ok(json!(cache))
 }
