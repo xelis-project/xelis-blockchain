@@ -5438,6 +5438,121 @@ Verify if a transaction hash is executed in requested block hash.
 }
 ```
 
+#### Get Mempool Cache
+Retrieve the stored mempool cache for a requested address.
+
+This includes nonce range (min/max) used, final output balances expected per asset used, and all transactions hashes related to this account.
+
+##### Method `get_mempool_cache`
+
+##### Parameters
+|        Name        |   Type  | Required |                Note               |
+|:------------------:|:-------:|:--------:|:---------------------------------:|
+|       address      | Address | Required | Valid address registered on chain |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "get_mempool_cache",
+    "params": {
+        "address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "balances": {
+            "0000000000000000000000000000000000000000000000000000000000000000": {
+                "commitment": [
+                    244,
+                    202,
+                    158,
+                    128,
+                    207,
+                    119,
+                    30,
+                    237,
+                    144,
+                    243,
+                    146,
+                    197,
+                    136,
+                    223,
+                    240,
+                    34,
+                    50,
+                    232,
+                    217,
+                    160,
+                    125,
+                    120,
+                    125,
+                    135,
+                    65,
+                    192,
+                    213,
+                    220,
+                    116,
+                    235,
+                    120,
+                    122
+                ],
+                "handle": [
+                    122,
+                    13,
+                    209,
+                    236,
+                    109,
+                    230,
+                    21,
+                    124,
+                    148,
+                    244,
+                    88,
+                    0,
+                    117,
+                    99,
+                    188,
+                    49,
+                    90,
+                    214,
+                    225,
+                    239,
+                    229,
+                    183,
+                    230,
+                    142,
+                    10,
+                    56,
+                    82,
+                    96,
+                    70,
+                    232,
+                    110,
+                    104
+                ]
+            }
+        },
+        "max": 2829,
+        "min": 2825,
+        "txs": [
+            "78148376846b2a8ce1f3b248a65bd5ed4e22ebb6ac98514377a4ea47d08cb2a8",
+            "d8b1d090eea0812e99c1384137240773079dcd79a4fbfe4d78d395288ff1823a",
+            "c82cba8d5472dc2c1d6d38dd30ee3726d32638001e0c54903905c4f0c814ae6a",
+            "2f4bf1ea35fc8ef33961a465ac0cf0dc2c6010daaee423ed06ffdcdf2b9c0d6d",
+            "f1c8425a7f3bea049dbdcaf905ef447d43ca41763740b54d2958baac15d0d3ae"
+        ]
+    }
+}
+```
+
 ## Wallet
 
 ### JSON-RPC methods
