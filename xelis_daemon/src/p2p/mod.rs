@@ -1100,7 +1100,7 @@ impl<S: Storage> P2pServer<S> {
                     if let Some(direction) = txs_cache.get_mut(&hash) {
                         if !direction.update(Direction::In) {
                             debug!("{} send us a transaction ({}) already tracked by him ({:?})", peer, hash, direction);
-                            return Err(P2pError::AlreadyTrackedTx(hash))
+                            // return Err(P2pError::AlreadyTrackedTx(hash))
                         }
                     } else {
                         txs_cache.put(hash.clone(), Direction::In);
@@ -1140,7 +1140,7 @@ impl<S: Storage> P2pServer<S> {
                     if let Some(direction) = blocks_propagation.get_mut(&block_hash) {
                         if !direction.update(Direction::In) {
                             debug!("{} send us a block ({}) already tracked by him ({:?})", peer, block_hash, direction);
-                            return Err(P2pError::AlreadyTrackedBlock(block_hash, *direction))
+                            // return Err(P2pError::AlreadyTrackedBlock(block_hash, *direction))
                         }
                     } else {
                         debug!("Saving {} in blocks propagation cache for {}", block_hash, peer);
