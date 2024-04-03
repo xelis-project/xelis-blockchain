@@ -269,7 +269,7 @@ impl Transaction {
         }
 
         // 1. Verify CommitmentEqProofs
-        trace!("verifyong commitments eq proofs");
+        trace!("verifying commitments eq proofs");
 
         for (commitment, new_source_commitment) in self
             .source_commitments
@@ -524,6 +524,122 @@ impl Transaction {
             }
         }
     
+        Ok(())
+    }
+
+    /// Verify only that the final sender balance is the expected one for each commitment
+    /// Then apply ciphertexts to the state
+    /// Checks done are: commitment eq proofs only
+    pub async fn apply_with_partial_verify<'a, E, B: BlockchainVerificationState<'a, E>>(&'a self, state: &mut B) -> Result<(), VerificationError<E>> {
+        trace!("apply with partial verify");
+        let mut sigma_batch_collector = BatchCollector::default();
+
+        let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
+            transfers
+                .iter()
+                .map(DecompressedTransferCt::decompress)
+                .collect::<Result<_, DecompressionError>>()
+                .map_err(ProofVerificationError::from)?
+        } else {
+            vec![]
+        };
+
+        let new_source_commitments_decompressed = self
+            .source_commitments
+            .iter()
+            .map(|commitment| commitment.commitment.decompress())
+            .collect::<Result<Vec<_>, DecompressionError>>()
+            .map_err(ProofVerificationError::from)?;
+
+        let owner = self
+            .source
+            .decompress()
+            .map_err(|err| VerificationError::Proof(err.into()))?;
+
+        let mut transcript = Self::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
+
+        trace!("verifying commitments eq proofs");
+
+        // This contains sender balance updated, output ciphertext, asset commitment
+        let mut commitments_changes = Vec::new();
+
+        for (commitment, new_source_commitment) in self
+            .source_commitments
+            .iter()
+            .zip(&new_source_commitments_decompressed)
+        {
+            // Ciphertext containing all the funds spent for this commitment
+            let output = self.get_sender_output_ct(&commitment.asset, &transfers_decompressed)
+                .map_err(|err| VerificationError::Proof(err.into()))?;
+
+            // Retrieve the balance of the sender
+            let mut source_verification_ciphertext = state
+                .get_sender_balance(&self.source, &commitment.asset, &self.reference).await
+                .map_err(VerificationError::State)?
+                .clone();
+
+            // Compute the new final balance for account
+            source_verification_ciphertext -= &output;
+            transcript.new_commitment_eq_proof_domain_separator();
+            transcript.append_hash(b"new_source_commitment_asset", &commitment.asset);
+            transcript
+                .append_commitment(b"new_source_commitment", &commitment.commitment);
+
+            commitment.proof.pre_verify(
+                &owner,
+                &source_verification_ciphertext,
+                &new_source_commitment,
+                &mut transcript,
+                &mut sigma_batch_collector,
+            )?;
+
+            commitments_changes.push((source_verification_ciphertext, output, &commitment.asset));
+        }
+
+        trace!("Verifying sigma proofs");
+        sigma_batch_collector
+            .verify()
+            .map_err(|_| ProofVerificationError::GenericProof)?;
+
+        // Proofs are correct, apply
+        for (source_verification_ciphertext, output, asset) in commitments_changes {
+            // Update sender final balance for asset
+            let current_ciphertext = state
+                .get_sender_balance(&self.source, asset, &self.reference)
+                .await
+                .map_err(VerificationError::State)?;
+            *current_ciphertext = source_verification_ciphertext;
+
+            // Update sender output for asset
+            state
+                .add_sender_output(
+                    &self.source,
+                    asset,
+                    output,
+                ).await
+                .map_err(VerificationError::State)?;
+        }
+
+        // Apply receiver balances
+        if let TransactionType::Transfers(transfers) = &self.data {
+            for transfer in transfers {
+                // Update receiver balance
+                let current_bal = state
+                    .get_receiver_balance(
+                        &transfer.destination,
+                        &transfer.asset,
+                    ).await
+                    .map_err(VerificationError::State)?;
+
+                let receiver_ct = transfer
+                    .get_ciphertext(Role::Receiver)
+                    .decompress()
+                    .expect("ill-formed ciphertext");
+
+                *current_bal += receiver_ct;
+            }
+        }
+
         Ok(())
     }
 }
