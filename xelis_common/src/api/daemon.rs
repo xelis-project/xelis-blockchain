@@ -395,8 +395,8 @@ pub struct SizeOnDiskResult {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetMempoolCacheParams {
-    pub address: Address
+pub struct GetMempoolCacheParams<'a> {
+    pub address: Cow<'a, Address>
 }
 
 #[derive(Serialize, Deserialize)]
