@@ -368,6 +368,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     command_manager.add_command(Command::with_optional_arguments("rescan", "Rescan balance and transactions", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(rescan))))?;
     command_manager.add_command(Command::with_optional_arguments("seed", "Show seed of selected language", vec![Arg::new("language", ArgType::Number)], CommandHandler::Async(async_handler!(seed))))?;
     command_manager.add_command(Command::new("nonce", "Show current nonce", CommandHandler::Async(async_handler!(nonce))))?;
+    command_manager.add_command(Command::new("set_nonce", "Set new nonce", CommandHandler::Async(async_handler!(set_nonce))))?;
 
     #[cfg(feature = "api_server")]
     {
@@ -832,6 +833,18 @@ async fn nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), Comma
     let wallet: &Arc<Wallet> = context.get()?;
     let nonce = wallet.get_nonce().await;
     manager.message(format!("Nonce: {}", nonce));
+    Ok(())
+}
+
+async fn set_nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let value = manager.get_prompt().read("New Nonce: ".to_string()).await
+        .context("Error while reading new nonce to set")?;
+
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let mut storage = wallet.get_storage().write().await;
+    storage.set_nonce(value)?;
+    manager.message(format!("New nonce is: {}", value));
     Ok(())
 }
 
