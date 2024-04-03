@@ -76,6 +76,10 @@ pub struct Connection {
     connected_on: TimestampSeconds,
     // if Connection#close() is called, close is set to true
     closed: AtomicBool,
+    // How many key rotation we got
+    rotate_key_in: AtomicUsize,
+    // How many key rotation we sent
+    rotate_key_out: AtomicUsize,
     // Encryption state used for packets
     encryption: Encryption
 }
@@ -99,6 +103,8 @@ impl Connection {
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
             closed: AtomicBool::new(false),
+            rotate_key_in: AtomicUsize::new(0),
+            rotate_key_out: AtomicUsize::new(0),
             encryption: Encryption::new()
         }
     }
@@ -139,7 +145,7 @@ impl Connection {
         };
 
         // Now that we got the peer key, update our encryption state
-        self.encryption.rotate_key(peer_key.into_owned(), false).await?;
+        self.rotate_peer_key(peer_key.into_owned()).await?;
 
         // Send back our key if we are the server
         if !self.is_out() {
@@ -192,6 +198,9 @@ impl Connection {
         // Rotate the key in our encryption state
         self.encryption.rotate_key(new_key, true).await?;
 
+        // Increment the key rotation counter
+        self.rotate_key_out.fetch_add(1, Ordering::Relaxed);
+
         Ok(packet)
     }
 
@@ -201,7 +210,10 @@ impl Connection {
     // We don't need to send a ACK to the peer to confirm the key rotation
     // as all next packets will be encrypted with the new key and we have updated it before
     pub async fn rotate_peer_key(&self, key: EncryptionKey) -> P2pResult<()> {
+        trace!("Rotating key with peer {}", self.get_address());
         self.encryption.rotate_key(key, false).await?;
+        // Increment the key rotation counter
+        self.rotate_key_in.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -376,6 +388,16 @@ impl Connection {
         self.bytes_in.load(Ordering::Relaxed)
     }
 
+    // Get the key rotation in
+    pub fn key_rotation_in(&self) -> usize {
+        self.rotate_key_in.load(Ordering::Relaxed)
+    }
+
+    // Get the key rotation out
+    pub fn key_rotation_out(&self) -> usize {
+        self.rotate_key_out.load(Ordering::Relaxed)
+    }
+
     // Get the time when the connection was established
     pub fn connected_on(&self) -> TimestampSeconds {
         self.connected_on
@@ -395,6 +417,6 @@ impl Connection {
 
 impl Display for Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
-        write!(f, "Connection[peer: {}, read: {}, sent: {}, connected since: {}, closed: {}]", self.get_address(), human_bytes(self.bytes_in() as f64), human_bytes(self.bytes_out() as f64), self.get_human_uptime(), self.is_closed())
+        write!(f, "Connection[peer: {}, read: {}, sent: {}, key rotation (in/out): ({}/{}), connected since: {}, closed: {}]", self.get_address(), human_bytes(self.bytes_in() as f64), human_bytes(self.bytes_out() as f64), self.key_rotation_in(), self.key_rotation_out(), self.get_human_uptime(), self.is_closed())
     }
 }
