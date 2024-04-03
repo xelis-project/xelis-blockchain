@@ -1,6 +1,7 @@
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 use curve25519_dalek::{traits::Identity, RistrettoPoint, Scalar};
+use serde::{Deserialize, Deserializer, Serialize};
 use super::{pedersen::{DecryptHandle, PedersenCommitment}, CompressedCiphertext, CompressedCommitment, CompressedHandle};
 
 // Represents a twisted ElGamal Ciphertext
@@ -220,5 +221,24 @@ impl SubAssign<Scalar> for Ciphertext {
 impl SubAssign<&Scalar> for Ciphertext {
     fn sub_assign(&mut self, rhs: &Scalar) {
         self.commitment -= rhs;
+    }
+}
+
+impl Serialize for Ciphertext {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        self.compress().serialize(serializer)
+    }
+}
+
+impl<'a> Deserialize<'a> for Ciphertext {
+    fn deserialize<D>(deserializer: D) -> Result<Ciphertext, D::Error>
+    where
+        D: Deserializer<'a>,
+    {
+        let compressed = CompressedCiphertext::deserialize(deserializer)?;
+        compressed.decompress().map_err(serde::de::Error::custom)
     }
 }
