@@ -58,6 +58,7 @@ use crate::{
         PASSWORD_HASH_SIZE,
         SALT_SIZE
     },
+    daemon_api::DaemonAPI,
     mnemonics,
     network_handler::{
         NetworkError,
@@ -170,7 +171,6 @@ pub enum WalletError {
     InvalidFeeProvided(u64, u64),
     #[error("Wallet name cannot be empty")]
     EmptyName,
-    #[cfg(feature = "api_server")]
     #[error("No handler available for this request")]
     NoHandlerAvailable,
     #[error(transparent)]
@@ -747,6 +747,24 @@ impl Wallet {
 
         // create the network handler
         let network_handler = NetworkHandler::new(Arc::clone(&self), daemon_address).await?;
+        // start the task
+        network_handler.start().await?;
+        *self.network_handler.lock().await = Some(network_handler);
+
+        Ok(())
+    }
+
+    // set the wallet in online mode using a shared daemon API
+    // this allows to share the same connection/Daemon API across several wallets to save resources
+    pub async fn set_online_mode_with_api(self: &Arc<Self>, daemon_api: Arc<DaemonAPI>) -> Result<(), WalletError> {
+        trace!("Set online mode with API");
+        if self.is_online().await {
+            // user have to set in offline mode himself first
+            return Err(WalletError::AlreadyOnlineMode)
+        }
+
+        // create the network handler
+        let network_handler = NetworkHandler::with_api(Arc::clone(&self), daemon_api).await?;
         // start the task
         network_handler.start().await?;
         *self.network_handler.lock().await = Some(network_handler);

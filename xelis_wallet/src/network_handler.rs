@@ -67,13 +67,22 @@ pub struct NetworkHandler {
     // wallet where we can save every data from chain
     wallet: Arc<Wallet>,
     // api to communicate with daemon
-    api: DaemonAPI
+    // It is behind a Arc to be shared across several wallets
+    // in case someone make a custom service and don't want to create a new connection
+    api: Arc<DaemonAPI>
 }
 
 impl NetworkHandler {
+    // Create a new network handler with a wallet and a daemon address
+    // This will create itself a DaemonAPI and verify if connection is possible
     pub async fn new<S: ToString>(wallet: Arc<Wallet>, daemon_address: S) -> Result<SharedNetworkHandler, Error> {
         let s = daemon_address.to_string();
         let api = DaemonAPI::new(format!("{}/json_rpc", sanitize_daemon_address(s.as_str()))).await?;
+        Self::with_api(wallet, Arc::new(api)).await
+    }
+
+    // Create a new network handler with an already created daemon API
+    pub async fn with_api(wallet: Arc<Wallet>, api: Arc<DaemonAPI>) -> Result<SharedNetworkHandler, Error> {
         // check that we can correctly get version from daemon
         let version = api.get_version().await?;
         debug!("Connected to daemon running version {}", version);
