@@ -181,13 +181,14 @@ impl Connection {
 
     // This will send to the peer a packet to rotate the key
     async fn rotate_key_packet(&self) -> P2pResult<Bytes> {
+        trace!("rotating our encryption key for peer {}", self.get_address());
         // Generate a new key to use
         let new_key = self.encryption.generate_key();
         // Verify if we already have one set
         
         // Build the packet
         let mut packet = Bytes::from(Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes());
-        
+
         // This is used to determine if we need to encrypt the packet or not
         // Check if we already had a key set, if so, encrypt it
         if self.encryption.is_write_ready().await {
@@ -210,7 +211,7 @@ impl Connection {
     // We don't need to send a ACK to the peer to confirm the key rotation
     // as all next packets will be encrypted with the new key and we have updated it before
     pub async fn rotate_peer_key(&self, key: EncryptionKey) -> P2pResult<()> {
-        trace!("Rotating key with peer {}", self.get_address());
+        trace!("Rotating encryption key of peer {}", self.get_address());
         self.encryption.rotate_key(key, false).await?;
         // Increment the key rotation counter
         self.rotate_key_in.fetch_add(1, Ordering::Relaxed);
