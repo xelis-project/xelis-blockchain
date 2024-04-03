@@ -3,14 +3,17 @@ use crate::{
     config::{P2P_EXTEND_PEERLIST_DELAY, PEER_FAIL_LIMIT}
 };
 use super::{peer::Peer, packet::Packet, error::P2pError};
-use std::{collections::HashMap, net::{SocketAddr, IpAddr}, fs, fmt::{Formatter, self, Display}, time::Duration};
+use std::{collections::HashMap, net::{SocketAddr, IpAddr},
+fs, fmt::{Formatter, self, Display},
+time::Duration};
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
 use tokio::sync::{RwLock, mpsc::UnboundedSender};
 use xelis_common::{
     serializer::Serializer,
     time::{TimestampSeconds, get_current_time_in_seconds},
-    api::daemon::Direction};
+    api::daemon::Direction
+};
 use std::sync::Arc;
 use bytes::Bytes;
 use log::{info, debug, trace, error, warn};

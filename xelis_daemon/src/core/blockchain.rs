@@ -39,7 +39,7 @@ use xelis_common::{
         get_current_time_in_seconds,
         TimestampMillis
     },
-    transaction::{Transaction, TransactionType},
+    transaction::{verify::BlockchainVerificationState, Transaction, TransactionType},
     utils::{calculate_tx_fee, format_xelis},
     varuint::VarUint
 };
@@ -1782,16 +1782,21 @@ impl<S: Storage> Blockchain<S> {
                             continue;
                         }
 
-                        // let next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
-                        // local_nonces.insert(tx.get_source(), next_nonce);
+                        // Execute the transaction by applying changes in storage
+                        debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
+                        if let Err(e) = tx.apply_with_partial_verify(chain_state.as_mut()).await {
+                            warn!("Error while executing TX {} with current DAG org: {}", tx_hash, e);
+                            // TX may be orphaned if not added again in good order in next blocks
+                            continue;
+                        }
+
+                        // Calculate the new nonce
+                        // This has to be done in case of side blocks where TX B would be before TX A
+                        let next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
+                        chain_state.as_mut().update_account_nonce(tx.get_source(), next_nonce).await?;
 
                         // mark tx as executed
-                        debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
                         chain_state.get_mut_storage().set_tx_executed_in_block(tx_hash, &hash)?;
-
-                        // Execute the transaction by applying changes in storage
-                        // self.execute_transaction(storage, &tx, &mut local_balances, highest_topo).await?;
-                        tx.apply_without_verify(chain_state.as_mut()).await?;
 
                         // Delete the transaction from  the list if it was marked as orphaned
                         if orphaned_transactions.remove(&tx_hash) {
