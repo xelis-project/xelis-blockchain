@@ -2065,7 +2065,8 @@ impl<S: Storage> P2pServer<S> {
                 let tips = storage.get_tips().await?;
                 let (hash, height) = self.blockchain.find_common_base::<S, _>(&storage, &tips).await?;
                 let stable_topo = storage.get_topo_height_for_hash(&hash).await?;
-                StepResponse::ChainInfo(common_point, stable_topo, height, hash)
+                let merkle_hash = storage.get_merkle_hash_at_topoheight(stable_topo).await?;
+                StepResponse::ChainInfo(common_point, stable_topo, height, hash, merkle_hash)
             },
             StepRequest::Assets(min, max, page) => {
                 if min > max {
@@ -2130,8 +2131,9 @@ impl<S: Storage> P2pServer<S> {
                     let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
                     let p = storage.get_estimated_covariance_or_block_hash(&hash).await?;
+                    let merkle_hash = storage.get_merkle_hash_at_topoheight(topoheight).await?;
 
-                    blocks.insert(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty, p });
+                    blocks.insert(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty, p, merkle_hash });
                 }
                 StepResponse::BlocksMetadata(blocks)
             },
@@ -2192,6 +2194,7 @@ impl<S: Storage> P2pServer<S> {
         let mut top_topoheight: u64 = 0;
         let mut top_height: u64 = 0;
         let mut top_block_hash: Option<Hash> = None;
+        let mut stable_merkle_hash: Option<Hash> = None;
 
         let mut all_assets = HashSet::new();
         loop {
@@ -2203,7 +2206,7 @@ impl<S: Storage> P2pServer<S> {
             };
 
             step = match response {
-                StepResponse::ChainInfo(common_point, topoheight, height, hash) => {
+                StepResponse::ChainInfo(common_point, topoheight, height, hash, merkle_hash) => {
                     // first, check the common point in case we deviated from the chain
                     if let Some(common_point) = common_point {
                         let mut storage = self.blockchain.get_storage().write().await;
@@ -2237,6 +2240,7 @@ impl<S: Storage> P2pServer<S> {
                     top_topoheight = topoheight;
                     top_height = height;
                     top_block_hash = Some(hash);
+                    stable_merkle_hash = Some(merkle_hash);
 
                     stable_topoheight = topoheight;
                     Some(StepRequest::Assets(our_topoheight, topoheight, None))
@@ -2362,6 +2366,7 @@ impl<S: Storage> P2pServer<S> {
                         storage.set_topo_height_for_block(&hash, lowest_topoheight).await?;
 
                         storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
+                        storage.set_merkle_hash_at_topoheight(lowest_topoheight, &metadata.merkle_hash).await?;
 
                         // save the block with its transactions, difficulty
                         storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.p, hash).await?;
@@ -2377,6 +2382,7 @@ impl<S: Storage> P2pServer<S> {
                     storage.set_top_topoheight(top_topoheight)?;
                     storage.set_top_height(top_height)?;
                     storage.store_tips(&HashSet::from([top_block_hash.take().expect("Expected top block hash for fast sync")]))?;
+                    storage.set_merkle_hash_at_topoheight(stable_topoheight, &stable_merkle_hash.take().expect("Expected merkle hash for fast sync")).await?;
                     None
                 },
                 response => { // shouldn't happens

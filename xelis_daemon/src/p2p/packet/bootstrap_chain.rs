@@ -37,12 +37,20 @@ pub const MAX_ITEMS_PER_PAGE: usize = 1024;
 
 #[derive(Debug)]
 pub struct BlockMetadata {
+    // Hash of the block
     pub hash: Hash,
+    // Circulating supply
     pub supply: u64,
+    // Miner reward
     pub reward: u64,
+    // Difficulty of the block
     pub difficulty: Difficulty,
+    // Cumulative difficulty of the chain
     pub cumulative_difficulty: CumulativeDifficulty,
-    pub p: VarUint
+    // Difficulty P variable
+    pub p: VarUint,
+    // Merkle hash of the block
+    pub merkle_hash: Hash,
 }
 
 impl StdHash for BlockMetadata {
@@ -67,6 +75,7 @@ impl Serializer for BlockMetadata {
         let difficulty = Difficulty::read(reader)?;
         let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
         let p = VarUint::read(reader)?;
+        let merkle_hash = reader.read_hash()?;
 
         Ok(Self {
             hash,
@@ -74,7 +83,8 @@ impl Serializer for BlockMetadata {
             reward,
             difficulty,
             cumulative_difficulty,
-            p
+            p,
+            merkle_hash
         })
     }
 
@@ -85,10 +95,11 @@ impl Serializer for BlockMetadata {
         self.difficulty.write(writer);
         self.cumulative_difficulty.write(writer);
         self.p.write(writer);
+        writer.write_hash(&self.merkle_hash);
     }
 
     fn size(&self) -> usize {
-        self.hash.size() + self.supply.size() + self.reward.size() + self.difficulty.size() + self.cumulative_difficulty.size()
+        self.hash.size() + self.supply.size() + self.reward.size() + self.difficulty.size() + self.cumulative_difficulty.size() + self.p.size() + self.merkle_hash.size()
     }
 }
 
@@ -284,8 +295,8 @@ impl Serializer for StepRequest<'_> {
 
 #[derive(Debug)]
 pub enum StepResponse {
-    // common point, topoheight of stable hash, stable height, stable hash
-    ChainInfo(Option<CommonPoint>, u64, u64, Hash),
+    // common point, topoheight of stable hash, stable height, stable hash, Stable Merkle Hash
+    ChainInfo(Option<CommonPoint>, u64, u64, Hash, Hash),
     // Set of assets, pagination
     Assets(IndexSet<AssetWithData>, Option<u64>),
     // Set of keys, pagination
@@ -302,7 +313,7 @@ pub enum StepResponse {
 impl StepResponse {
     pub fn kind(&self) -> StepKind {
         match self {
-            Self::ChainInfo(_, _, _, _) => StepKind::ChainInfo,
+            Self::ChainInfo(_, _, _, _, _) => StepKind::ChainInfo,
             Self::Assets(_, _) => StepKind::Assets,
             Self::Keys(_, _) => StepKind::Keys,
             Self::Balances(_) => StepKind::Balances,
@@ -320,8 +331,9 @@ impl Serializer for StepResponse {
                 let topoheight = reader.read_u64()?;
                 let stable_height = reader.read_u64()?;
                 let hash = reader.read_hash()?;
+                let merkle_hash = reader.read_hash()?;
 
-                Self::ChainInfo(common_point, topoheight, stable_height, hash)
+                Self::ChainInfo(common_point, topoheight, stable_height, hash, merkle_hash)
             },
             1 => {
                 let assets = IndexSet::<AssetWithData>::read(reader)?;
@@ -363,12 +375,13 @@ impl Serializer for StepResponse {
 
     fn write(&self, writer: &mut Writer) {
         match self {
-            Self::ChainInfo(common_point, topoheight, stable_height, hash) => {
+            Self::ChainInfo(common_point, topoheight, stable_height, hash, merkle_hash) => {
                 writer.write_u8(0);
                 common_point.write(writer);
                 writer.write_u64(topoheight);
                 writer.write_u64(stable_height);
                 writer.write_hash(hash);
+                writer.write_hash(merkle_hash);
             },
             Self::Assets(assets, page) => {
                 writer.write_u8(1);
@@ -397,8 +410,8 @@ impl Serializer for StepResponse {
 
     fn size(&self) -> usize {
         let size = match self {
-            Self::ChainInfo(common_point, topoheight, stable_height, hash) => {
-                common_point.size() + topoheight.size() + stable_height.size() + hash.size()
+            Self::ChainInfo(common_point, topoheight, stable_height, hash, merkle_hash) => {
+                common_point.size() + topoheight.size() + stable_height.size() + hash.size() + merkle_hash.size()
             },
             Self::Assets(assets, page) => {
                 assets.size() + page.size()
