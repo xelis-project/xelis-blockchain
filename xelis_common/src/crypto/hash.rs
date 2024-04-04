@@ -2,7 +2,8 @@ use crate::serializer::{Writer, Serializer, ReaderError, Reader};
 use std::{
     fmt::{Display, Error, Formatter},
     convert::TryInto,
-    hash::Hasher
+    hash::Hasher,
+    borrow::Cow,
 };
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
@@ -111,5 +112,17 @@ pub fn hash(value: &[u8]) -> Hash {
 impl AsRef<[u8]> for Hash {
     fn as_ref(&self) -> &[u8] {
         &self.0
+    }
+}
+
+impl<'a> Into<Cow<'a, Hash>> for Hash {
+    fn into(self) -> Cow<'a, Hash> {
+        Cow::Owned(self)
+    }
+}
+
+impl<'a> Into<Cow<'a, Hash>> for &'a Hash {
+    fn into(self) -> Cow<'a, Hash> {
+        Cow::Borrowed(self)
     }
 }
