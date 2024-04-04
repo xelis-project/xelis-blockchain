@@ -28,6 +28,7 @@ pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserializer: D
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct BlockHeader {
     pub version: u8,
+    pub merkle_hash: Hash,
     pub tips: IndexSet<Hash>,
     pub timestamp: TimestampMillis,
     pub height: u64,
@@ -41,9 +42,10 @@ pub struct BlockHeader {
 
 
 impl BlockHeader {
-    pub fn new(version: u8, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
+    pub fn new(version: u8, merkle_hash: Hash, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
         BlockHeader {
             version,
+            merkle_hash,
             height,
             timestamp,
             tips,
@@ -129,9 +131,10 @@ impl BlockHeader {
         let mut bytes: Vec<u8> = Vec::with_capacity(HEADER_WORK_SIZE);
 
         bytes.push(self.version); // 1
-        bytes.extend(&self.height.to_be_bytes()); // 1 + 8 = 9
-        bytes.extend(self.get_tips_hash().as_bytes()); // 9 + 32 = 41
-        bytes.extend(self.get_txs_hash().as_bytes()); // 41 + 32 = 73
+        bytes.extend(self.get_merkle_hash().to_bytes()); // 1 + 32 = 33
+        bytes.extend(&self.height.to_be_bytes()); // 33 + 8 = 41
+        bytes.extend(self.get_tips_hash().as_bytes()); // 41 + 32 = 73
+        bytes.extend(self.get_txs_hash().as_bytes()); // 73 + 32 = 105 
 
         debug_assert!(bytes.len() == HEADER_WORK_SIZE, "Error, invalid header work size, got {} but expected {}", bytes.len(), HEADER_WORK_SIZE);
 
@@ -141,6 +144,11 @@ impl BlockHeader {
     // compute the header work hash (immutable part in mining process)
     pub fn get_work_hash(&self) -> Hash {
         hash(&self.get_work())
+    }
+
+    // Get the merkle hash of the block
+    pub fn get_merkle_hash(&self) -> &Hash {
+        &self.merkle_hash
     }
 
     // This is similar as BlockMiner work
@@ -171,21 +179,22 @@ impl BlockHeader {
 impl Serializer for BlockHeader {
     fn write(&self, writer: &mut Writer) {
         writer.write_u8(self.version); // 1
-        writer.write_u64(&self.height); // 1 + 8 = 9
-        writer.write_u64(&self.timestamp); // 9 + 8 = 17
-        writer.write_u64(&self.nonce); // 17 + 8 = 25
-        writer.write_bytes(&self.extra_nonce); // 25 + 32 = 57
-        writer.write_u8(self.tips.len() as u8); // 57 + 1 = 58
+        writer.write_hash(&self.merkle_hash); // 1 + 32 = 33
+        writer.write_u64(&self.height); // 33 + 8 = 41
+        writer.write_u64(&self.timestamp); // 41 + 8 = 49
+        writer.write_u64(&self.nonce); // 49 + 8 = 57
+        writer.write_bytes(&self.extra_nonce); // 57 + 32 = 89
+        writer.write_u8(self.tips.len() as u8); // 89 + 1 = 90
         for tip in &self.tips {
             writer.write_hash(tip); // 32
         }
 
-        writer.write_u16(self.txs_hashes.len() as u16); // 58 + 2 = 60
+        writer.write_u16(self.txs_hashes.len() as u16); // 90 + (N*32) + 2 = 92 + (N*32)
         for tx in &self.txs_hashes {
             writer.write_hash(tx); // 32
         }
-        self.miner.write(writer); // 60 + 32 = 92
-        // Minimum size is 92 bytes
+        self.miner.write(writer); // 92 + (N*32) + (T*32) + 32 = 124 + (N*32) + (T*32)
+        // Minimum size is 124 bytes
     }
 
     fn read(reader: &mut Reader) -> Result<BlockHeader, ReaderError> {
@@ -196,6 +205,7 @@ impl Serializer for BlockHeader {
             return Err(ReaderError::InvalidValue)
         }
 
+        let merkle_hash = reader.read_hash()?;
         let height = reader.read_u64()?;
         let timestamp = reader.read_u64()?;
         let nonce = reader.read_u64()?;
@@ -228,6 +238,7 @@ impl Serializer for BlockHeader {
         Ok(
             BlockHeader {
                 version,
+                merkle_hash,
                 extra_nonce,
                 height,
                 timestamp,
@@ -247,7 +258,12 @@ impl Serializer for BlockHeader {
         // Version is u8
         let version_size = 1;
 
-        EXTRA_NONCE_SIZE + tips_size + txs_size + version_size + self.miner.size() + self.timestamp.size() + self.height.size() + self.nonce.size()
+        EXTRA_NONCE_SIZE + tips_size + txs_size + version_size
+        + self.miner.size()
+        + self.timestamp.size()
+        + self.height.size()
+        + self.nonce.size()
+        + self.merkle_hash.size()
     }
 }
 
