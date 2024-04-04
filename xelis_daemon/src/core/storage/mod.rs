@@ -20,7 +20,7 @@ use crate::core::error::BlockchainError;
 pub type Tips = HashSet<Hash>;
 
 #[async_trait]
-pub trait Storage: DagOrderProvider + PrunedTopoheightProvider + NonceProvider + ClientProtocolProvider + BlockDagProvider + Sync + Send + 'static {
+pub trait Storage: DagOrderProvider + PrunedTopoheightProvider + NonceProvider + ClientProtocolProvider + BlockDagProvider + MerkleHashProvider + Sync + Send + 'static {
     // Is the chain running on mainnet
     fn is_mainnet(&self) -> bool;
 

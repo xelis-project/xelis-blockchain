@@ -91,6 +91,8 @@ pub struct SledStorage {
     pub(super) balances: Tree,
     // Tree that store all versioned balances using hashed keys
     pub(super) versioned_balances: Tree,
+    // Tree that store all merkle hashes for each topoheight
+    pub(super) merkle_hashes: Tree,
     // opened DB used for assets to create dynamic assets
     db: sled::Db,
 
@@ -162,6 +164,7 @@ impl SledStorage {
             versioned_nonces: sled.open_tree("versioned_nonces")?,
             balances: sled.open_tree("balances")?,
             versioned_balances: sled.open_tree("versioned_balances")?,
+            merkle_hashes: sled.open_tree("merkle_hashes")?,
             db: sled,
             transactions_cache: init_cache!(cache_size),
             blocks_cache: init_cache!(cache_size),
