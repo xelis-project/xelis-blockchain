@@ -431,7 +431,7 @@ impl<S: Storage> Blockchain<S> {
         } else {
             warn!("No genesis block found!");
             info!("Generating a new genesis block...");
-            let header = BlockHeader::new(0, 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
+            let header = BlockHeader::new(0, Hash::zero(), 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
             let block = Block::new(Immutable::Owned(header), Vec::new());
             let block_hash = block.hash();
             info!("Genesis generated: {} with {:?} {}", block.to_hex(), block_hash, block_hash);
@@ -1318,7 +1318,8 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
-        let block = BlockHeader::new(self.get_version_at_height(height), height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
+        let merkle_hash = storage.get_merkle_hash_at_topoheight(self.get_stable_topoheight()).await?;
+        let block = BlockHeader::new(self.get_version_at_height(height), merkle_hash, height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
 
         Ok(block)
     }
@@ -1453,6 +1454,16 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::ExpectedTips)
         }
 
+        if tips_count > 0 && block.get_height() == 0 {
+            debug!("Invalid block height, got height 0 but tips are present for this block {}", block_hash);
+            return Err(BlockchainError::BlockHeightZeroNotAllowed)
+        }
+
+        if tips_count == 0 && block.get_height() != 0 {
+            debug!("Invalid tips count, got {} but current height is {} with block height {}", tips_count, current_height, block.get_height());
+            return Err(BlockchainError::InvalidTipsCount(block_hash, tips_count))
+        }
+
         // block contains header and full TXs
         let block_size = block.size();
         if block_size > MAX_BLOCK_SIZE {
@@ -1515,6 +1526,23 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
             }
+        }
+
+        // Keep a cache of the base block for future use (cumulative difficulty)
+        let mut base_cache = None;
+        // Verify the merkle hash based on the common base topoheight
+        if tips_count != 0 {
+            // First, we need to search the common base hash
+            let (base, base_height) = self.find_common_base(&*storage, block.get_tips()).await?;
+            // Take the topoheight of the base block
+            let base_topoheight = storage.get_topo_height_for_hash(&base).await?;
+            // Retrieve the merkle hash at the base topoheight
+            let merkle_hash = storage.get_merkle_hash_at_topoheight(base_topoheight).await?;
+            if merkle_hash != *block.get_merkle_hash() {
+                debug!("Invalid merkle hash for block {}, expected {} but got {}", block_hash, merkle_hash, block.get_merkle_hash());
+                return Err(BlockchainError::InvalidMerkleHash(block_hash, merkle_hash, block.get_merkle_hash().clone()))
+            }
+            base_cache = Some((base, base_height));
         }
 
         // verify PoW and get difficulty for this block based on tips
@@ -1619,7 +1647,12 @@ impl<S: Storage> Blockchain<S> {
             let cumulative_difficulty: CumulativeDifficulty = if tips_count == 0 {
                 GENESIS_BLOCK_DIFFICULTY.into()
             } else {
-                let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
+                let (base, base_height) = if let Some((base, base_height)) = base_cache {
+                    (base, base_height)
+                } else {
+                    self.find_common_base(storage, block.get_tips()).await?
+                };
+
                 let (_, cumulative_difficulty) = self.find_tip_work_score::<S>(&storage, &block_hash, &base, base_height).await?;
                 cumulative_difficulty
             };
