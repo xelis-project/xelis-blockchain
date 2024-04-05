@@ -2258,7 +2258,7 @@ impl<S: Storage> P2pServer<S> {
                     stable_merkle_hash = Some(merkle_hash);
 
                     stable_topoheight = topoheight;
-                    Some(StepRequest::Assets(our_topoheight, topoheight, None))
+                    Some(StepRequest::Merkles(our_topoheight, topoheight, None))
                 },
                 // Request all block hashes from our common point to the stable topoheight
                 StepResponse::Merkles(_merkles, next_page) => {
