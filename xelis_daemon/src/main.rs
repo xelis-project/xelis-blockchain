@@ -578,7 +578,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let blocks_count = storage.count_blocks().await.context("Error while counting blocks")?;
     let assets = storage.count_assets().await.context("Error while counting assets")?;
     let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
-    let merkle_hash = storage.get_merkle_hash_at_topoheight(topoheight).await.context("Error while retrieving merkle hash")?;
+    let merkle_hash = storage.get_balances_merkle_hash_at_topoheight(topoheight).await.context("Error while retrieving merkle hash")?;
 
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));

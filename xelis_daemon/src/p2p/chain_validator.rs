@@ -137,10 +137,10 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         let base_topoheight = self.get_topo_height_for_hash(&base).await?;
         // Because we can't compute the merkle hash without executing the block
         // we only check it if we have the merkle hash at the common base
-        if let Ok(base_merkle_hash) = self.get_merkle_hash_at_topoheight(base_topoheight).await {
-            if base_merkle_hash != *header.get_merkle_hash() {
+        if let Ok(base_merkle_hash) = self.get_balances_merkle_hash_at_topoheight(base_topoheight).await {
+            if base_merkle_hash != *header.get_balances_merkle_hash() {
                 debug!("Block {} has a different merkle hash than the common base", hash);
-                return Err(BlockchainError::InvalidMerkleHash(hash, base_merkle_hash, header.get_merkle_hash().clone()));
+                return Err(BlockchainError::InvalidMerkleHash(hash, base_merkle_hash, header.get_balances_merkle_hash().clone()));
             }
         }
 
@@ -322,12 +322,12 @@ impl<S: Storage> PrunedTopoheightProvider for ChainValidator<'_, S> {
 
 #[async_trait]
 impl<S: Storage> MerkleHashProvider for ChainValidator<'_, S> {
-    async fn get_merkle_hash_at_topoheight(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
+    async fn get_balances_merkle_hash_at_topoheight(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
         let storage = self.blockchain.get_storage().read().await;
-        storage.get_merkle_hash_at_topoheight(topoheight).await
+        storage.get_balances_merkle_hash_at_topoheight(topoheight).await
     }
 
-    async fn set_merkle_hash_at_topoheight(&mut self,  _: u64, _: &Hash) -> Result<(), BlockchainError> {
+    async fn set_balances_merkle_hash_at_topoheight(&mut self,  _: u64, _: &Hash) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 }

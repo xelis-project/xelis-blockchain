@@ -2065,8 +2065,23 @@ impl<S: Storage> P2pServer<S> {
                 let tips = storage.get_tips().await?;
                 let (hash, height) = self.blockchain.find_common_base::<S, _>(&storage, &tips).await?;
                 let stable_topo = storage.get_topo_height_for_hash(&hash).await?;
-                let merkle_hash = storage.get_merkle_hash_at_topoheight(stable_topo).await?;
+                let merkle_hash = storage.get_balances_merkle_hash_at_topoheight(stable_topo).await?;
                 StepResponse::ChainInfo(common_point, stable_topo, height, hash, merkle_hash)
+            },
+            StepRequest::Merkles(_common_topoheight, _topo, _page) => {
+                let merkles = IndexSet::new();
+                // let page = page.unwrap_or(0);
+                // for topoheight in (common_topoheight..=topo).skip(page as usize * MAX_ITEMS_PER_PAGE).take(MAX_ITEMS_PER_PAGE) {
+                //     let hash = storage.get_hash_at_topo_height(topoheight).await?;
+                //     merkles.insert(hash);
+                // }
+
+                // let page = if merkles.len() == MAX_ITEMS_PER_PAGE {
+                //     Some(page + 1)
+                // } else {
+                //     None
+                // };
+                StepResponse::Merkles(merkles, None)
             },
             StepRequest::Assets(min, max, page) => {
                 if min > max {
@@ -2131,7 +2146,7 @@ impl<S: Storage> P2pServer<S> {
                     let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
                     let p = storage.get_estimated_covariance_or_block_hash(&hash).await?;
-                    let merkle_hash = storage.get_merkle_hash_at_topoheight(topoheight).await?;
+                    let merkle_hash = storage.get_balances_merkle_hash_at_topoheight(topoheight).await?;
 
                     blocks.insert(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty, p, merkle_hash });
                 }
@@ -2245,6 +2260,15 @@ impl<S: Storage> P2pServer<S> {
                     stable_topoheight = topoheight;
                     Some(StepRequest::Assets(our_topoheight, topoheight, None))
                 },
+                // Request all block hashes from our common point to the stable topoheight
+                StepResponse::Merkles(_merkles, next_page) => {
+                    if next_page.is_some() {
+                        Some(StepRequest::Merkles(our_topoheight, stable_topoheight, next_page))
+                    } else {
+                        // Go to next step
+                        Some(StepRequest::Assets(our_topoheight, stable_topoheight, None))
+                    }
+                }
                 // fetch all assets from peer
                 StepResponse::Assets(assets, next_page) => {
                     let mut storage = self.blockchain.get_storage().write().await;
@@ -2366,7 +2390,7 @@ impl<S: Storage> P2pServer<S> {
                         storage.set_topo_height_for_block(&hash, lowest_topoheight).await?;
 
                         storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
-                        storage.set_merkle_hash_at_topoheight(lowest_topoheight, &metadata.merkle_hash).await?;
+                        storage.set_balances_merkle_hash_at_topoheight(lowest_topoheight, &metadata.merkle_hash).await?;
 
                         // save the block with its transactions, difficulty
                         storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.p, hash).await?;
@@ -2382,7 +2406,7 @@ impl<S: Storage> P2pServer<S> {
                     storage.set_top_topoheight(top_topoheight)?;
                     storage.set_top_height(top_height)?;
                     storage.store_tips(&HashSet::from([top_block_hash.take().expect("Expected top block hash for fast sync")]))?;
-                    storage.set_merkle_hash_at_topoheight(stable_topoheight, &stable_merkle_hash.take().expect("Expected merkle hash for fast sync")).await?;
+                    storage.set_balances_merkle_hash_at_topoheight(stable_topoheight, &stable_merkle_hash.take().expect("Expected merkle hash for fast sync")).await?;
                     None
                 },
                 response => { // shouldn't happens

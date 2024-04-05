@@ -11,20 +11,20 @@ use crate::core::{error::BlockchainError, storage::SledStorage};
 #[async_trait]
 pub trait MerkleHashProvider {
     // Get the merkle hash at a specific topoheight
-    async fn get_merkle_hash_at_topoheight(&self, topoheight: u64) -> Result<Hash, BlockchainError>;
+    async fn get_balances_merkle_hash_at_topoheight(&self, topoheight: u64) -> Result<Hash, BlockchainError>;
 
     // Set the merkle hash at a specific topoheight
-    async fn set_merkle_hash_at_topoheight(&mut self, topoheight: u64, merkle_proof: &Hash) -> Result<(), BlockchainError>;
+    async fn set_balances_merkle_hash_at_topoheight(&mut self, topoheight: u64, merkle_proof: &Hash) -> Result<(), BlockchainError>;
 }
 
 #[async_trait]
 impl MerkleHashProvider for SledStorage {
-    async fn get_merkle_hash_at_topoheight(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
+    async fn get_balances_merkle_hash_at_topoheight(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
         trace!("get merkle hash at topoheight {}", topoheight);
         self.load_from_disk(&self.merkle_hashes, &topoheight.to_bytes())
     }
 
-    async fn set_merkle_hash_at_topoheight(&mut self, topoheight: u64, merkle_proof: &Hash) -> Result<(), BlockchainError> {
+    async fn set_balances_merkle_hash_at_topoheight(&mut self, topoheight: u64, merkle_proof: &Hash) -> Result<(), BlockchainError> {
         trace!("set merkle hash {} at topoheight {}", merkle_proof, topoheight);
         self.merkle_hashes.insert(&topoheight.to_bytes(), merkle_proof.as_bytes())?;
         Ok(())

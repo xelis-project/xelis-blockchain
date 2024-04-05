@@ -1318,7 +1318,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
-        let merkle_hash = storage.get_merkle_hash_at_topoheight(self.get_stable_topoheight()).await?;
+        let merkle_hash = storage.get_balances_merkle_hash_at_topoheight(self.get_stable_topoheight()).await?;
         let block = BlockHeader::new(self.get_version_at_height(height), merkle_hash, height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
 
         Ok(block)
@@ -1537,10 +1537,10 @@ impl<S: Storage> Blockchain<S> {
             // Take the topoheight of the base block
             let base_topoheight = storage.get_topo_height_for_hash(&base).await?;
             // Retrieve the merkle hash at the base topoheight
-            let merkle_hash = storage.get_merkle_hash_at_topoheight(base_topoheight).await?;
-            if merkle_hash != *block.get_merkle_hash() {
-                debug!("Invalid merkle hash for block {}, expected {} but got {}", block_hash, merkle_hash, block.get_merkle_hash());
-                return Err(BlockchainError::InvalidMerkleHash(block_hash, merkle_hash, block.get_merkle_hash().clone()))
+            let merkle_hash = storage.get_balances_merkle_hash_at_topoheight(base_topoheight).await?;
+            if merkle_hash != *block.get_balances_merkle_hash() {
+                debug!("Invalid merkle hash for block {}, expected {} but got {}", block_hash, merkle_hash, block.get_balances_merkle_hash());
+                return Err(BlockchainError::InvalidMerkleHash(block_hash, merkle_hash, block.get_balances_merkle_hash().clone()))
             }
             base_cache = Some((base, base_height));
         }

@@ -258,7 +258,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
         // For genesis block, we take an empty hash
         let mut merkle_builder = MerkleBuilder::new();
         if self.inner.topoheight != 0 {
-            let previous_merkle_hash = self.inner.storage.get_merkle_hash_at_topoheight(self.inner.topoheight - 1).await?;
+            let previous_merkle_hash = self.inner.storage.get_balances_merkle_hash_at_topoheight(self.inner.topoheight - 1).await?;
             merkle_builder.add(previous_merkle_hash);
         }
 
@@ -287,7 +287,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 
         // Build the merkle hash of the topoheight and store it
         let merkle_hash = merkle_builder.build();
-        self.inner.storage.set_merkle_hash_at_topoheight(self.inner.topoheight, &merkle_hash).await?;
+        self.inner.storage.set_balances_merkle_hash_at_topoheight(self.inner.topoheight, &merkle_hash).await?;
 
         Ok(())
     }
