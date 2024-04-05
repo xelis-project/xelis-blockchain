@@ -27,25 +27,38 @@ pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserializer: D
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct BlockHeader {
+    // Version of the block
     pub version: u8,
-    pub merkle_hash: Hash,
+    // Merkle Hash containing all balances changes of common base
+    // A merkle hash of balances is based on previous topoheight merkle hash
+    // and all changes of balances in the block
+    pub balances_merkle_hash: Hash,
+    // All TIPS of the block (previous hashes of the block)
     pub tips: IndexSet<Hash>,
+    // Timestamp in milliseconds
     pub timestamp: TimestampMillis,
+    // Height of the block
     pub height: u64,
+    // Nonce of the block
+    // This is the mutable part in mining process
     pub nonce: u64,
+    // Extra nonce of the block
+    // This is the mutable part in mining process
+    // This is to spread even more the work in the network
     #[serde(serialize_with = "serialize_extra_nonce")]
     #[serde(deserialize_with = "deserialize_extra_nonce")]
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE],
+    // Miner public key
     pub miner: CompressedPublicKey,
+    // All transactions hashes of the block
     pub txs_hashes: IndexSet<Hash>
 }
 
-
 impl BlockHeader {
-    pub fn new(version: u8, merkle_hash: Hash, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
+    pub fn new(version: u8, balances_merkle_hash: Hash, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
         BlockHeader {
             version,
-            merkle_hash,
+            balances_merkle_hash,
             height,
             timestamp,
             tips,
@@ -131,7 +144,7 @@ impl BlockHeader {
         let mut bytes: Vec<u8> = Vec::with_capacity(HEADER_WORK_SIZE);
 
         bytes.push(self.version); // 1
-        bytes.extend(self.get_merkle_hash().to_bytes()); // 1 + 32 = 33
+        bytes.extend(self.get_balances_merkle_hash().to_bytes()); // 1 + 32 = 33
         bytes.extend(&self.height.to_be_bytes()); // 33 + 8 = 41
         bytes.extend(self.get_tips_hash().as_bytes()); // 41 + 32 = 73
         bytes.extend(self.get_txs_hash().as_bytes()); // 73 + 32 = 105 
@@ -146,9 +159,9 @@ impl BlockHeader {
         hash(&self.get_work())
     }
 
-    // Get the merkle hash of the block
-    pub fn get_merkle_hash(&self) -> &Hash {
-        &self.merkle_hash
+    // Get the balances merkle hash of the block
+    pub fn get_balances_merkle_hash(&self) -> &Hash {
+        &self.balances_merkle_hash
     }
 
     // This is similar as BlockMiner work
@@ -179,7 +192,7 @@ impl BlockHeader {
 impl Serializer for BlockHeader {
     fn write(&self, writer: &mut Writer) {
         writer.write_u8(self.version); // 1
-        writer.write_hash(&self.merkle_hash); // 1 + 32 = 33
+        writer.write_hash(&self.balances_merkle_hash); // 1 + 32 = 33
         writer.write_u64(&self.height); // 33 + 8 = 41
         writer.write_u64(&self.timestamp); // 41 + 8 = 49
         writer.write_u64(&self.nonce); // 49 + 8 = 57
@@ -205,7 +218,7 @@ impl Serializer for BlockHeader {
             return Err(ReaderError::InvalidValue)
         }
 
-        let merkle_hash = reader.read_hash()?;
+        let balances_merkle_hash = reader.read_hash()?;
         let height = reader.read_u64()?;
         let timestamp = reader.read_u64()?;
         let nonce = reader.read_u64()?;
@@ -238,7 +251,7 @@ impl Serializer for BlockHeader {
         Ok(
             BlockHeader {
                 version,
-                merkle_hash,
+                balances_merkle_hash,
                 extra_nonce,
                 height,
                 timestamp,
@@ -263,7 +276,7 @@ impl Serializer for BlockHeader {
         + self.timestamp.size()
         + self.height.size()
         + self.nonce.size()
-        + self.merkle_hash.size()
+        + self.balances_merkle_hash.size()
     }
 }
 
