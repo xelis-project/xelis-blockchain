@@ -21,6 +21,7 @@ use crate::core::{
         BlocksAtHeightProvider,
         DagOrderProvider,
         DifficultyProvider,
+        MerkleHashProvider,
         PrunedTopoheightProvider,
         Storage,
         Tips
@@ -131,8 +132,19 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         trace!("POW hash: {}", pow_hash);
         let (difficulty, p) = self.blockchain.verify_proof_of_work(self, &pow_hash, tips.iter()).await?;
 
-        // Find the cumulative difficulty for this block
+        // Find the common base between the block and the current blockchain
         let (base, base_height) = self.blockchain.find_common_base(self, header.get_tips()).await?;
+        let base_topoheight = self.get_topo_height_for_hash(&base).await?;
+        // Because we can't compute the merkle hash without executing the block
+        // we only check it if we have the merkle hash at the common base
+        if let Ok(base_merkle_hash) = self.get_merkle_hash_at_topoheight(base_topoheight).await {
+            if base_merkle_hash != *header.get_merkle_hash() {
+                debug!("Block {} has a different merkle hash than the common base", hash);
+                return Err(BlockchainError::InvalidMerkleHash(hash, base_merkle_hash, header.get_merkle_hash().clone()));
+            }
+        }
+
+        // Find the cumulative difficulty for this block
         let (_, cumulative_difficulty) = self.blockchain.find_tip_work_score(self, &hash, &base, base_height).await?;
 
         // Store the block in both maps
@@ -304,6 +316,18 @@ impl<S: Storage> PrunedTopoheightProvider for ChainValidator<'_, S> {
     }
 
     async fn set_pruned_topoheight(&mut self, _: u64) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
+    }
+}
+
+#[async_trait]
+impl<S: Storage> MerkleHashProvider for ChainValidator<'_, S> {
+    async fn get_merkle_hash_at_topoheight(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
+        let storage = self.blockchain.get_storage().read().await;
+        storage.get_merkle_hash_at_topoheight(topoheight).await
+    }
+
+    async fn set_merkle_hash_at_topoheight(&mut self,  _: u64, _: &Hash) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 }
