@@ -122,7 +122,7 @@ pub struct Config {
     #[clap(long)]
     pub exclusive_nodes: Vec<String>,
     /// Set dir path for blockchain storage.
-    /// This will be happened by the network name for the database directory.
+    /// This will be appended by the network name for the database directory.
     /// It must ends with a slash.
     #[clap(long)]
     pub dir_path: Option<String>,
