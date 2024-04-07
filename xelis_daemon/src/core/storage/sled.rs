@@ -143,7 +143,7 @@ macro_rules! init_cache {
 
 impl SledStorage {
     pub fn new(dir_path: String, cache_size: Option<usize>, network: Network) -> Result<Self, BlockchainError> {
-        let sled = sled::open(format!("{}{}", dir_path, network))?;
+        let sled = sled::open(format!("{}{}", dir_path, network.to_string().to_lowercase()))?;
         let mut storage = Self {
             mainnet: network.is_mainnet(),
             transactions: sled.open_tree("transactions")?,
