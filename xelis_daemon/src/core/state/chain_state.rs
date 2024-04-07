@@ -2,11 +2,25 @@ use std::{collections::{hash_map::Entry, HashMap}, ops::{Deref, DerefMut}};
 use async_trait::async_trait;
 use log::{debug, trace};
 use xelis_common::{
-    account::{BalanceType, CiphertextCache, VersionedBalance, VersionedNonce},
+    account::{
+        BalanceType,
+        CiphertextCache,
+        VersionedBalance,
+        VersionedNonce
+    },
     config::XELIS_ASSET,
-    crypto::{elgamal::Ciphertext, Hash, PublicKey},
-    transaction::{verify::BlockchainVerificationState, Reference, Transaction},
-    utils::format_xelis,
+    crypto::{
+        elgamal::Ciphertext,
+        Hash,
+        PublicKey
+    },
+    serializer::Serializer,
+    transaction::{
+        verify::BlockchainVerificationState,
+        Reference,
+        Transaction
+    },
+    utils::format_xelis
 };
 use crate::core::{
     blockchain::Blockchain,
@@ -262,18 +276,20 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             merkle_builder.add(previous_merkle_hash);
         }
 
+        // All changes applied to disk
+        let mut changes: Vec<u8> = Vec::new();
         // Apply all balances changes at topoheight
         // We injected the sender balances in the receiver balances previously
         for (account, balances) in self.inner.receiver_balances {
-            // Add the account to the merkle tree
-            merkle_builder.add_as_hash(*account.as_bytes());
+            // Add the account to changes
+            changes.extend_from_slice(account.as_bytes());
 
             for (asset, version) in balances {
                 trace!("Saving versioned balance {} for {} at topoheight {}", version, account.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
 
-                // Add its changes to the merkle tree
-                merkle_builder.add(asset);
-                merkle_builder.add_element(&version);
+                // Add changes, this will be used to build the merkle hash
+                changes.extend_from_slice(asset.as_bytes());
+                changes.extend_from_slice(&version.to_bytes());
 
                 self.inner.storage.set_last_balance_to(account, asset, self.inner.topoheight, &version).await?;
             }
@@ -284,6 +300,9 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 self.inner.storage.set_last_nonce_to(account, self.inner.topoheight, &VersionedNonce::new(0, None)).await?;
             }
         }
+
+        // Add all serialized changes to the merkle tree
+        merkle_builder.add_bytes(&changes);
 
         // Build the merkle hash of the topoheight and store it
         let merkle_hash = merkle_builder.build();

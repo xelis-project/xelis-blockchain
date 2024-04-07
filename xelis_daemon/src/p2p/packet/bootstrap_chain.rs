@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     hash::{Hash as StdHash, Hasher}
 };
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use log::debug;
 use xelis_common::{
     account::{BalanceType, CiphertextCache},
@@ -49,8 +49,10 @@ pub struct BlockMetadata {
     pub cumulative_difficulty: CumulativeDifficulty,
     // Difficulty P variable
     pub p: VarUint,
-    // Merkle hash of the block
-    pub merkle_hash: Hash,
+    // Balances Merkle hash of the block
+    pub balances_merkle_hash: Hash,
+    // Tips Merkle hash of the block
+    pub tips_merkle_hash: Hash,
 }
 
 impl StdHash for BlockMetadata {
@@ -75,7 +77,8 @@ impl Serializer for BlockMetadata {
         let difficulty = Difficulty::read(reader)?;
         let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
         let p = VarUint::read(reader)?;
-        let merkle_hash = reader.read_hash()?;
+        let balances_merkle_hash = reader.read_hash()?;
+        let tips_merkle_hash = reader.read_hash()?;
 
         Ok(Self {
             hash,
@@ -84,7 +87,8 @@ impl Serializer for BlockMetadata {
             difficulty,
             cumulative_difficulty,
             p,
-            merkle_hash
+            balances_merkle_hash,
+            tips_merkle_hash
         })
     }
 
@@ -95,11 +99,19 @@ impl Serializer for BlockMetadata {
         self.difficulty.write(writer);
         self.cumulative_difficulty.write(writer);
         self.p.write(writer);
-        writer.write_hash(&self.merkle_hash);
+        writer.write_hash(&self.balances_merkle_hash);
+        writer.write_hash(&self.tips_merkle_hash);
     }
 
     fn size(&self) -> usize {
-        self.hash.size() + self.supply.size() + self.reward.size() + self.difficulty.size() + self.cumulative_difficulty.size() + self.p.size() + self.merkle_hash.size()
+        self.hash.size()
+        + self.supply.size()
+        + self.reward.size()
+        + self.difficulty.size()
+        + self.cumulative_difficulty.size()
+        + self.p.size()
+        + self.balances_merkle_hash.size()
+        + self.tips_merkle_hash.size()
     }
 }
 
@@ -323,8 +335,8 @@ impl Serializer for StepRequest<'_> {
 pub enum StepResponse {
     // common point, topoheight of stable hash, stable height, stable hash, Stable Merkle Hash
     ChainInfo(Option<CommonPoint>, u64, u64, Hash, Hash),
-    // Merkle Hashes, pagination
-    Merkles(IndexSet<(Hash, Hash)>, Option<u64>),
+    // Merkle Block Hash -> Tips, pagination
+    Merkles(IndexMap<Hash, IndexSet<Hash>>, Option<u64>),
     // Set of assets, pagination
     Assets(IndexSet<AssetWithData>, Option<u64>),
     // Set of keys, pagination
@@ -365,6 +377,17 @@ impl Serializer for StepResponse {
                 Self::ChainInfo(common_point, topoheight, stable_height, hash, merkle_hash)
             },
             1 => {
+                let hashes = IndexMap::read(reader)?;
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+                Self::Merkles(hashes, page)
+            },
+            2 => {
                 let assets = IndexSet::<AssetWithData>::read(reader)?;
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
@@ -375,7 +398,7 @@ impl Serializer for StepResponse {
                 }
                 Self::Assets(assets, page)
             },
-            2 => {
+            3 => {
                 let keys = IndexSet::<PublicKey>::read(reader)?;
                 let page = Option::read(reader)?;
                 if let Some(page_number) = &page {
@@ -386,13 +409,13 @@ impl Serializer for StepResponse {
                 }
                 Self::Keys(keys, page)
             },
-            3 => {
+            4 => {
                 Self::Balances(Vec::read(reader)?)
             },
-            4 => {
+            5 => {
                 Self::Nonces(Vec::<u64>::read(reader)?)
             },
-            5 => {
+            6 => {
                 Self::BlocksMetadata(IndexSet::read(reader)?)
             },
             id => {

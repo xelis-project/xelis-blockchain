@@ -72,6 +72,8 @@ pub struct Connection {
     bytes_in: AtomicUsize,
     // total bytes sent
     bytes_out: AtomicUsize,
+    // total bytes sent using current key
+    bytes_out_key: AtomicUsize,
     // when the connection was established
     connected_on: TimestampSeconds,
     // if Connection#close() is called, close is set to true
@@ -85,7 +87,7 @@ pub struct Connection {
 }
 
 // We are rotating every 1GB sent
-const ROTATE_EVERY_N_BYTES: usize = 1024 * 1024 * 1024;
+const ROTATE_EVERY_N_BYTES: usize = 1000;
 
 impl Connection {
     pub fn new(stream: TcpStream, addr: SocketAddr, out: bool) -> Self {
@@ -102,6 +104,7 @@ impl Connection {
             connected_on: get_current_time_in_seconds(),
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
+            bytes_out_key: AtomicUsize::new(0),
             closed: AtomicBool::new(false),
             rotate_key_in: AtomicUsize::new(0),
             rotate_key_out: AtomicUsize::new(0),
@@ -202,6 +205,9 @@ impl Connection {
         // Increment the key rotation counter
         self.rotate_key_out.fetch_add(1, Ordering::Relaxed);
 
+        // Reset the counter
+        self.bytes_out_key.store(0, Ordering::Relaxed);
+
         Ok(packet)
     }
 
@@ -234,15 +240,18 @@ impl Connection {
         let mut stream = self.write.lock().await;
 
         // Count the bytes sent
-        let bytes_out = self.bytes_out.fetch_add(packet.len(), Ordering::Relaxed);
+        self.bytes_out.fetch_add(packet.len(), Ordering::Relaxed);
 
         if self.encryption.is_write_ready().await {
             let buffer = self.encryption.encrypt_packet(packet).await?;
             // Send the bytes in encrypted format
             self.send_packet_bytes_internal(&mut stream, &buffer).await?;
 
+            // Count the bytes sent with the current key
+            let bytes_out_key = self.bytes_out_key.fetch_add(packet.len(), Ordering::Relaxed);
+
             // Rotate the key if necessary
-            if bytes_out > 0 && bytes_out % ROTATE_EVERY_N_BYTES == 0 {
+            if bytes_out_key > 0 && bytes_out_key >= ROTATE_EVERY_N_BYTES {
                 debug!("Rotating our key with peer {}", self.get_address());
                 let packet = self.rotate_key_packet().await?;
                 // Send the new key to the peer

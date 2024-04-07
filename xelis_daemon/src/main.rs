@@ -132,11 +132,7 @@ async fn main() -> Result<()> {
             None
         };
 
-        let dir_path = if let Some(path) = blockchain_config.dir_path.as_ref() {
-            path.clone()
-        } else {
-            config.network.to_string().to_lowercase()
-        };
+        let dir_path = blockchain_config.dir_path.clone().unwrap_or_default();
         SledStorage::new(dir_path, use_cache, config.network)?
     };
 

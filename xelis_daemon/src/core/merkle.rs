@@ -45,6 +45,11 @@ impl<'a> MerkleBuilder<'a> {
         self.hashes.push(Cow::Owned(hash(&element.to_bytes())));
     }
 
+    /// Add a byte array to the list of hashes
+    pub fn add_bytes(&mut self, bytes: &[u8]) {
+        self.hashes.push(Cow::Owned(hash(bytes)));
+    }
+
     // Convert a byte array of HASH_SIZE to a Hash and add it to the list of hashes
     pub fn add_as_hash(&mut self, bytes: [u8; HASH_SIZE]) {
         self.hashes.push(Cow::Owned(Hash::new(bytes)));
@@ -68,5 +73,10 @@ impl<'a> MerkleBuilder<'a> {
         }
         debug_assert!(self.hashes.len() == 1);
         self.hashes.remove(0).into_owned()
+    }
+
+    // Verify the merkle tree with a given root hash
+    pub fn verify(&mut self, root: &Hash) -> bool {
+        self.build() == *root
     }
 }

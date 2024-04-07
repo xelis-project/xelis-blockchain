@@ -27,6 +27,8 @@ pub enum P2pError {
     InvalidBlockIdList,
     #[error("Incompatible direction received")]
     InvalidDirection,
+    #[error("Invalid merkle hash")]
+    InvalidMerkleHash,
     #[error("Duplicated peer {} received from {} received in ping packet (direction = {:?})", _0, _1, _2)]
     DuplicatedPeer(SocketAddr, SocketAddr, Direction),
     #[error("Pruned topoheight {} is greater than height {} in ping packet", _0, _1)]

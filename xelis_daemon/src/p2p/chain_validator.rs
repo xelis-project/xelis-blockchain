@@ -14,7 +14,7 @@ use xelis_common::{
     varuint::VarUint
 };
 use crate::core::{
-    blockchain::Blockchain,
+    blockchain::{build_merkle_tips_hash, Blockchain},
     blockdag,
     error::BlockchainError,
     storage::{
@@ -128,6 +128,12 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             }
         }
 
+        let tips_merkle_hash = build_merkle_tips_hash(self, tips.iter()).await?;
+        if tips_merkle_hash != *header.get_tips_merkle_hash() {
+            debug!("Block {} has a different tips merkle hash than the computed one", hash);
+            return Err(BlockchainError::InvalidTipsMerkleHash(hash, tips_merkle_hash, header.get_tips_merkle_hash().clone()))
+        }
+
         let pow_hash = header.get_pow_hash();
         trace!("POW hash: {}", pow_hash);
         let (difficulty, p) = self.blockchain.verify_proof_of_work(self, &pow_hash, tips.iter()).await?;
@@ -140,7 +146,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         if let Ok(base_merkle_hash) = self.get_balances_merkle_hash_at_topoheight(base_topoheight).await {
             if base_merkle_hash != *header.get_balances_merkle_hash() {
                 debug!("Block {} has a different merkle hash than the common base", hash);
-                return Err(BlockchainError::InvalidMerkleHash(hash, base_merkle_hash, header.get_balances_merkle_hash().clone()));
+                return Err(BlockchainError::InvalidBalancesMerkleHash(hash, base_merkle_hash, header.get_balances_merkle_hash().clone()));
             }
         }
 

@@ -16,7 +16,12 @@ use xelis_common::{
         RPCTransaction
     },
     asset::AssetData,
-    block::{Block, BlockHeader, EXTRA_NONCE_SIZE},
+    block::{
+        get_combined_hash_for_tips,
+        Block,
+        BlockHeader,
+        EXTRA_NONCE_SIZE
+    },
     config::{
         COIN_DECIMALS,
         MAXIMUM_SUPPLY,
@@ -89,7 +94,10 @@ use tokio::sync::{Mutex, RwLock};
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
-use super::storage::{BlocksAtHeightProvider, PrunedTopoheightProvider};
+use super::{
+    merkle::MerkleBuilder,
+    storage::{BlocksAtHeightProvider, PrunedTopoheightProvider}
+};
 
 #[derive(Debug, clap::Args)]
 pub struct Config {
@@ -114,6 +122,8 @@ pub struct Config {
     #[clap(long)]
     pub exclusive_nodes: Vec<String>,
     /// Set dir path for blockchain storage.
+    /// This will be happened by the network name for the database directory.
+    /// It must ends with a slash.
     #[clap(long)]
     pub dir_path: Option<String>,
     /// Set LRUCache size (0 = disabled).
@@ -283,7 +293,7 @@ impl<S: Storage> Blockchain<S> {
 
         let arc = Arc::new(blockchain);
         // create P2P Server
-        if !config.disable_p2p_server && arc.network != Network::Dev {
+        if !config.disable_p2p_server {
             info!("Starting P2p server...");
             // setup exclusive nodes
             let mut exclusive_nodes: Vec<SocketAddr> = Vec::with_capacity(config.exclusive_nodes.len());
@@ -298,7 +308,7 @@ impl<S: Storage> Blockchain<S> {
                 exclusive_nodes.push(addr);
             }
 
-            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing) {
+            match P2pServer::new(config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
@@ -431,7 +441,7 @@ impl<S: Storage> Blockchain<S> {
         } else {
             warn!("No genesis block found!");
             info!("Generating a new genesis block...");
-            let header = BlockHeader::new(0, Hash::zero(), 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
+            let header = BlockHeader::new(0, Hash::zero(), Hash::zero(), 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
             let block = Block::new(Immutable::Owned(header), Vec::new());
             let block_hash = block.hash();
             info!("Genesis generated: {} with {:?} {}", block.to_hex(), block_hash, block_hash);
@@ -1272,6 +1282,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Generate a block header template without transactions
     pub async fn get_block_header_template_for_storage(&self, storage: &S, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
+        trace!("get block header template");
         let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>(); // generate random bytes
         let tips_set = storage.get_tips().await?;
         let mut tips = Vec::with_capacity(tips_set.len());
@@ -1317,9 +1328,14 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
+        // Compute the combined merkle root of the tips
+        let tips_merkle_hash = build_merkle_tips_hash(&*storage, sorted_tips.iter()).await?;
+
         let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
-        let merkle_hash = storage.get_balances_merkle_hash_at_topoheight(self.get_stable_topoheight()).await?;
-        let block = BlockHeader::new(self.get_version_at_height(height), merkle_hash, height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
+        let (common_base, _) = self.find_common_base(storage, &sorted_tips).await?;
+        let common_topoheight = storage.get_topo_height_for_hash(&common_base).await?;
+        let balances_merkle_hash = storage.get_balances_merkle_hash_at_topoheight(common_topoheight).await?;
+        let block = BlockHeader::new(self.get_version_at_height(height), tips_merkle_hash, balances_merkle_hash, height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
 
         Ok(block)
     }
@@ -1540,9 +1556,15 @@ impl<S: Storage> Blockchain<S> {
             let merkle_hash = storage.get_balances_merkle_hash_at_topoheight(base_topoheight).await?;
             if merkle_hash != *block.get_balances_merkle_hash() {
                 debug!("Invalid merkle hash for block {}, expected {} but got {}", block_hash, merkle_hash, block.get_balances_merkle_hash());
-                return Err(BlockchainError::InvalidMerkleHash(block_hash, merkle_hash, block.get_balances_merkle_hash().clone()))
+                return Err(BlockchainError::InvalidBalancesMerkleHash(block_hash, merkle_hash, block.get_balances_merkle_hash().clone()))
             }
             base_cache = Some((base, base_height));
+
+            let tips_merkle_hash = build_merkle_tips_hash(&*storage, block.get_tips().iter()).await?;
+            if tips_merkle_hash != *block.get_tips_merkle_hash() {
+                debug!("Invalid tips merkle hash for block {}, expected {} but got {}", block_hash, tips_merkle_hash, block.get_tips_merkle_hash());
+                return Err(BlockchainError::InvalidTipsMerkleHash(block_hash, tips_merkle_hash, block.get_tips_merkle_hash().clone()))
+            }
         }
 
         // verify PoW and get difficulty for this block based on tips
@@ -2359,4 +2381,18 @@ pub fn get_block_dev_fee(height: u64) -> u64 {
     }
 
     0
+}
+
+// Compute the combined merkle root of the tips
+pub async fn build_merkle_tips_hash<'a, S: DifficultyProvider, I: Iterator<Item = &'a Hash> + ExactSizeIterator>(storage: &S, sorted_tips: I) -> Result<Hash, BlockchainError> {
+    let mut merkles = Vec::with_capacity(sorted_tips.len());
+    for hash in sorted_tips {
+        let mut merkle_builder = MerkleBuilder::new();
+        let header = storage.get_block_header_by_hash(hash).await?;
+        merkle_builder.add(hash);
+        merkle_builder.add(header.get_tips_merkle_hash());
+        merkles.push(merkle_builder.build());
+    }
+
+    Ok(get_combined_hash_for_tips(merkles.iter()))
 }
