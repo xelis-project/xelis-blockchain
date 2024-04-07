@@ -23,3 +23,15 @@ pub fn get_combined_hash_for_tips<'a, I: Iterator<Item = &'a Hash>>(tips: I) -> 
     }
     Hash::new(bytes)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::crypto::Hash;
+
+    #[test]
+    fn test_one_hash() {
+        let hash = Hash::new([255u8; 32]);
+        let combined_hash = super::get_combined_hash_for_tips(std::iter::once(&hash));
+        assert_eq!(combined_hash, hash);
+    }
+}
