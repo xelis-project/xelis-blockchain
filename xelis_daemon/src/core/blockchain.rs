@@ -1812,19 +1812,17 @@ impl<S: Storage> Blockchain<S> {
 
                 // Reward the miner of this block
                 // We have a decreasing block reward if there is too much side block
-                let is_side_block = self.is_side_block(storage, &hash).await?;
+                let is_side_block = self.is_side_block_internal(storage, &hash, highest_topo).await?;
                 let height = block.get_height();
                 let side_blocks_count = match side_blocks.entry(height) {
                     Entry::Occupied(entry) => entry.into_mut(),
                     Entry::Vacant(entry) => {
                         let mut count = 0;
-                        if height <= base_height {
-                            let blocks_at_height = storage.get_blocks_at_height(height).await?;
-                            for block in blocks_at_height {
-                                if block != hash && self.is_side_block(storage, &block).await? {
-                                    count += 1;
-                                    error!("Found side block {} at height {}", block, height);
-                                }
+                        let blocks_at_height = storage.get_blocks_at_height(height).await?;
+                        for block in blocks_at_height {
+                            if block != hash && self.is_side_block_internal(storage, &block, highest_topo).await? {
+                                count += 1;
+                                debug!("Found side block {} at height {}", block, height);
                             }
                         }
 
@@ -1833,11 +1831,11 @@ impl<S: Storage> Blockchain<S> {
                 };
 
                 let mut block_reward = self.internal_get_block_reward(past_supply, is_side_block, *side_blocks_count).await?;
+                trace!("set block {} reward to {} at {} (height {}, side block: {}, {} {}%)", hash, block_reward, highest_topo, height, is_side_block, side_blocks_count, side_block_reward_percentage(*side_blocks_count));
                 if is_side_block {
                     *side_blocks_count += 1;
                 }
 
-                trace!("set block reward to {} at {} (height {}, side block: {}, {} {}%)", block_reward, highest_topo, height, is_side_block, side_blocks_count, side_block_reward_percentage(*side_blocks_count));
                 storage.set_block_reward_at_topo_height(highest_topo, block_reward)?;
                 
                 let supply = past_supply + block_reward;
@@ -2249,8 +2247,12 @@ impl<S: Storage> Blockchain<S> {
         !storage.is_block_topological_ordered(hash).await
     }
 
-    // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
     pub async fn is_side_block(&self, storage: &S, hash: &Hash) -> Result<bool, BlockchainError> {
+        self.is_side_block_internal(storage, hash, self.get_topo_height()).await
+    }
+
+    // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
+    pub async fn is_side_block_internal(&self, storage: &S, hash: &Hash, current_topoheight: u64) -> Result<bool, BlockchainError> {
         trace!("is block {} a side block", hash);
         if !storage.is_block_topological_ordered(hash).await {
             return Ok(false)
@@ -2258,7 +2260,7 @@ impl<S: Storage> Blockchain<S> {
 
         let topoheight = storage.get_topo_height_for_hash(hash).await?;
         // genesis block can't be a side block
-        if topoheight == 0 {
+        if topoheight == 0 || topoheight > current_topoheight {
             return Ok(false)
         }
 
