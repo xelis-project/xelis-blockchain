@@ -61,6 +61,8 @@ pub const DEV_FEES: [DevFeeThreshold; 3] = [
 ];
 // only 30% of reward for side block
 pub const SIDE_BLOCK_REWARD_PERCENT: u64 = 30;
+// maximum 3 blocks for side block reward
+pub const SIDE_BLOCK_REWARD_MAX_BLOCKS: u64 = 3;
 pub const EMISSION_SPEED_FACTOR: u64 = 20;
 
 // Developer address for paying dev fees until Smart Contracts integration

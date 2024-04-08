@@ -54,7 +54,7 @@ use crate::{
         BLOCK_TIME_MILLIS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
         DEFAULT_CACHE_SIZE, DEFAULT_P2P_BIND_ADDRESS, DEFAULT_RPC_BIND_ADDRESS, DEV_FEES,
         DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY, MAX_BLOCK_SIZE,
-        MILLIS_PER_SECOND, MINIMUM_DIFFICULTY, P2P_DEFAULT_MAX_PEERS,
+        MILLIS_PER_SECOND, MINIMUM_DIFFICULTY, P2P_DEFAULT_MAX_PEERS, SIDE_BLOCK_REWARD_MAX_BLOCKS,
         PRUNE_SAFETY_LIMIT, SIDE_BLOCK_REWARD_PERCENT, STABLE_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT
     },
     core::{
@@ -1781,6 +1781,8 @@ impl<S: Storage> Blockchain<S> {
 
             // This is used to verify that each nonce is used only one time
             let mut nonce_checker = NonceChecker::new();
+            // Side blocks counter per height
+            let mut side_blocks: HashMap<u64, u64> = HashMap::new();
             // time to order the DAG that is moving
             debug!("Ordering blocks based on generated DAG order ({} blocks)", full_order.len());
             for (i, hash) in full_order.into_iter().enumerate() {
@@ -1803,17 +1805,27 @@ impl<S: Storage> Blockchain<S> {
                     storage.get_supply_at_topo_height(highest_topo - 1).await?
                 };
 
-                let mut block_reward = self.get_block_reward(storage, &hash, past_supply).await?;
+                // Block for this hash
+                let block = storage.get_block_by_hash(&hash).await?;
 
-                trace!("set block reward to {} at {}", block_reward, highest_topo);
+                // Reward the miner of this block
+                // We have a decreasing block reward if there is too much side block
+                let is_side_block = self.is_side_block(storage, &hash).await?;
+                let height = block.get_height();
+                let side_blocks_count = side_blocks.entry(height).or_insert(0);
+                if is_side_block {
+                    *side_blocks_count += 1;
+                }
+
+                let mut block_reward = self.internal_get_block_reward(past_supply, is_side_block, *side_blocks_count).await?;
+
+                trace!("set block reward to {} at {} (side block: {}, count {})", block_reward, highest_topo, is_side_block, *side_blocks_count);
                 storage.set_block_reward_at_topo_height(highest_topo, block_reward)?;
                 
                 let supply = past_supply + block_reward;
                 trace!("set block supply to {} at {}", supply, highest_topo);
                 storage.set_supply_at_topo_height(highest_topo, supply)?;
 
-                // Block for this hash
-                let block = storage.get_block_by_hash(&hash).await?;
                 // All fees from the transactions executed in this block
                 let mut total_fees = 0;
                 // Chain State used for the verification
@@ -2137,15 +2149,37 @@ impl<S: Storage> Blockchain<S> {
 
     // Get block reward based on the type of the block
     // Block shouldn't be orphaned
-    pub async fn get_block_reward(&self, storage: &S, hash: &Hash, past_supply: u64) -> Result<u64, BlockchainError> {
-        let block_reward = if self.is_side_block(storage, &hash).await? {
-            trace!("Block {} is a side block", hash);
+    pub async fn internal_get_block_reward(&self, past_supply: u64, is_side_block: bool, side_blocks_count: u64) -> Result<u64, BlockchainError> {
+        trace!("internal get block reward");
+        let block_reward = if is_side_block {
             let reward = get_block_reward(past_supply);
-            reward * SIDE_BLOCK_REWARD_PERCENT / 100
+            let side_block_percent = side_block_reward_percentage(side_blocks_count);
+            trace!("side block reward: {}%", side_block_percent);
+
+            reward * side_block_percent / 100
         } else {
             get_block_reward(past_supply)
         };
         Ok(block_reward)
+    }
+
+    // Get the block reward for a block
+    // This will search all blocks at same height and verify which one are side blocks
+    pub async fn get_block_reward(&self, storage: &S, hash: &Hash, past_supply: u64) -> Result<u64, BlockchainError> {
+        let is_side_block = self.is_side_block(storage, hash).await?;
+        let mut side_blocks_count = 0;
+        if is_side_block {
+            // get the block height for this hash
+            let height = storage.get_height_for_block_hash(hash).await?;
+            let blocks_at_height = storage.get_blocks_at_height(height).await?;
+            for block in blocks_at_height {
+                if self.is_side_block(storage, &block).await? {
+                    side_blocks_count += 1;
+                }
+            }
+        }
+
+        self.internal_get_block_reward(past_supply, is_side_block, side_blocks_count).await
     }
 
     // retrieve all txs hashes until height or until genesis block that were executed in a block
@@ -2362,6 +2396,22 @@ impl<S: Storage> Blockchain<S> {
     }
 }
 
+// Get the block reward for a side block based on how many side blocks exists at same height
+pub fn side_block_reward_percentage(side_blocks: u64) -> u64 {
+    let mut side_block_percent = SIDE_BLOCK_REWARD_PERCENT;
+    if side_blocks > 0 {
+        if side_blocks < SIDE_BLOCK_REWARD_MAX_BLOCKS {
+            side_block_percent = SIDE_BLOCK_REWARD_PERCENT / (side_blocks + 1);
+        } else {
+            // If we have more than 3 side blocks at same height
+            // we reduce the reward to 5%
+            side_block_percent = 5;
+        }
+    }
+
+    side_block_percent
+}
+
 // Calculate the block reward based on the current supply
 pub fn get_block_reward(supply: u64) -> u64 {
     // Prevent any overflow
@@ -2397,4 +2447,17 @@ pub async fn build_merkle_tips_hash<'a, S: DifficultyProvider, I: Iterator<Item 
     }
 
     Ok(get_combined_hash_for_tips(merkles.iter()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reward_side_block_percentage() {
+        assert_eq!(side_block_reward_percentage(0), SIDE_BLOCK_REWARD_PERCENT);
+        assert_eq!(side_block_reward_percentage(1), SIDE_BLOCK_REWARD_PERCENT / 2);
+        assert_eq!(side_block_reward_percentage(2), SIDE_BLOCK_REWARD_PERCENT / 3);
+        assert_eq!(side_block_reward_percentage(3), 5);
+    }
 }
