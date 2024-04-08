@@ -460,6 +460,8 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // mine a block for current difficulty
+    // This is for testing purpose and shouldn't be directly used as it will mine on async threads
+    // which will reduce performance of the daemon and can take forever if difficulty is high
     pub async fn mine_block(&self, key: &PublicKey) -> Result<Block, BlockchainError> {
         let (mut header, difficulty) = {
             let storage = self.storage.read().await;
@@ -467,7 +469,7 @@ impl<S: Storage> Blockchain<S> {
             let (difficulty, _) = self.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await?;
             (block, difficulty)
         };
-        let mut hash = header.hash();
+        let mut hash = header.get_pow_hash();
         let mut current_height = self.get_height();
         while !self.is_simulator_enabled() && !check_difficulty(&hash, &difficulty)? {
             if self.get_height() != current_height {
@@ -476,7 +478,7 @@ impl<S: Storage> Blockchain<S> {
             }
             header.nonce += 1;
             header.timestamp = get_current_time_in_millis();
-            hash = header.hash();
+            hash = header.get_pow_hash();
         }
 
         let block = self.build_block_from_header(Immutable::Owned(header)).await?;
