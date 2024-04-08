@@ -60,9 +60,22 @@ pub const DEV_FEES: [DevFeeThreshold; 3] = [
     }
 ];
 // only 30% of reward for side block
+// This is to prevent spamming side blocks
+// and also give rewards for miners with valid work on main chain
 pub const SIDE_BLOCK_REWARD_PERCENT: u64 = 30;
 // maximum 3 blocks for side block reward
+// Each side block reward will be divided by the number of side blocks * 2
+// With a configuration of 3 blocks, we have the following percents:
+// 1 block: 30%
+// 2 blocks: 15%
+// 3 blocks: 7%
+// 4 blocks: minimum percentage set below
 pub const SIDE_BLOCK_REWARD_MAX_BLOCKS: u64 = 3;
+// minimum 5% of block reward for side block
+// This is the minimum given for all others valid side blocks
+pub const SIDE_BLOCK_REWARD_MIN_PERCENT: u64 = 5;
+// Emission speed factor for the emission curve
+// It is used to calculate based on the supply the block reward
 pub const EMISSION_SPEED_FACTOR: u64 = 20;
 
 // Developer address for paying dev fees until Smart Contracts integration

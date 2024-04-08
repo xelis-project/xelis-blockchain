@@ -55,7 +55,8 @@ use crate::{
         DEFAULT_CACHE_SIZE, DEFAULT_P2P_BIND_ADDRESS, DEFAULT_RPC_BIND_ADDRESS, DEV_FEES,
         DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY, MAX_BLOCK_SIZE,
         MILLIS_PER_SECOND, MINIMUM_DIFFICULTY, P2P_DEFAULT_MAX_PEERS, SIDE_BLOCK_REWARD_MAX_BLOCKS,
-        PRUNE_SAFETY_LIMIT, SIDE_BLOCK_REWARD_PERCENT, STABLE_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT
+        PRUNE_SAFETY_LIMIT, SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT,
+        TIMESTAMP_IN_FUTURE_LIMIT
     },
     core::{
         blockdag,
@@ -2421,11 +2422,11 @@ pub fn side_block_reward_percentage(side_blocks: u64) -> u64 {
     let mut side_block_percent = SIDE_BLOCK_REWARD_PERCENT;
     if side_blocks > 0 {
         if side_blocks < SIDE_BLOCK_REWARD_MAX_BLOCKS {
-            side_block_percent = SIDE_BLOCK_REWARD_PERCENT / (side_blocks + 1);
+            side_block_percent = SIDE_BLOCK_REWARD_PERCENT / (side_blocks * 2);
         } else {
             // If we have more than 3 side blocks at same height
             // we reduce the reward to 5%
-            side_block_percent = 5;
+            side_block_percent = SIDE_BLOCK_REWARD_MIN_PERCENT;
         }
     }
 
@@ -2477,7 +2478,7 @@ mod tests {
     fn test_reward_side_block_percentage() {
         assert_eq!(side_block_reward_percentage(0), SIDE_BLOCK_REWARD_PERCENT);
         assert_eq!(side_block_reward_percentage(1), SIDE_BLOCK_REWARD_PERCENT / 2);
-        assert_eq!(side_block_reward_percentage(2), SIDE_BLOCK_REWARD_PERCENT / 3);
-        assert_eq!(side_block_reward_percentage(3), 5);
+        assert_eq!(side_block_reward_percentage(2), SIDE_BLOCK_REWARD_PERCENT / 4);
+        assert_eq!(side_block_reward_percentage(3), SIDE_BLOCK_REWARD_MIN_PERCENT);
     }
 }
