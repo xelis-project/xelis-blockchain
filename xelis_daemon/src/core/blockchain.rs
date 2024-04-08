@@ -79,7 +79,9 @@ use crate::{
 };
 use std::{
     borrow::Cow, collections::{
-        HashMap, HashSet
+        hash_map::Entry,
+        HashMap,
+        HashSet
     },
     net::SocketAddr,
     num::NonZeroUsize,
@@ -1812,14 +1814,30 @@ impl<S: Storage> Blockchain<S> {
                 // We have a decreasing block reward if there is too much side block
                 let is_side_block = self.is_side_block(storage, &hash).await?;
                 let height = block.get_height();
-                let side_blocks_count = side_blocks.entry(height).or_insert(0);
+                let side_blocks_count = match side_blocks.entry(height) {
+                    Entry::Occupied(entry) => entry.into_mut(),
+                    Entry::Vacant(entry) => {
+                        let mut count = 0;
+                        if height <= base_height {
+                            let blocks_at_height = storage.get_blocks_at_height(height).await?;
+                            for block in blocks_at_height {
+                                if block != hash && self.is_side_block(storage, &block).await? {
+                                    count += 1;
+                                    error!("Found side block {} at height {}", block, height);
+                                }
+                            }
+                        }
+
+                        entry.insert(count)
+                    },
+                };
+
+                let mut block_reward = self.internal_get_block_reward(past_supply, is_side_block, *side_blocks_count).await?;
                 if is_side_block {
                     *side_blocks_count += 1;
                 }
 
-                let mut block_reward = self.internal_get_block_reward(past_supply, is_side_block, *side_blocks_count).await?;
-
-                trace!("set block reward to {} at {} (side block: {}, count {})", block_reward, highest_topo, is_side_block, *side_blocks_count);
+                trace!("set block reward to {} at {} (height {}, side block: {}, {} {}%)", block_reward, highest_topo, height, is_side_block, side_blocks_count, side_block_reward_percentage(*side_blocks_count));
                 storage.set_block_reward_at_topo_height(highest_topo, block_reward)?;
                 
                 let supply = past_supply + block_reward;
