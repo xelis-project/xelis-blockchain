@@ -87,7 +87,7 @@ pub struct Connection {
 }
 
 // We are rotating every 1GB sent
-const ROTATE_EVERY_N_BYTES: usize = 1000;
+const ROTATE_EVERY_N_BYTES: usize = 1024 * 1024 * 1024;
 
 impl Connection {
     pub fn new(stream: TcpStream, addr: SocketAddr, out: bool) -> Self {
