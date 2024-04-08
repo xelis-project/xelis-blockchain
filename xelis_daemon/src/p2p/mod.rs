@@ -102,7 +102,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering}
     },
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{hash_map::Entry, HashSet},
     convert::TryInto,
     net::{IpAddr, SocketAddr},
     time::Duration,
@@ -158,6 +158,8 @@ pub struct P2pServer<S: Storage> {
     // Are we allowing others nodes to share us as a potential peer ?
     // Also if we allows to be listed in get_peers RPC API
     sharable: bool,
+    // Are we syncing the chain with another peer
+    is_syncing: AtomicBool,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -198,7 +200,8 @@ impl<S: Storage> P2pServer<S> {
             allow_boost_sync_mode,
             max_chain_response_size: max_chain_response_size.unwrap_or(CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS),
             exclusive_nodes: HashSet::from_iter(exclusive_nodes.into_iter()),
-            sharable
+            sharable,
+            is_syncing: AtomicBool::new(false),
         };
 
         let arc = Arc::new(server);
@@ -657,6 +660,16 @@ impl<S: Storage> P2pServer<S> {
         self.allow_boost_sync_mode
     }
 
+    // Set the chain syncing state
+    fn set_chain_syncing(&self, syncing: bool) {
+        self.is_syncing.store(syncing, Ordering::Release);
+    }
+
+    // Check if we are syncing the chain
+    pub fn is_syncing_chain(&self) -> bool {
+        self.is_syncing.load(Ordering::Acquire)
+    }
+
     // This a infinite task that is running every CHAIN_SYNC_DELAY seconds
     // Based on the user configuration, it will try to sync the chain with another node with longest chain if any
     async fn chain_sync_loop(self: Arc<Self>) {
@@ -703,6 +716,9 @@ impl<S: Storage> P2pServer<S> {
 
             if let Some(peer) = peer_selected {
                 debug!("Selected for chain sync is {}", peer);
+                // We are syncing the chain
+                self.set_chain_syncing(true);
+
                 // check if we can maybe fast sync first
                 // otherwise, fallback on the normal chain sync
                 let err = if fast_sync {
@@ -721,6 +737,8 @@ impl<S: Storage> P2pServer<S> {
                     }
                 };
                 previous_peer = Some((peer, err));
+                // We are not syncing anymore
+                self.set_chain_syncing(false);
             } else {
                 trace!("No peer found for chain sync, waiting before next check");
                 sleep(interval).await;
@@ -2214,13 +2232,16 @@ impl<S: Storage> P2pServer<S> {
         let mut top_topoheight: u64 = 0;
         let mut top_height: u64 = 0;
         let mut top_block_hash: Option<Hash> = None;
+        // Tips Stable merkle hash
         let mut stable_merkle_hash: Option<Hash> = None;
-        let mut merkles_built: HashMap<Hash, Hash> = HashMap::new();
+        // This cache will holds all merkles built for each block hash
+        // This is used to build the whole tree to verify the stable merkle hash
+        let mut merkles_built: LruCache<Hash, Hash> = LruCache::new(NonZeroUsize::new(1024).unwrap());
 
-        let mut all_assets = HashSet::new();
         loop {
             let response = if let Some(step) = step.take() {
                 info!("Requesting step {:?}", step.kind());
+                // This will also verify that the received step is the requested one
                 peer.request_boostrap_chain(step).await?
             } else {
                 break;
@@ -2262,8 +2283,8 @@ impl<S: Storage> P2pServer<S> {
                     top_height = height;
                     top_block_hash = Some(hash);
                     stable_merkle_hash = Some(merkle_hash);
-
                     stable_topoheight = topoheight;
+
                     Some(StepRequest::Merkles(our_topoheight, topoheight, None))
                 },
                 // Request all block hashes from our common point to the stable topoheight
@@ -2277,7 +2298,7 @@ impl<S: Storage> P2pServer<S> {
                             merkles.push(builder.build());
                         }
                         let merkle = get_combined_hash_for_tips(merkles.iter());
-                        merkles_built.insert(block_hash, merkle);
+                        merkles_built.put(block_hash, merkle);
                     }
 
                     if next_page.is_some() {
@@ -2293,7 +2314,6 @@ impl<S: Storage> P2pServer<S> {
                         let (asset, data) = asset.consume();
                         debug!("Saving asset {} at topoheight {}", asset, stable_topoheight);
                         storage.add_asset(&asset, data).await?;
-                        all_assets.insert(asset);
                     }
 
                     if next_page.is_some() {
@@ -2321,28 +2341,41 @@ impl<S: Storage> P2pServer<S> {
                         }
                     }
 
-                    // TODO don't retrieve ALL each time but one by one
-                    // otherwise in really long time, it may consume lot of memory
-                    for asset in &all_assets {
-                        debug!("Request balances for asset {}", asset);
-                        let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(stable_topoheight, Cow::Borrowed(&asset), Cow::Borrowed(&keys))).await? else {
-                            // shouldn't happen
-                            error!("Received an invalid StepResponse (how ?) while fetching balances");
-                            return Err(P2pError::InvalidPacket.into())
+                    let mut page = 0;
+                    loop {
+                        // Retrieve chunked assets
+                        let assets = {
+                            let storage = self.blockchain.get_storage().read().await;
+                            let assets = storage.get_chunked_assets(MAX_ITEMS_PER_PAGE, page * MAX_ITEMS_PER_PAGE).await?;
+                            if assets.is_empty() {
+                                break
+                            }
+                            page += 1;
+                            assets
                         };
 
-                        // save all balances for this asset
-                        let mut storage = self.blockchain.get_storage().write().await;
-                        for (key, balance) in keys.iter().zip(balances) {
-                            // check that the account have balance for this asset
-                            if let Some((balance, output_balance, balance_type)) = balance {
-                                debug!("Saving balance {:?} for key {} at topoheight {}", balance, key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
-                                let mut versioned_balance = storage.get_new_versioned_balance(key, &asset, stable_topoheight).await?;
-                                versioned_balance.set_balance(balance);
-                                versioned_balance.set_output_balance(output_balance);
-                                versioned_balance.set_balance_type(balance_type);
-                                versioned_balance.set_previous_topoheight(None);
-                                storage.set_last_balance_to(key, &asset, stable_topoheight, &versioned_balance).await?;
+                        // Request every asset balances
+                        for asset in assets {
+                            debug!("Request balances for asset {}", asset);
+                            let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(stable_topoheight, Cow::Borrowed(&asset), Cow::Borrowed(&keys))).await? else {
+                                // shouldn't happen
+                                error!("Received an invalid StepResponse (how ?) while fetching balances");
+                                return Err(P2pError::InvalidPacket.into())
+                            };
+    
+                            // save all balances for this asset
+                            let mut storage = self.blockchain.get_storage().write().await;
+                            for (key, balance) in keys.iter().zip(balances) {
+                                // check that the account have balance for this asset
+                                if let Some((balance, output_balance, balance_type)) = balance {
+                                    debug!("Saving balance {:?} for key {} at topoheight {}", balance, key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
+                                    let mut versioned_balance = storage.get_new_versioned_balance(key, &asset, stable_topoheight).await?;
+                                    versioned_balance.set_balance(balance);
+                                    versioned_balance.set_output_balance(output_balance);
+                                    versioned_balance.set_balance_type(balance_type);
+                                    versioned_balance.set_previous_topoheight(None);
+                                    storage.set_last_balance_to(key, &asset, stable_topoheight, &versioned_balance).await?;
+                                }
                             }
                         }
                     }
