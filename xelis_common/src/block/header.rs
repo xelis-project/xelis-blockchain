@@ -96,8 +96,9 @@ impl BlockHeader {
         &self.tips
     }
 
+    // Compute a hash covering all tips hashes
     pub fn get_tips_hash(&self) -> Hash {
-        let mut bytes = vec![];
+        let mut bytes = Vec::with_capacity(self.tips.len() * HASH_SIZE);
 
         for tx in &self.tips {
             bytes.extend(tx.as_bytes())
@@ -126,9 +127,9 @@ impl BlockHeader {
         self.txs_hashes
     }
 
+    // Compute a hash covering all TXs hashes
     pub fn get_txs_hash(&self) -> Hash {
-        let mut bytes = vec![];
-
+        let mut bytes = Vec::with_capacity(self.txs_hashes.len() * HASH_SIZE);
         for tx in &self.txs_hashes {
             bytes.extend(tx.as_bytes())
         }
