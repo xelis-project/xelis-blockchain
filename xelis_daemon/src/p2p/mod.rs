@@ -2148,7 +2148,7 @@ impl<S: Storage> P2pServer<S> {
                     let reward = storage.get_block_reward_at_topo_height(topoheight)?;
                     let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
-                    let p = storage.get_estimated_covariance_or_block_hash(&hash).await?;
+                    let p = storage.get_estimated_covariance_for_block_hash(&hash).await?;
                     let balances_merkle_hash = storage.get_balances_merkle_hash_at_topoheight(topoheight).await?;
                     // TODO
                     let tips_merkle_hash = Hash::zero();

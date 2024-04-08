@@ -223,13 +223,13 @@ impl<S: Storage> DifficultyProvider for ChainValidator<'_, S> {
         Ok(storage.get_block_header_by_hash(hash).await?)
     }
 
-    async fn get_estimated_covariance_or_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
+    async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
         if let Some(data) = self.blocks.get(hash) {
             return Ok(data.p.clone())
         }
 
         let storage = self.blockchain.get_storage().read().await;
-        Ok(storage.get_estimated_covariance_or_block_hash(hash).await?)
+        Ok(storage.get_estimated_covariance_for_block_hash(hash).await?)
     }
 
     async fn set_estimated_covariance_for_block_hash(&mut self, _: &Hash, _: VarUint) -> Result<(), BlockchainError> {
