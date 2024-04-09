@@ -9,7 +9,7 @@ mod encryption;
 
 pub use encryption::EncryptionKey;
 
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexSet;
 use lru::LruCache;
 use xelis_common::{
     account::VersionedNonce,
@@ -18,7 +18,7 @@ use xelis_common::{
         NotifyEvent,
         PeerPeerDisconnectedEvent
     },
-    block::{get_combined_hash_for_tips, Block, BlockHeader},
+    block::{Block, BlockHeader},
     config::{TIPS_LIMIT, VERSION},
     crypto::{Hash, Hashable},
     difficulty::CumulativeDifficulty,
@@ -41,8 +41,7 @@ use crate::{
     core::{
         blockchain::Blockchain,
         error::BlockchainError,
-        storage::Storage,
-        merkle::MerkleBuilder
+        storage::Storage
     },
     p2p::{
         chain_validator::ChainValidator,
@@ -2090,21 +2089,6 @@ impl<S: Storage> P2pServer<S> {
                 let merkle_hash = storage.get_balances_merkle_hash_at_topoheight(stable_topo).await?;
                 StepResponse::ChainInfo(common_point, stable_topo, height, hash, merkle_hash)
             },
-            StepRequest::Merkles(common_topoheight, topo, page) => {
-                let mut merkles = IndexMap::new();
-                let page = page.unwrap_or(0);
-                for topoheight in (common_topoheight+1..=topo).skip(page as usize * MAX_ITEMS_PER_PAGE).take(MAX_ITEMS_PER_PAGE) {
-                    let (hash, header) = storage.get_block_header_at_topoheight(topoheight).await?;
-                    merkles.insert(hash, header.get_tips().clone());
-                }
-
-                let page = if merkles.len() == MAX_ITEMS_PER_PAGE {
-                    Some(page + 1)
-                } else {
-                    None
-                };
-                StepResponse::Merkles(merkles, page)
-            },
             StepRequest::Assets(min, max, page) => {
                 if min > max {
                     warn!("Invalid range for assets");
@@ -2168,11 +2152,8 @@ impl<S: Storage> P2pServer<S> {
                     let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                     let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
                     let p = storage.get_estimated_covariance_for_block_hash(&hash).await?;
-                    let balances_merkle_hash = storage.get_balances_merkle_hash_at_topoheight(topoheight).await?;
-                    // TODO
-                    let tips_merkle_hash = Hash::zero();
 
-                    blocks.insert(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty, p, balances_merkle_hash, tips_merkle_hash });
+                    blocks.insert(BlockMetadata { hash, supply, reward, difficulty, cumulative_difficulty, p });
                 }
                 StepResponse::BlocksMetadata(blocks)
             },
@@ -2235,9 +2216,6 @@ impl<S: Storage> P2pServer<S> {
         let mut top_block_hash: Option<Hash> = None;
         // Tips Stable merkle hash
         let mut stable_merkle_hash: Option<Hash> = None;
-        // This cache will holds all merkles built for each block hash
-        // This is used to build the whole tree to verify the stable merkle hash
-        let mut merkles_built: LruCache<Hash, Hash> = LruCache::new(NonZeroUsize::new(1024).unwrap());
 
         loop {
             let response = if let Some(step) = step.take() {
@@ -2286,28 +2264,8 @@ impl<S: Storage> P2pServer<S> {
                     stable_merkle_hash = Some(merkle_hash);
                     stable_topoheight = topoheight;
 
-                    Some(StepRequest::Merkles(our_topoheight, topoheight, None))
+                    Some(StepRequest::Assets(our_topoheight, topoheight, None))
                 },
-                // Request all block hashes from our common point to the stable topoheight
-                StepResponse::Merkles(links, next_page) => {
-                    for (block_hash, tips) in links {
-                        let mut merkles = Vec::with_capacity(tips.len());
-                        for hash in tips {
-                            let mut builder = MerkleBuilder::new();
-                            builder.add(&hash);
-                            builder.add(merkles_built.get(&hash).cloned().ok_or(BlockchainError::Unknown)?);
-                            merkles.push(builder.build());
-                        }
-                        let merkle = get_combined_hash_for_tips(merkles.iter());
-                        merkles_built.put(block_hash, merkle);
-                    }
-
-                    if next_page.is_some() {
-                        Some(StepRequest::Merkles(our_topoheight, stable_topoheight, next_page))
-                    } else {
-                        Some(StepRequest::Assets(our_topoheight, stable_topoheight, None))
-                    }
-                }
                 // fetch all assets from peer
                 StepResponse::Assets(assets, next_page) => {
                     let mut storage = self.blockchain.get_storage().write().await;
@@ -2441,7 +2399,6 @@ impl<S: Storage> P2pServer<S> {
                         storage.set_topo_height_for_block(&hash, lowest_topoheight).await?;
 
                         storage.set_cumulative_difficulty_for_block_hash(&hash, metadata.cumulative_difficulty).await?;
-                        storage.set_balances_merkle_hash_at_topoheight(lowest_topoheight, &metadata.balances_merkle_hash).await?;
 
                         // save the block with its transactions, difficulty
                         storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.p, hash).await?;
