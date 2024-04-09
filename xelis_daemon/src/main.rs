@@ -125,6 +125,12 @@ async fn main() -> Result<()> {
     }
 
     let blockchain_config = config.nested;
+    if let Some(path) = blockchain_config.dir_path.as_ref() {
+        if !(path.ends_with("/") || path.ends_with("\\")) {
+            return Err(anyhow::anyhow!("Path must end with / or \\"));
+        }
+    }
+
     let storage = {
         let use_cache = if blockchain_config.cache_size > 0 {
             Some(blockchain_config.cache_size)
