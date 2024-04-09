@@ -1084,13 +1084,11 @@ impl<S: Storage> Blockchain<S> {
         let biggest_difficulty = provider.get_difficulty_for_block_hash(best_tip).await?;
 
         // Search the newest tip available to determine the real solve time
-        let newest_tip = blockdag::find_newest_tip_by_timestamp(provider, tips.clone().into_iter()).await?;
-        let newest_tip_timestamp = provider.get_timestamp_for_block_hash(newest_tip).await?;
+        let (_, newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, tips.clone().into_iter()).await?;
 
         // Find the newest tips parent timestamp
         let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
-        let parent_newest_tip = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
-        let parent_newest_tip_timestamp = provider.get_timestamp_for_block_hash(parent_newest_tip).await?;
+        let (_, parent_newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
 
         let p = provider.get_estimated_covariance_for_block_hash(best_tip).await?;
         let (difficulty, p_new) = difficulty::calculate_difficulty(parent_newest_tip_timestamp, newest_tip_timestamp, biggest_difficulty, p);

@@ -2,6 +2,7 @@ use indexmap::IndexSet;
 use log::trace;
 use xelis_common::{
     difficulty::CumulativeDifficulty,
+    time::TimestampMillis,
     crypto::Hash,
 };
 use super::{    
@@ -107,7 +108,7 @@ where
 }
 
 // Find the newest tip based on the timestamp of the blocks
-pub async fn find_newest_tip_by_timestamp<'a, D, I>(provider: &D, tips: I) -> Result<&'a Hash, BlockchainError>
+pub async fn find_newest_tip_by_timestamp<'a, D, I>(provider: &D, tips: I) -> Result<(&'a Hash, TimestampMillis), BlockchainError>
 where
     D: DifficultyProvider,
     I: Iterator<Item = &'a Hash> + ExactSizeIterator
@@ -116,7 +117,11 @@ where
     let tips_len = tips.len();
     match tips_len {
         0 => Err(BlockchainError::ExpectedTips),
-        1 => Ok(tips.into_iter().next().unwrap()),
+        1 => {
+            let hash = tips.into_iter().next().unwrap();
+            let timestamp = provider.get_timestamp_for_block_hash(hash).await?;
+            Ok((hash, timestamp))
+        },
         _ => {
             let mut timestamp = 0;
             let mut newest_tip = None;
@@ -129,7 +134,7 @@ where
                 }
             }
 
-            newest_tip.ok_or(BlockchainError::ExpectedTips)
+            Ok((newest_tip.ok_or(BlockchainError::ExpectedTips)?, timestamp))
         }
     }
 }
