@@ -2180,7 +2180,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Get the block reward for a block
     // This will search all blocks at same height and verify which one are side blocks
-    pub async fn get_block_reward(&self, storage: &S, hash: &Hash, past_supply: u64) -> Result<u64, BlockchainError> {
+    pub async fn get_block_reward(&self, storage: &S, hash: &Hash, past_supply: u64, current_topoheight: u64) -> Result<u64, BlockchainError> {
         let is_side_block = self.is_side_block(storage, hash).await?;
         let mut side_blocks_count = 0;
         if is_side_block {
@@ -2188,7 +2188,7 @@ impl<S: Storage> Blockchain<S> {
             let height = storage.get_height_for_block_hash(hash).await?;
             let blocks_at_height = storage.get_blocks_at_height(height).await?;
             for block in blocks_at_height {
-                if self.is_side_block(storage, &block).await? {
+                if *hash != block && self.is_side_block_internal(storage, &block, current_topoheight).await? {
                     side_blocks_count += 1;
                 }
             }

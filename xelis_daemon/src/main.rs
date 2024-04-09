@@ -315,10 +315,11 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     for topo in pruned_topoheight..=topoheight {
         let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
         let block_reward = if pruned_topoheight == 0 || topo - pruned_topoheight > STABLE_LIMIT {
-            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply).await.context("Error while calculating block reward")?;
+            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply, topo).await.context("Error while calculating block reward")?;
+            let expected_block_reward = storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward")?;
             // Verify the saved block reward
-            if block_reward != storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward")? {
-                manager.error(format!("Block reward saved is incorrect for {} at topoheight {}", hash_at_topo, topo));
+            if block_reward != expected_block_reward {
+                manager.error(format!("Block reward saved is incorrect for {} at topoheight {}, got {} while expecting {}", hash_at_topo, topo, format_xelis(block_reward), format_xelis(expected_block_reward)));
                 return Ok(())
             }
             block_reward
