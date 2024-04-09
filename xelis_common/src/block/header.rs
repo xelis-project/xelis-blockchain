@@ -29,12 +29,6 @@ pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserializer: D
 pub struct BlockHeader {
     // Version of the block
     pub version: u8,
-    // Merkle Hash containing merkle hash of all tips
-    pub tips_merkle_hash: Hash,
-    // Merkle Hash containing all balances changes of common base
-    // A merkle hash of balances is based on previous topoheight merkle hash
-    // and all changes of balances in the block
-    pub balances_merkle_hash: Hash,
     // All TIPS of the block (previous hashes of the block)
     pub tips: IndexSet<Hash>,
     // Timestamp in milliseconds
@@ -57,11 +51,9 @@ pub struct BlockHeader {
 }
 
 impl BlockHeader {
-    pub fn new(version: u8, tips_merkle_hash: Hash, balances_merkle_hash: Hash, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
+    pub fn new(version: u8, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
         BlockHeader {
             version,
-            tips_merkle_hash,
-            balances_merkle_hash,
             height,
             timestamp,
             tips,
@@ -148,11 +140,9 @@ impl BlockHeader {
         let mut bytes: Vec<u8> = Vec::with_capacity(HEADER_WORK_SIZE);
 
         bytes.push(self.version); // 1
-        bytes.extend(self.get_tips_merkle_hash().to_bytes()); // 1 + 32 = 33
-        bytes.extend(self.get_balances_merkle_hash().to_bytes()); // 33 + 32 = 65
-        bytes.extend(&self.height.to_be_bytes()); // 65 + 8 = 73
-        bytes.extend(self.get_tips_hash().as_bytes()); // 73 + 32 = 105
-        bytes.extend(self.get_txs_hash().as_bytes()); // 105 + 32 = 137 
+        bytes.extend(&self.height.to_be_bytes()); // 1 + 8 = 9
+        bytes.extend(self.get_tips_hash().as_bytes()); // 9 + 32 = 41
+        bytes.extend(self.get_txs_hash().as_bytes()); // 41 + 32 = 73
 
         debug_assert!(bytes.len() == HEADER_WORK_SIZE, "Error, invalid header work size, got {} but expected {}", bytes.len(), HEADER_WORK_SIZE);
 
@@ -162,16 +152,6 @@ impl BlockHeader {
     // compute the header work hash (immutable part in mining process)
     pub fn get_work_hash(&self) -> Hash {
         hash(&self.get_work())
-    }
-
-    // Get the tips merkle hash of the block
-    pub fn get_tips_merkle_hash(&self) -> &Hash {
-        &self.tips_merkle_hash
-    }
-
-    // Get the balances merkle hash of the block
-    pub fn get_balances_merkle_hash(&self) -> &Hash {
-        &self.balances_merkle_hash
     }
 
     // This is similar as BlockMiner work
@@ -202,23 +182,21 @@ impl BlockHeader {
 impl Serializer for BlockHeader {
     fn write(&self, writer: &mut Writer) {
         writer.write_u8(self.version); // 1
-        writer.write_hash(&self.tips_merkle_hash); // 1 + 32 = 33
-        writer.write_hash(&self.balances_merkle_hash); // 33 + 32 = 65 
-        writer.write_u64(&self.height); // 65 + 8 = 73
-        writer.write_u64(&self.timestamp); // 73 + 8 = 81
-        writer.write_u64(&self.nonce); // 81 + 8 = 89
-        writer.write_bytes(&self.extra_nonce); // 89 + 32 = 121
-        writer.write_u8(self.tips.len() as u8); // 121 + 1 = 122
+        writer.write_u64(&self.height); // 1 + 8 = 9
+        writer.write_u64(&self.timestamp); // 9 + 8 = 17
+        writer.write_u64(&self.nonce); // 17 + 8 = 25
+        writer.write_bytes(&self.extra_nonce); // 25 + 32 = 57
+        writer.write_u8(self.tips.len() as u8); // 57 + 1 = 58
         for tip in &self.tips {
-            writer.write_hash(tip); // 32
+            writer.write_hash(tip); // 32 per hash
         }
 
-        writer.write_u16(self.txs_hashes.len() as u16); // 122 + (N*32) + 2 = 124 + (N*32)
+        writer.write_u16(self.txs_hashes.len() as u16); // 58 + (N*32) + 2 = 60 + (N*32)
         for tx in &self.txs_hashes {
             writer.write_hash(tx); // 32
         }
-        self.miner.write(writer); // 124 + (N*32) + (T*32) + 32 = 156 + (N*32) + (T*32)
-        // Minimum size is 156 bytes
+        self.miner.write(writer); // 60 + (N*32) + (T*32) + 32 = 92 + (N*32) + (T*32)
+        // Minimum size is 92 bytes
     }
 
     fn read(reader: &mut Reader) -> Result<BlockHeader, ReaderError> {
@@ -229,8 +207,6 @@ impl Serializer for BlockHeader {
             return Err(ReaderError::InvalidValue)
         }
 
-        let tips_merkle_hash = reader.read_hash()?;
-        let balances_merkle_hash = reader.read_hash()?;
         let height = reader.read_u64()?;
         let timestamp = reader.read_u64()?;
         let nonce = reader.read_u64()?;
@@ -263,8 +239,6 @@ impl Serializer for BlockHeader {
         Ok(
             BlockHeader {
                 version,
-                tips_merkle_hash,
-                balances_merkle_hash,
                 extra_nonce,
                 height,
                 timestamp,
@@ -289,7 +263,6 @@ impl Serializer for BlockHeader {
         + self.timestamp.size()
         + self.height.size()
         + self.nonce.size()
-        + self.balances_merkle_hash.size()
     }
 }
 
