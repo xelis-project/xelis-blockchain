@@ -1834,9 +1834,10 @@ impl<S: Storage> P2pServer<S> {
             if let (Some(mut notifier), Some(mut blocker)) = (notifier, final_blocker) {
                 debug!("Waiting for final blocker to finish...");
                 select! {
-                    _ = &mut notifier => {
-                        debug!("An error has occured while requesting chain in boost mode");
-                        return Err(P2pError::BoostSyncModeError.into());
+                    res = &mut notifier => {
+                        let err = res.map_err(|e| P2pError::BoostSyncModeBlockerResponseError(e))?;
+                        debug!("An error has occured while requesting chain in boost mode: {}", err);
+                        return Err(err.into());
                     },
                     res = blocker.recv() => match res {
                         Ok(()) => {
