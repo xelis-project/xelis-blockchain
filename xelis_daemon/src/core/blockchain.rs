@@ -758,6 +758,7 @@ impl<S: Storage> Blockchain<S> {
                 return Ok((hash.clone(), block_height))
             }
 
+            trace!("block is not sync, searching tip base for {}", hash);
             // if block is not sync, we need to find its tip base too
             bases.push(self.find_tip_base(provider, hash, height, pruned_topoheight).await?);
         }
@@ -799,10 +800,10 @@ impl<S: Storage> Blockchain<S> {
         let pruned_topoheight = provider.get_pruned_topoheight().await?.unwrap_or(0);
         let mut bases = Vec::new();
         for hash in tips.into_iter() {
+            trace!("Searching tip base for {}", hash);
             bases.push(self.find_tip_base(provider, hash, best_height, pruned_topoheight).await?);
         }
 
-        
         // check that we have at least one value
         if bases.is_empty() {
             error!("bases list is empty");
@@ -1553,6 +1554,7 @@ impl<S: Storage> Blockchain<S> {
         if tips_count != 0 {
             // First, we need to search the common base hash
             let (base, base_height) = self.find_common_base(&*storage, block.get_tips()).await?;
+            trace!("common base found for block {}: {} at height {}", block_hash, base, base_height);
             // Take the topoheight of the base block
             let base_topoheight = storage.get_topo_height_for_hash(&base).await?;
             // Retrieve the merkle hash at the base topoheight
