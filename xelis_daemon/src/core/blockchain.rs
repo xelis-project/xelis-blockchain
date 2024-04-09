@@ -17,7 +17,6 @@ use xelis_common::{
     },
     asset::AssetData,
     block::{
-        get_combined_hash_for_tips,
         Block,
         BlockHeader,
         EXTRA_NONCE_SIZE
@@ -97,10 +96,7 @@ use tokio::sync::{Mutex, RwLock};
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
-use super::{
-    merkle::MerkleBuilder,
-    storage::{BlocksAtHeightProvider, PrunedTopoheightProvider}
-};
+use super::storage::{BlocksAtHeightProvider, PrunedTopoheightProvider};
 
 #[derive(Debug, clap::Args)]
 pub struct Config {
@@ -444,7 +440,7 @@ impl<S: Storage> Blockchain<S> {
         } else {
             warn!("No genesis block found!");
             info!("Generating a new genesis block...");
-            let header = BlockHeader::new(0, Hash::zero(), Hash::zero(), 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
+            let header = BlockHeader::new(0, 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
             let block = Block::new(Immutable::Owned(header), Vec::new());
             let block_hash = block.hash();
             info!("Genesis generated: {} with {:?} {}", block.to_hex(), block_hash, block_hash);
@@ -1332,14 +1328,8 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        // Compute the combined merkle root of the tips
-        let tips_merkle_hash = build_merkle_tips_hash(&*storage, sorted_tips.iter()).await?;
-
         let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
-        let (common_base, _) = self.find_common_base(storage, &sorted_tips).await?;
-        let common_topoheight = storage.get_topo_height_for_hash(&common_base).await?;
-        let balances_merkle_hash = storage.get_balances_merkle_hash_at_topoheight(common_topoheight).await?;
-        let block = BlockHeader::new(self.get_version_at_height(height), tips_merkle_hash, balances_merkle_hash, height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
+        let block = BlockHeader::new(self.get_version_at_height(height), height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
 
         Ok(block)
     }
@@ -1548,30 +1538,6 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        // Keep a cache of the base block for future use (cumulative difficulty)
-        let mut base_cache = None;
-        // Verify the merkle hash based on the common base topoheight
-        if tips_count != 0 {
-            // First, we need to search the common base hash
-            let (base, base_height) = self.find_common_base(&*storage, block.get_tips()).await?;
-            trace!("common base found for block {}: {} at height {}", block_hash, base, base_height);
-            // Take the topoheight of the base block
-            let base_topoheight = storage.get_topo_height_for_hash(&base).await?;
-            // Retrieve the merkle hash at the base topoheight
-            let merkle_hash = storage.get_balances_merkle_hash_at_topoheight(base_topoheight).await?;
-            if merkle_hash != *block.get_balances_merkle_hash() {
-                debug!("Invalid merkle hash for block {}, expected {} but got {}", block_hash, merkle_hash, block.get_balances_merkle_hash());
-                return Err(BlockchainError::InvalidBalancesMerkleHash(block_hash, merkle_hash, block.get_balances_merkle_hash().clone()))
-            }
-            base_cache = Some((base, base_height));
-
-            let tips_merkle_hash = build_merkle_tips_hash(&*storage, block.get_tips().iter()).await?;
-            if tips_merkle_hash != *block.get_tips_merkle_hash() {
-                debug!("Invalid tips merkle hash for block {}, expected {} but got {}", block_hash, tips_merkle_hash, block.get_tips_merkle_hash());
-                return Err(BlockchainError::InvalidTipsMerkleHash(block_hash, tips_merkle_hash, block.get_tips_merkle_hash().clone()))
-            }
-        }
-
         // verify PoW and get difficulty for this block based on tips
         let pow_hash = block.get_pow_hash();
         debug!("POW hash: {}", pow_hash);
@@ -1674,12 +1640,7 @@ impl<S: Storage> Blockchain<S> {
             let cumulative_difficulty: CumulativeDifficulty = if tips_count == 0 {
                 GENESIS_BLOCK_DIFFICULTY.into()
             } else {
-                let (base, base_height) = if let Some((base, base_height)) = base_cache {
-                    (base, base_height)
-                } else {
-                    self.find_common_base(storage, block.get_tips()).await?
-                };
-
+                let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
                 let (_, cumulative_difficulty) = self.find_tip_work_score::<S>(&storage, &block_hash, &base, base_height).await?;
                 cumulative_difficulty
             };
@@ -2457,18 +2418,18 @@ pub fn get_block_dev_fee(height: u64) -> u64 {
 }
 
 // Compute the combined merkle root of the tips
-pub async fn build_merkle_tips_hash<'a, S: DifficultyProvider, I: Iterator<Item = &'a Hash> + ExactSizeIterator>(storage: &S, sorted_tips: I) -> Result<Hash, BlockchainError> {
-    let mut merkles = Vec::with_capacity(sorted_tips.len());
-    for hash in sorted_tips {
-        let mut merkle_builder = MerkleBuilder::new();
-        let header = storage.get_block_header_by_hash(hash).await?;
-        merkle_builder.add(hash);
-        merkle_builder.add(header.get_tips_merkle_hash());
-        merkles.push(merkle_builder.build());
-    }
+// pub async fn build_merkle_tips_hash<'a, S: DifficultyProvider, I: Iterator<Item = &'a Hash> + ExactSizeIterator>(storage: &S, sorted_tips: I) -> Result<Hash, BlockchainError> {
+//     let mut merkles = Vec::with_capacity(sorted_tips.len());
+//     for hash in sorted_tips {
+//         let mut merkle_builder = MerkleBuilder::new();
+//         let header = storage.get_block_header_by_hash(hash).await?;
+//         merkle_builder.add(hash);
+//         merkle_builder.add(header.get_tips_merkle_hash());
+//         merkles.push(merkle_builder.build());
+//     }
 
-    Ok(get_combined_hash_for_tips(merkles.iter()))
-}
+//     Ok(get_combined_hash_for_tips(merkles.iter()))
+// }
 
 #[cfg(test)]
 mod tests {

@@ -14,7 +14,6 @@ use xelis_common::{
         Hash,
         PublicKey
     },
-    serializer::Serializer,
     transaction::{
         verify::BlockchainVerificationState,
         Reference,
@@ -25,8 +24,7 @@ use xelis_common::{
 use crate::core::{
     blockchain::Blockchain,
     error::BlockchainError,
-    storage::Storage,
-    merkle::MerkleBuilder
+    storage::Storage
 };
 
 // Sender changes
@@ -268,29 +266,11 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
         }
 
-        // Search the merkle hash of the previous topoheight
-        // For genesis block, we take an empty hash
-        let mut merkle_builder = MerkleBuilder::new();
-        if self.inner.topoheight != 0 {
-            let previous_merkle_hash = self.inner.storage.get_balances_merkle_hash_at_topoheight(self.inner.topoheight - 1).await?;
-            merkle_builder.add(previous_merkle_hash);
-        }
-
-        // All changes applied to disk
-        let mut changes: Vec<u8> = Vec::new();
         // Apply all balances changes at topoheight
         // We injected the sender balances in the receiver balances previously
         for (account, balances) in self.inner.receiver_balances {
-            // Add the account to changes
-            changes.extend_from_slice(account.as_bytes());
-
             for (asset, version) in balances {
                 trace!("Saving versioned balance {} for {} at topoheight {}", version, account.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
-
-                // Add changes, this will be used to build the merkle hash
-                changes.extend_from_slice(asset.as_bytes());
-                changes.extend_from_slice(&version.to_bytes());
-
                 self.inner.storage.set_last_balance_to(account, asset, self.inner.topoheight, &version).await?;
             }
 
@@ -300,13 +280,6 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 self.inner.storage.set_last_nonce_to(account, self.inner.topoheight, &VersionedNonce::new(0, None)).await?;
             }
         }
-
-        // Add all serialized changes to the merkle tree
-        merkle_builder.add_bytes(&changes);
-
-        // Build the merkle hash of the topoheight and store it
-        let merkle_hash = merkle_builder.build();
-        self.inner.storage.set_balances_merkle_hash_at_topoheight(self.inner.topoheight, &merkle_hash).await?;
 
         Ok(())
     }
