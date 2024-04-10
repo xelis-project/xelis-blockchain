@@ -93,7 +93,7 @@ impl Serializer for ValueType {
 }
 
 // This enum allows complex structures with multi depth if necessary
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum DataElement {
     Value(DataValue),
