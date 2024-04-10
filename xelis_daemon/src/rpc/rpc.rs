@@ -58,7 +58,8 @@ use xelis_common::{
             SubmitBlockParams,
             SubmitTransactionParams,
             TransactionResponse,
-            GetMempoolCacheParams
+            GetMempoolCacheParams,
+            AccountRegistrationParams,
         },
         RPCTransaction,
         RPCTransactionType as RPCTransactionType
@@ -318,6 +319,8 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_account_history", async_handler!(get_account_history::<S>));
     handler.register_method("get_account_assets", async_handler!(get_account_assets::<S>));
     handler.register_method("get_accounts", async_handler!(get_accounts::<S>));
+    handler.register_method("is_account_registered", async_handler!(is_account_registered::<S>));
+    handler.register_method("get_account_registration_topoheight", async_handler!(get_account_registration_topoheight::<S>));
     handler.register_method("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
     handler.register_method("get_dev_fee_thresholds", async_handler!(get_dev_fee_thresholds::<S>));
     handler.register_method("get_size_on_disk", async_handler!(get_size_on_disk::<S>));
@@ -1029,6 +1032,26 @@ async fn get_accounts<S: Storage>(context: Context, body: Value) -> Result<Value
         .into_iter().map(|key| key.to_address(mainnet)).collect::<Vec<_>>();
 
     Ok(json!(accounts))
+}
+
+// Check if the account is registered on chain or not
+async fn is_account_registered<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: AccountRegistrationParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let key = params.address.get_public_key();
+    let registered = storage.is_account_registered(key).await.context("Error while checking if account is registered")?;
+    Ok(json!(registered))
+}
+
+// Search the account registration topoheight
+async fn get_account_registration_topoheight<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: AccountRegistrationParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let key = params.address.get_public_key();
+    let topoheight = storage.get_account_registration_topoheight(key).await.context("Error while retrieving registration topoheight")?;
+    Ok(json!(topoheight))
 }
 
 // Check if the asked TX is executed in the block
