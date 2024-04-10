@@ -96,7 +96,7 @@ use tokio::sync::{Mutex, RwLock};
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
-use super::storage::{BlocksAtHeightProvider, PrunedTopoheightProvider};
+use super::storage::{AccountProvider, BlocksAtHeightProvider, PrunedTopoheightProvider};
 
 #[derive(Debug, clap::Args)]
 pub struct Config {
@@ -521,12 +521,14 @@ impl<S: Storage> Blockchain<S> {
             // create snapshots of balances to located_sync_topoheight
             storage.create_snapshot_balances_at_topoheight(located_sync_topoheight).await?;
             storage.create_snapshot_nonces_at_topoheight(located_sync_topoheight).await?;
+            storage.create_snapshot_registrations_at_topoheight(located_sync_topoheight).await?;
 
             // delete all blocks until the new topoheight
             for topoheight in last_pruned_topoheight..located_sync_topoheight {
                 trace!("Pruning block at topoheight {}", topoheight);
                 // delete block
                 let _ = storage.delete_block_at_topoheight(topoheight).await?;
+                let _ = storage.delete_registrations_at_topoheight(topoheight).await?;
             }
 
             // delete balances for all assets
@@ -1738,6 +1740,7 @@ impl<S: Storage> Blockchain<S> {
                     // Delete changes made by this block
                     storage.delete_versioned_balances_at_topoheight(topoheight).await?;
                     storage.delete_versioned_nonces_at_topoheight(topoheight).await?;
+                    storage.delete_registrations_at_topoheight(topoheight).await?;
 
                     topoheight += 1;
                 }
@@ -2359,23 +2362,23 @@ impl<S: Storage> Blockchain<S> {
         let diff = now_timestamp - count_timestamp;
         Ok(diff / count)
     }
+}
 
-    // Estimate the required fees for a transaction
-    pub async fn estimate_required_tx_fees(_: &S, tx: &Transaction) -> Result<u64, BlockchainError> {
-        let mut output_count = 0;
-        let new_addresses = 0;
-        if let TransactionType::Transfers(transfers) = tx.get_data() {
-            output_count = transfers.len();
-            // TODO enable this when we are deleting nonce on storage
-            // for transfer in transfers {
-            //     if !storage.has_nonce(transfer.get_destination()).await? {
-            //         new_addresses += 1;
-            //     }
-            // }
+
+// Estimate the required fees for a transaction
+pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: u64, tx: &Transaction) -> Result<u64, BlockchainError> {
+    let mut output_count = 0;
+    let mut new_addresses = 0;
+    if let TransactionType::Transfers(transfers) = tx.get_data() {
+        output_count = transfers.len();
+        for transfer in transfers {
+            if !provider.is_account_registered_below_topoheight(transfer.get_destination(), current_topoheight).await? {
+                new_addresses += 1;
+            }
         }
-
-        Ok(calculate_tx_fee(tx.size(), output_count, new_addresses))
     }
+
+    Ok(calculate_tx_fee(tx.size(), output_count, new_addresses))
 }
 
 // Get the block reward for a side block based on how many side blocks exists at same height

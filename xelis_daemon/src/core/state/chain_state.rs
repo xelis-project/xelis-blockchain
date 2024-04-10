@@ -22,7 +22,7 @@ use xelis_common::{
     utils::format_xelis
 };
 use crate::core::{
-    blockchain::Blockchain,
+    blockchain,
     error::BlockchainError,
     storage::Storage
 };
@@ -279,6 +279,11 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                 debug!("{} has now a balance but without any nonce registered, set default (0) nonce", account.as_address(self.inner.storage.is_mainnet()));
                 self.inner.storage.set_last_nonce_to(account, self.inner.topoheight, &VersionedNonce::new(0, None)).await?;
             }
+
+            // Mark it as registered at this topoheight
+            if !self.inner.storage.is_account_registered_below_topoheight(account, self.inner.topoheight).await? {
+                self.inner.storage.set_account_registration_topoheight(account, self.inner.topoheight).await?;
+            }
         }
 
         Ok(())
@@ -300,7 +305,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
     }
 
     // Get the storage used by the chain state
-    pub fn get_storage(&mut self) -> &S {
+    pub fn get_storage(&self) -> &S {
         self.storage.as_ref()
     }
 
@@ -441,7 +446,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
             return Err(BlockchainError::InvalidTxVersion);
         }
 
-        let required_fees = Blockchain::estimate_required_tx_fees(self.get_storage(), tx).await?;
+        // Verified that minimal fees are set
+        let required_fees = blockchain::estimate_required_tx_fees(self.get_storage(), self.topoheight, tx).await?;
         if required_fees > tx.get_fee() {
             debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
             return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));

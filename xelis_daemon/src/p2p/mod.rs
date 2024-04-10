@@ -2293,6 +2293,7 @@ impl<S: Storage> P2pServer<S> {
                         for (key, nonce) in keys.iter().zip(nonces) {
                             debug!("Saving nonce {} for {}", nonce, key.as_address(self.blockchain.get_network().is_mainnet()));
                             storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, None)).await?;
+                            storage.set_account_registration_topoheight(key, stable_topoheight).await?;
                         }
                     }
 

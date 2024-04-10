@@ -93,6 +93,10 @@ pub struct SledStorage {
     pub(super) versioned_balances: Tree,
     // Tree that store all merkle hashes for each topoheight
     pub(super) merkle_hashes: Tree,
+    // Account registrations topoheight
+    pub(super) registrations: Tree,
+    // Account registrations prefixed by their topoheight for easier deletion
+    pub(super) registrations_prefixed: Tree,
     // opened DB used for assets to create dynamic assets
     db: sled::Db,
 
@@ -165,6 +169,8 @@ impl SledStorage {
             balances: sled.open_tree("balances")?,
             versioned_balances: sled.open_tree("versioned_balances")?,
             merkle_hashes: sled.open_tree("merkle_hashes")?,
+            registrations: sled.open_tree("registrations")?,
+            registrations_prefixed: sled.open_tree("registrations_prefixed")?,
             db: sled,
             transactions_cache: init_cache!(cache_size),
             blocks_cache: init_cache!(cache_size),
@@ -235,6 +241,18 @@ impl SledStorage {
 
     pub fn is_mainnet(&self) -> bool {
         self.mainnet
+    }
+
+    pub(super) fn load_optional_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+        match tree.get(key)? {
+            Some(bytes) => {
+                let bytes = bytes.to_vec();
+                let mut reader = Reader::new(&bytes);
+                let value = T::read(&mut reader)?;
+                Ok(Some(value))
+            },
+            None => Ok(None)
+        }
     }
 
     pub(super) fn load_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<T, BlockchainError> {
@@ -643,6 +661,30 @@ impl Storage for SledStorage {
                     // keep searching
                     versioned_nonce = self.get_nonce_at_exact_topoheight(&key, previous_topoheight).await?;
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn create_snapshot_registrations_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        // tree where PublicKey are stored with the registration topoheight in it
+        let mut buf = [0u8; 40];
+        for el in self.registrations.iter() {
+            let (key, value) = el?;
+            let registration_topo = u64::from_bytes(&value)?;
+
+            // if the registration topoheight for this account is less than the snapshot topoheight
+            // update it to the topoheight
+            if registration_topo < topoheight {
+                // Delete the prefixed registration
+                buf[0..8].copy_from_slice(&value);
+                buf[8..40].copy_from_slice(&key);
+                self.registrations_prefixed.remove(&buf)?;
+
+                // save the new registration topoheight
+                self.registrations.insert(&key, &topoheight.to_be_bytes())?;
+                self.registrations_prefixed.insert(&buf, &[])?;
             }
         }
 
