@@ -373,6 +373,11 @@ pub struct GetAccountsParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct AccountRegistrationParams {
+    pub address: Address
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct IsTxExecutedInBlockParams<'a> {
     pub tx_hash: Cow<'a, Hash>,
     pub block_hash: Cow<'a, Hash>
