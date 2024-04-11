@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{create_dir_all, File},
     io::{Read, Write},
     path::Path,
@@ -40,6 +40,7 @@ use xelis_common::{
         builder::{
             AccountState,
             FeeBuilder,
+            FeeHelper,
             TransactionBuilder,
             TransactionTypeBuilder
         },
@@ -673,7 +674,17 @@ impl Wallet {
 
         // Build the state for the builder
         let used_assets = transaction_type.used_assets();
-        let mut balances = HashMap::with_capacity(used_assets.len());
+
+        // state used to build the transaction
+        let mut state = TransactionBuilderState::new(
+            self.network.is_mainnet(),
+            Reference {
+                topoheight: storage.get_synced_topoheight()?,
+                hash: storage.get_top_block_hash()?
+            },
+            nonce
+        );
+
         // Get all balances used
         for asset in used_assets {
             trace!("Checking balance for asset {}", asset);
@@ -682,33 +693,24 @@ impl Wallet {
             }
 
             let balance = storage.get_balance_for(&asset).await?;
-            balances.insert(asset, balance);
+            state.add_balance(asset, balance);
         }
 
-        let mut state = TransactionBuilderState {
-            mainnet: self.network.is_mainnet(),
-            balances,
-            reference: Reference {
-                topoheight: storage.get_synced_topoheight()?,
-                hash: storage.get_top_block_hash()?
-            },
-        };
-
         // Create the transaction builder
-        let builder = TransactionBuilder::new(0, self.public_key.clone(), transaction_type, fee, nonce);
+        let builder = TransactionBuilder::new(0, self.public_key.clone(), transaction_type, fee);
 
         // Build the final transaction
         let transaction = builder.build(&mut state, &self.keypair)
             .map_err(|e| WalletError::Any(e.into()))?;
+
+        // Increment the nonce
+        storage.set_nonce(state.get_nonce()?)?;
 
         // Update our storage in case of next transaction
         for (asset, balance) in state.balances {
             // We store every balances used in the transaction
             storage.set_balance_for(&asset, balance).await?;
         }
-
-        // Increment the nonce
-        storage.set_nonce(nonce + 1)?;
 
         Ok(transaction)
     }
@@ -731,10 +733,12 @@ impl Wallet {
     // Estimated fees returned are the minimum required to be valid on chain
     pub async fn estimate_fees(&self, tx_type: TransactionTypeBuilder) -> Result<u64, WalletError> {
         trace!("estimate fees");
-        let storage = self.storage.read().await;
-        let nonce = storage.get_nonce().unwrap_or(0);
-        let builder = TransactionBuilder::new(0, self.public_key.clone(), tx_type, FeeBuilder::default(), nonce);
-        Ok(builder.estimate_fees())
+        let mut state = EstimateFeesState::new();
+        let builder = TransactionBuilder::new(0, self.public_key.clone(), tx_type, FeeBuilder::default());
+        let estimated_fees = builder.estimate_fees(&mut state)
+            .map_err(|e| WalletError::Any(e.into()))?;
+
+        Ok(estimated_fees)
     }
 
     // set wallet in online mode: start a communication task which will keep the wallet synced
@@ -967,15 +971,87 @@ impl XSWDNodeMethodHandler for Arc<Wallet> {
     }
 }
 
-struct TransactionBuilderState {
+// State used to estimate fees for a transaction
+// Because fees can be higher if a destination account is not registered
+// We need to give this information during the estimation of fees
+pub struct EstimateFeesState {
+    // this is containing the registered keys that we are aware of
+    registered_keys: HashSet<PublicKey>
+}
+
+impl EstimateFeesState {
+    pub fn new() -> Self {
+        Self {
+            registered_keys: HashSet::new()
+        }
+    }
+
+    pub fn set_registered_keys(&mut self, registered_keys: HashSet<PublicKey>) {
+        self.registered_keys = registered_keys;
+    }
+
+    pub fn add_registered_key(&mut self, key: PublicKey) {
+        self.registered_keys.insert(key);
+    }
+}
+
+impl FeeHelper for EstimateFeesState {
+    type Error = WalletError;
+
+    fn account_exists(&self, key: &PublicKey) -> Result<bool, Self::Error> {
+        Ok(self.registered_keys.contains(key))
+    }
+}
+
+// State used to build a transaction
+// It contains the balances of the wallet and the registered keys
+pub struct TransactionBuilderState {
+    inner: EstimateFeesState,
     mainnet: bool,
     balances: HashMap<Hash, Balance>,
     reference: Reference,
+    nonce: u64,
+}
+
+impl TransactionBuilderState {
+    pub fn new(mainnet: bool, reference: Reference, nonce: u64) -> Self {
+        Self {
+            inner: EstimateFeesState {
+                registered_keys: HashSet::new(),
+            },
+            mainnet,
+            balances: HashMap::new(),
+            reference,
+            nonce
+        }
+    }
+
+    pub fn set_balances(&mut self, balances: HashMap<Hash, Balance>) {
+        self.balances = balances;
+    }
+
+    pub fn add_balance(&mut self, asset: Hash, balance: Balance) {
+        self.balances.insert(asset, balance);
+    }
+
+    pub fn set_registered_keys(&mut self, registered_keys: HashSet<PublicKey>) {
+        self.inner.registered_keys = registered_keys;
+    }
+
+    pub fn add_registered_key(&mut self, key: PublicKey) {
+        self.inner.registered_keys.insert(key);
+    }
+}
+
+impl FeeHelper for TransactionBuilderState {
+    type Error = WalletError;
+
+    fn account_exists(&self, key: &PublicKey) -> Result<bool, Self::Error> {
+        self.inner.account_exists(key)
+    }
 }
 
 impl AccountState for TransactionBuilderState {
-    type Error = WalletError;
-
     fn is_mainnet(&self) -> bool {
         self.mainnet
     }
@@ -1000,8 +1076,12 @@ impl AccountState for TransactionBuilderState {
         Ok(())
     }
 
-    fn account_exists(&self, _: &PublicKey) -> Result<bool, Self::Error> {
-        // TODO: check if the account exists
-        Ok(false)
+    fn get_nonce(&self) -> Result<u64, Self::Error> {
+        Ok(self.nonce)
+    }
+
+    fn update_nonce(&mut self, new_nonce: u64) -> Result<(), Self::Error> {
+        self.nonce = new_nonce;
+        Ok(())
     }
 }
