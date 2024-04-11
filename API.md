@@ -5976,7 +5976,7 @@ It can be broadcasted or not to the network.
 |        fee        |    FeeBuilder   | Optional |        Set an exact fee value or a multiplier        |
 |     broadcast     |     Boolean     | Optional |    Broadcast TX to daemon. By default set to true    |
 |     tx_as_hex     |     Boolean     | Optional | Serialize TX to hexadecimal. By default set to false |
-| transfers OR burn | TransactionType | Required |              Transaction Type parameters             |
+| transfers OR burn | TransactionType | Required |              Transaction Type parameter              |
 
 ##### Request
 ```json
@@ -7411,7 +7411,10 @@ Returned fees are in atomic units.
 ##### Method `estimate_fees`
 
 ##### Parameters
-Paramater value can be anything (object, value, array...)
+|        Name       |       Type      | Required |             Note             |
+|:-----------------:|:---------------:|:--------:|:----------------------------:|
+| transfers OR burn | TransactionType | Required |  Transaction Type parameter  |
+
 
 ##### Request
 ```json
