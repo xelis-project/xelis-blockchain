@@ -100,6 +100,19 @@ pub struct Transaction {
 }
 
 impl TransferPayload {
+    // Create a new transfer payload
+    pub fn new(asset: Hash, destination: CompressedPublicKey, extra_data: Option<Vec<u8>>, commitment: CompressedCommitment, sender_handle: CompressedHandle, receiver_handle: CompressedHandle, ct_validity_proof: CiphertextValidityProof) -> Self {
+        TransferPayload {
+            asset,
+            destination,
+            extra_data,
+            commitment,
+            sender_handle,
+            receiver_handle,
+            ct_validity_proof
+        }
+    }
+
     // Get the destination key
     pub fn get_destination(&self) -> &CompressedPublicKey {
         &self.destination
