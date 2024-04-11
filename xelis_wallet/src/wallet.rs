@@ -1001,6 +1001,7 @@ impl AccountState for TransactionBuilderState {
     }
 
     fn account_exists(&self, _: &PublicKey) -> Result<bool, Self::Error> {
-        Ok(true)
+        // TODO: check if the account exists
+        Ok(false)
     }
 }
