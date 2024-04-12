@@ -31,6 +31,25 @@ where
     }
 }
 
+// sort the scores by cumulative difficulty and, if equals, by hash value
+pub fn sort_ascending_by_cumulative_difficulty<T>(scores: &mut Vec<(T, CumulativeDifficulty)>)
+where
+    T: AsRef<Hash>,
+{
+    trace!("sort ascending by cumulative difficulty");
+    scores.sort_by(|(a_hash, a), (b_hash, b)| {
+        if a != b {
+            a.cmp(b)
+        } else {
+            a_hash.as_ref().cmp(b_hash.as_ref())
+        }
+    });
+
+    if scores.len() >= 2 {
+        debug_assert!(scores[0].1 <= scores[1].1);
+    }
+}
+
 // Sort the TIPS by cumulative difficulty
 // If the cumulative difficulty is the same, the hash value is used to sort
 // Hashes are sorted in descending order
