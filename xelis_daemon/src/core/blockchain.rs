@@ -74,7 +74,7 @@ use crate::{
 };
 use std::{
     borrow::Cow, collections::{
-        HashMap, HashSet
+        HashMap, HashSet, VecDeque
     },
     net::SocketAddr,
     num::NonZeroUsize,
@@ -689,80 +689,66 @@ impl<S: Storage> Blockchain<S> {
         Ok(true)
     }
 
-    #[async_recursion]
     async fn find_tip_base<P>(&self, provider: &P, hash: &Hash, height: u64, pruned_topoheight: u64) -> Result<(Hash, u64), BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + Send + Sync
     {
-        if pruned_topoheight > 0 && provider.is_block_topological_ordered(hash).await {
-            let topoheight = provider.get_topo_height_for_hash(hash).await?;
-            // Node is pruned, we only prune chain to stable height so we can return the hash
-            if topoheight <= pruned_topoheight {
-                debug!("Node is pruned, returns {} at {} as stable tip base", hash, height);
-                return Ok((hash.clone(), height))
-            }
-        }
+        let mut stack: VecDeque<(Hash, u64)> = VecDeque::new();
+        stack.push_back((hash.clone(), height));
 
-        let (tips, tips_count) = {
+        let mut cache = self.tip_base_cache.lock().await;
+
+        while let Some((current_hash, current_height)) = stack.pop_back() {
+            if pruned_topoheight > 0 && provider.is_block_topological_ordered(&current_hash).await {
+                let topoheight = provider.get_topo_height_for_hash(&current_hash).await?;
+                // Node is pruned, we only prune chain to stable height / sync block so we can return the hash
+                if topoheight <= pruned_topoheight {
+                    let block_height = provider.get_height_for_block_hash(&current_hash).await?;
+                    debug!("Node is pruned, returns tip {} at {} as stable tip base", current_hash, block_height);
+                    return Ok((current_hash.clone(), block_height))
+                }
+            }
+
             // first, check if we have it in cache
-            let mut cache = self.tip_base_cache.lock().await;
-            if let Some((base_hash, base_height)) = cache.get(&(hash.clone(), height)) {
+            if let Some((base_hash, base_height)) = cache.get(&(current_hash.clone(), current_height)) {
                 trace!("Tip Base for {} at height {} found in cache: {} for height {}", hash, height, base_hash, base_height);
                 return Ok((base_hash.clone(), *base_height))
             }
 
-            let tips = provider.get_past_blocks_for_block_hash(hash).await?;
+            let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
             let tips_count = tips.len();
             if tips_count == 0 { // only genesis block can have 0 tips saved
                 // save in cache
-                cache.put((hash.clone(), height), (hash.clone(), 0));
-                return Ok((hash.clone(), 0))
+                cache.put((hash.clone(), height), (current_hash.clone(), current_height));
+                return Ok((current_hash.clone(), 0))
             }
-            (tips, tips_count)
-        };
 
-        let mut bases = Vec::with_capacity(tips_count);
-        for hash in tips.iter() {
-            if pruned_topoheight > 0 && provider.is_block_topological_ordered(hash).await {
-                let topoheight = provider.get_topo_height_for_hash(hash).await?;
-                // Node is pruned, we only prune chain to stable height / sync block so we can return the hash
-                if topoheight <= pruned_topoheight {
-                    let block_height = provider.get_height_for_block_hash(hash).await?;
-                    debug!("Node is pruned, returns tip {} at {} as stable tip base", hash, block_height);
-                    return Ok((hash.clone(), block_height))
+            for tip_hash in tips.iter() {
+                if pruned_topoheight > 0 && provider.is_block_topological_ordered(&tip_hash).await {
+                    let topoheight = provider.get_topo_height_for_hash(&tip_hash).await?;
+                    // Node is pruned, we only prune chain to stable height / sync block so we can return the hash
+                    if topoheight <= pruned_topoheight {
+                        let block_height = provider.get_height_for_block_hash(&tip_hash).await?;
+                        debug!("Node is pruned, returns tip {} at {} as stable tip base", tip_hash, block_height);
+                        return Ok((tip_hash.clone(), block_height))
+                    }
                 }
+
+                // if block is sync, it is a tip base
+                if self.is_sync_block_at_height(provider, &tip_hash, current_height).await? {
+                    let block_height = provider.get_height_for_block_hash(&tip_hash).await?;
+                    // save in cache
+                    cache.put((hash.clone(), height), (tip_hash.clone(), block_height));
+
+                    return Ok((tip_hash.clone(), block_height))
+                }
+
+                // Tip was not sync, we need to find its tip base too
+                stack.push_back((tip_hash.clone(), current_height));
             }
-
-            // if block is sync, it is a tip base
-            if self.is_sync_block_at_height(provider, hash, height).await? {
-                let block_height = provider.get_height_for_block_hash(hash).await?;
-                // save in cache (lock each time to avoid deadlocks)
-                let mut cache = self.tip_base_cache.lock().await;
-                cache.put((hash.clone(), height), (hash.clone(), block_height));
-
-                return Ok((hash.clone(), block_height))
-            }
-
-            // if block is not sync, we need to find its tip base too
-            bases.push(self.find_tip_base(provider, hash, height, pruned_topoheight).await?);
         }
 
-        if bases.is_empty() {
-            error!("Tip base for {} at height {} not found", hash, height);
-            return Err(BlockchainError::ExpectedTips)
-        }
-
-        // now we sort descending by height and return the last element deleted
-        bases.sort_by(|(_, a), (_, b)| b.cmp(a));
-        debug_assert!(bases[0].1 >= bases[bases.len() - 1].1);
-
-        let (base_hash, base_height) = bases.remove(bases.len() - 1);
-        // save in cache
-        let mut cache = self.tip_base_cache.lock().await;
-        cache.put((hash.clone(), height), (base_hash.clone(), base_height));
-        trace!("Tip Base for {} at height {} found: {} for height {}", hash, height, base_hash, base_height);
-
-        Ok((base_hash, base_height))
+        Err(BlockchainError::ExpectedTips)
     }
 
     // find the common base (block hash and block height) of all tips
@@ -807,18 +793,22 @@ impl<S: Storage> Blockchain<S> {
         Ok((base_hash, base_height))
     }
 
-    #[async_recursion] // TODO no recursion
-    async fn build_reachability_recursive(&self, storage: &S, set: &mut HashSet<Hash>, hash: Hash, level: u64) -> Result<(), BlockchainError> {
-        if level >= 2 * STABLE_LIMIT {
-            trace!("Level limit reached, adding {}", hash);
-            set.insert(hash);
-        } else {
-            trace!("Level {} reached with hash {}", level, hash);
-            let tips = storage.get_past_blocks_for_block_hash(&hash).await?;
-            set.insert(hash);
-            for past_hash in tips.iter() {
-                if !set.contains(past_hash) {
-                    self.build_reachability_recursive(storage, set, past_hash.clone(), level + 1).await?;
+    async fn build_reachability_recursive(&self, storage: &S, set: &mut HashSet<Hash>, hash: Hash) -> Result<(), BlockchainError> {
+        let mut stack: VecDeque<(Hash, u64)> = VecDeque::new();
+        stack.push_back((hash, 0));
+    
+        while let Some((current_hash, current_level)) = stack.pop_back() {
+            if current_level >= 2 * STABLE_LIMIT {
+                trace!("Level limit reached, adding {}", current_hash);
+                set.insert(current_hash);
+            } else {
+                trace!("Level {} reached with hash {}", current_level, current_hash);
+                let tips = storage.get_past_blocks_for_block_hash(&current_hash).await?;
+                set.insert(current_hash);
+                for past_hash in tips.iter() {
+                    if !set.contains(past_hash) {
+                        stack.push_back((past_hash.clone(), current_level + 1));
+                    }
                 }
             }
         }
@@ -835,7 +825,7 @@ impl<S: Storage> Blockchain<S> {
         for hash in block.get_tips() {
             let mut set = HashSet::new();
             // TODO no clone
-            self.build_reachability_recursive(storage, &mut set, hash.clone(), 0).await?;
+            self.build_reachability_recursive(storage, &mut set, hash.clone()).await?;
             reach.push(set);
         }
 
@@ -886,24 +876,39 @@ impl<S: Storage> Blockchain<S> {
         Ok(lowest_height)
     }
 
-    #[async_recursion] // TODO no recursion
-    async fn find_tip_work_score_internal<'a, P>(&self, provider: &P, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: u64, base_height: u64) -> Result<(), BlockchainError>
+    async fn find_tip_work_score_internal<'a, P>(&self, provider: &P, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: u64) -> Result<(), BlockchainError>
     where
-        // Sync + Send is required for recursive calls
         P: DifficultyProvider + DagOrderProvider + Sync + Send
     {
-        let tips = provider.get_past_blocks_for_block_hash(hash).await?;
-        for hash in tips.iter() {
-            if !map.contains_key(hash) {
-                let is_ordered = provider.is_block_topological_ordered(hash).await;
-                if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(hash).await? >= base_topoheight) {
-                    self.find_tip_work_score_internal(provider, map, hash, base_topoheight, base_height).await?;
+        let mut stack: VecDeque<Hash> = VecDeque::new();
+        let mut visited: HashSet<Hash> = HashSet::new();
+    
+        stack.push_back(hash.clone());
+    
+        while let Some(current_hash) = stack.pop_back() {
+            if visited.contains(&current_hash) {
+                continue;
+            }
+    
+            let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
+            let mut can_insert = true;
+    
+            for tip_hash in tips.as_ref().clone().into_iter() {
+                if !map.contains_key(&tip_hash) {
+                    let is_ordered = provider.is_block_topological_ordered(&tip_hash).await;
+                    if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(&tip_hash).await? >= base_topoheight) {
+                        stack.push_back(tip_hash);
+                        can_insert = false;
+                    }
                 }
             }
+    
+            if can_insert {
+                map.insert(current_hash.clone(), provider.get_difficulty_for_block_hash(&current_hash).await?.into());
+                visited.insert(current_hash);
+            }
         }
-
-        map.insert(hash.clone(), provider.get_difficulty_for_block_hash(hash).await?.into());
-
+    
         Ok(())
     }
 
@@ -922,7 +927,7 @@ impl<S: Storage> Blockchain<S> {
             if !map.contains_key(hash) {
                 let is_ordered = provider.is_block_topological_ordered(hash).await;
                 if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(hash).await? >= base_topoheight) {
-                    self.find_tip_work_score_internal(provider, &mut map, hash, base_topoheight, base_height).await?;
+                    self.find_tip_work_score_internal(provider, &mut map, hash, base_topoheight).await?;
                 }
             }
         }
