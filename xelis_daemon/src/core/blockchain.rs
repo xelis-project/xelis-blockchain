@@ -992,42 +992,47 @@ impl<S: Storage> Blockchain<S> {
     // first hash in order is the base hash
     // base_height is only used for the cache key
     async fn generate_full_order(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: u64) -> Result<IndexSet<Hash>, BlockchainError> {
-        let mut stack: VecDeque<(Hash, IndexSet<Hash>)> = VecDeque::new();
-        let mut visited: HashSet<Hash> = HashSet::new();
+        trace!("Generating full order for {} with base {}", hash, base);
         let mut cache = self.full_order_cache.lock().await;
-    
-        // check if its present in the cache first
-        if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
-            trace!("Found full order in cache: {}", value.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
-            return Ok(value.clone())
-        }
 
-        let block_tips = storage.get_past_blocks_for_block_hash(hash).await?;
-        if block_tips.len() == 0 {
-            debug!("Genesis block detected, zero tips");
-            let mut result = IndexSet::new();
-            result.insert(hash.clone());
-            cache.put((hash.clone(), base.clone(), base_height), result.clone());
-            return Ok(result)
-        }
-    
-        stack.push_back((hash.clone(), IndexSet::new()));
-    
-        while let Some((current_hash, mut order)) = stack.pop_back() {
-            if visited.contains(&current_hash) {
-                continue;
+        // Full order that is generated
+        let mut full_order = IndexSet::new();
+        // Current stack of hashes that need to be processed
+        let mut stack: VecDeque<Hash> = VecDeque::new();
+        stack.push_back(hash.clone());
+
+        // Keep track of processed hashes that got reinjected for correct order
+        let mut processed = IndexSet::new();
+
+        'main: while let Some(current_hash) = stack.pop_back() {
+            // If it is processed and got reinjected, its to maintains right order
+            // We just need to insert current hash as it the "final hash" that got processed
+            // after all tips
+            if processed.contains(&current_hash) {
+                full_order.insert(current_hash);
+                continue 'main;
             }
-    
+
+            // Search in the cache to retrieve faster the full order
+            let cache_key = (current_hash.clone(), base.clone(), base_height);
+            if let Some(order_cache) = cache.get(&cache_key) {
+                full_order.extend(order_cache.clone());
+                continue 'main;
+            }
+
+            // Retrieve block tips
             let block_tips = storage.get_past_blocks_for_block_hash(&current_hash).await?;
-            if block_tips.is_empty() {
-                // if the block has been previously ordered, return it as base
-                if current_hash == *base {
-                    order.insert(current_hash.clone());
-                    cache.put((current_hash.clone(), base.clone(), base_height), order.clone());
-                    return Ok(order);
-                }
+
+            // if the block is genesis or its the base block, we can add it to the full order
+            if block_tips.is_empty() || current_hash == *base {
+                let mut order = IndexSet::new();
+                order.insert(current_hash.clone());
+                cache.put(cache_key, order.clone());
+                full_order.extend(order);
+                continue 'main;
             }
-    
+
+            // Calculate the score for each tips above the base topoheight
             let mut scores = Vec::new();
             for tip_hash in block_tips.iter() {
                 let is_ordered = storage.is_block_topological_ordered(tip_hash).await;
@@ -1038,23 +1043,23 @@ impl<S: Storage> Blockchain<S> {
                     debug!("Block {} is skipped in generate_full_order, is ordered = {}, base topo height = {}", tip_hash, is_ordered, base_topo_height);
                 }
             }
-    
-            blockdag::sort_descending_by_cumulative_difficulty(&mut scores);
-    
+
+            // We sort by ascending cumulative difficulty because it is faster
+            // than doing a .reverse() on scores and give correct order for tips processing
+            // using our stack impl 
+            blockdag::sort_ascending_by_cumulative_difficulty(&mut scores);
+
+            processed.insert(current_hash.clone());
+            stack.push_back(current_hash);
+
             for (tip_hash, _) in scores {
-                if !visited.contains(&tip_hash) {
-                    let sub_order = cache.get(&(tip_hash.clone(), base.clone(), base_height)).cloned().unwrap_or_else(IndexSet::new);
-                    stack.push_back((tip_hash, sub_order.clone()));
-                    order.extend(sub_order);
-                }
+                stack.push_back(tip_hash);
             }
-    
-            order.insert(current_hash.clone());
-            visited.insert(current_hash.clone());
-            cache.put((current_hash.clone(), base.clone(), base_height), order.clone());
         }
-    
-        Ok(cache.get(&(hash.clone(), base.clone(), base_height)).cloned().unwrap_or_else(IndexSet::new))
+
+        cache.put((hash.clone(), base.clone(), base_height), full_order.clone());
+
+        Ok(full_order)
     }
 
     // confirms whether the actual tip difficulty is withing 9% deviation with best tip (reference)
