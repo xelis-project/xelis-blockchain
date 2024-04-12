@@ -974,66 +974,70 @@ impl<S: Storage> Blockchain<S> {
     // the full order is re generated each time a new block is added based on new TIPS
     // first hash in order is the base hash
     // base_height is only used for the cache key
-    #[async_recursion]
     async fn generate_full_order(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: u64) -> Result<IndexSet<Hash>, BlockchainError> {
-        let block_tips = {
-            let mut cache = self.full_order_cache.lock().await;
-            // check if its present in the cache first
-            if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
-                trace!("Found full order in cache: {}", value.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
-                return Ok(value.clone())
-            }
-
-            let block_tips = storage.get_past_blocks_for_block_hash(hash).await?;
-            // only the genesis block can have 0 tips, returns its hash
-            if block_tips.len() == 0 {
-                debug!("Genesis block detected, zero tips");
-                let mut result = IndexSet::new();
-                result.insert(hash.clone());
-                cache.put((hash.clone(), base.clone(), base_height), result.clone());
-                return Ok(result)
-            }
-
-            // if the block has been previously ordered, return it as base
-            if hash == base {
-                let mut result = IndexSet::new();
-                result.insert(base.clone());
-                cache.put((hash.clone(), base.clone(), base_height), result.clone());
-                return Ok(result)
-            }
-
-            block_tips
-        };
-
-        let mut scores = Vec::new();
-        for hash in block_tips.iter() {
-            let is_ordered = storage.is_block_topological_ordered(hash).await;
-            if !is_ordered || (is_ordered && storage.get_topo_height_for_hash(hash).await? >= base_topo_height) {
-                let diff = storage.get_cumulative_difficulty_for_block_hash(hash).await?;
-                scores.push((hash, diff));
-            } else {
-                debug!("Block {} is skipped in generate_full_order, is ordered = {}, base topo height = {}", hash, is_ordered, base_topo_height);
-            }
-        }
-
-        blockdag::sort_descending_by_cumulative_difficulty(&mut scores);
-
-        // let's build the right order now
-        let mut order: IndexSet<Hash> = IndexSet::new();
-        for (hash, _) in scores {
-            let sub_order = self.generate_full_order(storage, hash, base, base_height, base_topo_height).await?;
-            for order_hash in sub_order {
-                order.insert(order_hash);
-            }
-        }
-
-        order.insert(hash.clone());
-
-        // save in cache final result
+        let mut stack: VecDeque<(Hash, IndexSet<Hash>)> = VecDeque::new();
+        let mut visited: HashSet<Hash> = HashSet::new();
         let mut cache = self.full_order_cache.lock().await;
-        cache.put((hash.clone(), base.clone(), base_height), order.clone());
+    
+        // check if its present in the cache first
+        if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
+            trace!("Found full order in cache: {}", value.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
+            return Ok(value.clone())
+        }
 
-        Ok(order)
+        let block_tips = storage.get_past_blocks_for_block_hash(hash).await?;
+        if block_tips.len() == 0 {
+            debug!("Genesis block detected, zero tips");
+            let mut result = IndexSet::new();
+            result.insert(hash.clone());
+            cache.put((hash.clone(), base.clone(), base_height), result.clone());
+            return Ok(result)
+        }
+    
+        stack.push_back((hash.clone(), IndexSet::new()));
+    
+        while let Some((current_hash, mut order)) = stack.pop_back() {
+            if visited.contains(&current_hash) {
+                continue;
+            }
+    
+            let block_tips = storage.get_past_blocks_for_block_hash(&current_hash).await?;
+            if block_tips.is_empty() {
+                // if the block has been previously ordered, return it as base
+                if current_hash == *base {
+                    order.insert(current_hash.clone());
+                    cache.put((current_hash.clone(), base.clone(), base_height), order.clone());
+                    return Ok(order);
+                }
+            }
+    
+            let mut scores = Vec::new();
+            for tip_hash in block_tips.iter() {
+                let is_ordered = storage.is_block_topological_ordered(tip_hash).await;
+                if !is_ordered || (is_ordered && storage.get_topo_height_for_hash(tip_hash).await? >= base_topo_height) {
+                    let diff = storage.get_cumulative_difficulty_for_block_hash(tip_hash).await?;
+                    scores.push((tip_hash.clone(), diff));
+                } else {
+                    debug!("Block {} is skipped in generate_full_order, is ordered = {}, base topo height = {}", tip_hash, is_ordered, base_topo_height);
+                }
+            }
+    
+            blockdag::sort_descending_by_cumulative_difficulty(&mut scores);
+    
+            for (tip_hash, _) in scores {
+                if !visited.contains(&tip_hash) {
+                    let sub_order = cache.get(&(tip_hash.clone(), base.clone(), base_height)).cloned().unwrap_or_else(IndexSet::new);
+                    stack.push_back((tip_hash, sub_order.clone()));
+                    order.extend(sub_order);
+                }
+            }
+    
+            order.insert(current_hash.clone());
+            visited.insert(current_hash.clone());
+            cache.put((current_hash.clone(), base.clone(), base_height), order.clone());
+        }
+    
+        Ok(cache.get(&(hash.clone(), base.clone(), base_height)).cloned().unwrap_or_else(IndexSet::new))
     }
 
     // confirms whether the actual tip difficulty is withing 9% deviation with best tip (reference)
