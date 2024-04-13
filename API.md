@@ -5776,10 +5776,7 @@ This returns the following response:
 {
 	"id": 1,
 	"jsonrpc": "2.0",
-	"result": {
-		"event": "new_topo_height",
-		"topoheight": 57
-	}
+	"result": true
 }
 ```
 
