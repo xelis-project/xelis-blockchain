@@ -1,7 +1,25 @@
 use std::collections::HashMap;
 use async_trait::async_trait;
-use crate::{account::CiphertextCache, config::{COIN_VALUE, XELIS_ASSET}, crypto::{elgamal::Ciphertext, Address, Hash, KeyPair, PublicKey}, transaction::MAX_TRANSFER_COUNT};
-use super::{builder::{AccountState, FeeBuilder, TransactionBuilder, TransactionTypeBuilder, TransferBuilder}, verify::BlockchainVerificationState, BurnPayload, Reference, Transaction};
+use crate::{
+    account::CiphertextCache,
+    config::{COIN_VALUE, XELIS_ASSET},
+    crypto::{elgamal::Ciphertext, Address, Hash, KeyPair, PublicKey},
+    transaction::MAX_TRANSFER_COUNT
+};
+use super::{
+    builder::{
+        AccountState,
+        FeeBuilder,
+        FeeHelper,
+        TransactionBuilder,
+        TransactionTypeBuilder,
+        TransferBuilder
+    },
+    verify::BlockchainVerificationState,
+    BurnPayload,
+    Reference,
+    Transaction
+};
 
 struct AccountChainState {
     balances: HashMap<Hash, Ciphertext>,
@@ -50,11 +68,13 @@ impl Account {
 struct AccountStateImpl {
     balances: HashMap<Hash, Balance>,
     reference: Reference,
+    nonce: u64,
 }
 
 fn create_tx_for(account: Account, destination: Address, amount: u64) -> Transaction {
     let mut state = AccountStateImpl {
         balances: account.balances,
+        nonce: account.nonce,
         reference: Reference {
             topoheight: 0,
             hash: Hash::zero(),
@@ -69,7 +89,7 @@ fn create_tx_for(account: Account, destination: Address, amount: u64) -> Transac
     }]);
 
 
-    let builder = TransactionBuilder::new(0, account.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64), 0);
+    let builder = TransactionBuilder::new(0, account.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
     let tx = builder.build(&mut state, &account.keypair).unwrap();
 
     tx
@@ -127,6 +147,7 @@ async fn test_burn_tx_verify() {
     let tx = {
         let mut state = AccountStateImpl {
             balances: alice.balances.clone(),
+            nonce: alice.nonce,
             reference: Reference {
                 topoheight: 0,
                 hash: Hash::zero(),
@@ -137,7 +158,7 @@ async fn test_burn_tx_verify() {
             amount: 50 * COIN_VALUE,
             asset: XELIS_ASSET,
         });
-        let builder = TransactionBuilder::new(0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64), 0);
+        let builder = TransactionBuilder::new(0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
         builder.build(&mut state, &alice.keypair).unwrap()
     };
 
@@ -192,6 +213,7 @@ async fn test_max_transfers() {
 
         let mut state = AccountStateImpl {
             balances: alice.balances.clone(),
+            nonce: alice.nonce,
             reference: Reference {
                 topoheight: 0,
                 hash: Hash::zero(),
@@ -199,7 +221,7 @@ async fn test_max_transfers() {
         };
     
         let data = TransactionTypeBuilder::Transfers(transfers);
-        let builder = TransactionBuilder::new(0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64), 0);
+        let builder = TransactionBuilder::new(0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
         builder.build(&mut state, &alice.keypair).unwrap()
     };
 
@@ -293,15 +315,17 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     }
 }
 
-impl AccountState for AccountStateImpl {
+impl FeeHelper for AccountStateImpl {
     type Error = ();
 
+    fn account_exists(&self, _: &PublicKey) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+}
+
+impl AccountState for AccountStateImpl {
     fn is_mainnet(&self) -> bool {
         false
-    }
-
-    fn account_exists(&self, _: &PublicKey) -> Result<bool, Self::Error> {
-        Ok(true)
     }
 
     fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error> {
@@ -321,6 +345,15 @@ impl AccountState for AccountStateImpl {
             balance,
             ciphertext: CiphertextCache::Decompressed(ciphertext),
         });
+        Ok(())
+    }
+
+    fn get_nonce(&self) -> Result<u64, Self::Error> {
+        Ok(self.nonce)
+    }
+
+    fn update_nonce(&mut self, new_nonce: u64) -> Result<(), Self::Error> {
+        self.nonce = new_nonce;
         Ok(())
     }
 }
