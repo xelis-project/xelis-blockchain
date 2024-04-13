@@ -84,7 +84,6 @@ use std::{
     },
     time::Instant
 };
-use async_recursion::async_recursion;
 use tokio::sync::{Mutex, RwLock};
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
@@ -815,7 +814,8 @@ impl<S: Storage> Blockchain<S> {
         Ok((base_hash, base_height))
     }
 
-    async fn build_reachability_recursive(&self, storage: &S, set: &mut HashSet<Hash>, hash: Hash) -> Result<(), BlockchainError> {
+    async fn build_reachability(&self, storage: &S, hash: Hash) -> Result<HashSet<Hash>, BlockchainError> {
+        let mut set = HashSet::new();
         let mut stack: VecDeque<(Hash, u64)> = VecDeque::new();
         stack.push_back((hash, 0));
     
@@ -835,19 +835,16 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        Ok(())
+        Ok(set)
     }
 
     // this function check that a TIP cannot be refered as past block in another TIP
-    async fn verify_non_reachability(&self, storage: &S, block: &BlockHeader) -> Result<bool, BlockchainError> {
+    async fn verify_non_reachability(&self, storage: &S, tips: &IndexSet<Hash>) -> Result<bool, BlockchainError> {
         trace!("Verifying non reachability for block");
-        let tips = block.get_tips();
         let tips_count = tips.len();
         let mut reach = Vec::with_capacity(tips_count);
-        for hash in block.get_tips() {
-            let mut set = HashSet::new();
-            // TODO no clone
-            self.build_reachability_recursive(storage, &mut set, hash.clone()).await?;
+        for hash in tips {
+            let set = self.build_reachability(storage, hash.clone()).await?;
             reach.push(set);
         }
 
@@ -864,19 +861,45 @@ impl<S: Storage> Blockchain<S> {
         Ok(true)
     }
 
-    #[async_recursion] // TODO no recursion
-    async fn calculate_distance_from_mainchain_recursive(&self, storage: &S, set: &mut HashSet<u64>, hash: &Hash) -> Result<(), BlockchainError> {
-        let tips = storage.get_past_blocks_for_block_hash(hash).await?;
-        for hash in tips.iter() {
-            if storage.is_block_topological_ordered(hash).await {
-                set.insert(storage.get_height_for_block_hash(hash).await?);
-            } else {
-                self.calculate_distance_from_mainchain_recursive(storage, set, hash).await?;
+    // Search the lowest height available from the tips of a block hash
+    // We go through all tips and their tips until we have no unordered block left
+    async fn find_lowest_height_from_mainchain(&self, storage: &S, hash: Hash) -> Result<u64, BlockchainError> {
+        // Lowest height found from mainchain
+        let mut lowest_height = u64::max_value();
+        // Current stack of blocks to process
+        let mut stack: VecDeque<Hash> = VecDeque::new();
+        // Because several blocks can have the same tips,
+        // prevent to process a block twice
+        let mut processed = HashSet::new();
+
+        stack.push_back(hash);
+
+        while let Some(current_hash) = stack.pop_back() {
+            if processed.contains(&current_hash) {
+                continue;
             }
+
+            let tips = storage.get_past_blocks_for_block_hash(&current_hash).await?;
+            for tip_hash in tips.iter() {
+                if storage.is_block_topological_ordered(tip_hash).await {
+                    let height = storage.get_height_for_block_hash(tip_hash).await?;
+                    if lowest_height > height {
+                        lowest_height = height;
+                    }
+                } else {
+                    stack.push_back(tip_hash.clone());
+                }
+            }
+            processed.insert(current_hash);
         }
-        Ok(())
+
+        Ok(lowest_height)
     }
 
+    // Search the lowest height available from this block hash
+    // This function is used to calculate the distance from mainchain
+    // It will recursively search all tips and their height
+    // If a tip is not ordered, we will search its tips until we find an ordered block
     async fn calculate_distance_from_mainchain(&self, storage: &S, hash: &Hash) -> Result<u64, BlockchainError> {
         if storage.is_block_topological_ordered(hash).await {
             let height = storage.get_height_for_block_hash(hash).await?;
@@ -884,17 +907,9 @@ impl<S: Storage> Blockchain<S> {
             return Ok(height)
         }
         debug!("calculate_distance: Block {} is not ordered, calculate distance from mainchain", hash);
-        let mut set = HashSet::new(); // replace by a Vec and sort + remove first ?
-        self.calculate_distance_from_mainchain_recursive(storage, &mut set, hash).await?;
+        let lowest_height = self.find_lowest_height_from_mainchain(storage, hash.clone()).await?;
 
-        let mut lowest_height = u64::max_value();
-        for height in &set {
-            if lowest_height > *height {
-                lowest_height = *height;
-            }
-        }
-
-        debug!("calculate_distance: lowest height found is {} on {} elements", lowest_height, set.len());
+        debug!("calculate_distance: lowest height found is {}", lowest_height);
         Ok(lowest_height)
     }
 
@@ -1514,7 +1529,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        if !self.verify_non_reachability(storage, &block).await? {
+        if !self.verify_non_reachability(storage, block.get_tips()).await? {
             debug!("{} with hash {} has an invalid reachability", block, block_hash);
             return Err(BlockchainError::InvalidReachability)
         }
