@@ -572,6 +572,21 @@ impl Storage for SledStorage {
         self.delete_versioned_tree_above_topoheight(&self.versioned_nonces, topoheight)
     }
 
+    async fn delete_registrations_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete registrations above topoheight {}", topoheight);
+        for el in self.registrations_prefixed.iter().keys() {
+            let key = el?;
+            let topo = u64::from_bytes(&key[0..8])?;
+            if topo > topoheight {
+                self.registrations_prefixed.remove(&key)?;
+                let pkey = &key[8..40];
+                self.registrations.remove(&pkey)?;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("delete versioned balances below topoheight {}!", topoheight);
         self.delete_versioned_tree_below_topoheight(&self.versioned_balances, topoheight)
@@ -892,9 +907,12 @@ impl Storage for SledStorage {
         warn!("Blocks rewinded: {}, new topoheight: {}, new height: {}", done, topoheight, height);
 
         trace!("Cleaning versioned balances and nonces");
+
         // now delete all versioned balances and nonces above the new topoheight
         self.delete_versioned_balances_above_topoheight(topoheight).await?;
         self.delete_versioned_nonces_above_topoheight(topoheight).await?;
+        // Delete also registrations
+        self.delete_registrations_above_topoheight(topoheight).await?;
 
         trace!("Cleaning caches");
         // Clear all caches to not have old data after rewind

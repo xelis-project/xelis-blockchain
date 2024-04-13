@@ -36,11 +36,14 @@ pub trait Storage: DagOrderProvider + PrunedTopoheightProvider + NonceProvider +
     // delete versioned nonces at topoheight
     async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // delete versioned balances above or at topoheight
+    // delete versioned balances above topoheight
     async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // delete versioned nonces above or at topoheight
+    // delete versioned nonces above topoheight
     async fn delete_versioned_nonces_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
+
+    // delete account registrations above topoheight
+    async fn delete_registrations_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
     // delete versioned balances below topoheight
     async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
