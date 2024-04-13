@@ -5751,6 +5751,190 @@ This includes nonce range (min/max) used, final output balances expected per ass
 
 ## Wallet
 
+### Events
+
+This require to use the WebSocket connection.
+
+All events sent by the wallet to be notified in real-time through the WebSocket.
+
+Every events are registered using the following RPC request (example for `new_topo_height` event)
+
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "subscribe",
+	"id": 1,
+	"params": {
+		"notify": "new_topo_height"
+	}
+}
+```
+
+This returns the following response:
+
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"event": "new_topo_height",
+		"topoheight": 57
+	}
+}
+```
+
+If its true, that means the daemon accepted the subscription to the requested event.
+If its returning false, that may means you are already subscribed to this event.
+
+To unsubscribe from an event, replace the method name `subscribe` by `unsubscribe`.
+
+**NOTE**: The field `id` used during the request `subscribe` of the event is reused for each event fired by the wallet.
+This is useful to determine which kind of event it is. You must set a unique `id` value to each event.
+
+#### New TopoHeight
+
+When a new topoheight is detected by the wallet.
+It may be lower than the previous one, based on how the DAG reacts
+
+##### Name `new_topo_height`
+
+##### On Event
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"event": "new_topo_height",
+		"topoheight": 57
+	}
+}
+```
+
+#### New Asset
+
+When a new asset is detected by the wallet.
+
+##### Name `new_asset`
+
+##### On Event
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"event": "new_asset",
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+		"topoheight": 57,
+		"decimals": 8
+	}
+}
+```
+
+#### New Transaction
+
+When a new transaction is detected by the wallet.
+
+##### Name `new_transaction`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "new_transaction",
+        "hash": "b84adead7fe1c0499f92826c08f4f67f8e5133981465b7b9cf0b34649e11f1e0",
+        "outgoing": {
+            "fee": 125000,
+            "nonce": 3530,
+            "transfers": [
+                {
+                    "amount": 100000000,
+                    "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "destination": "xet:6elhr5zvx5wl2ljjl82l6yxxxqkxjvcr38kcq9qef3nurm2r2arsq89z4ll",
+                    "extra_data": null
+                }
+            ]
+        },
+        "topoheight": 107853
+    }
+}
+```
+
+#### Balance Changed
+
+When an asset balance has been updated.
+
+**NOTE**: Balance is in atomic units.
+
+##### Name `balance_changed`
+
+##### On Event
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"event": "balance_changed",
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+		"balance": 178800000000
+	}
+}
+```
+
+#### Rescan
+
+When a rescan has been triggered by the wallet.
+The event response contains the topoheight until which the wallet rescanned and deleted the transactions.
+
+##### Name `rescan`
+
+##### On Event
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"event": "rescan",
+		"start_topoheight": 50
+	}
+}
+```
+
+#### Online
+
+When the wallet is in online mode (connected to a daemon).
+
+##### Name `online`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "online"
+    }
+}
+```
+
+#### Offline
+
+When the wallet is in offline mode (not connected to any daemon).
+
+##### Name `offline`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "offline"
+    }
+}
+```
+
 ### JSON-RPC methods
 
 #### Get Version
