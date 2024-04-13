@@ -1,3 +1,4 @@
+use anyhow::Context;
 use async_trait::async_trait;
 use indexmap::IndexSet;
 use crate::{
@@ -709,7 +710,7 @@ impl Storage for SledStorage {
 
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64, stable_topo_height: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
         trace!("pop blocks from height: {}, topoheight: {}, count: {}", height, topoheight, count);
-        if height < count as u64 { // also prevent removing genesis block
+        if topoheight < count as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
         }
 
@@ -721,7 +722,7 @@ impl Storage for SledStorage {
         let pruned_topoheight = self.get_pruned_topoheight().await?.unwrap_or(0);
         if pruned_topoheight != 0 {
             let safety_pruned_topoheight = pruned_topoheight + PRUNE_SAFETY_LIMIT;
-            if lowest_topo <= safety_pruned_topoheight {
+            if lowest_topo <= safety_pruned_topoheight && stable_topo_height != 0 {
                 warn!("Pruned topoheight is {}, lowest topoheight is {}, rewind only until {}", pruned_topoheight, lowest_topo, safety_pruned_topoheight);
                 lowest_topo = safety_pruned_topoheight;
             }
@@ -744,7 +745,7 @@ impl Storage for SledStorage {
         'main: loop {
             // stop rewinding if its genesis block or if we reached the lowest topo
             if topoheight <= lowest_topo || topoheight <= stable_topo_height || height == 0 { // prevent removing genesis block
-                trace!("Done: {done}, count: {count}, height: {height}, topoheight: {topoheight}");
+                trace!("Done: {done}, count: {count}, height: {height}, topoheight: {topoheight}, lowest topo: {lowest_topo}, stable topo: {stable_topo_height}");
                 break 'main;
             }
 
@@ -761,6 +762,20 @@ impl Storage for SledStorage {
                 tips.insert(hash.clone());
             }
 
+            if topoheight <= pruned_topoheight {
+                warn!("Pruned topoheight is reached, this is not healthy, starting from 0");
+                topoheight = 0;
+                height = 0;
+
+                tips.clear();
+                tips.insert(self.get_hash_at_topo_height(0).await?);
+
+                self.extra.remove(PRUNED_TOPOHEIGHT)?;
+                self.pruned_topoheight = None;
+
+                break 'main;
+            }
+
             topoheight -= 1;
             // height of old block become new height
             if block.get_height() < height {
@@ -771,30 +786,42 @@ impl Storage for SledStorage {
 
         debug!("Blocks processed {}, new topoheight: {}, new height: {}, tips: {}", done, topoheight, height, tips.len());
 
-        // clean all assets
+        trace!("Cleaning assets");
+
+        // All deleted assets
         let mut deleted_assets = HashSet::new();
-        let mut assets = HashSet::new();
+        
+        // clean all assets
         for el in self.assets.iter() {
-            let (key, value) = el?;
+            let (key, value) = el.context("error on asset iterator")?;
             let asset = Hash::from_bytes(&key)?;
+            trace!("verifying asset registered: {}", asset);
+
             let registration_topoheight = u64::from_bytes(&value)?;
             if registration_topoheight > topoheight {
                 trace!("Asset {} was registered at topoheight {}, deleting", asset, registration_topoheight);
-                self.assets.remove(&key)?;
-                deleted_assets.insert(asset);
+                // Delete it from registered assets
+                self.assets.remove(&key).context(format!("Error while deleting asset {asset} from registered assets"))?;
 
                 // drop the tree for this asset
-                self.db.drop_tree(key)?;
-            } else {
-                assets.insert(asset);
+                self.db.drop_tree(key).context(format!("error on dropping asset {asset} tree"))?;
+
+                deleted_assets.insert(asset);
             }
         }
 
+        trace!("Cleaning nonces");
         // now let's process nonces versions
         // we set the new highest topoheight to the highest found under the new topoheight
         for el in self.nonces.iter() {
             let (key, value) = el?;
             let highest_topoheight = u64::from_bytes(&value)?;
+            if highest_topoheight < pruned_topoheight {
+                warn!("wrong nonce topoheight stored, highest topoheight is {}, pruned topoheight is {}", highest_topoheight, pruned_topoheight);
+                self.nonces.remove(key)?;
+                continue;
+            }
+
             if highest_topoheight > topoheight {
                 if self.nonces.remove(&key)?.is_some() {
                     self.store_accounts_count(self.count_accounts().await? - 1)?;
@@ -802,7 +829,9 @@ impl Storage for SledStorage {
 
                 // find the first version which is under topoheight
                 let pkey = PublicKey::from_bytes(&key)?;
-                let mut version = self.get_nonce_at_exact_topoheight(&pkey, highest_topoheight).await?;
+                let mut version = self.get_nonce_at_exact_topoheight(&pkey, highest_topoheight).await
+                    .context(format!("Error while retrieving nonce at exact topoheight {highest_topoheight}"))?;
+
                 while let Some(previous_topoheight) = version.get_previous_topoheight() {
                     if previous_topoheight < topoheight {
                         // we find the new highest version which is under new topoheight
@@ -814,51 +843,64 @@ impl Storage for SledStorage {
                     }
 
                     // keep searching
-                    version = self.get_nonce_at_exact_topoheight(&pkey, previous_topoheight).await?;
+                    version = self.get_nonce_at_exact_topoheight(&pkey, previous_topoheight).await
+                        .context(format!("Error while searching nonce at exact topoheight"))?;
                 }
             } else {
                 // nothing to do as its under the rewinded topoheight
             }
         }
 
+        trace!("Cleaning balances");
         // do balances too
         for el in self.balances.iter() {
             let (key, value) = el?;
-            let highest_topoheight = u64::from_bytes(&value)?;
-            if highest_topoheight > topoheight {
-                // find the first version which is under topoheight
-                let pkey = PublicKey::from_bytes(&key[0..32])?;
-                let asset = Hash::from_bytes(&key[32..64])?;
-                let mut delete = true;
-                let mut version = self.get_balance_at_exact_topoheight(&pkey, &asset, highest_topoheight).await?;
-                while let Some(previous_topoheight) = version.get_previous_topoheight() {
-                    if previous_topoheight < topoheight {
-                        // we find the new highest version which is under new topoheight
-                        trace!("New highest version balance for {} is at topoheight {} with asset {}", pkey.as_address(self.is_mainnet()), previous_topoheight, asset);
-                        self.balances.insert(&key, &previous_topoheight.to_be_bytes())?;
-                        delete = false;
-                        break;
+            let asset = Hash::from_bytes(&key[32..64])?;
+            let mut delete = true;
+
+            
+            // if the asset is not deleted, we can process it
+            if !deleted_assets.contains(&asset) {
+                let highest_topoheight = u64::from_bytes(&value)?;
+                if highest_topoheight > topoheight && highest_topoheight >= pruned_topoheight {
+                    // find the first version which is under topoheight
+                    let pkey = PublicKey::from_bytes(&key[0..32])?;
+
+                    let mut version = self.get_balance_at_exact_topoheight(&pkey, &asset, highest_topoheight).await
+                    .context(format!("Error while retrieving balance at exact topoheight {highest_topoheight}"))?;
+
+                    while let Some(previous_topoheight) = version.get_previous_topoheight() {
+                        if previous_topoheight < topoheight {
+                            // we find the new highest version which is under new topoheight
+                            trace!("New highest version balance for {} is at topoheight {} with asset {}", pkey.as_address(self.is_mainnet()), previous_topoheight, asset);
+                            self.balances.insert(&key, &previous_topoheight.to_be_bytes())?;
+                            delete = false;
+                            break;
+                        }
+    
+                        // keep searching
+                        version = self.get_balance_at_exact_topoheight(&pkey, &asset, previous_topoheight).await?;
                     }
-
-                    // keep searching
-                    version = self.get_balance_at_exact_topoheight(&pkey, &asset, previous_topoheight).await?;
                 }
+            }
 
-                if delete {
-                    self.balances.remove(&key)?;
-                }
-            } else {
-                // nothing to do as its under the rewinded topoheight
+            if delete {
+                self.balances.remove(&key)?;
             }
         }
 
+        warn!("Blocks rewinded: {}, new topoheight: {}, new height: {}", done, topoheight, height);
+
+        trace!("Cleaning versioned balances and nonces");
         // now delete all versioned balances and nonces above the new topoheight
         self.delete_versioned_balances_above_topoheight(topoheight).await?;
         self.delete_versioned_nonces_above_topoheight(topoheight).await?;
 
+        trace!("Cleaning caches");
         // Clear all caches to not have old data after rewind
         self.clear_caches().await?;
 
+        trace!("Storing new pointers");
         // store the new tips and topo topoheight
         self.store_tips(&tips)?;
         self.set_top_topoheight(topoheight)?;

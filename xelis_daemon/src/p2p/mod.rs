@@ -1670,7 +1670,7 @@ impl<S: Storage> P2pServer<S> {
 
             if let Some(pruned_topo) = storage.get_pruned_topoheight().await? {
                 let available_diff = self.blockchain.get_topo_height() - pruned_topo;
-                if count > available_diff {
+                if count > available_diff && !(available_diff == 0 && peer.is_priority()) {
                     warn!("Peer sent us a pop count of {} but we only have {} blocks available", count, available_diff);
                     count = available_diff;
                 }
