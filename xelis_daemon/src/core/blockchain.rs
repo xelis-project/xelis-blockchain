@@ -88,7 +88,11 @@ use tokio::sync::{Mutex, RwLock};
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
-use super::storage::{BlocksAtHeightProvider, PrunedTopoheightProvider};
+use super::storage::{
+    BlocksAtHeightProvider,
+    ClientProtocolProvider,
+    PrunedTopoheightProvider
+};
 
 #[derive(Debug, clap::Args)]
 pub struct Config {
@@ -690,7 +694,7 @@ impl<S: Storage> Blockchain<S> {
 
     async fn find_tip_base<P>(&self, provider: &P, hash: &Hash, height: u64, pruned_topoheight: u64) -> Result<(Hash, u64), BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + Send + Sync
+        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
     {
         let mut cache = self.tip_base_cache.lock().await;
 
@@ -775,7 +779,7 @@ impl<S: Storage> Blockchain<S> {
     // find the common base (block hash and block height) of all tips
     pub async fn find_common_base<'a, P, I>(&self, provider: &P, tips: I) -> Result<(Hash, u64), BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + Send + Sync,
+        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider,
         I: IntoIterator<Item = &'a Hash> + Copy,
     {
         debug!("Searching for common base for tips {}", tips.into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
@@ -863,7 +867,10 @@ impl<S: Storage> Blockchain<S> {
 
     // Search the lowest height available from the tips of a block hash
     // We go through all tips and their tips until we have no unordered block left
-    async fn find_lowest_height_from_mainchain(&self, storage: &S, hash: Hash) -> Result<u64, BlockchainError> {
+    async fn find_lowest_height_from_mainchain<P>(&self, provider: &P, hash: Hash) -> Result<u64, BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider
+    {
         // Lowest height found from mainchain
         let mut lowest_height = u64::max_value();
         // Current stack of blocks to process
@@ -879,10 +886,10 @@ impl<S: Storage> Blockchain<S> {
                 continue;
             }
 
-            let tips = storage.get_past_blocks_for_block_hash(&current_hash).await?;
+            let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
             for tip_hash in tips.iter() {
-                if storage.is_block_topological_ordered(tip_hash).await {
-                    let height = storage.get_height_for_block_hash(tip_hash).await?;
+                if provider.is_block_topological_ordered(tip_hash).await {
+                    let height = provider.get_height_for_block_hash(tip_hash).await?;
                     if lowest_height > height {
                         lowest_height = height;
                     }
@@ -900,14 +907,17 @@ impl<S: Storage> Blockchain<S> {
     // This function is used to calculate the distance from mainchain
     // It will recursively search all tips and their height
     // If a tip is not ordered, we will search its tips until we find an ordered block
-    async fn calculate_distance_from_mainchain(&self, storage: &S, hash: &Hash) -> Result<u64, BlockchainError> {
-        if storage.is_block_topological_ordered(hash).await {
-            let height = storage.get_height_for_block_hash(hash).await?;
+    async fn calculate_distance_from_mainchain<P>(&self, provider: &P, hash: &Hash) -> Result<u64, BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider
+    {
+        if provider.is_block_topological_ordered(hash).await {
+            let height = provider.get_height_for_block_hash(hash).await?;
             debug!("calculate_distance: Block {} is at height {}", hash, height);
             return Ok(height)
         }
         debug!("calculate_distance: Block {} is not ordered, calculate distance from mainchain", hash);
-        let lowest_height = self.find_lowest_height_from_mainchain(storage, hash.clone()).await?;
+        let lowest_height = self.find_lowest_height_from_mainchain(provider, hash.clone()).await?;
 
         debug!("calculate_distance: lowest height found is {}", lowest_height);
         Ok(lowest_height)
@@ -917,7 +927,7 @@ impl<S: Storage> Blockchain<S> {
     // this will recursively find all tips and their difficulty
     async fn find_tip_work_score_internal<'a, P>(&self, provider: &P, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: u64) -> Result<(), BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + Sync + Send
+        P: DifficultyProvider + DagOrderProvider
     {
         trace!("Finding tip work score for {}", hash);
 
@@ -945,7 +955,10 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // find the sum of work done
-    pub async fn find_tip_work_score<DD: DifficultyProvider + DagOrderProvider + Sync + Send>(&self, provider: &DD, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError> {
+    pub async fn find_tip_work_score<P>(&self, provider: &P, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider
+    {
         let mut cache = self.tip_work_score_cache.lock().await;
         if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
             trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
@@ -1006,7 +1019,10 @@ impl<S: Storage> Blockchain<S> {
     // the full order is re generated each time a new block is added based on new TIPS
     // first hash in order is the base hash
     // base_height is only used for the cache key
-    async fn generate_full_order(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: u64) -> Result<IndexSet<Hash>, BlockchainError> {
+    async fn generate_full_order<P>(&self, provider: &P, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: u64) -> Result<IndexSet<Hash>, BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider
+    {
         trace!("Generating full order for {} with base {}", hash, base);
         let mut cache = self.full_order_cache.lock().await;
 
@@ -1036,7 +1052,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             // Retrieve block tips
-            let block_tips = storage.get_past_blocks_for_block_hash(&current_hash).await?;
+            let block_tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
 
             // if the block is genesis or its the base block, we can add it to the full order
             if block_tips.is_empty() || current_hash == *base {
@@ -1050,9 +1066,9 @@ impl<S: Storage> Blockchain<S> {
             // Calculate the score for each tips above the base topoheight
             let mut scores = Vec::new();
             for tip_hash in block_tips.iter() {
-                let is_ordered = storage.is_block_topological_ordered(tip_hash).await;
-                if !is_ordered || (is_ordered && storage.get_topo_height_for_hash(tip_hash).await? >= base_topo_height) {
-                    let diff = storage.get_cumulative_difficulty_for_block_hash(tip_hash).await?;
+                let is_ordered = provider.is_block_topological_ordered(tip_hash).await;
+                if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(tip_hash).await? >= base_topo_height) {
+                    let diff = provider.get_cumulative_difficulty_for_block_hash(tip_hash).await?;
                     scores.push((tip_hash.clone(), diff));
                 } else {
                     debug!("Block {} is skipped in generate_full_order, is ordered = {}, base topo height = {}", tip_hash, is_ordered, base_topo_height);
@@ -2139,7 +2155,10 @@ impl<S: Storage> Blockchain<S> {
 
     // retrieve all txs hashes until height or until genesis block that were executed in a block
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
-    async fn get_all_executed_txs_until_height(&self, storage: &S, until_height: u64, tips: impl Iterator<Item = Hash>) -> Result<HashSet<Hash>, BlockchainError> {
+    async fn get_all_executed_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>) -> Result<HashSet<Hash>, BlockchainError>
+    where
+        P: DifficultyProvider + ClientProtocolProvider
+    {
         trace!("get all txs until height {}", until_height);
         // All transactions hashes found under the stable height
         let mut hashes = HashSet::new();
@@ -2151,7 +2170,7 @@ impl<S: Storage> Blockchain<S> {
 
         // get last element from queue (order doesn't matter and its faster than moving all elements)
         while let Some(hash) = queue.pop() {
-            let block = storage.get_block_header_by_hash(&hash).await?;
+            let block = provider.get_block_header_by_hash(&hash).await?;
 
             // check that the block height is higher than the height passed in param
             if until_height < block.get_height() {
@@ -2160,7 +2179,7 @@ impl<S: Storage> Blockchain<S> {
                     // Check that we don't have it yet
                     if !hashes.contains(tx) {
                         // Then check that it's executed in this block
-                        if storage.is_tx_executed_in_block(tx, &hash)? {
+                        if provider.is_tx_executed_in_block(tx, &hash)? {
                             // add it to the list
                             hashes.insert(tx.clone());
                         }
@@ -2187,26 +2206,29 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
-    pub async fn is_side_block(&self, storage: &S, hash: &Hash) -> Result<bool, BlockchainError> {
+    pub async fn is_side_block<P>(&self, provider: &P, hash: &Hash) -> Result<bool, BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider
+    {
         trace!("is block {} a side block", hash);
-        if !storage.is_block_topological_ordered(hash).await {
+        if !provider.is_block_topological_ordered(hash).await {
             return Ok(false)
         }
 
-        let topoheight = storage.get_topo_height_for_hash(hash).await?;
+        let topoheight = provider.get_topo_height_for_hash(hash).await?;
         // genesis block can't be a side block
         if topoheight == 0 {
             return Ok(false)
         }
 
-        let height = storage.get_height_for_block_hash(hash).await?;
+        let height = provider.get_height_for_block_hash(hash).await?;
 
         // verify if there is a block with height higher than this block in past 8 topo blocks
         let mut counter = 0;
         let mut i = topoheight - 1;
         while counter < STABLE_LIMIT && i > 0 {
-            let hash = storage.get_hash_at_topo_height(i).await?;
-            let previous_height = storage.get_height_for_block_hash(&hash).await?;
+            let hash = provider.get_hash_at_topo_height(i).await?;
+            let previous_height = provider.get_height_for_block_hash(&hash).await?;
 
             if height <= previous_height {
                 return Ok(true)
@@ -2219,10 +2241,13 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // to have stable order: it must be ordered, and be under the stable height limit
-    pub async fn has_block_stable_order(&self, storage: &S, hash: &Hash, topoheight: u64) -> Result<bool, BlockchainError> {
+    pub async fn has_block_stable_order<P>(&self, provider: &P, hash: &Hash, topoheight: u64) -> Result<bool, BlockchainError>
+    where
+        P: DagOrderProvider
+    {
         trace!("has block {} stable order at topoheight {}", hash, topoheight);
-        if storage.is_block_topological_ordered(hash).await {
-            let block_topo_height = storage.get_topo_height_for_hash(hash).await?;
+        if provider.is_block_topological_ordered(hash).await {
+            let block_topo_height = provider.get_topo_height_for_hash(hash).await?;
             return Ok(block_topo_height + STABLE_LIMIT <= topoheight)
         }
         Ok(false)
