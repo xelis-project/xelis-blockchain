@@ -2,6 +2,202 @@
 
 ## Daemon
 
+### Events
+
+This require to use the WebSocket connection.
+
+All events sent by the daemon to be notified in real-time through the WebSocket.
+
+Every events are registered using the following RPC request (example for `new_block` event)
+
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "subscribe",
+	"id": 1,
+	"params": {
+		"notify": "new_block"
+	}
+}
+```
+
+This returns the following response:
+
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+If its true, that means the daemon accepted the subscription to the requested event.
+If its returning false, that may means you are already subscribed to this event.
+
+To unsubscribe from an event, replace the method name `subscribe` by `unsubscribe`.
+
+**NOTE**: The field `id` used during the subscription of the event is reused for each event fired by the daemon.
+This is useful to determine which kind of event it is. You must set a unique `id` value to each event.
+
+#### New Block
+
+When a new block has been accepted and included in the chain by the daemon.
+
+##### Name `new_block`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "block_type": "Normal",
+        "cumulative_difficulty": "9909351292695001",
+        "difficulty": "85713090000",
+        "event": "new_block",
+        "extra_nonce": "cb4a04b8cd2913f0947c323c8a2fe4d3623047f1e8a9f4e5f717aaf6ec5da70e",
+        "hash": "0000000008ef82aeb890b919803e19985c430311ddd34aa9b0cb2d40a6dffb87",
+        "height": 106173,
+        "miner": "xet:4fcjmjxs6dyq7d3xl95m26wzfwrluz2tcqdtfp6fpc7rah2kmqusqdr3c66",
+        "nonce": 121282154,
+        "reward": 144997766,
+        "supply": 15506012755620,
+        "timestamp": 1713028338116,
+        "tips": [
+            "0000000000beaccfbb05ffc3b33536daffa85a90cbbf4761287376a65dcac859"
+        ],
+        "topoheight": 107219,
+        "total_fees": 0,
+        "total_size_in_bytes": 124,
+        "txs_hashes": [],
+        "version": 0
+    }
+}
+```
+
+#### Block Ordered
+
+When a block has been ordered and executed by the DAG order.
+
+##### Name `block_ordered`
+
+##### On Event
+```json
+
+```
+
+#### Block Orphaned
+
+When a block was previously executed in the DAG but due to DAG reorg, got rewinded.
+
+##### Name `block_orphaned`
+
+##### On Event
+```json
+
+```
+
+#### Stable Height Changed
+
+When the DAG found a new stable height.
+This means no new blocks can be added at this height or below.
+
+##### Name `stable_height_changed`
+
+##### On Event
+```json
+
+```
+
+#### Transaction Orphaned
+
+When a transaction that was previously executed in the DAG but due to DAG reorg, got rewinded.
+If transaction couldn't be added back to the mempool, it is orphaned.
+
+##### Name `transaction_orphaned`
+
+##### On Event
+```json
+
+```
+
+#### Transaction Added In Mempool
+
+When a valid transaction is added in the daemon mempool.
+
+##### Name `transaction_added_in_mempool`
+
+##### On Event
+```json
+
+```
+
+#### Transaction Executed
+
+When a transaction has been executed by the DAG order.
+
+##### Name `transaction_executed`
+
+##### On Event
+```json
+
+```
+
+#### Peer Connected
+
+When a new peer is connected to our daemon and allows to be shared through API.
+
+##### Name `peer_connected`
+
+##### On Event
+```json
+
+```
+
+#### Peer Disconnected
+
+When a peer previously connected disconnect from us.
+
+##### Name `peer_disconnected`
+
+##### On Event
+```json
+
+```
+
+#### Peer PeerList Updated
+
+When a peer peerlist has been updated.
+
+##### Name `peer_peer_list_updated`
+
+##### On Event
+```json
+
+```
+
+#### Peer State Updated
+
+When a peer state has been updated due to a ping packet.
+
+##### Name `peer_state_updated`
+
+##### On Event
+```json
+
+```
+
+#### Peer Peer Disconnected
+
+When a peer's peer has disconnected from him and notified us.
+
+##### Name `peer_peer_disconnected`
+
+##### On Event
+```json
+
+```
+
 ### JSON-RPC methods
 
 #### Get Version
