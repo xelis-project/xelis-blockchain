@@ -79,7 +79,7 @@ impl TransactionBuilderState {
 
     pub async fn apply_changes(&mut self, storage: &mut EncryptedStorage) -> Result<(), WalletError> {
         for (asset, balance) in self.balances.drain() {
-            storage.set_balance_for(&asset, balance).await?;
+            storage.set_unconfirmed_balance_for(asset, balance).await?;
         }
         storage.set_nonce(self.nonce)?;
 

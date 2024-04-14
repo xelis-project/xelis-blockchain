@@ -688,7 +688,7 @@ impl Wallet {
                 return Err(WalletError::BalanceNotFound(asset));
             }
 
-            let balance = storage.get_balance_for(&asset).await?;
+            let balance = storage.get_unconfirmed_balance_for(&asset).await?;
             state.add_balance(asset, balance);
         }
 

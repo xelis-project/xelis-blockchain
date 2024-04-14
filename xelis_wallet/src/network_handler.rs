@@ -306,7 +306,6 @@ impl NetworkHandler {
 
                 // Find the highest nonce
                 if is_owner && our_highest_nonce.map(|n| tx.nonce > n).unwrap_or(true) {
-                    // Increase the nonce by one to get our new account nonce
                     our_highest_nonce = Some(tx.nonce);
                 }
 
@@ -379,8 +378,13 @@ impl NetworkHandler {
                     let store = storage.get_balance_for(asset).await.map(|b| b.ciphertext != balance).unwrap_or(true);
                     if store {
                         debug!("Storing balance for asset {}", asset);
-                        let ciphertext = balance.decompressed()?;
-                        let plaintext_balance = Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.clone()).await?;
+                        let plaintext_balance = if let Some(plaintext_balance) = storage.get_unconfirmed_balance_decoded_for(&asset, &balance.compressed()).await? {
+                            plaintext_balance
+                        } else {
+                            trace!("Decrypting balance for asset {}", asset);
+                            let ciphertext = balance.decompressed()?;
+                            Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.clone()).await?
+                        };
 
                         // Store the new balance
                         storage.set_balance_for(asset, Balance::new(plaintext_balance, balance)).await?;
@@ -618,18 +622,32 @@ impl NetworkHandler {
             }
 
             for (asset, mut ciphertext) in balances {
-                let must_update = {
+                let (must_update, balance_cache) = {
                     let storage = self.wallet.get_storage().read().await;
-                    match storage.get_balance_for(&asset).await {
+                    let must_update = match storage.get_balance_for(&asset).await {
                         Ok(mut previous) => previous.ciphertext.compressed() != ciphertext.compressed(),
                         // If we don't have a balance for this asset, we should update it
                         Err(_) => true
-                    }
+                    };
+
+                    // If we must update, check if we have a cache for this balance
+                    let balance_cache = if must_update {
+                        storage.get_unconfirmed_balance_decoded_for(&asset, &ciphertext.compressed()).await?
+                    } else {
+                        None
+                    };
+
+                    (must_update, balance_cache)
                 };
 
                 if must_update {
                     trace!("must update balance for asset: {}, ct: {:?}", asset, ciphertext.to_bytes());
-                    let value = Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.decompressed()?.clone()).await?;
+                    let value = if let Some(cache) = balance_cache {
+                        cache
+                    } else {
+                        trace!("Decrypting balance for asset {}", asset);
+                        Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.decompressed()?.clone()).await?
+                    };
 
                     // Inform the change of the balance
                     self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet, VecDeque},
     num::NonZeroUsize
 };
 use indexmap::IndexMap;
@@ -21,6 +21,7 @@ use xelis_common::{
         DataValue
     },
     crypto::{
+        elgamal::CompressedCiphertext,
         Hash,
         PrivateKey,
         PublicKey
@@ -123,6 +124,11 @@ pub struct EncryptedStorage {
     inner: Storage,
     // Caches
     balances_cache: Mutex<LruCache<Hash, Balance>>,
+    // this cache is used to store unconfirmed balances
+    // it is used to store the balance before the transaction is confirmed
+    // so we can build several txs without having to wait for the confirmation
+    // We store it in a VecDeque so for each TX we have an entry and can just retrieve it
+    unconfirmed_balances_cache: Mutex<HashMap<Hash, VecDeque<Balance>>>,
     assets_cache: Mutex<LruCache<Hash, u8>>,
     // Cache for the synced topoheight
     synced_topoheight: Option<u64>
@@ -140,6 +146,7 @@ impl EncryptedStorage {
             cipher,
             inner,
             balances_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
+            unconfirmed_balances_cache: Mutex::new(HashMap::new()),
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
         };
@@ -458,6 +465,49 @@ impl EncryptedStorage {
         Ok(balance)
     }
 
+    // Retrieve the unconfirmed balance for this asset if present
+    // otherwise, fall back on the confirmed balance
+    pub async fn get_unconfirmed_balance_for(&self, asset: &Hash) -> Result<Balance> {
+        trace!("get unconfirmed balance for {}", asset);
+        let cache = self.unconfirmed_balances_cache.lock().await;
+        if let Some(balances) = cache.get(asset) {
+            // get the latest unconfirmed balance
+            if let Some(balance) = balances.back() {
+                return Ok(Balance {
+                    amount: balance.amount,
+                    ciphertext: balance.ciphertext.clone()
+                });
+            }
+        }
+
+        // Fallback
+        self.get_balance_for(asset).await
+    }
+
+    // Retrieve the unconfirmed balance decoded for this asset if present
+    pub async fn get_unconfirmed_balance_decoded_for(&self, asset: &Hash, compressed_ct: &CompressedCiphertext) -> Result<Option<u64>> {
+        let mut cache = self.unconfirmed_balances_cache.lock().await;
+        if let Some(balances) = cache.get_mut(asset) {
+            for balance in balances.iter_mut() {
+                if *balance.ciphertext.compressed() == *compressed_ct {
+                    return Ok(Some(balance.amount));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    // Set the unconfirmed balance for this asset
+    pub async fn set_unconfirmed_balance_for(&self, asset: Hash, balance: Balance) -> Result<()> {
+        trace!("set unconfirmed balance for {}", asset);
+        let mut cache = self.unconfirmed_balances_cache.lock().await;
+        let balances = cache.entry(asset).or_insert_with(VecDeque::new);
+        balances.push_back(balance);
+
+        Ok(())
+    }
+
     // Determine if we have any balance stored
     pub async fn has_any_balance(&self) -> Result<bool> {
         let cache = self.balances_cache.lock().await;
@@ -479,7 +529,21 @@ impl EncryptedStorage {
     }
 
     // Set the balance for this asset
-    pub async fn set_balance_for(&mut self, asset: &Hash, balance: Balance) -> Result<()> {
+    pub async fn set_balance_for(&mut self, asset: &Hash, mut balance: Balance) -> Result<()> {
+        // Clear the cache of all outdated balances
+        // for this, we simply go through all versions available and delete them all until we find the one we are looking for
+        {
+            let mut cache = self.unconfirmed_balances_cache.lock().await;
+            if let Some(balances) = cache.get_mut(asset) {
+                while let Some(mut b) = balances.pop_front() {
+                    if *b.ciphertext.compressed() == *balance.ciphertext.compressed() {
+                        trace!("unconfirmed balance previously stored found for {}", asset);
+                        break;
+                    }
+                }
+            }
+        }
+
         self.save_to_disk(&self.balances, asset.as_bytes(), &balance.to_bytes())?;
 
         let mut cache = self.balances_cache.lock().await;
@@ -596,7 +660,14 @@ impl EncryptedStorage {
     // Delete all balances from this wallet
     pub async fn delete_balances(&mut self) -> Result<()> {
         self.balances.clear()?;
+        self.delete_unconfirmed_balances().await?;
         self.balances_cache.lock().await.clear();
+        Ok(())
+    }
+
+    // Delete all unconfirmed balances from this wallet
+    pub async fn delete_unconfirmed_balances(&mut self) -> Result<()> {
+        self.unconfirmed_balances_cache.lock().await.clear();
         Ok(())
     }
 
