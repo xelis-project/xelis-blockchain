@@ -656,15 +656,22 @@ impl Wallet {
     }
 
     // Create a transaction with the given transaction type and fee
+    // this will apply the changes to the storage if the transaction
     pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         trace!("create transaction");
         let mut storage = self.storage.write().await;
-        self.create_transaction_with_storage(&mut storage, transaction_type, fee).await
+        let (mut state, transaction) = self.create_transaction_with_storage(&mut storage, transaction_type, fee).await?;
+
+        state.apply_changes(&mut storage).await?;
+
+        Ok(transaction)
     }
 
     // create the final transaction with calculated fees and signature
     // also check that we have enough funds for the transaction
-    pub async fn create_transaction_with_storage(&self, storage: &mut EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
+    // This will returns the transaction builder state along the transaction
+    // You must handle "apply changes" to the storage
+    pub async fn create_transaction_with_storage(&self, storage: &mut EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(TransactionBuilderState, Transaction), WalletError> {
         trace!("create transaction with storage");
         let nonce = storage.get_nonce().unwrap_or(0);
 
@@ -701,7 +708,7 @@ impl Wallet {
 
         state.apply_changes(storage).await?;
 
-        Ok(transaction)
+        Ok((state, transaction))
     }
 
     // submit a transaction to the network through the connection to daemon
