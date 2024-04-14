@@ -1,10 +1,6 @@
 use std::{
     collections::HashSet,
-    num::NonZeroUsize,
-    sync::atomic::{
-        AtomicU64,
-        Ordering
-    }
+    num::NonZeroUsize
 };
 use indexmap::IndexMap;
 use log::trace;
@@ -129,7 +125,7 @@ pub struct EncryptedStorage {
     balances_cache: Mutex<LruCache<Hash, Balance>>,
     assets_cache: Mutex<LruCache<Hash, u8>>,
     // Cache for the synced topoheight
-    synced_topoheight: AtomicU64
+    synced_topoheight: Option<u64>
 }
 
 impl EncryptedStorage {
@@ -145,7 +141,7 @@ impl EncryptedStorage {
             inner,
             balances_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
-            synced_topoheight: AtomicU64::new(0)
+            synced_topoheight: None,
         };
 
         if storage.has_network()? {
@@ -652,20 +648,20 @@ impl EncryptedStorage {
     // Set the topoheight until which the wallet is synchronized
     pub fn set_synced_topoheight(&mut self, topoheight: u64) -> Result<()> {
         trace!("set synced topoheight to {}", topoheight);
-        self.synced_topoheight.store(topoheight, Ordering::Relaxed);
+        self.synced_topoheight = Some(topoheight);
         self.save_to_disk(&self.extra, TOPOHEIGHT_KEY, &topoheight.to_be_bytes())
     }
 
     // Get the topoheight until which the wallet is synchronized
     pub fn get_synced_topoheight(&self) -> Result<u64> {
         trace!("get synced topoheight");
-        let cache = self.synced_topoheight.load(Ordering::Relaxed);
-        if cache > 0 {
-            return Ok(cache);
+
+        if let Some(topoheight) = self.synced_topoheight {
+            trace!("returning cached synced topoheight {}", topoheight);
+            return Ok(topoheight);
         }
 
         let synced_topoheight = self.load_from_disk(&self.extra, TOPOHEIGHT_KEY)?;
-        self.synced_topoheight.store(synced_topoheight, Ordering::Relaxed);
         Ok(synced_topoheight)
     }
 
