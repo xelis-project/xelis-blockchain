@@ -706,8 +706,6 @@ impl Wallet {
         let transaction = builder.build(&mut state, &self.keypair)
             .map_err(|e| WalletError::Any(e.into()))?;
 
-        state.apply_changes(storage).await?;
-
         Ok((state, transaction))
     }
 
