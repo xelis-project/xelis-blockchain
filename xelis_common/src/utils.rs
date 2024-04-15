@@ -85,12 +85,20 @@ pub fn format_difficulty(mut difficulty: Difficulty) -> String {
     let max = HASHRATE_FORMATS.len() - 1;
     let mut count = 0;
     let thousand = VarUint::from_u64(1000);
-    while difficulty > thousand && count < max {
+    let mut left = VarUint::zero();
+    while difficulty >= thousand && count < max {
         count += 1;
+        left = difficulty % thousand;
         difficulty = difficulty / thousand;
     }
 
-    return format!("{}{}", difficulty, DIFFICULTY_FORMATS[count]);
+    let left_str = if left == VarUint::zero() {
+        "".to_string()
+    } else {
+        format!(".{}", left / 10)
+    };
+
+    return format!("{}{}{}", difficulty, left_str, DIFFICULTY_FORMATS[count]);
 }
 
 // Sanitize a daemon address to make sure it's a valid websocket address
@@ -119,4 +127,33 @@ pub fn sanitize_daemon_address(target: &str) -> String {
     }
 
     target
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_difficulty_format_zero() {
+        let value = Difficulty::zero();
+        assert_eq!(format_difficulty(value), "0");
+    }
+
+    #[test]
+    fn test_difficulty_format_thousand_k() {
+        let value: Difficulty = 1000u64.into();
+        assert_eq!(format_difficulty(value), "1K");
+    }
+
+    #[test]
+    fn test_difficulty_format_thousand_k_left() {
+        let value: Difficulty = 1150u64.into();
+        assert_eq!(format_difficulty(value), "1.15K");
+    }
+
+    #[test]
+    fn test_high_difficulty() {
+        let value: Difficulty = 1150_000_000u64.into();
+        assert_eq!(format_difficulty(value), "1.15G");
+    }
 }
