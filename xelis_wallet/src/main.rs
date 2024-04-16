@@ -544,6 +544,12 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
     let seed = prompt.read_input("Seed: ".into(), false)
         .await.context("Error while reading seed")?;
 
+    let words_count = seed.split_whitespace().count();
+    if words_count != 25 || words_count != 24 {
+        manager.error("Seed must be 24 or 25 (checksum) words long");
+        return Ok(())
+    }
+
     let name = prompt.read_input("Wallet name: ".into(), false)
         .await.context("Error while reading wallet name")?;
 
