@@ -36,15 +36,8 @@ pub fn from_xelis(value: impl Into<String>) -> Option<u64> {
     let mut split = value.split('.');
     let xelis: u64 = split.next()?.parse::<u64>().ok()?;
     let decimals = split.next().unwrap_or("0");
-    if decimals.len() > COIN_DECIMALS as usize {
-        return None;
-    }
-
-    let mut decimals = decimals.parse::<u64>().ok()?;
-    while decimals > 0 && decimals % 10 == 0 {
-        decimals /= 10;
-    }
-
+    let decimals: String = decimals.chars().chain(std::iter::repeat('0')).take(COIN_DECIMALS as usize).collect();
+    let decimals = decimals.parse::<u64>().ok()?;
     Some(xelis * 10u64.pow(COIN_DECIMALS as u32) + decimals)
 }
 
@@ -155,5 +148,11 @@ mod tests {
     fn test_high_difficulty() {
         let value: Difficulty = 1150_000_000u64.into();
         assert_eq!(format_difficulty(value), "1.15G");
+    }
+
+    #[test]
+    fn test_from_xelis() {
+        let value = from_xelis("100.123");
+        assert_eq!(value, Some(100_123_00000));
     }
 }
