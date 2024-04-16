@@ -343,7 +343,7 @@ impl NetworkHandler {
 
     // Scan the chain using a specific balance asset, this helps us to get a list of version to only requests blocks where changes happened
     // When the block is requested, we don't limit the syncing to asset in parameter
-    async fn get_balance_and_transactions(&self, topoheight_processed: &mut HashSet<u64>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool) -> Result<(), Error> {
+    async fn get_balance_and_transactions(&self, topoheight_processed: &mut HashSet<u64>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool, highest_nonce: &mut Option<u64>) -> Result<(), Error> {
         // Retrieve the highest version
         let (mut topoheight, mut version) = self.api.get_balance(address, asset).await.map(|res| (res.topoheight, res.version))?;
         // don't sync already synced blocks
@@ -366,12 +366,17 @@ impl NetworkHandler {
                 if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
                     let mut storage = self.wallet.get_storage().write().await;
 
+                    if highest_nonce.is_none() {
+                        // Get the highest nonce from storage
+                        *highest_nonce = Some(storage.get_nonce()?);
+                    }
+
                     // Store only the highest nonce
                     // Because if we are building queued transactions, it may break our queue
                     // Our we couldn't submit new txs before they get removed from mempool
-                    let stored_nonce = storage.get_nonce().unwrap_or(0);
-                    if let Some(nonce) = nonce.filter(|n| *n > stored_nonce) {
+                    if let Some(nonce) = nonce.filter(|n| highest_nonce.as_ref().map(|h| *h < *n).unwrap_or(true)) {
                         storage.set_nonce(nonce)?;
+                        *highest_nonce = Some(nonce);
                     }
 
                     // If we have no balance in storage OR the stored ciphertext isn't the same, we should store it
@@ -784,9 +789,10 @@ impl NetworkHandler {
         let mut topoheight_processed = HashSet::new();
 
         // get balance and transactions for each asset
+        let mut highest_nonce = None;
         for asset in assets {
             debug!("calling get balances and transactions {}", current_topoheight);
-            if let Err(e) = self.get_balance_and_transactions(&mut topoheight_processed, &address, &asset, current_topoheight, balances).await {
+            if let Err(e) = self.get_balance_and_transactions(&mut topoheight_processed, &address, &asset, current_topoheight, balances, &mut highest_nonce).await {
                 error!("Error while syncing balance for asset {}: {}", asset, e);
             }
         }
