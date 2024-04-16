@@ -32,13 +32,18 @@ pub fn format_xelis(value: u64) -> String {
 
 // Convert a XELIS amount from string to a u64
 pub fn from_xelis(value: impl Into<String>) -> Option<u64> {
+    from_coin(value, COIN_DECIMALS)
+}
+
+// Convert a coin amount from string to a u64 based on the provided decimals
+pub fn from_coin(value: impl Into<String>, coin_decimals: u8) -> Option<u64> {
     let value = value.into();
     let mut split = value.split('.');
-    let xelis: u64 = split.next()?.parse::<u64>().ok()?;
-    let decimals = split.next().unwrap_or("0");
-    let decimals: String = decimals.chars().chain(std::iter::repeat('0')).take(COIN_DECIMALS as usize).collect();
-    let decimals = decimals.parse::<u64>().ok()?;
-    Some(xelis * 10u64.pow(COIN_DECIMALS as u32) + decimals)
+    let value: u64 = split.next()?.parse::<u64>().ok()?;
+    let right_part = split.next().unwrap_or("0");
+    let decimals: String = right_part.chars().chain(std::iter::repeat('0')).take(coin_decimals as usize).collect();
+    let decimals_value = decimals.parse::<u64>().ok()?;
+    Some(value * 10u64.pow(coin_decimals as u32) + decimals_value)
 }
 
 // return the fee for a transaction based on its size in bytes
