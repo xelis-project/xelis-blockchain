@@ -184,6 +184,21 @@ impl TransactionTypeBuilder {
 
         consumed
     }
+
+    pub fn used_keys(&self) -> HashSet<CompressedPublicKey> {
+        let mut used_keys = HashSet::new();
+
+        match &self {
+            TransactionTypeBuilder::Transfers(transfers) => {
+                for transfer in transfers {
+                    used_keys.insert(transfer.destination.get_public_key().clone());
+                }
+            }
+            TransactionTypeBuilder::Burn(_) => {}
+        }
+
+        used_keys
+    }
 }
 
 // Used to build the final transaction
