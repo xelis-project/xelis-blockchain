@@ -238,7 +238,7 @@ impl<'a> serde::Deserialize<'a> for Address {
 
 impl Display for Address {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_string().unwrap())
+        write!(f, "{}", self.as_string().map_err(|_| fmt::Error)?)
     }
 }
 
