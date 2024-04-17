@@ -373,15 +373,15 @@ pub struct GetAccountsParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct IsAccountRegisteredParams {
-    pub address: Address,
+pub struct IsAccountRegisteredParams<'a> {
+    pub address: Cow<'a, Address>,
     // If it is registered in stable height (confirmed)
     pub in_stable_height: bool,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetAccountRegistrationParams {
-    pub address: Address,
+pub struct GetAccountRegistrationParams<'a> {
+    pub address: Cow<'a, Address>,
 }
 
 #[derive(Serialize, Deserialize)]
