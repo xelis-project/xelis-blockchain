@@ -5407,6 +5407,76 @@ The topoheight range in parameters search for all accounts having a on-chain int
 }
 ```
 
+
+#### Is Account Registered
+Verify if the account on chain is registered.
+This is useful to determine if we should pay additionnal fee or not.
+
+For transactions, it is recommended to verify that the account is already registered in stable height.
+
+##### Method `is_account_registered`
+
+##### Parameters
+|       Name       |   Type  | Required |                            Note                           |
+|:----------------:|:-------:|:--------:|:---------------------------------------------------------:|
+|      address     | Address | Required |               Account address to search for               |
+| in_stable_height | Boolean | Required | If registration must be done only in stable height or not |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "is_account_registered",
+	"id": 1,
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+		"in_stable_height": true
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+#### Get Account Registration TopoHeight
+Retrieve the account registration topoheight.
+
+This is like its "first time" doing an action on the chain.
+
+##### Method `get_account_registration_topoheight`
+
+##### Parameters
+|   Name  |   Type  | Required |              Note             |
+|:-------:|:-------:|:--------:|:-----------------------------:|
+| address | Address | Required | Account address to search for |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_account_registration_topoheight",
+	"id": 1,
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 57
+}
+```
+
 #### Get Blocks Range By TopoHeight
 Retrieve a specific range of blocks (up to 20 maximum) based on topoheight.
 
