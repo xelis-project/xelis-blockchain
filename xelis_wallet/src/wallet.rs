@@ -361,7 +361,7 @@ impl Wallet {
         let keypair = if let Some(seed) = seed {
         debug!("Retrieving keypair from seed...");
         let words: Vec<String> = seed.split_whitespace().map(str::to_string).collect();
-        let key = mnemonics::words_to_key(words)?;
+        let key = mnemonics::words_to_key(&words)?;
             KeyPair::from_private_key(key)
         } else {
             debug!("Generating a new keypair...");
