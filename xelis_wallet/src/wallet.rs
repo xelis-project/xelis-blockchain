@@ -699,6 +699,19 @@ impl Wallet {
             state.add_balance(asset, balance);
         }
 
+        // To pay exact fees needed, we must verify that we don't have to pay more than needed
+        let used_keys = transaction_type.used_keys();
+        if !used_keys.is_empty() {
+            if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
+                for key in used_keys {
+                    let addr = key.to_address(self.network.is_mainnet());
+                    if network_handler.get_api().is_account_registered(&addr, true).await? {
+                        state.add_registered_key(addr.to_public_key());
+                    }
+                }
+            }
+        }
+
         // Create the transaction builder
         let builder = TransactionBuilder::new(0, self.public_key.clone(), transaction_type, fee);
 

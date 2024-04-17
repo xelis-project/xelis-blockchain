@@ -32,7 +32,8 @@ use xelis_common::{
         GetAccountAssetsParams,
         GetAssetParams,
         GetMempoolCacheParams,
-        GetMempoolCacheResult
+        GetMempoolCacheResult,
+        IsAccountRegisteredParams
     },
     account::VersionedBalance,
     crypto::{
@@ -214,5 +215,13 @@ impl DaemonAPI {
             address: Cow::Borrowed(address)
         }).await.context("Error while fetching mempool cache")?;
         Ok(cache)
+    }
+
+    pub async fn is_account_registered(&self, address: &Address, in_stable_height: bool) -> Result<bool> {
+        let is_registered = self.client.call_with("is_account_registered", &IsAccountRegisteredParams {
+            address: Cow::Borrowed(address),
+            in_stable_height,
+        }).await.context("Error while checking if account is registered")?;
+        Ok(is_registered)
     }
 }
