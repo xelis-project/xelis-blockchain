@@ -59,7 +59,8 @@ use xelis_common::{
             SubmitTransactionParams,
             TransactionResponse,
             GetMempoolCacheParams,
-            AccountRegistrationParams,
+            IsAccountRegisteredParams,
+            GetAccountRegistrationParams,
         },
         RPCTransaction,
         RPCTransactionType as RPCTransactionType
@@ -1036,7 +1037,7 @@ async fn get_accounts<S: Storage>(context: Context, body: Value) -> Result<Value
 
 // Check if the account is registered on chain or not
 async fn is_account_registered<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: AccountRegistrationParams = parse_params(body)?;
+    let params: IsAccountRegisteredParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let key = params.address.get_public_key();
@@ -1053,7 +1054,7 @@ async fn is_account_registered<S: Storage>(context: Context, body: Value) -> Res
 
 // Search the account registration topoheight
 async fn get_account_registration_topoheight<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: AccountRegistrationParams = parse_params(body)?;
+    let params: GetAccountRegistrationParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let storage = blockchain.get_storage().read().await;
     let key = params.address.get_public_key();
