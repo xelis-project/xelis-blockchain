@@ -7,9 +7,21 @@ use sha3::Digest;
 use zeroize::Zeroize;
 use thiserror::Error;
 
-use crate::{crypto::elgamal::{
-    Ciphertext, PedersenOpening, PrivateKey, H
-}, serializer::{Reader, ReaderError, Serializer, Writer}};
+use crate::{
+    crypto::elgamal::{
+        Ciphertext,
+        DecryptHandle,
+        PedersenOpening,
+        PrivateKey,
+        H
+    },
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    }
+};
 
 pub type AEADKey = chacha20poly1305::Key;
 pub type KDF = sha3::Sha3_256;
@@ -42,7 +54,15 @@ pub fn derive_aead_key_from_ct(
     sk: &PrivateKey,
     ciphertext: &Ciphertext,
 ) -> AEADKey {
-    derive_aead_key(&(sk.as_scalar() * ciphertext.handle().as_point()).compress())
+    derive_aead_key_from_handle(sk, ciphertext.handle())
+}
+
+/// See [`derive_aead_key`].
+pub fn derive_aead_key_from_handle(
+    sk: &PrivateKey,
+    handle: &DecryptHandle,
+) -> AEADKey {
+    derive_aead_key(&(sk.as_scalar() * handle.as_point()).compress())
 }
 
 /// During encryption, we know the opening `r`, so this needs to be called with `r * H`.
