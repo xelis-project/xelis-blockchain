@@ -43,8 +43,18 @@ use crate::{
     utils::calculate_tx_fee
 };
 use thiserror::Error;
-
-use super::{BurnPayload, Reference, Role, SourceCommitment, Transaction, TransactionType, TransferPayload, EXTRA_DATA_LIMIT_SIZE, MAX_TRANSFER_COUNT};
+use super::{
+    aead::{derive_aead_key_from_opening, PlaintextData},
+    BurnPayload,
+    Reference,
+    Role,
+    SourceCommitment,
+    Transaction,
+    TransactionType,
+    TransferPayload,
+    EXTRA_DATA_LIMIT_SIZE,
+    MAX_TRANSFER_COUNT
+};
 
 #[derive(Error, Debug, Clone)]
 pub enum GenerationError<T> {
@@ -58,6 +68,8 @@ pub enum GenerationError<T> {
     SenderIsReceiver,
     #[error("Extra data too large")]
     ExtraDataTooLarge,
+    #[error("Encrypted extra data is too large")]
+    EncryptedExtraDataTooLarge,
     #[error("Address is not on the same network as us")]
     InvalidNetwork,
     #[error("Extra data was provied with an integrated address")]
@@ -572,17 +584,31 @@ impl TransactionBuilder {
                     range_proof_values.push(transfer.inner.amount);
                     range_proof_openings.push(transfer.amount_opening.as_scalar());
 
-                    TransferPayload {
+                    // Encrypt the extra data if it exists
+                    let extra_data = if let Some(extra_data) = transfer.inner.extra_data {
+                        let bytes = extra_data.to_bytes();
+                        let key = derive_aead_key_from_opening(&transfer.amount_opening);
+                        let cipher = PlaintextData(bytes).encrypt_in_place(&key);
+                        if cipher.0.len() > EXTRA_DATA_LIMIT_SIZE {
+                            return Err(GenerationError::EncryptedExtraDataTooLarge);
+                        }
+
+                        Some(cipher)
+                    } else {
+                        None
+                    };
+
+                    Ok(TransferPayload {
                         commitment,
                         receiver_handle,
                         sender_handle,
                         destination: transfer.inner.destination.to_public_key(),
                         asset: transfer.inner.asset,
                         ct_validity_proof,
-                        extra_data: transfer.inner.extra_data.map(|v| v.to_bytes()),
-                    }
+                        extra_data,
+                    })
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
             transfers
         } else {
