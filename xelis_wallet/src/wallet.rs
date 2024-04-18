@@ -702,11 +702,16 @@ impl Wallet {
         // To pay exact fees needed, we must verify that we don't have to pay more than needed
         let used_keys = transaction_type.used_keys();
         if !used_keys.is_empty() {
+            trace!("Checking if destination keys are registered");
             if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
-                for key in used_keys {
-                    let addr = key.to_address(self.network.is_mainnet());
-                    if network_handler.get_api().is_account_registered(&addr, true).await? {
-                        state.add_registered_key(addr.to_public_key());
+                if network_handler.is_running().await {
+                    trace!("Network handler is running, checking if keys are registered");
+                    for key in used_keys {
+                        let addr = key.to_address(self.network.is_mainnet());
+                        trace!("Checking if {} is registered in stable height", addr);
+                        if network_handler.get_api().is_account_registered(&addr, true).await? {
+                            state.add_registered_key(addr.to_public_key());
+                        }
                     }
                 }
             }
@@ -806,15 +811,16 @@ impl Wallet {
             return Err(WalletError::NotOnlineMode)
         }
 
+        let mut storage = self.get_storage().write().await;
+        if topoheight > storage.get_synced_topoheight()? {
+            return Err(WalletError::RescanTopoheightTooHigh)
+        }
+
         let handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.as_ref() {
             debug!("Stopping network handler!");
             network_handler.stop().await?;
             {
-                let mut storage = self.get_storage().write().await;
-                if topoheight > storage.get_synced_topoheight()? {
-                    return Err(WalletError::RescanTopoheightTooHigh)
-                }
                 debug!("set synced topoheight to {}", topoheight);
                 storage.set_synced_topoheight(topoheight)?;
                 storage.delete_top_block_hash()?;
@@ -965,15 +971,18 @@ impl XSWDNodeMethodHandler for Arc<Wallet> {
         let network_handler = self.network_handler.lock().await;
         let id = request.id;
         if let Some(network_handler) = network_handler.as_ref() {
-            let api = network_handler.get_api();
-            let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id, InternalRpcError::Custom(e.to_string())))?;
-            Ok(json!({
-                "jsonrpc": JSON_RPC_VERSION,
-                "id": id,
-                "result": response
-            }))
-        } else {
-            Err(RpcResponseError::new(id, InternalRpcError::CustomStr("Wallet is not in online mode")))
+            if network_handler.is_running().await {
+                let api = network_handler.get_api();
+                let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id, InternalRpcError::Custom(e.to_string())))?;
+
+                return Ok(json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "id": id,
+                    "result": response
+                }))
+            }
         }
+
+        Err(RpcResponseError::new(id, InternalRpcError::CustomStr("Wallet is not in online mode")))
     }
 }
