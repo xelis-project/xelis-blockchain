@@ -17,7 +17,6 @@ use xelis_common::{
             NewBlockEvent
         },
         wallet::BalanceChanged,
-        DataElement,
         RPCTransactionType
     },
     asset::AssetWithData,
@@ -243,8 +242,6 @@ impl NetworkHandler {
                     for transfer in txs {
                         let destination = transfer.destination.to_public_key();
                         if is_owner || destination == *address.get_public_key() {
-                            let extra_data = transfer.extra_data.into_owned().and_then(|bytes| DataElement::from_bytes(&bytes).ok());
-
                             // Get the right handle
                             let handle = if is_owner {
                                 transfer.sender_handle
@@ -268,6 +265,12 @@ impl NetworkHandler {
                                     error!("Error while decompressing handle of TX {}: {}", tx.hash, e);
                                     continue;
                                 }
+                            };
+
+                            let extra_data = if let Some(cipher) = transfer.extra_data.into_owned() {
+                                self.wallet.decrypt_extra_data(cipher, &handle).ok()
+                            } else {
+                                None
                             };
 
                             debug!("Decrypting amount from TX {}", tx.hash);

@@ -26,7 +26,7 @@ use xelis_common::{
     asset::AssetWithData,
     crypto::{
         ecdlp::{self, ECDLPTablesFileView},
-        elgamal::{Ciphertext, PublicKey as DecompressedPublicKey},
+        elgamal::{Ciphertext, DecryptHandle, PublicKey as DecompressedPublicKey},
         Address,
         Hash,
         KeyPair,
@@ -34,7 +34,9 @@ use xelis_common::{
         Signature
     },
     network::Network,
+    serializer::Serializer,
     transaction::{
+        aead::{self, AEADCipher},
         builder::{
             FeeBuilder,
             TransactionBuilder,
@@ -176,6 +178,8 @@ pub enum WalletError {
     BalanceNotFound(Hash),
     #[error("No result found for ciphertext")]
     CiphertextDecode,
+    #[error(transparent)]
+    AEADCipherFormatError(#[from] aead::CipherFormatError),
 }
 
 #[derive(Serialize, Clone)]
@@ -653,6 +657,14 @@ impl Wallet {
                 .decrypt(&view, &ciphertext)
                 .ok_or(WalletError::CiphertextDecode)
         }).await.context("Error while decrypting ciphertext")?
+    }
+
+    // Decrypt the extra data from a transfer
+    pub fn decrypt_extra_data(&self, cipher: AEADCipher, handle: &DecryptHandle) -> Result<DataElement, WalletError> {
+        trace!("decrypt extra data");
+        let key = aead::derive_aead_key_from_handle(&self.keypair.get_private_key(), handle);
+        let plaintext = cipher.decrypt_in_place(&key)?;
+        DataElement::from_bytes(&plaintext.0).map_err(|_| WalletError::CiphertextDecode)
     }
 
     // Create a transaction with the given transaction type and fee
