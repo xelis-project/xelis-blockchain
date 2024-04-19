@@ -2403,9 +2403,15 @@ impl<S: Storage> P2pServer<S> {
 
                     let mut storage = self.blockchain.get_storage().write().await;
 
+                    // Create a snapshots for all others keys that didn't got updated
+                    storage.create_snapshot_balances_at_topoheight(lowest_topoheight).await?;
+                    storage.create_snapshot_nonces_at_topoheight(lowest_topoheight).await?;
+                    storage.create_snapshot_registrations_at_topoheight(lowest_topoheight).await?;
+
                     // Delete all old data
                     storage.delete_versioned_balances_below_topoheight(lowest_topoheight).await?;
                     storage.delete_versioned_nonces_below_topoheight(lowest_topoheight).await?;
+                    storage.delete_registrations_below_topoheight(lowest_topoheight).await?;
 
                     storage.set_pruned_topoheight(lowest_topoheight).await?;
                     storage.set_top_topoheight(top_topoheight)?;

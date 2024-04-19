@@ -535,13 +535,14 @@ impl<S: Storage> Blockchain<S> {
                 trace!("Pruning block at topoheight {}", topoheight);
                 // delete block
                 let _ = storage.delete_block_at_topoheight(topoheight).await?;
-                let _ = storage.delete_registrations_at_topoheight(topoheight).await?;
             }
 
             // delete balances for all assets
             storage.delete_versioned_balances_below_topoheight(located_sync_topoheight).await?;
             // delete nonces versions
             storage.delete_versioned_nonces_below_topoheight(located_sync_topoheight).await?;
+            // Also delete registrations
+            storage.delete_registrations_below_topoheight(located_sync_topoheight).await?;
 
             // Update the pruned topoheight
             storage.set_pruned_topoheight(located_sync_topoheight).await?;

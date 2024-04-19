@@ -587,6 +587,24 @@ impl Storage for SledStorage {
         Ok(())
     }
 
+    async fn delete_registrations_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete registrations below topoheight {}", topoheight);
+        let mut buf = [0u8; 40];
+        for el in self.registrations.iter() {
+            let (key, value) = el?;
+            let topo = u64::from_bytes(&value[0..8])?;
+            if topo < topoheight {
+                buf[0..8].copy_from_slice(&value);
+                buf[8..40].copy_from_slice(&key);
+
+                self.registrations_prefixed.remove(&buf)?;
+                self.registrations.remove(&key)?;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("delete versioned balances below topoheight {}!", topoheight);
         self.delete_versioned_tree_below_topoheight(&self.versioned_balances, topoheight)
