@@ -332,7 +332,13 @@ impl<S: Storage> P2pServer<S> {
             let (connection, priority) = select! {
                 res = listener.accept() => {
                     trace!("New listener result received (is err: {})", res.is_err());
-                    let (mut stream, addr) = res?;
+                    let (mut stream, addr) = match res {
+                        Ok((stream, addr)) => (stream, addr),
+                        Err(e) => {
+                            error!("Error while accepting new connection: {}", e);
+                            continue;
+                        }
+                    };
 
                     // Verify if we can accept new connections
                     let reject = if !self.accept_new_connections().await { // if we have already reached the limit, we ignore this new connection
