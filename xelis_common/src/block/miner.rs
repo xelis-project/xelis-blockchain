@@ -1,12 +1,14 @@
 use std::borrow::Cow;
+
 use crate::{
     crypto::{
-        pow_hash_with_scratch_pad,
         Hash,
         Hashable,
         PublicKey,
         XelisHashError,
-        POW_MEMORY_SIZE
+        pow_hash_with_scratch_pad,
+        Input,
+        ScratchPad
     },
     serializer::{Reader, ReaderError, Serializer, Writer},
     time::TimestampMillis,
@@ -25,7 +27,7 @@ pub struct BlockMiner<'a> {
     // Can also be used to spread more the work job and increase its work capacity
     extra_nonce: [u8; EXTRA_NONCE_SIZE],
     // Cache in case of hashing
-    cache: Option<[u8; BLOCK_WORK_SIZE]>
+    cache: Option<Input>
 }
 
 impl<'a> BlockMiner<'a> {
@@ -53,13 +55,15 @@ impl<'a> BlockMiner<'a> {
     }
 
     #[inline(always)]
-    pub fn get_pow_hash(&mut self, scratch_pad: &mut [u64; POW_MEMORY_SIZE]) -> Result<Hash, XelisHashError> {
+    pub fn get_pow_hash(&mut self, scratch_pad: &mut ScratchPad) -> Result<Hash, XelisHashError> {
         if self.cache.is_none() {
-            self.cache = Some(self.to_bytes().try_into().unwrap());
+            let mut input = Input::default();
+            input.as_mut_slice()?[0..BLOCK_WORK_SIZE].copy_from_slice(&self.to_bytes());
+            self.cache = Some(input);
         }
 
-        let bytes = self.cache.as_ref().unwrap();
-        pow_hash_with_scratch_pad(bytes, scratch_pad)
+        let bytes = self.cache.as_mut().unwrap();
+        pow_hash_with_scratch_pad(bytes.as_mut_slice()?, scratch_pad)
     }
 
     pub fn get_extra_nonce(&mut self) -> &mut [u8; EXTRA_NONCE_SIZE] {
@@ -67,19 +71,22 @@ impl<'a> BlockMiner<'a> {
     }
 
     #[inline(always)]
-    pub fn set_timestamp(&mut self, timestamp: TimestampMillis) {
+    pub fn set_timestamp(&mut self, timestamp: TimestampMillis) -> Result<(), XelisHashError> {
         self.timestamp = timestamp;
         if let Some(cache) = &mut self.cache {
-            cache[32..40].copy_from_slice(&self.timestamp.to_be_bytes());
+            cache.as_mut_slice()?[32..40].copy_from_slice(&self.timestamp.to_be_bytes());
         }
+
+        Ok(())
     }
 
     #[inline(always)]
-    pub fn increase_nonce(&mut self) {
+    pub fn increase_nonce(&mut self) -> Result<(), XelisHashError> {
         self.nonce += 1;
         if let Some(cache) = &mut self.cache {
-            cache[40..48].copy_from_slice(&self.nonce.to_be_bytes());
+            cache.as_mut_slice()?[40..48].copy_from_slice(&self.nonce.to_be_bytes());
         }
+        Ok(())
     }
 
     #[inline(always)]
@@ -100,8 +107,8 @@ impl<'a> BlockMiner<'a> {
 
 impl<'a> Serializer for BlockMiner<'a> {
     fn write(&self, writer: &mut Writer) {
-        if let Some(cache) = self.cache {
-            writer.write_bytes(&cache);
+        if let Some(cache) = self.cache.as_ref() {
+            writer.write_bytes(cache.as_slice().unwrap());
         } else {
             writer.write_hash(&self.header_work_hash); // 32
             writer.write_u64(&self.timestamp); // 32 + 8 = 40
