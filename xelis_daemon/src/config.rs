@@ -121,6 +121,8 @@ pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
 pub const PEER_FAIL_TIME_RESET: u64 = 30 * 60;
 // number of fail to disconnect the peer
 pub const PEER_FAIL_LIMIT: u8 = 50;
+// number of fail during handshake before temp ban
+pub const PEER_FAIL_TO_CONNECT_LIMIT: u8 = 3;
 // number of seconds to temp ban the peer in case of fail reached
 // Set to 15 minutes
 pub const PEER_TEMP_BAN_TIME: u64 = 15 * 60;
@@ -169,7 +171,7 @@ pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
     match network {
         Network::Mainnet => &MAINNET_GENESIS_BLOCK_HASH,
         Network::Testnet => &TESTNET_GENESIS_BLOCK_HASH,
-        Network::Dev => panic!("Dev network has not fix genesis block hash"),
+        Network::Dev => panic!("Dev network has no fix genesis block hash"),
     }
 }
 
