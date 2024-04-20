@@ -382,6 +382,14 @@ impl<S: Storage> P2pServer<S> {
                             continue;
                         }
 
+                        {
+                            // check that this incoming peer isn't blacklisted
+                            let peer_list = self.peer_list.read().await;
+                            if !peer_list.is_allowed(&addr.ip()) {
+                                debug!("{} is blacklisted, rejecting outgoing connection", addr);
+                                continue;
+                            }
+                        }
 
                         match self.connect_to_peer(addr).await {
                             Ok(connection) => (connection, priority),
