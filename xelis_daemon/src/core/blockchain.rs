@@ -49,13 +49,12 @@ use xelis_common::{
 };
 use crate::{
     config::{
-        get_genesis_block_hash, get_hex_genesis_block,
+        get_genesis_block_hash, get_hex_genesis_block, get_minimum_difficulty,
         BLOCK_TIME_MILLIS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
         DEFAULT_CACHE_SIZE, DEFAULT_P2P_BIND_ADDRESS, DEFAULT_RPC_BIND_ADDRESS, DEV_FEES,
         DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY, MAX_BLOCK_SIZE,
-        MILLIS_PER_SECOND, MINIMUM_DIFFICULTY, P2P_DEFAULT_MAX_PEERS, SIDE_BLOCK_REWARD_MAX_BLOCKS,
-        PRUNE_SAFETY_LIMIT, SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT,
-        TIMESTAMP_IN_FUTURE_LIMIT
+        MILLIS_PER_SECOND, P2P_DEFAULT_MAX_PEERS, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
+        SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT
     },
     core::{
         blockdag,
@@ -1141,7 +1140,7 @@ impl<S: Storage> Blockchain<S> {
         let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
         // Simulator is enabled, don't calculate difficulty
         if height <= 1 || self.is_simulator_enabled() {
-            return Ok((MINIMUM_DIFFICULTY, difficulty::P))
+            return Ok((get_minimum_difficulty(self.get_network()), difficulty::P))
         }
 
         // Search the highest difficulty available
@@ -1156,7 +1155,10 @@ impl<S: Storage> Blockchain<S> {
         let (_, parent_newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
 
         let p = provider.get_estimated_covariance_for_block_hash(best_tip).await?;
-        let (difficulty, p_new) = difficulty::calculate_difficulty(parent_newest_tip_timestamp, newest_tip_timestamp, biggest_difficulty, p);
+
+        // Get the minimum difficulty configured
+        let minimum_difficulty = get_minimum_difficulty(self.get_network());
+        let (difficulty, p_new) = difficulty::calculate_difficulty(parent_newest_tip_timestamp, newest_tip_timestamp, biggest_difficulty, p, minimum_difficulty);
         Ok((difficulty, p_new))
     }
 

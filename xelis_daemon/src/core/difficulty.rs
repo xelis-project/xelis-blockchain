@@ -7,7 +7,7 @@ use xelis_common::{
     utils::format_difficulty,
     varuint::VarUint
 };
-use crate::config::{BLOCK_TIME_MILLIS, MINIMUM_DIFFICULTY};
+use crate::config::BLOCK_TIME_MILLIS;
 
 const SHIFT: u64 = 32;
 // This is equal to 2 ** 32
@@ -55,7 +55,7 @@ pub fn kalman_filter(z: VarUint, x_est_prev: VarUint, p_prev: VarUint) -> (VarUi
 
 // Calculate the required difficulty for the next block based on the solve time of the previous block
 // We are using a Kalman filter to estimate the hashrate and adjust the difficulty
-pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: TimestampMillis, previous_difficulty: Difficulty, p: VarUint) -> (Difficulty, VarUint) {
+pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: TimestampMillis, previous_difficulty: Difficulty, p: VarUint, minimum_difficulty: Difficulty) -> (Difficulty, VarUint) {
     let mut solve_time = timestamp - parent_timestamp;
 
     // Someone trying to do something shady or really lucky
@@ -70,8 +70,8 @@ pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: Timest
     trace!("x_est_new: {}, p_new: {}", x_est_new, p_new);
 
     let difficulty = x_est_new * BLOCK_TIME_MILLIS;
-    if difficulty < MINIMUM_DIFFICULTY {
-        return (MINIMUM_DIFFICULTY, P);
+    if difficulty < minimum_difficulty {
+        return (minimum_difficulty, P);
     }
 
     (difficulty, p_new)
@@ -79,6 +79,7 @@ pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: Timest
 
 #[cfg(test)]
 mod tests {
+    use crate::config::MINIMUM_DIFFICULTY;
     use super::*;
 
     #[test]

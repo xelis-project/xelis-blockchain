@@ -29,7 +29,10 @@ pub const MILLIS_PER_SECOND: u64 = 1000;
 pub const BLOCK_TIME_MILLIS: u64 = 15 * MILLIS_PER_SECOND; // 15s block time
 // Minimum difficulty (each difficulty point is in H/s)
 // Current: BLOCK TIME in millis * 50 = 50 KH/s minimum
+// This is to prevent spamming the network with low difficulty blocks
+// This is active only on mainnet mode
 pub const MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 50);
+// This is also used as testnet and devnet minimum difficulty
 pub const GENESIS_BLOCK_DIFFICULTY: Difficulty = Difficulty::from_u64(1);
 // 1024 * 1024 + (256 * 1024) bytes = 1.25 MB maximum size per block with txs
 pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024);
@@ -178,5 +181,15 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
         Network::Mainnet => &MAINNET_SEED_NODES,
         Network::Testnet => &TESTNET_SEED_NODES,
         Network::Dev => &[],
+    }
+}
+
+// Get minimum difficulty based on the network
+// Mainnet has a minimum difficulty to prevent spamming the network
+// Testnet has a lower difficulty to allow faster block generation
+pub const fn get_minimum_difficulty(network: &Network) -> Difficulty {
+    match network {
+        Network::Mainnet => MINIMUM_DIFFICULTY,
+        _ => GENESIS_BLOCK_DIFFICULTY,
     }
 }
