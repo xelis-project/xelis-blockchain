@@ -158,12 +158,15 @@ pub struct P2pServer<S: Storage> {
     // Are we allowing others nodes to share us as a potential peer ?
     // Also if we allows to be listed in get_peers RPC API
     sharable: bool,
+    // Do we try to connect to others nodes
+    // If this is enabled, only way to have peers is to let them connect to us
+    outgoing_connections_disabled: AtomicBool,
     // Are we syncing the chain with another peer
     is_syncing: AtomicBool,
 }
 
 impl<S: Storage> P2pServer<S> {
-    pub fn new(dir_path: Option<String>, tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool) -> Result<Arc<Self>, P2pError> {
+    pub fn new(dir_path: Option<String>, tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool, disable_outgoing_connections: bool) -> Result<Arc<Self>, P2pError> {
         if let Some(tag) = &tag {
             debug_assert!(tag.len() > 0 && tag.len() <= 16);
         }
@@ -202,6 +205,7 @@ impl<S: Storage> P2pServer<S> {
             exclusive_nodes: HashSet::from_iter(exclusive_nodes.into_iter()),
             sharable,
             is_syncing: AtomicBool::new(false),
+            outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
         };
 
         let arc = Arc::new(server);
@@ -235,6 +239,14 @@ impl<S: Storage> P2pServer<S> {
     // Verify if we are still running
     pub fn is_running(&self) -> bool {
         self.is_running.load(Ordering::Acquire)
+    }
+
+    pub fn is_outgoing_connections_disabled(&self) -> bool {
+        self.outgoing_connections_disabled.load(Ordering::Acquire)
+    }
+
+    pub fn set_disable_outgoing_connections(&self, disable: bool) {
+        self.outgoing_connections_disabled.store(disable, Ordering::Release);
     }
 
     // Connect to nodes which aren't already connected in parameters
@@ -358,6 +370,12 @@ impl<S: Storage> P2pServer<S> {
                             trace!("Coudln't connect to {}, limit has been reached!", addr);
                             continue;
                         }
+
+                        if self.is_outgoing_connections_disabled() {
+                            trace!("Outgoing connections are disabled, skipping connection to {}", addr);
+                            continue;
+                        }
+
 
                         match self.connect_to_peer(addr).await {
                             Ok(connection) => (connection, priority),
@@ -512,14 +530,13 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Connect to a new peer using its socket address
-    // We give up to 800 millis to connect to this address
     // Then we send him a handshake
     async fn connect_to_peer(&self, addr: SocketAddr) -> Result<Connection, P2pError> {
         trace!("Trying to connect to {}", addr);
         if self.is_connected_to_addr(&addr).await? {
             return Err(P2pError::PeerAlreadyConnected(format!("{}", addr)));
         }
-        let stream = timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), TcpStream::connect(&addr)).await??; // allow maximum 800ms of latency
+        let stream = timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), TcpStream::connect(&addr)).await??;
         let connection = Connection::new(stream, addr, true);
         Ok(connection)
     }

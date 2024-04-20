@@ -177,7 +177,12 @@ pub struct Config {
     /// 
     /// Note that it may prevent to have new incoming peers.
     #[clap(long, default_value = "false")]
-    pub disable_ip_sharing: bool
+    pub disable_ip_sharing: bool,
+    /// Disable outgoing connections from peers.
+    /// 
+    /// This is useful for seed nodes under heavy load or for nodes that don't want to connect to others.
+    #[clap(long, default_value = "false")]
+    pub disable_outgoing_connections: bool
 }
 
 pub struct Blockchain<S: Storage> {
@@ -313,7 +318,7 @@ impl<S: Storage> Blockchain<S> {
                 exclusive_nodes.push(addr);
             }
 
-            match P2pServer::new(config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing) {
+            match P2pServer::new(config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing, config.disable_outgoing_connections) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
