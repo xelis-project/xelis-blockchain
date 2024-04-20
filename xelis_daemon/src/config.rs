@@ -171,9 +171,24 @@ pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
 }
 
 // Mainnet seed nodes
-const MAINNET_SEED_NODES: [&str; 0] = [];
+const MAINNET_SEED_NODES: [&str; 5] = [
+    // France
+    "51.210.117.23:2125",
+    // US
+    "198.71.55.87:2125",
+    // Germany
+    "162.19.249.100:2125",
+    // Singapore
+    "139.99.89.27:2125",
+    // Poland
+    "51.68.142.141:2125"
+];
+
 // Testnet seed nodes
-const TESTNET_SEED_NODES: [&str; 2] = ["74.208.251.149:2125", "162.19.249.100:2125"];
+const TESTNET_SEED_NODES: [&str; 1] = [
+    // US
+    "74.208.251.149:2125",
+];
 
 // Get seed nodes based on the network used
 pub const fn get_seed_nodes(network: &Network) -> &[&str] {
