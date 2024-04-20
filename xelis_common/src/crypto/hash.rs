@@ -15,6 +15,7 @@ pub use xelis_hash::{
     xelis_hash_no_scratch_pad,
     BYTES_ARRAY_INPUT,
     MEMORY_SIZE as POW_MEMORY_SIZE,
+    Input
 };
 
 pub const HASH_SIZE: usize = 32; // 32 bytes / 256 bits
@@ -53,8 +54,8 @@ pub fn pow_hash(input: &[u8]) -> Result<Hash, XelisHashError> {
         return Err(XelisHashError);
     }
 
-    let mut buffer = [0u8; BYTES_ARRAY_INPUT];
-    buffer[..input.len()].copy_from_slice(input);
+    let mut buffer = Input::default();
+    buffer.as_mut_slice()[..input.len()].copy_from_slice(input);
     xelis_hash_no_scratch_pad(buffer.as_mut_slice()).map(|bytes| Hash::new(bytes))
 }
 
@@ -63,8 +64,8 @@ pub fn pow_hash_with_scratch_pad(input: &[u8], scratch_pad: &mut [u64; POW_MEMOR
         return Err(XelisHashError);
     }
 
-    let mut buffer = [0u8; BYTES_ARRAY_INPUT];
-    buffer[..input.len()].copy_from_slice(input);
+    let mut buffer = Input::default();
+    buffer.as_mut_slice()[..input.len()].copy_from_slice(input);
     xelis_hash(buffer.as_mut_slice(), scratch_pad).map(|bytes| Hash::new(bytes))
 }
 
