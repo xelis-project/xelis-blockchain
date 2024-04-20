@@ -7,7 +7,8 @@ use xelis_common::{
         elgamal::DecompressionError,
         proofs::ProofVerificationError,
         Address,
-        Hash
+        Hash,
+        XelisHashError
     },
     difficulty::DifficultyError,
     prompt::PromptError,
@@ -241,6 +242,8 @@ pub enum BlockchainError {
     SenderIsReceiver,
     #[error("Invalid transaction proof: {}", _0)]
     TransactionProof(ProofVerificationError),
+    #[error("Error while generating pow hash")]
+    POWHashError(#[from] XelisHashError),
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {

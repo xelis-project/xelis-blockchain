@@ -475,7 +475,7 @@ impl<S: Storage> Blockchain<S> {
             let (difficulty, _) = self.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await?;
             (block, difficulty)
         };
-        let mut hash = header.get_pow_hash();
+        let mut hash = header.get_pow_hash()?;
         let mut current_height = self.get_height();
         while !self.is_simulator_enabled() && !check_difficulty(&hash, &difficulty)? {
             if self.get_height() != current_height {
@@ -484,7 +484,7 @@ impl<S: Storage> Blockchain<S> {
             }
             header.nonce += 1;
             header.timestamp = get_current_time_in_millis();
-            hash = header.get_pow_hash();
+            hash = header.get_pow_hash()?;
         }
 
         let block = self.build_block_from_header(Immutable::Owned(header)).await?;
@@ -1607,7 +1607,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // verify PoW and get difficulty for this block based on tips
-        let pow_hash = block.get_pow_hash();
+        let pow_hash = block.get_pow_hash()?;
         debug!("POW hash: {}", pow_hash);
         let (difficulty, p) = self.verify_proof_of_work(storage, &pow_hash, block.get_tips().iter()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);

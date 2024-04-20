@@ -128,7 +128,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             }
         }
 
-        let pow_hash = header.get_pow_hash();
+        let pow_hash = header.get_pow_hash()?;
         trace!("POW hash: {}", pow_hash);
         let (difficulty, p) = self.blockchain.verify_proof_of_work(self, &pow_hash, tips.iter()).await?;
 

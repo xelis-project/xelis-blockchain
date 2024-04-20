@@ -3006,10 +3006,11 @@ dependencies = [
 [[package]]
 name = "xelis-hash"
 version = "0.1.0"
-source = "git+ssh://git@github.com/xelis-project/xelis-hash?branch=master#017fe9bbbd036f92d337129410bb55ed0444997c"
+source = "git+ssh://git@github.com/xelis-project/xelis-hash?branch=master#7995547e1c42e82789a13569ccf6092a3df7cfc3"
 dependencies = [
  "aes",
  "bytemuck",
+ "thiserror",
  "tiny-keccak",
 ]
 
