@@ -42,7 +42,8 @@ use xelis_common::{
     crypto::{
         Address,
         Hash,
-        Hashable
+        Hashable,
+        POW_MEMORY_SIZE
     },
     difficulty::{
         check_difficulty_against_target,
@@ -225,8 +226,9 @@ fn benchmark(threads: usize, iterations: usize) {
         for _ in 0..bench {
             let mut job = BlockMiner::new(Hash::zero(), get_current_time_in_millis());
             let handle = thread::spawn(move || {
+                let mut scratch_pad = [0u64; POW_MEMORY_SIZE];
                 for _ in 0..iterations {
-                    let _ = job.get_pow_hash();
+                    let _ = job.get_pow_hash(&mut scratch_pad).unwrap();
                     job.increase_nonce();
                     if job.nonce() % UPDATE_EVERY_NONCE == 0 {
                         job.set_timestamp(get_current_time_in_millis());
@@ -369,6 +371,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
         let mut job: BlockMiner;
         let mut hash: Hash;
 
+        let mut scratch_pad = [0u64; POW_MEMORY_SIZE];
         info!("Mining Thread #{}: started", id);
         'main: loop {
             let message = match job_receiver.blocking_recv() {
@@ -411,7 +414,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                     };
 
                     // Solve block
-                    hash = job.get_pow_hash();
+                    hash = job.get_pow_hash(&mut scratch_pad).unwrap();
                     while !check_difficulty_against_target(&hash, &difficulty_target) {
                         job.increase_nonce();
                         // check if we have a new job pending
@@ -424,7 +427,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                             HASHRATE_COUNTER.fetch_add(UPDATE_EVERY_NONCE as usize, Ordering::SeqCst);
                         }
 
-                        hash = job.get_pow_hash();
+                        hash = job.get_pow_hash(&mut scratch_pad).unwrap();
                     }
 
                     // compute the reference hash for easier finding of the block
