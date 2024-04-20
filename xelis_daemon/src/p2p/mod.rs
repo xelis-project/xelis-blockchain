@@ -250,7 +250,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Connect to nodes which aren't already connected in parameters
-    async fn connect_to_nodes(self: &Arc<Self>, nodes: impl Iterator<Item = SocketAddr>) -> Result<(), P2pError> {
+    async fn connect_to_nodes(self: &Arc<Self>, nodes: impl Iterator<Item = SocketAddr>, break_on_first: bool) -> Result<(), P2pError> {
         let mut nodes = nodes.collect::<Vec<_>>();
         nodes.shuffle(&mut rand::thread_rng());
 
@@ -258,6 +258,9 @@ impl<S: Storage> P2pServer<S> {
             if self.accept_new_connections().await {
                 if !self.is_connected_to_addr(&addr).await? {
                     self.try_to_connect_to_peer(addr, true).await;
+                } else if break_on_first {
+                    debug!("Already connected to {}, no need to have more than one node", addr);
+                    break;
                 }
             }
         }
@@ -265,7 +268,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // every 10 seconds, verify and connect if necessary
-    async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: HashSet<SocketAddr>) -> Result<(), P2pError> {
+    async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: HashSet<SocketAddr>, break_on_first: bool) -> Result<(), P2pError> {
         debug!("Starting maintains seed nodes task...");
         let mut interval = interval(Duration::from_secs(10));
         loop {
@@ -276,7 +279,7 @@ impl<S: Storage> P2pServer<S> {
             }
 
             if self.accept_new_connections().await {
-                if let Err(e) = self.connect_to_nodes(nodes.iter().cloned()).await {
+                if let Err(e) = self.connect_to_nodes(nodes.iter().cloned(), break_on_first).await {
                     debug!("Error while connecting to seed nodes: {}", e);
                 };
             }
@@ -292,18 +295,20 @@ impl<S: Storage> P2pServer<S> {
         info!("P2p Server will listen on: {}", self.get_bind_address());
 
         let mut exclusive_nodes = self.exclusive_nodes.clone();
+        let mut is_seed_nodes = false;
         if exclusive_nodes.is_empty() {
             debug!("No exclusive nodes available, using seed nodes...");
             let network = self.blockchain.get_network();
             let seed_nodes = get_seed_nodes(&network);
             exclusive_nodes = seed_nodes.iter().map(|s| s.parse().unwrap()).collect();
+            is_seed_nodes = true;
         }
 
         // create tokio task to maintains connection to exclusive nodes or seed nodes
         let zelf = Arc::clone(self);
         tokio::spawn(async move {
             info!("Connecting to seed nodes...");
-            if let Err(e) = zelf.maintains_connection_to_nodes(exclusive_nodes).await {
+            if let Err(e) = zelf.maintains_connection_to_nodes(exclusive_nodes, is_seed_nodes).await {
                 error!("Error while maintening connection with seed nodes: {}", e);
             };
         });
@@ -1303,15 +1308,14 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 let is_local_peer = is_local_address(peer.get_connection().get_address());
-                for peer in ping.get_peers() {
-                    if is_local_address(peer) && !is_local_peer {
-                        error!("{} is a local address but peer is external", peer);
+                for addr in ping.get_peers() {
+                    if is_local_address(addr) && !is_local_peer {
+                        error!("{} is a local address from {} but peer is external", addr, peer);
                         return Err(P2pError::InvalidPeerlist)
                     }
 
-                    if !self.is_connected_to_addr(&peer).await? {
-                        let peer = peer.clone();
-                        self.try_to_connect_to_peer(peer, false).await;
+                    if !self.is_connected_to_addr(&addr).await? {
+                        self.try_to_connect_to_peer(addr.clone(), false).await;
                     }
                 }
                 ping.into_owned().update_peer(peer, &self.blockchain).await?;

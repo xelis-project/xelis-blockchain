@@ -135,7 +135,7 @@ pub enum P2pError {
     PeerInvalidPingCoutdown,
     #[error(transparent)]
     BlockchainError(#[from] Box<BlockchainError>),
-    #[error("Invalid content in peerlist file")]
+    #[error("Invalid content in peerlist shared")]
     InvalidPeerlist,
     #[error("Invalid bootstrap chain step, expected {:?}, got {:?}", _0, _1)]
     InvalidBootstrapStep(StepKind, StepKind),
