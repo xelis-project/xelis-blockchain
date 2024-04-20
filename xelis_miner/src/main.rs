@@ -96,7 +96,7 @@ pub struct MinerConfig {
     #[clap(long)]
     benchmark: bool,
     /// Iterations to run the benchmark
-    #[clap(long, default_value_t = 10_000_000)]
+    #[clap(long, default_value_t = 100)]
     iterations: usize,
     /// Disable the log file
     #[clap(long)]
@@ -148,7 +148,7 @@ lazy_static! {
 }
 
 // After how many iterations we update the timestamp of the block to avoid too much CPU usage 
-const UPDATE_EVERY_NONCE: u64 = 100_000;
+const UPDATE_EVERY_NONCE: u64 = 10;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
