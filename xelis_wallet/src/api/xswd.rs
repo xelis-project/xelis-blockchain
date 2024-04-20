@@ -417,7 +417,8 @@ where
     }
 
     async fn verify_permission_for_request(&self, app: &AppStateShared, request: &RpcRequest) -> Result<(), RpcResponseError> {
-        let _permit = self.permission_handler_semaphore.acquire().await.unwrap();
+        let _permit = self.permission_handler_semaphore.acquire().await
+            .map_err(|_| RpcResponseError::new(request.id, InternalRpcError::CustomStr("Permission handler semaphore error")))?;
         let mut permissions = app.permissions.lock().await;
 
         // We acquired the lock, lets check that the app is still registered
@@ -536,7 +537,8 @@ where
         }
 
         // Request permission to user
-        let _permit = self.permission_handler_semaphore.acquire().await.unwrap();
+        let _permit = self.permission_handler_semaphore.acquire().await
+            .map_err(|_| RpcResponseError::new(None, InternalRpcError::CustomStr("Permission handler semaphore error")))?;
 
         state.set_requesting(true);
         let permission = match wallet.request_permission(&state, PermissionRequest::Application(has_signature)).await {

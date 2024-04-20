@@ -8,3 +8,4 @@ pub mod simulator;
 pub mod nonce_checker;
 pub mod tx_selector;
 pub mod state;
+pub mod merkle;

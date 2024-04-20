@@ -3,14 +3,17 @@ use crate::{
     config::{P2P_EXTEND_PEERLIST_DELAY, PEER_FAIL_LIMIT}
 };
 use super::{peer::Peer, packet::Packet, error::P2pError};
-use std::{collections::HashMap, net::{SocketAddr, IpAddr}, fs, fmt::{Formatter, self, Display}, time::Duration};
+use std::{collections::HashMap, net::{SocketAddr, IpAddr},
+fs, fmt::{Formatter, self, Display},
+time::Duration};
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
 use tokio::sync::{RwLock, mpsc::UnboundedSender};
 use xelis_common::{
     serializer::Serializer,
     time::{TimestampSeconds, get_current_time_in_seconds},
-    api::daemon::Direction};
+    api::daemon::Direction
+};
 use std::sync::Arc;
 use bytes::Bytes;
 use log::{info, debug, trace, error, warn};
@@ -125,30 +128,32 @@ impl PeerList {
         )
     }
 
-    pub async fn remove_peer(&mut self, peer_id: u64) {
-        let Some(peer) = self.peers.remove(&peer_id) else {
-            warn!("Trying to remove an unknown peer: {}", peer_id);
-            return;
-        };
-
-        // now remove this peer from all peers that tracked it
-        let addr = peer.get_outgoing_address();
-        let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
-        for peer in self.peers.values() {
-            let mut shared_peers = peer.get_peers().lock().await;
-            // check if it was a common peer (we sent it and we received it)
-            // Because its a common peer, we can expect that he will send us the same packet
-            if let Some(direction) = shared_peers.get(addr) {
-                // If its a outgoing direction, send a packet to notify that the peer disconnected
-                if *direction != Direction::In {
-                    trace!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
-                    // we send the packet to notify the peer that we don't have it in common anymore
-                    if let Err(e) = peer.send_bytes(packet.clone()).await {
-                        error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
+    // Remove a peer from the list
+    // We will notify all peers that have this peer in common
+    pub async fn remove_peer(&mut self, peer_id: u64) -> Result<(), P2pError> {
+        let peer = self.peers.remove(&peer_id).ok_or(P2pError::PeerNotFoundById(peer_id))?;
+    
+        // If peer allows us to share it, we have to notify all peers that have this peer in common
+        if peer.sharable() {
+            // now remove this peer from all peers that tracked it
+            let addr = peer.get_outgoing_address();
+            let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
+            for peer in self.peers.values() {
+                let mut shared_peers = peer.get_peers().lock().await;
+                // check if it was a common peer (we sent it and we received it)
+                // Because its a common peer, we can expect that he will send us the same packet
+                if let Some(direction) = shared_peers.get(addr) {
+                    // If its a outgoing direction, send a packet to notify that the peer disconnected
+                    if *direction != Direction::In {
+                        trace!("Sending PeerDisconnected packet to peer {} for {}", peer.get_outgoing_address(), addr);
+                        // we send the packet to notify the peer that we don't have it in common anymore
+                        if let Err(e) = peer.send_bytes(packet.clone()).await {
+                            error!("Error while trying to send PeerDisconnected packet to peer {}: {}", peer.get_connection().get_address(), e);
+                        }
+    
+                        // Maybe he only disconnected from us, delete it to stay synced
+                        shared_peers.remove(addr);
                     }
-
-                    // Maybe he only disconnected from us, delete it to stay synced
-                    shared_peers.remove(addr);
                 }
             }
         }
@@ -160,6 +165,8 @@ impl PeerList {
                 error!("Error while sending peer disconnect notification: {}", e);
             }
         }
+
+        Ok(())
     }
 
     pub fn add_peer(&mut self, id: u64, peer: Peer) -> Arc<Peer> {
@@ -365,7 +372,9 @@ impl PeerList {
         self.set_state_to_address(ip, StoredPeerState::Blacklist);
 
         if let Some(peer) = self.peers.values().find(|peer| peer.get_connection().get_address().ip() == *ip) {
-            if let Err(e) = peer.close().await {
+            // We have to clone because we're holding a immutable reference from self
+            let peer = Arc::clone(peer);
+            if let Err(e) = peer.close_with_peerlist(self).await {
                 error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
             }
         }
@@ -375,8 +384,8 @@ impl PeerList {
     // this will also close the peer
     pub async fn temp_ban_peer(&mut self, peer: &Peer, seconds: u64) {
         self.temp_ban_address(&peer.get_connection().get_address().ip(), seconds).await;
-        if let Err(e) = peer.close().await {
-            error!("Error while trying to close peer {} for being temp banned: {}", peer.get_connection().get_address(), e);
+        if let Err(e) = peer.close_with_peerlist(self).await {
+            error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
         }
     }
 

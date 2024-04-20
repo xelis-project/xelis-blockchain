@@ -117,11 +117,16 @@ impl PrivateKey {
         commitment - &(self.0 * handle)
     }
 
+    // Decode a point to a u64 with precomputed tables
+    pub fn decode_point<const L1: usize>(&self, precomputed_tables: &ECDLPTablesFileView<L1>, point: RistrettoPoint) -> Option<u64> {
+        ecdlp::decode(precomputed_tables, point, ECDLPArguments::new_with_range(0, MAXIMUM_SUPPLY as i64))
+            .map(|x| x as u64)
+    }
+
     // Decrypt a Ciphertext to a u64 with precomputed tables
     pub fn decrypt<const L1: usize>(&self, precomputed_tables: &ECDLPTablesFileView<L1>, ciphertext: &Ciphertext) -> Option<u64> {
         let point = self.decrypt_to_point(ciphertext);
-        ecdlp::decode(precomputed_tables, point, ECDLPArguments::new_with_range(0, MAXIMUM_SUPPLY as i64))
-            .map(|x| x as u64)
+        self.decode_point(precomputed_tables, point)
     }
 }
 
@@ -156,6 +161,10 @@ impl KeyPair {
         self.private_key.decrypt(precomputed_tables, ciphertext)
     }
 
+    pub fn decrypt_to_point(&self, ciphertext: &Ciphertext) -> RistrettoPoint {
+        self.private_key.decrypt_to_point(ciphertext)
+    }
+
     // Sign a message with the private key
     pub fn sign(&self, message: &[u8]) -> Signature {
         let k = Scalar::random(&mut OsRng);
@@ -173,6 +182,11 @@ impl KeyPair {
     // Get the private key of the KeyPair
     pub fn get_private_key(&self) -> &PrivateKey {
         &self.private_key
+    }
+
+    // Split the KeyPair into its components
+    pub fn split(self) -> (PublicKey, PrivateKey) {
+        (self.public_key, self.private_key)
     }
 }
 

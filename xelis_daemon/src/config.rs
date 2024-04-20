@@ -28,8 +28,11 @@ pub const MILLIS_PER_SECOND: u64 = 1000;
 // Block Time in milliseconds
 pub const BLOCK_TIME_MILLIS: u64 = 15 * MILLIS_PER_SECOND; // 15s block time
 // Minimum difficulty (each difficulty point is in H/s)
-// Current: BLOCK TIME in millis * 1000 = 1 MH/s minimum
-pub const MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 1000);
+// Current: BLOCK TIME in millis * 20 = 20 KH/s minimum
+// This is to prevent spamming the network with low difficulty blocks
+// This is active only on mainnet mode
+pub const MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 20);
+// This is also used as testnet and devnet minimum difficulty
 pub const GENESIS_BLOCK_DIFFICULTY: Difficulty = Difficulty::from_u64(1);
 // 1024 * 1024 + (256 * 1024) bytes = 1.25 MB maximum size per block with txs
 pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024);
@@ -60,12 +63,27 @@ pub const DEV_FEES: [DevFeeThreshold; 3] = [
     }
 ];
 // only 30% of reward for side block
+// This is to prevent spamming side blocks
+// and also give rewards for miners with valid work on main chain
 pub const SIDE_BLOCK_REWARD_PERCENT: u64 = 30;
+// maximum 3 blocks for side block reward
+// Each side block reward will be divided by the number of side blocks * 2
+// With a configuration of 3 blocks, we have the following percents:
+// 1 block: 30%
+// 2 blocks: 15%
+// 3 blocks: 7%
+// 4 blocks: minimum percentage set below
+pub const SIDE_BLOCK_REWARD_MAX_BLOCKS: u64 = 3;
+// minimum 5% of block reward for side block
+// This is the minimum given for all others valid side blocks
+pub const SIDE_BLOCK_REWARD_MIN_PERCENT: u64 = 5;
+// Emission speed factor for the emission curve
+// It is used to calculate based on the supply the block reward
 pub const EMISSION_SPEED_FACTOR: u64 = 20;
 
 // Developer address for paying dev fees until Smart Contracts integration
 // (testnet/mainnet format is converted lazily later)
-pub const DEV_ADDRESS: &str = "xel:3tr88r8vvx3qxvgr7gdja5kae784v8htc7ayaj4nxlzgflhchlmqq4gwg7h";
+pub const DEV_ADDRESS: &str = "xel:vs3mfyywt0fjys0rgslue7mm4wr23xdgejsjk0ld7f2kxng4d4nqqnkdufz";
 
 // Chain sync config
 // minimum X seconds between each chain sync request per peer
@@ -122,6 +140,7 @@ pub const PEER_BLOCK_CACHE_SIZE: usize = 1024;
 
 // Genesis block to have the same starting point for every nodes
 // Genesis block in hexadecimal format
+const MAINNET_GENESIS_BLOCK: &str = "0000000000000000000000018efc057580000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
 const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018dc0f93552000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac6738cec61a2033103f21b2ed2ddcf8f561eebc7ba4ecab337c484fef8bff6";
 
 // Genesis block getter
@@ -129,7 +148,7 @@ const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018dc0f93552000000000
 // Dev returns none to generate a new genesis block each time it starts a chain
 pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
     match network {
-        Network::Mainnet => todo!("Mainnet is not ready yet, please use testnet network"),
+        Network::Mainnet => Some(MAINNET_GENESIS_BLOCK),
         Network::Testnet => Some(TESTNET_GENESIS_BLOCK),
         Network::Dev => None
     }
@@ -140,22 +159,39 @@ lazy_static! {
     pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
 }
 
-// Testnet genesis block hash
+// Genesis block hash for both networks
 // It must be the same as the hash of the genesis block
+const MAINNET_GENESIS_BLOCK_HASH: Hash = Hash::new([175, 118, 37, 203, 175, 200, 25, 148, 9, 202, 29, 120, 93, 128, 36, 209, 146, 193, 217, 36, 61, 51, 24, 194, 114, 113, 121, 208, 237, 163, 27, 55]);
 const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([183, 21, 203, 2, 41, 209, 63, 95, 84, 10, 228, 138, 223, 3, 188, 49, 176, 148, 176, 64, 176, 117, 106, 36, 84, 99, 27, 45, 221, 137, 156, 58]);
 
 // Genesis block hash based on network selected
 pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
     match network {
-        Network::Mainnet => todo!("Mainnet is not ready yet, please use testnet network"),
-        _ => &TESTNET_GENESIS_BLOCK_HASH
+        Network::Mainnet => &MAINNET_GENESIS_BLOCK_HASH,
+        Network::Testnet => &TESTNET_GENESIS_BLOCK_HASH,
+        Network::Dev => panic!("Dev network has not fix genesis block hash"),
     }
 }
 
 // Mainnet seed nodes
-const MAINNET_SEED_NODES: [&str; 0] = [];
+const MAINNET_SEED_NODES: [&str; 5] = [
+    // France
+    "51.210.117.23:2125",
+    // US
+    "198.71.55.87:2125",
+    // Germany
+    "162.19.249.100:2125",
+    // Singapore
+    "139.99.89.27:2125",
+    // Poland
+    "51.68.142.141:2125"
+];
+
 // Testnet seed nodes
-const TESTNET_SEED_NODES: [&str; 2] = ["74.208.251.149:2125", "162.19.249.100:2125"];
+const TESTNET_SEED_NODES: [&str; 1] = [
+    // US
+    "74.208.251.149:2125",
+];
 
 // Get seed nodes based on the network used
 pub const fn get_seed_nodes(network: &Network) -> &[&str] {
@@ -163,5 +199,15 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
         Network::Mainnet => &MAINNET_SEED_NODES,
         Network::Testnet => &TESTNET_SEED_NODES,
         Network::Dev => &[],
+    }
+}
+
+// Get minimum difficulty based on the network
+// Mainnet has a minimum difficulty to prevent spamming the network
+// Testnet has a lower difficulty to allow faster block generation
+pub const fn get_minimum_difficulty(network: &Network) -> Difficulty {
+    match network {
+        Network::Mainnet => MINIMUM_DIFFICULTY,
+        _ => GENESIS_BLOCK_DIFFICULTY,
     }
 }

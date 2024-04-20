@@ -30,7 +30,10 @@ use xelis_common::{
         StableHeightChangedEvent,
         TransactionAddedInMempoolEvent,
         GetAccountAssetsParams,
-        GetAssetParams
+        GetAssetParams,
+        GetMempoolCacheParams,
+        GetMempoolCacheResult,
+        IsAccountRegisteredParams
     },
     account::VersionedBalance,
     crypto::{
@@ -194,8 +197,7 @@ impl DaemonAPI {
 
     pub async fn get_nonce(&self, address: &Address) -> Result<GetNonceResult> {
         let nonce = self.client.call_with("get_nonce", &GetNonceParams {
-            address: Cow::Borrowed(address),
-            topoheight: None
+            address: Cow::Borrowed(address)
         }).await.context(format!("Error while fetching nonce from address {}", address))?;
         Ok(nonce)
     }
@@ -206,5 +208,20 @@ impl DaemonAPI {
             block_hash: Cow::Borrowed(block_hash)
         }).await.context(format!("Error while checking if tx {} is executed in block {}", tx_hash, block_hash))?;
         Ok(is_executed)
+    }
+
+    pub async fn get_mempool_cache(&self, address: &Address) -> Result<GetMempoolCacheResult> {
+        let cache = self.client.call_with("get_mempool_cache", &GetMempoolCacheParams {
+            address: Cow::Borrowed(address)
+        }).await.context("Error while fetching mempool cache")?;
+        Ok(cache)
+    }
+
+    pub async fn is_account_registered(&self, address: &Address, in_stable_height: bool) -> Result<bool> {
+        let is_registered = self.client.call_with("is_account_registered", &IsAccountRegisteredParams {
+            address: Cow::Borrowed(address),
+            in_stable_height,
+        }).await.context("Error while checking if account is registered")?;
+        Ok(is_registered)
     }
 }

@@ -241,10 +241,12 @@ impl<S: Storage> GetWorkServer<S> {
             let mut hash = self.last_header_hash.lock().await;
             let mut mining_jobs = self.mining_jobs.lock().await;
             let (job, height, difficulty);
-            if let Some(hash) = hash.as_ref() {
+            // if we have a job in cache, and we are rate limited, we can send it
+            // otherwise, we generate a new job
+            if let Some(hash) = hash.as_ref().filter(|_| self.is_rate_limited().0) {
                 let (header, diff) = mining_jobs.peek(hash).ok_or_else(|| {
                     error!("No mining job found! How is it possible ?");
-                    InternalRpcError::InvalidRequest
+                    InternalRpcError::CustomStr("No mining job found")
                 })?;
                 job = BlockMiner::new(header.get_work_hash(), get_current_time_in_millis());
                 height = header.height;
@@ -324,7 +326,7 @@ impl<S: Storage> GetWorkServer<S> {
             } else {
                 // really old job, or miner send invalid job
                 debug!("Job {} was not found in cache", job.get_header_work_hash());
-                return Err(InternalRpcError::InvalidRequest)
+                return Err(InternalRpcError::CustomStr("Job was not found in cache"))
             };
         }
 
@@ -402,18 +404,24 @@ impl<S: Storage> GetWorkServer<S> {
         Ok(())
     }
 
+    // check if the last notify is older than the rate limit
+    // if it's the case, we can notify miners
+    // Returns a tuple with a boolean indicating if the rate limit is reached, and the current timestamp
+    fn is_rate_limited(&self) -> (bool, TimestampMillis) {
+        let now = get_current_time_in_millis();
+        let last_notify = self.last_notify.load(Ordering::SeqCst);
+        (now - last_notify < self.notify_rate_limit_ms, now)
+    }
+
     // notify every miners connected to the getwork server
     // each miner have his own task so nobody wait on other
     pub async fn notify_new_job_rate_limited(&self) -> Result<(), InternalRpcError> {
-        {
-            let now = get_current_time_in_millis();
-            let last_notify = self.last_notify.load(Ordering::SeqCst);
-            if now - last_notify < self.notify_rate_limit_ms {
-                debug!("Rate limit reached, not notifying miners");
-                return Ok(());
-            }
-            self.last_notify.store(now, Ordering::SeqCst);
+        let (rate_limit_reached, now) = self.is_rate_limited();
+        if rate_limit_reached {
+            debug!("Rate limit reached, no need to notify miners");
+            return Ok(());
         }
+        self.last_notify.store(now, Ordering::SeqCst);
 
         self.notify_new_job().await
     }

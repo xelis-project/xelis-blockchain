@@ -1,6 +1,7 @@
 pub mod config;
 
 use std::{
+    num::NonZeroUsize,
     time::Duration,
     sync::atomic::{
         AtomicU64,
@@ -41,7 +42,8 @@ use xelis_common::{
     crypto::{
         Address,
         Hash,
-        Hashable
+        Hashable,
+        POW_MEMORY_SIZE
     },
     difficulty::{
         check_difficulty_against_target,
@@ -94,7 +96,7 @@ pub struct MinerConfig {
     #[clap(long)]
     benchmark: bool,
     /// Iterations to run the benchmark
-    #[clap(long, default_value_t = 10_000_000)]
+    #[clap(long, default_value_t = 100)]
     iterations: usize,
     /// Disable the log file
     #[clap(long)]
@@ -146,20 +148,29 @@ lazy_static! {
 }
 
 // After how many iterations we update the timestamp of the block to avoid too much CPU usage 
-const UPDATE_EVERY_NONCE: u64 = 100_000;
+const UPDATE_EVERY_NONCE: u64 = 10;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
-    let threads_count = num_cpus::get();
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging)?;
+
+    let threads_count = match thread::available_parallelism() {
+        Ok(value) => value,
+        Err(e) => {
+            warn!("Couldn't detect number of available threads: {}, fallback to 1 thread only", e);
+            NonZeroUsize::new(1).unwrap()
+        }
+    }.get();
     let mut threads = config.num_threads;
 
     // if no specific threads count is specified in options, set detected threads count
-    if threads < 1 {
+    if threads == 0 {
         threads = threads_count as u8;
     }
 
-    info!("Total threads to use: {}", threads);
+    info!("Total threads to use: {} (detected: {})", threads, threads_count);
+
     if config.benchmark {
         info!("Benchmark mode enabled, miner will try up to {} threads", threads_count);
         benchmark(threads as usize, config.iterations);
@@ -167,7 +178,6 @@ async fn main() -> Result<()> {
         return Ok(())
     }
 
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging)?;
     if threads_count > u8::MAX as usize {
         warn!("Your CPU have more than 255 threads. This miner only support up to 255 threads used at once.");
     }
@@ -208,7 +218,7 @@ async fn main() -> Result<()> {
 }
 
 fn benchmark(threads: usize, iterations: usize) {
-    println!("{0: <10} | {1: <10} | {2: <16} | {3: <13} | {4: <13}", "Threads", "Total Time", "Total Iterations", "Time/PoW (ms)", "Hashrate");
+    info!("{0: <10} | {1: <10} | {2: <16} | {3: <13} | {4: <13}", "Threads", "Total Time", "Total Iterations", "Time/PoW (ms)", "Hashrate");
 
     for bench in 1..=threads {
         let start = Instant::now();
@@ -216,8 +226,9 @@ fn benchmark(threads: usize, iterations: usize) {
         for _ in 0..bench {
             let mut job = BlockMiner::new(Hash::zero(), get_current_time_in_millis());
             let handle = thread::spawn(move || {
+                let mut scratch_pad = [0u64; POW_MEMORY_SIZE];
                 for _ in 0..iterations {
-                    let _ = job.get_pow_hash();
+                    let _ = job.get_pow_hash(&mut scratch_pad).unwrap();
                     job.increase_nonce();
                     if job.nonce() % UPDATE_EVERY_NONCE == 0 {
                         job.set_timestamp(get_current_time_in_millis());
@@ -232,7 +243,7 @@ fn benchmark(threads: usize, iterations: usize) {
         }
         let duration = start.elapsed().as_millis();
         let hashrate = format_hashrate(1000f64 / (duration as f64 / (bench*iterations) as f64));
-        println!("{0: <10} | {1: <10} | {2: <16} | {3: <13} | {4: <13}", bench, duration, bench*iterations, duration/(bench*iterations) as u128, hashrate);
+        info!("{0: <10} | {1: <10} | {2: <16} | {3: <13} | {4: <13}", bench, duration, bench*iterations, duration/(bench*iterations) as u128, hashrate);
     }
 }
 
@@ -360,6 +371,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
         let mut job: BlockMiner;
         let mut hash: Hash;
 
+        let mut scratch_pad = [0u64; POW_MEMORY_SIZE];
         info!("Mining Thread #{}: started", id);
         'main: loop {
             let message = match job_receiver.blocking_recv() {
@@ -402,7 +414,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                     };
 
                     // Solve block
-                    hash = job.get_pow_hash();
+                    hash = job.get_pow_hash(&mut scratch_pad).unwrap();
                     while !check_difficulty_against_target(&hash, &difficulty_target) {
                         job.increase_nonce();
                         // check if we have a new job pending
@@ -415,7 +427,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                             HASHRATE_COUNTER.fetch_add(UPDATE_EVERY_NONCE as usize, Ordering::SeqCst);
                         }
 
-                        hash = job.get_pow_hash();
+                        hash = job.get_pow_hash(&mut scratch_pad).unwrap();
                     }
 
                     // compute the reference hash for easier finding of the block

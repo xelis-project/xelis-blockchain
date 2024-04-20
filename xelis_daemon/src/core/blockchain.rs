@@ -16,7 +16,11 @@ use xelis_common::{
         RPCTransaction
     },
     asset::AssetData,
-    block::{Block, BlockHeader, EXTRA_NONCE_SIZE},
+    block::{
+        Block,
+        BlockHeader,
+        EXTRA_NONCE_SIZE
+    },
     config::{
         COIN_DECIMALS,
         MAXIMUM_SUPPLY,
@@ -39,18 +43,18 @@ use xelis_common::{
         get_current_time_in_seconds,
         TimestampMillis
     },
-    transaction::{Transaction, TransactionType},
+    transaction::{verify::BlockchainVerificationState, Transaction, TransactionType},
     utils::{calculate_tx_fee, format_xelis},
     varuint::VarUint
 };
 use crate::{
     config::{
-        get_genesis_block_hash, get_hex_genesis_block,
+        get_genesis_block_hash, get_hex_genesis_block, get_minimum_difficulty,
         BLOCK_TIME_MILLIS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
         DEFAULT_CACHE_SIZE, DEFAULT_P2P_BIND_ADDRESS, DEFAULT_RPC_BIND_ADDRESS, DEV_FEES,
         DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY, MAX_BLOCK_SIZE,
-        MILLIS_PER_SECOND, MINIMUM_DIFFICULTY, P2P_DEFAULT_MAX_PEERS,
-        PRUNE_SAFETY_LIMIT, SIDE_BLOCK_REWARD_PERCENT, STABLE_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT
+        MILLIS_PER_SECOND, P2P_DEFAULT_MAX_PEERS, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
+        SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT
     },
     core::{
         blockdag,
@@ -69,12 +73,17 @@ use crate::{
             get_block_type_for_block,
             get_block_response
         },
-        DaemonRpcServer, SharedDaemonRpcServer
+        DaemonRpcServer,
+        SharedDaemonRpcServer
     }
 };
 use std::{
-    borrow::Cow, collections::{
-        HashMap, HashSet
+    borrow::Cow,
+    collections::{
+        HashMap,
+        hash_map::Entry,
+        HashSet,
+        VecDeque
     },
     net::SocketAddr,
     num::NonZeroUsize,
@@ -84,12 +93,16 @@ use std::{
     },
     time::Instant
 };
-use async_recursion::async_recursion;
 use tokio::sync::{Mutex, RwLock};
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
-use super::storage::{BlocksAtHeightProvider, PrunedTopoheightProvider};
+use super::storage::{
+    BlocksAtHeightProvider,
+    ClientProtocolProvider,
+    PrunedTopoheightProvider,
+    AccountProvider
+};
 
 #[derive(Debug, clap::Args)]
 pub struct Config {
@@ -114,6 +127,8 @@ pub struct Config {
     #[clap(long)]
     pub exclusive_nodes: Vec<String>,
     /// Set dir path for blockchain storage.
+    /// This will be appended by the network name for the database directory.
+    /// It must ends with a slash.
     #[clap(long)]
     pub dir_path: Option<String>,
     /// Set LRUCache size (0 = disabled).
@@ -283,7 +298,7 @@ impl<S: Storage> Blockchain<S> {
 
         let arc = Arc::new(blockchain);
         // create P2P Server
-        if !config.disable_p2p_server && arc.network != Network::Dev {
+        if !config.disable_p2p_server {
             info!("Starting P2p server...");
             // setup exclusive nodes
             let mut exclusive_nodes: Vec<SocketAddr> = Vec::with_capacity(config.exclusive_nodes.len());
@@ -298,7 +313,7 @@ impl<S: Storage> Blockchain<S> {
                 exclusive_nodes.push(addr);
             }
 
-            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing) {
+            match P2pServer::new(config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
@@ -450,6 +465,8 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // mine a block for current difficulty
+    // This is for testing purpose and shouldn't be directly used as it will mine on async threads
+    // which will reduce performance of the daemon and can take forever if difficulty is high
     pub async fn mine_block(&self, key: &PublicKey) -> Result<Block, BlockchainError> {
         let (mut header, difficulty) = {
             let storage = self.storage.read().await;
@@ -457,7 +474,7 @@ impl<S: Storage> Blockchain<S> {
             let (difficulty, _) = self.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await?;
             (block, difficulty)
         };
-        let mut hash = header.hash();
+        let mut hash = header.get_pow_hash()?;
         let mut current_height = self.get_height();
         while !self.is_simulator_enabled() && !check_difficulty(&hash, &difficulty)? {
             if self.get_height() != current_height {
@@ -466,7 +483,7 @@ impl<S: Storage> Blockchain<S> {
             }
             header.nonce += 1;
             header.timestamp = get_current_time_in_millis();
-            hash = header.hash();
+            hash = header.get_pow_hash()?;
         }
 
         let block = self.build_block_from_header(Immutable::Owned(header)).await?;
@@ -510,6 +527,7 @@ impl<S: Storage> Blockchain<S> {
             // create snapshots of balances to located_sync_topoheight
             storage.create_snapshot_balances_at_topoheight(located_sync_topoheight).await?;
             storage.create_snapshot_nonces_at_topoheight(located_sync_topoheight).await?;
+            storage.create_snapshot_registrations_at_topoheight(located_sync_topoheight).await?;
 
             // delete all blocks until the new topoheight
             for topoheight in last_pruned_topoheight..located_sync_topoheight {
@@ -522,6 +540,8 @@ impl<S: Storage> Blockchain<S> {
             storage.delete_versioned_balances_below_topoheight(located_sync_topoheight).await?;
             // delete nonces versions
             storage.delete_versioned_nonces_below_topoheight(located_sync_topoheight).await?;
+            // Also delete registrations
+            storage.delete_registrations_below_topoheight(located_sync_topoheight).await?;
 
             // Update the pruned topoheight
             storage.set_pruned_topoheight(located_sync_topoheight).await?;
@@ -689,62 +709,70 @@ impl<S: Storage> Blockchain<S> {
         Ok(true)
     }
 
-    #[async_recursion]
     async fn find_tip_base<P>(&self, provider: &P, hash: &Hash, height: u64, pruned_topoheight: u64) -> Result<(Hash, u64), BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + Send + Sync
+        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
     {
-        if pruned_topoheight > 0 && provider.is_block_topological_ordered(hash).await {
-            let topoheight = provider.get_topo_height_for_hash(hash).await?;
-            // Node is pruned, we only prune chain to stable height so we can return the hash
-            if topoheight <= pruned_topoheight {
-                debug!("Node is pruned, returns {} at {} as stable tip base", hash, height);
-                return Ok((hash.clone(), height))
-            }
-        }
+        let mut cache = self.tip_base_cache.lock().await;
 
-        let (tips, tips_count) = {
-            // first, check if we have it in cache
-            let mut cache = self.tip_base_cache.lock().await;
-            if let Some((base_hash, base_height)) = cache.get(&(hash.clone(), height)) {
-                trace!("Tip Base for {} at height {} found in cache: {} for height {}", hash, height, base_hash, base_height);
-                return Ok((base_hash.clone(), *base_height))
-            }
+        let mut stack: VecDeque<Hash> = VecDeque::new();
+        stack.push_back(hash.clone());
 
-            let tips = provider.get_past_blocks_for_block_hash(hash).await?;
-            let tips_count = tips.len();
-            if tips_count == 0 { // only genesis block can have 0 tips saved
-                // save in cache
-                cache.put((hash.clone(), height), (hash.clone(), 0));
-                return Ok((hash.clone(), 0))
-            }
-            (tips, tips_count)
-        };
+        let mut bases: IndexSet<(Hash, u64)> = IndexSet::new();
 
-        let mut bases = Vec::with_capacity(tips_count);
-        for hash in tips.iter() {
-            if pruned_topoheight > 0 && provider.is_block_topological_ordered(hash).await {
-                let topoheight = provider.get_topo_height_for_hash(hash).await?;
+        'main: while let Some(current_hash) = stack.pop_back() {
+            trace!("Finding tip base for {} at height {}", current_hash, height);
+            if pruned_topoheight > 0 && provider.is_block_topological_ordered(&current_hash).await {
+                let topoheight = provider.get_topo_height_for_hash(&current_hash).await?;
                 // Node is pruned, we only prune chain to stable height / sync block so we can return the hash
                 if topoheight <= pruned_topoheight {
-                    let block_height = provider.get_height_for_block_hash(hash).await?;
-                    debug!("Node is pruned, returns tip {} at {} as stable tip base", hash, block_height);
-                    return Ok((hash.clone(), block_height))
+                    let block_height = provider.get_height_for_block_hash(&current_hash).await?;
+                    debug!("Node is pruned, returns tip {} at {} as stable tip base", current_hash, block_height);
+                    bases.insert((current_hash.clone(), block_height));
+                    continue 'main;
                 }
             }
 
-            // if block is sync, it is a tip base
-            if self.is_sync_block_at_height(provider, hash, height).await? {
-                let block_height = provider.get_height_for_block_hash(hash).await?;
-                // save in cache (lock each time to avoid deadlocks)
-                let mut cache = self.tip_base_cache.lock().await;
-                cache.put((hash.clone(), height), (hash.clone(), block_height));
-
-                return Ok((hash.clone(), block_height))
+            // first, check if we have it in cache
+            if let Some((base_hash, base_height)) = cache.get(&(current_hash.clone(), height)) {
+                trace!("Tip Base for {} at height {} found in cache: {} for height {}", current_hash, height, base_hash, base_height);
+                bases.insert((base_hash.clone(), *base_height));
+                continue 'main;
             }
 
-            // if block is not sync, we need to find its tip base too
-            bases.push(self.find_tip_base(provider, hash, height, pruned_topoheight).await?);
+            let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
+            let tips_count = tips.len();
+            if tips_count == 0 { // only genesis block can have 0 tips saved
+                // save in cache
+                cache.put((hash.clone(), height), (current_hash.clone(), height));
+                bases.insert((current_hash.clone(), 0));
+                continue 'main;
+            }
+
+            for tip_hash in tips.iter() {
+                if pruned_topoheight > 0 && provider.is_block_topological_ordered(&tip_hash).await {
+                    let topoheight = provider.get_topo_height_for_hash(&tip_hash).await?;
+                    // Node is pruned, we only prune chain to stable height / sync block so we can return the hash
+                    if topoheight <= pruned_topoheight {
+                        let block_height = provider.get_height_for_block_hash(&tip_hash).await?;
+                        debug!("Node is pruned, returns tip {} at {} as stable tip base", tip_hash, block_height);
+                        bases.insert((tip_hash.clone(), block_height));
+                        continue 'main;
+                    }
+                }
+
+                // if block is sync, it is a tip base
+                if self.is_sync_block_at_height(provider, &tip_hash, height).await? {
+                    let block_height = provider.get_height_for_block_hash(&tip_hash).await?;
+                    // save in cache
+                    cache.put((hash.clone(), height), (tip_hash.clone(), block_height));
+                    bases.insert((tip_hash.clone(), block_height));
+                    continue 'main;
+                }
+
+                // Tip was not sync, we need to find its tip base too
+                stack.push_back(tip_hash.clone());
+            }
         }
 
         if bases.is_empty() {
@@ -756,9 +784,9 @@ impl<S: Storage> Blockchain<S> {
         bases.sort_by(|(_, a), (_, b)| b.cmp(a));
         debug_assert!(bases[0].1 >= bases[bases.len() - 1].1);
 
-        let (base_hash, base_height) = bases.remove(bases.len() - 1);
+        let (base_hash, base_height) = bases.pop().ok_or(BlockchainError::ExpectedTips)?;
+
         // save in cache
-        let mut cache = self.tip_base_cache.lock().await;
         cache.put((hash.clone(), height), (base_hash.clone(), base_height));
         trace!("Tip Base for {} at height {} found: {} for height {}", hash, height, base_hash, base_height);
 
@@ -768,7 +796,7 @@ impl<S: Storage> Blockchain<S> {
     // find the common base (block hash and block height) of all tips
     pub async fn find_common_base<'a, P, I>(&self, provider: &P, tips: I) -> Result<(Hash, u64), BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + Send + Sync,
+        P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider,
         I: IntoIterator<Item = &'a Hash> + Copy,
     {
         debug!("Searching for common base for tips {}", tips.into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
@@ -784,10 +812,10 @@ impl<S: Storage> Blockchain<S> {
         let pruned_topoheight = provider.get_pruned_topoheight().await?.unwrap_or(0);
         let mut bases = Vec::new();
         for hash in tips.into_iter() {
+            trace!("Searching tip base for {}", hash);
             bases.push(self.find_tip_base(provider, hash, best_height, pruned_topoheight).await?);
         }
 
-        
         // check that we have at least one value
         if bases.is_empty() {
             error!("bases list is empty");
@@ -807,35 +835,37 @@ impl<S: Storage> Blockchain<S> {
         Ok((base_hash, base_height))
     }
 
-    #[async_recursion] // TODO no recursion
-    async fn build_reachability_recursive(&self, storage: &S, set: &mut HashSet<Hash>, hash: Hash, level: u64) -> Result<(), BlockchainError> {
-        if level >= 2 * STABLE_LIMIT {
-            trace!("Level limit reached, adding {}", hash);
-            set.insert(hash);
-        } else {
-            trace!("Level {} reached with hash {}", level, hash);
-            let tips = storage.get_past_blocks_for_block_hash(&hash).await?;
-            set.insert(hash);
-            for past_hash in tips.iter() {
-                if !set.contains(past_hash) {
-                    self.build_reachability_recursive(storage, set, past_hash.clone(), level + 1).await?;
+    async fn build_reachability(&self, storage: &S, hash: Hash) -> Result<HashSet<Hash>, BlockchainError> {
+        let mut set = HashSet::new();
+        let mut stack: VecDeque<(Hash, u64)> = VecDeque::new();
+        stack.push_back((hash, 0));
+    
+        while let Some((current_hash, current_level)) = stack.pop_back() {
+            if current_level >= 2 * STABLE_LIMIT {
+                trace!("Level limit reached, adding {}", current_hash);
+                set.insert(current_hash);
+            } else {
+                trace!("Level {} reached with hash {}", current_level, current_hash);
+                let tips = storage.get_past_blocks_for_block_hash(&current_hash).await?;
+                set.insert(current_hash);
+                for past_hash in tips.iter() {
+                    if !set.contains(past_hash) {
+                        stack.push_back((past_hash.clone(), current_level + 1));
+                    }
                 }
             }
         }
 
-        Ok(())
+        Ok(set)
     }
 
     // this function check that a TIP cannot be refered as past block in another TIP
-    async fn verify_non_reachability(&self, storage: &S, block: &BlockHeader) -> Result<bool, BlockchainError> {
+    async fn verify_non_reachability(&self, storage: &S, tips: &IndexSet<Hash>) -> Result<bool, BlockchainError> {
         trace!("Verifying non reachability for block");
-        let tips = block.get_tips();
         let tips_count = tips.len();
         let mut reach = Vec::with_capacity(tips_count);
-        for hash in block.get_tips() {
-            let mut set = HashSet::new();
-            // TODO no clone
-            self.build_reachability_recursive(storage, &mut set, hash.clone(), 0).await?;
+        for hash in tips {
+            let set = self.build_reachability(storage, hash.clone()).await?;
             reach.push(set);
         }
 
@@ -852,63 +882,100 @@ impl<S: Storage> Blockchain<S> {
         Ok(true)
     }
 
-    #[async_recursion] // TODO no recursion
-    async fn calculate_distance_from_mainchain_recursive(&self, storage: &S, set: &mut HashSet<u64>, hash: &Hash) -> Result<(), BlockchainError> {
-        let tips = storage.get_past_blocks_for_block_hash(hash).await?;
-        for hash in tips.iter() {
-            if storage.is_block_topological_ordered(hash).await {
-                set.insert(storage.get_height_for_block_hash(hash).await?);
-            } else {
-                self.calculate_distance_from_mainchain_recursive(storage, set, hash).await?;
+    // Search the lowest height available from the tips of a block hash
+    // We go through all tips and their tips until we have no unordered block left
+    async fn find_lowest_height_from_mainchain<P>(&self, provider: &P, hash: Hash) -> Result<u64, BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider
+    {
+        // Lowest height found from mainchain
+        let mut lowest_height = u64::max_value();
+        // Current stack of blocks to process
+        let mut stack: VecDeque<Hash> = VecDeque::new();
+        // Because several blocks can have the same tips,
+        // prevent to process a block twice
+        let mut processed = HashSet::new();
+
+        stack.push_back(hash);
+
+        while let Some(current_hash) = stack.pop_back() {
+            if processed.contains(&current_hash) {
+                continue;
             }
+
+            let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
+            for tip_hash in tips.iter() {
+                if provider.is_block_topological_ordered(tip_hash).await {
+                    let height = provider.get_height_for_block_hash(tip_hash).await?;
+                    if lowest_height > height {
+                        lowest_height = height;
+                    }
+                } else {
+                    stack.push_back(tip_hash.clone());
+                }
+            }
+            processed.insert(current_hash);
         }
-        Ok(())
+
+        Ok(lowest_height)
     }
 
-    async fn calculate_distance_from_mainchain(&self, storage: &S, hash: &Hash) -> Result<u64, BlockchainError> {
-        if storage.is_block_topological_ordered(hash).await {
-            let height = storage.get_height_for_block_hash(hash).await?;
+    // Search the lowest height available from this block hash
+    // This function is used to calculate the distance from mainchain
+    // It will recursively search all tips and their height
+    // If a tip is not ordered, we will search its tips until we find an ordered block
+    async fn calculate_distance_from_mainchain<P>(&self, provider: &P, hash: &Hash) -> Result<u64, BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider
+    {
+        if provider.is_block_topological_ordered(hash).await {
+            let height = provider.get_height_for_block_hash(hash).await?;
             debug!("calculate_distance: Block {} is at height {}", hash, height);
             return Ok(height)
         }
         debug!("calculate_distance: Block {} is not ordered, calculate distance from mainchain", hash);
-        let mut set = HashSet::new(); // replace by a Vec and sort + remove first ?
-        self.calculate_distance_from_mainchain_recursive(storage, &mut set, hash).await?;
+        let lowest_height = self.find_lowest_height_from_mainchain(provider, hash.clone()).await?;
 
-        let mut lowest_height = u64::max_value();
-        for height in &set {
-            if lowest_height > *height {
-                lowest_height = *height;
-            }
-        }
-
-        debug!("calculate_distance: lowest height found is {} on {} elements", lowest_height, set.len());
+        debug!("calculate_distance: lowest height found is {}", lowest_height);
         Ok(lowest_height)
     }
 
-    #[async_recursion] // TODO no recursion
-    async fn find_tip_work_score_internal<'a, P>(&self, provider: &P, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: u64, base_height: u64) -> Result<(), BlockchainError>
+    // Find tip work score internal for a block hash
+    // this will recursively find all tips and their difficulty
+    async fn find_tip_work_score_internal<'a, P>(&self, provider: &P, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: u64) -> Result<(), BlockchainError>
     where
-        // Sync + Send is required for recursive calls
-        P: DifficultyProvider + DagOrderProvider + Sync + Send
+        P: DifficultyProvider + DagOrderProvider
     {
-        let tips = provider.get_past_blocks_for_block_hash(hash).await?;
-        for hash in tips.iter() {
-            if !map.contains_key(hash) {
-                let is_ordered = provider.is_block_topological_ordered(hash).await;
-                if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(hash).await? >= base_topoheight) {
-                    self.find_tip_work_score_internal(provider, map, hash, base_topoheight, base_height).await?;
+        trace!("Finding tip work score for {}", hash);
+
+        let mut stack: VecDeque<Hash> = VecDeque::new();
+        stack.push_back(hash.clone());
+
+        while let Some(current_hash) = stack.pop_back() {
+            let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
+
+            for tip_hash in tips.iter() {
+                if !map.contains_key(tip_hash) {
+                    let is_ordered = provider.is_block_topological_ordered(tip_hash).await;
+                    if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(tip_hash).await? >= base_topoheight) {
+                        stack.push_back(tip_hash.clone());
+                    }
                 }
             }
+
+            if !map.contains_key(&current_hash) {
+                map.insert(current_hash.clone(), provider.get_difficulty_for_block_hash(&current_hash).await?.into());
+            }
         }
-
-        map.insert(hash.clone(), provider.get_difficulty_for_block_hash(hash).await?.into());
-
+    
         Ok(())
     }
 
     // find the sum of work done
-    pub async fn find_tip_work_score<DD: DifficultyProvider + DagOrderProvider + Sync + Send>(&self, provider: &DD, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError> {
+    pub async fn find_tip_work_score<P>(&self, provider: &P, hash: &Hash, base: &Hash, base_height: u64) -> Result<(HashSet<Hash>, CumulativeDifficulty), BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider
+    {
         let mut cache = self.tip_work_score_cache.lock().await;
         if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
             trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
@@ -922,7 +989,7 @@ impl<S: Storage> Blockchain<S> {
             if !map.contains_key(hash) {
                 let is_ordered = provider.is_block_topological_ordered(hash).await;
                 if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(hash).await? >= base_topoheight) {
-                    self.find_tip_work_score_internal(provider, &mut map, hash, base_topoheight, base_height).await?;
+                    self.find_tip_work_score_internal(provider, &mut map, hash, base_topoheight).await?;
                 }
             }
         }
@@ -969,66 +1036,78 @@ impl<S: Storage> Blockchain<S> {
     // the full order is re generated each time a new block is added based on new TIPS
     // first hash in order is the base hash
     // base_height is only used for the cache key
-    #[async_recursion]
-    async fn generate_full_order(&self, storage: &S, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: u64) -> Result<IndexSet<Hash>, BlockchainError> {
-        let block_tips = {
-            let mut cache = self.full_order_cache.lock().await;
-            // check if its present in the cache first
-            if let Some(value) = cache.get(&(hash.clone(), base.clone(), base_height)) {
-                trace!("Found full order in cache: {}", value.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
-                return Ok(value.clone())
-            }
-
-            let block_tips = storage.get_past_blocks_for_block_hash(hash).await?;
-            // only the genesis block can have 0 tips, returns its hash
-            if block_tips.len() == 0 {
-                debug!("Genesis block detected, zero tips");
-                let mut result = IndexSet::new();
-                result.insert(hash.clone());
-                cache.put((hash.clone(), base.clone(), base_height), result.clone());
-                return Ok(result)
-            }
-
-            // if the block has been previously ordered, return it as base
-            if hash == base {
-                let mut result = IndexSet::new();
-                result.insert(base.clone());
-                cache.put((hash.clone(), base.clone(), base_height), result.clone());
-                return Ok(result)
-            }
-
-            block_tips
-        };
-
-        let mut scores = Vec::new();
-        for hash in block_tips.iter() {
-            let is_ordered = storage.is_block_topological_ordered(hash).await;
-            if !is_ordered || (is_ordered && storage.get_topo_height_for_hash(hash).await? >= base_topo_height) {
-                let diff = storage.get_cumulative_difficulty_for_block_hash(hash).await?;
-                scores.push((hash, diff));
-            } else {
-                debug!("Block {} is skipped in generate_full_order, is ordered = {}, base topo height = {}", hash, is_ordered, base_topo_height);
-            }
-        }
-
-        blockdag::sort_descending_by_cumulative_difficulty(&mut scores);
-
-        // let's build the right order now
-        let mut order: IndexSet<Hash> = IndexSet::new();
-        for (hash, _) in scores {
-            let sub_order = self.generate_full_order(storage, hash, base, base_height, base_topo_height).await?;
-            for order_hash in sub_order {
-                order.insert(order_hash);
-            }
-        }
-
-        order.insert(hash.clone());
-
-        // save in cache final result
+    async fn generate_full_order<P>(&self, provider: &P, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: u64) -> Result<IndexSet<Hash>, BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider
+    {
+        trace!("Generating full order for {} with base {}", hash, base);
         let mut cache = self.full_order_cache.lock().await;
-        cache.put((hash.clone(), base.clone(), base_height), order.clone());
 
-        Ok(order)
+        // Full order that is generated
+        let mut full_order = IndexSet::new();
+        // Current stack of hashes that need to be processed
+        let mut stack: VecDeque<Hash> = VecDeque::new();
+        stack.push_back(hash.clone());
+
+        // Keep track of processed hashes that got reinjected for correct order
+        let mut processed = IndexSet::new();
+
+        'main: while let Some(current_hash) = stack.pop_back() {
+            // If it is processed and got reinjected, its to maintains right order
+            // We just need to insert current hash as it the "final hash" that got processed
+            // after all tips
+            if processed.contains(&current_hash) {
+                full_order.insert(current_hash);
+                continue 'main;
+            }
+
+            // Search in the cache to retrieve faster the full order
+            let cache_key = (current_hash.clone(), base.clone(), base_height);
+            if let Some(order_cache) = cache.get(&cache_key) {
+                full_order.extend(order_cache.clone());
+                continue 'main;
+            }
+
+            // Retrieve block tips
+            let block_tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
+
+            // if the block is genesis or its the base block, we can add it to the full order
+            if block_tips.is_empty() || current_hash == *base {
+                let mut order = IndexSet::new();
+                order.insert(current_hash.clone());
+                cache.put(cache_key, order.clone());
+                full_order.extend(order);
+                continue 'main;
+            }
+
+            // Calculate the score for each tips above the base topoheight
+            let mut scores = Vec::new();
+            for tip_hash in block_tips.iter() {
+                let is_ordered = provider.is_block_topological_ordered(tip_hash).await;
+                if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(tip_hash).await? >= base_topo_height) {
+                    let diff = provider.get_cumulative_difficulty_for_block_hash(tip_hash).await?;
+                    scores.push((tip_hash.clone(), diff));
+                } else {
+                    debug!("Block {} is skipped in generate_full_order, is ordered = {}, base topo height = {}", tip_hash, is_ordered, base_topo_height);
+                }
+            }
+
+            // We sort by ascending cumulative difficulty because it is faster
+            // than doing a .reverse() on scores and give correct order for tips processing
+            // using our stack impl 
+            blockdag::sort_ascending_by_cumulative_difficulty(&mut scores);
+
+            processed.insert(current_hash.clone());
+            stack.push_back(current_hash);
+
+            for (tip_hash, _) in scores {
+                stack.push_back(tip_hash);
+            }
+        }
+
+        cache.put((hash.clone(), base.clone(), base_height), full_order.clone());
+
+        Ok(full_order)
     }
 
     // confirms whether the actual tip difficulty is withing 9% deviation with best tip (reference)
@@ -1061,7 +1140,7 @@ impl<S: Storage> Blockchain<S> {
         let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
         // Simulator is enabled, don't calculate difficulty
         if height <= 1 || self.is_simulator_enabled() {
-            return Ok((MINIMUM_DIFFICULTY, difficulty::P))
+            return Ok((get_minimum_difficulty(self.get_network()), difficulty::P))
         }
 
         // Search the highest difficulty available
@@ -1069,16 +1148,17 @@ impl<S: Storage> Blockchain<S> {
         let biggest_difficulty = provider.get_difficulty_for_block_hash(best_tip).await?;
 
         // Search the newest tip available to determine the real solve time
-        let newest_tip = blockdag::find_newest_tip_by_timestamp(provider, tips.clone().into_iter()).await?;
-        let newest_tip_timestamp = provider.get_timestamp_for_block_hash(newest_tip).await?;
+        let (_, newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, tips.clone().into_iter()).await?;
 
         // Find the newest tips parent timestamp
         let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
-        let parent_newest_tip = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
-        let parent_newest_tip_timestamp = provider.get_timestamp_for_block_hash(parent_newest_tip).await?;
+        let (_, parent_newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
 
-        let p = provider.get_estimated_covariance_or_block_hash(best_tip).await?;
-        let (difficulty, p_new) = difficulty::calculate_difficulty(parent_newest_tip_timestamp, newest_tip_timestamp, biggest_difficulty, p);
+        let p = provider.get_estimated_covariance_for_block_hash(best_tip).await?;
+
+        // Get the minimum difficulty configured
+        let minimum_difficulty = get_minimum_difficulty(self.get_network());
+        let (difficulty, p_new) = difficulty::calculate_difficulty(parent_newest_tip_timestamp, newest_tip_timestamp, biggest_difficulty, p, minimum_difficulty);
         Ok((difficulty, p_new))
     }
 
@@ -1272,6 +1352,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Generate a block header template without transactions
     pub async fn get_block_header_template_for_storage(&self, storage: &S, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
+        trace!("get block header template");
         let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>(); // generate random bytes
         let tips_set = storage.get_tips().await?;
         let mut tips = Vec::with_capacity(tips_set.len());
@@ -1453,6 +1534,16 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::ExpectedTips)
         }
 
+        if tips_count > 0 && block.get_height() == 0 {
+            debug!("Invalid block height, got height 0 but tips are present for this block {}", block_hash);
+            return Err(BlockchainError::BlockHeightZeroNotAllowed)
+        }
+
+        if tips_count == 0 && block.get_height() != 0 {
+            debug!("Invalid tips count, got {} but current height is {} with block height {}", tips_count, current_height, block.get_height());
+            return Err(BlockchainError::InvalidTipsCount(block_hash, tips_count))
+        }
+
         // block contains header and full TXs
         let block_size = block.size();
         if block_size > MAX_BLOCK_SIZE {
@@ -1483,7 +1574,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        if !self.verify_non_reachability(storage, &block).await? {
+        if !self.verify_non_reachability(storage, block.get_tips()).await? {
             debug!("{} with hash {} has an invalid reachability", block, block_hash);
             return Err(BlockchainError::InvalidReachability)
         }
@@ -1518,7 +1609,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // verify PoW and get difficulty for this block based on tips
-        let pow_hash = block.get_pow_hash();
+        let pow_hash = block.get_pow_hash()?;
         debug!("POW hash: {}", pow_hash);
         let (difficulty, p) = self.verify_proof_of_work(storage, &pow_hash, block.get_tips().iter()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
@@ -1717,6 +1808,7 @@ impl<S: Storage> Blockchain<S> {
                     // Delete changes made by this block
                     storage.delete_versioned_balances_at_topoheight(topoheight).await?;
                     storage.delete_versioned_nonces_at_topoheight(topoheight).await?;
+                    storage.delete_registrations_at_topoheight(topoheight).await?;
 
                     topoheight += 1;
                 }
@@ -1724,6 +1816,8 @@ impl<S: Storage> Blockchain<S> {
 
             // This is used to verify that each nonce is used only one time
             let mut nonce_checker = NonceChecker::new();
+            // Side blocks counter per height
+            let mut side_blocks: HashMap<u64, u64> = HashMap::new();
             // time to order the DAG that is moving
             debug!("Ordering blocks based on generated DAG order ({} blocks)", full_order.len());
             for (i, hash) in full_order.into_iter().enumerate() {
@@ -1746,17 +1840,41 @@ impl<S: Storage> Blockchain<S> {
                     storage.get_supply_at_topo_height(highest_topo - 1).await?
                 };
 
-                let mut block_reward = self.get_block_reward(storage, &hash, past_supply).await?;
+                // Block for this hash
+                let block = storage.get_block_by_hash(&hash).await?;
 
-                trace!("set block reward to {} at {}", block_reward, highest_topo);
+                // Reward the miner of this block
+                // We have a decreasing block reward if there is too much side block
+                let is_side_block = self.is_side_block_internal(storage, &hash, highest_topo).await?;
+                let height = block.get_height();
+                let side_blocks_count = match side_blocks.entry(height) {
+                    Entry::Occupied(entry) => entry.into_mut(),
+                    Entry::Vacant(entry) => {
+                        let mut count = 0;
+                        let blocks_at_height = storage.get_blocks_at_height(height).await?;
+                        for block in blocks_at_height {
+                            if block != hash && self.is_side_block_internal(storage, &block, highest_topo).await? {
+                                count += 1;
+                                debug!("Found side block {} at height {}", block, height);
+                            }
+                        }
+
+                        entry.insert(count)
+                    },
+                };
+
+                let mut block_reward = self.internal_get_block_reward(past_supply, is_side_block, *side_blocks_count).await?;
+                trace!("set block {} reward to {} at {} (height {}, side block: {}, {} {}%)", hash, block_reward, highest_topo, height, is_side_block, side_blocks_count, side_block_reward_percentage(*side_blocks_count));
+                if is_side_block {
+                    *side_blocks_count += 1;
+                }
+
                 storage.set_block_reward_at_topo_height(highest_topo, block_reward)?;
                 
                 let supply = past_supply + block_reward;
                 trace!("set block supply to {} at {}", supply, highest_topo);
                 storage.set_supply_at_topo_height(highest_topo, supply)?;
 
-                // Block for this hash
-                let block = storage.get_block_by_hash(&hash).await?;
                 // All fees from the transactions executed in this block
                 let mut total_fees = 0;
                 // Chain State used for the verification
@@ -1782,16 +1900,21 @@ impl<S: Storage> Blockchain<S> {
                             continue;
                         }
 
-                        // let next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
-                        // local_nonces.insert(tx.get_source(), next_nonce);
+                        // Execute the transaction by applying changes in storage
+                        debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
+                        if let Err(e) = tx.apply_with_partial_verify(chain_state.as_mut()).await {
+                            warn!("Error while executing TX {} with current DAG org: {}", tx_hash, e);
+                            // TX may be orphaned if not added again in good order in next blocks
+                            continue;
+                        }
+
+                        // Calculate the new nonce
+                        // This has to be done in case of side blocks where TX B would be before TX A
+                        let next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
+                        chain_state.as_mut().update_account_nonce(tx.get_source(), next_nonce).await?;
 
                         // mark tx as executed
-                        debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
                         chain_state.get_mut_storage().set_tx_executed_in_block(tx_hash, &hash)?;
-
-                        // Execute the transaction by applying changes in storage
-                        // self.execute_transaction(storage, &tx, &mut local_balances, highest_topo).await?;
-                        tx.apply_without_verify(chain_state.as_mut()).await?;
 
                         // Delete the transaction from  the list if it was marked as orphaned
                         if orphaned_transactions.remove(&tx_hash) {
@@ -1875,6 +1998,15 @@ impl<S: Storage> Blockchain<S> {
             storage.set_top_topoheight(highest_topo)?;
             self.topoheight.store(highest_topo, Ordering::Release);
             current_topoheight = highest_topo;
+        }
+
+        // If block is directly orphaned
+        // Mark all TXs ourself as linked to it
+        if !block_is_ordered {
+            trace!("Block {} is orphaned, marking all TXs as linked to it", block_hash);
+            for tx_hash in block.get_txs_hashes() {
+                storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash)?;
+            }
         }
 
         // auto prune mode
@@ -2066,20 +2198,45 @@ impl<S: Storage> Blockchain<S> {
 
     // Get block reward based on the type of the block
     // Block shouldn't be orphaned
-    pub async fn get_block_reward(&self, storage: &S, hash: &Hash, past_supply: u64) -> Result<u64, BlockchainError> {
-        let block_reward = if self.is_side_block(storage, &hash).await? {
-            trace!("Block {} is a side block", hash);
+    pub async fn internal_get_block_reward(&self, past_supply: u64, is_side_block: bool, side_blocks_count: u64) -> Result<u64, BlockchainError> {
+        trace!("internal get block reward");
+        let block_reward = if is_side_block {
             let reward = get_block_reward(past_supply);
-            reward * SIDE_BLOCK_REWARD_PERCENT / 100
+            let side_block_percent = side_block_reward_percentage(side_blocks_count);
+            trace!("side block reward: {}%", side_block_percent);
+
+            reward * side_block_percent / 100
         } else {
             get_block_reward(past_supply)
         };
         Ok(block_reward)
     }
 
+    // Get the block reward for a block
+    // This will search all blocks at same height and verify which one are side blocks
+    pub async fn get_block_reward(&self, storage: &S, hash: &Hash, past_supply: u64, current_topoheight: u64) -> Result<u64, BlockchainError> {
+        let is_side_block = self.is_side_block(storage, hash).await?;
+        let mut side_blocks_count = 0;
+        if is_side_block {
+            // get the block height for this hash
+            let height = storage.get_height_for_block_hash(hash).await?;
+            let blocks_at_height = storage.get_blocks_at_height(height).await?;
+            for block in blocks_at_height {
+                if *hash != block && self.is_side_block_internal(storage, &block, current_topoheight).await? {
+                    side_blocks_count += 1;
+                }
+            }
+        }
+
+        self.internal_get_block_reward(past_supply, is_side_block, side_blocks_count).await
+    }
+
     // retrieve all txs hashes until height or until genesis block that were executed in a block
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
-    async fn get_all_executed_txs_until_height(&self, storage: &S, until_height: u64, tips: impl Iterator<Item = Hash>) -> Result<HashSet<Hash>, BlockchainError> {
+    async fn get_all_executed_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>) -> Result<HashSet<Hash>, BlockchainError>
+    where
+        P: DifficultyProvider + ClientProtocolProvider
+    {
         trace!("get all txs until height {}", until_height);
         // All transactions hashes found under the stable height
         let mut hashes = HashSet::new();
@@ -2091,7 +2248,7 @@ impl<S: Storage> Blockchain<S> {
 
         // get last element from queue (order doesn't matter and its faster than moving all elements)
         while let Some(hash) = queue.pop() {
-            let block = storage.get_block_header_by_hash(&hash).await?;
+            let block = provider.get_block_header_by_hash(&hash).await?;
 
             // check that the block height is higher than the height passed in param
             if until_height < block.get_height() {
@@ -2100,7 +2257,7 @@ impl<S: Storage> Blockchain<S> {
                     // Check that we don't have it yet
                     if !hashes.contains(tx) {
                         // Then check that it's executed in this block
-                        if storage.is_tx_executed_in_block(tx, &hash)? {
+                        if provider.is_tx_executed_in_block(tx, &hash)? {
                             // add it to the list
                             hashes.insert(tx.clone());
                         }
@@ -2126,27 +2283,34 @@ impl<S: Storage> Blockchain<S> {
         !storage.is_block_topological_ordered(hash).await
     }
 
-    // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
     pub async fn is_side_block(&self, storage: &S, hash: &Hash) -> Result<bool, BlockchainError> {
+        self.is_side_block_internal(storage, hash, self.get_topo_height()).await
+    }
+
+    // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
+    pub async fn is_side_block_internal<P>(&self, provider: &P, hash: &Hash, current_topoheight: u64) -> Result<bool, BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider
+    {
         trace!("is block {} a side block", hash);
-        if !storage.is_block_topological_ordered(hash).await {
+        if !provider.is_block_topological_ordered(hash).await {
             return Ok(false)
         }
 
-        let topoheight = storage.get_topo_height_for_hash(hash).await?;
+        let topoheight = provider.get_topo_height_for_hash(hash).await?;
         // genesis block can't be a side block
-        if topoheight == 0 {
+        if topoheight == 0 || topoheight > current_topoheight {
             return Ok(false)
         }
 
-        let height = storage.get_height_for_block_hash(hash).await?;
+        let height = provider.get_height_for_block_hash(hash).await?;
 
         // verify if there is a block with height higher than this block in past 8 topo blocks
         let mut counter = 0;
         let mut i = topoheight - 1;
         while counter < STABLE_LIMIT && i > 0 {
-            let hash = storage.get_hash_at_topo_height(i).await?;
-            let previous_height = storage.get_height_for_block_hash(&hash).await?;
+            let hash = provider.get_hash_at_topo_height(i).await?;
+            let previous_height = provider.get_height_for_block_hash(&hash).await?;
 
             if height <= previous_height {
                 return Ok(true)
@@ -2159,10 +2323,13 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // to have stable order: it must be ordered, and be under the stable height limit
-    pub async fn has_block_stable_order(&self, storage: &S, hash: &Hash, topoheight: u64) -> Result<bool, BlockchainError> {
+    pub async fn has_block_stable_order<P>(&self, provider: &P, hash: &Hash, topoheight: u64) -> Result<bool, BlockchainError>
+    where
+        P: DagOrderProvider
+    {
         trace!("has block {} stable order at topoheight {}", hash, topoheight);
-        if storage.is_block_topological_ordered(hash).await {
-            let block_topo_height = storage.get_topo_height_for_hash(hash).await?;
+        if provider.is_block_topological_ordered(hash).await {
+            let block_topo_height = provider.get_topo_height_for_hash(hash).await?;
             return Ok(block_topo_height + STABLE_LIMIT <= topoheight)
         }
         Ok(false)
@@ -2272,23 +2439,39 @@ impl<S: Storage> Blockchain<S> {
         let diff = now_timestamp - count_timestamp;
         Ok(diff / count)
     }
+}
 
-    // Estimate the required fees for a transaction
-    pub async fn estimate_required_tx_fees(_: &S, tx: &Transaction) -> Result<u64, BlockchainError> {
-        let mut output_count = 0;
-        let new_addresses = 0;
-        if let TransactionType::Transfers(transfers) = tx.get_data() {
-            output_count = transfers.len();
-            // TODO enable this when we are deleting nonce on storage
-            // for transfer in transfers {
-            //     if !storage.has_nonce(transfer.get_destination()).await? {
-            //         new_addresses += 1;
-            //     }
-            // }
+
+// Estimate the required fees for a transaction
+pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: u64, tx: &Transaction) -> Result<u64, BlockchainError> {
+    let mut output_count = 0;
+    let mut new_addresses = 0;
+    if let TransactionType::Transfers(transfers) = tx.get_data() {
+        output_count = transfers.len();
+        for transfer in transfers {
+            if !provider.is_account_registered_below_topoheight(transfer.get_destination(), current_topoheight).await? {
+                new_addresses += 1;
+            }
         }
-
-        Ok(calculate_tx_fee(tx.size(), output_count, new_addresses))
     }
+
+    Ok(calculate_tx_fee(tx.size(), output_count, new_addresses))
+}
+
+// Get the block reward for a side block based on how many side blocks exists at same height
+pub fn side_block_reward_percentage(side_blocks: u64) -> u64 {
+    let mut side_block_percent = SIDE_BLOCK_REWARD_PERCENT;
+    if side_blocks > 0 {
+        if side_blocks < SIDE_BLOCK_REWARD_MAX_BLOCKS {
+            side_block_percent = SIDE_BLOCK_REWARD_PERCENT / (side_blocks * 2);
+        } else {
+            // If we have more than 3 side blocks at same height
+            // we reduce the reward to 5%
+            side_block_percent = SIDE_BLOCK_REWARD_MIN_PERCENT;
+        }
+    }
+
+    side_block_percent
 }
 
 // Calculate the block reward based on the current supply
@@ -2312,4 +2495,31 @@ pub fn get_block_dev_fee(height: u64) -> u64 {
     }
 
     0
+}
+
+// Compute the combined merkle root of the tips
+// pub async fn build_merkle_tips_hash<'a, S: DifficultyProvider, I: Iterator<Item = &'a Hash> + ExactSizeIterator>(storage: &S, sorted_tips: I) -> Result<Hash, BlockchainError> {
+//     let mut merkles = Vec::with_capacity(sorted_tips.len());
+//     for hash in sorted_tips {
+//         let mut merkle_builder = MerkleBuilder::new();
+//         let header = storage.get_block_header_by_hash(hash).await?;
+//         merkle_builder.add(hash);
+//         merkle_builder.add(header.get_tips_merkle_hash());
+//         merkles.push(merkle_builder.build());
+//     }
+
+//     Ok(get_combined_hash_for_tips(merkles.iter()))
+// }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reward_side_block_percentage() {
+        assert_eq!(side_block_reward_percentage(0), SIDE_BLOCK_REWARD_PERCENT);
+        assert_eq!(side_block_reward_percentage(1), SIDE_BLOCK_REWARD_PERCENT / 2);
+        assert_eq!(side_block_reward_percentage(2), SIDE_BLOCK_REWARD_PERCENT / 4);
+        assert_eq!(side_block_reward_percentage(3), SIDE_BLOCK_REWARD_MIN_PERCENT);
+    }
 }

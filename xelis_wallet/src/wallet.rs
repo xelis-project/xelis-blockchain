@@ -1,5 +1,9 @@
-use std::{collections::HashMap, fs::File, io::{Read, Write}, sync::Arc};
-
+use std::{
+    fs::{create_dir_all, File},
+    io::{Read, Write},
+    path::Path,
+    sync::Arc
+};
 use anyhow::{Error, Context};
 use serde::Serialize;
 use tokio::sync::{
@@ -11,7 +15,6 @@ use tokio::sync::{
     RwLock
 };
 use xelis_common::{
-    account::CiphertextCache,
     api::{
         wallet::{
             BalanceChanged,
@@ -23,7 +26,7 @@ use xelis_common::{
     asset::AssetWithData,
     crypto::{
         ecdlp::{self, ECDLPTablesFileView},
-        elgamal::{Ciphertext, PublicKey as DecompressedPublicKey},
+        elgamal::{Ciphertext, DecryptHandle, PublicKey as DecompressedPublicKey},
         Address,
         Hash,
         KeyPair,
@@ -31,9 +34,10 @@ use xelis_common::{
         Signature
     },
     network::Network,
+    serializer::Serializer,
     transaction::{
+        aead::{self, AEADCipher},
         builder::{
-            AccountState,
             FeeBuilder,
             TransactionBuilder,
             TransactionTypeBuilder
@@ -53,6 +57,7 @@ use crate::{
         PASSWORD_HASH_SIZE,
         SALT_SIZE
     },
+    daemon_api::DaemonAPI,
     mnemonics,
     network_handler::{
         NetworkError,
@@ -60,10 +65,10 @@ use crate::{
         SharedNetworkHandler
     },
     storage::{
-        Balance,
         EncryptedStorage,
         Storage
-    }
+    },
+    transaction_builder::{EstimateFeesState, TransactionBuilderState}
 };
 use chacha20poly1305::{
     aead::OsRng,
@@ -165,7 +170,6 @@ pub enum WalletError {
     InvalidFeeProvided(u64, u64),
     #[error("Wallet name cannot be empty")]
     EmptyName,
-    #[cfg(feature = "api_server")]
     #[error("No handler available for this request")]
     NoHandlerAvailable,
     #[error(transparent)]
@@ -174,6 +178,8 @@ pub enum WalletError {
     BalanceNotFound(Hash),
     #[error("No result found for ciphertext")]
     CiphertextDecode,
+    #[error(transparent)]
+    AEADCipherFormatError(#[from] aead::CipherFormatError),
 }
 
 #[derive(Serialize, Clone)]
@@ -238,7 +244,13 @@ pub type PrecomputedTablesShared = Arc<PrecomputedTables>;
 impl PrecomputedTables {
     pub fn new(l1: usize) -> Self {
         let bytes_count = ecdlp::table_generation::table_file_len(l1);
-        let bytes = vec![Bytes32Alignment([0; 32]); bytes_count / 2 + 1];
+        debug!("Precomputed tables size: {} bytes", bytes_count);
+        let mut n = bytes_count / 32;
+        if bytes_count % 32 != 0 {
+            n += 1;
+        }
+
+        let bytes = vec![Bytes32Alignment([0; 32]); n];
 
         Self {
             bytes,
@@ -298,11 +310,18 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
 impl Wallet {
     // This will read from file if exists, or generate and store it in file
     // This must be call only one time, and can be cloned to be shared through differents wallets
-    pub fn read_or_generate_precomputed_tables(path: Option<String>) -> Result<PrecomputedTablesShared, Error> {
+    pub fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared, Error> {
         const N: usize = PRECOMPUTED_TABLES_L1;
         let mut precomputed_tables = PrecomputedTables::new(N);
 
+        if let Some(path) = path.as_ref() {
+            let path = Path::new(&path);
+            if !path.exists() {
+                create_dir_all(path)?;
+            }
+        }
         let path = path.unwrap_or_default();
+
         // Try to read from file
         if let Ok(mut file) = File::open(format!("{path}precomputed_tables_{N}.bin")) {
             info!("Reading precomputed tables from file");
@@ -310,7 +329,7 @@ impl Wallet {
         } else {
             // File does not exists, generate and store it
             info!("Generating precomputed tables");
-            ecdlp::table_generation::create_table_file(N, precomputed_tables.get_mut())?;
+            ecdlp::table_generation::create_table_file_with_progress_report(N, precomputed_tables.get_mut(), progress_report)?;
             File::create(format!("{path}precomputed_tables_{N}.bin"))?.write_all(precomputed_tables.get())?;
         }
 
@@ -346,7 +365,7 @@ impl Wallet {
         let keypair = if let Some(seed) = seed {
         debug!("Retrieving keypair from seed...");
         let words: Vec<String> = seed.split_whitespace().map(str::to_string).collect();
-        let key = mnemonics::words_to_key(words)?;
+        let key = mnemonics::words_to_key(&words)?;
             KeyPair::from_private_key(key)
         } else {
             debug!("Generating a new keypair...");
@@ -629,27 +648,58 @@ impl Wallet {
         Ok(())
     }
 
-    pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
-        trace!("Decrypting ciphertext");
-        tokio::task::block_in_place(|| self.keypair.decrypt(&ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get()), &ciphertext).ok_or(WalletError::CiphertextDecode))
+    // Wallet has to be under a Arc to be shared to the spawn_blocking function
+    pub async fn decrypt_ciphertext(self: Arc<Self>, ciphertext: Ciphertext) -> Result<u64, WalletError> {
+        trace!("decrypt ciphertext");
+        tokio::task::spawn_blocking(move || {
+            let view = ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get());
+            self.keypair.get_private_key()
+                .decrypt(&view, &ciphertext)
+                .ok_or(WalletError::CiphertextDecode)
+        }).await.context("Error while decrypting ciphertext")?
+    }
+
+    // Decrypt the extra data from a transfer
+    pub fn decrypt_extra_data(&self, cipher: AEADCipher, handle: &DecryptHandle) -> Result<DataElement, WalletError> {
+        trace!("decrypt extra data");
+        let key = aead::derive_aead_key_from_handle(&self.keypair.get_private_key(), handle);
+        let plaintext = cipher.decrypt_in_place(&key)?;
+        DataElement::from_bytes(&plaintext.0).map_err(|_| WalletError::CiphertextDecode)
     }
 
     // Create a transaction with the given transaction type and fee
+    // this will apply the changes to the storage if the transaction
     pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         trace!("create transaction");
         let mut storage = self.storage.write().await;
-        self.create_transaction_with_storage(&mut storage, transaction_type, fee).await
+        let (mut state, transaction) = self.create_transaction_with_storage(&mut storage, transaction_type, fee).await?;
+
+        state.apply_changes(&mut storage).await?;
+
+        Ok(transaction)
     }
 
     // create the final transaction with calculated fees and signature
     // also check that we have enough funds for the transaction
-    pub async fn create_transaction_with_storage(&self, storage: &mut EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
+    // This will returns the transaction builder state along the transaction
+    // You must handle "apply changes" to the storage
+    pub async fn create_transaction_with_storage(&self, storage: &mut EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(TransactionBuilderState, Transaction), WalletError> {
         trace!("create transaction with storage");
         let nonce = storage.get_nonce().unwrap_or(0);
 
         // Build the state for the builder
         let used_assets = transaction_type.used_assets();
-        let mut balances = HashMap::with_capacity(used_assets.len());
+
+        // state used to build the transaction
+        let mut state = TransactionBuilderState::new(
+            self.network.is_mainnet(),
+            Reference {
+                topoheight: storage.get_synced_topoheight()?,
+                hash: storage.get_top_block_hash()?
+            },
+            nonce
+        );
+
         // Get all balances used
         for asset in used_assets {
             trace!("Checking balance for asset {}", asset);
@@ -657,36 +707,36 @@ impl Wallet {
                 return Err(WalletError::BalanceNotFound(asset));
             }
 
-            let balance = storage.get_balance_for(&asset).await?;
-            balances.insert(asset, balance);
+            let balance = storage.get_unconfirmed_balance_for(&asset).await?;
+            state.add_balance(asset, balance);
         }
 
-        let mut state = TransactionBuilderState {
-            mainnet: self.network.is_mainnet(),
-            balances,
-            reference: Reference {
-                topoheight: storage.get_synced_topoheight()?,
-                hash: storage.get_top_block_hash()?
-            },
-        };
+        // To pay exact fees needed, we must verify that we don't have to pay more than needed
+        let used_keys = transaction_type.used_keys();
+        if !used_keys.is_empty() {
+            trace!("Checking if destination keys are registered");
+            if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
+                if network_handler.is_running().await {
+                    trace!("Network handler is running, checking if keys are registered");
+                    for key in used_keys {
+                        let addr = key.to_address(self.network.is_mainnet());
+                        trace!("Checking if {} is registered in stable height", addr);
+                        if network_handler.get_api().is_account_registered(&addr, true).await? {
+                            state.add_registered_key(addr.to_public_key());
+                        }
+                    }
+                }
+            }
+        }
 
         // Create the transaction builder
-        let builder = TransactionBuilder::new(0, self.public_key.clone(), transaction_type, fee, nonce);
+        let builder = TransactionBuilder::new(0, self.public_key.clone(), transaction_type, fee);
 
         // Build the final transaction
         let transaction = builder.build(&mut state, &self.keypair)
             .map_err(|e| WalletError::Any(e.into()))?;
 
-        // Update our storage in case of next transaction
-        for (asset, balance) in state.balances {
-            // We store every balances used in the transaction
-            storage.set_balance_for(&asset, balance).await?;
-        }
-
-        // Increment the nonce
-        storage.set_nonce(nonce + 1)?;
-
-        Ok(transaction)
+        Ok((state, transaction))
     }
 
     // submit a transaction to the network through the connection to daemon
@@ -707,10 +757,12 @@ impl Wallet {
     // Estimated fees returned are the minimum required to be valid on chain
     pub async fn estimate_fees(&self, tx_type: TransactionTypeBuilder) -> Result<u64, WalletError> {
         trace!("estimate fees");
-        let storage = self.storage.read().await;
-        let nonce = storage.get_nonce().unwrap_or(0);
-        let builder = TransactionBuilder::new(0, self.public_key.clone(), tx_type, FeeBuilder::default(), nonce);
-        Ok(builder.estimate_fees())
+        let mut state = EstimateFeesState::new();
+        let builder = TransactionBuilder::new(0, self.public_key.clone(), tx_type, FeeBuilder::default());
+        let estimated_fees = builder.estimate_fees(&mut state)
+            .map_err(|e| WalletError::Any(e.into()))?;
+
+        Ok(estimated_fees)
     }
 
     // set wallet in online mode: start a communication task which will keep the wallet synced
@@ -723,6 +775,24 @@ impl Wallet {
 
         // create the network handler
         let network_handler = NetworkHandler::new(Arc::clone(&self), daemon_address).await?;
+        // start the task
+        network_handler.start().await?;
+        *self.network_handler.lock().await = Some(network_handler);
+
+        Ok(())
+    }
+
+    // set the wallet in online mode using a shared daemon API
+    // this allows to share the same connection/Daemon API across several wallets to save resources
+    pub async fn set_online_mode_with_api(self: &Arc<Self>, daemon_api: Arc<DaemonAPI>) -> Result<(), WalletError> {
+        trace!("Set online mode with API");
+        if self.is_online().await {
+            // user have to set in offline mode himself first
+            return Err(WalletError::AlreadyOnlineMode)
+        }
+
+        // create the network handler
+        let network_handler = NetworkHandler::with_api(Arc::clone(&self), daemon_api).await?;
         // start the task
         network_handler.start().await?;
         *self.network_handler.lock().await = Some(network_handler);
@@ -753,15 +823,16 @@ impl Wallet {
             return Err(WalletError::NotOnlineMode)
         }
 
+        let mut storage = self.get_storage().write().await;
+        if topoheight > storage.get_synced_topoheight()? {
+            return Err(WalletError::RescanTopoheightTooHigh)
+        }
+
         let handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.as_ref() {
             debug!("Stopping network handler!");
             network_handler.stop().await?;
             {
-                let mut storage = self.get_storage().write().await;
-                if topoheight > storage.get_synced_topoheight()? {
-                    return Err(WalletError::RescanTopoheightTooHigh)
-                }
                 debug!("set synced topoheight to {}", topoheight);
                 storage.set_synced_topoheight(topoheight)?;
                 storage.delete_top_block_hash()?;
@@ -912,53 +983,18 @@ impl XSWDNodeMethodHandler for Arc<Wallet> {
         let network_handler = self.network_handler.lock().await;
         let id = request.id;
         if let Some(network_handler) = network_handler.as_ref() {
-            let api = network_handler.get_api();
-            let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id, InternalRpcError::Custom(e.to_string())))?;
-            Ok(json!({
-                "jsonrpc": JSON_RPC_VERSION,
-                "id": id,
-                "result": response
-            }))
-        } else {
-            Err(RpcResponseError::new(id, InternalRpcError::CustomStr("Wallet is not in online mode")))
+            if network_handler.is_running().await {
+                let api = network_handler.get_api();
+                let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id, InternalRpcError::Custom(e.to_string())))?;
+
+                return Ok(json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "id": id,
+                    "result": response
+                }))
+            }
         }
-    }
-}
 
-struct TransactionBuilderState {
-    mainnet: bool,
-    balances: HashMap<Hash, Balance>,
-    reference: Reference,
-}
-
-impl AccountState for TransactionBuilderState {
-    type Error = WalletError;
-
-    fn is_mainnet(&self) -> bool {
-        self.mainnet
-    }
-
-    fn get_reference(&self) -> Reference {
-        self.reference.clone()
-    }
-
-    fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error> {
-        self.balances.get(asset).map(|b| b.amount).ok_or_else(|| WalletError::BalanceNotFound(asset.clone()))
-    }
-
-    fn get_account_ciphertext(&self, asset: &Hash) -> Result<CiphertextCache, Self::Error> {
-        self.balances.get(asset).map(|b| b.ciphertext.clone()).ok_or_else(|| WalletError::BalanceNotFound(asset.clone()))
-    }
-
-    fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error> {
-        self.balances.insert(asset.clone(), Balance {
-            amount: new_balance,
-            ciphertext: CiphertextCache::Decompressed(ciphertext)
-        });
-        Ok(())
-    }
-
-    fn account_exists(&self, _: &PublicKey) -> Result<bool, Self::Error> {
-        Ok(true)
+        Err(RpcResponseError::new(id, InternalRpcError::CustomStr("Wallet is not in online mode")))
     }
 }

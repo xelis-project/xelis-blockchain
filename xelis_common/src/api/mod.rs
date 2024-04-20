@@ -16,11 +16,13 @@ use crate::{
         Signature
     },
     transaction::{
+        aead::AEADCipher,
         BurnPayload,
         Reference,
         SourceCommitment,
         Transaction,
-        TransactionType
+        TransactionType,
+        TransferPayload
     }
 };
 pub use data::*;
@@ -48,11 +50,25 @@ pub struct DataHash<'a, T: Clone> {
 pub struct RPCTransferPayload<'a> {
     pub asset: Cow<'a, Hash>,
     pub destination: Address,
-    pub extra_data: Cow<'a, Option<Vec<u8>>>,
+    pub extra_data: Cow<'a, Option<AEADCipher>>,
     pub commitment: Cow<'a, CompressedCommitment>,
     pub sender_handle: Cow<'a, CompressedHandle>,
     pub receiver_handle: Cow<'a, CompressedHandle>,
     pub ct_validity_proof: Cow<'a, CiphertextValidityProof>,
+}
+
+impl<'a> From<RPCTransferPayload<'a>> for TransferPayload {
+    fn from(transfer: RPCTransferPayload<'a>) -> Self {
+        TransferPayload::new(
+            transfer.asset.into_owned(),
+            transfer.destination.to_public_key(),
+            transfer.extra_data.into_owned(),
+            transfer.commitment.into_owned(),
+            transfer.sender_handle.into_owned(),
+            transfer.receiver_handle.into_owned(),
+            transfer.ct_validity_proof.into_owned()
+        )
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -84,6 +100,18 @@ impl<'a> RPCTransactionType<'a> {
         }
     }
 }
+
+impl From<RPCTransactionType<'_>> for TransactionType {
+    fn from(data: RPCTransactionType) -> Self {
+        match data {
+            RPCTransactionType::Transfers(transfers) => {
+                TransactionType::Transfers(transfers.into_iter().map(|transfer| transfer.into()).collect::<Vec<TransferPayload>>())
+            },
+            RPCTransactionType::Burn(burn) => TransactionType::Burn(burn.into_owned())
+        }
+    }
+}
+
 // This is exactly the same as the one in xelis_common/src/transaction/mod.rs
 // We use this one for serde (de)serialization
 // So we have addresses displayed as strings and not Public Key as bytes
@@ -126,6 +154,21 @@ impl<'a> RPCTransaction<'a> {
             reference: Cow::Borrowed(tx.get_reference()),
             signature: Cow::Borrowed(tx.get_signature()),
         }
+    }
+}
+
+impl<'a> From<RPCTransaction<'a>> for Transaction {
+    fn from(tx: RPCTransaction<'a>) -> Self {
+        Transaction::new(
+            tx.source.to_public_key(),
+            tx.data.into(),
+            tx.fee,
+            tx.nonce,
+            tx.source_commitments.into_owned(),
+            tx.range_proof.into_owned(),
+            tx.reference.into_owned(),
+            tx.signature.into_owned()
+        )
     }
 }
 

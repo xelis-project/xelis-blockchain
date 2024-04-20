@@ -41,7 +41,7 @@ pub trait DifficultyProvider {
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError>;
 
     // Retrieve the estimated covariance (P) for a block hash
-    async fn get_estimated_covariance_or_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError>;
+    async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError>;
 
     // Set the estimated covariance (P) for a block hash
     async fn set_estimated_covariance_for_block_hash(&mut self, hash: &Hash, p: VarUint) -> Result<(), BlockchainError>;
@@ -107,7 +107,7 @@ impl DifficultyProvider for SledStorage {
         Ok(())
     }
 
-    async fn get_estimated_covariance_or_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
+    async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
         trace!("get p for hash {}", hash);
         self.load_from_disk(&self.difficulty_covariance, hash.as_bytes())
     }

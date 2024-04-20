@@ -15,7 +15,7 @@ use xelis_common::{
     utils::format_xelis
 };
 use crate::core::{
-    blockchain::Blockchain,
+    blockchain,
     error::BlockchainError,
     mempool::Mempool,
     storage::Storage
@@ -187,7 +187,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
             return Err(BlockchainError::InvalidTxVersion);
         }
 
-        let required_fees = Blockchain::estimate_required_tx_fees(self.storage, tx).await?;
+        let required_fees = blockchain::estimate_required_tx_fees(self.storage, self.topoheight, tx).await?;
         if required_fees > tx.get_fee() {
             debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
             return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));

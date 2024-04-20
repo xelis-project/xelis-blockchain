@@ -93,7 +93,7 @@ impl Serializer for ValueType {
 }
 
 // This enum allows complex structures with multi depth if necessary
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum DataElement {
     Value(DataValue),
@@ -479,5 +479,129 @@ impl Serializer for DataValue {
         };
         // 1 byte for the type
         size + 1
+    }
+}
+
+macro_rules! impl_data_value {
+    ($(($type:ident, $type2:ident)),*) => {
+        $(
+            impl From<$type2> for DataValue {
+                fn from(value: $type2) -> Self {
+                    Self::$type(value)
+                }
+            }
+
+            impl From<$type2> for DataElement {
+                fn from(value: $type2) -> Self {
+                    DataElement::Value(value.into())
+                }
+            }
+
+            impl From<Vec<$type2>> for DataElement {
+                fn from(value: Vec<$type2>) -> Self {
+                    DataElement::Array(value.into_iter().map(|v| v.into()).collect())
+                }
+            }
+
+            impl Into<Result<$type2, DataConversionError>> for DataValue {
+                fn into(self) -> Result<$type2, DataConversionError> {
+                    match self {
+                        Self::$type(v) => Ok(v),
+                        _ => Err(DataConversionError::UnexpectedValue(self.kind()))
+                    }
+                }
+            }
+
+            impl Into<Result<$type2, DataConversionError>> for DataElement {
+                fn into(self) -> Result<$type2, DataConversionError> {
+                    match self {
+                        DataElement::Value(v) => v.into(),
+                        _ => Err(DataConversionError::ExpectedValue)
+                    }
+                }
+            }
+
+            impl Into<Result<Vec<$type2>, DataConversionError>> for DataElement {
+                fn into(self) -> Result<Vec<$type2>, DataConversionError> {
+                    match self {
+                        DataElement::Array(v) => v.into_iter().map(|v| v.into()).collect::<Result<Vec<_>, DataConversionError>>(),
+                        _ => Err(DataConversionError::ExpectedValue)
+                    }
+                }
+            }
+
+            impl Into<Option<$type2>> for DataValue {
+                fn into(self) -> Option<$type2> {
+                    match self {
+                        Self::$type(v) => Some(v),
+                        _ => None
+                    }
+                }
+            }
+
+            impl Into<Option<$type2>> for DataElement {
+                fn into(self) -> Option<$type2> {
+                    match self {
+                        DataElement::Value(v) => v.into(),
+                        _ => None
+                    }
+                }
+            }
+
+            impl Into<$type2> for DataValue {
+                fn into(self) -> $type2 {
+                    match self {
+                        Self::$type(v) => v,
+                        _ => panic!("Unexpected value type")
+                    }
+                }
+            }
+
+            impl Into<$type2> for DataElement {
+                fn into(self) -> $type2 {
+                    match self {
+                        DataElement::Value(v) => v.into(),
+                        _ => panic!("Unexpected element type")
+                    }
+                }
+            }
+
+            impl Into<Vec<$type2>> for DataElement {
+                fn into(self) -> Vec<$type2> {
+                    match self {
+                        DataElement::Array(v) => v.into_iter().map(|v| v.into()).collect(),
+                        _ => panic!("Unexpected element type")
+                    }
+                }
+            }
+        )*
+    };
+}
+
+impl_data_value!(
+    (String, String),
+    (Hash, Hash),
+    (U8, u8),
+    (U16, u16),
+    (U32, u32),
+    (U64, u64),
+    (U128, u128),
+    (Bool, bool)
+);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_into() {
+        let value = DataValue::U8(10);
+        let element = DataElement::Value(value.clone());
+        let value2: u8 = element.into();
+        assert_eq!(value2, 10);
+
+        let array: DataElement = vec![0u64, 24u64, 37u64, 55u64].into();
+        let array2: Vec<u64> = array.into();
+        assert_eq!(array2, vec![0, 24, 37, 55]);
     }
 }

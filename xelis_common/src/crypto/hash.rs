@@ -2,11 +2,20 @@ use crate::serializer::{Writer, Serializer, ReaderError, Reader};
 use std::{
     fmt::{Display, Error, Formatter},
     convert::TryInto,
-    hash::Hasher
+    hash::Hasher,
+    borrow::Cow,
 };
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
 use blake3::hash as blake3_hash;
+
+pub use xelis_hash::{
+    Error as XelisHashError,
+    xelis_hash,
+    xelis_hash_no_scratch_pad,
+    BYTES_ARRAY_INPUT,
+    MEMORY_SIZE as POW_MEMORY_SIZE,
+};
 
 pub const HASH_SIZE: usize = 32; // 32 bytes / 256 bits
 
@@ -37,6 +46,26 @@ impl Hash {
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
     }
+}
+
+pub fn pow_hash(input: &[u8]) -> Result<Hash, XelisHashError> {
+    if input.len() > BYTES_ARRAY_INPUT {
+        return Err(XelisHashError);
+    }
+
+    let mut buffer = [0u8; BYTES_ARRAY_INPUT];
+    buffer[..input.len()].copy_from_slice(input);
+    xelis_hash_no_scratch_pad(buffer.as_mut_slice()).map(|bytes| Hash::new(bytes))
+}
+
+pub fn pow_hash_with_scratch_pad(input: &[u8], scratch_pad: &mut [u64; POW_MEMORY_SIZE]) -> Result<Hash, XelisHashError> {
+    if input.len() > BYTES_ARRAY_INPUT {
+        return Err(XelisHashError);
+    }
+
+    let mut buffer = [0u8; BYTES_ARRAY_INPUT];
+    buffer[..input.len()].copy_from_slice(input);
+    xelis_hash(buffer.as_mut_slice(), scratch_pad).map(|bytes| Hash::new(bytes))
 }
 
 impl Serializer for Hash {
@@ -111,5 +140,17 @@ pub fn hash(value: &[u8]) -> Hash {
 impl AsRef<[u8]> for Hash {
     fn as_ref(&self) -> &[u8] {
         &self.0
+    }
+}
+
+impl<'a> Into<Cow<'a, Hash>> for Hash {
+    fn into(self) -> Cow<'a, Hash> {
+        Cow::Owned(self)
+    }
+}
+
+impl<'a> Into<Cow<'a, Hash>> for &'a Hash {
+    fn into(self) -> Cow<'a, Hash> {
+        Cow::Borrowed(self)
     }
 }

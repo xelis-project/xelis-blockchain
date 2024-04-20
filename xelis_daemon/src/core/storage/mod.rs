@@ -20,7 +20,7 @@ use crate::core::error::BlockchainError;
 pub type Tips = HashSet<Hash>;
 
 #[async_trait]
-pub trait Storage: DagOrderProvider + PrunedTopoheightProvider + NonceProvider + ClientProtocolProvider + BlockDagProvider + Sync + Send + 'static {
+pub trait Storage: DagOrderProvider + PrunedTopoheightProvider + NonceProvider + AccountProvider + ClientProtocolProvider + BlockDagProvider + MerkleHashProvider + Sync + Send + 'static {
     // Is the chain running on mainnet
     fn is_mainnet(&self) -> bool;
 
@@ -36,11 +36,17 @@ pub trait Storage: DagOrderProvider + PrunedTopoheightProvider + NonceProvider +
     // delete versioned nonces at topoheight
     async fn delete_versioned_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // delete versioned balances above or at topoheight
+    // delete versioned balances above topoheight
     async fn delete_versioned_balances_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
-    // delete versioned nonces above or at topoheight
+    // delete versioned nonces above topoheight
     async fn delete_versioned_nonces_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
+
+    // delete account registrations above topoheight
+    async fn delete_registrations_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
+
+    // delete account registrations below topoheight
+    async fn delete_registrations_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
     // delete versioned balances below topoheight
     async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
@@ -55,6 +61,9 @@ pub trait Storage: DagOrderProvider + PrunedTopoheightProvider + NonceProvider +
 
     // same as above but for nonces
     async fn create_snapshot_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
+
+    // same as above but for registrations
+    async fn create_snapshot_registrations_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
 
     // Get the network on which the chain is running
     fn get_network(&self) -> Result<Network, BlockchainError>;

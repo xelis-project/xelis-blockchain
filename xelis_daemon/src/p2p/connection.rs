@@ -72,10 +72,16 @@ pub struct Connection {
     bytes_in: AtomicUsize,
     // total bytes sent
     bytes_out: AtomicUsize,
+    // total bytes sent using current key
+    bytes_out_key: AtomicUsize,
     // when the connection was established
     connected_on: TimestampSeconds,
     // if Connection#close() is called, close is set to true
     closed: AtomicBool,
+    // How many key rotation we got
+    rotate_key_in: AtomicUsize,
+    // How many key rotation we sent
+    rotate_key_out: AtomicUsize,
     // Encryption state used for packets
     encryption: Encryption
 }
@@ -98,7 +104,10 @@ impl Connection {
             connected_on: get_current_time_in_seconds(),
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
+            bytes_out_key: AtomicUsize::new(0),
             closed: AtomicBool::new(false),
+            rotate_key_in: AtomicUsize::new(0),
+            rotate_key_out: AtomicUsize::new(0),
             encryption: Encryption::new()
         }
     }
@@ -139,7 +148,7 @@ impl Connection {
         };
 
         // Now that we got the peer key, update our encryption state
-        self.encryption.rotate_key(peer_key.into_owned(), false).await?;
+        self.rotate_peer_key(peer_key.into_owned()).await?;
 
         // Send back our key if we are the server
         if !self.is_out() {
@@ -175,13 +184,14 @@ impl Connection {
 
     // This will send to the peer a packet to rotate the key
     async fn rotate_key_packet(&self) -> P2pResult<Bytes> {
+        trace!("rotating our encryption key for peer {}", self.get_address());
         // Generate a new key to use
         let new_key = self.encryption.generate_key();
         // Verify if we already have one set
         
         // Build the packet
         let mut packet = Bytes::from(Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes());
-        
+
         // This is used to determine if we need to encrypt the packet or not
         // Check if we already had a key set, if so, encrypt it
         if self.encryption.is_write_ready().await {
@@ -192,6 +202,12 @@ impl Connection {
         // Rotate the key in our encryption state
         self.encryption.rotate_key(new_key, true).await?;
 
+        // Increment the key rotation counter
+        self.rotate_key_out.fetch_add(1, Ordering::Relaxed);
+
+        // Reset the counter
+        self.bytes_out_key.store(0, Ordering::Relaxed);
+
         Ok(packet)
     }
 
@@ -201,7 +217,10 @@ impl Connection {
     // We don't need to send a ACK to the peer to confirm the key rotation
     // as all next packets will be encrypted with the new key and we have updated it before
     pub async fn rotate_peer_key(&self, key: EncryptionKey) -> P2pResult<()> {
+        trace!("Rotating encryption key of peer {}", self.get_address());
         self.encryption.rotate_key(key, false).await?;
+        // Increment the key rotation counter
+        self.rotate_key_in.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -221,15 +240,18 @@ impl Connection {
         let mut stream = self.write.lock().await;
 
         // Count the bytes sent
-        let bytes_out = self.bytes_out.fetch_add(packet.len(), Ordering::Relaxed);
+        self.bytes_out.fetch_add(packet.len(), Ordering::Relaxed);
 
         if self.encryption.is_write_ready().await {
             let buffer = self.encryption.encrypt_packet(packet).await?;
             // Send the bytes in encrypted format
             self.send_packet_bytes_internal(&mut stream, &buffer).await?;
 
+            // Count the bytes sent with the current key
+            let bytes_out_key = self.bytes_out_key.fetch_add(packet.len(), Ordering::Relaxed);
+
             // Rotate the key if necessary
-            if bytes_out > 0 && bytes_out % ROTATE_EVERY_N_BYTES == 0 {
+            if bytes_out_key > 0 && bytes_out_key >= ROTATE_EVERY_N_BYTES {
                 debug!("Rotating our key with peer {}", self.get_address());
                 let packet = self.rotate_key_packet().await?;
                 // Send the new key to the peer
@@ -376,6 +398,16 @@ impl Connection {
         self.bytes_in.load(Ordering::Relaxed)
     }
 
+    // Get the key rotation in
+    pub fn key_rotation_in(&self) -> usize {
+        self.rotate_key_in.load(Ordering::Relaxed)
+    }
+
+    // Get the key rotation out
+    pub fn key_rotation_out(&self) -> usize {
+        self.rotate_key_out.load(Ordering::Relaxed)
+    }
+
     // Get the time when the connection was established
     pub fn connected_on(&self) -> TimestampSeconds {
         self.connected_on
@@ -395,6 +427,6 @@ impl Connection {
 
 impl Display for Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
-        write!(f, "Connection[peer: {}, read: {}, sent: {}, connected since: {}, closed: {}]", self.get_address(), human_bytes(self.bytes_in() as f64), human_bytes(self.bytes_out() as f64), self.get_human_uptime(), self.is_closed())
+        write!(f, "Connection[peer: {}, read: {}, sent: {}, key rotation (in/out): ({}/{}), connected since: {}, closed: {}]", self.get_address(), human_bytes(self.bytes_in() as f64), human_bytes(self.bytes_out() as f64), self.key_rotation_in(), self.key_rotation_out(), self.get_human_uptime(), self.is_closed())
     }
 }

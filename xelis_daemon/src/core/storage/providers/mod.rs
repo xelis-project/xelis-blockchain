@@ -9,6 +9,8 @@ mod client_protocol;
 mod transaction;
 mod block;
 mod blockdag;
+mod merkle;
+mod account;
 
 pub use asset::AssetProvider;
 pub use blocks_at_height::BlocksAtHeightProvider;
@@ -21,3 +23,5 @@ pub use client_protocol::ClientProtocolProvider;
 pub use transaction::TransactionProvider;
 pub use block::BlockProvider;
 pub use blockdag::BlockDagProvider;
+pub use merkle::MerkleHashProvider;
+pub use account::AccountProvider;

@@ -11,9 +11,11 @@ use crate::{
 use bulletproofs::RangeProof;
 use log::debug;
 use serde::{Deserialize, Serialize};
+use self::aead::AEADCipher;
 
 pub mod builder;
 pub mod verify;
+pub mod aead;
 
 #[cfg(test)]
 mod tests;
@@ -51,7 +53,7 @@ pub struct TransferPayload {
     asset: Hash,
     destination: CompressedPublicKey,
     // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
-    extra_data: Option<Vec<u8>>,
+    extra_data: Option<AEADCipher>,
     /// Represents the ciphertext along with `sender_handle` and `receiver_handle`.
     /// The opening is reused for both of the sender and receiver commitments.
     commitment: CompressedCommitment,
@@ -100,6 +102,19 @@ pub struct Transaction {
 }
 
 impl TransferPayload {
+    // Create a new transfer payload
+    pub fn new(asset: Hash, destination: CompressedPublicKey, extra_data: Option<AEADCipher>, commitment: CompressedCommitment, sender_handle: CompressedHandle, receiver_handle: CompressedHandle, ct_validity_proof: CiphertextValidityProof) -> Self {
+        TransferPayload {
+            asset,
+            destination,
+            extra_data,
+            commitment,
+            sender_handle,
+            receiver_handle,
+            ct_validity_proof
+        }
+    }
+
     // Get the destination key
     pub fn get_destination(&self) -> &CompressedPublicKey {
         &self.destination
@@ -111,7 +126,7 @@ impl TransferPayload {
     }
 
     // Get the extra data if any
-    pub fn get_extra_data(&self) -> &Option<Vec<u8>> {
+    pub fn get_extra_data(&self) -> &Option<AEADCipher> {
         &self.extra_data
     }
 
@@ -145,7 +160,7 @@ impl TransferPayload {
     }
 
     // Take all data
-    pub fn consume(self) -> (Hash, CompressedPublicKey, Option<Vec<u8>>, CompressedCommitment, CompressedHandle, CompressedHandle) {
+    pub fn consume(self) -> (Hash, CompressedPublicKey, Option<AEADCipher>, CompressedCommitment, CompressedHandle, CompressedHandle) {
         (self.asset, self.destination, self.extra_data, self.commitment, self.sender_handle, self.receiver_handle)
     }
 }
@@ -243,11 +258,7 @@ impl Serializer for TransferPayload {
     fn write(&self, writer: &mut Writer) {
         self.asset.write(writer);
         self.destination.write(writer);
-        writer.write_bool(self.extra_data.is_some());
-        if let Some(extra_data) = &self.extra_data {
-            writer.write_u16(extra_data.len() as u16);
-            writer.write_bytes(extra_data);
-        }
+        self.extra_data.write(writer);
         self.commitment.write(writer);
         self.sender_handle.write(writer);
         self.receiver_handle.write(writer);
@@ -257,17 +268,7 @@ impl Serializer for TransferPayload {
     fn read(reader: &mut Reader) -> Result<TransferPayload, ReaderError> {
         let asset = Hash::read(reader)?;
         let destination = CompressedPublicKey::read(reader)?;
-        let has_extra_data = reader.read_bool()?;
-        let extra_data = if has_extra_data {
-            let extra_data_size = reader.read_u16()? as usize;
-            if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
-                return Err(ReaderError::InvalidSize)
-            }
-
-            Some(reader.read_bytes(extra_data_size)?)
-        } else {
-            None
-        };
+        let extra_data = Option::read(reader)?;
 
         let commitment = CompressedCommitment::read(reader)?;
         let sender_handle = CompressedHandle::read(reader)?;
@@ -286,13 +287,13 @@ impl Serializer for TransferPayload {
     }
 
     fn size(&self) -> usize {
-        // + 1 for the bool
-        let mut size = self.asset.size() + self.destination.size() + 1 + self.commitment.size() + self.sender_handle.size() + self.receiver_handle.size();
-        if let Some(extra_data) = &self.extra_data {
-            // + 2 for the size of the extra data
-            size += 2 + extra_data.len();
-        }
-        size + self.ct_validity_proof.size()
+        self.asset.size()
+        + self.destination.size()
+        + self.extra_data.size()
+        + self.commitment.size()
+        + self.sender_handle.size()
+        + self.receiver_handle.size()
+        + self.ct_validity_proof.size()
     }
 }
 

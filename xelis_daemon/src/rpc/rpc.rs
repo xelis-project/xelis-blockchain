@@ -57,7 +57,10 @@ use xelis_common::{
             SizeOnDiskResult,
             SubmitBlockParams,
             SubmitTransactionParams,
-            TransactionResponse
+            TransactionResponse,
+            GetMempoolCacheParams,
+            IsAccountRegisteredParams,
+            GetAccountRegistrationParams,
         },
         RPCTransaction,
         RPCTransactionType as RPCTransactionType
@@ -317,9 +320,12 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_account_history", async_handler!(get_account_history::<S>));
     handler.register_method("get_account_assets", async_handler!(get_account_assets::<S>));
     handler.register_method("get_accounts", async_handler!(get_accounts::<S>));
+    handler.register_method("is_account_registered", async_handler!(is_account_registered::<S>));
+    handler.register_method("get_account_registration_topoheight", async_handler!(get_account_registration_topoheight::<S>));
     handler.register_method("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
     handler.register_method("get_dev_fee_thresholds", async_handler!(get_dev_fee_thresholds::<S>));
     handler.register_method("get_size_on_disk", async_handler!(get_size_on_disk::<S>));
+    handler.register_method("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
 }
 
 async fn version<S: Storage>(_: Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -520,13 +526,8 @@ async fn get_nonce<S: Storage>(context: Context, body: Value) -> Result<Value, I
     }
 
     let storage = blockchain.get_storage().read().await;
-    let (topoheight, version) = if let Some(topoheight) = params.topoheight {
-        (topoheight, storage.get_nonce_at_exact_topoheight(params.address.get_public_key(), topoheight).await
-            .context("Error while retrieving nonce at topo for account")?)
-    } else {
-         storage.get_last_nonce(params.address.get_public_key()).await
-            .context("Error while retrieving nonce for account")?
-    };
+    let (topoheight, version) = storage.get_last_nonce(params.address.get_public_key()).await
+        .context("Error while retrieving nonce for account")?;
 
     Ok(json!(GetNonceResult { topoheight, version }))
 }
@@ -1034,6 +1035,33 @@ async fn get_accounts<S: Storage>(context: Context, body: Value) -> Result<Value
     Ok(json!(accounts))
 }
 
+// Check if the account is registered on chain or not
+async fn is_account_registered<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: IsAccountRegisteredParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let key = params.address.get_public_key();
+    let registered = if params.in_stable_height {
+        storage.is_account_registered_below_topoheight(key, blockchain.get_stable_topoheight()).await
+            .context("Error while checking if account is registered in stable height")?
+    } else {
+        storage.is_account_registered(key).await
+            .context("Error while checking if account is registered")?
+    };
+
+    Ok(json!(registered))
+}
+
+// Search the account registration topoheight
+async fn get_account_registration_topoheight<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetAccountRegistrationParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let key = params.address.get_public_key();
+    let topoheight = storage.get_account_registration_topoheight(key).await.context("Error while retrieving registration topoheight")?;
+    Ok(json!(topoheight))
+}
+
 // Check if the asked TX is executed in the block
 async fn is_tx_executed_in_block<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: IsTxExecutedInBlockParams = parse_params(body)?;
@@ -1065,4 +1093,23 @@ async fn get_size_on_disk<S: Storage>(context: Context, body: Value) -> Result<V
         size_bytes,
         size_formatted
     }))
+}
+
+// Retrieve the mempool cache for an account
+async fn get_mempool_cache<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetMempoolCacheParams = parse_params(body)?;
+    if !params.address.is_normal() {
+        return Err(InternalRpcError::AnyError(ApiError::ExpectedNormalAddress.into()))    
+    }
+    
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+    }
+
+    let mempool = blockchain.get_mempool().read().await;
+    let cache = mempool.get_cache_for(params.address.get_public_key())
+        .context("Account not found while retrieving mempool cache")?;
+
+    Ok(json!(cache))
 }

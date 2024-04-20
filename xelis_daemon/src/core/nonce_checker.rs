@@ -68,6 +68,8 @@ impl NonceChecker {
                 let mut entry = AccountEntry::new(stored_nonce);
                 let valid = entry.insert_nonce_at_topoheight(nonce, topoheight);
 
+                // Insert the entry into the cache before returning
+                // So we don't have to search nonce again
                 self.cache.insert(key.clone(), entry);
 
                 if !valid {
@@ -79,6 +81,7 @@ impl NonceChecker {
         Ok(true)
     }
 
+    // Get the next nonce needed for the account
     pub fn get_new_nonce(&self, key: &PublicKey, mainnet: bool) -> Result<u64, BlockchainError> {
         let entry = self.cache.get(key).ok_or_else(|| BlockchainError::AccountNotFound(key.as_address(mainnet)))?;
         Ok(entry.expected_nonce)

@@ -1,7 +1,8 @@
 use std::{
+    ops::ControlFlow,
+    path::Path,
     sync::Arc,
-    time::Duration,
-    path::Path
+    time::Duration
 };
 use anyhow::{Result, Context};
 use fern::colors::Color;
@@ -15,6 +16,7 @@ use xelis_common::{
         XELIS_ASSET
     },
     crypto::{
+        ecdlp,
         Address,
         Hashable
     },
@@ -147,6 +149,16 @@ pub struct Config {
     enable_xswd: bool
 }
 
+/// This struct is used to log the progress of the table generation
+struct LogProgressTableGenerationReportFunction;
+
+impl ecdlp::ProgressTableGenerationReportFunction for LogProgressTableGenerationReportFunction {
+    fn report(&self, progress: f64, step: ecdlp::ReportStep) -> ControlFlow<()> {
+        info!("Progress: {:.2}% on step {:?}", progress * 100.0, step);
+        ControlFlow::Continue(())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
@@ -187,7 +199,7 @@ async fn main() -> Result<()> {
             prompt.read_input(format!("Enter Password for '{}': ", path), true).await?
         };
 
-        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(config.precomputed_tables_path)?;
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(config.precomputed_tables_path, LogProgressTableGenerationReportFunction)?;
         let wallet = if Path::new(&path).is_dir() {
             info!("Opening wallet {}", path);
             Wallet::open(path, password, config.network, precomputed_tables)?
@@ -356,6 +368,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     command_manager.add_command(Command::with_optional_arguments("rescan", "Rescan balance and transactions", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(rescan))))?;
     command_manager.add_command(Command::with_optional_arguments("seed", "Show seed of selected language", vec![Arg::new("language", ArgType::Number)], CommandHandler::Async(async_handler!(seed))))?;
     command_manager.add_command(Command::new("nonce", "Show current nonce", CommandHandler::Async(async_handler!(nonce))))?;
+    command_manager.add_command(Command::new("set_nonce", "Set new nonce", CommandHandler::Async(async_handler!(set_nonce))))?;
 
     #[cfg(feature = "api_server")]
     {
@@ -460,7 +473,7 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None)?;
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction)?;
         Wallet::open(dir, password, *network, precomputed_tables)?
     };
 
@@ -505,7 +518,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None)?;
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction)?;
         Wallet::create(dir, password, None, *network, precomputed_tables)?
     };
  
@@ -530,6 +543,12 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
 
     let seed = prompt.read_input("Seed: ".into(), false)
         .await.context("Error while reading seed")?;
+
+    let words_count = seed.split_whitespace().count();
+    if words_count != 25 && words_count != 24 {
+        manager.error("Seed must be 24 or 25 (checksum) words long");
+        return Ok(())
+    }
 
     let name = prompt.read_input("Wallet name: ".into(), false)
         .await.context("Error while reading wallet name")?;
@@ -561,7 +580,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
     let wallet = {
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
-        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None)?;
+        let precomputed_tables = Wallet::read_or_generate_precomputed_tables(None, LogProgressTableGenerationReportFunction)?;
         Wallet::create(dir, password, Some(seed), *network, precomputed_tables)?
     };
 
@@ -820,6 +839,18 @@ async fn nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), Comma
     let wallet: &Arc<Wallet> = context.get()?;
     let nonce = wallet.get_nonce().await;
     manager.message(format!("Nonce: {}", nonce));
+    Ok(())
+}
+
+async fn set_nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let value = manager.get_prompt().read("New Nonce: ".to_string()).await
+        .context("Error while reading new nonce to set")?;
+
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let mut storage = wallet.get_storage().write().await;
+    storage.set_nonce(value)?;
+    manager.message(format!("New nonce is: {}", value));
     Ok(())
 }
 
