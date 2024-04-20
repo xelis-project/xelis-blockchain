@@ -43,7 +43,7 @@ use xelis_common::{
         Address,
         Hash,
         Hashable,
-        POW_MEMORY_SIZE
+        ScratchPad
     },
     difficulty::{
         check_difficulty_against_target,
@@ -226,12 +226,12 @@ fn benchmark(threads: usize, iterations: usize) {
         for _ in 0..bench {
             let mut job = BlockMiner::new(Hash::zero(), get_current_time_in_millis());
             let handle = thread::spawn(move || {
-                let mut scratch_pad = [0u64; POW_MEMORY_SIZE];
+                let mut scratch_pad = ScratchPad::default();
                 for _ in 0..iterations {
                     let _ = job.get_pow_hash(&mut scratch_pad).unwrap();
-                    job.increase_nonce();
+                    job.increase_nonce().unwrap();
                     if job.nonce() % UPDATE_EVERY_NONCE == 0 {
-                        job.set_timestamp(get_current_time_in_millis());
+                        job.set_timestamp(get_current_time_in_millis()).unwrap();
                     }
                 }
             });
@@ -371,7 +371,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
         let mut job: BlockMiner;
         let mut hash: Hash;
 
-        let mut scratch_pad = [0u64; POW_MEMORY_SIZE];
+        let mut scratch_pad = ScratchPad::default();
         info!("Mining Thread #{}: started", id);
         'main: loop {
             let message = match job_receiver.blocking_recv() {
@@ -416,14 +416,14 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                     // Solve block
                     hash = job.get_pow_hash(&mut scratch_pad).unwrap();
                     while !check_difficulty_against_target(&hash, &difficulty_target) {
-                        job.increase_nonce();
+                        job.increase_nonce().unwrap();
                         // check if we have a new job pending
                         // Only update every N iterations to avoid too much CPU usage
                         if job.nonce() % UPDATE_EVERY_NONCE == 0 {
                             if !job_receiver.is_empty() {
                                 continue 'main;
                             }
-                            job.set_timestamp(get_current_time_in_millis());
+                            job.set_timestamp(get_current_time_in_millis()).unwrap();
                             HASHRATE_COUNTER.fetch_add(UPDATE_EVERY_NONCE as usize, Ordering::SeqCst);
                         }
 
