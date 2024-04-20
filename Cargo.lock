@@ -3006,7 +3006,7 @@ dependencies = [
 [[package]]
 name = "xelis-hash"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-hash?branch=master#185e3af92c63bd38de586731d4bae229554e8798"
+source = "git+https://github.com/xelis-project/xelis-hash?branch=master#3c1493ed06a8659b6117ac637c61aa27e5b64878"
 dependencies = [
  "aes",
  "bytemuck",

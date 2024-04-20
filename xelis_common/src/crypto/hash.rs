@@ -9,6 +9,7 @@ use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
 use blake3::hash as blake3_hash;
 
+use xelis_hash::ScratchPad;
 pub use xelis_hash::{
     Error as XelisHashError,
     xelis_hash,
@@ -50,13 +51,8 @@ impl Hash {
 }
 
 pub fn pow_hash(input: &[u8]) -> Result<Hash, XelisHashError> {
-    if input.len() > BYTES_ARRAY_INPUT {
-        return Err(XelisHashError);
-    }
-
-    let mut buffer = Input::default();
-    buffer.as_mut_slice()[..input.len()].copy_from_slice(input);
-    xelis_hash_no_scratch_pad(buffer.as_mut_slice()).map(|bytes| Hash::new(bytes))
+    let mut scratchpad = ScratchPad::default();
+    pow_hash_with_scratch_pad(input, scratchpad.as_mut_slice())
 }
 
 pub fn pow_hash_with_scratch_pad(input: &[u8], scratch_pad: &mut [u64; POW_MEMORY_SIZE]) -> Result<Hash, XelisHashError> {
@@ -64,9 +60,12 @@ pub fn pow_hash_with_scratch_pad(input: &[u8], scratch_pad: &mut [u64; POW_MEMOR
         return Err(XelisHashError);
     }
 
+    // Make sure the input has good alignment
     let mut buffer = Input::default();
-    buffer.as_mut_slice()[..input.len()].copy_from_slice(input);
-    xelis_hash(buffer.as_mut_slice(), scratch_pad).map(|bytes| Hash::new(bytes))
+    let slice = buffer.as_mut_slice()?;
+    slice[..input.len()].copy_from_slice(input);
+
+    xelis_hash(slice, scratch_pad).map(|bytes| Hash::new(bytes))
 }
 
 impl Serializer for Hash {
