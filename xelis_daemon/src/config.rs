@@ -129,7 +129,7 @@ pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15000;
 // millis until we timeout during a bootstrap request
 pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60000;
 // millis until we timeout during a handshake
-pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 3000;
+pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 5000;
 // 16 additional bytes are for AEAD from ChaCha20Poly1305
 pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
 // Peer TX cache size

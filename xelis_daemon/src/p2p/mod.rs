@@ -108,6 +108,7 @@ use std::{
 };
 use bytes::Bytes;
 use rand::Rng;
+use rand::seq::SliceRandom;
 
 enum MessageChannel {
     Exit,
@@ -238,6 +239,9 @@ impl<S: Storage> P2pServer<S> {
 
     // Connect to nodes which aren't already connected in parameters
     async fn connect_to_nodes(self: &Arc<Self>, nodes: impl Iterator<Item = SocketAddr>) -> Result<(), P2pError> {
+        let mut nodes = nodes.collect::<Vec<_>>();
+        nodes.shuffle(&mut rand::thread_rng());
+
         for addr in nodes {
             if self.accept_new_connections().await {
                 if !self.is_connected_to_addr(&addr).await? {
@@ -487,7 +491,7 @@ impl<S: Storage> P2pServer<S> {
     // Connect to a specific peer address
     // Buffer is passed in parameter to prevent the re-allocation each time
     pub async fn try_to_connect_to_peer(&self, addr: SocketAddr, priority: bool) {
-        trace!("try to connect to peer addr {}, priority: {}", addr, priority);
+        debug!("try to connect to peer addr {}, priority: {}", addr, priority);
         if !self.is_compatible_with_exclusive_nodes(&addr) {
             debug!("Not in exclusive node list: {}, skipping", addr);
             return;
@@ -515,7 +519,7 @@ impl<S: Storage> P2pServer<S> {
         if self.is_connected_to_addr(&addr).await? {
             return Err(P2pError::PeerAlreadyConnected(format!("{}", addr)));
         }
-        let stream = timeout(Duration::from_millis(800), TcpStream::connect(&addr)).await??; // allow maximum 800ms of latency
+        let stream = timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), TcpStream::connect(&addr)).await??; // allow maximum 800ms of latency
         let connection = Connection::new(stream, addr, true);
         Ok(connection)
     }
