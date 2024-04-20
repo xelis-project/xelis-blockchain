@@ -28,8 +28,8 @@ pub const MILLIS_PER_SECOND: u64 = 1000;
 // Block Time in milliseconds
 pub const BLOCK_TIME_MILLIS: u64 = 15 * MILLIS_PER_SECOND; // 15s block time
 // Minimum difficulty (each difficulty point is in H/s)
-// Current: BLOCK TIME in millis * 1000 = 1 MH/s minimum
-pub const MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 1000);
+// Current: BLOCK TIME in millis * 50 = 50 KH/s minimum
+pub const MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 50);
 pub const GENESIS_BLOCK_DIFFICULTY: Difficulty = Difficulty::from_u64(1);
 // 1024 * 1024 + (256 * 1024) bytes = 1.25 MB maximum size per block with txs
 pub const MAX_BLOCK_SIZE: usize = (1024 * 1024) + (256 * 1024);
