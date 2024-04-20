@@ -92,6 +92,12 @@ pub struct SledStorage {
     pub(super) balances: Tree,
     // Tree that store all versioned balances using hashed keys
     pub(super) versioned_balances: Tree,
+    // Tree that store all merkle hashes for each topoheight
+    pub(super) merkle_hashes: Tree,
+    // Account registrations topoheight
+    pub(super) registrations: Tree,
+    // Account registrations prefixed by their topoheight for easier deletion
+    pub(super) registrations_prefixed: Tree,
     // opened DB used for assets to create dynamic assets
     db: sled::Db,
 
@@ -142,7 +148,7 @@ macro_rules! init_cache {
 
 impl SledStorage {
     pub fn new(dir_path: String, cache_size: Option<usize>, network: Network) -> Result<Self, BlockchainError> {
-        let sled = sled::open(dir_path)?;
+        let sled = sled::open(format!("{}{}", dir_path, network.to_string().to_lowercase()))?;
         let mut storage = Self {
             mainnet: network.is_mainnet(),
             transactions: sled.open_tree("transactions")?,
@@ -163,6 +169,9 @@ impl SledStorage {
             versioned_nonces: sled.open_tree("versioned_nonces")?,
             balances: sled.open_tree("balances")?,
             versioned_balances: sled.open_tree("versioned_balances")?,
+            merkle_hashes: sled.open_tree("merkle_hashes")?,
+            registrations: sled.open_tree("registrations")?,
+            registrations_prefixed: sled.open_tree("registrations_prefixed")?,
             db: sled,
             transactions_cache: init_cache!(cache_size),
             blocks_cache: init_cache!(cache_size),
@@ -233,6 +242,18 @@ impl SledStorage {
 
     pub fn is_mainnet(&self) -> bool {
         self.mainnet
+    }
+
+    pub(super) fn load_optional_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+        match tree.get(key)? {
+            Some(bytes) => {
+                let bytes = bytes.to_vec();
+                let mut reader = Reader::new(&bytes);
+                let value = T::read(&mut reader)?;
+                Ok(Some(value))
+            },
+            None => Ok(None)
+        }
     }
 
     pub(super) fn load_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<T, BlockchainError> {
@@ -551,6 +572,39 @@ impl Storage for SledStorage {
         self.delete_versioned_tree_above_topoheight(&self.versioned_nonces, topoheight)
     }
 
+    async fn delete_registrations_above_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete registrations above topoheight {}", topoheight);
+        for el in self.registrations_prefixed.iter().keys() {
+            let key = el?;
+            let topo = u64::from_bytes(&key[0..8])?;
+            if topo > topoheight {
+                self.registrations_prefixed.remove(&key)?;
+                let pkey = &key[8..40];
+                self.registrations.remove(&pkey)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn delete_registrations_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("delete registrations below topoheight {}", topoheight);
+        let mut buf = [0u8; 40];
+        for el in self.registrations.iter() {
+            let (key, value) = el?;
+            let topo = u64::from_bytes(&value[0..8])?;
+            if topo < topoheight {
+                buf[0..8].copy_from_slice(&value);
+                buf[8..40].copy_from_slice(&key);
+
+                self.registrations_prefixed.remove(&buf)?;
+                self.registrations.remove(&key)?;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
         trace!("delete versioned balances below topoheight {}!", topoheight);
         self.delete_versioned_tree_below_topoheight(&self.versioned_balances, topoheight)
@@ -641,6 +695,30 @@ impl Storage for SledStorage {
                     // keep searching
                     versioned_nonce = self.get_nonce_at_exact_topoheight(&key, previous_topoheight).await?;
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn create_snapshot_registrations_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        // tree where PublicKey are stored with the registration topoheight in it
+        let mut buf = [0u8; 40];
+        for el in self.registrations.iter() {
+            let (key, value) = el?;
+            let registration_topo = u64::from_bytes(&value)?;
+
+            // if the registration topoheight for this account is less than the snapshot topoheight
+            // update it to the topoheight
+            if registration_topo < topoheight {
+                // Delete the prefixed registration
+                buf[0..8].copy_from_slice(&value);
+                buf[8..40].copy_from_slice(&key);
+                self.registrations_prefixed.remove(&buf)?;
+
+                // save the new registration topoheight
+                self.registrations.insert(&key, &topoheight.to_be_bytes())?;
+                self.registrations_prefixed.insert(&buf, &[])?;
             }
         }
 
@@ -847,9 +925,12 @@ impl Storage for SledStorage {
         warn!("Blocks rewinded: {}, new topoheight: {}, new height: {}", done, topoheight, height);
 
         trace!("Cleaning versioned balances and nonces");
+
         // now delete all versioned balances and nonces above the new topoheight
         self.delete_versioned_balances_above_topoheight(topoheight).await?;
         self.delete_versioned_nonces_above_topoheight(topoheight).await?;
+        // Delete also registrations
+        self.delete_registrations_above_topoheight(topoheight).await?;
 
         trace!("Cleaning caches");
         // Clear all caches to not have old data after rewind

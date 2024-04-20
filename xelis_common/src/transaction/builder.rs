@@ -43,8 +43,18 @@ use crate::{
     utils::calculate_tx_fee
 };
 use thiserror::Error;
-
-use super::{BurnPayload, Reference, Role, SourceCommitment, Transaction, TransactionType, TransferPayload, EXTRA_DATA_LIMIT_SIZE, MAX_TRANSFER_COUNT};
+use super::{
+    aead::{derive_aead_key_from_opening, PlaintextData},
+    BurnPayload,
+    Reference,
+    Role,
+    SourceCommitment,
+    Transaction,
+    TransactionType,
+    TransferPayload,
+    EXTRA_DATA_LIMIT_SIZE,
+    MAX_TRANSFER_COUNT
+};
 
 #[derive(Error, Debug, Clone)]
 pub enum GenerationError<T> {
@@ -58,6 +68,8 @@ pub enum GenerationError<T> {
     SenderIsReceiver,
     #[error("Extra data too large")]
     ExtraDataTooLarge,
+    #[error("Encrypted extra data is too large")]
+    EncryptedExtraDataTooLarge,
     #[error("Address is not on the same network as us")]
     InvalidNetwork,
     #[error("Extra data was provied with an integrated address")]
@@ -80,10 +92,21 @@ impl Default for FeeBuilder {
     }
 }
 
+pub trait FeeHelper {
+    type Error;
+
+    /// Get the fee multiplier from wallet if wanted
+    fn get_fee_multiplier(&self) -> f64 {
+        1f64
+    }
+
+    /// Verify if the account exists or if we should pay more fees for account creation
+    fn account_exists(&self, account: &CompressedPublicKey) -> Result<bool, Self::Error>;
+}
+
 /// If the returned balance and ct do not match, the build function will panic and/or
 /// the proof will be invalid.
-pub trait AccountState {
-    type Error;
+pub trait AccountState: FeeHelper {
 
     /// Used to verify if the address is on the same chain
     fn is_mainnet(&self) -> bool;
@@ -100,8 +123,11 @@ pub trait AccountState {
     /// Update the balance and the ciphertext
     fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error>;
 
-    /// Verify if the account exists or if we should pay more fees for account creation
-    fn account_exists(&self, account: &CompressedPublicKey) -> Result<bool, Self::Error>;
+    /// Get the nonce of the account
+    fn get_nonce(&self) -> Result<u64, Self::Error>;
+
+    /// Update account nonce
+    fn update_nonce(&mut self, new_nonce: u64) -> Result<(), Self::Error>;
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -126,9 +152,7 @@ pub struct TransactionBuilder {
     version: u8,
     source: CompressedPublicKey,
     data: TransactionTypeBuilder,
-    fee_builder: FeeBuilder,
-    nonce: u64,
-    fee: u64,
+    fee_builder: FeeBuilder
 }
 
 // Internal struct for build
@@ -172,6 +196,21 @@ impl TransactionTypeBuilder {
 
         consumed
     }
+
+    pub fn used_keys(&self) -> HashSet<CompressedPublicKey> {
+        let mut used_keys = HashSet::new();
+
+        match &self {
+            TransactionTypeBuilder::Transfers(transfers) => {
+                for transfer in transfers {
+                    used_keys.insert(transfer.destination.get_public_key().clone());
+                }
+            }
+            TransactionTypeBuilder::Burn(_) => {}
+        }
+
+        used_keys
+    }
 }
 
 // Used to build the final transaction
@@ -207,20 +246,18 @@ impl TransactionSigner {
 }
 
 impl TransactionBuilder {
-    pub fn new(version: u8, source: CompressedPublicKey, data: TransactionTypeBuilder, fee_builder: FeeBuilder, nonce: u64) -> Self {
+    pub fn new(version: u8, source: CompressedPublicKey, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
         Self {
             version,
             source,
             data,
             fee_builder,
-            nonce,
-            fee: 0,
         }
     }
 
     /// Estimate by hand the bytes size of a final TX
     // Returns bytes size and transfers count
-    fn estimate_size(&self) -> (usize, usize) {
+    fn estimate_size(&self) -> usize {
         let assets_used = self.data.used_assets().len();
         // Version byte
         let mut size = 1
@@ -229,9 +266,9 @@ impl TransactionBuilder {
         // Transaction type byte
         + 1
         // Fee u64
-        + self.fee.size()
+        + 8
         // Nonce u64
-        + self.nonce.size()
+        + 8
         // Reference (hash, topo)
         + HASH_SIZE + 8
         // Commitments byte length
@@ -283,28 +320,42 @@ impl TransactionBuilder {
         // G_vec len
         + 2 * RISTRETTO_COMPRESSED_SIZE * lg_n;
 
-        (size, transfers_count)
+        size
     }
 
     // Estimate the fees for this TX
-    pub fn estimate_fees(&self) -> u64 {
+    pub fn estimate_fees<B: FeeHelper>(&self, state: &mut B) -> Result<u64, GenerationError<B::Error>> {
         let calculated_fee = match self.fee_builder {
             FeeBuilder::Multiplier(multiplier) => {
-                let (size, transfers) = self.estimate_size();
-                let expected_fee = calculate_tx_fee(size, transfers, 0);
+                // Compute the size and transfers count
+                let size = self.estimate_size();
+                let (transfers, new_addresses) = if let TransactionTypeBuilder::Transfers(transfers) = &self.data {
+                    let mut new_addresses = 0;
+                    for transfer in transfers {
+                        if !state.account_exists(&transfer.destination.get_public_key()).map_err(GenerationError::State)? {
+                            new_addresses += 1;
+                        }
+                    }
+
+                    (transfers.len(), new_addresses)
+                } else {
+                    (0, 0)
+                };
+
+                let expected_fee = calculate_tx_fee(size, transfers, new_addresses);
                 (expected_fee as f64 * multiplier) as u64
             },
             // If the value is set, use it
             FeeBuilder::Value(value) => value
         };
 
-        calculated_fee
+        Ok(calculated_fee)
     }
 
-    fn get_new_source_ct(&self, mut ct: Ciphertext, asset: &Hash, transfers: &[TransferWithCommitment]) -> Ciphertext {
+    fn get_new_source_ct(&self, mut ct: Ciphertext, fee: u64, asset: &Hash, transfers: &[TransferWithCommitment]) -> Ciphertext {
         if asset == &XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
-            ct -= Scalar::from(self.fee);
+            ct -= Scalar::from(fee);
         }
 
         match &self.data {
@@ -326,12 +377,12 @@ impl TransactionBuilder {
     }
 
     /// Compute the full cost of the transaction
-    pub fn get_transaction_cost(&self, asset: &Hash) -> u64 {
+    pub fn get_transaction_cost(&self, fee: u64, asset: &Hash) -> u64 {
         let mut cost = 0;
 
         if *asset == XELIS_ASSET {
             // Fees are applied to the native blockchain asset only.
-            cost += self.fee;
+            cost += fee;
         }
 
         match &self.data {
@@ -358,7 +409,11 @@ impl TransactionBuilder {
         source_keypair: &KeyPair,
     ) -> Result<Transaction, GenerationError<B::Error>> {
         // Compute the fees
-        self.fee = self.estimate_fees();
+        let fee = self.estimate_fees(state)?;
+
+        // Get the nonce
+        let nonce = state.get_nonce().map_err(GenerationError::State)?;
+        state.update_nonce(nonce + 1).map_err(GenerationError::State)?;
 
         // 0.a Create the commitments
 
@@ -434,7 +489,7 @@ impl TransactionBuilder {
         };
 
         let reference = state.get_reference();
-        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, self.fee, self.nonce);
+        let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, nonce);
 
         let mut range_proof_openings: Vec<_> =
             iter::repeat_with(|| PedersenOpening::generate_new().as_scalar())
@@ -444,7 +499,7 @@ impl TransactionBuilder {
         let mut range_proof_values: Vec<_> = used_assets
             .iter()
             .map(|asset| {
-                let cost = self.get_transaction_cost(&asset);
+                let cost = self.get_transaction_cost(fee, &asset);
                 let source_new_balance = state
                     .get_account_balance(asset)
                     .map_err(GenerationError::State)?
@@ -473,7 +528,7 @@ impl TransactionBuilder {
                     .compress();
 
                 let new_source_ciphertext =
-                    self.get_new_source_ct(source_current_ciphertext, &asset, &transfers);
+                    self.get_new_source_ct(source_current_ciphertext, fee, &asset, &transfers);
 
                 // 1. Make the CommitmentEqProof
 
@@ -529,17 +584,31 @@ impl TransactionBuilder {
                     range_proof_values.push(transfer.inner.amount);
                     range_proof_openings.push(transfer.amount_opening.as_scalar());
 
-                    TransferPayload {
+                    // Encrypt the extra data if it exists
+                    let extra_data = if let Some(extra_data) = transfer.inner.extra_data {
+                        let bytes = extra_data.to_bytes();
+                        let key = derive_aead_key_from_opening(&transfer.amount_opening);
+                        let cipher = PlaintextData(bytes).encrypt_in_place(&key);
+                        if cipher.0.len() > EXTRA_DATA_LIMIT_SIZE {
+                            return Err(GenerationError::EncryptedExtraDataTooLarge);
+                        }
+
+                        Some(cipher)
+                    } else {
+                        None
+                    };
+
+                    Ok(TransferPayload {
                         commitment,
                         receiver_handle,
                         sender_handle,
                         destination: transfer.inner.destination.to_public_key(),
                         asset: transfer.inner.asset,
                         ct_validity_proof,
-                        extra_data: transfer.inner.extra_data.map(|v| v.to_bytes()),
-                    }
+                        extra_data,
+                    })
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
             transfers
         } else {
@@ -578,8 +647,8 @@ impl TransactionBuilder {
             version: self.version,
             source: self.source,
             data,
-            fee: self.fee,
-            nonce: self.nonce,
+            fee,
+            nonce,
             source_commitments,
             reference,
             range_proof,

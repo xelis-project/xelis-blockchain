@@ -125,6 +125,12 @@ async fn main() -> Result<()> {
     }
 
     let blockchain_config = config.nested;
+    if let Some(path) = blockchain_config.dir_path.as_ref() {
+        if !(path.ends_with("/") || path.ends_with("\\")) {
+            return Err(anyhow::anyhow!("Path must end with / or \\"));
+        }
+    }
+
     let storage = {
         let use_cache = if blockchain_config.cache_size > 0 {
             Some(blockchain_config.cache_size)
@@ -132,11 +138,7 @@ async fn main() -> Result<()> {
             None
         };
 
-        let dir_path = if let Some(path) = blockchain_config.dir_path.as_ref() {
-            path.clone()
-        } else {
-            config.network.to_string().to_lowercase()
-        };
+        let dir_path = blockchain_config.dir_path.clone().unwrap_or_default();
         SledStorage::new(dir_path, use_cache, config.network)?
     };
 
@@ -313,10 +315,11 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     for topo in pruned_topoheight..=topoheight {
         let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
         let block_reward = if pruned_topoheight == 0 || topo - pruned_topoheight > STABLE_LIMIT {
-            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply).await.context("Error while calculating block reward")?;
+            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply, topo).await.context("Error while calculating block reward")?;
+            let expected_block_reward = storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward")?;
             // Verify the saved block reward
-            if block_reward != storage.get_block_reward_at_topo_height(topo).context("Error while retrieving block reward")? {
-                manager.error(format!("Block reward saved is incorrect for {} at topoheight {}", hash_at_topo, topo));
+            if block_reward != expected_block_reward {
+                manager.error(format!("Block reward saved is incorrect for {} at topoheight {}, got {} while expecting {}", hash_at_topo, topo, format_xelis(block_reward), format_xelis(expected_block_reward)));
                 return Ok(())
             }
             block_reward
@@ -732,9 +735,7 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
         } else {
     
             // Retrieve best tip timestamp
-            let newest_tip = blockdag::find_newest_tip_by_timestamp::<S, _>(&storage, header.get_tips().iter()).await.context("Error while finding best tip")?;
-            let tip_timestamp = storage.get_timestamp_for_block_hash(newest_tip).await.context("Error while retrieving tip timestamp")?;
-    
+            let (_, tip_timestamp) = blockdag::find_newest_tip_by_timestamp::<S, _>(&storage, header.get_tips().iter()).await.context("Error while finding best tip")?;
             let solve_time = header.get_timestamp() - tip_timestamp;
     
             solve_time

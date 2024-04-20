@@ -2980,6 +2980,7 @@ dependencies = [
  "async-trait",
  "blake3",
  "bulletproofs",
+ "chacha20poly1305",
  "chrono",
  "clap",
  "crossterm",

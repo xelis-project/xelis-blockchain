@@ -2,6 +2,202 @@
 
 ## Daemon
 
+### Events
+
+This require to use the WebSocket connection.
+
+All events sent by the daemon to be notified in real-time through the WebSocket.
+
+Every events are registered using the following RPC request (example for `new_block` event)
+
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "subscribe",
+	"id": 1,
+	"params": {
+		"notify": "new_block"
+	}
+}
+```
+
+This returns the following response:
+
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+If its true, that means the daemon accepted the subscription to the requested event.
+If its returning false, that may means you are already subscribed to this event.
+
+To unsubscribe from an event, replace the method name `subscribe` by `unsubscribe`.
+
+**NOTE**: The field `id` used during the subscription of the event is reused for each event fired by the daemon.
+This is useful to determine which kind of event it is. You must set a unique `id` value to each event.
+
+#### New Block
+
+When a new block has been accepted and included in the chain by the daemon.
+
+##### Name `new_block`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "block_type": "Normal",
+        "cumulative_difficulty": "9909351292695001",
+        "difficulty": "85713090000",
+        "event": "new_block",
+        "extra_nonce": "cb4a04b8cd2913f0947c323c8a2fe4d3623047f1e8a9f4e5f717aaf6ec5da70e",
+        "hash": "0000000008ef82aeb890b919803e19985c430311ddd34aa9b0cb2d40a6dffb87",
+        "height": 106173,
+        "miner": "xet:4fcjmjxs6dyq7d3xl95m26wzfwrluz2tcqdtfp6fpc7rah2kmqusqdr3c66",
+        "nonce": 121282154,
+        "reward": 144997766,
+        "supply": 15506012755620,
+        "timestamp": 1713028338116,
+        "tips": [
+            "0000000000beaccfbb05ffc3b33536daffa85a90cbbf4761287376a65dcac859"
+        ],
+        "topoheight": 107219,
+        "total_fees": 0,
+        "total_size_in_bytes": 124,
+        "txs_hashes": [],
+        "version": 0
+    }
+}
+```
+
+#### Block Ordered
+
+When a block has been ordered and executed by the DAG order.
+
+##### Name `block_ordered`
+
+##### On Event
+```json
+
+```
+
+#### Block Orphaned
+
+When a block was previously executed in the DAG but due to DAG reorg, got rewinded.
+
+##### Name `block_orphaned`
+
+##### On Event
+```json
+
+```
+
+#### Stable Height Changed
+
+When the DAG found a new stable height.
+This means no new blocks can be added at this height or below.
+
+##### Name `stable_height_changed`
+
+##### On Event
+```json
+
+```
+
+#### Transaction Orphaned
+
+When a transaction that was previously executed in the DAG but due to DAG reorg, got rewinded.
+If transaction couldn't be added back to the mempool, it is orphaned.
+
+##### Name `transaction_orphaned`
+
+##### On Event
+```json
+
+```
+
+#### Transaction Added In Mempool
+
+When a valid transaction is added in the daemon mempool.
+
+##### Name `transaction_added_in_mempool`
+
+##### On Event
+```json
+
+```
+
+#### Transaction Executed
+
+When a transaction has been executed by the DAG order.
+
+##### Name `transaction_executed`
+
+##### On Event
+```json
+
+```
+
+#### Peer Connected
+
+When a new peer is connected to our daemon and allows to be shared through API.
+
+##### Name `peer_connected`
+
+##### On Event
+```json
+
+```
+
+#### Peer Disconnected
+
+When a peer previously connected disconnect from us.
+
+##### Name `peer_disconnected`
+
+##### On Event
+```json
+
+```
+
+#### Peer PeerList Updated
+
+When a peer peerlist has been updated.
+
+##### Name `peer_peer_list_updated`
+
+##### On Event
+```json
+
+```
+
+#### Peer State Updated
+
+When a peer state has been updated due to a ping packet.
+
+##### Name `peer_state_updated`
+
+##### On Event
+```json
+
+```
+
+#### Peer Peer Disconnected
+
+When a peer's peer has disconnected from him and notified us.
+
+##### Name `peer_peer_disconnected`
+
+##### On Event
+```json
+
+```
+
 ### JSON-RPC methods
 
 #### Get Version
@@ -5211,6 +5407,76 @@ The topoheight range in parameters search for all accounts having a on-chain int
 }
 ```
 
+
+#### Is Account Registered
+Verify if the account on chain is registered.
+This is useful to determine if we should pay additionnal fee or not.
+
+For transactions, it is recommended to verify that the account is already registered in stable height.
+
+##### Method `is_account_registered`
+
+##### Parameters
+|       Name       |   Type  | Required |                            Note                           |
+|:----------------:|:-------:|:--------:|:---------------------------------------------------------:|
+|      address     | Address | Required |               Account address to search for               |
+| in_stable_height | Boolean | Required | If registration must be done only in stable height or not |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "is_account_registered",
+	"id": 1,
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+		"in_stable_height": true
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+#### Get Account Registration TopoHeight
+Retrieve the account registration topoheight.
+
+This is like its "first time" doing an action on the chain.
+
+##### Method `get_account_registration_topoheight`
+
+##### Parameters
+|   Name  |   Type  | Required |              Note             |
+|:-------:|:-------:|:--------:|:-----------------------------:|
+| address | Address | Required | Account address to search for |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_account_registration_topoheight",
+	"id": 1,
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 57
+}
+```
+
 #### Get Blocks Range By TopoHeight
 Retrieve a specific range of blocks (up to 20 maximum) based on topoheight.
 
@@ -5554,6 +5820,187 @@ This includes nonce range (min/max) used, final output balances expected per ass
 ```
 
 ## Wallet
+
+### Events
+
+This require to use the WebSocket connection.
+
+All events sent by the wallet to be notified in real-time through the WebSocket.
+
+Every events are registered using the following RPC request (example for `new_topo_height` event)
+
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "subscribe",
+	"id": 1,
+	"params": {
+		"notify": "new_topo_height"
+	}
+}
+```
+
+This returns the following response:
+
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+If its true, that means the daemon accepted the subscription to the requested event.
+If its returning false, that may means you are already subscribed to this event.
+
+To unsubscribe from an event, replace the method name `subscribe` by `unsubscribe`.
+
+**NOTE**: The field `id` used during the request `subscribe` of the event is reused for each event fired by the wallet.
+This is useful to determine which kind of event it is. You must set a unique `id` value to each event.
+
+#### New TopoHeight
+
+When a new topoheight is detected by the wallet.
+It may be lower than the previous one, based on how the DAG reacts
+
+##### Name `new_topo_height`
+
+##### On Event
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"event": "new_topo_height",
+		"topoheight": 57
+	}
+}
+```
+
+#### New Asset
+
+When a new asset is detected by the wallet.
+
+##### Name `new_asset`
+
+##### On Event
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"event": "new_asset",
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+		"topoheight": 57,
+		"decimals": 8
+	}
+}
+```
+
+#### New Transaction
+
+When a new transaction is detected by the wallet.
+
+##### Name `new_transaction`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "new_transaction",
+        "hash": "b84adead7fe1c0499f92826c08f4f67f8e5133981465b7b9cf0b34649e11f1e0",
+        "outgoing": {
+            "fee": 125000,
+            "nonce": 3530,
+            "transfers": [
+                {
+                    "amount": 100000000,
+                    "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "destination": "xet:6elhr5zvx5wl2ljjl82l6yxxxqkxjvcr38kcq9qef3nurm2r2arsq89z4ll",
+                    "extra_data": null
+                }
+            ]
+        },
+        "topoheight": 107853
+    }
+}
+```
+
+#### Balance Changed
+
+When an asset balance has been updated.
+
+**NOTE**: Balance is in atomic units.
+
+##### Name `balance_changed`
+
+##### On Event
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"event": "balance_changed",
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+		"balance": 178800000000
+	}
+}
+```
+
+#### Rescan
+
+When a rescan has been triggered by the wallet.
+The event response contains the topoheight until which the wallet rescanned and deleted the transactions.
+
+##### Name `rescan`
+
+##### On Event
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"event": "rescan",
+		"start_topoheight": 50
+	}
+}
+```
+
+#### Online
+
+When the wallet is in online mode (connected to a daemon).
+
+##### Name `online`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "online"
+    }
+}
+```
+
+#### Offline
+
+When the wallet is in offline mode (not connected to any daemon).
+
+##### Name `offline`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "offline"
+    }
+}
+```
 
 ### JSON-RPC methods
 
@@ -5976,7 +6423,7 @@ It can be broadcasted or not to the network.
 |        fee        |    FeeBuilder   | Optional |        Set an exact fee value or a multiplier        |
 |     broadcast     |     Boolean     | Optional |    Broadcast TX to daemon. By default set to true    |
 |     tx_as_hex     |     Boolean     | Optional | Serialize TX to hexadecimal. By default set to false |
-| transfers OR burn | TransactionType | Required |              Transaction Type parameters             |
+| transfers OR burn | TransactionType | Required |              Transaction Type parameter              |
 
 ##### Request
 ```json
@@ -7411,7 +7858,10 @@ Returned fees are in atomic units.
 ##### Method `estimate_fees`
 
 ##### Parameters
-Paramater value can be anything (object, value, array...)
+|        Name       |       Type      | Required |             Note             |
+|:-----------------:|:---------------:|:--------:|:----------------------------:|
+| transfers OR burn | TransactionType | Required |  Transaction Type parameter  |
+
 
 ##### Request
 ```json

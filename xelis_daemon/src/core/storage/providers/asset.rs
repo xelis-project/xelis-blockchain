@@ -28,6 +28,10 @@ pub trait AssetProvider {
     // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
     async fn get_partial_assets(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<AssetWithData>, BlockchainError>;
 
+    // Get chunked assets
+    // This is useful to not retrieve all assets at once
+    async fn get_chunked_assets(&self, maximum: usize, skip: usize) -> Result<IndexSet<Hash>, BlockchainError>;
+
     // Get all assets for a specific key
     // TODO: replace with impl Iterator<Item = Result<Hash, BlockchainError>> when async trait methods are stable
     async fn get_assets_for(&self, key: &PublicKey) -> Result<Vec<Hash>, BlockchainError>;
@@ -80,6 +84,16 @@ impl AssetProvider for SledStorage {
                     }
                 }
             }
+        }
+        Ok(assets)
+    }
+
+    async fn get_chunked_assets(&self, maximum: usize, skip: usize) -> Result<IndexSet<Hash>, BlockchainError> {
+        let mut assets = IndexSet::with_capacity(maximum);
+        for el in self.assets.iter().keys().skip(skip).take(maximum) {
+            let key = el?;
+            let asset = Hash::from_bytes(&key)?;
+            assets.insert(asset);
         }
         Ok(assets)
     }

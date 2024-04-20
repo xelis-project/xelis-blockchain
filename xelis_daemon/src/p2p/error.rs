@@ -19,6 +19,8 @@ use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Tracker request has expired, we didn't received a valid response in time")]
+    TrackerRequestExpired,
     #[error("Peer not found by id {}", _0)]
     PeerNotFoundById(u64),
     #[error("Invalid pop count, got {} with only {} blocks", _0, _1)]
@@ -27,6 +29,8 @@ pub enum P2pError {
     InvalidBlockIdList,
     #[error("Incompatible direction received")]
     InvalidDirection,
+    #[error("Invalid merkle hash")]
+    InvalidMerkleHash,
     #[error("Duplicated peer {} received from {} received in ping packet (direction = {:?})", _0, _1, _2)]
     DuplicatedPeer(SocketAddr, SocketAddr, Direction),
     #[error("Pruned topoheight {} is greater than height {} in ping packet", _0, _1)]
@@ -115,10 +119,8 @@ pub enum P2pError {
     InvalidObjectResponse(Hash),
     #[error("Invalid object response type for request")]
     InvalidObjectResponseType,
-    #[error(transparent)]
-    ObjectRequestError(#[from] RecvError),
-    #[error("Error while sending object request in boost sync mode")]
-    BoostSyncModeError,
+    #[error("Error while receiving blocker response in boost sync mode: {}", _0)]
+    BoostSyncModeBlockerResponseError(#[from] RecvError),
     #[error("Error while waiting on blocker in boost sync mode")]
     BoostSyncModeBlockerError,
     #[error("Boost sync mode failed")]

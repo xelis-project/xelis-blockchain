@@ -21,6 +21,7 @@ use crate::core::{
         BlocksAtHeightProvider,
         DagOrderProvider,
         DifficultyProvider,
+        MerkleHashProvider,
         PrunedTopoheightProvider,
         Storage,
         Tips
@@ -131,8 +132,10 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         trace!("POW hash: {}", pow_hash);
         let (difficulty, p) = self.blockchain.verify_proof_of_work(self, &pow_hash, tips.iter()).await?;
 
-        // Find the cumulative difficulty for this block
+        // Find the common base between the block and the current blockchain
         let (base, base_height) = self.blockchain.find_common_base(self, header.get_tips()).await?;
+
+        // Find the cumulative difficulty for this block
         let (_, cumulative_difficulty) = self.blockchain.find_tip_work_score(self, &hash, &base, base_height).await?;
 
         // Store the block in both maps
@@ -205,13 +208,13 @@ impl<S: Storage> DifficultyProvider for ChainValidator<'_, S> {
         Ok(storage.get_block_header_by_hash(hash).await?)
     }
 
-    async fn get_estimated_covariance_or_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
+    async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
         if let Some(data) = self.blocks.get(hash) {
             return Ok(data.p.clone())
         }
 
         let storage = self.blockchain.get_storage().read().await;
-        Ok(storage.get_estimated_covariance_or_block_hash(hash).await?)
+        Ok(storage.get_estimated_covariance_for_block_hash(hash).await?)
     }
 
     async fn set_estimated_covariance_for_block_hash(&mut self, _: &Hash, _: VarUint) -> Result<(), BlockchainError> {
@@ -304,6 +307,18 @@ impl<S: Storage> PrunedTopoheightProvider for ChainValidator<'_, S> {
     }
 
     async fn set_pruned_topoheight(&mut self, _: u64) -> Result<(), BlockchainError> {
+        Err(BlockchainError::UnsupportedOperation)
+    }
+}
+
+#[async_trait]
+impl<S: Storage> MerkleHashProvider for ChainValidator<'_, S> {
+    async fn get_balances_merkle_hash_at_topoheight(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
+        let storage = self.blockchain.get_storage().read().await;
+        storage.get_balances_merkle_hash_at_topoheight(topoheight).await
+    }
+
+    async fn set_balances_merkle_hash_at_topoheight(&mut self,  _: u64, _: &Hash) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 }

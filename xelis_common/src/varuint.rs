@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Display, Formatter},
-    ops::{Add, AddAssign, Div, Mul, Shl, ShlAssign, Shr, ShrAssign, Sub}
+    ops::{Add, AddAssign, Div, Mul, Rem, Shl, ShlAssign, Shr, ShrAssign, Sub}
 };
 use log::debug;
 use primitive_types::U256;
@@ -227,6 +227,14 @@ impl ShlAssign<u64> for VarUint {
 impl ShrAssign<u64> for VarUint {
     fn shr_assign(&mut self, rhs: u64) {
         self.0 >>= rhs;
+    }
+}
+
+impl Rem for VarUint {
+    type Output = Self;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        Self(self.0 % rhs.0)
     }
 }
 

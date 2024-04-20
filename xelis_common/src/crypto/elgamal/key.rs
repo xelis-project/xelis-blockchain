@@ -183,6 +183,11 @@ impl KeyPair {
     pub fn get_private_key(&self) -> &PrivateKey {
         &self.private_key
     }
+
+    // Split the KeyPair into its components
+    pub fn split(self) -> (PublicKey, PrivateKey) {
+        (self.public_key, self.private_key)
+    }
 }
 
 impl Serializer for PrivateKey {

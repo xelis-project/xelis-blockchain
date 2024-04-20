@@ -27,18 +27,28 @@ pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserializer: D
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct BlockHeader {
+    // Version of the block
     pub version: u8,
+    // All TIPS of the block (previous hashes of the block)
     pub tips: IndexSet<Hash>,
+    // Timestamp in milliseconds
     pub timestamp: TimestampMillis,
+    // Height of the block
     pub height: u64,
+    // Nonce of the block
+    // This is the mutable part in mining process
     pub nonce: u64,
+    // Extra nonce of the block
+    // This is the mutable part in mining process
+    // This is to spread even more the work in the network
     #[serde(serialize_with = "serialize_extra_nonce")]
     #[serde(deserialize_with = "deserialize_extra_nonce")]
     pub extra_nonce: [u8; EXTRA_NONCE_SIZE],
+    // Miner public key
     pub miner: CompressedPublicKey,
+    // All transactions hashes of the block
     pub txs_hashes: IndexSet<Hash>
 }
-
 
 impl BlockHeader {
     pub fn new(version: u8, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
@@ -78,8 +88,9 @@ impl BlockHeader {
         &self.tips
     }
 
+    // Compute a hash covering all tips hashes
     pub fn get_tips_hash(&self) -> Hash {
-        let mut bytes = vec![];
+        let mut bytes = Vec::with_capacity(self.tips.len() * HASH_SIZE);
 
         for tx in &self.tips {
             bytes.extend(tx.as_bytes())
@@ -108,9 +119,9 @@ impl BlockHeader {
         self.txs_hashes
     }
 
+    // Compute a hash covering all TXs hashes
     pub fn get_txs_hash(&self) -> Hash {
-        let mut bytes = vec![];
-
+        let mut bytes = Vec::with_capacity(self.txs_hashes.len() * HASH_SIZE);
         for tx in &self.txs_hashes {
             bytes.extend(tx.as_bytes())
         }
@@ -177,14 +188,14 @@ impl Serializer for BlockHeader {
         writer.write_bytes(&self.extra_nonce); // 25 + 32 = 57
         writer.write_u8(self.tips.len() as u8); // 57 + 1 = 58
         for tip in &self.tips {
-            writer.write_hash(tip); // 32
+            writer.write_hash(tip); // 32 per hash
         }
 
-        writer.write_u16(self.txs_hashes.len() as u16); // 58 + 2 = 60
+        writer.write_u16(self.txs_hashes.len() as u16); // 58 + (N*32) + 2 = 60 + (N*32)
         for tx in &self.txs_hashes {
             writer.write_hash(tx); // 32
         }
-        self.miner.write(writer); // 60 + 32 = 92
+        self.miner.write(writer); // 60 + (N*32) + (T*32) + 32 = 92 + (N*32) + (T*32)
         // Minimum size is 92 bytes
     }
 
@@ -247,7 +258,11 @@ impl Serializer for BlockHeader {
         // Version is u8
         let version_size = 1;
 
-        EXTRA_NONCE_SIZE + tips_size + txs_size + version_size + self.miner.size() + self.timestamp.size() + self.height.size() + self.nonce.size()
+        EXTRA_NONCE_SIZE + tips_size + txs_size + version_size
+        + self.miner.size()
+        + self.timestamp.size()
+        + self.height.size()
+        + self.nonce.size()
     }
 }
 

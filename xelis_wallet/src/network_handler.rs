@@ -17,7 +17,6 @@ use xelis_common::{
             NewBlockEvent
         },
         wallet::BalanceChanged,
-        DataElement,
         RPCTransactionType
     },
     asset::AssetWithData,
@@ -243,8 +242,6 @@ impl NetworkHandler {
                     for transfer in txs {
                         let destination = transfer.destination.to_public_key();
                         if is_owner || destination == *address.get_public_key() {
-                            let extra_data = transfer.extra_data.into_owned().and_then(|bytes| DataElement::from_bytes(&bytes).ok());
-
                             // Get the right handle
                             let handle = if is_owner {
                                 transfer.sender_handle
@@ -268,6 +265,12 @@ impl NetworkHandler {
                                     error!("Error while decompressing handle of TX {}: {}", tx.hash, e);
                                     continue;
                                 }
+                            };
+
+                            let extra_data = if let Some(cipher) = transfer.extra_data.into_owned() {
+                                self.wallet.decrypt_extra_data(cipher, &handle).ok()
+                            } else {
+                                None
                             };
 
                             debug!("Decrypting amount from TX {}", tx.hash);
@@ -306,7 +309,6 @@ impl NetworkHandler {
 
                 // Find the highest nonce
                 if is_owner && our_highest_nonce.map(|n| tx.nonce > n).unwrap_or(true) {
-                    // Increase the nonce by one to get our new account nonce
                     our_highest_nonce = Some(tx.nonce);
                 }
 
@@ -344,7 +346,7 @@ impl NetworkHandler {
 
     // Scan the chain using a specific balance asset, this helps us to get a list of version to only requests blocks where changes happened
     // When the block is requested, we don't limit the syncing to asset in parameter
-    async fn get_balance_and_transactions(&self, topoheight_processed: &mut HashSet<u64>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool) -> Result<(), Error> {
+    async fn get_balance_and_transactions(&self, topoheight_processed: &mut HashSet<u64>, address: &Address, asset: &Hash, min_topoheight: u64, balances: bool, highest_nonce: &mut Option<u64>) -> Result<(), Error> {
         // Retrieve the highest version
         let (mut topoheight, mut version) = self.api.get_balance(address, asset).await.map(|res| (res.topoheight, res.version))?;
         // don't sync already synced blocks
@@ -367,20 +369,30 @@ impl NetworkHandler {
                 if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
                     let mut storage = self.wallet.get_storage().write().await;
 
+                    if highest_nonce.is_none() {
+                        // Get the highest nonce from storage
+                        *highest_nonce = Some(storage.get_nonce()?);
+                    }
+
                     // Store only the highest nonce
                     // Because if we are building queued transactions, it may break our queue
                     // Our we couldn't submit new txs before they get removed from mempool
-                    let stored_nonce = storage.get_nonce().unwrap_or(0);
-                    if let Some(nonce) = nonce.filter(|n| *n > stored_nonce) {
+                    if let Some(nonce) = nonce.filter(|n| highest_nonce.as_ref().map(|h| *h < *n).unwrap_or(true)) {
                         storage.set_nonce(nonce)?;
+                        *highest_nonce = Some(nonce);
                     }
 
                     // If we have no balance in storage OR the stored ciphertext isn't the same, we should store it
                     let store = storage.get_balance_for(asset).await.map(|b| b.ciphertext != balance).unwrap_or(true);
                     if store {
                         debug!("Storing balance for asset {}", asset);
-                        let ciphertext = balance.decompressed()?;
-                        let plaintext_balance = Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.clone()).await?;
+                        let plaintext_balance = if let Some(plaintext_balance) = storage.get_unconfirmed_balance_decoded_for(&asset, &balance.compressed()).await? {
+                            plaintext_balance
+                        } else {
+                            trace!("Decrypting balance for asset {}", asset);
+                            let ciphertext = balance.decompressed()?;
+                            Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.clone()).await?
+                        };
 
                         // Store the new balance
                         storage.set_balance_for(asset, Balance::new(plaintext_balance, balance)).await?;
@@ -618,18 +630,32 @@ impl NetworkHandler {
             }
 
             for (asset, mut ciphertext) in balances {
-                let must_update = {
+                let (must_update, balance_cache) = {
                     let storage = self.wallet.get_storage().read().await;
-                    match storage.get_balance_for(&asset).await {
+                    let must_update = match storage.get_balance_for(&asset).await {
                         Ok(mut previous) => previous.ciphertext.compressed() != ciphertext.compressed(),
                         // If we don't have a balance for this asset, we should update it
                         Err(_) => true
-                    }
+                    };
+
+                    // If we must update, check if we have a cache for this balance
+                    let balance_cache = if must_update {
+                        storage.get_unconfirmed_balance_decoded_for(&asset, &ciphertext.compressed()).await?
+                    } else {
+                        None
+                    };
+
+                    (must_update, balance_cache)
                 };
 
                 if must_update {
                     trace!("must update balance for asset: {}, ct: {:?}", asset, ciphertext.to_bytes());
-                    let value = Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.decompressed()?.clone()).await?;
+                    let value = if let Some(cache) = balance_cache {
+                        cache
+                    } else {
+                        trace!("Decrypting balance for asset {}", asset);
+                        Arc::clone(&self.wallet).decrypt_ciphertext(ciphertext.decompressed()?.clone()).await?
+                    };
 
                     // Inform the change of the balance
                     self.wallet.propagate_event(Event::BalanceChanged(BalanceChanged {
@@ -766,9 +792,10 @@ impl NetworkHandler {
         let mut topoheight_processed = HashSet::new();
 
         // get balance and transactions for each asset
+        let mut highest_nonce = None;
         for asset in assets {
             debug!("calling get balances and transactions {}", current_topoheight);
-            if let Err(e) = self.get_balance_and_transactions(&mut topoheight_processed, &address, &asset, current_topoheight, balances).await {
+            if let Err(e) = self.get_balance_and_transactions(&mut topoheight_processed, &address, &asset, current_topoheight, balances, &mut highest_nonce).await {
                 error!("Error while syncing balance for asset {}: {}", asset, e);
             }
         }

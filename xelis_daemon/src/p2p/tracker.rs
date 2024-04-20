@@ -168,7 +168,7 @@ impl Drop for Request {
 pub struct GroupManager {
     // This is used to have unique id for each group of requests
     group_id: AtomicU64,
-    groups: Mutex<HashMap<u64, oneshot::Sender<()>>>
+    groups: Mutex<HashMap<u64, oneshot::Sender<P2pError>>>
 }
 
 impl GroupManager {
@@ -180,7 +180,7 @@ impl GroupManager {
     }
 
     // Generate a new group id
-    pub async fn next_group_id(&self) -> (u64, oneshot::Receiver<()>) {
+    pub async fn next_group_id(&self) -> (u64, oneshot::Receiver<P2pError>) {
         let mut groups = self.groups.lock().await;
         let id = self.group_id.fetch_add(1, Ordering::SeqCst);
 
@@ -196,10 +196,10 @@ impl GroupManager {
     }
 
     // Notify the requester about the failure
-    pub async fn notify_group(&self, group_id: u64) {
+    pub async fn notify_group(&self, group_id: u64, err: P2pError) {
         let mut groups = self.groups.lock().await;
         if let Some(sender) = groups.remove(&group_id) {
-            if sender.send(()).is_err() {
+            if sender.send(err).is_err() {
                 warn!("Error while sending group error");
             }
         }
@@ -373,7 +373,7 @@ impl ObjectTracker {
                         let (_, request) = queue.pop().unwrap();
                         if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast()).await {
                             debug!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
-                            self.clean_queue(&mut queue, request.get_peer().get_id(), request.get_group_id()).await;
+                            self.clean_queue(&mut queue, request.get_peer().get_id(), request.get_group_id().map(|v| (v, e))).await;
                         }
                     },
                     None => {
@@ -382,7 +382,7 @@ impl ObjectTracker {
                             if requested_at.elapsed() > TIME_OUT {
                                 warn!("Request timed out for object {}", request.get_hash());
                                 let (_, request) = queue.pop().unwrap();
-                                self.clean_queue(&mut queue, request.get_peer().get_id(), request.get_group_id()).await;
+                                self.clean_queue(&mut queue, request.get_peer().get_id(), request.get_group_id().map(|v| (v, P2pError::TrackerRequestExpired))).await;
                             } else {
                                 break;
                             }
@@ -474,9 +474,9 @@ impl ObjectTracker {
     }
 
     // Clean the queue from all requests from the given peer or from the group if it is specified
-    async fn clean_queue(&self, queue: &mut Queue<Hash, Request>, peer_id: u64, group: Option<u64>) {
+    async fn clean_queue(&self, queue: &mut Queue<Hash, Request>, peer_id: u64, group: Option<(u64, P2pError)>) {
         let iter = queue.extract_if(|(_, request)| {
-            if let (Some(failed_group), Some(request_group)) = (group.as_ref(), request.get_group_id()) {
+            if let (Some((failed_group, _)), Some(request_group)) = (group.as_ref(), request.get_group_id()) {
                 if *failed_group == request_group {
                     return true;
                 }
@@ -502,15 +502,15 @@ impl ObjectTracker {
             }
         });
 
-        // Delete all from the same group if one of them failed
-        if let Some(group) = group {
-            debug!("Group {} failed", group);
-            self.group.notify_group(group).await;
-        }
-
         for hash in iter {
             debug!("Adding requested object with hash {} in expirable cache", hash);
             self.cache.insert(hash).await;
+        }
+
+        // Delete all from the same group if one of them failed
+        if let Some((group, err)) = group {
+            debug!("Group {} failed", group);
+            self.group.notify_group(group, err).await;
         }
     }
 
@@ -527,7 +527,7 @@ impl ObjectTracker {
             let peer = request.get_peer();
             if let Err(e) = peer.send_bytes(packet).await {
                 warn!("Error while requesting object {} using Object Tracker: {}", request_hash, e);
-                Some((peer.get_id(), request.get_group_id()))
+                Some((peer.get_id(), request.get_group_id().map(|v| (v, e))))
             } else {
                 None
             }

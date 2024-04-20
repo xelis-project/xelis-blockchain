@@ -16,7 +16,11 @@ use xelis_common::{
         RPCTransaction
     },
     asset::AssetData,
-    block::{Block, BlockHeader, EXTRA_NONCE_SIZE},
+    block::{
+        Block,
+        BlockHeader,
+        EXTRA_NONCE_SIZE
+    },
     config::{
         COIN_DECIMALS,
         MAXIMUM_SUPPLY,
@@ -49,8 +53,9 @@ use crate::{
         BLOCK_TIME_MILLIS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
         DEFAULT_CACHE_SIZE, DEFAULT_P2P_BIND_ADDRESS, DEFAULT_RPC_BIND_ADDRESS, DEV_FEES,
         DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY, MAX_BLOCK_SIZE,
-        MILLIS_PER_SECOND, MINIMUM_DIFFICULTY, P2P_DEFAULT_MAX_PEERS,
-        PRUNE_SAFETY_LIMIT, SIDE_BLOCK_REWARD_PERCENT, STABLE_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT
+        MILLIS_PER_SECOND, MINIMUM_DIFFICULTY, P2P_DEFAULT_MAX_PEERS, SIDE_BLOCK_REWARD_MAX_BLOCKS,
+        PRUNE_SAFETY_LIMIT, SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT,
+        TIMESTAMP_IN_FUTURE_LIMIT
     },
     core::{
         blockdag,
@@ -69,12 +74,17 @@ use crate::{
             get_block_type_for_block,
             get_block_response
         },
-        DaemonRpcServer, SharedDaemonRpcServer
+        DaemonRpcServer,
+        SharedDaemonRpcServer
     }
 };
 use std::{
-    borrow::Cow, collections::{
-        HashMap, HashSet, VecDeque
+    borrow::Cow,
+    collections::{
+        HashMap,
+        hash_map::Entry,
+        HashSet,
+        VecDeque
     },
     net::SocketAddr,
     num::NonZeroUsize,
@@ -91,7 +101,8 @@ use rand::Rng;
 use super::storage::{
     BlocksAtHeightProvider,
     ClientProtocolProvider,
-    PrunedTopoheightProvider
+    PrunedTopoheightProvider,
+    AccountProvider
 };
 
 #[derive(Debug, clap::Args)]
@@ -117,6 +128,8 @@ pub struct Config {
     #[clap(long)]
     pub exclusive_nodes: Vec<String>,
     /// Set dir path for blockchain storage.
+    /// This will be appended by the network name for the database directory.
+    /// It must ends with a slash.
     #[clap(long)]
     pub dir_path: Option<String>,
     /// Set LRUCache size (0 = disabled).
@@ -286,7 +299,7 @@ impl<S: Storage> Blockchain<S> {
 
         let arc = Arc::new(blockchain);
         // create P2P Server
-        if !config.disable_p2p_server && arc.network != Network::Dev {
+        if !config.disable_p2p_server {
             info!("Starting P2p server...");
             // setup exclusive nodes
             let mut exclusive_nodes: Vec<SocketAddr> = Vec::with_capacity(config.exclusive_nodes.len());
@@ -301,7 +314,7 @@ impl<S: Storage> Blockchain<S> {
                 exclusive_nodes.push(addr);
             }
 
-            match P2pServer::new(config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing) {
+            match P2pServer::new(config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
@@ -453,6 +466,8 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // mine a block for current difficulty
+    // This is for testing purpose and shouldn't be directly used as it will mine on async threads
+    // which will reduce performance of the daemon and can take forever if difficulty is high
     pub async fn mine_block(&self, key: &PublicKey) -> Result<Block, BlockchainError> {
         let (mut header, difficulty) = {
             let storage = self.storage.read().await;
@@ -460,7 +475,7 @@ impl<S: Storage> Blockchain<S> {
             let (difficulty, _) = self.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await?;
             (block, difficulty)
         };
-        let mut hash = header.hash();
+        let mut hash = header.get_pow_hash();
         let mut current_height = self.get_height();
         while !self.is_simulator_enabled() && !check_difficulty(&hash, &difficulty)? {
             if self.get_height() != current_height {
@@ -469,7 +484,7 @@ impl<S: Storage> Blockchain<S> {
             }
             header.nonce += 1;
             header.timestamp = get_current_time_in_millis();
-            hash = header.hash();
+            hash = header.get_pow_hash();
         }
 
         let block = self.build_block_from_header(Immutable::Owned(header)).await?;
@@ -513,6 +528,7 @@ impl<S: Storage> Blockchain<S> {
             // create snapshots of balances to located_sync_topoheight
             storage.create_snapshot_balances_at_topoheight(located_sync_topoheight).await?;
             storage.create_snapshot_nonces_at_topoheight(located_sync_topoheight).await?;
+            storage.create_snapshot_registrations_at_topoheight(located_sync_topoheight).await?;
 
             // delete all blocks until the new topoheight
             for topoheight in last_pruned_topoheight..located_sync_topoheight {
@@ -525,6 +541,8 @@ impl<S: Storage> Blockchain<S> {
             storage.delete_versioned_balances_below_topoheight(located_sync_topoheight).await?;
             // delete nonces versions
             storage.delete_versioned_nonces_below_topoheight(located_sync_topoheight).await?;
+            // Also delete registrations
+            storage.delete_registrations_below_topoheight(located_sync_topoheight).await?;
 
             // Update the pruned topoheight
             storage.set_pruned_topoheight(located_sync_topoheight).await?;
@@ -795,10 +813,10 @@ impl<S: Storage> Blockchain<S> {
         let pruned_topoheight = provider.get_pruned_topoheight().await?.unwrap_or(0);
         let mut bases = Vec::new();
         for hash in tips.into_iter() {
+            trace!("Searching tip base for {}", hash);
             bases.push(self.find_tip_base(provider, hash, best_height, pruned_topoheight).await?);
         }
 
-        
         // check that we have at least one value
         if bases.is_empty() {
             error!("bases list is empty");
@@ -1131,15 +1149,13 @@ impl<S: Storage> Blockchain<S> {
         let biggest_difficulty = provider.get_difficulty_for_block_hash(best_tip).await?;
 
         // Search the newest tip available to determine the real solve time
-        let newest_tip = blockdag::find_newest_tip_by_timestamp(provider, tips.clone().into_iter()).await?;
-        let newest_tip_timestamp = provider.get_timestamp_for_block_hash(newest_tip).await?;
+        let (_, newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, tips.clone().into_iter()).await?;
 
         // Find the newest tips parent timestamp
         let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
-        let parent_newest_tip = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
-        let parent_newest_tip_timestamp = provider.get_timestamp_for_block_hash(parent_newest_tip).await?;
+        let (_, parent_newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
 
-        let p = provider.get_estimated_covariance_or_block_hash(best_tip).await?;
+        let p = provider.get_estimated_covariance_for_block_hash(best_tip).await?;
         let (difficulty, p_new) = difficulty::calculate_difficulty(parent_newest_tip_timestamp, newest_tip_timestamp, biggest_difficulty, p);
         Ok((difficulty, p_new))
     }
@@ -1334,6 +1350,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Generate a block header template without transactions
     pub async fn get_block_header_template_for_storage(&self, storage: &S, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
+        trace!("get block header template");
         let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>(); // generate random bytes
         let tips_set = storage.get_tips().await?;
         let mut tips = Vec::with_capacity(tips_set.len());
@@ -1513,6 +1530,16 @@ impl<S: Storage> Blockchain<S> {
         if tips_count == 0 && current_height != 0 {
             debug!("Expected at least one previous block for this block {}", block_hash);
             return Err(BlockchainError::ExpectedTips)
+        }
+
+        if tips_count > 0 && block.get_height() == 0 {
+            debug!("Invalid block height, got height 0 but tips are present for this block {}", block_hash);
+            return Err(BlockchainError::BlockHeightZeroNotAllowed)
+        }
+
+        if tips_count == 0 && block.get_height() != 0 {
+            debug!("Invalid tips count, got {} but current height is {} with block height {}", tips_count, current_height, block.get_height());
+            return Err(BlockchainError::InvalidTipsCount(block_hash, tips_count))
         }
 
         // block contains header and full TXs
@@ -1779,6 +1806,7 @@ impl<S: Storage> Blockchain<S> {
                     // Delete changes made by this block
                     storage.delete_versioned_balances_at_topoheight(topoheight).await?;
                     storage.delete_versioned_nonces_at_topoheight(topoheight).await?;
+                    storage.delete_registrations_at_topoheight(topoheight).await?;
 
                     topoheight += 1;
                 }
@@ -1786,6 +1814,8 @@ impl<S: Storage> Blockchain<S> {
 
             // This is used to verify that each nonce is used only one time
             let mut nonce_checker = NonceChecker::new();
+            // Side blocks counter per height
+            let mut side_blocks: HashMap<u64, u64> = HashMap::new();
             // time to order the DAG that is moving
             debug!("Ordering blocks based on generated DAG order ({} blocks)", full_order.len());
             for (i, hash) in full_order.into_iter().enumerate() {
@@ -1808,17 +1838,41 @@ impl<S: Storage> Blockchain<S> {
                     storage.get_supply_at_topo_height(highest_topo - 1).await?
                 };
 
-                let mut block_reward = self.get_block_reward(storage, &hash, past_supply).await?;
+                // Block for this hash
+                let block = storage.get_block_by_hash(&hash).await?;
 
-                trace!("set block reward to {} at {}", block_reward, highest_topo);
+                // Reward the miner of this block
+                // We have a decreasing block reward if there is too much side block
+                let is_side_block = self.is_side_block_internal(storage, &hash, highest_topo).await?;
+                let height = block.get_height();
+                let side_blocks_count = match side_blocks.entry(height) {
+                    Entry::Occupied(entry) => entry.into_mut(),
+                    Entry::Vacant(entry) => {
+                        let mut count = 0;
+                        let blocks_at_height = storage.get_blocks_at_height(height).await?;
+                        for block in blocks_at_height {
+                            if block != hash && self.is_side_block_internal(storage, &block, highest_topo).await? {
+                                count += 1;
+                                debug!("Found side block {} at height {}", block, height);
+                            }
+                        }
+
+                        entry.insert(count)
+                    },
+                };
+
+                let mut block_reward = self.internal_get_block_reward(past_supply, is_side_block, *side_blocks_count).await?;
+                trace!("set block {} reward to {} at {} (height {}, side block: {}, {} {}%)", hash, block_reward, highest_topo, height, is_side_block, side_blocks_count, side_block_reward_percentage(*side_blocks_count));
+                if is_side_block {
+                    *side_blocks_count += 1;
+                }
+
                 storage.set_block_reward_at_topo_height(highest_topo, block_reward)?;
                 
                 let supply = past_supply + block_reward;
                 trace!("set block supply to {} at {}", supply, highest_topo);
                 storage.set_supply_at_topo_height(highest_topo, supply)?;
 
-                // Block for this hash
-                let block = storage.get_block_by_hash(&hash).await?;
                 // All fees from the transactions executed in this block
                 let mut total_fees = 0;
                 // Chain State used for the verification
@@ -2142,15 +2196,37 @@ impl<S: Storage> Blockchain<S> {
 
     // Get block reward based on the type of the block
     // Block shouldn't be orphaned
-    pub async fn get_block_reward(&self, storage: &S, hash: &Hash, past_supply: u64) -> Result<u64, BlockchainError> {
-        let block_reward = if self.is_side_block(storage, &hash).await? {
-            trace!("Block {} is a side block", hash);
+    pub async fn internal_get_block_reward(&self, past_supply: u64, is_side_block: bool, side_blocks_count: u64) -> Result<u64, BlockchainError> {
+        trace!("internal get block reward");
+        let block_reward = if is_side_block {
             let reward = get_block_reward(past_supply);
-            reward * SIDE_BLOCK_REWARD_PERCENT / 100
+            let side_block_percent = side_block_reward_percentage(side_blocks_count);
+            trace!("side block reward: {}%", side_block_percent);
+
+            reward * side_block_percent / 100
         } else {
             get_block_reward(past_supply)
         };
         Ok(block_reward)
+    }
+
+    // Get the block reward for a block
+    // This will search all blocks at same height and verify which one are side blocks
+    pub async fn get_block_reward(&self, storage: &S, hash: &Hash, past_supply: u64, current_topoheight: u64) -> Result<u64, BlockchainError> {
+        let is_side_block = self.is_side_block(storage, hash).await?;
+        let mut side_blocks_count = 0;
+        if is_side_block {
+            // get the block height for this hash
+            let height = storage.get_height_for_block_hash(hash).await?;
+            let blocks_at_height = storage.get_blocks_at_height(height).await?;
+            for block in blocks_at_height {
+                if *hash != block && self.is_side_block_internal(storage, &block, current_topoheight).await? {
+                    side_blocks_count += 1;
+                }
+            }
+        }
+
+        self.internal_get_block_reward(past_supply, is_side_block, side_blocks_count).await
     }
 
     // retrieve all txs hashes until height or until genesis block that were executed in a block
@@ -2205,8 +2281,12 @@ impl<S: Storage> Blockchain<S> {
         !storage.is_block_topological_ordered(hash).await
     }
 
+    pub async fn is_side_block(&self, storage: &S, hash: &Hash) -> Result<bool, BlockchainError> {
+        self.is_side_block_internal(storage, hash, self.get_topo_height()).await
+    }
+
     // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
-    pub async fn is_side_block<P>(&self, provider: &P, hash: &Hash) -> Result<bool, BlockchainError>
+    pub async fn is_side_block_internal<P>(&self, provider: &P, hash: &Hash, current_topoheight: u64) -> Result<bool, BlockchainError>
     where
         P: DifficultyProvider + DagOrderProvider
     {
@@ -2217,7 +2297,7 @@ impl<S: Storage> Blockchain<S> {
 
         let topoheight = provider.get_topo_height_for_hash(hash).await?;
         // genesis block can't be a side block
-        if topoheight == 0 {
+        if topoheight == 0 || topoheight > current_topoheight {
             return Ok(false)
         }
 
@@ -2357,23 +2437,39 @@ impl<S: Storage> Blockchain<S> {
         let diff = now_timestamp - count_timestamp;
         Ok(diff / count)
     }
+}
 
-    // Estimate the required fees for a transaction
-    pub async fn estimate_required_tx_fees(_: &S, tx: &Transaction) -> Result<u64, BlockchainError> {
-        let mut output_count = 0;
-        let new_addresses = 0;
-        if let TransactionType::Transfers(transfers) = tx.get_data() {
-            output_count = transfers.len();
-            // TODO enable this when we are deleting nonce on storage
-            // for transfer in transfers {
-            //     if !storage.has_nonce(transfer.get_destination()).await? {
-            //         new_addresses += 1;
-            //     }
-            // }
+
+// Estimate the required fees for a transaction
+pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: u64, tx: &Transaction) -> Result<u64, BlockchainError> {
+    let mut output_count = 0;
+    let mut new_addresses = 0;
+    if let TransactionType::Transfers(transfers) = tx.get_data() {
+        output_count = transfers.len();
+        for transfer in transfers {
+            if !provider.is_account_registered_below_topoheight(transfer.get_destination(), current_topoheight).await? {
+                new_addresses += 1;
+            }
         }
-
-        Ok(calculate_tx_fee(tx.size(), output_count, new_addresses))
     }
+
+    Ok(calculate_tx_fee(tx.size(), output_count, new_addresses))
+}
+
+// Get the block reward for a side block based on how many side blocks exists at same height
+pub fn side_block_reward_percentage(side_blocks: u64) -> u64 {
+    let mut side_block_percent = SIDE_BLOCK_REWARD_PERCENT;
+    if side_blocks > 0 {
+        if side_blocks < SIDE_BLOCK_REWARD_MAX_BLOCKS {
+            side_block_percent = SIDE_BLOCK_REWARD_PERCENT / (side_blocks * 2);
+        } else {
+            // If we have more than 3 side blocks at same height
+            // we reduce the reward to 5%
+            side_block_percent = SIDE_BLOCK_REWARD_MIN_PERCENT;
+        }
+    }
+
+    side_block_percent
 }
 
 // Calculate the block reward based on the current supply
@@ -2397,4 +2493,31 @@ pub fn get_block_dev_fee(height: u64) -> u64 {
     }
 
     0
+}
+
+// Compute the combined merkle root of the tips
+// pub async fn build_merkle_tips_hash<'a, S: DifficultyProvider, I: Iterator<Item = &'a Hash> + ExactSizeIterator>(storage: &S, sorted_tips: I) -> Result<Hash, BlockchainError> {
+//     let mut merkles = Vec::with_capacity(sorted_tips.len());
+//     for hash in sorted_tips {
+//         let mut merkle_builder = MerkleBuilder::new();
+//         let header = storage.get_block_header_by_hash(hash).await?;
+//         merkle_builder.add(hash);
+//         merkle_builder.add(header.get_tips_merkle_hash());
+//         merkles.push(merkle_builder.build());
+//     }
+
+//     Ok(get_combined_hash_for_tips(merkles.iter()))
+// }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reward_side_block_percentage() {
+        assert_eq!(side_block_reward_percentage(0), SIDE_BLOCK_REWARD_PERCENT);
+        assert_eq!(side_block_reward_percentage(1), SIDE_BLOCK_REWARD_PERCENT / 2);
+        assert_eq!(side_block_reward_percentage(2), SIDE_BLOCK_REWARD_PERCENT / 4);
+        assert_eq!(side_block_reward_percentage(3), SIDE_BLOCK_REWARD_MIN_PERCENT);
+    }
 }

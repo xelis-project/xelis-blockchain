@@ -37,12 +37,18 @@ pub const MAX_ITEMS_PER_PAGE: usize = 1024;
 
 #[derive(Debug)]
 pub struct BlockMetadata {
+    // Hash of the block
     pub hash: Hash,
+    // Circulating supply
     pub supply: u64,
+    // Miner reward
     pub reward: u64,
+    // Difficulty of the block
     pub difficulty: Difficulty,
+    // Cumulative difficulty of the chain
     pub cumulative_difficulty: CumulativeDifficulty,
-    pub p: VarUint
+    // Difficulty P variable
+    pub p: VarUint,
 }
 
 impl StdHash for BlockMetadata {
@@ -88,7 +94,12 @@ impl Serializer for BlockMetadata {
     }
 
     fn size(&self) -> usize {
-        self.hash.size() + self.supply.size() + self.reward.size() + self.difficulty.size() + self.cumulative_difficulty.size()
+        self.hash.size()
+        + self.supply.size()
+        + self.reward.size()
+        + self.difficulty.size()
+        + self.cumulative_difficulty.size()
+        + self.p.size()
     }
 }
 

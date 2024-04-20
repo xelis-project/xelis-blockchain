@@ -7,7 +7,7 @@ use std::{
     net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr
     }
 };
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use log::{error, warn};
 
 // Used for Tips storage
@@ -471,5 +471,36 @@ impl<A: Serializer, B: Serializer, C: Serializer> Serializer for (A, B, C) {
 
     fn size(&self) -> usize {
         self.0.size() + self.1.size() + self.2.size()
+    }
+}
+
+impl<K: Serializer + std::hash::Hash + Eq, V: Serializer> Serializer for IndexMap<K, V> {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let size = reader.read_u16()?;
+        let mut map = IndexMap::with_capacity(size as usize);
+        for _ in 0..size {
+            let k = K::read(reader)?;
+            let v = V::read(reader)?;
+            map.insert(k, v);
+        }
+
+        Ok(map)
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u16(self.len() as u16);
+        for (key, value) in self.iter() {
+            key.write(writer);
+            value.write(writer);
+        }
+    }
+
+    fn size(&self) -> usize {
+        // 2 for the size of the map (u16)
+        let mut size = 2;
+        for (key, value) in self.iter() {
+            size += key.size() + value.size();
+        }
+        size
     }
 }

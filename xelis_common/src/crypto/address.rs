@@ -18,7 +18,7 @@ use log::debug;
 use serde::de::Error as SerdeError;
 use anyhow::Error;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AddressType {
     Normal,
     // Data variant allow to integrate data in address for easier communication / data transfered
@@ -26,7 +26,7 @@ pub enum AddressType {
     Data(DataElement)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Address {
     mainnet: bool,
     addr_type: AddressType,
@@ -238,6 +238,22 @@ impl<'a> serde::Deserialize<'a> for Address {
 
 impl Display for Address {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_string().unwrap())
+        write!(f, "{}", self.as_string().map_err(|_| fmt::Error)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::crypto::KeyPair;
+
+    use super::{Address, AddressType};
+
+    #[test]
+    fn test_serde() {
+        let (pub_key, _) = KeyPair::new().split();
+        let addr = Address::new(false, AddressType::Normal, pub_key.compress());
+        let v = addr.to_string();
+        let addr2: Address = Address::from_string(&v).unwrap();
+        assert_eq!(addr, addr2);
     }
 }

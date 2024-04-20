@@ -373,6 +373,18 @@ pub struct GetAccountsParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct IsAccountRegisteredParams<'a> {
+    pub address: Cow<'a, Address>,
+    // If it is registered in stable height (confirmed)
+    pub in_stable_height: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetAccountRegistrationParams<'a> {
+    pub address: Cow<'a, Address>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct IsTxExecutedInBlockParams<'a> {
     pub tx_hash: Cow<'a, Hash>,
     pub block_hash: Cow<'a, Hash>

@@ -63,7 +63,7 @@ fn verify_checksum(words: &Vec<String>, prefix_len: usize) -> Result<bool> {
     Ok(checksum_word == expected_checksum_word)
 }
 
-fn find_indices(words: Vec<String>) -> Result<Option<(Vec<usize>, usize)>> {
+fn find_indices(words: &Vec<String>) -> Result<Option<(Vec<usize>, usize)>> {
     'main: for (i, language) in LANGUAGES.iter().enumerate() {
         // this map is used to store the indices of the words in the language
         let mut language_words: HashMap<&str, usize> = HashMap::with_capacity(WORDS_LIST);
@@ -94,7 +94,7 @@ fn find_indices(words: Vec<String>) -> Result<Option<(Vec<usize>, usize)>> {
 }
 
 // convert a words list to a Private Key (32 bytes)
-pub fn words_to_key(words: Vec<String>) -> Result<PrivateKey> {
+pub fn words_to_key(words: &Vec<String>) -> Result<PrivateKey> {
     if words.len() != SEED_LENGTH + 1 {
         return Err(anyhow!("Invalid number of words"));
     }
@@ -122,6 +122,10 @@ pub fn words_to_key(words: Vec<String>) -> Result<PrivateKey> {
 
 pub fn key_to_words(key: &PrivateKey, language_index: usize) -> Result<Vec<String>> {
     let language = LANGUAGES.get(language_index).context("Invalid language index")?;
+    key_to_words_with_language(key, language)
+}
+
+pub fn key_to_words_with_language(key: &PrivateKey, language: &Language) -> Result<Vec<String>> {
     if language.words.len() != WORDS_LIST {
         return Err(anyhow!("Invalid word list length"));
     }
@@ -147,4 +151,22 @@ pub fn key_to_words(key: &PrivateKey, language_index: usize) -> Result<Vec<Strin
     words.push(words.get(checksum as usize).context("error no checksum calculation")?.clone());
 
     Ok(words)
+}
+
+#[cfg(test)]
+mod tests {
+    use xelis_common::crypto::KeyPair;
+
+    #[test]
+    fn test_languages() {
+        let (_, key) = KeyPair::new().split();
+        for language in super::LANGUAGES.iter() {
+            let words = super::key_to_words_with_language(&key, language).unwrap();
+            let nkey = super::words_to_key(&words).unwrap();
+            assert_eq!(key.as_scalar(), nkey.as_scalar());
+
+            let words2 = super::key_to_words_with_language(&nkey, language).unwrap();
+            assert_eq!(words, words2);
+        }
+    }
 }

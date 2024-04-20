@@ -37,6 +37,10 @@ pub enum DiskContext {
 pub enum BlockchainError {
     #[error("Block is not ordered")]
     BlockNotOrdered,
+    #[error("Invalid balances merkle hash for block {}, expected {}, got {}", _0, _1, _2)]
+    InvalidBalancesMerkleHash(Hash, Hash, Hash),
+    #[error("Invalid tips merkle hash for block {}, expected {}, got {}", _0, _1, _2)]
+    InvalidTipsMerkleHash(Hash, Hash, Hash),
     #[error("Transaction size is {} while limit is {}", human_bytes(*_0 as f64), human_bytes(*_1 as f64))]
     TxTooBig(usize, usize),
     #[error("Timestamp {} is less than parent", _0)]
@@ -45,6 +49,8 @@ pub enum BlockchainError {
     TimestampIsInFuture(TimestampMillis, TimestampMillis), // left is expected, right is got
     #[error("Block height mismatch, expected {}, got {}.", _0, _1)]
     InvalidBlockHeight(u64, u64),
+    #[error("Block height is zero which is not allowed")]
+    BlockHeightZeroNotAllowed,
     #[error("Block height is in stable height which is not allowed")]
     InvalidBlockHeightStableHeight,
     #[error("Invalid difficulty")]
