@@ -5,10 +5,18 @@ use log::debug;
 use crate::{
     block::{BLOCK_WORK_SIZE, HEADER_WORK_SIZE},
     config::TIPS_LIMIT,
-    crypto::{elgamal::CompressedPublicKey, hash, Hash, Hashable, HASH_SIZE},
+    crypto::{
+        elgamal::CompressedPublicKey,
+        hash,
+        pow_hash,
+        Hash,
+        Hashable,
+        HASH_SIZE
+    },
     serializer::{Reader, ReaderError, Serializer, Writer},
     time::TimestampMillis
 };
+use xelis_hash::Error as XelisHashError;
 use super::EXTRA_NONCE_SIZE;
 
 // Serialize the extra nonce in a hexadecimal string
@@ -169,9 +177,8 @@ impl BlockHeader {
     }
 
     // compute the block POW hash
-    pub fn get_pow_hash(&self) -> Hash {
-        // TODO replace with the real POW algorithm
-        hash(&self.get_serialized_header())
+    pub fn get_pow_hash(&self) -> Result<Hash, XelisHashError> {
+        pow_hash(&self.get_serialized_header())
     }
 
     pub fn get_transactions(&self) -> &IndexSet<Hash> {

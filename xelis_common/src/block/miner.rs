@@ -1,12 +1,14 @@
 use std::borrow::Cow;
 use crate::{
     crypto::{
-        PublicKey,
-        Hashable,
+        pow_hash_with_scratch_pad,
         Hash,
-        hash,
+        Hashable,
+        PublicKey,
+        XelisHashError,
+        POW_MEMORY_SIZE
     },
-    serializer::{Serializer, Writer, Reader, ReaderError},
+    serializer::{Reader, ReaderError, Serializer, Writer},
     time::TimestampMillis,
 };
 
@@ -51,14 +53,13 @@ impl<'a> BlockMiner<'a> {
     }
 
     #[inline(always)]
-    pub fn get_pow_hash(&mut self) -> Hash {
+    pub fn get_pow_hash(&mut self, scratch_pad: &mut [u64; POW_MEMORY_SIZE]) -> Result<Hash, XelisHashError> {
         if self.cache.is_none() {
             self.cache = Some(self.to_bytes().try_into().unwrap());
         }
 
         let bytes = self.cache.as_ref().unwrap();
-        // TODO replace with real POW algorithm
-        hash(bytes)
+        pow_hash_with_scratch_pad(bytes, scratch_pad)
     }
 
     pub fn get_extra_nonce(&mut self) -> &mut [u8; EXTRA_NONCE_SIZE] {
