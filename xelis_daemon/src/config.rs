@@ -28,10 +28,10 @@ pub const MILLIS_PER_SECOND: u64 = 1000;
 // Block Time in milliseconds
 pub const BLOCK_TIME_MILLIS: u64 = 15 * MILLIS_PER_SECOND; // 15s block time
 // Minimum difficulty (each difficulty point is in H/s)
-// Current: BLOCK TIME in millis * 50 = 50 KH/s minimum
+// Current: BLOCK TIME in millis * 20 = 20 KH/s minimum
 // This is to prevent spamming the network with low difficulty blocks
 // This is active only on mainnet mode
-pub const MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 50);
+pub const MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 20);
 // This is also used as testnet and devnet minimum difficulty
 pub const GENESIS_BLOCK_DIFFICULTY: Difficulty = Difficulty::from_u64(1);
 // 1024 * 1024 + (256 * 1024) bytes = 1.25 MB maximum size per block with txs
@@ -140,6 +140,7 @@ pub const PEER_BLOCK_CACHE_SIZE: usize = 1024;
 
 // Genesis block to have the same starting point for every nodes
 // Genesis block in hexadecimal format
+const MAINNET_GENESIS_BLOCK: &str = "";
 const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018dc0f93552000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac6738cec61a2033103f21b2ed2ddcf8f561eebc7ba4ecab337c484fef8bff6";
 
 // Genesis block getter
@@ -147,7 +148,7 @@ const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018dc0f93552000000000
 // Dev returns none to generate a new genesis block each time it starts a chain
 pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
     match network {
-        Network::Mainnet => todo!("Mainnet is not ready yet, please use testnet network"),
+        Network::Mainnet => Some(MAINNET_GENESIS_BLOCK),
         Network::Testnet => Some(TESTNET_GENESIS_BLOCK),
         Network::Dev => None
     }
@@ -158,15 +159,17 @@ lazy_static! {
     pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
 }
 
-// Testnet genesis block hash
+// Genesis block hash for both networks
 // It must be the same as the hash of the genesis block
+const MAINNET_GENESIS_BLOCK_HASH: Hash = Hash::zero();
 const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([183, 21, 203, 2, 41, 209, 63, 95, 84, 10, 228, 138, 223, 3, 188, 49, 176, 148, 176, 64, 176, 117, 106, 36, 84, 99, 27, 45, 221, 137, 156, 58]);
 
 // Genesis block hash based on network selected
 pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
     match network {
-        Network::Mainnet => todo!("Mainnet is not ready yet, please use testnet network"),
-        _ => &TESTNET_GENESIS_BLOCK_HASH
+        Network::Mainnet => &MAINNET_GENESIS_BLOCK_HASH,
+        Network::Testnet => &TESTNET_GENESIS_BLOCK_HASH,
+        Network::Dev => panic!("Dev network has not fix genesis block hash"),
     }
 }
 
