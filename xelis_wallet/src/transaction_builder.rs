@@ -129,3 +129,9 @@ impl AccountState for TransactionBuilderState {
         Ok(())
     }
 }
+
+impl AsMut<EstimateFeesState> for TransactionBuilderState {
+    fn as_mut(&mut self) -> &mut EstimateFeesState {
+        &mut self.inner
+    }
+}

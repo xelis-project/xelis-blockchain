@@ -711,23 +711,7 @@ impl Wallet {
             state.add_balance(asset, balance);
         }
 
-        // To pay exact fees needed, we must verify that we don't have to pay more than needed
-        let used_keys = transaction_type.used_keys();
-        if !used_keys.is_empty() {
-            trace!("Checking if destination keys are registered");
-            if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
-                if network_handler.is_running().await {
-                    trace!("Network handler is running, checking if keys are registered");
-                    for key in used_keys {
-                        let addr = key.to_address(self.network.is_mainnet());
-                        trace!("Checking if {} is registered in stable height", addr);
-                        if network_handler.get_api().is_account_registered(&addr, true).await? {
-                            state.add_registered_key(addr.to_public_key());
-                        }
-                    }
-                }
-            }
-        }
+        self.add_registered_keys_for_fees_estimation(state.as_mut(), &fee, &transaction_type).await?;
 
         // Create the transaction builder
         let builder = TransactionBuilder::new(0, self.public_key.clone(), transaction_type, fee);
@@ -753,11 +737,40 @@ impl Wallet {
         }
     }
 
+    // Search if possible all registered keys for the transaction type
+    pub async fn add_registered_keys_for_fees_estimation(&self, state: &mut EstimateFeesState, fee: &FeeBuilder, transaction_type: &TransactionTypeBuilder) -> Result<(), WalletError> {
+        trace!("add registered keys for fees estimation");
+        if let FeeBuilder::Multiplier(_) = fee {
+            // To pay exact fees needed, we must verify that we don't have to pay more than needed
+            let used_keys = transaction_type.used_keys();
+            if !used_keys.is_empty() {
+                trace!("Checking if destination keys are registered");
+                if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
+                    if network_handler.is_running().await {
+                        trace!("Network handler is running, checking if keys are registered");
+                        for key in used_keys {
+                            let addr = key.to_address(self.network.is_mainnet());
+                            trace!("Checking if {} is registered in stable height", addr);
+                            if network_handler.get_api().is_account_registered(&addr, true).await? {
+                                state.add_registered_key(addr.to_public_key());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     // Estimate fees for a given transaction type
     // Estimated fees returned are the minimum required to be valid on chain
     pub async fn estimate_fees(&self, tx_type: TransactionTypeBuilder) -> Result<u64, WalletError> {
         trace!("estimate fees");
         let mut state = EstimateFeesState::new();
+
+        self.add_registered_keys_for_fees_estimation(&mut state, &FeeBuilder::default(), &tx_type).await?;
+
         let builder = TransactionBuilder::new(0, self.public_key.clone(), tx_type, FeeBuilder::default());
         let estimated_fees = builder.estimate_fees(&mut state)
             .map_err(|e| WalletError::Any(e.into()))?;
