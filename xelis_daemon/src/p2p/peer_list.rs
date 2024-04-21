@@ -8,9 +8,12 @@ use crate::{
     p2p::packet::peer_disconnected::PacketPeerDisconnected
 };
 use super::{peer::Peer, packet::Packet, error::P2pError};
-use std::{collections::HashMap, net::{SocketAddr, IpAddr},
-fs, fmt::{Formatter, self, Display},
-time::Duration};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    fmt::{self, Display, Formatter},
+    fs, net::{IpAddr, SocketAddr},
+    time::Duration
+};
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
 use tokio::sync::{RwLock, mpsc::UnboundedSender};
@@ -443,20 +446,18 @@ impl PeerList {
     }
 
     // increase the fail count of a peer
-    pub fn increase_fail_count_for_saved_peer(&mut self, ip: &IpAddr) {
-        self.internal_increase_fail_count_for_saved_peer(ip, false)
-    }
-
-    pub fn internal_increase_fail_count_for_saved_peer(&mut self, ip: &IpAddr, on_connect: bool) {
-        if let Some(stored_peer) = self.stored_peers.get_mut(ip) {
-            let fail_count = stored_peer.get_fail_count();
-            if on_connect && (fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0 || fail_count == u8::MAX)  {
-                warn!("Temp banning {} for failing to connect too many times", ip);
-                // we reached the max value, we can't increase it anymore
-                stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME));
-            } else if fail_count != u8::MAX {
-                stored_peer.set_fail_count(fail_count + 1);
-            }
+    pub fn increase_fail_count_for_stored_peer(&mut self, ip: &IpAddr) {
+        let stored_peer = match self.stored_peers.entry(*ip) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(StoredPeer::new(0, StoredPeerState::Graylist))
+        };
+        let fail_count = stored_peer.get_fail_count();
+        if fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0 || fail_count == u8::MAX  {
+            warn!("Temp banning {} for failing to connect too many times", ip);
+            // we reached the max value, we can't increase it anymore
+            stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME));
+        } else if fail_count != u8::MAX {
+            stored_peer.set_fail_count(fail_count + 1);
         }
     }
 
