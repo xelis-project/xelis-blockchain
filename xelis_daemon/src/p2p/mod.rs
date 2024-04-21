@@ -398,7 +398,7 @@ impl<S: Storage> P2pServer<S> {
                                 trace!("Error while trying to connect to new outgoing peer: {}", e);
                                 // if its a outgoing connection, increase its fail count
                                 let mut peer_list = self.peer_list.write().await;
-                                peer_list.increase_fail_count_for_stored_peer(&addr.ip());
+                                peer_list.increase_fail_count_for_stored_peer(&addr.ip(), false);
                                 continue;
                             }
                         }
@@ -413,7 +413,7 @@ impl<S: Storage> P2pServer<S> {
                     P2pError::InvalidHandshake | P2pError::InvalidPacketSize | P2pError::InvalidPacket => {
                         // if its a outgoing connection, increase its fail count
                         let mut peer_list = self.peer_list.write().await;
-                        peer_list.increase_fail_count_for_stored_peer(&addr);
+                        peer_list.increase_fail_count_for_stored_peer(&addr, true);
                     },
                     _ => ()
                 };
