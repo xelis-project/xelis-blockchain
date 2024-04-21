@@ -407,15 +407,16 @@ impl<S: Storage> P2pServer<S> {
             };
             trace!("Handling new connection: {} (out = {}, priority = {})", connection, connection.is_out(), priority);
             let addr = connection.get_address().ip();
+            let is_out = connection.is_out();
             if let Err(e) = self.handle_new_connection(&mut handshake_buffer, connection, priority).await {
-                debug!("Error occured on handled connection: {}", e);
+                debug!("Error occured on handled connection {} (out: {}, priority: {}): {}", addr, is_out, priority, e);
                 match e {
-                    P2pError::InvalidHandshake | P2pError::InvalidPacketSize | P2pError::InvalidPacket => {
+                    P2pError::Disconnected => (),
+                    _ => {
                         // if its a outgoing connection, increase its fail count
                         let mut peer_list = self.peer_list.write().await;
                         peer_list.increase_fail_count_for_stored_peer(&addr, true);
                     },
-                    _ => ()
                 };
                 // no need to close it here, as it will be automatically closed in drop
             }
