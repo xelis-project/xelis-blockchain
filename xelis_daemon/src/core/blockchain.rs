@@ -2124,18 +2124,15 @@ impl<S: Storage> Blockchain<S> {
                     if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx.clone(), tx_hash.clone(), false).await {
                         debug!("Error while adding back orphaned tx: {}, broadcasting event", e);
                         // We couldn't add it back to mempool, let's notify this event
-                        if should_track_events.contains(&NotifyEvent::TransactionOrphaned) {
-                            let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
-
-                            let data = TransactionResponse {
-                                blocks: None,
-                                executed_in_block: None,
-                                in_mempool: false,
-                                first_seen: None,
-                                data,
-                            };
-                            events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
-                        }
+                        let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
+                        let data = TransactionResponse {
+                            blocks: None,
+                            executed_in_block: None,
+                            in_mempool: false,
+                            first_seen: None,
+                            data,
+                        };
+                        events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
                     }
                 }
             }
