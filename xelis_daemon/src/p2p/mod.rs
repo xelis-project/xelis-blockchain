@@ -330,6 +330,7 @@ impl<S: Storage> P2pServer<S> {
         let mut handshake_buffer = [0; 512];
         loop {
             let (connection, priority) = select! {
+                biased; // biased to accept new connections first
                 res = listener.accept() => {
                     trace!("New listener result received (is err: {})", res.is_err());
                     let (mut stream, addr) = match res {
