@@ -108,6 +108,7 @@ use std::{
 };
 use bytes::Bytes;
 use rand::Rng;
+use rand::seq::SliceRandom;
 
 enum MessageChannel {
     Exit,
@@ -157,12 +158,15 @@ pub struct P2pServer<S: Storage> {
     // Are we allowing others nodes to share us as a potential peer ?
     // Also if we allows to be listed in get_peers RPC API
     sharable: bool,
+    // Do we try to connect to others nodes
+    // If this is enabled, only way to have peers is to let them connect to us
+    outgoing_connections_disabled: AtomicBool,
     // Are we syncing the chain with another peer
     is_syncing: AtomicBool,
 }
 
 impl<S: Storage> P2pServer<S> {
-    pub fn new(dir_path: Option<String>, tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool) -> Result<Arc<Self>, P2pError> {
+    pub fn new(dir_path: Option<String>, tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool, disable_outgoing_connections: bool) -> Result<Arc<Self>, P2pError> {
         if let Some(tag) = &tag {
             debug_assert!(tag.len() > 0 && tag.len() <= 16);
         }
@@ -201,6 +205,7 @@ impl<S: Storage> P2pServer<S> {
             exclusive_nodes: HashSet::from_iter(exclusive_nodes.into_iter()),
             sharable,
             is_syncing: AtomicBool::new(false),
+            outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
         };
 
         let arc = Arc::new(server);
@@ -236,8 +241,19 @@ impl<S: Storage> P2pServer<S> {
         self.is_running.load(Ordering::Acquire)
     }
 
+    pub fn is_outgoing_connections_disabled(&self) -> bool {
+        self.outgoing_connections_disabled.load(Ordering::Acquire)
+    }
+
+    pub fn set_disable_outgoing_connections(&self, disable: bool) {
+        self.outgoing_connections_disabled.store(disable, Ordering::Release);
+    }
+
     // Connect to nodes which aren't already connected in parameters
     async fn connect_to_nodes(self: &Arc<Self>, nodes: impl Iterator<Item = SocketAddr>) -> Result<(), P2pError> {
+        let mut nodes = nodes.collect::<Vec<_>>();
+        nodes.shuffle(&mut rand::thread_rng());
+
         for addr in nodes {
             if self.accept_new_connections().await {
                 if !self.is_connected_to_addr(&addr).await? {
@@ -314,6 +330,7 @@ impl<S: Storage> P2pServer<S> {
         let mut handshake_buffer = [0; 512];
         loop {
             let (connection, priority) = select! {
+                biased; // biased to accept new connections first
                 res = listener.accept() => {
                     trace!("New listener result received (is err: {})", res.is_err());
                     let (mut stream, addr) = match res {
@@ -361,13 +378,27 @@ impl<S: Storage> P2pServer<S> {
                             continue;
                         }
 
+                        if self.is_outgoing_connections_disabled() {
+                            trace!("Outgoing connections are disabled, skipping connection to {}", addr);
+                            continue;
+                        }
+
+                        {
+                            // check that this incoming peer isn't blacklisted
+                            let peer_list = self.peer_list.read().await;
+                            if !peer_list.is_allowed(&addr.ip()) {
+                                debug!("{} is blacklisted, rejecting outgoing connection", addr);
+                                continue;
+                            }
+                        }
+
                         match self.connect_to_peer(addr).await {
                             Ok(connection) => (connection, priority),
                             Err(e) => {
                                 trace!("Error while trying to connect to new outgoing peer: {}", e);
                                 // if its a outgoing connection, increase its fail count
                                 let mut peer_list = self.peer_list.write().await;
-                                peer_list.increase_fail_count_for_saved_peer(&addr.ip());
+                                peer_list.increase_fail_count_for_stored_peer(&addr.ip(), false);
                                 continue;
                             }
                         }
@@ -375,8 +406,18 @@ impl<S: Storage> P2pServer<S> {
                 }
             };
             trace!("Handling new connection: {} (out = {}, priority = {})", connection, connection.is_out(), priority);
+            let addr = connection.get_address().ip();
+            let is_out = connection.is_out();
             if let Err(e) = self.handle_new_connection(&mut handshake_buffer, connection, priority).await {
-                debug!("Error occured on handled connection: {}", e);
+                debug!("Error occured on handled connection {} (out: {}, priority: {}): {}", addr, is_out, priority, e);
+                match e {
+                    P2pError::Disconnected => (),
+                    _ => {
+                        // if its a outgoing connection, increase its fail count
+                        let mut peer_list = self.peer_list.write().await;
+                        peer_list.increase_fail_count_for_stored_peer(&addr, true);
+                    },
+                };
                 // no need to close it here, as it will be automatically closed in drop
             }
         }
@@ -493,7 +534,7 @@ impl<S: Storage> P2pServer<S> {
     // Connect to a specific peer address
     // Buffer is passed in parameter to prevent the re-allocation each time
     pub async fn try_to_connect_to_peer(&self, addr: SocketAddr, priority: bool) {
-        trace!("try to connect to peer addr {}, priority: {}", addr, priority);
+        debug!("try to connect to peer addr {}, priority: {}", addr, priority);
         if !self.is_compatible_with_exclusive_nodes(&addr) {
             debug!("Not in exclusive node list: {}, skipping", addr);
             return;
@@ -514,14 +555,13 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Connect to a new peer using its socket address
-    // We give up to 800 millis to connect to this address
     // Then we send him a handshake
     async fn connect_to_peer(&self, addr: SocketAddr) -> Result<Connection, P2pError> {
         trace!("Trying to connect to {}", addr);
         if self.is_connected_to_addr(&addr).await? {
             return Err(P2pError::PeerAlreadyConnected(format!("{}", addr)));
         }
-        let stream = timeout(Duration::from_millis(800), TcpStream::connect(&addr)).await??; // allow maximum 800ms of latency
+        let stream = timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), TcpStream::connect(&addr)).await??;
         let connection = Connection::new(stream, addr, true);
         Ok(connection)
     }
@@ -1282,15 +1322,14 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 let is_local_peer = is_local_address(peer.get_connection().get_address());
-                for peer in ping.get_peers() {
-                    if is_local_address(peer) && !is_local_peer {
-                        error!("{} is a local address but peer is external", peer);
+                for addr in ping.get_peers() {
+                    if is_local_address(addr) && !is_local_peer {
+                        error!("{} is a local address from {} but peer is external", addr, peer);
                         return Err(P2pError::InvalidPeerlist)
                     }
 
-                    if !self.is_connected_to_addr(&peer).await? {
-                        let peer = peer.clone();
-                        self.try_to_connect_to_peer(peer, false).await;
+                    if !self.is_connected_to_addr(&addr).await? {
+                        self.try_to_connect_to_peer(addr.clone(), false).await;
                     }
                 }
                 ping.into_owned().update_peer(peer, &self.blockchain).await?;

@@ -359,6 +359,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     // Add wallet commands
     command_manager.add_command(Command::new("change_password", "Set a new password to open your wallet", CommandHandler::Async(async_handler!(change_password))))?;
     command_manager.add_command(Command::with_optional_arguments("transfer", "Send asset to a specified address", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(transfer))))?;
+    command_manager.add_command(Command::with_optional_arguments("transfer_all", "Send all your asset balance to a specified address", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(transfer_all))))?;
     command_manager.add_command(Command::with_required_arguments("burn", "Burn amount of asset", vec![Arg::new("asset", ArgType::Hash), Arg::new("amount", ArgType::Number)], CommandHandler::Async(async_handler!(burn))))?;
     command_manager.add_command(Command::new("display_address", "Show your wallet address", CommandHandler::Async(async_handler!(display_address))))?;
     command_manager.add_command(Command::with_optional_arguments("balance", "List all non-zero balances or show the selected one", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(balance))))?;
@@ -661,6 +662,72 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
         extra_data: None
     };
     let tx = wallet.create_transaction(TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default()).await
+        .context("Error while creating transaction")?;
+
+    broadcast_tx(wallet, manager, tx).await;
+    Ok(())
+}
+
+
+// Send the whole balance to a specified address
+async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    // read address
+    let str_address = prompt.read_input(
+        prompt::colorize_str(Color::Green, "Address: "),
+        false
+    ).await.context("Error while reading address")?;
+    let address = Address::from_string(&str_address).context("Invalid address")?;
+
+    let mut asset = args.get_value("asset").and_then(|v| v.to_hash()).ok();
+    if asset.is_none() {
+        asset = prompt.read_hash(
+           prompt::colorize_str(Color::Green, "Asset (default XELIS): ")
+       ).await.ok();
+    }
+
+    let asset = asset.unwrap_or(XELIS_ASSET);
+    let (mut amount, decimals) = {
+        let storage = wallet.get_storage().read().await;
+        let amount = storage.get_plaintext_balance_for(&asset).await.unwrap_or(0);
+        let decimals = storage.get_asset_decimals(&asset).unwrap_or(COIN_DECIMALS);
+        (amount, decimals)
+    };
+
+    let transfer = TransferBuilder {
+        destination: address.clone(),
+        amount,
+        asset: asset.clone(),
+        extra_data: None
+    };
+    let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
+    let estimated_fees = wallet.estimate_fees(tx_type.clone()).await.context("Error while estimating fees")?;
+
+    if asset == XELIS_ASSET {
+        amount -= estimated_fees;
+    }
+
+    manager.message(format!("Sending {} of {} to {} (fees: {})", format_coin(amount, decimals), asset, address.to_string(), format_xelis(estimated_fees)));
+    
+    if !prompt.ask_confirmation().await.context("Error while confirming action")? {
+        manager.message("Transaction has been aborted");
+        return Ok(())
+    }
+
+    let transfer = TransferBuilder {
+        destination: address,
+        amount,
+        asset,
+        extra_data: None
+    };
+    let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
+
+    manager.message("Building transaction...");
+
+    let tx = wallet.create_transaction(tx_type, FeeBuilder::default()).await
         .context("Error while creating transaction")?;
 
     broadcast_tx(wallet, manager, tx).await;

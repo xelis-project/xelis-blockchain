@@ -148,7 +148,7 @@ NOTE: It is recommended to use the GetWork WebSocket server to be notified of ne
 Mining jobs are send only when a new block is found or when a new TX is added in mempool.
 Miners software are recommended to update themselves the block timestamp (or at least every 500ms) for best network difficulty calculation.
 
-Actually, the POW Hashing algorithm is `Blake3` which is until we develop (or choose) our own algorithm.
+The POW Hashing algorithm is [xelis-hash](https://github.com/xelis-project/xelis-hash).
 
 ## Client Protocol
 

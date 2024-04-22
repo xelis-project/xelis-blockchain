@@ -177,7 +177,12 @@ pub struct Config {
     /// 
     /// Note that it may prevent to have new incoming peers.
     #[clap(long, default_value = "false")]
-    pub disable_ip_sharing: bool
+    pub disable_ip_sharing: bool,
+    /// Disable outgoing connections from peers.
+    /// 
+    /// This is useful for seed nodes under heavy load or for nodes that don't want to connect to others.
+    #[clap(long, default_value = "false")]
+    pub disable_outgoing_connections: bool
 }
 
 pub struct Blockchain<S: Storage> {
@@ -313,7 +318,7 @@ impl<S: Storage> Blockchain<S> {
                 exclusive_nodes.push(addr);
             }
 
-            match P2pServer::new(config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing) {
+            match P2pServer::new(config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing, config.disable_outgoing_connections) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
@@ -2119,18 +2124,15 @@ impl<S: Storage> Blockchain<S> {
                     if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx.clone(), tx_hash.clone(), false).await {
                         debug!("Error while adding back orphaned tx: {}, broadcasting event", e);
                         // We couldn't add it back to mempool, let's notify this event
-                        if should_track_events.contains(&NotifyEvent::TransactionOrphaned) {
-                            let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
-
-                            let data = TransactionResponse {
-                                blocks: None,
-                                executed_in_block: None,
-                                in_mempool: false,
-                                first_seen: None,
-                                data,
-                            };
-                            events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
-                        }
+                        let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
+                        let data = TransactionResponse {
+                            blocks: None,
+                            executed_in_block: None,
+                            in_mempool: false,
+                            first_seen: None,
+                            data,
+                        };
+                        events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
                     }
                 }
             }

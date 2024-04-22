@@ -121,6 +121,8 @@ pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
 pub const PEER_FAIL_TIME_RESET: u64 = 30 * 60;
 // number of fail to disconnect the peer
 pub const PEER_FAIL_LIMIT: u8 = 50;
+// number of fail during handshake before temp ban
+pub const PEER_FAIL_TO_CONNECT_LIMIT: u8 = 3;
 // number of seconds to temp ban the peer in case of fail reached
 // Set to 15 minutes
 pub const PEER_TEMP_BAN_TIME: u64 = 15 * 60;
@@ -129,7 +131,7 @@ pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15000;
 // millis until we timeout during a bootstrap request
 pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60000;
 // millis until we timeout during a handshake
-pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 3000;
+pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 5000;
 // 16 additional bytes are for AEAD from ChaCha20Poly1305
 pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
 // Peer TX cache size
@@ -169,7 +171,7 @@ pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
     match network {
         Network::Mainnet => &MAINNET_GENESIS_BLOCK_HASH,
         Network::Testnet => &TESTNET_GENESIS_BLOCK_HASH,
-        Network::Dev => panic!("Dev network has not fix genesis block hash"),
+        Network::Dev => panic!("Dev network has no fix genesis block hash"),
     }
 }
 
