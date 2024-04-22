@@ -163,8 +163,16 @@ impl EncryptedStorage {
         Ok(storage)
     }
 
+    // Flush on disk to make sure it is saved
+    pub fn flush(&mut self) -> Result<()> {
+        trace!("Flushing storage");
+        self.inner.db.flush()?;
+        Ok(())
+    }
+
     // Await for the storage to be flushed
     pub async fn stop(&mut self) {
+        trace!("Stopping storage");
         if let Err(e) = self.inner.db.flush_async().await {
             error!("Error while flushing the database: {}", e);
         }

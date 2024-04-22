@@ -136,8 +136,10 @@ pub enum WalletError {
     NoSalt,
     #[error("Error while hashing: {}", _0)]
     AlgorithmHashingError(String),
-    #[error("Error while fetching encrypted master key from DB")]
+    #[error("Error while fetching encrypted master key: not found in DB")]
     NoMasterKeyFound,
+    #[error("Error while fetching password salt: not found in DB")]
+    NoPasswordSaltFound,
     #[error("Invalid salt size stored in storage, expected 32 bytes")]
     InvalidSaltSize,
     #[error("Error while fetching password salt from DB")]
@@ -408,6 +410,9 @@ impl Wallet {
 
         // Store the private key
         storage.set_private_key(&keypair.get_private_key())?;
+
+        // Flush the storage to be sure its written on disk
+        storage.flush()?;
 
         Ok(Self::new(storage, keypair, network, precomputed_tables))
     }
