@@ -718,6 +718,9 @@ impl Storage for SledStorage {
 
                 // save the new registration topoheight
                 self.registrations.insert(&key, &topoheight.to_be_bytes())?;
+
+                // Overwrite with the new topoheight
+                buf[0..8].copy_from_slice(&topoheight.to_be_bytes());
                 self.registrations_prefixed.insert(&buf, &[])?;
             }
         }
@@ -784,6 +787,7 @@ impl Storage for SledStorage {
 
             // Delete the hash at topoheight
             let (hash, block, block_txs) = self.delete_block_at_topoheight(topoheight).await?;
+            trace!("Block {} at topoheight {} deleted", hash, topoheight);
             txs.extend(block_txs);
 
             // generate new tips
@@ -900,7 +904,7 @@ impl Storage for SledStorage {
                     let pkey = PublicKey::from_bytes(&key[0..32])?;
 
                     let mut version = self.get_balance_at_exact_topoheight(&pkey, &asset, highest_topoheight).await
-                    .context(format!("Error while retrieving balance at exact topoheight {highest_topoheight}"))?;
+                        .context(format!("Error while retrieving balance at exact topoheight {highest_topoheight}"))?;
 
                     while let Some(previous_topoheight) = version.get_previous_topoheight() {
                         if previous_topoheight < topoheight {
