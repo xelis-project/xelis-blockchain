@@ -12,6 +12,7 @@ use xelis_common::{
     crypto::{
         elgamal::Ciphertext,
         Hash,
+        Hashable,
         PublicKey
     },
     transaction::{
@@ -442,27 +443,27 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     ) -> Result<(), BlockchainError> {
         // Check the version
         if tx.get_version() != 0 {
-            debug!("Invalid version: {}", tx.get_version());
+            debug!("Invalid version for tx {}: {}", tx.hash(), tx.get_version());
             return Err(BlockchainError::InvalidTxVersion);
         }
 
         // Verified that minimal fees are set
         let required_fees = blockchain::estimate_required_tx_fees(self.get_storage(), self.topoheight, tx).await?;
         if required_fees > tx.get_fee() {
-            debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
+            debug!("Invalid fees for tx {}: {} required, {} provided", tx.hash(), format_xelis(required_fees), format_xelis(tx.get_fee()));
             return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));
         }
 
         let reference = tx.get_reference();
         // Verify that the block he is built upon exists
         if !self.storage.has_block_with_hash(&reference.hash).await? {
-            debug!("Invalid reference: block {} not found", reference.hash);
+            debug!("Invalid reference for tx {}: block {} not found", tx.hash(), reference.hash);
             return Err(BlockchainError::InvalidReferenceHash);
         }
 
         // Verify that it is not a fake topoheight
         if self.topoheight < reference.topoheight {
-            debug!("Invalid reference: topoheight {} is higher than chain {}", reference.topoheight, self.topoheight);
+            debug!("Invalid reference for tx {}: topoheight {} is higher than chain {}", tx.hash(), reference.topoheight, self.topoheight);
             return Err(BlockchainError::InvalidReferenceTopoheight);
         }
 
