@@ -2520,6 +2520,12 @@ impl<S: Storage> P2pServer<S> {
 
         self.handle_chain_response(peer, response, requested_max_size).await
     }
+
+    // Clear all p2p connections by kicking peers
+    pub async fn clear_connections(&self) {
+        let mut peer_list = self.peer_list.write().await;
+        peer_list.close_all().await;
+    }
 }
 
 // Check if a socket address is a local address

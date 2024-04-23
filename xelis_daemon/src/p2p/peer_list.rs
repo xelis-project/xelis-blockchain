@@ -136,6 +136,16 @@ impl PeerList {
         )
     }
 
+    // Clear the peerlist, this will overwrite the file on disk also
+    pub fn clear_peerlist(&mut self) {
+        trace!("clear peerlist");
+        self.peers.clear();
+
+        if let Err(e) = self.save_peers_to_file() {
+            error!("Error while trying to save peerlist to file: {}", e);
+        }
+    }
+
     // Remove a peer from the list
     // We will notify all peers that have this peer in common
     pub async fn remove_peer(&mut self, peer_id: u64) -> Result<(), P2pError> {
@@ -463,6 +473,7 @@ impl PeerList {
 
     // serialize the stored peers to a file
     fn save_peers_to_file(&self) -> Result<(), P2pError> {
+        trace!("saving peerlist to file");
         let content = serde_json::to_string_pretty(&self.stored_peers)?;
         fs::write(&self.filename, content)?;
 
