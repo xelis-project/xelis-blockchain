@@ -31,7 +31,9 @@ pub const BLOCK_TIME_MILLIS: u64 = 15 * MILLIS_PER_SECOND; // 15s block time
 // Current: BLOCK TIME in millis * 20 = 20 KH/s minimum
 // This is to prevent spamming the network with low difficulty blocks
 // This is active only on mainnet mode
-pub const MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 20);
+pub const MAINNET_MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS * 20);
+// Testnet & Devnet minimum difficulty
+pub const OTHER_MINIMUM_DIFFICULTY: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS);
 // This is also used as testnet and devnet minimum difficulty
 pub const GENESIS_BLOCK_DIFFICULTY: Difficulty = Difficulty::from_u64(1);
 // 1024 * 1024 + (256 * 1024) bytes = 1.25 MB maximum size per block with txs
@@ -114,6 +116,8 @@ pub const P2P_PING_PEER_LIST_LIMIT: usize = 16;
 pub const P2P_DEFAULT_MAX_PEERS: usize = 32;
 // time in seconds between each time we try to connect to a new peer
 pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
+// Peer wait on error accept new p2p connections in seconds
+pub const P2P_PEER_WAIT_ON_ERROR: u64 = 15;
 
 // Peer rules
 // number of seconds to reset the counter
@@ -122,10 +126,13 @@ pub const PEER_FAIL_TIME_RESET: u64 = 30 * 60;
 // number of fail to disconnect the peer
 pub const PEER_FAIL_LIMIT: u8 = 50;
 // number of fail during handshake before temp ban
-pub const PEER_FAIL_TO_CONNECT_LIMIT: u8 = 3;
+pub const PEER_FAIL_TO_CONNECT_LIMIT: u8 = 10;
 // number of seconds to temp ban the peer in case of fail reached
 // Set to 15 minutes
 pub const PEER_TEMP_BAN_TIME: u64 = 15 * 60;
+// number of seconds to temp ban the peer in case of fail reached during handshake
+// Set to 1 minute
+pub const PEER_TEMP_BAN_TIME_ON_CONNECT: u64 = 60;
 // millis until we timeout
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15000;
 // millis until we timeout during a bootstrap request
@@ -143,7 +150,7 @@ pub const PEER_BLOCK_CACHE_SIZE: usize = 1024;
 // Genesis block to have the same starting point for every nodes
 // Genesis block in hexadecimal format
 const MAINNET_GENESIS_BLOCK: &str = "0000000000000000000000018efc057580000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
-const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018dc0f93552000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac6738cec61a2033103f21b2ed2ddcf8f561eebc7ba4ecab337c484fef8bff6";
+const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018f116b47cf000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
 
 // Genesis block getter
 // This is necessary to prevent having the same Genesis Block for differents network
@@ -164,7 +171,7 @@ lazy_static! {
 // Genesis block hash for both networks
 // It must be the same as the hash of the genesis block
 const MAINNET_GENESIS_BLOCK_HASH: Hash = Hash::new([175, 118, 37, 203, 175, 200, 25, 148, 9, 202, 29, 120, 93, 128, 36, 209, 146, 193, 217, 36, 61, 51, 24, 194, 114, 113, 121, 208, 237, 163, 27, 55]);
-const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([183, 21, 203, 2, 41, 209, 63, 95, 84, 10, 228, 138, 223, 3, 188, 49, 176, 148, 176, 64, 176, 117, 106, 36, 84, 99, 27, 45, 221, 137, 156, 58]);
+const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([171, 50, 219, 186, 28, 164, 189, 225, 197, 167, 187, 143, 213, 59, 217, 238, 51, 242, 133, 181, 188, 235, 151, 50, 110, 33, 185, 188, 100, 146, 23, 132]);
 
 // Genesis block hash based on network selected
 pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
@@ -209,7 +216,7 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
 // Testnet has a lower difficulty to allow faster block generation
 pub const fn get_minimum_difficulty(network: &Network) -> Difficulty {
     match network {
-        Network::Mainnet => MINIMUM_DIFFICULTY,
-        _ => GENESIS_BLOCK_DIFFICULTY,
+        Network::Mainnet => MAINNET_MINIMUM_DIFFICULTY,
+        _ => OTHER_MINIMUM_DIFFICULTY,
     }
 }

@@ -6,7 +6,7 @@ pub mod config;
 use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
 use fern::colors::Color;
 use humantime::format_duration;
-use log::{info, error, warn};
+use log::{debug, error, info, warn};
 use p2p::P2pServer;
 use rpc::{
     getwork_server::SharedGetWorkServer,
@@ -176,6 +176,8 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_required_arguments("kick_peer", "Kick a peer using its ip:port", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(kick_peer::<S>))))?;
     command_manager.add_command(Command::new("clear_caches", "Clear storage caches", CommandHandler::Async(async_handler!(clear_caches::<S>))))?;
     command_manager.add_command(Command::new("clear_rpc_connections", "Clear all WS connections from RPC", CommandHandler::Async(async_handler!(clear_rpc_connections::<S>))))?;
+    command_manager.add_command(Command::new("clear_p2p_connections", "Clear all P2P connections", CommandHandler::Async(async_handler!(clear_p2p_connections::<S>))))?;
+    command_manager.add_command(Command::new("clear_p2p_peerlist", "Clear P2P peerlist", CommandHandler::Async(async_handler!(clear_p2p_peerlist::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("difficulty_dataset", "Create a dataset for difficulty from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(difficulty_dataset::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
     command_manager.add_command(Command::new("p2p_outgoing_connections", "Accept/refuse to connect to outgoing nodes", CommandHandler::Async(async_handler!(p2p_outgoing_connections::<S>))))?;
@@ -200,28 +202,34 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     };
 
     let closure = |_: &_, _: _| async {
+        debug!("Retrieving P2P peers and median topoheight");
         let (peers, median) = match &p2p {
             Some(p2p) => (p2p.get_peer_count().await, p2p.get_median_topoheight_of_peers().await),
             None => (0, blockchain.get_topo_height())
         };
 
+        debug!("Retrieving RPC connections count");
         let rpc_count = match &rpc {
             Some(rpc) => rpc.get_websocket().count_connections().await,
             None => 0
         };
 
+        debug!("Retrieving miners count");
         let miners = match &getwork {
             Some(getwork) => getwork.count_miners().await,
             None => 0
         };
 
+        debug!("Retrieving mempool size");
         let mempool = {
             let mempool = blockchain.get_mempool().read().await;
             mempool.size()
         };
 
+        debug!("Retrieving network hashrate");
         let network_hashrate = (blockchain.get_difficulty().await / BLOCK_TIME).into();
 
+        debug!("Building prompt message");
         Ok(
             build_prompt_message(
                 blockchain.get_topo_height(),
@@ -236,7 +244,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         )
     };
 
-    prompt.start(Duration::from_millis(100), Box::new(async_handler!(closure)), Some(&command_manager)).await
+    prompt.start(Duration::from_secs(1), Box::new(async_handler!(closure)), Some(&command_manager)).await
 }
 
 fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrate: f64, peers_count: usize, rpc_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
@@ -627,6 +635,39 @@ async fn clear_rpc_connections<S: Storage>(manager: &CommandManager, _: Argument
         },
         None => {
             manager.error("RPC is not enabled");
+        }
+    };
+
+    Ok(())
+}
+
+async fn clear_p2p_connections<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_p2p().read().await.as_ref() {
+        Some(p2p) => {
+            p2p.clear_connections().await;
+            manager.message("All P2P connections cleared");
+        },
+        None => {
+            manager.error("P2P is not enabled");
+        }
+    };
+
+    Ok(())
+}
+
+async fn clear_p2p_peerlist<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_p2p().read().await.as_ref() {
+        Some(p2p) => {
+            let mut peerlist = p2p.get_peer_list().write().await;
+            peerlist.clear_peerlist();
+            manager.message("P2P peerlist cleared");
+        },
+        None => {
+            manager.error("P2P is not enabled");
         }
     };
 

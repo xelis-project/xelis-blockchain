@@ -36,7 +36,7 @@ use crate::{
         CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_DELAY, CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START,
         CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, PEER_MAX_PACKET_SIZE,
         MILLIS_PER_SECOND, NETWORK_ID, P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT,
-        PEER_FAIL_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, PRUNE_SAFETY_LIMIT, STABLE_LIMIT
+        PEER_FAIL_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, PRUNE_SAFETY_LIMIT, STABLE_LIMIT, P2P_PEER_WAIT_ON_ERROR
     },
     core::{
         blockchain::Blockchain,
@@ -336,7 +336,8 @@ impl<S: Storage> P2pServer<S> {
                     let (mut stream, addr) = match res {
                         Ok((stream, addr)) => (stream, addr),
                         Err(e) => {
-                            error!("Error while accepting new connection: {}", e);
+                            error!("Error while accepting new connection, retrying in {}s: {}", P2P_PEER_WAIT_ON_ERROR, e);
+                            sleep(Duration::from_secs(P2P_PEER_WAIT_ON_ERROR)).await;
                             continue;
                         }
                     };
@@ -415,7 +416,7 @@ impl<S: Storage> P2pServer<S> {
                     _ => {
                         // if its a outgoing connection, increase its fail count
                         let mut peer_list = self.peer_list.write().await;
-                        peer_list.increase_fail_count_for_stored_peer(&addr, true);
+                        peer_list.increase_fail_count_for_stored_peer(&addr, !is_out && !priority);
                     },
                 };
                 // no need to close it here, as it will be automatically closed in drop
@@ -2519,6 +2520,12 @@ impl<S: Storage> P2pServer<S> {
         *last_chain_sync = get_current_time_in_millis();
 
         self.handle_chain_response(peer, response, requested_max_size).await
+    }
+
+    // Clear all p2p connections by kicking peers
+    pub async fn clear_connections(&self) {
+        let mut peer_list = self.peer_list.write().await;
+        peer_list.close_all().await;
     }
 }
 

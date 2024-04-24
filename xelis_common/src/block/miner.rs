@@ -1,14 +1,17 @@
 use std::borrow::Cow;
 
+use log::warn;
+
 use crate::{
     crypto::{
+        elgamal::RISTRETTO_COMPRESSED_SIZE,
+        pow_hash_with_scratch_pad,
         Hash,
         Hashable,
-        PublicKey,
-        XelisHashError,
-        pow_hash_with_scratch_pad,
         Input,
-        ScratchPad
+        PublicKey,
+        ScratchPad,
+        XelisHashError
     },
     serializer::{Reader, ReaderError, Serializer, Writer},
     time::TimestampMillis,
@@ -62,8 +65,8 @@ impl<'a> BlockMiner<'a> {
             self.cache = Some(input);
         }
 
-        let bytes = self.cache.as_mut().unwrap();
-        pow_hash_with_scratch_pad(bytes.as_mut_slice()?, scratch_pad)
+        let mut bytes = self.cache.as_mut().unwrap().as_mut_slice()?.clone();
+        pow_hash_with_scratch_pad(&mut bytes, scratch_pad)
     }
 
     pub fn get_extra_nonce(&mut self) -> &mut [u8; EXTRA_NONCE_SIZE] {
@@ -107,21 +110,17 @@ impl<'a> BlockMiner<'a> {
 
 impl<'a> Serializer for BlockMiner<'a> {
     fn write(&self, writer: &mut Writer) {
-        if let Some(cache) = self.cache.as_ref() {
-            writer.write_bytes(cache.as_slice().unwrap());
+        writer.write_hash(&self.header_work_hash); // 32
+        writer.write_u64(&self.timestamp); // 32 + 8 = 40
+        writer.write_u64(&self.nonce); // 40 + 8 = 48
+        writer.write_bytes(&self.extra_nonce); // 48 + 32 = 80
+
+        // 80 + 32 = 112
+        if let Some(miner) = &self.miner {
+            miner.write(writer);
         } else {
-            writer.write_hash(&self.header_work_hash); // 32
-            writer.write_u64(&self.timestamp); // 32 + 8 = 40
-            writer.write_u64(&self.nonce); // 40 + 8 = 48
-            writer.write_bytes(&self.extra_nonce); // 48 + 32 = 80
-    
-            // 80 + 32 = 112
-            if let Some(miner) = &self.miner {
-                miner.write(writer);
-            } else {
-                // We set a 32 bytes empty public key as we don't have any miner
-                writer.write_bytes(&[0u8; 32]);
-            }
+            // We set a 32 bytes empty public key as we don't have any miner
+            writer.write_bytes(&[0u8; RISTRETTO_COMPRESSED_SIZE]);
         }
 
         debug_assert!(writer.total_write() == BLOCK_WORK_SIZE, "invalid block work size, expected {}, got {}", BLOCK_WORK_SIZE, writer.total_write());
@@ -129,6 +128,7 @@ impl<'a> Serializer for BlockMiner<'a> {
 
     fn read(reader: &mut Reader) -> Result<BlockMiner<'a>, ReaderError> {
         if reader.total_size() != BLOCK_WORK_SIZE {
+            warn!("invalid block work size, expected {}, got {}", BLOCK_WORK_SIZE, reader.total_size());
             return Err(ReaderError::InvalidSize)
         }
 

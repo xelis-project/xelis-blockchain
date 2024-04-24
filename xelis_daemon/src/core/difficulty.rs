@@ -79,17 +79,17 @@ pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: Timest
 
 #[cfg(test)]
 mod tests {
-    use crate::config::MINIMUM_DIFFICULTY;
+    use crate::config::MAINNET_MINIMUM_DIFFICULTY;
     use super::*;
 
     #[test]
     fn test_kalman_filter() {
-        let z = MINIMUM_DIFFICULTY / VarUint::from_u64(1000);
+        let z = MAINNET_MINIMUM_DIFFICULTY / VarUint::from_u64(1000);
         let (x_est_new, p_new) = kalman_filter(z, VarUint::one(), P);
         assert_eq!(x_est_new, VarUint::one());
         assert_eq!(p_new, VarUint::from_u64(4501837440));
 
-        let (x_est_new, p_new) = kalman_filter(MINIMUM_DIFFICULTY / VarUint::from_u64(2000), x_est_new, p_new);
+        let (x_est_new, p_new) = kalman_filter(MAINNET_MINIMUM_DIFFICULTY / VarUint::from_u64(2000), x_est_new, p_new);
         assert_eq!(x_est_new, VarUint::one());
         assert_eq!(p_new, VarUint::from_u64(4699383461));
     }

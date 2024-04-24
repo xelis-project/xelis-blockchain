@@ -1,6 +1,6 @@
 [package]
 name = "xelis_common"
-version = "1.9.2"
+version = "1.9.3"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 build = "build.rs"
@@ -20,7 +20,7 @@ zeroize = "1.7.0"
 lazy_static = "1.4.0"
 sha3 = "0.10.8"
 chacha20poly1305 = "0.10.1"
-xelis-hash = { git = "https://github.com/xelis-project/xelis-hash", branch = "master" }
+xelis-hash = { git = "https://github.com/xelis-project/xelis-hash", branch = "master", default-features = false }
 
 thiserror = "1.0.58"
 anyhow = "1.0.81"
@@ -50,6 +50,7 @@ primitive-types = { version = "0.12.2", features = ["serde"] }
 tokio = { version = "1.36", features = ["full"] }
 
 [features]
+nightly = ["xelis-hash/nightly"]
 json_rpc = ["dep:reqwest"]
 prompt = ["dep:tokio"]
 clap = ["dep:clap"]

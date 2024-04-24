@@ -6425,6 +6425,19 @@ It can be broadcasted or not to the network.
 |     tx_as_hex     |     Boolean     | Optional | Serialize TX to hexadecimal. By default set to false |
 | transfers OR burn | TransactionType | Required |              Transaction Type parameter              |
 
+Fee builder has two variants:
+- One to provide a multiplier applied on estimated fees.
+```json
+{"multiplier":1.0}
+```
+
+- One to provide a fixed amount of fee to pay
+```json
+{"value":100}
+```
+
+When it's not provided, Fee Builder is set by default to multiplier 1 to pay what is estimated.
+
 ##### Request
 ```json
 {

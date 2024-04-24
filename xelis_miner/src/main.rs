@@ -290,9 +290,11 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
         loop {
             select! {
                 Some(message) = read.next() => { // read all messages from daemon
+                    debug!("Received message from daemon: {:?}", message);
                     match handle_websocket_message(message, &job_sender).await {
                         Ok(exit) => {
                             if exit {
+                                debug!("Exiting communication task");
                                 break;
                             }
                         },
@@ -303,12 +305,13 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
                     }
                 },
                 Some(block) = block_receiver.recv() => { // send all valid blocks found to the daemon
-                    debug!("Block header work hash found: {}", block.get_header_work_hash());
+                    info!("submitting new block found...");
                     let submit = serde_json::json!(SubmitBlockParams { block_template: block.to_hex() }).to_string();
                     if let Err(e) = write.send(Message::Text(submit)).await {
                         error!("Error while sending the block found to the daemon: {}", e);
                         break;
                     }
+                    debug!("Block found has been sent to daemon");
                 }
             }
         }
@@ -437,6 +440,7 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                         error!("Mining Thread #{}: error while sending block found with hash {}", id, block_hash);
                         continue 'main;
                     }
+                    debug!("Job sent to communication task");
                 }
             };
         }
