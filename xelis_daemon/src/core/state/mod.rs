@@ -40,9 +40,22 @@ pub (super) async fn search_versioned_balance_for_reference<S: Storage>(storage:
     // We sent another TX C at topo 1004
     // We must use the output balance if available
 
+    // Retrieve the block topoheight based on reference hash
+    let reference_block_topo = if storage.is_block_topological_ordered(&reference.hash).await {
+        let topo = storage.get_topo_height_for_hash(&reference.hash).await?;
+        if topo == reference.topoheight {
+            topo
+        } else if reference.topoheight < current_topoheight {
+            reference.topoheight
+        } else {
+            current_topoheight
+        }
+    } else {
+        current_topoheight
+    };
 
     let mut use_output_balance = false;
-    let mut version = None;
+    let version;
     // We must verify the last "output" balance for the asset
     // Search the last output balance
     let last_output = storage.get_output_balance_at_maximum_topoheight(key, asset, current_topoheight).await?;
@@ -50,70 +63,26 @@ pub (super) async fn search_versioned_balance_for_reference<S: Storage>(storage:
     if let Some((topo, v)) = last_output {
         trace!("Found output balance at topoheight {}", topo);
         // Verify if the output balance topo is higher than our reference
-        let mut reference_block_topo = None;
-        if reference.topoheight < topo || {
-            // Search the topoheight of the reference block in case of reorg
-            let t = storage.get_topo_height_for_hash(&reference.hash).await?;
-            let under = t < topo;
-            reference_block_topo = Some(t);
-            under
-        } {
+        if reference.topoheight < topo || reference_block_topo < topo {
             debug!("Scenario C");
             // We must use the output balance if possible because this TX may be built after a previous TX at same reference
             // see Scenario C
             use_output_balance = true;
             version = Some(v);
-        } else if topo < reference.topoheight || {
-            // Use cache if available
-            if let Some(t) = reference_block_topo {
-                t < topo
-            } else {
-                // Search the topoheight of the reference block in case of reorg
-                let t = storage.get_topo_height_for_hash(&reference.hash).await?;
-                let under = t < topo;
-                reference_block_topo = Some(t);
-                under
-            }
-        } {
+        } else if topo < reference.topoheight || topo < reference_block_topo {
             trace!("Reference is above last output balance");
             debug!("Scenario B");
 
-            // Retrieve the block topoheight based on reference hash
-            let reference_block_topo = if let Some(t) = reference_block_topo {
-                t
-            } else {
-                storage.get_topo_height_for_hash(&reference.hash).await?
-            };
-
-            version = storage.get_balance_at_maximum_topoheight(key, asset, reference.topoheight.max(reference_block_topo)).await?
+            version = storage.get_balance_at_maximum_topoheight(key, asset, topo.max(reference_block_topo)).await?
                 .map(|(_, v)| v);
+        } else {
+            debug!("Scenario A (bis)");
+            version = Some(v);
         }
     } else {
-        trace!("No output balance found");
-        // Retrieve the block topoheight based on reference hash
-        let reference_block_topo = if storage.is_block_topological_ordered(&reference.hash).await {
-            let topo = storage.get_topo_height_for_hash(&reference.hash).await?;
-            if topo == reference.topoheight {
-                Some(topo)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        if let Some(reference_block_topo) = reference_block_topo {
-            // There was no reorg, we can use the final balance of the reference block
-            debug!("Scenario B bis (no output balance)");
-            // We must use the final balance of the reference block
-            // see Scenario B
-            version = storage.get_balance_at_maximum_topoheight(key, asset, reference_block_topo).await?
-                .map(|(_, v)| v);
-        } else {
-            debug!("Scenario Luck bis (no output balance)");
-            version = storage.get_balance_at_maximum_topoheight(key, asset, reference.topoheight).await?
-                .map(|(_, v)| v);
-        }
+        trace!("No output balance found (Scenario B)");
+        version = storage.get_balance_at_maximum_topoheight(key, asset, reference_block_topo).await?
+            .map(|(_, v)| v);
     }
 
     let (new_version, version) = if let Some(version) = version {

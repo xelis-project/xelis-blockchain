@@ -465,7 +465,7 @@ impl PeerList {
         let fail_count = stored_peer.get_fail_count();
         if *stored_peer.get_state() != StoredPeerState::Whitelist {
             if temp_ban && fail_count != 0 && fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0 {
-                warn!("Temp banning {} for failing too many times", ip);
+                warn!("Temp banning {} for failing too many times (count = {})", ip, fail_count);
                 stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME_ON_CONNECT));
             }
 
