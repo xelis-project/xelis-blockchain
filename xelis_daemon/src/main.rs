@@ -6,7 +6,7 @@ pub mod config;
 use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
 use fern::colors::Color;
 use humantime::format_duration;
-use log::{info, error, warn};
+use log::{debug, error, info, warn};
 use p2p::P2pServer;
 use rpc::{
     getwork_server::SharedGetWorkServer,
@@ -202,28 +202,34 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     };
 
     let closure = |_: &_, _: _| async {
+        debug!("Retrieving P2P peers and median topoheight");
         let (peers, median) = match &p2p {
             Some(p2p) => (p2p.get_peer_count().await, p2p.get_median_topoheight_of_peers().await),
             None => (0, blockchain.get_topo_height())
         };
 
+        debug!("Retrieving RPC connections count");
         let rpc_count = match &rpc {
             Some(rpc) => rpc.get_websocket().count_connections().await,
             None => 0
         };
 
+        debug!("Retrieving miners count");
         let miners = match &getwork {
             Some(getwork) => getwork.count_miners().await,
             None => 0
         };
 
+        debug!("Retrieving mempool size");
         let mempool = {
             let mempool = blockchain.get_mempool().read().await;
             mempool.size()
         };
 
+        debug!("Retrieving network hashrate");
         let network_hashrate = (blockchain.get_difficulty().await / BLOCK_TIME).into();
 
+        debug!("Building prompt message");
         Ok(
             build_prompt_message(
                 blockchain.get_topo_height(),
