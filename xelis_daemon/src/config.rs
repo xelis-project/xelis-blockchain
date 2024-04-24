@@ -122,7 +122,7 @@ pub const PEER_FAIL_TIME_RESET: u64 = 30 * 60;
 // number of fail to disconnect the peer
 pub const PEER_FAIL_LIMIT: u8 = 50;
 // number of fail during handshake before temp ban
-pub const PEER_FAIL_TO_CONNECT_LIMIT: u8 = 3;
+pub const PEER_FAIL_TO_CONNECT_LIMIT: u8 = 10;
 // number of seconds to temp ban the peer in case of fail reached
 // Set to 15 minutes
 pub const PEER_TEMP_BAN_TIME: u64 = 15 * 60;

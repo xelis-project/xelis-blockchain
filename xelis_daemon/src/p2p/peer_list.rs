@@ -464,14 +464,13 @@ impl PeerList {
         };
         let fail_count = stored_peer.get_fail_count();
         if *stored_peer.get_state() != StoredPeerState::Whitelist {
-            if temp_ban && ((fail_count != 0 && fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0) || fail_count == u8::MAX) {
+            if temp_ban && fail_count != 0 && fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0 {
                 warn!("Temp banning {} for failing too many times", ip);
-                // we reached the max value, we can't increase it anymore
                 stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME_ON_CONNECT));
-            } else if fail_count != u8::MAX {
-                debug!("Increasing fail count for {}", ip);
-                stored_peer.set_fail_count(fail_count + 1);
             }
+
+            debug!("Increasing fail count for {}", ip);
+            stored_peer.set_fail_count(fail_count.wrapping_add(1));
         } else {
             debug!("{} is whitelisted, not increasing fail count", ip);
         }
