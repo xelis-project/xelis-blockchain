@@ -91,10 +91,19 @@ pub (super) async fn search_versioned_balance_for_reference<S: Storage>(storage:
     } else {
         trace!("No output balance found");
         // Retrieve the block topoheight based on reference hash
-        let reference_block_topo = storage.get_topo_height_for_hash(&reference.hash).await?;
+        let reference_block_topo = if storage.is_block_topological_ordered(&reference.hash).await {
+            let topo = storage.get_topo_height_for_hash(&reference.hash).await?;
+            if topo == reference.topoheight {
+                Some(topo)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
-        // There was no reorg, we can use the final balance of the reference block
-        if reference_block_topo == reference.topoheight {
+        if let Some(reference_block_topo) = reference_block_topo {
+            // There was no reorg, we can use the final balance of the reference block
             debug!("Scenario B bis (no output balance)");
             // We must use the final balance of the reference block
             // see Scenario B
