@@ -3006,7 +3006,7 @@ dependencies = [
 [[package]]
 name = "xelis-hash"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-hash?branch=master#4a30afbc42ae53000e855b3d32e7e33040217371"
+source = "git+https://github.com/xelis-project/xelis-hash?branch=master#7fbb048e86cd75b6446bb4bd83e234b1f01a89c6"
 dependencies = [
  "aes",
  "bytemuck",
@@ -3152,9 +3152,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.7.0"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "525b4ec142c6b68a2d10f01f7bbf6755599ca3f81ea53b8431b7dd348f5fdb2d"
+checksum = "63381fa6624bf92130a6b87c0d07380116f80b565c42cf0d754136f0238359ef"
 dependencies = [
  "zeroize_derive",
 ]
