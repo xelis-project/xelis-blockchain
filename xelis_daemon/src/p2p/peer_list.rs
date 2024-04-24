@@ -457,17 +457,23 @@ impl PeerList {
 
     // increase the fail count of a peer
     pub fn increase_fail_count_for_stored_peer(&mut self, ip: &IpAddr, temp_ban: bool) {
+        trace!("increasing fail count for {}, allow temp ban: {}", ip, temp_ban);
         let stored_peer = match self.stored_peers.entry(*ip) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(StoredPeer::new(0, StoredPeerState::Graylist))
         };
         let fail_count = stored_peer.get_fail_count();
-        if temp_ban && ((fail_count != 0 && fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0) || fail_count == u8::MAX)  {
-            warn!("Temp banning {} for failing too many times", ip);
-            // we reached the max value, we can't increase it anymore
-            stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME));
-        } else if fail_count != u8::MAX {
-            stored_peer.set_fail_count(fail_count + 1);
+        if *stored_peer.get_state() != StoredPeerState::Whitelist {
+            if temp_ban && ((fail_count != 0 && fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0) || fail_count == u8::MAX) {
+                warn!("Temp banning {} for failing too many times", ip);
+                // we reached the max value, we can't increase it anymore
+                stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME));
+            } else if fail_count != u8::MAX {
+                debug!("Increasing fail count for {}", ip);
+                stored_peer.set_fail_count(fail_count + 1);
+            }
+        } else {
+            debug!("{} is whitelisted, not increasing fail count", ip);
         }
     }
 
