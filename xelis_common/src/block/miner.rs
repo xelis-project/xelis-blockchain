@@ -65,8 +65,8 @@ impl<'a> BlockMiner<'a> {
             self.cache = Some(input);
         }
 
-        let bytes = self.cache.as_mut().unwrap();
-        pow_hash_with_scratch_pad(bytes.as_mut_slice()?, scratch_pad)
+        let mut bytes = self.cache.as_mut().unwrap().as_mut_slice()?.clone();
+        pow_hash_with_scratch_pad(&mut bytes, scratch_pad)
     }
 
     pub fn get_extra_nonce(&mut self) -> &mut [u8; EXTRA_NONCE_SIZE] {
