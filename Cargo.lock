@@ -3016,7 +3016,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_common"
-version = "1.9.2"
+version = "1.9.3"
 dependencies = [
  "actix-rt",
  "actix-web",
@@ -3054,7 +3054,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_daemon"
-version = "1.9.2"
+version = "1.9.3"
 dependencies = [
  "actix",
  "actix-web",
@@ -3085,7 +3085,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_miner"
-version = "1.9.2"
+version = "1.9.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -3103,7 +3103,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_wallet"
-version = "1.9.2"
+version = "1.9.3"
 dependencies = [
  "actix",
  "actix-web",
