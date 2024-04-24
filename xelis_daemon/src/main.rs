@@ -244,7 +244,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         )
     };
 
-    prompt.start(Duration::from_millis(100), Box::new(async_handler!(closure)), Some(&command_manager)).await
+    prompt.start(Duration::from_secs(1), Box::new(async_handler!(closure)), Some(&command_manager)).await
 }
 
 fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrate: f64, peers_count: usize, rpc_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {

@@ -165,12 +165,7 @@ impl<S: Storage> StreamHandler<Result<Message, ProtocolError>> for GetWorkWebSoc
                 };
 
                 let server = self.server.clone();
-                let fut = async move {
-                    if let Err(e) = server.handle_block_for(address, template).await {
-                        debug!("Error while handling new job from miner: {}", e);
-                    }
-                };
-                ctx.wait(actix::fut::wrap_future(fut));
+                ctx.wait(actix::fut::wrap_future(server.handle_block_for(address, template)));
             },
             Ok(Message::Close(reason)) => {
                 ctx.close(reason);
@@ -353,12 +348,18 @@ impl<S: Storage> GetWorkServer<S> {
     // handle the incoming mining job from the miner
     // decode the block miner, and using its header work hash, retrieve the block header
     // if its block is rejected, resend him the job
-    pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, template: SubmitBlockParams) -> Result<(), InternalRpcError> {
-        let job = BlockMiner::from_hex(template.block_template)?;
-        let response = match self.accept_miner_job(job).await {
-            Ok(response) => response,
+    pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, template: SubmitBlockParams) {
+        trace!("handle block for");
+        let response = match BlockMiner::from_hex(template.block_template) {
+            Ok(job) => match self.accept_miner_job(job).await {
+                Ok(response) => response,
+                Err(e) => {
+                    debug!("Error while accepting miner job: {}", e);
+                    Response::BlockRejected(e.to_string())
+                }
+            },
             Err(e) => {
-                debug!("Error while accepting miner job: {}", e);
+                debug!("Error while decoding block miner: {}", e);
                 Response::BlockRejected(e.to_string())
             }
         };
@@ -410,8 +411,6 @@ impl<S: Storage> GetWorkServer<S> {
             }
             debug!("Response sent!");
         });
-
-        Ok(())
     }
 
     // check if the last notify is older than the rate limit
