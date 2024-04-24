@@ -742,7 +742,7 @@ impl Prompt {
 
         base.level_for("sled", log::LevelFilter::Warn)
         .level_for("actix_server", log::LevelFilter::Warn)
-        .level_for("actix_web", log::LevelFilter::Warn)
+        .level_for("actix_web", log::LevelFilter::Off)
         .level_for("actix_http", log::LevelFilter::Warn)
         .level_for("mio", log::LevelFilter::Warn)
         .level_for("tokio_tungstenite", log::LevelFilter::Warn)
