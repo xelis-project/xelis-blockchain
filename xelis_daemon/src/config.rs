@@ -126,6 +126,9 @@ pub const PEER_FAIL_TO_CONNECT_LIMIT: u8 = 3;
 // number of seconds to temp ban the peer in case of fail reached
 // Set to 15 minutes
 pub const PEER_TEMP_BAN_TIME: u64 = 15 * 60;
+// number of seconds to temp ban the peer in case of fail reached during handshake
+// Set to 1 minute
+pub const PEER_TEMP_BAN_TIME_ON_CONNECT: u64 = 60;
 // millis until we timeout
 pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15000;
 // millis until we timeout during a bootstrap request

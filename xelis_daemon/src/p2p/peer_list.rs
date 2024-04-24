@@ -3,7 +3,7 @@ use crate::{
         P2P_EXTEND_PEERLIST_DELAY,
         PEER_FAIL_LIMIT,
         PEER_FAIL_TO_CONNECT_LIMIT,
-        PEER_TEMP_BAN_TIME
+        PEER_TEMP_BAN_TIME_ON_CONNECT
     },
     p2p::packet::peer_disconnected::PacketPeerDisconnected
 };
@@ -467,7 +467,7 @@ impl PeerList {
             if temp_ban && ((fail_count != 0 && fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0) || fail_count == u8::MAX) {
                 warn!("Temp banning {} for failing too many times", ip);
                 // we reached the max value, we can't increase it anymore
-                stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME));
+                stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME_ON_CONNECT));
             } else if fail_count != u8::MAX {
                 debug!("Increasing fail count for {}", ip);
                 stored_peer.set_fail_count(fail_count + 1);
