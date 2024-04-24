@@ -148,7 +148,7 @@ pub const PEER_BLOCK_CACHE_SIZE: usize = 1024;
 // Genesis block to have the same starting point for every nodes
 // Genesis block in hexadecimal format
 const MAINNET_GENESIS_BLOCK: &str = "0000000000000000000000018efc057580000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
-const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018dc0f93552000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac6738cec61a2033103f21b2ed2ddcf8f561eebc7ba4ecab337c484fef8bff6";
+const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018f116b47cf000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
 
 // Genesis block getter
 // This is necessary to prevent having the same Genesis Block for differents network
@@ -169,7 +169,7 @@ lazy_static! {
 // Genesis block hash for both networks
 // It must be the same as the hash of the genesis block
 const MAINNET_GENESIS_BLOCK_HASH: Hash = Hash::new([175, 118, 37, 203, 175, 200, 25, 148, 9, 202, 29, 120, 93, 128, 36, 209, 146, 193, 217, 36, 61, 51, 24, 194, 114, 113, 121, 208, 237, 163, 27, 55]);
-const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([183, 21, 203, 2, 41, 209, 63, 95, 84, 10, 228, 138, 223, 3, 188, 49, 176, 148, 176, 64, 176, 117, 106, 36, 84, 99, 27, 45, 221, 137, 156, 58]);
+const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([171, 50, 219, 186, 28, 164, 189, 225, 197, 167, 187, 143, 213, 59, 217, 238, 51, 242, 133, 181, 188, 235, 151, 50, 110, 33, 185, 188, 100, 146, 23, 132]);
 
 // Genesis block hash based on network selected
 pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
