@@ -25,7 +25,7 @@ use actix_web_actors::ws::{
     WebsocketContext
 };
 use anyhow::Context;
-use log::{debug, warn, error};
+use log::{debug, error, trace, warn};
 use lru::LruCache;
 use rand::{
     rngs::OsRng,
@@ -87,11 +87,16 @@ impl TMessage for Response {
 pub struct Miner {
     // Used to display correctly its address
     mainnet: bool,
-    first_seen: TimestampMillis, // timestamp of first connection
-    key: PublicKey, // public key of account (address)
-    name: String, // worker name
-    blocks_accepted: usize, // blocks accepted by us since he is connected
-    blocks_rejected: usize // blocks rejected since he is connected
+    // timestamp of first connection
+    first_seen: TimestampMillis,
+    // public key of account (address)
+    key: PublicKey,
+    // worker name
+    name: String,
+    // blocks accepted by us since he is connected
+    blocks_accepted: usize,
+    // blocks rejected since he is connected
+    blocks_rejected: usize
 }
 
 impl Miner {
@@ -226,17 +231,20 @@ impl<S: Storage> GetWorkServer<S> {
 
     // Returns the number of miners connected to the getwork server
     pub async fn count_miners(&self) -> usize {
+        trace!("count miners");
         self.miners.lock().await.len()
     }
 
     // Returns the list of miners connected to the getwork server
     pub fn get_miners(&self) -> &Mutex<HashMap<Addr<GetWorkWebSocketHandler<S>>, Miner>> {
+        trace!("get miners");
         &self.miners
     }
 
     // retrieve last mining job and set random extra nonce and miner public key
     // then, send it
     async fn send_new_job(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, key: PublicKey) -> Result<(), InternalRpcError> {
+        debug!("Sending new job to miner");
         let (mut job, height, difficulty) = {
             let mut hash = self.last_header_hash.lock().await;
             let mut mining_jobs = self.mining_jobs.lock().await;
@@ -279,6 +287,7 @@ impl<S: Storage> GetWorkServer<S> {
     }
 
     pub async fn add_miner(self: &Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, key: PublicKey, worker: String) {
+        trace!("add miner");
         {
             let mut miners = self.miners.lock().await;
             let miner = Miner::new(self.blockchain.get_network().is_mainnet(), key.clone(), worker);
@@ -308,6 +317,7 @@ impl<S: Storage> GetWorkServer<S> {
     // its used to check that the job come from our server
     // when it's found, we merge the miner job inside the block header
     async fn accept_miner_job(&self, job: BlockMiner<'_>) -> Result<Response, InternalRpcError> {
+        trace!("accept miner job");
         if job.get_miner().is_none() {
             return Err(InternalRpcError::InvalidRequest);
         }
@@ -429,6 +439,7 @@ impl<S: Storage> GetWorkServer<S> {
     // notify every miners connected to the getwork server
     // each miner have his own task so nobody wait on other
     pub async fn notify_new_job(&self) -> Result<(), InternalRpcError> {
+        trace!("notify new job");
         // Check that there is at least one miner connected
         // otherwise, no need to build a new job
         {
