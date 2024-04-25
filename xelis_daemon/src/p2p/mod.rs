@@ -251,7 +251,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // every 10 seconds, verify and connect if necessary to a random node
-    async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: IndexSet<SocketAddr>) -> Result<(), P2pError> {
+    async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: IndexSet<SocketAddr>, sender: Sender<SocketAddr>) -> Result<(), P2pError> {
         debug!("Starting maintains seed nodes task...");
         let mut interval = interval(Duration::from_secs(P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY));
         loop {
@@ -274,7 +274,9 @@ impl<S: Storage> P2pServer<S> {
 
             if let Some(node) = connect {
                 trace!("Trying to connect to priority node: {}", node);
-                self.try_to_connect_to_peer(node, true).await;
+                if let Err(e) = sender.send(node).await {
+                    error!("Error while sending priority node to connect to: {}", e);
+                }
             }
         }
 
@@ -295,11 +297,12 @@ impl<S: Storage> P2pServer<S> {
             exclusive_nodes = seed_nodes.iter().map(|s| s.parse().unwrap()).collect();
         }
 
+        let (priority_sender, mut priority_receiver) = mpsc::channel(1);
         // create tokio task to maintains connection to exclusive nodes or seed nodes
         let zelf = Arc::clone(self);
         tokio::spawn(async move {
             info!("Connecting to seed nodes...");
-            if let Err(e) = zelf.maintains_connection_to_nodes(exclusive_nodes).await {
+            if let Err(e) = zelf.maintains_connection_to_nodes(exclusive_nodes, priority_sender).await {
                 error!("Error while maintening connection with seed nodes: {}", e);
             };
         });
@@ -326,7 +329,18 @@ impl<S: Storage> P2pServer<S> {
         let mut handshake_buffer = [0; 512];
         loop {
             let (connection, priority) = select! {
-                biased; // biased to accept new connections first
+                // biased to accept new priority nodes then new incoming connections first
+                biased;
+                Some(addr) = priority_receiver.recv() => {
+                    trace!("New priority node received: {}", addr);
+                    match self.connect_to_peer(addr).await {
+                        Ok(connection) => (connection, true),
+                        Err(e) => {
+                            trace!("Error while trying to connect to priority node: {}", e);
+                            continue;
+                        }
+                    }
+                },
                 res = listener.accept() => {
                     trace!("New listener result received (is err: {})", res.is_err());
                     let (mut stream, addr) = match res {
