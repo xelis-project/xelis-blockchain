@@ -9,7 +9,7 @@ use std::{
 use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, trace, warn};
-use tokio::{task::JoinHandle, sync::Mutex, net::lookup_host, io::ErrorKind};
+use tokio::{task::JoinHandle, sync::Mutex, net::lookup_host};
 use xelis_common::{
     account::CiphertextCache,
     api::{
