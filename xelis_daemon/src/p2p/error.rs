@@ -19,6 +19,8 @@ use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Peer list is full")]
+    PeerListFull,
     #[error("Tracker request has expired, we didn't received a valid response in time")]
     TrackerRequestExpired,
     #[error("Peer not found by id {}", _0)]
