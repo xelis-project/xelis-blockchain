@@ -418,7 +418,7 @@ impl<S: Storage> P2pServer<S> {
                     _ => {
                         // if its a outgoing connection, increase its fail count
                         let mut peer_list = self.peer_list.write().await;
-                        peer_list.increase_fail_count_for_stored_peer(&addr, !is_out && !priority);
+                        peer_list.increase_fail_count_for_stored_peer(&addr, !priority);
                     },
                 };
                 // no need to close it here, as it will be automatically closed in drop
