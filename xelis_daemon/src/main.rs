@@ -207,7 +207,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         let topoheight = blockchain.get_topo_height();
         let (peers, median) = match &p2p {
             Some(p2p) => {
-                let peer_list = timeout(Duration::from_millis(100), p2p.get_peer_list().read()).await.unwrap();
+                let peer_list = timeout(Duration::from_millis(4800), p2p.get_peer_list().read()).await.unwrap();
                 (peer_list.size(), peer_list.get_median_topoheight(Some(topoheight)))
             },
             None => (0, blockchain.get_topo_height())
