@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use log::warn;
+use log::debug;
 
 use crate::{
     crypto::{
@@ -128,7 +128,7 @@ impl<'a> Serializer for BlockMiner<'a> {
 
     fn read(reader: &mut Reader) -> Result<BlockMiner<'a>, ReaderError> {
         if reader.total_size() != BLOCK_WORK_SIZE {
-            warn!("invalid block work size, expected {}, got {}", BLOCK_WORK_SIZE, reader.total_size());
+            debug!("invalid block work size, expected {}, got {}", BLOCK_WORK_SIZE, reader.total_size());
             return Err(ReaderError::InvalidSize)
         }
 
