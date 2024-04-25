@@ -12,6 +12,7 @@ use rpc::{
     getwork_server::SharedGetWorkServer,
     rpc::get_block_response_for_hash
 };
+use tokio::time::timeout;
 use xelis_common::{
     async_handler,
     config::{VERSION, XELIS_ASSET},
@@ -204,33 +205,33 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     let closure = |_: &_, _: _| async {
         debug!("Retrieving P2P peers and median topoheight");
         let (peers, median) = match &p2p {
-            Some(p2p) => (p2p.get_peer_count().await, p2p.get_median_topoheight_of_peers().await),
+            Some(p2p) => (timeout(Duration::from_millis(100), p2p.get_peer_count()).await.unwrap(), timeout(Duration::from_millis(100), p2p.get_median_topoheight_of_peers()).await.unwrap()),
             None => (0, blockchain.get_topo_height())
         };
 
         debug!("Retrieving RPC connections count");
         let rpc_count = match &rpc {
-            Some(rpc) => rpc.get_websocket().count_connections().await,
+            Some(rpc) => timeout(Duration::from_millis(100), rpc.get_websocket().count_connections()).await.unwrap(),
             None => 0
         };
 
         debug!("Retrieving miners count");
         let miners = match &getwork {
-            Some(getwork) => getwork.count_miners().await,
+            Some(getwork) => timeout(Duration::from_millis(100), getwork.count_miners()).await.unwrap(),
             None => 0
         };
 
         debug!("Retrieving mempool size");
         let mempool = {
-            let mempool = blockchain.get_mempool().read().await;
+            let mempool = timeout(Duration::from_millis(100), blockchain.get_mempool().read()).await.unwrap();
             mempool.size()
         };
 
         debug!("Retrieving network hashrate");
-        let network_hashrate = (blockchain.get_difficulty().await / BLOCK_TIME).into();
+        let network_hashrate = (timeout(Duration::from_millis(100), blockchain.get_difficulty()).await.unwrap() / BLOCK_TIME).into();
 
         debug!("Building prompt message");
-        Ok(
+        Ok( 
             build_prompt_message(
                 blockchain.get_topo_height(),
                 median,
