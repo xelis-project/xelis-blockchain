@@ -638,7 +638,7 @@ async fn p2p_status<S: Storage>(context: Context, body: Value) -> Result<Value, 
     }
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let p2p = blockchain.get_p2p().read().await;
+    let p2p = { blockchain.get_p2p().read().await.clone() };
     match p2p.as_ref() {
         Some(p2p) => {
             let tag = p2p.get_tag();
@@ -668,7 +668,7 @@ async fn get_peers<S: Storage>(context: Context, body: Value) -> Result<Value, I
         return Err(InternalRpcError::UnexpectedParams)
     }
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let p2p = blockchain.get_p2p().read().await;
+    let p2p = { blockchain.get_p2p().read().await.clone() };
     match p2p.as_ref() {
         Some(p2p) => {
             let peer_list = p2p.get_peer_list().read().await;
