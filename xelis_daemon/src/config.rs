@@ -118,6 +118,8 @@ pub const P2P_DEFAULT_MAX_PEERS: usize = 32;
 pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
 // Peer wait on error accept new p2p connections in seconds
 pub const P2P_PEER_WAIT_ON_ERROR: u64 = 15;
+// Delay in second to connect to priority nodes
+pub const P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY: u64 = 30;
 
 // Peer rules
 // number of seconds to reset the counter

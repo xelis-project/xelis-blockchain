@@ -36,7 +36,7 @@ use crate::{
         CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_DELAY, CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START,
         CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, PEER_MAX_PACKET_SIZE,
         MILLIS_PER_SECOND, NETWORK_ID, P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT,
-        PEER_FAIL_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, PRUNE_SAFETY_LIMIT, STABLE_LIMIT, P2P_PEER_WAIT_ON_ERROR
+        PEER_FAIL_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, PRUNE_SAFETY_LIMIT, STABLE_LIMIT, P2P_PEER_WAIT_ON_ERROR, P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY
     },
     core::{
         blockchain::Blockchain,
@@ -109,8 +109,7 @@ use std::{
     time::Duration,
 };
 use bytes::Bytes;
-use rand::Rng;
-use rand::seq::SliceRandom;
+use rand::{seq::IteratorRandom, Rng};
 
 enum MessageChannel {
     Exit,
@@ -156,7 +155,7 @@ pub struct P2pServer<S: Storage> {
     max_chain_response_size: usize,
     // Configured exclusive nodes
     // If not empty, no other peer than those listed can connect to this node
-    exclusive_nodes: HashSet<SocketAddr>,
+    exclusive_nodes: IndexSet<SocketAddr>,
     // Are we allowing others nodes to share us as a potential peer ?
     // Also if we allows to be listed in get_peers RPC API
     sharable: bool,
@@ -204,7 +203,7 @@ impl<S: Storage> P2pServer<S> {
             allow_fast_sync_mode,
             allow_boost_sync_mode,
             max_chain_response_size: max_chain_response_size.unwrap_or(CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS),
-            exclusive_nodes: HashSet::from_iter(exclusive_nodes.into_iter()),
+            exclusive_nodes: IndexSet::from_iter(exclusive_nodes.into_iter()),
             sharable,
             is_syncing: AtomicBool::new(false),
             outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
@@ -251,25 +250,10 @@ impl<S: Storage> P2pServer<S> {
         self.outgoing_connections_disabled.store(disable, Ordering::Release);
     }
 
-    // Connect to nodes which aren't already connected in parameters
-    async fn connect_to_nodes(self: &Arc<Self>, nodes: impl Iterator<Item = SocketAddr>) -> Result<(), P2pError> {
-        let mut nodes = nodes.collect::<Vec<_>>();
-        nodes.shuffle(&mut rand::thread_rng());
-
-        for addr in nodes {
-            if self.accept_new_connections().await {
-                if !self.is_connected_to_addr(&addr).await? {
-                    self.try_to_connect_to_peer(addr, true).await;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    // every 10 seconds, verify and connect if necessary
-    async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: HashSet<SocketAddr>) -> Result<(), P2pError> {
+    // every 10 seconds, verify and connect if necessary to a random node
+    async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: IndexSet<SocketAddr>) -> Result<(), P2pError> {
         debug!("Starting maintains seed nodes task...");
-        let mut interval = interval(Duration::from_secs(10));
+        let mut interval = interval(Duration::from_secs(P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY));
         loop {
             interval.tick().await;
             if !self.is_running() {
@@ -277,10 +261,20 @@ impl<S: Storage> P2pServer<S> {
                 break;
             }
 
-            if self.accept_new_connections().await {
-                if let Err(e) = self.connect_to_nodes(nodes.iter().cloned()).await {
-                    debug!("Error while connecting to seed nodes: {}", e);
-                };
+            let connect = {
+                let peer_list = self.peer_list.read().await;
+                if peer_list.size() >= self.max_peers {
+                    // if we have already reached the limit, we ignore this new connection
+                    None
+                } else {
+                    let potential_nodes = nodes.iter().filter(|node| !peer_list.is_connected_to_addr(node));
+                    potential_nodes.choose(&mut rand::thread_rng()).copied()
+                }
+            };
+
+            if let Some(node) = connect {
+                trace!("Trying to connect to priority node: {}", node);
+                self.try_to_connect_to_peer(node, true).await;
             }
         }
 
