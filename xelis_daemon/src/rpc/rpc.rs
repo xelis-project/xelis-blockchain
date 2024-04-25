@@ -262,9 +262,9 @@ pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, mempool:
 
 // Get a Peer Entry based on peer data
 pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
-    let top_block_hash = peer.get_top_block_hash().lock().await.clone();
-    let peers = peer.get_peers().lock().await.clone();
-    let cumulative_difficulty = peer.get_cumulative_difficulty().lock().await;
+    let top_block_hash = { peer.get_top_block_hash().lock().await.clone() };
+    let peers = { peer.get_peers().lock().await.clone() };
+    let cumulative_difficulty = { peer.get_cumulative_difficulty().lock().await.clone() };
     PeerEntry {
         id: peer.get_id(),
         addr: Cow::Borrowed(peer.get_connection().get_address()),
@@ -277,7 +277,7 @@ pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
         last_ping: peer.get_last_ping(),
         peers: Cow::Owned(peers),
         pruned_topoheight: peer.get_pruned_topoheight(),
-        cumulative_difficulty: Cow::Owned(*cumulative_difficulty),
+        cumulative_difficulty: Cow::Owned(cumulative_difficulty),
         connected_on: peer.get_connection().connected_on()
     }
 }

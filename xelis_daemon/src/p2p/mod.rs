@@ -722,9 +722,11 @@ impl<S: Storage> P2pServer<S> {
 
         for p in available_peers {
             // Avoid selecting peers that have a weaker cumulative difficulty than us
-            let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
-            if *cumulative_difficulty <= our_cumulative_difficulty {
-                continue;
+            {
+                let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
+                if *cumulative_difficulty <= our_cumulative_difficulty {
+                    continue;
+                }
             }
 
             let peer_topoheight = p.get_topoheight();
@@ -2121,12 +2123,14 @@ impl<S: Storage> P2pServer<S> {
             if (peer_topoheight >= current_topoheight && peer_topoheight - current_topoheight < STABLE_LIMIT) || (current_topoheight >= peer_topoheight && current_topoheight - peer_topoheight < STABLE_LIMIT) {
                 trace!("Peer {} is not too far from us, checking cache for tx hash {}", peer, tx);
                 let mut txs_cache = peer.get_txs_cache().lock().await;
+                trace!("Cache locked for tx hash {}", tx);
                 // check that we didn't already send this tx to this peer or that he don't already have it
                 if !txs_cache.contains(&tx) {
                     trace!("Broadcasting tx hash {} to {}", tx, peer);
                     if let Err(e) = peer.send_bytes(bytes.clone()).await {
                         error!("Error while broadcasting tx hash {} to {}: {}", tx, peer, e);
                     }
+                    trace!("Adding tx hash {} to cache for {}", tx, peer);
                     // Set it as "In" so we can't get it back as we are the sender of it
                     txs_cache.put(tx.clone(), Direction::In);
                 } else {
@@ -2159,7 +2163,9 @@ impl<S: Storage> P2pServer<S> {
             // (block height is always + 1 above the highest tip height, so we can just check that peer height is not above block height + 1, it's enough in 90% of time)
             // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
             if (peer_height >= block.get_height() && peer_height - block.get_height() < STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
+                trace!("locking blocks propagation for peer {}", peer);
                 let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
+                trace!("end locking blocks propagation for peer {}", peer);
                 // check that this block was never shared with this peer
                 if !blocks_propagation.contains(hash) {
                     // we broadcasted to him, add it to the cache
@@ -2170,12 +2176,14 @@ impl<S: Storage> P2pServer<S> {
                     if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
                         debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
                     }
+                    trace!("{} has been broadcasted to {}", hash, peer);
                 } else {
                     debug!("{} contains {}, don't broadcast block to him", peer, hash);
                     // But we can notify him with a ping packet that we got the block
                     if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
                         debug!("Error on sending ping for notifying that we accepted the block {} to {}: {}", hash, peer, e);
                     } else {
+                        trace!("{} has been notified that we have the block {}", peer, hash);
                         peer.set_last_ping_sent(get_current_time_in_seconds());
                     }
                 }
