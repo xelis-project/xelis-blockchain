@@ -6221,7 +6221,7 @@ When no topoheight is set, it rescan until topoheight 0.
 	"method": "rescan",
 	"id": 1,
 	"params": {
-		"topoheight": 1337
+		"until_topoheight": 1337
 	}
 }
 ```
