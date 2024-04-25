@@ -3,12 +3,13 @@ use std::{
     collections::{
         HashMap,
         HashSet
-    }
+    },
+    net::SocketAddr
 };
 use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, trace, warn};
-use tokio::{task::JoinHandle, sync::Mutex};
+use tokio::{task::JoinHandle, sync::Mutex, net::lookup_host, io::ErrorKind};
 use xelis_common::{
     account::CiphertextCache,
     api::{
@@ -76,7 +77,17 @@ impl NetworkHandler {
     // This will create itself a DaemonAPI and verify if connection is possible
     pub async fn new<S: ToString>(wallet: Arc<Wallet>, daemon_address: S) -> Result<SharedNetworkHandler, Error> {
         let s = daemon_address.to_string();
-        let api = DaemonAPI::new(format!("{}/json_rpc", sanitize_daemon_address(s.as_str()))).await?;
+        let mut resolved_addr: String;
+        resolved_addr = "".to_string();
+        let mut resolved_addrs = lookup_host(s).await?;
+         while let Some(addr) = resolved_addrs.next() {
+            match addr {
+                SocketAddr::V4(addr) => resolved_addr = addr.to_string(),
+                SocketAddr::V6(addr) => resolved_addr = addr.to_string(),
+            }
+        }
+
+        let api = DaemonAPI::new(format!("{}/json_rpc", sanitize_daemon_address(resolved_addr.as_str()))).await?;
         Self::with_api(wallet, Arc::new(api)).await
     }
 
