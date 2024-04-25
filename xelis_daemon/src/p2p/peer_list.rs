@@ -158,7 +158,10 @@ impl PeerList {
             let addr = peer.get_outgoing_address();
             let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
             for peer in self.peers.values() {
+                trace!("Locking shared peers for {}", peer.get_connection().get_address());
                 let mut shared_peers = peer.get_peers().lock().await;
+                trace!("locked shared peers for {}", peer.get_connection().get_address());
+
                 // check if it was a common peer (we sent it and we received it)
                 // Because its a common peer, we can expect that he will send us the same packet
                 if let Some(direction) = shared_peers.get(addr) {

@@ -538,6 +538,7 @@ impl Peer {
     pub async fn close_and_temp_ban(&self) -> Result<(), P2pError> {
         trace!("Tempban {}", self);
         let mut peer_list = self.peer_list.write().await;
+        trace!("Locked peer list for temp ban {}", self);
         if !self.is_priority() {
             peer_list.temp_ban_address(&self.get_connection().get_address().ip(), PEER_TEMP_BAN_TIME).await;
         } else {
