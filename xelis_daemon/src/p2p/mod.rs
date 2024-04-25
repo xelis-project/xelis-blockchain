@@ -83,8 +83,10 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::{
         mpsc::{
-            self, UnboundedSender, UnboundedReceiver,
-            Sender, Receiver, unbounded_channel
+            self,
+            Sender,
+            Receiver,
+            channel
         },
         Mutex
     },
@@ -132,7 +134,7 @@ pub struct P2pServer<S: Storage> {
     // reference to the chain to add blocks/txs
     blockchain: Arc<Blockchain<S>>,
     // this sender allows to create a queue system in one task only
-    connections_sender: UnboundedSender<MessageChannel>,
+    connections_sender: Sender<MessageChannel>,
     // used to requests objects to peers and avoid requesting the same object to multiple peers
     object_tracker: SharedObjectTracker,
     // used to check if the server is running or not in tasks
@@ -180,11 +182,11 @@ impl<S: Storage> P2pServer<S> {
         let peer_id: u64 = rng.gen(); // generate a random peer id for network
         let addr: SocketAddr = bind_address.parse()?; // parse the bind address
         // create mspc channel for connections to peers
-        let (connections_sender, connections_receiver) = mpsc::unbounded_channel();
+        let (connections_sender, connections_receiver) = mpsc::channel(max_peers);
         let (blocks_processor, blocks_processor_receiver) = mpsc::channel(TIPS_LIMIT * STABLE_LIMIT as usize);
         let object_tracker = ObjectTracker::new(blockchain.clone());
 
-        let (sender, event_receiver) = unbounded_channel::<Arc<Peer>>(); 
+        let (sender, event_receiver) = channel::<Arc<Peer>>(max_peers); 
         let peer_list = PeerList::new(max_peers, format!("{}peerlist-{}.json", dir_path.unwrap_or_default(), blockchain.get_network().to_string().to_lowercase()), Some(sender));
 
         let server = Self {
@@ -226,7 +228,7 @@ impl<S: Storage> P2pServer<S> {
         info!("Stopping P2p Server...");
         self.is_running.store(false, Ordering::Release);
 
-        if let Err(e) = self.connections_sender.send(MessageChannel::Exit) {
+        if let Err(e) = self.connections_sender.send(MessageChannel::Exit).await {
             error!("Error while sending Exit message to stop accepting new connections: {}", e);
         }
 
@@ -287,7 +289,7 @@ impl<S: Storage> P2pServer<S> {
 
     // connect to seed nodes, start p2p server
     // and wait on all new connections
-    async fn start(self: &Arc<Self>, mut receiver: UnboundedReceiver<MessageChannel>, blocks_processor_receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>, event_receiver: UnboundedReceiver<Arc<Peer>>, use_peerlist: bool) -> Result<(), P2pError> {
+    async fn start(self: &Arc<Self>, mut receiver: Receiver<MessageChannel>, blocks_processor_receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>, event_receiver: Receiver<Arc<Peer>>, use_peerlist: bool) -> Result<(), P2pError> {
         let listener = TcpListener::bind(self.get_bind_address()).await?;
         info!("P2p Server will listen on: {}", self.get_bind_address());
 
@@ -550,7 +552,7 @@ impl<S: Storage> P2pServer<S> {
             }
         }
 
-        if let Err(e) = self.connections_sender.send(MessageChannel::Connect((addr, priority))) {
+        if let Err(e) = self.connections_sender.send(MessageChannel::Connect((addr, priority))).await {
             error!("Error while trying to connect to address {} (priority = {}): {}", addr, priority, e);
         }
     }
@@ -924,7 +926,7 @@ impl<S: Storage> P2pServer<S> {
 
     // This function is used to broadcast PeerDisconnected event to listeners
     // We use a channel to avoid having to pass the Blockchain<S> to the Peerlist & Peers
-    async fn event_loop(self: Arc<Self>, mut receiver: UnboundedReceiver<Arc<Peer>>) {
+    async fn event_loop(self: Arc<Self>, mut receiver: Receiver<Arc<Peer>>) {
         debug!("Starting event loop task...");
         while let Some(peer) = receiver.recv().await {
             if !self.is_running() {
@@ -1003,7 +1005,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // this function handle the logic to send all packets to the peer
-    async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut UnboundedReceiver<ConnectionMessage>) -> Result<(), P2pError> {
+    async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut Receiver<ConnectionMessage>) -> Result<(), P2pError> {
         loop {
             // all packets to be sent
             if let Some(data) = rx.recv().await {

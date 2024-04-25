@@ -3,7 +3,8 @@ use crate::{
         P2P_EXTEND_PEERLIST_DELAY,
         PEER_FAIL_LIMIT,
         PEER_FAIL_TO_CONNECT_LIMIT,
-        PEER_TEMP_BAN_TIME_ON_CONNECT
+        PEER_TEMP_BAN_TIME_ON_CONNECT,
+        PEER_TIMEOUT_DISCONNECT
     },
     p2p::packet::peer_disconnected::PacketPeerDisconnected
 };
@@ -16,7 +17,7 @@ use std::{
 };
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
-use tokio::sync::{RwLock, mpsc::UnboundedSender};
+use tokio::{sync::{mpsc::Sender, RwLock}, time::timeout};
 use xelis_common::{
     serializer::Serializer,
     time::{TimestampSeconds, get_current_time_in_seconds},
@@ -40,7 +41,7 @@ pub struct PeerList {
     // used to notify the server that a peer disconnected
     // this is done through a channel to not have to handle generic types
     // and to be flexible in the future
-    peer_disconnect_channel: Option<UnboundedSender<Arc<Peer>>>
+    peer_disconnect_channel: Option<Sender<Arc<Peer>>>
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
@@ -114,7 +115,7 @@ impl PeerList {
         Ok(peers)
     }
 
-    pub fn new(capacity: usize, filename: String, peer_disconnect_channel: Option<UnboundedSender<Arc<Peer>>>) -> SharedPeerList {
+    pub fn new(capacity: usize, filename: String, peer_disconnect_channel: Option<Sender<Arc<Peer>>>) -> SharedPeerList {
         let stored_peers = match Self::load_stored_peers(&filename) {
             Ok(peers) => peers,
             Err(e) => {
@@ -179,7 +180,7 @@ impl PeerList {
         info!("Peer disconnected: {}", peer);
         if let Some(peer_disconnect_channel) = &self.peer_disconnect_channel {
             debug!("Notifying server that {} disconnected", peer);
-            if let Err(e) = peer_disconnect_channel.send(peer) {
+            if let Err(e) = peer_disconnect_channel.send(peer).await {
                 error!("Error while sending peer disconnect notification: {}", e);
             }
         }
@@ -227,8 +228,10 @@ impl PeerList {
     pub async fn close_all(&mut self) {
         for (_, peer) in self.peers.iter() {
             debug!("Closing peer: {}", peer);
-            if let Err(e) = peer.get_connection().close().await {
-                error!("Error while trying to close peer {}: {}", peer.get_connection().get_address(), e);
+            match timeout(Duration::from_secs(PEER_TIMEOUT_DISCONNECT), peer.get_connection().close()).await {
+                Err(e) => error!("Error while trying to close peer {}, deadline elapsed: {}", peer.get_connection().get_address(), e),
+                Ok(Err(e)) => error!("Error while trying to close peer {}: {}", peer.get_connection().get_address(), e),
+                Ok(Ok(())) => debug!("Peer {} closed", peer.get_connection().get_address())
             }
         }
 

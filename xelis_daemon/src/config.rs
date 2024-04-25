@@ -139,6 +139,8 @@ pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15000;
 pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60000;
 // millis until we timeout during a handshake
 pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 5000;
+// millis until we timeout during a handshake
+pub const PEER_TIMEOUT_DISCONNECT: u64 = 1500;
 // 16 additional bytes are for AEAD from ChaCha20Poly1305
 pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
 // Peer TX cache size
@@ -146,6 +148,8 @@ pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
 pub const PEER_TX_CACHE_SIZE: usize = 10240;
 // Peer Block cache size
 pub const PEER_BLOCK_CACHE_SIZE: usize = 1024;
+// Peer packet channel size
+pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 
 // Genesis block to have the same starting point for every nodes
 // Genesis block in hexadecimal format

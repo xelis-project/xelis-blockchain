@@ -1,4 +1,4 @@
-use crate::config::PEER_TIMEOUT_INIT_CONNECTION;
+use crate::config::{PEER_PACKET_CHANNEL_SIZE, PEER_TIMEOUT_INIT_CONNECTION};
 use super::{
     encryption::Encryption,
     error::P2pError,
@@ -40,8 +40,8 @@ pub enum ConnectionMessage {
     Exit
 }
 
-pub type Tx = mpsc::UnboundedSender<ConnectionMessage>;
-pub type Rx = mpsc::UnboundedReceiver<ConnectionMessage>;
+pub type Tx = mpsc::Sender<ConnectionMessage>;
+pub type Rx = mpsc::Receiver<ConnectionMessage>;
 
 type P2pResult<T> = Result<T, P2pError>;
 
@@ -91,7 +91,7 @@ const ROTATE_EVERY_N_BYTES: usize = 1024 * 1024 * 1024;
 
 impl Connection {
     pub fn new(stream: TcpStream, addr: SocketAddr, out: bool) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(PEER_PACKET_CHANNEL_SIZE);
         let (read, write) = stream.into_split();
         Self {
             out,
@@ -174,7 +174,7 @@ impl Connection {
         trace!("Sending {} bytes to {}", bytes.len(), self.addr);
         let tx = self.tx.lock().await;
         trace!("Lock acquired, Sending packet");
-        tx.send(ConnectionMessage::Packet(bytes))?;
+        tx.send(ConnectionMessage::Packet(bytes)).await?;
         Ok(())
     }
 
@@ -371,10 +371,18 @@ impl Connection {
     // Close the connection
     pub async fn close(&self) -> P2pResult<()> {
         self.closed.store(true, Ordering::Relaxed);
-        let tx = self.tx.lock().await;
-        tx.send(ConnectionMessage::Exit)?; // send a exit message to stop the current lock of stream
-        let mut stream = self.write.lock().await;
-        stream.shutdown().await?; // sometimes the peer is not removed on other peer side
+        {
+            let tx = self.tx.lock().await;
+            // send a exit message to stop the current lock of stream
+            tx.send(ConnectionMessage::Exit).await?;
+        }
+
+        {
+            let mut stream = self.write.lock().await;
+            // sometimes the peer is not removed on other peer side
+            stream.shutdown().await?;
+        }
+
         Ok(())
     }
 
