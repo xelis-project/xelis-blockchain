@@ -699,8 +699,7 @@ impl<S: Storage> P2pServer<S> {
     // he have the blocks we need
     async fn select_random_best_peer(&self, fast_sync: bool, previous_peer: Option<&(Arc<Peer>, bool)>) -> Result<Option<Arc<Peer>>, BlockchainError> {
         trace!("select random best peer");
-        let peer_list = self.peer_list.read().await;
-        trace!("peer list locked for select random best peer");
+        
         let our_height = self.blockchain.get_height();
         let our_topoheight = self.blockchain.get_topo_height();
 
@@ -711,6 +710,9 @@ impl<S: Storage> P2pServer<S> {
             let hash = storage.get_hash_at_topo_height(our_topoheight).await?;
             storage.get_cumulative_difficulty_for_block_hash(&hash).await?
         };
+        
+        let peer_list = self.peer_list.read().await;
+        trace!("peer list locked for select random best peer");
 
         // search for peers which are greater than us
         // and that are pruned but before our height so we can sync correctly
