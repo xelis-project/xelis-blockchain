@@ -137,6 +137,10 @@ pub struct Config {
     /// Disable GetWork Server (WebSocket for miners).
     #[clap(long)]
     pub disable_getwork_server: bool,
+    /// Disable RPC Server
+    /// This will also disable the GetWork Server as it is loaded on RPC server.
+    #[clap(long)]
+    pub disable_rpc_server: bool,
     /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME).
     #[clap(long)]
     pub simulator: Option<Simulator>,
@@ -339,7 +343,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // create RPC Server
-        {
+        if !config.disable_rpc_server {
             info!("RPC Server will listen on: {}", config.rpc_bind_address);
             match DaemonRpcServer::new(config.rpc_bind_address, Arc::clone(&arc), config.disable_getwork_server).await {
                 Ok(server) => *arc.rpc.write().await = Some(server),
