@@ -7847,7 +7847,7 @@ Parameter value can be anything (object, value, array...)
 ```json
 {
 	"jsonrpc": "2.0",
-	"method": "estimate_fees",
+	"method": "sign_data",
 	"id": 1,
 	"params": {
 		"hello": "world"
@@ -7900,5 +7900,32 @@ Returned fees are in atomic units.
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": 25000
+}
+```
+
+
+#### Is Online
+Determine if the wallet is connected to a node or not (offline / online mode).
+
+##### Method `is_online`
+
+##### Parameters
+No parameter
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "is_online",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
 }
 ```
