@@ -139,7 +139,7 @@ impl PeerList {
     // Clear the peerlist, this will overwrite the file on disk also
     pub fn clear_peerlist(&mut self) {
         trace!("clear peerlist");
-        self.peers.clear();
+        self.stored_peers.clear();
 
         if let Err(e) = self.save_peers_to_file() {
             error!("Error while trying to save peerlist to file: {}", e);
