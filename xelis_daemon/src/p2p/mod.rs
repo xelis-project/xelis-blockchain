@@ -1069,6 +1069,8 @@ impl<S: Storage> P2pServer<S> {
             let zelf = Arc::clone(self);
             let peer = Arc::clone(&peer);
             tokio::spawn(async move {
+                let addr = *peer.get_connection().get_address();
+                trace!("Handle connection write side task for {} has been started", addr);
                 let mut rx = peer.get_connection().get_rx().lock().await;
                 if let Err(e) = zelf.handle_connection_write_side(&peer, &mut rx).await {
                     debug!("Error while writing to {}: {}", peer, e);
@@ -1079,6 +1081,8 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
                 rx.close(); // clean shutdown
+
+                trace!("Handle connection read side task for {} has been finished", addr);
             })
         };
 
@@ -1087,6 +1091,8 @@ impl<S: Storage> P2pServer<S> {
             let zelf = Arc::clone(&self);
             let peer = Arc::clone(&peer);
             tokio::spawn(async move {
+                let addr = *peer.get_connection().get_address();
+                trace!("Handle connection read side task for {} has been started", addr);
                 if let Err(e) = zelf.handle_connection_read_side(&peer, write_task).await {
                     debug!("Error while running read part from peer {}: {}", peer, e);
                     if !peer.get_connection().is_closed() {
@@ -1095,6 +1101,7 @@ impl<S: Storage> P2pServer<S> {
                         }
                     }
                 }
+                trace!("Handle connection read side task for {} has been finished", addr);
             });
         }
 
