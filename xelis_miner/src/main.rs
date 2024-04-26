@@ -33,8 +33,8 @@ use tokio_tungstenite::{
 };
 use xelis_common::{
     api::daemon::{
-        GetBlockTemplateResult,
-        SubmitBlockParams
+        GetMinerWorkResult,
+        SubmitMinerWorkParams,
     },
     async_handler,
     block::BlockMiner,
@@ -132,13 +132,13 @@ enum ThreadNotification<'a> {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")] 
 pub enum SocketMessage {
-    NewJob(GetBlockTemplateResult),
+    NewJob(GetMinerWorkResult),
     BlockAccepted,
     BlockRejected(String)
 }
 
 static WEBSOCKET_CONNECTED: AtomicBool = AtomicBool::new(false);
-static CURRENT_HEIGHT: AtomicU64 = AtomicU64::new(0);
+static CURRENT_TOPO_HEIGHT: AtomicU64 = AtomicU64::new(0);
 static BLOCKS_FOUND: AtomicUsize = AtomicUsize::new(0);
 static BLOCKS_REJECTED: AtomicUsize = AtomicUsize::new(0);
 static HASHRATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -304,9 +304,9 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
                         }
                     }
                 },
-                Some(block) = block_receiver.recv() => { // send all valid blocks found to the daemon
+                Some(work) = block_receiver.recv() => { // send all valid blocks found to the daemon
                     info!("submitting new block found...");
-                    let submit = serde_json::json!(SubmitBlockParams { block_template: block.to_hex() }).to_string();
+                    let submit = serde_json::json!(SubmitMinerWorkParams { miner_work: work.to_hex() }).to_string();
                     if let Err(e) = write.send(Message::Text(submit)).await {
                         error!("Error while sending the block found to the daemon: {}", e);
                         break;
@@ -334,7 +334,7 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
                 SocketMessage::NewJob(job) => {
                     info!("New job received: difficulty {} at height {}", format_difficulty(job.difficulty), job.height);
                     let block = BlockMiner::from_hex(job.template).context("Error while decoding new job received from daemon")?;
-                    CURRENT_HEIGHT.store(job.height, Ordering::SeqCst);
+                    CURRENT_TOPO_HEIGHT.store(job.topoheight, Ordering::SeqCst);
 
                     if let Err(e) = job_sender.send(ThreadNotification::NewJob(block, job.difficulty, job.height)) {
                         error!("Error while sending new job to threads: {}", e);
@@ -454,10 +454,10 @@ async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
     command_manager.register_default_commands()?;
 
     let closure = |_: &_, _: _| async {
-        let height_str = format!(
+        let topoheight_str = format!(
             "{}: {}",
-            prompt::colorize_str(Color::Yellow, "Height"),
-            prompt::colorize_string(Color::Green, &format!("{}", CURRENT_HEIGHT.load(Ordering::SeqCst))),
+            prompt::colorize_str(Color::Yellow, "TopoHeight"),
+            prompt::colorize_string(Color::Green, &format!("{}", CURRENT_TOPO_HEIGHT.load(Ordering::SeqCst))),
         );
         let blocks_found = format!(
             "{}: {}",
@@ -488,7 +488,7 @@ async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
             format!(
                 "{} | {} | {} | {} | {} | {} {} ",
                 prompt::colorize_str(Color::Blue, "XELIS Miner"),
-                height_str,
+                topoheight_str,
                 blocks_found,
                 blocks_rejected,
                 hashrate,
