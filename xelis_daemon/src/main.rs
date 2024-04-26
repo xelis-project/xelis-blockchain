@@ -12,7 +12,6 @@ use rpc::{
     getwork_server::SharedGetWorkServer,
     rpc::get_block_response_for_hash
 };
-use tokio::time::timeout;
 use xelis_common::{
     async_handler,
     config::{VERSION, XELIS_ASSET},
@@ -207,7 +206,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         let topoheight = blockchain.get_topo_height();
         let (peers, median) = match &p2p {
             Some(p2p) => {
-                let peer_list = timeout(Duration::from_millis(4800), p2p.get_peer_list().read()).await.unwrap();
+                let peer_list = p2p.get_peer_list().read().await;
                 (peer_list.size(), peer_list.get_median_topoheight(Some(topoheight)))
             },
             None => (0, blockchain.get_topo_height())
@@ -215,24 +214,24 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
 
         debug!("Retrieving RPC connections count");
         let rpc_count = match &rpc {
-            Some(rpc) => timeout(Duration::from_millis(100), rpc.get_websocket().count_connections()).await.unwrap(),
+            Some(rpc) => rpc.get_websocket().count_connections().await,
             None => 0
         };
 
         debug!("Retrieving miners count");
         let miners = match &getwork {
-            Some(getwork) => timeout(Duration::from_millis(100), getwork.count_miners()).await.unwrap(),
+            Some(getwork) => getwork.count_miners().await,
             None => 0
         };
 
         debug!("Retrieving mempool size");
         let mempool = {
-            let mempool = timeout(Duration::from_millis(100), blockchain.get_mempool().read()).await.unwrap();
+            let mempool = blockchain.get_mempool().read().await;
             mempool.size()
         };
 
         debug!("Retrieving network hashrate");
-        let network_hashrate = (timeout(Duration::from_millis(100), blockchain.get_difficulty()).await.unwrap() / BLOCK_TIME).into();
+        let network_hashrate = (blockchain.get_difficulty().await / BLOCK_TIME).into();
 
         debug!("Building prompt message");
         Ok( 
