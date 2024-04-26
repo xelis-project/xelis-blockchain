@@ -80,11 +80,18 @@ use self::{
     error::P2pError
 };
 use tokio::{
-    io::AsyncWriteExt, net::{TcpListener, TcpStream}, select, sync::{
+    io::AsyncWriteExt,
+    net::{TcpListener, TcpStream},
+    select,
+    sync::{
         mpsc::{
-            self, channel, Receiver, Sender
+            self,
+            channel,
+            Receiver,
+            Sender
         },
-        Mutex, Semaphore
+        Mutex,
+        Semaphore
     }, task::JoinHandle, time::{interval, sleep, timeout}
 };
 use log::{info, warn, error, debug, trace};
@@ -452,6 +459,15 @@ impl<S: Storage> P2pServer<S> {
                     debug!("Error while closing & ignoring incoming connection {}: {}", addr, e);
                 }
                 continue;
+            }
+
+            // Prevent creating a too high count of tasks
+            {
+                trace!("Acquiring semaphore for incoming connection {}", addr);
+                if let Err(e) = semaphore.acquire().await {
+                    error!("Error while acquiring semaphore for incoming connection {}: {}", addr, e);
+                    continue;
+                }
             }
 
             let connection = Connection::new(stream, addr, false);
