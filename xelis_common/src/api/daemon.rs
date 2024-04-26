@@ -524,7 +524,7 @@ pub struct PeerPeerListUpdatedEvent {
     // Peer ID of the peer that sent us the new peer list
     pub peer_id: u64,
     // Peerlist received from this peer
-    pub peerlist: Vec<SocketAddr>
+    pub peerlist: IndexSet<SocketAddr>
 }
 
 // Value of NotifyEvent::PeerStateUpdated
