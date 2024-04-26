@@ -68,7 +68,8 @@ use xelis_common::{
     async_handler,
     block::{
         Block,
-        BlockHeader
+        BlockHeader,
+        BlockMiner
     },
     config::{
         MAXIMUM_SUPPLY,
@@ -397,14 +398,20 @@ async fn get_block_template<S: Storage>(context: Context, body: Value) -> Result
     let block = blockchain.get_block_template_for_storage(&storage, params.address.into_owned().to_public_key()).await.context("Error while retrieving block template")?;
     let (difficulty, _) = blockchain.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
     let height = block.height;
-    Ok(json!(GetBlockTemplateResult { template: block.to_hex(), height, difficulty }))
+    let topoheight = blockchain.get_topo_height();
+    Ok(json!(GetBlockTemplateResult { template: block.to_hex(), height, topoheight, difficulty }))
 }
 
 async fn submit_block<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SubmitBlockParams = parse_params(body)?;
-    let header = BlockHeader::from_hex(params.block_template)?;
+    let mut header = BlockHeader::from_hex(params.block_template)?;
+    if let Some(work) = params.miner_work {
+        let work = BlockMiner::from_hex(work)?;
+        header.apply_miner_work(work);
+    }
+
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    // TODO add block hashing blob on block template
+
     let block = blockchain.build_block_from_header(Immutable::Owned(header)).await.context("Error while building block from header")?;
     blockchain.add_new_block(block, true, true).await.context("Error while adding new block to chain")?;
     Ok(json!(true))
