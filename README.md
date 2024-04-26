@@ -3,7 +3,7 @@ All rights reserved.
 
 A from scratch blockchain made in Rust and powered by Tokio, using account model. XELIS is based on an event-driven system combined with the native async/await and works with a unique and from scratch p2p system. This allow to be notified on any events happening on the network and to be able to react to them instead of checking periodically for updates.
 
-BlockDAG is enabled to improve the scalability and the security of the network. Homomorphic Encryption using ElGamal is used to provide privacy on transactions (transfered amounts) and balances.
+BlockDAG is enabled to improve the scalability and the security of the network. Homomorphic Encryption using ElGamal is used to provide privacy on transactions (transferred amounts) and balances.
 
 ElGamal cryptosystem was choosen because it's a well known and studied encryption algorithm which has homomorphism features. ElGamal is fast and is used in combination with Ristretto255 curve to provide a good level of security (~128 bits of security). Homomorphic operations available using ElGamal are addition/subtraction between ciphertexts and/or plaintext and multiplication against plaintext value.
 
@@ -35,7 +35,7 @@ Thank you to every people testing actively the code base, honest miners and ever
 The main features of XELIS are the following:
 - **BlockDAG**: reduce orphaned blocks rate.
 - **Egalitarian Mining**: any CPU or GPU can mine XELIS easily.
-- **Privacy**: Homomorphic Encryption allows to have encrypted balances and encrypted transfered amounts.
+- **Privacy**: Homomorphic Encryption allows to have encrypted balances and encrypted transferred amounts.
 - **Confidential Asset**: Any asset deployed on XELIS network will have the same privacy and functionality like XELIS. Not just a number in a Smart Contract.
 - **Event system**: every event happening on the network (daemon or wallet) can be detected and notified easily.
 - **Instant Sync**: Your wallet balances and history is synced in few seconds.
@@ -199,12 +199,12 @@ Every data is integrated in the transaction payload when using an integrated add
 
 ## P2p (Encrypted Network)
 
-All transfered data are using a custom Serializer/Deserializer made by hand to transform a struct representation in raw bytes directly.
+All transferred data are using a custom Serializer/Deserializer made by hand to transform a struct representation in raw bytes directly.
 This serialization is done using the fixed position of each fields and their corresponding bits size.
 
-Before sending a packet, we're encrypting it using ChaCha20-Poly1305 algorithm to prevent network traffic analysis and authenticate each transfered data.
+Before sending a packet, we're encrypting it using ChaCha20-Poly1305 algorithm to prevent network traffic analysis and authenticate each transferred data.
 
-Every data transfered is done through the Packet system which allow easily to read & transfer data and doing the whole serialization itself.
+Every data transferred is done through the Packet system which allow easily to read & transfer data and doing the whole serialization itself.
 
 The connection for a new peer (took from the queue or a new incoming connections) is executed through a unique tokio task with the same allocated buffer for handshake.
 This prevents any DoS attack on creating multiple task and verifying connection.
