@@ -462,12 +462,15 @@ Block Header can be serialized/deserialized using following order on byte array:
 #### Submit Block
 Submit a block header in hexadecimal format to the daemon.
 
+**NOTE**: Parameter `miner_work` is optional has it is also supported to be directly applied on `block_template`.
+
 ##### Method `submit_block`
 
 ##### Parameters
-|      Name      |  Type  | Required |         Note        |
-|:--------------:|:------:|:--------:|:-------------------:|
-| block_template | String | Required | Block in hex format |
+|      Name      |  Type  | Required |            Note          |
+|:--------------:|:------:|:--------:|:------------------------:|
+| block_template | String | Required |   Block in hex format    |
+|   miner_work   | String | Optional | Miner work in hex format |
 
 ##### Request
 ```json
@@ -476,7 +479,7 @@ Submit a block header in hexadecimal format to the daemon.
 	"id": 0,
 	"method": "submit_block",
 	"params": {
-		"block_template": "0000000000000be0000000000000000000000186c0d2dac5000000000003e33798b264214181b57720a6e6cdf87cd9bcd80391dde6780223f87176aff03b45080100000040453896c70b2be2d7088860f179a9e9fc3d03941170d6bf8c2dc6d3e60000d549622a55c88b5c14c263ec0db5f5ffae249c7288f68b0c1333cb105df89450"
+		"block_template": "00000000000000002d0000018f1cbd697000000000000000000eded85557e887b45989a727b6786e1bd250de65042d9381822fa73d01d2c4ff01d3a0154853dbb01dc28c9102e9d94bea355b8ee0d82c3e078ac80841445e86520000d67ad13934337b85c34985491c437386c95de0d97017131088724cfbedebdc55"
 	}
 }
 ```
@@ -487,19 +490,6 @@ Submit a block header in hexadecimal format to the daemon.
 	"id": 0,
 	"jsonrpc": "2.0",
 	"result": true
-}
-```
-
-##### Response
-```json
-{
-	"id": 1,
-	"jsonrpc": "2.0",
-	"result": {
-		"difficulty": "92606820000",
-		"height": 21863,
-		"template": "0000000000000055670000018e8715a7e30000000000000000c0e5e874714934c447db03757ac0666bbb1712f61da2c9d9aa548741240ccac10100000000098c66fcb4a8d5c1eeb5acdde7a31e9bc912120c61e41826328e6dee0000d67ad13934337b85c34985491c437386c95de0d97017131088724cfbedebdc55"
-	}
 }
 ```
 
