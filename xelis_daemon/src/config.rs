@@ -136,13 +136,15 @@ pub const PEER_TEMP_BAN_TIME: u64 = 15 * 60;
 // Set to 1 minute
 pub const PEER_TEMP_BAN_TIME_ON_CONNECT: u64 = 60;
 // millis until we timeout
-pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15000;
+pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15_000;
 // millis until we timeout during a bootstrap request
-pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60000;
+pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60_000;
 // millis until we timeout during a handshake
-pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 5000;
+pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 5_000;
+// millis until we timeout during outgoing connection try
+pub const PEER_TIMEOUT_INIT_OUTGOING_CONNECTION: u64 = 30_000;
 // millis until we timeout during a handshake
-pub const PEER_TIMEOUT_DISCONNECT: u64 = 1500;
+pub const PEER_TIMEOUT_DISCONNECT: u64 = 1_500;
 // 16 additional bytes are for AEAD from ChaCha20Poly1305
 pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
 // Peer TX cache size
