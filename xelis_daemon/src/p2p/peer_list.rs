@@ -376,8 +376,13 @@ impl PeerList {
         if let Some(peer) = self.peers.values().find(|peer| peer.get_connection().get_address().ip() == *ip) {
             // We have to clone because we're holding a immutable reference from self
             let peer = Arc::clone(peer);
-            if let Err(e) = peer.close_with_peerlist(self).await {
+
+            if let Err(e) = peer.get_connection().close().await {
                 error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
+            }
+    
+            if let Err(e) = self.remove_peer(peer.get_id()).await {
+                error!("Error while removing peer from peerlist for being blacklisted: {}", e);
             }
         }
     }
@@ -386,8 +391,12 @@ impl PeerList {
     // this will also close the peer
     pub async fn temp_ban_peer(&mut self, peer: &Peer, seconds: u64) {
         self.temp_ban_address(&peer.get_connection().get_address().ip(), seconds).await;
-        if let Err(e) = peer.close_with_peerlist(self).await {
-            error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
+        if let Err(e) = peer.get_connection().close().await {
+            error!("Error while trying to close {} for being temp banned: {}", peer, e);
+        }
+
+        if let Err(e) = self.remove_peer(peer.get_id()).await {
+            error!("Error while removing peer from peerlist for being temp banned: {}", e);
         }
     }
 

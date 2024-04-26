@@ -33,7 +33,7 @@ use super::{
         },
         Packet
     },
-    peer_list::{PeerList, SharedPeerList},
+    peer_list::SharedPeerList,
     connection::Connection,
     error::P2pError
 };
@@ -537,30 +537,41 @@ impl Peer {
     // Close the peer connection and remove it from the peer list
     pub async fn close_and_temp_ban(&self) -> Result<(), P2pError> {
         trace!("Tempban {}", self);
-        let mut peer_list = self.peer_list.write().await;
-        trace!("Locked peer list for temp ban {}", self);
-        if !self.is_priority() {
-            peer_list.temp_ban_address(&self.get_connection().get_address().ip(), PEER_TEMP_BAN_TIME).await;
-        } else {
-            warn!("{} is a priority peer, closing only", self);
-        }
-        self.close_with_peerlist(&mut peer_list).await
-    }
+        let res = self.get_connection().close().await;
 
-    // Close peer connection and delete it from the peer list
-    pub async fn close_with_peerlist(&self, peer_list: &mut PeerList) -> Result<(), P2pError> {
-        trace!("Closing connection with {}", self);
-        peer_list.remove_peer(self.get_id()).await?;
-        self.get_connection().close().await?;
-        trace!("{} has been disconnected", self);
+        {
+            let mut peer_list = self.peer_list.write().await;
+            trace!("Locked peer list for temp ban {}", self);
+            if !self.is_priority() {
+                peer_list.temp_ban_address(&self.get_connection().get_address().ip(), PEER_TEMP_BAN_TIME).await;
+            } else {
+                debug!("{} is a priority peer, closing only", self);
+            }
+    
+            peer_list.remove_peer(self.get_id()).await?;
+        }
+        res?;
+        
         Ok(())
     }
 
     // Close the peer connection and remove it from the peer list
     pub async fn close(&self) -> Result<(), P2pError> {
         trace!("Closing connection with {}", self);
+        let res = self.get_connection().close().await;
+
         let mut peer_list = self.peer_list.write().await;
-        self.close_with_peerlist(&mut peer_list).await
+        trace!("Locked peer list for temp ban {}", self);
+        if !self.is_priority() {
+            peer_list.temp_ban_address(&self.get_connection().get_address().ip(), PEER_TEMP_BAN_TIME).await;
+        } else {
+            debug!("{} is a priority peer, closing only", self);
+        }
+
+        peer_list.remove_peer(self.get_id()).await?;
+        res?;
+
+        Ok(())
     }
 
     // Send a packet to the peer
