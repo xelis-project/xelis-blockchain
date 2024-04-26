@@ -1477,7 +1477,8 @@ impl<S: Storage> P2pServer<S> {
                 let last_request = peer.get_last_chain_sync();
                 let time = get_current_time_in_seconds();
                 // Node is trying to ask too fast our chain
-                if  last_request + CHAIN_SYNC_DELAY > time {
+                // Don't allow faster than 1/3 of the delay
+                if  last_request + (CHAIN_SYNC_DELAY * 2 / 3) > time {
                     debug!("{} requested sync chain too fast!", peer);
                     return Err(P2pError::RequestSyncChainTooFast)
                 }
@@ -1516,13 +1517,6 @@ impl<S: Storage> P2pServer<S> {
                 trace!("Received a ping packet from {}", peer);
                 let current_time = get_current_time_in_seconds();
                 let empty_peer_list = ping.get_peers().is_empty();
-                // verify the respect of the coutdown to prevent massive packet incoming
-                // if he send 4x faster than rules, throw error (because of connection latency / packets being queued)
-                // let last_ping = peer.get_last_ping();
-                // Disabled for testing block notification
-                // if current_time - last_ping < P2P_PING_DELAY / 4 && empty_peer_list {
-                //     return Err(P2pError::PeerInvalidPingCoutdown)
-                // }
 
                 // update the last ping only if he respect the protocol rules
                 peer.set_last_ping(current_time);
@@ -1532,7 +1526,8 @@ impl<S: Storage> P2pServer<S> {
                     trace!("received peer list from {}: {}", peer, ping.get_peers().len());
                     let last_peer_list = peer.get_last_peer_list();
                     let diff = current_time - last_peer_list;
-                    if last_peer_list != 0 && diff < P2P_PING_PEER_LIST_DELAY {
+                    // Don't allow faster than 1/3 of the delay (because of connection latency / packets being queued)
+                    if last_peer_list != 0 && diff < (P2P_PING_PEER_LIST_DELAY * 2 / 3) {
                         return Err(P2pError::PeerInvalidPeerListCountdown(P2P_PING_PEER_LIST_DELAY - diff))
                     }
                     peer.set_last_peer_list(current_time);
