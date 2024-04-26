@@ -102,7 +102,13 @@ pub struct GetBlockTemplateParams<'a> {
 pub struct GetBlockTemplateResult {
     // block_template is Block Header in hexadecimal format
     // miner jobs can be created from it
-    pub block_template: String
+    pub template: String,
+    // Blockchain height
+    pub height: u64,
+    // Topoheight of the daemon
+    pub topoheight: u64,
+    // Difficulty target for the POW challenge
+    pub difficulty: Difficulty,
 }
 
 #[derive(Serialize, Deserialize, PartialEq)]
@@ -130,6 +136,8 @@ pub struct SubmitMinerWorkParams {
 pub struct SubmitBlockParams {
     // hex: represent the BlockHeader (Block)
     pub block_template: String,
+    // optional miner work to apply to the block template
+    pub miner_work: Option<String>
 }
 
 #[derive(Serialize, Deserialize)]

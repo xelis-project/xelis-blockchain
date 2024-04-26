@@ -17,7 +17,7 @@ use crate::{
     time::TimestampMillis
 };
 use xelis_hash::Error as XelisHashError;
-use super::EXTRA_NONCE_SIZE;
+use super::{BlockMiner, EXTRA_NONCE_SIZE};
 
 // Serialize the extra nonce in a hexadecimal string
 pub fn serialize_extra_nonce<S: serde::Serializer>(extra_nonce: &[u8; EXTRA_NONCE_SIZE], s: S) -> Result<S::Ok, S::Error> {
@@ -70,6 +70,15 @@ impl BlockHeader {
             miner,
             txs_hashes
         }
+    }
+
+    // Apply a BlockMiner to this block header to match the POW hash
+    pub fn apply_miner_work(&mut self, work: BlockMiner) {
+        let (_, timestamp, nonce, miner, extra_nonce) = work.take();
+        self.miner = miner.unwrap().into_owned();
+        self.timestamp = timestamp;
+        self.nonce = nonce;
+        self.extra_nonce = extra_nonce;
     }
 
     pub fn get_version(&self) -> u8 {
