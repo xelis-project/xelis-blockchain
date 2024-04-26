@@ -430,7 +430,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     async fn handle_incoming_connections(self: Arc<Self>, listener: TcpListener, tx: Sender<Peer>) {
-        let semaphore = Arc::new(Semaphore::new(4));
+        let semaphore = Arc::new(Semaphore::new(16));
         loop {
             let res = listener.accept().await;
             trace!("New listener result received (is err: {})", res.is_err());
