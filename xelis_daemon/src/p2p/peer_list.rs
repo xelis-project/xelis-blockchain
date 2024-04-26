@@ -216,8 +216,14 @@ impl PeerList {
         }
     }
 
+    // Verify if the peer is connected (in peerlist)
     pub fn has_peer(&self, peer_id: &u64) -> bool {
         self.peers.contains_key(peer_id)
+    }
+
+    // Check if the peer is known from our peerlist
+    pub fn has_peer_stored(&self, ip: &IpAddr) -> bool {
+        self.stored_peers.contains_key(ip)
     }
 
     pub fn get_peers(&self) -> &HashMap<u64, Arc<Peer>> {
@@ -467,6 +473,18 @@ impl PeerList {
         } else {
             debug!("{} is whitelisted, not increasing fail count", ip);
         }
+    }
+
+    // Store a new peer address into the peerlist file
+    pub fn store_peer_address(&mut self, addr: SocketAddr) -> bool {
+        let ip: IpAddr = addr.ip();
+        if self.stored_peers.contains_key(&ip) {
+            return false;
+        }
+
+        self.stored_peers.insert(ip, StoredPeer::new(addr.port(), StoredPeerState::Graylist));
+
+        true
     }
 
     // serialize the stored peers to a file

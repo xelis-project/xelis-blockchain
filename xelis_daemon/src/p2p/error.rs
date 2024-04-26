@@ -19,6 +19,10 @@ use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Incompatible with configured exclusive nodes")]
+    ExclusiveNode,
+    #[error("Address is not allowed to connect")]
+    NotAllowed,
     #[error("Peer list is full")]
     PeerListFull,
     #[error("Tracker request has expired, we didn't received a valid response in time")]
@@ -80,7 +84,7 @@ pub enum P2pError {
     #[error("Peer id {} is already used!", _0)]
     PeerIdAlreadyUsed(u64),
     #[error("Peer already connected: {}", _0)]
-    PeerAlreadyConnected(String),
+    PeerAlreadyConnected(SocketAddr),
     #[error(transparent)]
     ErrorStd(#[from] IOError),
     #[error("Poison Error: {}", _0)]

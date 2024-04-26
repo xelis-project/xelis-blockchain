@@ -677,22 +677,9 @@ impl<S: Storage> P2pServer<S> {
 
     // Connect to a specific peer address
     // Buffer is passed in parameter to prevent the re-allocation each time
+    // No check is done, this is done at the moment of the connection
     pub async fn try_to_connect_to_peer(&self, addr: SocketAddr, priority: bool) {
         debug!("try to connect to peer addr {}, priority: {}", addr, priority);
-        if !self.is_compatible_with_exclusive_nodes(&addr) {
-            debug!("Not in exclusive node list: {}, skipping", addr);
-            return;
-        }
-
-        {
-            let peer_list = self.peer_list.read().await;
-            trace!("peer list locked for trying to connect to peer {}", addr);
-            if !peer_list.is_allowed(&addr.ip()) {
-                debug!("{} is not allowed, we can't connect to it", addr);
-                return;
-            }
-        }
-
         if let Err(e) = self.connections_sender.send(MessageChannel::Connect((addr, priority))).await {
             error!("Error while trying to connect to address {} (priority = {}): {}", addr, priority, e);
         }
@@ -702,9 +689,26 @@ impl<S: Storage> P2pServer<S> {
     // Then we send him a handshake
     async fn connect_to_peer(&self, addr: SocketAddr) -> Result<Connection, P2pError> {
         trace!("Trying to connect to {}", addr);
-        if self.is_connected_to_addr(&addr).await? {
-            return Err(P2pError::PeerAlreadyConnected(format!("{}", addr)));
+
+        if !self.is_compatible_with_exclusive_nodes(&addr) {
+            debug!("Not in exclusive node list: {}, skipping", addr);
+            return Err(P2pError::ExclusiveNode);
         }
+
+        {
+            let peer_list = self.peer_list.read().await;
+            trace!("peer list locked for trying to connect to peer {}", addr);
+            if self.is_connected_to_addr_for_peerlist(&addr, &peer_list) {
+                debug!("Already connected to peer: {}, skipping", addr);
+                return Err(P2pError::PeerAlreadyConnected(addr));
+            }
+
+            if !peer_list.is_allowed(&addr.ip()) {
+                debug!("{} is not allowed, we can't connect to it", addr);
+                return Err(P2pError::NotAllowed);
+            }
+        }
+
         let stream = timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), TcpStream::connect(&addr)).await??;
         let connection = Connection::new(stream, addr, true);
         Ok(connection)
@@ -740,7 +744,7 @@ impl<S: Storage> P2pServer<S> {
         };
         let highest_topo_height = self.blockchain.get_topo_height();
         let highest_height = self.blockchain.get_height();
-        let new_peers = Vec::new();
+        let new_peers = IndexSet::new();
         Ping::new(Cow::Owned(block_top_hash), highest_topo_height, highest_height, pruned_topoheight, cumulative_difficulty, new_peers)
     }
 
@@ -1011,7 +1015,7 @@ impl<S: Storage> P2pServer<S> {
                             trace!("{} didn't received {} yet, adding it to peerlist in ping packet", peer.get_outgoing_address(), addr);
 
                             // add it to new list to send it
-                            new_peers.push(*addr);
+                            new_peers.insert(*addr);
                             if new_peers.len() >= P2P_PING_PEER_LIST_LIMIT {
                                 break;
                             }
@@ -1505,17 +1509,23 @@ impl<S: Storage> P2pServer<S> {
                     peer.set_last_peer_list(current_time);
                 }
 
-                let is_local_peer = is_local_address(peer.get_connection().get_address());
-                for addr in ping.get_peers() {
-                    if is_local_address(addr) && !is_local_peer {
-                        error!("{} is a local address from {} but peer is external", addr, peer);
-                        return Err(P2pError::InvalidPeerlist)
-                    }
-
-                    if !self.is_connected_to_addr(&addr).await? {
-                        self.try_to_connect_to_peer(addr.clone(), false).await;
+                {
+                    let is_local_peer = is_local_address(peer.get_connection().get_address());
+                    let mut peer_list = self.peer_list.write().await;
+                    for addr in ping.get_peers() {
+                        if is_local_address(addr) && !is_local_peer {
+                            error!("{} is a local address from {} but peer is external", addr, peer);
+                            return Err(P2pError::InvalidPeerlist)
+                        }
+    
+                        if !self.is_connected_to_addr_for_peerlist(addr, &peer_list) && peer_list.has_peer_stored(&addr.ip()) {
+                            if !peer_list.store_peer_address(*addr) {
+                                debug!("{} already stored in peer list", addr);
+                            }
+                        }
                     }
                 }
+
                 ping.into_owned().update_peer(peer, &self.blockchain).await?;
             },
             Packet::ObjectRequest(request) => {
@@ -2181,6 +2191,17 @@ impl<S: Storage> P2pServer<S> {
         Ok(peer_list.is_connected_to_addr(peer_addr))
     }
 
+    // Check if we are already connected to a socket address (IPv4 or IPv6) including its port
+    pub fn is_connected_to_addr_for_peerlist(&self, peer_addr: &SocketAddr, peer_list: &PeerList) -> bool {
+        // don't try to connect to ourself
+        if *peer_addr == *self.get_bind_address() {
+            debug!("Trying to connect to ourself, ignoring.");
+            return true
+        }
+
+        peer_list.is_connected_to_addr(peer_addr)
+    }
+
     // get the socket address on which we are listening
     pub fn get_bind_address(&self) -> &SocketAddr {
         &self.bind_address
@@ -2235,7 +2256,7 @@ impl<S: Storage> P2pServer<S> {
         debug!("Broadcasting block {} at height {}", hash, block.get_height());
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock
-        let ping = Ping::new(Cow::Borrowed(hash), our_topoheight, our_height, pruned_topoheight, cumulative_difficulty, Vec::new());
+        let ping = Ping::new(Cow::Borrowed(hash), our_topoheight, our_height, pruned_topoheight, cumulative_difficulty, IndexSet::new());
         let block_packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Borrowed(&ping)));
         let packet_block_bytes = Bytes::from(block_packet.to_bytes());
         let packet_ping_bytes = Bytes::from(Packet::Ping(Cow::Owned(ping)).to_bytes());

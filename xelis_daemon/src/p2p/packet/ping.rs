@@ -1,3 +1,4 @@
+use indexmap::IndexSet;
 use xelis_common::{
     api::daemon::{Direction, NotifyEvent, PeerPeerListUpdatedEvent},
     crypto::Hash,
@@ -37,11 +38,11 @@ pub struct Ping<'a> {
     height: u64,
     pruned_topoheight: Option<u64>,
     cumulative_difficulty: CumulativeDifficulty,
-    peer_list: Vec<SocketAddr>
+    peer_list: IndexSet<SocketAddr>
 }
 
 impl<'a> Ping<'a> {
-    pub fn new(top_hash: Cow<'a, Hash>, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, cumulative_difficulty: CumulativeDifficulty, peer_list: Vec<SocketAddr>) -> Self {
+    pub fn new(top_hash: Cow<'a, Hash>, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, cumulative_difficulty: CumulativeDifficulty, peer_list: IndexSet<SocketAddr>) -> Self {
         Self {
             top_hash,
             topoheight,
@@ -141,11 +142,11 @@ impl<'a> Ping<'a> {
         self.topoheight
     }
 
-    pub fn get_peers(&self) -> &Vec<SocketAddr> {
+    pub fn get_peers(&self) -> &IndexSet<SocketAddr> {
         &self.peer_list
     }
 
-    pub fn get_mut_peers(&mut self) -> &mut Vec<SocketAddr> {
+    pub fn get_mut_peers(&mut self) -> &mut IndexSet<SocketAddr> {
         &mut self.peer_list
     }
 }
@@ -181,10 +182,13 @@ impl Serializer for Ping<'_> {
             return Err(ReaderError::InvalidValue)
         }
 
-        let mut peer_list = Vec::with_capacity(peers_len);
+        let mut peer_list = IndexSet::with_capacity(peers_len);
         for _ in 0..peers_len {
             let peer = SocketAddr::read(reader)?;
-            peer_list.push(peer);
+            if !peer_list.insert(peer) {
+                debug!("Duplicated peer {} in ping packet", peer);
+                return Err(ReaderError::InvalidValue)
+            }
         }
 
         Ok(Self { top_hash, topoheight, height, pruned_topoheight, cumulative_difficulty, peer_list })
