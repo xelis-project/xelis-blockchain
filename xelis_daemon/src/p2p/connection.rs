@@ -237,6 +237,7 @@ impl Connection {
     // Send bytes to the peer
     // Encrypt must be used all time starting handshake
     pub async fn send_bytes(&self, packet: &[u8]) -> P2pResult<()> {
+        trace!("Sending {} bytes to {}", packet.len(), self.get_address());
         let mut stream = self.write.lock().await;
 
         // Count the bytes sent
@@ -370,18 +371,22 @@ impl Connection {
 
     // Close the connection
     pub async fn close(&self) -> P2pResult<()> {
-        self.closed.store(true, Ordering::Relaxed);
-        {
-            let tx = self.tx.lock().await;
-            // send a exit message to stop the current lock of stream
-            tx.send(ConnectionMessage::Exit).await?;
-        }
+        trace!("Closing connection with {}", self.addr);
 
-        {
-            let mut stream = self.write.lock().await;
-            // sometimes the peer is not removed on other peer side
-            stream.shutdown().await?;
-        }
+        let tx = self.tx.lock().await;
+        // send a exit message to stop the current lock of stream
+        tx.send(ConnectionMessage::Exit).await?;
+
+        Ok(())
+    }
+
+    pub async fn close_internal(&self) -> P2pResult<()> {
+        trace!("Closing internal connection with {}", self.addr);
+        self.closed.store(true, Ordering::Relaxed);
+
+        // sometimes the peer is not removed on other peer side
+        let mut stream = self.write.lock().await;
+        stream.shutdown().await?;
 
         Ok(())
     }

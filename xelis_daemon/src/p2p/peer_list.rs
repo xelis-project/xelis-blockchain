@@ -245,28 +245,6 @@ impl PeerList {
         self.peers.clear();
     }
 
-    pub async fn broadcast(&self, packet: Packet<'_>) {
-        trace!("broadcast to all peers");
-        let bytes = Bytes::from(packet.to_bytes());
-        for (_, peer) in self.peers.iter() {
-            if let Err(e) = peer.send_bytes(bytes.clone()).await {
-                error!("Error while trying to broadcast packet to peer {}: {}", peer.get_connection().get_address(), e);
-            };
-        }
-    }
-
-    pub async fn broadcast_filter<P>(&self, predicate: P, packet: Packet<'_>)
-        where P: FnMut(&(&u64, &Arc<Peer>)) -> bool
-    {
-        trace!("broadcast with filter");
-        let bytes = Bytes::from(packet.to_bytes());
-        for (_, peer) in self.peers.iter().filter(predicate) {
-            if let Err(e) = peer.send_bytes(bytes.clone()).await {
-                error!("Error while trying to broadcast packet to peer {}: {}", peer.get_connection().get_address(), e);
-            };
-        }
-    }
-
     // Returns the highest topoheight of all peers
     pub fn get_best_topoheight(&self) -> u64 {
         let mut best_height = 0;

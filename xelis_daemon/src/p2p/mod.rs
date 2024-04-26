@@ -512,14 +512,10 @@ impl<S: Storage> P2pServer<S> {
         }
 
         if *handshake.get_network_id() != NETWORK_ID {
-            trace!("{} has an invalid network id: {:#?}", connection, handshake.get_network_id());
-            connection.close().await?;
             return Err(P2pError::InvalidNetworkID);
         }
 
         if self.is_connected_to(&handshake.get_peer_id()).await? {
-            trace!("{} has an already used peer id {}", connection, handshake.get_peer_id());
-            connection.close().await?;
             return Err(P2pError::PeerIdAlreadyUsed(handshake.get_peer_id()));
         }
 
@@ -557,7 +553,8 @@ impl<S: Storage> P2pServer<S> {
         let handshake = match self.verify_connection(buf, &mut connection).await {
             Ok(handshake) => handshake,
             Err(e) => {
-                connection.close().await?;
+                debug!("Error while verifying connection with {}: {}", connection, e);
+                connection.close_internal().await?;
                 return Err(e);
             }
         };
@@ -605,8 +602,8 @@ impl<S: Storage> P2pServer<S> {
             if self.accept_new_connections_for_peerlist(&peer_list) {
                 peer_list.add_peer(peer_id, peer)
             } else {
-                trace!("Peer list is full, closing connection with {}", peer);
-                peer.get_connection().close().await?;
+                debug!("Peer list is full, closing connection with {}", peer);
+                peer.get_connection().close_internal().await?;
                 return Err(P2pError::PeerListFull);
             }
         };
@@ -1110,6 +1107,7 @@ impl<S: Storage> P2pServer<S> {
             // all packets to be sent
             if let Some(data) = rx.recv().await {
                 if peer.get_connection().is_closed() {
+                    debug!("Connection with {} is closed, stopping write side", peer);
                     break;
                 }
 
@@ -1122,6 +1120,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                     ConnectionMessage::Exit => {
                         trace!("Exit message received for peer {}", peer);
+                        peer.get_connection().close_internal().await?;
                         break;
                     }
                 };
@@ -2208,14 +2207,6 @@ impl<S: Storage> P2pServer<S> {
             }
         }
         trace!("broadcasting block {} is done", hash);
-    }
-
-    // Broadcast a packet to across all nodes connected
-    pub async fn broadcast_packet(&self, packet: Packet<'_>) {
-        trace!("Locking peer list for broadcasting packet");
-        let peer_list = self.peer_list.read().await;
-        trace!("Lock acquired, broadcast packet");
-        peer_list.broadcast(packet).await;
     }
 
     // Handle a bootstrap chain request
