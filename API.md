@@ -414,7 +414,17 @@ No parameters
 ```
 
 #### Get Block Template
-Retrieve the block template for PoW work
+Retrieve the block template (Block Header) for PoW work.
+
+Block Header can be serialized/deserialized using following order on byte array:
+- 1 byte for version
+- 8 bytes for height (u64) big endian format
+- 8 bytes for timestamp (u64) big endian format
+- 8 bytes for nonce (u64) big endian format
+- 1 byte for tips count
+- 32 bytes per hash (count of elements is based on previous byte)
+- 32 bytes for extra nonce (this space is free and can be used to spread more the work or write anything)
+- 32 bytes for miner public key
 
 ##### Method `get_block_template`
 
@@ -432,6 +442,20 @@ Retrieve the block template for PoW work
 	"params": {
 		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk"
 	}
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "difficulty": "15000",
+        "height": 45,
+        "template": "00000000000000002d0000018f1cbd697000000000000000000eded85557e887b45989a727b6786e1bd250de65042d9381822fa73d01d2c4ff01d3a0154853dbb01dc28c9102e9d94bea355b8ee0d82c3e078ac80841445e86520000d67ad13934337b85c34985491c437386c95de0d97017131088724cfbedebdc55",
+        "topoheight": 44
+    }
 }
 ```
 
