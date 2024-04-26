@@ -84,6 +84,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
     select,
     sync::{
+        broadcast,
         mpsc::{
             self,
             channel,
@@ -93,7 +94,9 @@ use tokio::{
         },
         Mutex,
         Semaphore
-    }, task::JoinHandle, time::{interval, sleep, timeout}
+    },
+    task::JoinHandle,
+    time::{interval, sleep, timeout}
 };
 use log::{info, warn, error, debug, trace};
 use std::{
@@ -164,6 +167,8 @@ pub struct P2pServer<S: Storage> {
     outgoing_connections_disabled: AtomicBool,
     // Are we syncing the chain with another peer
     is_syncing: AtomicBool,
+    // Exit channel to notify all tasks to stop
+    exit_sender: broadcast::Sender<()>,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -188,6 +193,8 @@ impl<S: Storage> P2pServer<S> {
         let (sender, event_receiver) = channel::<Arc<Peer>>(max_peers); 
         let peer_list = PeerList::new(max_peers, format!("{}peerlist-{}.json", dir_path.unwrap_or_default(), blockchain.get_network().to_string().to_lowercase()), Some(sender));
 
+        let (exit_sender, _) = broadcast::channel(1);
+
         let server = Self {
             peer_id,
             tag,
@@ -207,6 +214,7 @@ impl<S: Storage> P2pServer<S> {
             sharable,
             is_syncing: AtomicBool::new(false),
             outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
+            exit_sender,
         };
 
         let arc = Arc::new(server);
@@ -254,29 +262,38 @@ impl<S: Storage> P2pServer<S> {
     async fn maintains_connection_to_nodes(self: &Arc<Self>, nodes: IndexSet<SocketAddr>, sender: Sender<SocketAddr>) -> Result<(), P2pError> {
         debug!("Starting maintains seed nodes task...");
         let mut interval = interval(Duration::from_secs(P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY));
+        let mut exit_receiver = self.exit_sender.subscribe();
         loop {
-            interval.tick().await;
-            if !self.is_running() {
-                debug!("Maintains seed nodes task is stopped!");
-                break;
-            }
-
-            let connect = {
-                let peer_list = self.peer_list.read().await;
-                if peer_list.size() >= self.max_peers {
-                    // if we have already reached the limit, we ignore this new connection
-                    None
-                } else {
-                    let potential_nodes = nodes.iter().filter(|node| !peer_list.is_connected_to_addr(node));
-                    potential_nodes.choose(&mut rand::thread_rng()).copied()
-                }
-            };
-
-            if let Some(node) = connect {
-                trace!("Trying to connect to priority node: {}", node);
-                if let Err(e) = sender.send(node).await {
-                    error!("Error while sending priority node to connect: {}", e);
-                }
+            select! {
+                biased;
+                _ = exit_receiver.recv() => {
+                    debug!("Received Exit message, exiting task");
+                    break;
+                },
+                _ = interval.tick() => {
+                    if !self.is_running() {
+                        debug!("Maintains seed nodes task is stopped!");
+                        break;
+                    }
+        
+                    let connect = {
+                        let peer_list = self.peer_list.read().await;
+                        if peer_list.size() >= self.max_peers {
+                            // if we have already reached the limit, we ignore this new connection
+                            None
+                        } else {
+                            let potential_nodes = nodes.iter().filter(|node| !peer_list.is_connected_to_addr(node));
+                            potential_nodes.choose(&mut rand::thread_rng()).copied()
+                        }
+                    };
+        
+                    if let Some(node) = connect {
+                        trace!("Trying to connect to priority node: {}", node);
+                        if let Err(e) = sender.send(node).await {
+                            error!("Error while sending priority node to connect: {}", e);
+                        }
+                    }
+                },
             }
         }
 
@@ -351,10 +368,14 @@ impl<S: Storage> P2pServer<S> {
     async fn handle_outgoing_connections(self: Arc<Self>, mut priority_connections: Receiver<SocketAddr>, mut receiver: Receiver<MessageChannel>, tx: Sender<Peer>) {
         // only allocate one time the buffer for this packet
         let mut handshake_buffer = [0; 512];
-
+        let mut exit_receiver = self.exit_sender.subscribe();
         loop {
             let (addr, priority) = select! {
                 biased;
+                _ = exit_receiver.recv() => {
+                    debug!("Received Exit message, exiting task");
+                    break;
+                },
                 res = priority_connections.recv() => {
                     trace!("New priority connection received");
                     match res {
@@ -438,78 +459,92 @@ impl<S: Storage> P2pServer<S> {
 
     async fn handle_incoming_connections(self: Arc<Self>, listener: TcpListener, tx: Sender<Peer>) {
         let semaphore = Arc::new(Semaphore::new(16));
+        let mut exit_receiver = self.exit_sender.subscribe();
         loop {
-            let res = listener.accept().await;
-            trace!("New listener result received (is err: {})", res.is_err());
-            let (mut stream, addr) = match res {
-                Ok((stream, addr)) => (stream, addr),
-                Err(e) => {
-                    error!("Error while accepting new connection, retrying in {}s: {}", P2P_PEER_WAIT_ON_ERROR, e);
-                    sleep(Duration::from_secs(P2P_PEER_WAIT_ON_ERROR)).await;
-                    continue;
-                }
-            };
-
-            if !self.is_running() {
-                break;
-            }
-
-            // Verify if we can accept new connections
-            let reject = if !self.is_compatible_with_exclusive_nodes(&addr) {
-                debug!("{} is not an exclusive node, reject connection", addr);
-                true
-            } else {
-                // check that this incoming peer isn't blacklisted
-                let peer_list = self.peer_list.read().await;
-                !self.accept_new_connections_for_peerlist(&peer_list) || !peer_list.is_allowed(&addr.ip())
-            };
-
-            // Reject connection
-            if reject {
-                if let Err(e) = stream.shutdown().await {
-                    debug!("Error while closing & ignoring incoming connection {}: {}", addr, e);
-                }
-                continue;
-            }
-
-            // Prevent creating a too high count of tasks
-            {
-                trace!("Acquiring semaphore for incoming connection {}", addr);
-                if let Err(e) = semaphore.acquire().await {
-                    error!("Error while acquiring semaphore for incoming connection {}: {}", addr, e);
-                    continue;
-                }
-            }
-
-            let connection = Connection::new(stream, addr, false);
-            let zelf = Arc::clone(&self);
-            let tx = tx.clone();
-            let semaphore = Arc::clone(&semaphore);
-            tokio::spawn(async move {
-                let _permit = match semaphore.acquire().await {
-                    Ok(permit) => permit,
-                    Err(e) => {
-                        error!("Error while acquiring semaphore for incoming connection {}: {}", addr, e);
-                        return;
-                    }
-                
-                };
-
-                let mut buffer = [0; 512];
-                match zelf.create_verified_peer(&mut buffer, connection, false).await {
-                    Ok(peer) => {
-                        if let Err(e) = tx.send(peer).await {
-                            error!("Error while sending new connection to listener: {}", e);
-                        }
+            select! {
+                res = exit_receiver.recv() => match res {
+                    Ok(_) => {
+                        debug!("Received Exit message, exiting task");
+                        break;
                     },
                     Err(e) => {
-                        debug!("Error while handling incoming connection {}: {}", addr, e);
-
-                        let mut peer_list = zelf.peer_list.write().await;
-                        peer_list.increase_fail_count_for_stored_peer(&addr.ip(), true);
+                        error!("Error while receiving Exit message: {}", e);
+                        break;
                     }
-                };
-            });
+                },
+                res = listener.accept() => {
+                    trace!("New listener result received (is err: {})", res.is_err());
+                    let (mut stream, addr) = match res {
+                        Ok((stream, addr)) => (stream, addr),
+                        Err(e) => {
+                            error!("Error while accepting new connection, retrying in {}s: {}", P2P_PEER_WAIT_ON_ERROR, e);
+                            sleep(Duration::from_secs(P2P_PEER_WAIT_ON_ERROR)).await;
+                            continue;
+                        }
+                    };
+        
+                    if !self.is_running() {
+                        break;
+                    }
+        
+                    // Verify if we can accept new connections
+                    let reject = if !self.is_compatible_with_exclusive_nodes(&addr) {
+                        debug!("{} is not an exclusive node, reject connection", addr);
+                        true
+                    } else {
+                        // check that this incoming peer isn't blacklisted
+                        let peer_list = self.peer_list.read().await;
+                        !self.accept_new_connections_for_peerlist(&peer_list) || !peer_list.is_allowed(&addr.ip())
+                    };
+        
+                    // Reject connection
+                    if reject {
+                        if let Err(e) = stream.shutdown().await {
+                            debug!("Error while closing & ignoring incoming connection {}: {}", addr, e);
+                        }
+                        continue;
+                    }
+        
+                    // Prevent creating a too high count of tasks
+                    {
+                        trace!("Acquiring semaphore for incoming connection {}", addr);
+                        if let Err(e) = semaphore.acquire().await {
+                            error!("Error while acquiring semaphore for incoming connection {}: {}", addr, e);
+                            continue;
+                        }
+                    }
+        
+                    let connection = Connection::new(stream, addr, false);
+                    let zelf = Arc::clone(&self);
+                    let tx = tx.clone();
+                    let semaphore = Arc::clone(&semaphore);
+                    tokio::spawn(async move {
+                        let _permit = match semaphore.acquire().await {
+                            Ok(permit) => permit,
+                            Err(e) => {
+                                error!("Error while acquiring semaphore for incoming connection {}: {}", addr, e);
+                                return;
+                            }
+                        
+                        };
+        
+                        let mut buffer = [0; 512];
+                        match zelf.create_verified_peer(&mut buffer, connection, false).await {
+                            Ok(peer) => {
+                                if let Err(e) = tx.send(peer).await {
+                                    error!("Error while sending new connection to listener: {}", e);
+                                }
+                            },
+                            Err(e) => {
+                                debug!("Error while handling incoming connection {}: {}", addr, e);
+        
+                                let mut peer_list = zelf.peer_list.write().await;
+                                peer_list.increase_fail_count_for_stored_peer(&addr.ip(), true);
+                            }
+                        };
+                    });
+                }
+            }
         }
 
         debug!("incoming connections task has exited");
@@ -848,6 +883,11 @@ impl<S: Storage> P2pServer<S> {
             }
             last_chain_sync = current;
 
+            if !self.is_running() {
+                debug!("Chain sync loop is stopped!");
+                break;
+            }
+
             // first we have to check if we allow fast sync mode
             // and then we check if we have a potential peer above us to fast sync
             // otherwise we sync normally 
@@ -914,6 +954,11 @@ impl<S: Storage> P2pServer<S> {
         loop {
             trace!("Waiting for ping delay...");
             sleep(duration).await;
+
+            if !self.is_running() {
+                debug!("Ping loop task is stopped!");
+                break;
+            }
 
             let mut ping = self.build_generic_ping_packet().await;
             trace!("generic ping packet finished");
@@ -1059,6 +1104,11 @@ impl<S: Storage> P2pServer<S> {
     async fn blocks_processing_task(self: Arc<Self>, mut receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>) {
         debug!("Starting blocks processing task");
         while let Some((peer, header, block_hash)) = receiver.recv().await {
+            if !self.is_running() {
+                debug!("blocks processing task is stopped!");
+                break;
+            }
+
             let mut response_blockers: Vec<ResponseBlocker> = Vec::new();
             for hash in header.get_txs_hashes() {
                 let contains = { // we don't lock one time because we may wait on p2p response
@@ -1116,31 +1166,37 @@ impl<S: Storage> P2pServer<S> {
 
     // this function handle the logic to send all packets to the peer
     async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut UnboundedReceiver<ConnectionMessage>) -> Result<(), P2pError> {
+        let mut exit_receiver = self.exit_sender.subscribe();
         loop {
-            // all packets to be sent
-            if let Some(data) = rx.recv().await {
-                if peer.get_connection().is_closed() {
-                    debug!("Connection with {} is closed, stopping write side", peer);
+            select! {
+                biased;
+                _ = exit_receiver.recv() => {
+                    trace!("Exit message received for peer {}", peer);
+                    peer.get_connection().close_internal().await?;
                     break;
-                }
-
-                match data {
-                    ConnectionMessage::Packet(bytes) => {
-                        // there is a overhead of 4 for each packet (packet size u32 4 bytes, packet id u8 is counted in the packet size)
-                        trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[4], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len());
-                        peer.get_connection().send_bytes(&bytes).await?;
-                        trace!("data sucessfully sent!");
-                    }
-                    ConnectionMessage::Exit => {
-                        trace!("Exit message received for peer {}", peer);
-                        peer.get_connection().close_internal().await?;
+                },
+                // all packets to be sent to the peer are received here
+                res = rx.recv() => {
+                    if let Some(data) = res {
+                        match data {
+                            ConnectionMessage::Packet(bytes) => {
+                                // there is a overhead of 4 for each packet (packet size u32 4 bytes, packet id u8 is counted in the packet size)
+                                trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[4], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len());
+                                peer.get_connection().send_bytes(&bytes).await?;
+                                trace!("data sucessfully sent!");
+                            },
+                            ConnectionMessage::Exit => {
+                                trace!("Exit message received for peer {}", peer);
+                                peer.get_connection().close_internal().await?;
+                                break;
+                            }
+                        };
+                    } else {
+                        debug!("Closing write side for {} because all senders are dropped", peer);
                         break;
                     }
-                };
-            } else {
-                debug!("Closing write side because all senders are dropped");
-                break;
-            }
+                }
+            };
         }
         Ok(())
     }
@@ -1149,9 +1205,15 @@ impl<S: Storage> P2pServer<S> {
     async fn handle_connection_read_side(self: Arc<Self>, peer: &Arc<Peer>, mut write_task: JoinHandle<()>) -> Result<(), P2pError> {
         // allocate the unique buffer for this connection
         let mut buf = [0u8; 1024];
+        let mut exit_receiver = self.exit_sender.subscribe();
         loop {
             select! {
                 biased;
+                _ = exit_receiver.recv() => {
+                    trace!("Exit message received for peer {}", peer);
+                    peer.get_connection().close_internal().await?;
+                    break;
+                },
                 _ = &mut write_task => {
                     debug!("write task for {} has finished, stopping...", peer);
                     break;
