@@ -88,7 +88,8 @@ use tokio::{
             self,
             channel,
             Receiver,
-            Sender
+            Sender,
+            UnboundedReceiver
         },
         Mutex,
         Semaphore
@@ -395,6 +396,10 @@ impl<S: Storage> P2pServer<S> {
                 }
             }
 
+            if !self.is_running() {
+                break;
+            }
+
             let connection = match self.connect_to_peer(addr).await {
                 Ok(connection) => connection,
                 Err(e) => {
@@ -427,6 +432,8 @@ impl<S: Storage> P2pServer<S> {
                 break;
             }
         }
+
+        debug!("handle outgoing connections task has exited");
     }
 
     async fn handle_incoming_connections(self: Arc<Self>, listener: TcpListener, tx: Sender<Peer>) {
@@ -442,6 +449,10 @@ impl<S: Storage> P2pServer<S> {
                     continue;
                 }
             };
+
+            if !self.is_running() {
+                break;
+            }
 
             // Verify if we can accept new connections
             let reject = if !self.is_compatible_with_exclusive_nodes(&addr) {
@@ -500,6 +511,8 @@ impl<S: Storage> P2pServer<S> {
                 };
             });
         }
+
+        debug!("incoming connections task has exited");
     }
 
     // Verify handshake send by a new connection
@@ -1102,7 +1115,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // this function handle the logic to send all packets to the peer
-    async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut Receiver<ConnectionMessage>) -> Result<(), P2pError> {
+    async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut UnboundedReceiver<ConnectionMessage>) -> Result<(), P2pError> {
         loop {
             // all packets to be sent
             if let Some(data) = rx.recv().await {

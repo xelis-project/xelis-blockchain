@@ -1,4 +1,4 @@
-use crate::config::{PEER_PACKET_CHANNEL_SIZE, PEER_TIMEOUT_INIT_CONNECTION};
+use crate::config::PEER_TIMEOUT_INIT_CONNECTION;
 use super::{
     encryption::Encryption,
     error::P2pError,
@@ -40,8 +40,8 @@ pub enum ConnectionMessage {
     Exit
 }
 
-pub type Tx = mpsc::Sender<ConnectionMessage>;
-pub type Rx = mpsc::Receiver<ConnectionMessage>;
+pub type Tx = mpsc::UnboundedSender<ConnectionMessage>;
+pub type Rx = mpsc::UnboundedReceiver<ConnectionMessage>;
 
 type P2pResult<T> = Result<T, P2pError>;
 
@@ -65,7 +65,7 @@ pub struct Connection {
     // TCP Address
     addr: SocketAddr,
     // Tx to send bytes
-    tx: Mutex<Tx>,
+    tx: Tx,
     // Rx to read bytes to send
     rx: Mutex<Rx>,
     // total bytes read
@@ -91,7 +91,7 @@ const ROTATE_EVERY_N_BYTES: usize = 1024 * 1024 * 1024;
 
 impl Connection {
     pub fn new(stream: TcpStream, addr: SocketAddr, out: bool) -> Self {
-        let (tx, rx) = mpsc::channel(PEER_PACKET_CHANNEL_SIZE);
+        let (tx, rx) = mpsc::unbounded_channel();
         let (read, write) = stream.into_split();
         Self {
             out,
@@ -99,7 +99,7 @@ impl Connection {
             write: Mutex::new(write),
             read: Mutex::new(read),
             addr,
-            tx: Mutex::new(tx),
+            tx,
             rx: Mutex::new(rx),
             connected_on: get_current_time_in_seconds(),
             bytes_in: AtomicUsize::new(0),
@@ -172,9 +172,8 @@ impl Connection {
     // This will send the bytes to the writer task through its channel
     pub async fn send_bytes_to_task(&self, bytes: Bytes) -> Result<(), P2pError> {
         trace!("Sending {} bytes to {}", bytes.len(), self.addr);
-        let tx = self.tx.lock().await;
+        self.tx.send(ConnectionMessage::Packet(bytes))?;
         trace!("Lock acquired, Sending packet");
-        tx.send(ConnectionMessage::Packet(bytes)).await?;
         Ok(())
     }
 
@@ -372,10 +371,8 @@ impl Connection {
     // Close the connection
     pub async fn close(&self) -> P2pResult<()> {
         trace!("Closing connection with {}", self.addr);
-
-        let tx = self.tx.lock().await;
         // send a exit message to stop the current lock of stream
-        tx.send(ConnectionMessage::Exit).await?;
+        self.tx.send(ConnectionMessage::Exit)?;
 
         Ok(())
     }
