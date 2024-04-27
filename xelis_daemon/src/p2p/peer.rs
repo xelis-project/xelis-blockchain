@@ -588,6 +588,18 @@ impl Peer {
         Ok(())
     }
 
+    // Close the peer connection and remove it from the peer list
+    pub async fn close_internal(&self) -> Result<(), P2pError> {
+        trace!("Closing internal connection with {}", self);
+        // Remove this peer from peer list
+        let mut peer_list = self.peer_list.write().await;
+        peer_list.remove_peer(self.get_id()).await?;
+
+        self.get_connection().close().await?;
+
+        Ok(())
+    }
+
     // Send a packet to the peer
     // This will transform the packet into bytes and send it to the peer
     pub async fn send_packet(&self, packet: Packet<'_>) -> Result<(), P2pError> {

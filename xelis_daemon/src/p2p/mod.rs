@@ -612,6 +612,7 @@ impl<S: Storage> P2pServer<S> {
         Ok(Packet::Handshake(Cow::Owned(handshake)).to_bytes())
     }
 
+    // Create a valid peer using the connection, if an error happen, it will close the stream and return the error
     async fn create_verified_peer(&self, buf: &mut [u8], mut connection: Connection, priority: bool) -> Result<(Peer, Rx), P2pError> {
         let handshake = match self.verify_connection(buf, &mut connection).await {
             Ok(handshake) => handshake,
@@ -677,7 +678,8 @@ impl<S: Storage> P2pServer<S> {
                 return Err(P2pError::PeerIdAlreadyUsed(peer_id));
             }
 
-            if self.accept_new_connections_for_peerlist(&peer_list) { 
+            if self.accept_new_connections_for_peerlist(&peer_list) {
+                trace!("Adding peer to peer list: {}", peer);
                 peer_list.add_peer(peer_id, peer)
             } else {
                 debug!("Peer list is full, closing connection with {}", peer);
@@ -1212,10 +1214,12 @@ impl<S: Storage> P2pServer<S> {
                 biased;
                 _ = server_exit.recv() => {
                     trace!("Exit message received for peer {}", peer);
+                    peer.close_internal().await?;
                     break;
                 },
                 _ = peer_exit.recv() => {
                     debug!("Peer {} has exited, stopping...", peer);
+                    peer.get_connection().close().await?;
                     break;
                 },
                 // all packets to be sent to the peer are received here
@@ -1241,7 +1245,6 @@ impl<S: Storage> P2pServer<S> {
                 biased;
                 _ = server_exit.recv() => {
                     trace!("Exit message received for peer {}", peer);
-                    peer.get_connection().close().await?;
                     break;
                 },
                 _ = peer_exit.recv() => {
@@ -1262,7 +1265,6 @@ impl<S: Storage> P2pServer<S> {
                         if let Err(e) = peer.close_and_temp_ban().await {
                             error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
                         }
-                        break;
                     }
                 }
             }
@@ -1291,7 +1293,7 @@ impl<S: Storage> P2pServer<S> {
                 // Close the peer if not already closed
                 if !peer.get_connection().is_closed() {
                     debug!("Closing connection with {} from write task", addr);
-                    if let Err(e) = peer.close().await {
+                    if let Err(e) = peer.close_internal().await {
                         debug!("Error while closing {} from write side: {}", peer, e);
                     }
                 }
@@ -1316,7 +1318,7 @@ impl<S: Storage> P2pServer<S> {
                 if !peer.get_connection().is_closed() {
                     debug!("Connection with {} has been closed, closing it from read task...", addr);
 
-                    if let Err(e) = peer.close().await {
+                    if let Err(e) = peer.close_internal().await {
                         debug!("Error while closing {} from read side: {}", peer, e);
                     }
                 }
