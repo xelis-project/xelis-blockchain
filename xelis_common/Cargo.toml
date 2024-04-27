@@ -28,7 +28,7 @@ log = "0.4"
 fern = { version = "0.6", features = ["colored", "date-based"] }
 chrono = "0.4.35"
 tokio = { version = "1.36", features = ["macros", "signal", "time", "sync"], optional = true }
-reqwest = { version = "0.11.25", default-features = false, features = ["json", "rustls"], optional = true }
+reqwest = { version = "0.11.25", default-features = false, features = ["json"], optional = true }
 clap = { version = "4.5.2", features = ["derive"], optional = true }
 crossterm = "0.27.0"
 indexmap = { version = "2.2.5", features = ["serde"] }
