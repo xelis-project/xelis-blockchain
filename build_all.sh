@@ -19,9 +19,7 @@ sudo systemctl start docker
 # compile all binaries for all targets
 echo "Compiling binaries for all targets"
 for target in "${targets[@]}"; do
-    for binary in "${binaries[@]}"; do
-        cross build --profile release-with-lto --bin $binary --target $target
-    done
+    cross build --target $target --profile release-with-lto
 done
 
 echo "Deleting build folder"
