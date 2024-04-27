@@ -42,7 +42,7 @@ regex = "1"
 # Query system
 serde_regex = "1.1.0"
 # WebSocket clients using tokio
-tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
 # Used for U256
 primitive-types = { version = "0.12.2", features = ["serde"] }
 
