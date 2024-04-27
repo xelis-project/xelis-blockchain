@@ -13,7 +13,7 @@ Pruning system is also available to reduce the size of the blockchain by removin
 
 We also aims to enabled Smart Contracts support in the future.
 
-We provide differents built-in network:
+We provide different built-in networks:
 - Mainnet: Released April 20, 2024.
 - Testnet: Running
 - Devnet: this network is used for local development purpose where you want to create your own local chain. It has no peers
