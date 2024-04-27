@@ -25,6 +25,7 @@ use actix_web_actors::ws::{
     WebsocketContext
 };
 use anyhow::Context;
+use indexmap::IndexSet;
 use log::{debug, error, trace, warn};
 use lru::LruCache;
 use rand::{
@@ -44,7 +45,9 @@ use xelis_common::{
         MinerWork
     },
     crypto::{
-        Hash, PublicKey
+        Hash,
+        Hashable,
+        PublicKey
     },
     difficulty::Difficulty,
     immutable::Immutable,
@@ -93,9 +96,11 @@ pub struct Miner {
     // worker name
     name: String,
     // blocks accepted by us since he is connected
-    blocks_accepted: usize,
+    blocks_accepted: IndexSet<Hash>,
     // blocks rejected since he is connected
-    blocks_rejected: usize
+    blocks_rejected: usize,
+    // timestamp of the last invalid block received
+    last_invalid_block: TimestampMillis
 }
 
 impl Miner {
@@ -105,8 +110,9 @@ impl Miner {
             first_seen: get_current_time_in_millis(),
             key,
             name,
-            blocks_accepted: 0,
-            blocks_rejected: 0
+            blocks_accepted: IndexSet::new(),
+            blocks_rejected: 0,
+            last_invalid_block: 0
         }
     }
 
@@ -123,13 +129,14 @@ impl Miner {
     }
 
     pub fn get_blocks_accepted(&self) -> usize {
-        self.blocks_accepted
+        self.blocks_accepted.len()
     }
 }
 
 impl Display for Miner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Miner[address={}, name={}, accepted={}, rejected={}]", self.key.as_address(self.mainnet), self.name, self.blocks_accepted, self.blocks_rejected)
+        let valid_blocks = self.blocks_accepted.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",");
+        write!(f, "Miner[address={}, name={}, accepted={} ({}), rejected={}]", self.key.as_address(self.mainnet), self.name, self.blocks_accepted.len(), valid_blocks, self.blocks_rejected)
     }
 }
 
@@ -311,7 +318,7 @@ impl<S: Storage> GetWorkServer<S> {
     // we retrieve the block header saved in cache using the mining job "header_work_hash"
     // its used to check that the job come from our server
     // when it's found, we merge the miner job inside the block header
-    async fn accept_miner_job(&self, job: MinerWork<'_>) -> Result<Response, InternalRpcError> {
+    async fn accept_miner_job(&self, job: MinerWork<'_>) -> Result<(Response, Hash), InternalRpcError> {
         trace!("accept miner job");
         if job.get_miner().is_none() {
             return Err(InternalRpcError::InvalidRequest);
@@ -332,11 +339,12 @@ impl<S: Storage> GetWorkServer<S> {
         }
 
         let block = self.blockchain.build_block_from_header(Immutable::Owned(miner_header)).await.context("Error while building block from header")?;
+        let block_hash = block.hash();
         Ok(match self.blockchain.add_new_block(block, true, true).await {
-            Ok(_) => Response::BlockAccepted,
+            Ok(_) => (Response::BlockAccepted, block_hash),
             Err(e) => {
                 debug!("Error while accepting miner block: {}", e);
-                Response::BlockRejected(e.to_string())
+                (Response::BlockRejected(e.to_string()), block_hash)
             }
         })
     }
@@ -346,17 +354,17 @@ impl<S: Storage> GetWorkServer<S> {
     // if its block is rejected, resend him the job
     pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, submitted_work: SubmitMinerWorkParams) {
         trace!("handle block for");
-        let response = match MinerWork::from_hex(submitted_work.miner_work) {
+        let (response, hash) = match MinerWork::from_hex(submitted_work.miner_work) {
             Ok(job) => match self.accept_miner_job(job).await {
-                Ok(response) => response,
+                Ok((response, hash)) => (response, Some(hash)),
                 Err(e) => {
                     debug!("Error while accepting miner job: {}", e);
-                    Response::BlockRejected(e.to_string())
+                    (Response::BlockRejected(e.to_string()), None)
                 }
             },
             Err(e) => {
                 debug!("Error while decoding block miner: {}", e);
-                Response::BlockRejected(e.to_string())
+                (Response::BlockRejected(e.to_string()), None)
             }
         };
 
@@ -366,12 +374,14 @@ impl<S: Storage> GetWorkServer<S> {
             if let Some(miner) = miners.get_mut(&addr) {
                 match &response {
                     Response::BlockAccepted => {
-                        debug!("Miner {} found a block!", miner);
-                        miner.blocks_accepted += 1;
+                        let hash = hash.unwrap();
+                        debug!("Miner {} found block {}!", miner, hash);
+                        miner.blocks_accepted.insert(hash);
                     },
                     Response::BlockRejected(_) => {
                         debug!("Miner {} sent an invalid block", miner);
                         miner.blocks_rejected += 1;
+                        miner.last_invalid_block = get_current_time_in_millis();
                     },
                     _ => {}
                 }
