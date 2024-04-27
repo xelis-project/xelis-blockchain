@@ -19,6 +19,8 @@ use super::packet::object::ObjectRequest;
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Already closed")]
+    AlreadyClosed,
     #[error("Incompatible with configured exclusive nodes")]
     ExclusiveNode,
     #[error("Address is not allowed to connect")]

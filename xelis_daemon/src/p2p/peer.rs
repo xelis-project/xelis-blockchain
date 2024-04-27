@@ -48,7 +48,7 @@ use std::{
     time::Duration
 };
 use tokio::{
-    sync::{oneshot::Sender, Mutex},
+    sync::{broadcast, mpsc, oneshot::Sender, Mutex},
     time::timeout,
 };
 use lru::LruCache;
@@ -64,6 +64,10 @@ use log::{
 // A RequestedObjects is a map of all objects requested from a peer
 // This is done to be awaitable with a timeout
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
+
+
+pub type Tx = mpsc::UnboundedSender<Bytes>;
+pub type Rx = mpsc::UnboundedReceiver<Bytes>;
 
 // A Peer represents a connection to another node in the network
 // It is used to propagate and receive blocks / transactions and do chain sync
@@ -127,11 +131,15 @@ pub struct Peer {
     // IP address with local port
     outgoing_address: SocketAddr,
     // Determine if this peer allows to be shared to others and/or through API
-    sharable: bool
+    sharable: bool,
+    // Channel to send bytes to the writer task
+    tx: Tx,
+    // Channel to notify the tasks to exit
+    exit_channel: broadcast::Sender<()>
 }
 
 impl Peer {
-    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>, sharable: bool) -> Self {
+    pub fn new(connection: Connection, id: u64, node_tag: Option<String>, local_port: u16, version: String, top_hash: Hash, topoheight: u64, height: u64, pruned_topoheight: Option<u64>, priority: bool, cumulative_difficulty: CumulativeDifficulty, peer_list: SharedPeerList, peers_received: HashSet<SocketAddr>, sharable: bool) -> (Self, Rx) {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
 
@@ -140,7 +148,10 @@ impl Peer {
             peers.insert(peer, Direction::In);
         }
 
-        Self {
+        let (exit_channel, _) = broadcast::channel(1);
+        let (tx, rx) = mpsc::unbounded_channel();
+
+        (Self {
             connection,
             id,
             node_tag,
@@ -169,8 +180,15 @@ impl Peer {
             bootstrap_chain: Mutex::new(None),
             sync_chain: Mutex::new(None),
             outgoing_address,
-            sharable
-        }
+            sharable,
+            exit_channel,
+            tx
+        }, rx)
+    }
+
+    // Subscribe to the exit channel to be notified when peer disconnects
+    pub fn get_exit_receiver(&self) -> broadcast::Receiver<()> {
+        self.exit_channel.subscribe()
     }
 
     // Get the IP address of the peer
@@ -583,7 +601,8 @@ impl Peer {
     // Send packet bytes to the peer
     // This will send the bytes to the writer task through its channel
     pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), P2pError> {
-        self.get_connection().send_bytes_to_task(bytes).await
+        self.tx.send(bytes)
+            .map_err(|e| P2pError::SendError(e.to_string()))
     }
 }
 

@@ -25,7 +25,7 @@ use tokio::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream
     },
-    sync::{mpsc, Mutex},
+    sync::Mutex,
     time::timeout
 };
 use xelis_common::{
@@ -35,22 +35,14 @@ use xelis_common::{
 use bytes::Bytes;
 use log::{debug, error, trace, warn};
 
-pub enum ConnectionMessage {
-    Packet(Bytes),
-    Exit
-}
-
-pub type Tx = mpsc::UnboundedSender<ConnectionMessage>;
-pub type Rx = mpsc::UnboundedReceiver<ConnectionMessage>;
-
 type P2pResult<T> = Result<T, P2pError>;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum State {
     Pending, // connection is new, no handshake received
-    KeyHandshake, // peer key received, sending our
+    KeyExchange, // start exchanging keys
     Handshake, // handshake received, not checked
-    Success // handshake is valid
+    Success // connection is ready
 }
 
 pub struct Connection {
@@ -64,10 +56,6 @@ pub struct Connection {
     read: Mutex<OwnedReadHalf>,
     // TCP Address
     addr: SocketAddr,
-    // Tx to send bytes
-    tx: Tx,
-    // Rx to read bytes to send
-    rx: Mutex<Rx>,
     // total bytes read
     bytes_in: AtomicUsize,
     // total bytes sent
@@ -91,7 +79,6 @@ const ROTATE_EVERY_N_BYTES: usize = 1024 * 1024 * 1024;
 
 impl Connection {
     pub fn new(stream: TcpStream, addr: SocketAddr, out: bool) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
         let (read, write) = stream.into_split();
         Self {
             out,
@@ -99,8 +86,6 @@ impl Connection {
             write: Mutex::new(write),
             read: Mutex::new(read),
             addr,
-            tx,
-            rx: Mutex::new(rx),
             connected_on: get_current_time_in_seconds(),
             bytes_in: AtomicUsize::new(0),
             bytes_out: AtomicUsize::new(0),
@@ -108,7 +93,7 @@ impl Connection {
             closed: AtomicBool::new(false),
             rotate_key_in: AtomicUsize::new(0),
             rotate_key_out: AtomicUsize::new(0),
-            encryption: Encryption::new()
+            encryption: Encryption::new(),
         }
     }
 
@@ -127,7 +112,7 @@ impl Connection {
         trace!("Exchanging keys with {}", self.addr);
 
         // Update our state
-        self.set_state(State::KeyHandshake);
+        self.set_state(State::KeyExchange);
 
         // Send our key if we initiated the connection
         if self.is_out() {
@@ -166,19 +151,6 @@ impl Connection {
     // Verify if its a outgoing connection
     pub fn is_out(&self) -> bool {
         self.out
-    }
-
-    // Send packet bytes to the peer
-    // This will send the bytes to the writer task through its channel
-    pub async fn send_bytes_to_task(&self, bytes: Bytes) -> Result<(), P2pError> {
-        trace!("Sending {} bytes to {}", bytes.len(), self.addr);
-        self.tx.send(ConnectionMessage::Packet(bytes))?;
-        trace!("Lock acquired, Sending packet");
-        Ok(())
-    }
-
-    pub fn get_rx(&self) -> &Mutex<Rx> {
-        &self.rx
     }
 
     // This will send to the peer a packet to rotate the key
@@ -305,7 +277,7 @@ impl Connection {
     async fn read_packet_size(&self, stream: &mut OwnedReadHalf, buf: &mut [u8], max_usize: u32) -> P2pResult<u32> {
         let read = self.read_bytes_from_stream(stream, &mut buf[0..4]).await?;
         if read != 4 {
-            warn!("Received invalid packet size: expected to read 4 bytes but read only {} bytes from peer {}", read, self.get_address());
+            warn!("Received invalid packet size: expected to read 4 bytes but read only {} bytes from {}", read, self);
             warn!("Read: {:?}", &buf[0..read]);
             return Err(P2pError::InvalidPacketSize)
         }
@@ -314,7 +286,7 @@ impl Connection {
 
         // Verify if the size is valid
         if size > max_usize {
-            warn!("Received invalid packet size: {} bytes from peer {}", size, self.get_address());
+            warn!("Received invalid packet size: {} bytes from {}", size, self);
             return Err(P2pError::InvalidPacketSize)
         }
         Ok(size)
@@ -368,16 +340,9 @@ impl Connection {
         Ok(read)
     }
 
-    // Close the connection
+    // Close internal close directly the stream
+    // This must be called only from the write connection task
     pub async fn close(&self) -> P2pResult<()> {
-        trace!("Closing connection with {}", self.addr);
-        // send a exit message to stop the current lock of stream
-        self.tx.send(ConnectionMessage::Exit)?;
-
-        Ok(())
-    }
-
-    pub async fn close_internal(&self) -> P2pResult<()> {
         trace!("Closing internal connection with {}", self.addr);
         self.closed.store(true, Ordering::Relaxed);
 
@@ -386,6 +351,11 @@ impl Connection {
         stream.shutdown().await?;
 
         Ok(())
+    }
+
+    // Get the state of the connection
+    pub fn get_state(&self) -> State {
+        self.state
     }
 
     // Set the state of the connection
@@ -437,6 +407,6 @@ impl Connection {
 
 impl Display for Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
-        write!(f, "Connection[peer: {}, read: {}, sent: {}, key rotation (in/out): ({}/{}), connected since: {}, closed: {}]", self.get_address(), human_bytes(self.bytes_in() as f64), human_bytes(self.bytes_out() as f64), self.key_rotation_in(), self.key_rotation_out(), self.get_human_uptime(), self.is_closed())
+        write!(f, "Connection[state: {:?}, peer: {}, read: {}, sent: {}, key rotation (in/out): ({}/{}), connected since: {}, closed: {}]", self.state, self.get_address(), human_bytes(self.bytes_in() as f64), human_bytes(self.bytes_out() as f64), self.key_rotation_in(), self.key_rotation_out(), self.get_human_uptime(), self.is_closed())
     }
 }
