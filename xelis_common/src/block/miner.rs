@@ -21,7 +21,7 @@ use super::{EXTRA_NONCE_SIZE, BLOCK_WORK_SIZE};
 
 // This structure is used by xelis-miner which allow to compute a valid block POW hash
 #[derive(Clone, Debug)]
-pub struct BlockMiner<'a> {
+pub struct MinerWork<'a> {
     header_work_hash: Hash, // include merkle tree of tips, txs, and height (immutable)
     timestamp: TimestampMillis, // miners can update timestamp to keep it up-to-date
     nonce: u64,
@@ -33,7 +33,7 @@ pub struct BlockMiner<'a> {
     cache: Option<Input>
 }
 
-impl<'a> BlockMiner<'a> {
+impl<'a> MinerWork<'a> {
     pub fn new(header_work_hash: Hash, timestamp: TimestampMillis) -> Self {
         Self {
             header_work_hash,
@@ -103,12 +103,17 @@ impl<'a> BlockMiner<'a> {
     }
 
     #[inline(always)]
+    pub fn set_thread_id_u16(&mut self, id: u16) {
+        self.extra_nonce[EXTRA_NONCE_SIZE - 2..].copy_from_slice(id.to_be_bytes().as_ref());
+    }
+
+    #[inline(always)]
     pub fn take(self) -> (Hash, TimestampMillis, u64, Option<Cow<'a, PublicKey>>, [u8; EXTRA_NONCE_SIZE]) {
         (self.header_work_hash, self.timestamp, self.nonce, self.miner, self.extra_nonce)
     }
 }
 
-impl<'a> Serializer for BlockMiner<'a> {
+impl<'a> Serializer for MinerWork<'a> {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(&self.header_work_hash); // 32
         writer.write_u64(&self.timestamp); // 32 + 8 = 40
@@ -126,7 +131,7 @@ impl<'a> Serializer for BlockMiner<'a> {
         debug_assert!(writer.total_write() == BLOCK_WORK_SIZE, "invalid block work size, expected {}, got {}", BLOCK_WORK_SIZE, writer.total_write());
     }
 
-    fn read(reader: &mut Reader) -> Result<BlockMiner<'a>, ReaderError> {
+    fn read(reader: &mut Reader) -> Result<MinerWork<'a>, ReaderError> {
         if reader.total_size() != BLOCK_WORK_SIZE {
             debug!("invalid block work size, expected {}, got {}", BLOCK_WORK_SIZE, reader.total_size());
             return Err(ReaderError::InvalidSize)
@@ -138,7 +143,7 @@ impl<'a> Serializer for BlockMiner<'a> {
         let extra_nonce = reader.read_bytes_32()?;
         let miner = Some(Cow::Owned(PublicKey::read(reader)?));
 
-        Ok(BlockMiner {
+        Ok(MinerWork {
             header_work_hash,
             timestamp,
             nonce,
@@ -154,4 +159,4 @@ impl<'a> Serializer for BlockMiner<'a> {
 }
 
 // no need to override hash() as its already serialized in good format
-impl Hashable for BlockMiner<'_> {}
+impl Hashable for MinerWork<'_> {}

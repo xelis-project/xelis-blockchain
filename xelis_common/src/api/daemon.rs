@@ -146,7 +146,6 @@ pub struct GetBalanceParams<'a> {
     pub asset: Cow<'a, Hash>
 }
 
-
 #[derive(Serialize, Deserialize)]
 pub struct HasBalanceParams<'a> {
     pub address: Cow<'a, Address>,
