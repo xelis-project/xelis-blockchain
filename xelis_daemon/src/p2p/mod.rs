@@ -360,6 +360,11 @@ impl<S: Storage> P2pServer<S> {
                 res = rx.recv() => match res {
                     Some((peer, rx)) => {
                         trace!("New peer received: {}", peer);
+                        if !self.is_running() {
+                            debug!("blocks processing task is stopped!");
+                            break;
+                        }
+            
                         match self.handle_new_peer(peer, rx).await {
                             Ok(_) => {},
                             Err(e) => match e {
@@ -502,6 +507,7 @@ impl<S: Storage> P2pServer<S> {
         if reject {
             debug!("Rejecting connection from {}", addr);
             stream.shutdown().await?;
+            return Ok(())
         }
 
         let connection = Connection::new(stream, addr, false);
@@ -545,6 +551,7 @@ impl<S: Storage> P2pServer<S> {
                 }
                 res = listener.accept() => {
                     trace!("New listener result received (is err: {})", res.is_err());
+
                     if !self.is_running() {
                         break;
                     }
