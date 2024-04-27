@@ -1283,7 +1283,7 @@ impl<S: Storage> P2pServer<S> {
 
                 // Close the peer if not already closed
                 if !peer.get_connection().is_closed() {
-                    trace!("Closing connection with {}", addr);
+                    debug!("Closing connection with {} from write task", addr);
                     if let Err(e) = peer.close().await {
                         debug!("Error while closing {} from write side: {}", peer, e);
                     }
@@ -1307,7 +1307,7 @@ impl<S: Storage> P2pServer<S> {
                 // Verify that the connection is closed
                 // Write task should be responsible for closing the connection
                 if !peer.get_connection().is_closed() {
-                    warn!("Connection with {} has been closed, closing it from read task...", addr);
+                    debug!("Connection with {} has been closed, closing it from read task...", addr);
 
                     if let Err(e) = peer.close().await {
                         debug!("Error while closing {} from read side: {}", peer, e);
