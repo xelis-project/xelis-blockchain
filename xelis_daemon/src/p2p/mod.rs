@@ -175,7 +175,7 @@ pub struct P2pServer<S: Storage> {
 }
 
 impl<S: Storage> P2pServer<S> {
-    pub fn new(dir_path: Option<String>, tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool, disable_outgoing_connections: bool) -> Result<Arc<Self>, P2pError> {
+    pub fn new(concurrency: usize, dir_path: Option<String>, tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool, disable_outgoing_connections: bool) -> Result<Arc<Self>, P2pError> {
         if let Some(tag) = &tag {
             debug_assert!(tag.len() > 0 && tag.len() <= 16);
         }
@@ -218,7 +218,7 @@ impl<S: Storage> P2pServer<S> {
             is_syncing: AtomicBool::new(false),
             outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
             exit_sender,
-            listen_semaphore: Semaphore::new(8),
+            listen_semaphore: Semaphore::new(concurrency),
         };
 
         let arc = Arc::new(server);
