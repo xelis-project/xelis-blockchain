@@ -41,7 +41,7 @@ use xelis_common::{
     },
     block::{
         BlockHeader,
-        BlockMiner
+        MinerWork
     },
     crypto::{
         Hash, PublicKey
@@ -250,7 +250,7 @@ impl<S: Storage> GetWorkServer<S> {
                     error!("No mining job found! How is it possible ?");
                     InternalRpcError::CustomStr("No mining job found")
                 })?;
-                job = BlockMiner::new(header.get_work_hash(), get_current_time_in_millis());
+                job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
                 height = header.height;
                 difficulty = *diff;
             } else {
@@ -259,7 +259,7 @@ impl<S: Storage> GetWorkServer<S> {
                 let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await.context("Error while retrieving block template")?;
                 (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
 
-                job = BlockMiner::new(header.get_work_hash(), get_current_time_in_millis());
+                job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
                 height = header.height;
 
                 // save the mining job, and set it as last job
@@ -311,7 +311,7 @@ impl<S: Storage> GetWorkServer<S> {
     // we retrieve the block header saved in cache using the mining job "header_work_hash"
     // its used to check that the job come from our server
     // when it's found, we merge the miner job inside the block header
-    async fn accept_miner_job(&self, job: BlockMiner<'_>) -> Result<Response, InternalRpcError> {
+    async fn accept_miner_job(&self, job: MinerWork<'_>) -> Result<Response, InternalRpcError> {
         trace!("accept miner job");
         if job.get_miner().is_none() {
             return Err(InternalRpcError::InvalidRequest);
@@ -346,7 +346,7 @@ impl<S: Storage> GetWorkServer<S> {
     // if its block is rejected, resend him the job
     pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, submitted_work: SubmitMinerWorkParams) {
         trace!("handle block for");
-        let response = match BlockMiner::from_hex(submitted_work.miner_work) {
+        let response = match MinerWork::from_hex(submitted_work.miner_work) {
             Ok(job) => match self.accept_miner_job(job).await {
                 Ok(response) => response,
                 Err(e) => {
@@ -453,7 +453,7 @@ impl<S: Storage> GetWorkServer<S> {
             (header, difficulty)
         };
 
-        let mut job = BlockMiner::new(header.get_work_hash(), header.timestamp);
+        let mut job = MinerWork::new(header.get_work_hash(), header.timestamp);
         let height = header.height;
 
         // save the header used for job in cache

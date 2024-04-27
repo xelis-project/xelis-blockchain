@@ -69,7 +69,7 @@ use xelis_common::{
     block::{
         Block,
         BlockHeader,
-        BlockMiner
+        MinerWork
     },
     config::{
         MAXIMUM_SUPPLY,
@@ -406,7 +406,7 @@ async fn submit_block<S: Storage>(context: Context, body: Value) -> Result<Value
     let params: SubmitBlockParams = parse_params(body)?;
     let mut header = BlockHeader::from_hex(params.block_template)?;
     if let Some(work) = params.miner_work {
-        let work = BlockMiner::from_hex(work)?;
+        let work = MinerWork::from_hex(work)?;
         header.apply_miner_work(work);
     }
 
