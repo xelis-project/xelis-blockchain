@@ -555,7 +555,7 @@ impl Peer {
     // Close the peer connection and remove it from the peer list
     pub async fn close_and_temp_ban(&self) -> Result<(), P2pError> {
         trace!("Tempban {}", self);
-        let res = self.get_connection().close().await;
+        let res = self.exit_channel.send(()).map_err(|e| P2pError::SendError(e.to_string()));
 
         {
             let mut peer_list = self.peer_list.write().await;
@@ -576,17 +576,13 @@ impl Peer {
     // Close the peer connection and remove it from the peer list
     pub async fn close(&self) -> Result<(), P2pError> {
         trace!("Closing connection with {}", self);
-        let res = self.get_connection().close().await;
+        // Notify the writer task to exit
+        let res = self.exit_channel.send(()).map_err(|e| P2pError::SendError(e.to_string()));
 
+        // Remove this peer from peer list
         let mut peer_list = self.peer_list.write().await;
-        trace!("Locked peer list for temp ban {}", self);
-        if !self.is_priority() {
-            peer_list.temp_ban_address(&self.get_connection().get_address().ip(), PEER_TEMP_BAN_TIME).await;
-        } else {
-            debug!("{} is a priority peer, closing only", self);
-        }
-
         peer_list.remove_peer(self.get_id()).await?;
+
         res?;
 
         Ok(())
