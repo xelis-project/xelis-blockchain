@@ -482,16 +482,10 @@ impl<S: Storage> P2pServer<S> {
         let mut exit_receiver = self.exit_sender.subscribe();
         loop {
             select! {
-                res = exit_receiver.recv() => match res {
-                    Ok(_) => {
-                        debug!("Received Exit message, exiting task");
-                        break;
-                    },
-                    Err(e) => {
-                        error!("Error while receiving Exit message: {}", e);
-                        break;
-                    }
-                },
+                _ = exit_receiver.recv() => {
+                    debug!("Received Exit message, exiting task");
+                    break;
+                }
                 res = listener.accept() => {
                     trace!("New listener result received (is err: {})", res.is_err());
                     if !self.is_running() {

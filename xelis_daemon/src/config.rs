@@ -119,7 +119,7 @@ pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
 // Peer wait on error accept new p2p connections in seconds
 pub const P2P_PEER_WAIT_ON_ERROR: u64 = 15;
 // Delay in second to connect to priority nodes
-pub const P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY: u64 = 30;
+pub const P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY: u64 = 5;
 // Default number of concurrent tasks for incoming p2p connections
 pub const P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT: usize = 4;
 
