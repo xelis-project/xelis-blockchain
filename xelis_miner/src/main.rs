@@ -1,7 +1,6 @@
 pub mod config;
 
 use std::{
-    num::NonZeroUsize,
     time::Duration,
     sync::atomic::{
         AtomicU64,
@@ -37,7 +36,7 @@ use xelis_common::{
         SubmitMinerWorkParams,
     },
     async_handler,
-    block::BlockMiner,
+    block::MinerWork,
     config::VERSION,
     crypto::{
         Address,
@@ -114,9 +113,10 @@ pub struct MinerConfig {
     /// It must end with a / to be a valid folder.
     #[clap(long, default_value_t = String::from("logs/"))]
     logs_path: String,
-    /// Numbers of threads to use (at least 1, max: 255)
-    #[clap(short, long, default_value_t = 0)]
-    num_threads: u8,
+    /// Numbers of threads to use (at least 1, max: 65535)
+    /// By default, this will try to detect the number of threads available on your CPU.
+    #[clap(short, long)]
+    num_threads: Option<u16>,
     /// Worker name to be displayed on daemon side
     #[clap(short, long, default_value_t = String::from("default"))]
     worker: String
@@ -124,7 +124,7 @@ pub struct MinerConfig {
 
 #[derive(Clone)]
 enum ThreadNotification<'a> {
-    NewJob(BlockMiner<'a>, Difficulty, u64), // block work, difficulty, height
+    NewJob(MinerWork<'a>, Difficulty, u64), // block work, difficulty, height
     WebSocketClosed, // WebSocket connection has been closed
     Exit // all threads must stop
 }
@@ -155,43 +155,39 @@ async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
     let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging)?;
 
-    let threads_count = match thread::available_parallelism() {
-        Ok(value) => value,
+    let detected_threads = match thread::available_parallelism() {
+        Ok(value) => value.get() as u16,
         Err(e) => {
             warn!("Couldn't detect number of available threads: {}, fallback to 1 thread only", e);
-            NonZeroUsize::new(1).unwrap()
+            1
         }
-    }.get();
-    let mut threads = config.num_threads;
+    };
 
-    // if no specific threads count is specified in options, set detected threads count
-    if threads == 0 {
-        threads = threads_count as u8;
-    }
+    let threads = match config.num_threads {
+        Some(value) => value,
+        None => detected_threads
+    };
 
-    info!("Total threads to use: {} (detected: {})", threads, threads_count);
+
+    info!("Total threads to use: {} (detected: {})", threads, detected_threads);
 
     if config.benchmark {
-        info!("Benchmark mode enabled, miner will try up to {} threads", threads_count);
+        info!("Benchmark mode enabled, miner will try up to {} threads", threads);
         benchmark(threads as usize, config.iterations);
         info!("Benchmark finished");
         return Ok(())
     }
 
-    if threads_count > u8::MAX as usize {
-        warn!("Your CPU have more than 255 threads. This miner only support up to 255 threads used at once.");
-    }
-
     let address = config.miner_address.ok_or_else(|| Error::msg("No miner address specified"))?;
     info!("Miner address: {}", address);    
-    if config.num_threads != 0 && threads as usize != threads_count {
-        warn!("Attention, the number of threads used may not be optimal, recommended is: {}", threads_count);
+    if threads != detected_threads {
+        warn!("Attention, the number of threads used may not be optimal, recommended is: {}", detected_threads);
     }
 
     // broadcast channel to send new jobs / exit command to all threads
     let (sender, _) = broadcast::channel::<ThreadNotification>(threads as usize);
     // mpsc channel to send from threads to the "communication" task.
-    let (block_sender, block_receiver) = mpsc::channel::<BlockMiner>(threads as usize);
+    let (block_sender, block_receiver) = mpsc::channel::<MinerWork>(threads as usize);
     for id in 0..threads {
         debug!("Starting thread #{}", id);
         if let Err(e) = start_thread(id, sender.subscribe(), block_sender.clone()) {
@@ -224,7 +220,7 @@ fn benchmark(threads: usize, iterations: usize) {
         let start = Instant::now();
         let mut handles = vec![];
         for _ in 0..bench {
-            let mut job = BlockMiner::new(Hash::zero(), get_current_time_in_millis());
+            let mut job = MinerWork::new(Hash::zero(), get_current_time_in_millis());
             let handle = thread::spawn(move || {
                 let mut scratch_pad = ScratchPad::default();
                 for _ in 0..iterations {
@@ -251,7 +247,7 @@ fn benchmark(threads: usize, iterations: usize) {
 // It maintains a WebSocket connection with the daemon and notify all threads when it receive a new job.
 // Its also the task who have the job to send directly the new block found by one of the threads.
 // This allow mining threads to only focus on mining and receiving jobs through memory channels.
-async fn communication_task(daemon_address: String, job_sender: broadcast::Sender<ThreadNotification<'_>>, mut block_receiver: mpsc::Receiver<BlockMiner<'_>>, address: Address, worker: String) {
+async fn communication_task(daemon_address: String, job_sender: broadcast::Sender<ThreadNotification<'_>>, mut block_receiver: mpsc::Receiver<MinerWork<'_>>, address: Address, worker: String) {
     info!("Starting communication task");
     let daemon_address = sanitize_daemon_address(&daemon_address);
     'main: loop {
@@ -333,7 +329,7 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
             match serde_json::from_slice::<SocketMessage>(text.as_bytes())? {
                 SocketMessage::NewJob(job) => {
                     info!("New job received: difficulty {} at height {}", format_difficulty(job.difficulty), job.height);
-                    let block = BlockMiner::from_hex(job.template).context("Error while decoding new job received from daemon")?;
+                    let block = MinerWork::from_hex(job.template).context("Error while decoding new job received from daemon")?;
                     CURRENT_TOPO_HEIGHT.store(job.topoheight, Ordering::SeqCst);
 
                     if let Err(e) = job_sender.send(ThreadNotification::NewJob(block, job.difficulty, job.height)) {
@@ -368,10 +364,10 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
     Ok(false)
 }
 
-fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification<'static>>, block_sender: mpsc::Sender<BlockMiner<'static>>) -> Result<(), Error> {
+fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotification<'static>>, block_sender: mpsc::Sender<MinerWork<'static>>) -> Result<(), Error> {
     let builder = thread::Builder::new().name(format!("Mining Thread #{}", id));
     builder.spawn(move || {
-        let mut job: BlockMiner;
+        let mut job: MinerWork;
         let mut hash: Hash;
 
         let mut scratch_pad = ScratchPad::default();
@@ -405,8 +401,8 @@ fn start_thread(id: u8, mut job_receiver: broadcast::Receiver<ThreadNotification
                     debug!("Mining Thread #{} received a new job", id);
                     job = new_job;
                     // set thread id in extra nonce for more work spread between threads
-                    // because it's a u8, it support up to 255 threads
-                    job.set_thread_id(id);
+                    // u16 support up to 65535 threads
+                    job.set_thread_id_u16(id);
 
                     let difficulty_target = match compute_difficulty_target(&expected_difficulty) {
                         Ok(value) => value,
