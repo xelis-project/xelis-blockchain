@@ -307,7 +307,7 @@ async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] promp
 
     if !config.offline_mode {
         info!("Trying to connect to daemon at '{}'", config.daemon_address);
-        if let Err(e) = wallet.set_online_mode(&config.daemon_address).await {
+        if let Err(e) = wallet.set_online_mode(&config.daemon_address, true).await {
             error!("Couldn't connect to daemon: {}", e);
             info!("You can activate online mode using 'online_mode [daemon_address]'");
         } else {
@@ -843,7 +843,7 @@ async fn online_mode(manager: &CommandManager, mut arguments: ArgumentManager) -
             DEFAULT_DAEMON_ADDRESS.to_string()
         };
 
-        wallet.set_online_mode(&daemon_address).await.context("Couldn't enable online mode")?;
+        wallet.set_online_mode(&daemon_address, true).await.context("Couldn't enable online mode")?;
         manager.message("Wallet is now online");
     }
     Ok(())
@@ -872,7 +872,7 @@ async fn rescan(manager: &CommandManager, mut arguments: ArgumentManager) -> Res
         0
     };
 
-    wallet.rescan(topoheight).await.context("error while restarting network handler")?;
+    wallet.rescan(topoheight, true).await.context("error while restarting network handler")?;
     manager.message("Network handler has been restarted!");
     Ok(())
 }

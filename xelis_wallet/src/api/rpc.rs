@@ -156,7 +156,7 @@ async fn split_address(_: Context, body: Value) -> Result<Value, InternalRpcErro
 async fn rescan(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: RescanParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    wallet.rescan(params.until_topoheight.unwrap_or(0)).await.context("Error while rescanning wallet")?;
+    wallet.rescan(params.until_topoheight.unwrap_or(0), params.auto_reconnect).await.context("Error while rescanning wallet")?;
     Ok(json!(true))
 }
 
@@ -306,7 +306,7 @@ async fn set_online_mode(context: Context, body: Value) -> Result<Value, Interna
         return Err(InternalRpcError::CustomStr("Wallet is already connected to a daemon"))
     }
 
-    wallet.set_online_mode(&params.daemon_address).await.context("Error while setting online mode")?;
+    wallet.set_online_mode(&params.daemon_address, params.auto_reconnect).await.context("Error while setting online mode")?;
 
     Ok(json!(true))
 }
