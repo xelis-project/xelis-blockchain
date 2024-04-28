@@ -557,7 +557,7 @@ impl<S: Storage> P2pServer<S> {
                     }
 
                     self.handle_incoming_connection(res, &tx).await.unwrap_or_else(|e| {
-                        error!("Error while handling incoming connection: {}", e);
+                        debug!("Error while handling incoming connection: {}", e);
                     });
                 }
             }
