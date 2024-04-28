@@ -40,7 +40,7 @@ impl Serializer for BalanceType {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub struct VersionedBalance {
     // Output balance is used in case of multi TXs not in same block
     // If you build several TXs at same time but are not in the same block,
@@ -179,14 +179,21 @@ impl Serializer for VersionedBalance {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let final_balance = CiphertextCache::read(reader)?;
-        let output = BalanceType::read(reader)?;
+        let balance_type = BalanceType::read(reader)?;
         let (previous_topoheight, output_balance) = if reader.size() == 0 {
             (None, None)
         } else {
-            if reader.size() == 8 {
-                (Some(reader.read_u64()?), None)
+            // Compressed ciphertext is 32 * 2 bytes, + 8 for topoheight
+            let previous_topo = if reader.size() == 8 || (balance_type == BalanceType::Both && reader.size() == 72) {
+                Some(reader.read_u64()?)
             } else {
-                (Some(reader.read_u64()?), Some(CiphertextCache::read(reader)?))
+                None
+            };
+
+            if balance_type == BalanceType::Both {
+                (previous_topo, Some(CiphertextCache::read(reader)?))
+            } else {
+                (previous_topo, None)
             }
         };
 
@@ -194,7 +201,7 @@ impl Serializer for VersionedBalance {
             output_balance,
             final_balance,
             previous_topoheight,
-            balance_type: output
+            balance_type
         })
     }
 
@@ -203,5 +210,58 @@ impl Serializer for VersionedBalance {
         + self.balance_type.size()
         + if let Some(topoheight) = self.previous_topoheight { topoheight.size() } else { 0 }
         + if let Some(output_balance) = &self.output_balance { output_balance.size() } else { 0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serde_versioned_balance_zero() {
+        let mut zero = VersionedBalance::zero();
+        zero.set_balance_type(BalanceType::Input);
+        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();
+        assert_eq!(zero, zero_bis);
+    }
+
+
+    #[test]
+    fn serde_versioned_balance_previous_topo() {
+        let mut zero = VersionedBalance::zero();
+        zero.set_balance_type(BalanceType::Input);
+        zero.set_previous_topoheight(Some(42));
+        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();
+        assert_eq!(zero, zero_bis);
+    }
+
+    #[test]
+    fn serde_versioned_balance_output() {
+        let mut zero = VersionedBalance::zero();
+        zero.set_balance_type(BalanceType::Output);
+
+        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();
+        assert_eq!(zero, zero_bis);
+    }
+
+    #[test]
+    fn serde_versioned_balance_both() {
+        let mut zero = VersionedBalance::zero();
+        zero.set_balance_type(BalanceType::Both);
+        zero.set_output_balance(Some(CiphertextCache::Decompressed(Ciphertext::zero())));
+
+        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();
+        assert_eq!(zero, zero_bis);
+    }
+
+    #[test]
+    fn serde_versioned_balance_output_previous_topo() {
+        let mut zero = VersionedBalance::zero();
+        zero.set_balance_type(BalanceType::Both);
+        zero.set_output_balance(Some(CiphertextCache::Decompressed(Ciphertext::zero())));
+        zero.set_previous_topoheight(Some(42));
+
+        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();
+        assert_eq!(zero, zero_bis);
     }
 }
