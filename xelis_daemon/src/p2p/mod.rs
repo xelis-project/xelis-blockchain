@@ -1234,7 +1234,7 @@ impl<S: Storage> P2pServer<S> {
                     // Last time we got a ping packet from him
                     let last_ping = peer.get_last_ping();
                     if last_ping != 0 && get_current_time_in_seconds() - last_ping > P2P_PING_TIMEOUT {
-                        warn!("Peer {} has not sent a ping packet for {} seconds, closing connection...", peer, P2P_PING_TIMEOUT);
+                        debug!("Peer {} has not sent a ping packet for {} seconds, closing connection...", peer, P2P_PING_TIMEOUT);
                         peer.close_internal().await?;
                         break;
                     }
