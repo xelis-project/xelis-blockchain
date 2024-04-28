@@ -384,7 +384,7 @@ impl<S: Storage> P2pServer<S> {
                         }
                     },
                     None => {
-                        error!("Error while receiving new connection, exiting task");
+                        debug!("channel is closed, exiting task");
                         break;
                     }
                 }
