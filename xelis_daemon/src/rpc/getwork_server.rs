@@ -59,7 +59,8 @@ use xelis_common::{
     time::{
         get_current_time_in_millis,
         TimestampMillis
-    }
+    },
+    utils::spawn_task
 };
 use crate::{
     core::{
@@ -299,7 +300,7 @@ impl<S: Storage> GetWorkServer<S> {
 
         // notify the new miner so he can work ASAP
         let zelf = Arc::clone(&self);
-        tokio::spawn(async move {
+        spawn_task("getwork-new-job", async move {
             if let Err(e) = zelf.send_new_job(addr, key).await {
                 error!("Error while sending new job to miner: {}", e);
             }
@@ -388,7 +389,7 @@ impl<S: Storage> GetWorkServer<S> {
             }
         }
 
-        tokio::spawn(async move {
+        spawn_task("getwork-reply", async move {
             let resend_job = match response {
                 Response::BlockRejected(_) => true,
                 _ => false
@@ -490,7 +491,7 @@ impl<S: Storage> GetWorkServer<S> {
 
             // New task for each miner in case a miner is slow
             // we don't want to wait for him
-            tokio::spawn(async move {
+            spawn_task("getwork-notify-new-job", async move {
                 match addr.send(Response::NewJob(GetMinerWorkResult { template, height, topoheight, difficulty })).await {
                     Ok(request) => {
                         if let Err(e) = request {

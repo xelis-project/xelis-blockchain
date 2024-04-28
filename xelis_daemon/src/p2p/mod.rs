@@ -28,16 +28,18 @@ use xelis_common::{
         get_current_time_in_millis,
         get_current_time_in_seconds,
         TimestampMillis
-    }
+    }, utils::spawn_task
 };
 use crate::{
     config::{
-        get_genesis_block_hash, get_seed_nodes,
+        get_genesis_block_hash,
+        get_seed_nodes,
         CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS, CHAIN_SYNC_DELAY, CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START,
-        CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_TOP_BLOCKS, PEER_MAX_PACKET_SIZE,
-        MILLIS_PER_SECOND, NETWORK_ID, P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT,
-        PEER_FAIL_LIMIT, PEER_TIMEOUT_INIT_CONNECTION, PRUNE_SAFETY_LIMIT, STABLE_LIMIT,
-        P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY, PEER_TIMEOUT_INIT_OUTGOING_CONNECTION
+        CHAIN_SYNC_REQUEST_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS,
+        CHAIN_SYNC_TOP_BLOCKS, MILLIS_PER_SECOND, NETWORK_ID, P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY,
+        P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT,
+        PEER_FAIL_LIMIT, PEER_MAX_PACKET_SIZE, PEER_TIMEOUT_INIT_CONNECTION, PEER_TIMEOUT_INIT_OUTGOING_CONNECTION,
+        PRUNE_SAFETY_LIMIT, STABLE_LIMIT
     },
     core::{
         blockchain::Blockchain,
@@ -175,12 +177,16 @@ pub struct P2pServer<S: Storage> {
 
 impl<S: Storage> P2pServer<S> {
     pub fn new(concurrency: usize, dir_path: Option<String>, tag: Option<String>, max_peers: usize, bind_address: String, blockchain: Arc<Blockchain<S>>, use_peerlist: bool, exclusive_nodes: Vec<SocketAddr>, allow_fast_sync_mode: bool, allow_boost_sync_mode: bool, max_chain_response_size: Option<usize>, sharable: bool, disable_outgoing_connections: bool) -> Result<Arc<Self>, P2pError> {
-        if let Some(tag) = &tag {
-            debug_assert!(tag.len() > 0 && tag.len() <= 16);
+        if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
+            return Err(P2pError::InvalidTag);
         }
 
-        if let Some(max_chain_response_size) = max_chain_response_size {
-            debug_assert!(max_chain_response_size >= CHAIN_SYNC_RESPONSE_MIN_BLOCKS && max_chain_response_size <= CHAIN_SYNC_REQUEST_MAX_BLOCKS);
+        if max_chain_response_size.is_some_and(|size| size < CHAIN_SYNC_RESPONSE_MIN_BLOCKS || size > CHAIN_SYNC_RESPONSE_MAX_BLOCKS) {
+            return Err(P2pError::InvalidMaxChainResponseSize);
+        }
+
+        if max_peers == 0 {
+            return Err(P2pError::InvalidMaxPeers);
         }
 
         // set channel to communicate with listener thread
@@ -223,7 +229,7 @@ impl<S: Storage> P2pServer<S> {
         let arc = Arc::new(server);
         {
             let zelf = Arc::clone(&arc);
-            tokio::spawn(async move {
+            spawn_task("p2p-engine", async move {
                 if let Err(e) = zelf.start(connections_receiver, blocks_processor_receiver, event_receiver, use_peerlist).await {
                     error!("Unexpected error on P2p module: {}", e);
                 }
@@ -320,7 +326,7 @@ impl<S: Storage> P2pServer<S> {
         let (priority_sender, priority_connections) = mpsc::channel(1);
         // create tokio task to maintains connection to exclusive nodes or seed nodes
         let zelf = Arc::clone(self);
-        tokio::spawn(async move {
+        spawn_task("p2p-maintain-nodes", async move {
             info!("Connecting to seed nodes...");
             if let Err(e) = zelf.maintains_connection_to_nodes(exclusive_nodes, priority_sender).await {
                 error!("Error while maintening connection with seed nodes: {}", e);
@@ -328,26 +334,26 @@ impl<S: Storage> P2pServer<S> {
         });
 
         // start a new task for chain sync
-        tokio::spawn(Arc::clone(&self).chain_sync_loop());
+        spawn_task("p2p-chain-sync", Arc::clone(&self).chain_sync_loop());
 
         // start another task for ping loop
-        tokio::spawn(Arc::clone(&self).ping_loop());
+        spawn_task("p2p-ping", Arc::clone(&self).ping_loop());
 
         // start the blocks processing task to have a queued handler
-        tokio::spawn(Arc::clone(&self).blocks_processing_task(blocks_processor_receiver));
+        spawn_task("p2p-blocks", Arc::clone(&self).blocks_processing_task(blocks_processor_receiver));
 
         // start the event loop task to handle peer disconnect events
-        tokio::spawn(Arc::clone(&self).event_loop(event_receiver));
+        spawn_task("p2p-events", Arc::clone(&self).event_loop(event_receiver));
 
 
         // start another task for peerlist loop
         if use_peerlist {
-            tokio::spawn(Arc::clone(&self).peerlist_loop());
+            spawn_task("p2p-peerlist", Arc::clone(&self).peerlist_loop());
         }
 
         let (tx, mut rx) = channel(1);
-        tokio::spawn(Arc::clone(&self).handle_outgoing_connections(priority_connections, receiver, tx.clone()));
-        tokio::spawn(Arc::clone(&self).handle_incoming_connections(listener, tx));
+        spawn_task("p2p-outgoing-connections", Arc::clone(&self).handle_outgoing_connections(priority_connections, receiver, tx.clone()));
+        spawn_task("p2p-incoming-connections", Arc::clone(&self).handle_incoming_connections(listener, tx));
 
         let mut exit_receiver = self.exit_sender.subscribe();
         loop {
@@ -513,7 +519,7 @@ impl<S: Storage> P2pServer<S> {
         let connection = Connection::new(stream, addr, false);
         let zelf = Arc::clone(&self);
         let tx = tx.clone();
-        tokio::spawn(async move {
+        spawn_task("p2p-incoming-connection", async move {
             let _permit = match zelf.listen_semaphore.acquire().await {
                 Ok(permit) => permit,
                 Err(e) => {
@@ -1280,7 +1286,7 @@ impl<S: Storage> P2pServer<S> {
         let write_task = {
             let zelf = Arc::clone(self);
             let peer = Arc::clone(&peer);
-            tokio::spawn(async move {
+            spawn_task(format!("p2p-handle-write-{}", peer.get_connection().get_address()), async move {
                 let addr = *peer.get_connection().get_address();
                 trace!("Handle connection write side task for {} has been started", addr);
                 if let Err(e) = zelf.handle_connection_write_side(&peer, &mut rx).await {
@@ -1307,7 +1313,7 @@ impl<S: Storage> P2pServer<S> {
         {
             let zelf = Arc::clone(&self);
             let peer = Arc::clone(&peer);
-            tokio::spawn(async move {
+            spawn_task(format!("p2p-handle-read-{}", peer.get_connection().get_address()), async move {
                 let addr = *peer.get_connection().get_address();
                 trace!("Handle connection read side task for {} has been started", addr);
                 if let Err(e) = zelf.handle_connection_read_side(&peer, write_task).await {
