@@ -1,4 +1,8 @@
-use std::net::SocketAddr;
+use tokio::task::{Builder, JoinHandle};
+use std::{
+    net::SocketAddr,
+    future::Future,
+};
 
 use crate::{
     config::{
@@ -125,6 +129,17 @@ pub fn sanitize_daemon_address(target: &str) -> String {
     }
 
     target
+}
+
+// Spawn a new task with a name
+pub fn spawn_task<Fut, S: Into<String>>(name: S, future: Fut) -> JoinHandle<Fut::Output>
+where
+    Fut: Future + Send + 'static,
+    Fut::Output: Send + 'static,
+{
+    let name_str = name.into();
+    let name = name_str.as_str();
+    Builder::new().name(name).spawn(future).expect(name)
 }
 
 #[cfg(test)]

@@ -5,7 +5,18 @@ use log::debug;
 use serde_json::{Value, json};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::Mutex;
-use crate::{rpc_server::{RPCHandler, RpcResponseError, InternalRpcError, RpcRequest, RpcResponse}, api::{SubscribeParams, EventResult}, context::Context};
+use crate::{
+    api::{EventResult, SubscribeParams},
+    context::Context,
+    rpc_server::{
+        InternalRpcError,
+        RPCHandler,
+        RpcRequest,
+        RpcResponse,
+        RpcResponseError
+    },
+    utils::spawn_task
+};
 use super::{WebSocketSessionShared, WebSocketHandler};
 
 // generic websocket handler supporting event subscriptions 
@@ -46,7 +57,7 @@ where
             if let Some(id) = subscriptions.get(event) {
                 let response = json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value)));
                 let session = session.clone();
-                tokio::spawn(async move {
+                spawn_task(format!("notify-ws-{}", session.id), async move {
                     if let Err(e) = session.send_text(response.to_string()).await {
                         debug!("Error occured while notifying a new event: {}", e);
                     };
