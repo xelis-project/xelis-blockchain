@@ -235,8 +235,12 @@ impl PeerList {
     }
 
     pub async fn close_all(&mut self) {
-        for (_, peer) in self.peers.iter() {
-            debug!("Closing peer: {}", peer);
+        for (_, peer) in self.peers.drain() {
+            debug!("Closing {}", peer);
+            if let Err(e) = peer.signal_exit().await {
+                debug!("Error while trying to signal exit to {}: {}", peer, e);
+            }
+
             match timeout(Duration::from_secs(PEER_TIMEOUT_DISCONNECT), peer.get_connection().close()).await {
                 Err(e) => error!("Error while trying to close peer {}, deadline elapsed: {}", peer.get_connection().get_address(), e),
                 Ok(Err(e)) => error!("Error while trying to close peer {}: {}", peer.get_connection().get_address(), e),
@@ -247,8 +251,6 @@ impl PeerList {
         if let Err(e) = self.save_peers_to_file() {
             error!("Error while trying to save peerlist to file: {}", e);
         }
-
-        self.peers.clear();
     }
 
     // Returns the highest topoheight of all peers
