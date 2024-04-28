@@ -195,10 +195,10 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
 
         let reference = tx.get_reference();
         // Verify that the block he is built upon exists
-        if !self.storage.has_block_with_hash(&reference.hash).await? {
-            debug!("Invalid reference: block {} not found", reference.hash);
-            return Err(BlockchainError::InvalidReferenceHash);
-        }
+        // if !self.storage.has_block_with_hash(&reference.hash).await? || !self.storage.is_block_topological_ordered(&reference.hash).await {
+        //     debug!("Invalid reference: block {} not found", reference.hash);
+        //     return Err(BlockchainError::InvalidReferenceHash);
+        // }
 
         // Verify that it is not a fake topoheight
         if self.topoheight < reference.topoheight {

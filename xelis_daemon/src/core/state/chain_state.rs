@@ -456,15 +456,15 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
 
         let reference = tx.get_reference();
         // Verify that the block he is built upon exists
-        if !self.storage.has_block_with_hash(&reference.hash).await? {
-            debug!("TX {} reference {} was not found in storage, checking if its below pruned topoheight", tx.hash(), reference.hash);
-            let pruned_topoheight = self.storage.get_pruned_topoheight().await?
-                .unwrap_or(0);
-            if pruned_topoheight < reference.topoheight {
-                debug!("Invalid reference for tx {}: block {} not found", tx.hash(), reference.hash);
-                return Err(BlockchainError::InvalidReferenceHash);
-            }
-        }
+        // if !self.storage.has_block_with_hash(&reference.hash).await? || !self.storage.is_block_topological_ordered(&reference.hash).await {
+        //     debug!("TX {} reference {} was not found in storage, checking if its below pruned topoheight", tx.hash(), reference.hash);
+        //     let pruned_topoheight = self.storage.get_pruned_topoheight().await?
+        //         .unwrap_or(0);
+        //     if pruned_topoheight < reference.topoheight {
+        //         debug!("Invalid reference for tx {}: block {} not found", tx.hash(), reference.hash);
+        //         return Err(BlockchainError::InvalidReferenceHash);
+        //     }
+        // }
 
         // Verify that it is not a fake topoheight
         if self.topoheight < reference.topoheight {
