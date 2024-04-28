@@ -28,7 +28,7 @@ use xelis_common::{
         Hash
     },
     serializer::Serializer,
-    utils::sanitize_daemon_address
+    utils::{sanitize_daemon_address, spawn_task}
 };
 use crate::{
     config::AUTO_RECONNECT_INTERVAL,
@@ -112,7 +112,7 @@ impl NetworkHandler {
         }
 
         let zelf = Arc::clone(&self);
-        *self.task.lock().await = Some(tokio::spawn(async move {
+        *self.task.lock().await = Some(spawn_task("network-handler", async move {
             loop {
                 let res =  zelf.start_syncing().await;
                 if let Err(e) = res.as_ref() {

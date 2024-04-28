@@ -49,6 +49,8 @@ use xelis_common::{
         format_xelis
     }
 };
+#[cfg(feature = "api_server")]
+use xelis_common::utils::spawn_task;
 use xelis_wallet::{
     wallet::Wallet,
     config::{DEFAULT_DAEMON_ADDRESS, DIR_PATH}
@@ -245,7 +247,7 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
             },
             XSWDEvent::RequestApplication(app_state, signed, callback) => {
                 let prompt = prompt.clone();
-                tokio::spawn(async move {
+                spawn_task("xswd-request", async move {
                     let res = xswd_handle_request_application(&prompt, app_state, signed).await;
                     if callback.send(res).is_err() {
                         error!("Error while sending application response back to XSWD");
@@ -341,7 +343,7 @@ async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] promp
                 Ok(receiver) => {
                     // Only clone when its necessary
                     let prompt = prompt.clone();
-                    tokio::spawn(xswd_handler(receiver, prompt));
+                    spawn_task("xswd-handler", xswd_handler(receiver, prompt));
                 },
                 Err(e) => error!("Error while enabling XSWD Server: {}", e)
             };
@@ -955,7 +957,7 @@ async fn start_xswd(manager: &CommandManager, _: ArgumentManager) -> Result<(), 
     match wallet.enable_xswd().await {
         Ok(receiver) => {
             let prompt = manager.get_prompt().clone();
-            tokio::spawn(xswd_handler(receiver, prompt));
+            spawn_task("xswd", xswd_handler(receiver, prompt));
             manager.message("XSWD Server has been enabled");
         },
         Err(e) => manager.error(format!("Error while enabling XSWD Server: {}", e))

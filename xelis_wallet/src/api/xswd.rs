@@ -66,7 +66,8 @@ use xelis_common::{
         ReaderError,
         Serializer,
         Writer
-    }
+    },
+    utils::spawn_task
 };
 use serde::{Deserialize, Serialize};
 use crate::config::XSWD_BIND_ADDRESS;
@@ -281,7 +282,7 @@ where
         .run();
 
         let handle = http_server.handle();
-        tokio::spawn(http_server);
+        spawn_task("xswd-server", http_server);
 
         info!("XSWD is listening on ws://{}", XSWD_BIND_ADDRESS);
 
@@ -407,7 +408,7 @@ where
             if let Some(id) = subscriptions.get(event) {
                 let response = json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value)));
                 let session = session.clone();
-                tokio::spawn(async move {
+                spawn_task("xswd-notify", async move {
                     if let Err(e) = session.send_text(response.to_string()).await {
                         debug!("Error occured while notifying a new event: {}", e);
                     };
