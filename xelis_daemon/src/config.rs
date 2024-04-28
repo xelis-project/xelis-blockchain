@@ -126,7 +126,7 @@ pub const P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT: usize = 4;
 pub const P2P_HEARTBEAT_INTERVAL: u64 = P2P_PING_DELAY / 2;
 // Timeout in seconds
 // If we didn't receive any packet from a peer during this time, we disconnect it
-pub const P2P_PING_TIMEOUT: u64 = P2P_PING_DELAY * 3;
+pub const P2P_PING_TIMEOUT: u64 = P2P_PING_DELAY * 6;
 
 // Peer rules
 // number of seconds to reset the counter
