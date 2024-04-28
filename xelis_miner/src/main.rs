@@ -61,7 +61,9 @@ use xelis_common::{
     time::get_current_time_in_millis,
     utils::{
         format_difficulty,
-        format_hashrate, sanitize_daemon_address
+        format_hashrate,
+        sanitize_daemon_address,
+        spawn_task
     }
 };
 use clap::Parser;
@@ -196,7 +198,7 @@ async fn main() -> Result<()> {
     }
 
     // start communication task
-    let task = tokio::spawn(communication_task(config.daemon_address, sender.clone(), block_receiver, address, config.worker));
+    let task = spawn_task("communication", communication_task(config.daemon_address, sender.clone(), block_receiver, address, config.worker));
 
     if let Err(e) = run_prompt(prompt).await {
         error!("Error on running prompt: {}", e);
