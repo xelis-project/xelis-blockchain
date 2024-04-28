@@ -2466,6 +2466,7 @@ dependencies = [
  "signal-hook-registry",
  "socket2",
  "tokio-macros",
+ "tracing",
  "windows-sys 0.48.0",
 ]
 
@@ -2993,7 +2994,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_common"
-version = "1.9.4"
+version = "1.9.5"
 dependencies = [
  "actix-rt",
  "actix-web",
@@ -3031,7 +3032,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_daemon"
-version = "1.9.4"
+version = "1.9.5"
 dependencies = [
  "actix",
  "actix-web",
@@ -3062,7 +3063,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_miner"
-version = "1.9.4"
+version = "1.9.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -3080,7 +3081,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_wallet"
-version = "1.9.4"
+version = "1.9.5"
 dependencies = [
  "actix",
  "actix-web",

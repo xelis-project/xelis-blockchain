@@ -6,18 +6,34 @@ use std::{
     collections::HashMap,
     hash::Hash,
     marker::PhantomData,
-    borrow::Cow, time::Duration
+    borrow::Cow,
+    time::Duration
 };
-
 use anyhow::Error;
-use futures_util::{StreamExt, stream::{SplitSink, SplitStream}, SinkExt};
+use futures_util::{
+    StreamExt,
+    stream::{SplitSink, SplitStream},
+    SinkExt
+};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Value, json};
-use tokio::{net::TcpStream, sync::{broadcast, oneshot, Mutex}, task::JoinHandle, time::sleep};
-use tokio_tungstenite::{WebSocketStream, MaybeTlsStream, connect_async, tungstenite::Message};
+use tokio::{
+    net::TcpStream,
+    sync::{broadcast, oneshot, Mutex},
+    task::JoinHandle,
+    time::sleep
+};
+use tokio_tungstenite::{
+    WebSocketStream,
+    MaybeTlsStream,
+    connect_async,
+    tungstenite::Message
+};
 use log::{debug, error, trace, warn};
-
-use crate::api::SubscribeParams;
+use crate::{
+    api::SubscribeParams,
+    utils::{sanitize_daemon_address, spawn_task}
+};
 
 use super::{JSON_RPC_VERSION, JsonRPCError, JsonRPCResponse, JsonRPCResult};
 
@@ -101,15 +117,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
     }
 
     pub async fn new(mut target: String) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
-        if target.starts_with("https://") {
-            target.replace_range(..8, "wss://");
-        }
-        else if target.starts_with("http://") {
-            target.replace_range(..7, "ws://");
-        }
-        else if !target.starts_with("ws://") && !target.starts_with("wss://") {
-            target.insert_str(0, "ws://");
-        }
+        target = sanitize_daemon_address(target.as_str());
 
         let ws = Self::connect_to(&target).await?;
         
@@ -130,7 +138,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
 
         {
             let zelf = client.clone();
-            let handle = tokio::spawn(async move {
+            let handle = spawn_task("ws-subscribe-events", async move {
                 if let Err(e) = zelf.read(read).await {
                     error!("Error in the WebSocket client ioloop: {:?}", e);
                 };
@@ -270,7 +278,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
             }
 
             let zelf = self.clone();
-            let handle = tokio::spawn(async move {
+            let handle = spawn_task("WS ioloop", async move {
                 if let Err(e) = zelf.read(read).await {
                     error!("Error in the WebSocket client ioloop: {:?}", e);
                 };
@@ -324,7 +332,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
             // Register all events again
             {
                 let client = self.clone();
-                tokio::spawn(async move {
+                spawn_task("ws-subscribe-events", async move {
                     if let Err(e) = client.resubscribe_events().await {
                         error!("Error while resubscribing to events: {:?}", e);
                     }

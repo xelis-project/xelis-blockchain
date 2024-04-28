@@ -44,7 +44,7 @@ use xelis_common::{
         TimestampMillis
     },
     transaction::{verify::BlockchainVerificationState, Transaction, TransactionType},
-    utils::{calculate_tx_fee, format_xelis},
+    utils::{calculate_tx_fee, format_xelis, spawn_task},
     varuint::VarUint
 };
 use crate::{
@@ -359,7 +359,7 @@ impl<S: Storage> Blockchain<S> {
         if let Some(simulator) = arc.simulator {
             warn!("Simulator {} mode enabled!", simulator);
             let blockchain = Arc::clone(&arc);
-            tokio::spawn(async move {
+            spawn_task("simulator", async move {
                 simulator.start(blockchain).await;
             });
         }
@@ -2157,7 +2157,7 @@ impl<S: Storage> Blockchain<S> {
                 let pruned_topoheight = storage.get_pruned_topoheight().await?;
                 let block = block.clone();
                 let block_hash = block_hash.clone();
-                tokio::spawn(async move {
+                spawn_task("broadcast-block", async move {
                     p2p.broadcast_block(&block, cumulative_difficulty, current_topoheight, current_height, pruned_topoheight, &block_hash, mining).await;
                 });
             }
@@ -2169,7 +2169,7 @@ impl<S: Storage> Blockchain<S> {
             if broadcast {
                 if let Some(getwork) = rpc.getwork_server() {
                     let getwork = getwork.clone();
-                    tokio::spawn(async move {
+                    spawn_task("notify-new-job", async move {
                         if let Err(e) = getwork.notify_new_job().await {
                             debug!("Error while notifying new job to miners: {}", e);
                         }
@@ -2192,7 +2192,7 @@ impl<S: Storage> Blockchain<S> {
 
             let rpc = rpc.clone();
             // don't block mutex/lock more than necessary, we move it in another task
-            tokio::spawn(async move {
+            spawn_task("rpc-notify-events", async move {
                 for (event, values) in events {
                     for value in values {
                         if let Err(e) = rpc.notify_clients(&event, value).await {
@@ -2389,7 +2389,7 @@ impl<S: Storage> Blockchain<S> {
                 if stable_height != previous_stable_height {
                     if rpc.is_event_tracked(&NotifyEvent::StableHeightChanged).await {
                         let rpc = rpc.clone();
-                        tokio::spawn(async move {
+                        spawn_task("rpc-notify-stable-height", async move {
                             let event = json!(StableHeightChangedEvent {
                                 previous_stable_height,
                                 new_stable_height: stable_height

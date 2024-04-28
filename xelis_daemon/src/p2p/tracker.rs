@@ -21,8 +21,9 @@ use tokio::{
 };
 use xelis_common::{
     crypto::Hash,
+    queue::Queue,
     serializer::Serializer,
-    queue::Queue
+    utils::spawn_task
 };
 use crate::{
     core::{
@@ -278,7 +279,7 @@ impl ObjectTracker {
         // start the requester task loop which send requests to peers
         {
             let zelf = zelf.clone();
-            tokio::spawn(async move {
+            spawn_task("p2p-tracker-requester", async move {
                 zelf.requester_loop(request_receiver).await;
             });
         }
@@ -286,14 +287,14 @@ impl ObjectTracker {
         // start the handler task loop which handle the responses based on request queue order
         {
             let zelf = zelf.clone();
-            tokio::spawn(async move {
+            spawn_task("p2p-tracker-handler", async move {
                 zelf.handler_loop(blockchain, handler_receiver).await;
             });
         }
 
         {
             let zelf = zelf.clone();
-            tokio::spawn(async move {
+            spawn_task("p2p-tracker-clean", async move {
                 zelf.task_clean_cache().await;
             });
         }

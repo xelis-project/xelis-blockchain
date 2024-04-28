@@ -1,24 +1,46 @@
-use crate::core::error::BlockchainError;
-use tokio::sync::AcquireError;
-use tokio::sync::mpsc::error::SendError as TSendError;
-use tokio::sync::oneshot::error::RecvError;
-use xelis_common::api::daemon::Direction;
-use xelis_common::crypto::Hash;
-use xelis_common::serializer::ReaderError;
-use std::array::TryFromSliceError;
-use std::net::{AddrParseError, SocketAddr};
-use tokio::time::error::Elapsed;
-use std::sync::mpsc::SendError;
-use std::io::Error as IOError;
-use std::sync::PoisonError;
+use crate::{
+    core::error::BlockchainError,
+    config::{CHAIN_SYNC_RESPONSE_MAX_BLOCKS, CHAIN_SYNC_RESPONSE_MIN_BLOCKS}
+};
+use tokio::{
+    sync::{
+        AcquireError,
+        mpsc::error::SendError as TSendError,
+        oneshot::error::RecvError,
+    },
+    time::error::Elapsed
+};
+use xelis_common::{
+    api::daemon::Direction,
+    crypto::Hash,
+    serializer::ReaderError,
+};
+use std::{
+    array::TryFromSliceError,
+    net::{AddrParseError, SocketAddr},
+    sync::{
+        mpsc::SendError,
+        PoisonError,
+    },
+    io::Error as IOError
+};
 use thiserror::Error;
-
-use super::encryption::EncryptionError;
-use super::packet::bootstrap_chain::StepKind;
-use super::packet::object::ObjectRequest;
+use super::{
+    encryption::EncryptionError,
+    packet::{
+        bootstrap_chain::StepKind,
+        object::ObjectRequest,
+    }
+};
 
 #[derive(Error, Debug)]
 pub enum P2pError {
+    #[error("Invalid tag, it must be greater than 0 and maximum 16 chars")]
+    InvalidTag,
+    #[error("Invalid max chain response size, it must be between {} and {}", CHAIN_SYNC_RESPONSE_MIN_BLOCKS, CHAIN_SYNC_RESPONSE_MAX_BLOCKS)]
+    InvalidMaxChainResponseSize,
+    #[error("Invalid max peers, it must be greater than 0")]
+    InvalidMaxPeers,
     #[error("Already closed")]
     AlreadyClosed,
     #[error("Incompatible with configured exclusive nodes")]

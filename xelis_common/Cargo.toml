@@ -1,6 +1,6 @@
 [package]
 name = "xelis_common"
-version = "1.9.4"
+version = "1.9.5"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 build = "build.rs"
@@ -27,7 +27,7 @@ anyhow = "1.0.81"
 log = "0.4"
 fern = { version = "0.6", features = ["colored", "date-based"] }
 chrono = "0.4.35"
-tokio = { version = "1.36", features = ["macros", "signal", "time", "sync"], optional = true }
+tokio = { version = "1.36", features = ["macros", "signal", "time", "sync", "tracing"], optional = true }
 reqwest = { version = "0.11.25", default-features = false, features = ["json"], optional = true }
 clap = { version = "4.5.2", features = ["derive"], optional = true }
 crossterm = "0.27.0"

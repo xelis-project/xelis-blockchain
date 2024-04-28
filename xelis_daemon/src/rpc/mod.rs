@@ -33,18 +33,19 @@ use xelis_common::{
     config,
     crypto::Address,
     rpc_server::{
+        json_rpc,
+        websocket,
         websocket::{
             EventWebSocketHandler,
-            WebSocketServerShared,
-            WebSocketServer
+            WebSocketServer,
+            WebSocketServerShared
         },
         InternalRpcError,
         RPCHandler,
         RPCServerHandler,
-        json_rpc,
-        websocket,
-        WebSocketServerHandler,
+        WebSocketServerHandler
     },
+    utils::spawn_task,
 };
 use std::{
     collections::HashSet,
@@ -126,7 +127,7 @@ impl<S: Storage> DaemonRpcServer<S> {
                 *lock = Some(handle);
 
             }
-            tokio::spawn(http_server);
+            spawn_task("rpc-server", http_server);
         }
         Ok(server)
     }

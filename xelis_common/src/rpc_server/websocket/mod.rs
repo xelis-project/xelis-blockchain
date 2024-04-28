@@ -9,6 +9,8 @@ use futures_util::StreamExt;
 use log::{debug, error, trace};
 use tokio::{sync::Mutex, select};
 
+use crate::utils::spawn_task;
+
 pub use self::{
     handler::EventWebSocketHandler,
     http_request::HttpRequest
@@ -220,7 +222,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             // call on_close
             let zelf = Arc::clone(self);
             let session = session.clone();
-            tokio::spawn(async move {
+            spawn_task(format!("ws-on-close-{}", session.id), async move {
                 if let Err(e) = zelf.handler.on_close(&session).await {
                     debug!("Error while calling on_close: {}", e);
                 }
@@ -284,7 +286,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                             debug!("Received text message for session #{}: {}", session.id, text);
                             let zelf = Arc::clone(&self);
                             let session = session.clone();
-                            tokio::spawn(async move {
+                            spawn_task(format!("ws-on-msg-{}", session.id), async move {
                                 if let Err(e) = zelf.handler.on_message(session, text.into_bytes()).await {
                                     debug!("Error while calling on_message: {}", e);
                                 }

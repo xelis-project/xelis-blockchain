@@ -1,11 +1,40 @@
 use std::sync::Arc;
 
-use actix_web_httpauth::{middleware::HttpAuthentication, extractors::basic::BasicAuth};
+use actix_web_httpauth::{
+    middleware::HttpAuthentication,
+    extractors::basic::BasicAuth
+};
 use anyhow::Result;
 use log::{info, warn};
 use tokio::sync::Mutex;
-use xelis_common::{config, rpc_server::{RPCHandler, RPCServerHandler, json_rpc, websocket, websocket::{EventWebSocketHandler, WebSocketServerShared, WebSocketServer}, WebSocketServerHandler}, api::wallet::NotifyEvent};
-use actix_web::{get, HttpResponse, Responder, HttpServer, web::{Data, self}, App, dev::{ServerHandle, ServiceRequest}, Error, error::{ErrorUnauthorized, ErrorBadGateway, ErrorBadRequest}};
+use xelis_common::{
+    api::wallet::NotifyEvent,
+    config,
+    rpc_server::{
+        json_rpc,
+        websocket,
+        websocket::{
+            EventWebSocketHandler,
+            WebSocketServer,
+            WebSocketServerShared
+        },
+        RPCHandler,
+        RPCServerHandler,
+        WebSocketServerHandler
+    },
+    utils::spawn_task
+};
+use actix_web::{
+    get,
+    HttpResponse,
+    Responder,
+    HttpServer,
+    web::{Data, self},
+    App,
+    dev::{ServerHandle, ServiceRequest},
+    Error,
+    error::{ErrorUnauthorized, ErrorBadGateway, ErrorBadRequest}
+};
 
 pub type WalletRpcServerShared<W> = Arc<WalletRpcServer<W>>;
 
@@ -58,7 +87,7 @@ where
                 *lock = Some(handle);
 
             }
-            tokio::spawn(http_server);
+            spawn_task("rpc-server", http_server);
         }
 
         Ok(server)
