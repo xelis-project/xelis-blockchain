@@ -245,7 +245,9 @@ impl Connection {
         let mut stream = self.read.lock().await;
         let size = self.read_packet_size(&mut stream, buf, max_size).await?;
         if size == 0 || size > max_size {
-            warn!("Received invalid packet size: {} bytes (max: {} bytes) from peer {}", size, max_size, self.get_address());
+            if self.get_state() == State::Success {
+                warn!("Received invalid packet size: {} bytes (max: {} bytes) from peer {}", size, max_size, self.get_address());
+            }
             return Err(P2pError::InvalidPacketSize)
         }
         trace!("Size received: {}", size);
@@ -277,8 +279,10 @@ impl Connection {
     async fn read_packet_size(&self, stream: &mut OwnedReadHalf, buf: &mut [u8], max_usize: u32) -> P2pResult<u32> {
         let read = self.read_bytes_from_stream(stream, &mut buf[0..4]).await?;
         if read != 4 {
-            warn!("Received invalid packet size: expected to read 4 bytes but read only {} bytes from {}", read, self);
-            warn!("Read: {:?}", &buf[0..read]);
+            if self.get_state() == State::Success {
+                warn!("Received invalid packet size: expected to read 4 bytes but read only {} bytes from {}", read, self);
+                warn!("Read: {:?}", &buf[0..read]);
+            }
             return Err(P2pError::InvalidPacketSize)
         }
         let array: [u8; 4] = buf[0..4].try_into()?;
@@ -286,7 +290,9 @@ impl Connection {
 
         // Verify if the size is valid
         if size > max_usize {
-            warn!("Received invalid packet size: {} bytes from {}", size, self);
+            if self.get_state() == State::Success {
+                warn!("Received invalid packet size: {} bytes from {}", size, self);
+            }
             return Err(P2pError::InvalidPacketSize)
         }
         Ok(size)
