@@ -3,7 +3,8 @@ use crate::{
         P2P_EXTEND_PEERLIST_DELAY,
         PEER_FAIL_LIMIT,
         PEER_FAIL_TO_CONNECT_LIMIT,
-        PEER_TEMP_BAN_TIME_ON_CONNECT
+        PEER_TEMP_BAN_TIME_ON_CONNECT,
+        PEER_TIMEOUT_DISCONNECT
     },
     p2p::packet::peer_disconnected::PacketPeerDisconnected
 };
@@ -16,7 +17,7 @@ use std::{
 };
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
-use tokio::sync::{RwLock, mpsc::UnboundedSender};
+use tokio::{sync::{mpsc::Sender, RwLock}, time::timeout};
 use xelis_common::{
     serializer::Serializer,
     time::{TimestampSeconds, get_current_time_in_seconds},
@@ -40,7 +41,7 @@ pub struct PeerList {
     // used to notify the server that a peer disconnected
     // this is done through a channel to not have to handle generic types
     // and to be flexible in the future
-    peer_disconnect_channel: Option<UnboundedSender<Arc<Peer>>>
+    peer_disconnect_channel: Option<Sender<Arc<Peer>>>
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
@@ -114,7 +115,7 @@ impl PeerList {
         Ok(peers)
     }
 
-    pub fn new(capacity: usize, filename: String, peer_disconnect_channel: Option<UnboundedSender<Arc<Peer>>>) -> SharedPeerList {
+    pub fn new(capacity: usize, filename: String, peer_disconnect_channel: Option<Sender<Arc<Peer>>>) -> SharedPeerList {
         let stored_peers = match Self::load_stored_peers(&filename) {
             Ok(peers) => peers,
             Err(e) => {
@@ -139,7 +140,7 @@ impl PeerList {
     // Clear the peerlist, this will overwrite the file on disk also
     pub fn clear_peerlist(&mut self) {
         trace!("clear peerlist");
-        self.peers.clear();
+        self.stored_peers.clear();
 
         if let Err(e) = self.save_peers_to_file() {
             error!("Error while trying to save peerlist to file: {}", e);
@@ -157,7 +158,10 @@ impl PeerList {
             let addr = peer.get_outgoing_address();
             let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
             for peer in self.peers.values() {
+                trace!("Locking shared peers for {}", peer.get_connection().get_address());
                 let mut shared_peers = peer.get_peers().lock().await;
+                trace!("locked shared peers for {}", peer.get_connection().get_address());
+
                 // check if it was a common peer (we sent it and we received it)
                 // Because its a common peer, we can expect that he will send us the same packet
                 if let Some(direction) = shared_peers.get(addr) {
@@ -179,7 +183,7 @@ impl PeerList {
         info!("Peer disconnected: {}", peer);
         if let Some(peer_disconnect_channel) = &self.peer_disconnect_channel {
             debug!("Notifying server that {} disconnected", peer);
-            if let Err(e) = peer_disconnect_channel.send(peer) {
+            if let Err(e) = peer_disconnect_channel.send(peer).await {
                 error!("Error while sending peer disconnect notification: {}", e);
             }
         }
@@ -212,8 +216,14 @@ impl PeerList {
         }
     }
 
+    // Verify if the peer is connected (in peerlist)
     pub fn has_peer(&self, peer_id: &u64) -> bool {
         self.peers.contains_key(peer_id)
+    }
+
+    // Check if the peer is known from our peerlist
+    pub fn has_peer_stored(&self, ip: &IpAddr) -> bool {
+        self.stored_peers.contains_key(ip)
     }
 
     pub fn get_peers(&self) -> &HashMap<u64, Arc<Peer>> {
@@ -225,39 +235,21 @@ impl PeerList {
     }
 
     pub async fn close_all(&mut self) {
-        for (_, peer) in self.peers.iter() {
-            debug!("Closing peer: {}", peer);
-            if let Err(e) = peer.get_connection().close().await {
-                error!("Error while trying to close peer {}: {}", peer.get_connection().get_address(), e);
+        for (_, peer) in self.peers.drain() {
+            debug!("Closing {}", peer);
+            if let Err(e) = peer.signal_exit().await {
+                debug!("Error while trying to signal exit to {}: {}", peer, e);
+            }
+
+            match timeout(Duration::from_secs(PEER_TIMEOUT_DISCONNECT), peer.get_connection().close()).await {
+                Err(e) => error!("Error while trying to close peer {}, deadline elapsed: {}", peer.get_connection().get_address(), e),
+                Ok(Err(e)) => error!("Error while trying to close peer {}: {}", peer.get_connection().get_address(), e),
+                Ok(Ok(())) => debug!("Peer {} closed", peer.get_connection().get_address())
             }
         }
 
         if let Err(e) = self.save_peers_to_file() {
             error!("Error while trying to save peerlist to file: {}", e);
-        }
-
-        self.peers.clear();
-    }
-
-    pub async fn broadcast(&self, packet: Packet<'_>) {
-        trace!("broadcast to all peers");
-        let bytes = Bytes::from(packet.to_bytes());
-        for (_, peer) in self.peers.iter() {
-            if let Err(e) = peer.send_bytes(bytes.clone()).await {
-                error!("Error while trying to broadcast packet to peer {}: {}", peer.get_connection().get_address(), e);
-            };
-        }
-    }
-
-    pub async fn broadcast_filter<P>(&self, predicate: P, packet: Packet<'_>)
-        where P: FnMut(&(&u64, &Arc<Peer>)) -> bool
-    {
-        trace!("broadcast with filter");
-        let bytes = Bytes::from(packet.to_bytes());
-        for (_, peer) in self.peers.iter().filter(predicate) {
-            if let Err(e) = peer.send_bytes(bytes.clone()).await {
-                error!("Error while trying to broadcast packet to peer {}: {}", peer.get_connection().get_address(), e);
-            };
         }
     }
 
@@ -392,8 +384,13 @@ impl PeerList {
         if let Some(peer) = self.peers.values().find(|peer| peer.get_connection().get_address().ip() == *ip) {
             // We have to clone because we're holding a immutable reference from self
             let peer = Arc::clone(peer);
-            if let Err(e) = peer.close_with_peerlist(self).await {
+
+            if let Err(e) = peer.get_connection().close().await {
                 error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
+            }
+    
+            if let Err(e) = self.remove_peer(peer.get_id()).await {
+                error!("Error while removing peer from peerlist for being blacklisted: {}", e);
             }
         }
     }
@@ -402,8 +399,12 @@ impl PeerList {
     // this will also close the peer
     pub async fn temp_ban_peer(&mut self, peer: &Peer, seconds: u64) {
         self.temp_ban_address(&peer.get_connection().get_address().ip(), seconds).await;
-        if let Err(e) = peer.close_with_peerlist(self).await {
-            error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
+        if let Err(e) = peer.get_connection().close().await {
+            error!("Error while trying to close {} for being temp banned: {}", peer, e);
+        }
+
+        if let Err(e) = self.remove_peer(peer.get_id()).await {
+            error!("Error while removing peer from peerlist for being temp banned: {}", e);
         }
     }
 
@@ -465,7 +466,7 @@ impl PeerList {
         let fail_count = stored_peer.get_fail_count();
         if *stored_peer.get_state() != StoredPeerState::Whitelist {
             if temp_ban && fail_count != 0 && fail_count % PEER_FAIL_TO_CONNECT_LIMIT == 0 {
-                warn!("Temp banning {} for failing too many times (count = {})", ip, fail_count);
+                debug!("Temp banning {} for failing too many times (count = {})", ip, fail_count);
                 stored_peer.set_temp_ban_until(Some(get_current_time_in_seconds() + PEER_TEMP_BAN_TIME_ON_CONNECT));
             }
 
@@ -474,6 +475,18 @@ impl PeerList {
         } else {
             debug!("{} is whitelisted, not increasing fail count", ip);
         }
+    }
+
+    // Store a new peer address into the peerlist file
+    pub fn store_peer_address(&mut self, addr: SocketAddr) -> bool {
+        let ip: IpAddr = addr.ip();
+        if self.stored_peers.contains_key(&ip) {
+            return false;
+        }
+
+        self.stored_peers.insert(ip, StoredPeer::new(addr.port(), StoredPeerState::Graylist));
+
+        true
     }
 
     // serialize the stored peers to a file

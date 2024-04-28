@@ -12,7 +12,7 @@ use crate::crypto::elgamal::{Ciphertext, CompressedCiphertext, DecompressionErro
 use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 
 // Represents a Ciphertext that can be lazily decompressed and compressed
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum CiphertextCache {
     Compressed(CompressedCiphertext),
     Decompressed(Ciphertext),
@@ -165,3 +165,14 @@ impl Display for CiphertextCache {
         })
     }
 }
+
+
+impl PartialEq for CiphertextCache {
+    fn eq(&self, other: &Self) -> bool {
+        let a = self.compress();
+        let b = other.compress();
+        a == b
+    }
+}
+
+impl Eq for CiphertextCache {}

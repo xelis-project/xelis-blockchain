@@ -784,7 +784,7 @@ impl Wallet {
     }
 
     // set wallet in online mode: start a communication task which will keep the wallet synced
-    pub async fn set_online_mode(self: &Arc<Self>, daemon_address: &String) -> Result<(), WalletError> {
+    pub async fn set_online_mode(self: &Arc<Self>, daemon_address: &String, auto_reconnect: bool) -> Result<(), WalletError> {
         trace!("Set online mode");
         if self.is_online().await {
             // user have to set in offline mode himself first
@@ -794,7 +794,7 @@ impl Wallet {
         // create the network handler
         let network_handler = NetworkHandler::new(Arc::clone(&self), daemon_address).await?;
         // start the task
-        network_handler.start().await?;
+        network_handler.start(auto_reconnect).await?;
         *self.network_handler.lock().await = Some(network_handler);
 
         Ok(())
@@ -802,7 +802,7 @@ impl Wallet {
 
     // set the wallet in online mode using a shared daemon API
     // this allows to share the same connection/Daemon API across several wallets to save resources
-    pub async fn set_online_mode_with_api(self: &Arc<Self>, daemon_api: Arc<DaemonAPI>) -> Result<(), WalletError> {
+    pub async fn set_online_mode_with_api(self: &Arc<Self>, daemon_api: Arc<DaemonAPI>, auto_reconnect: bool) -> Result<(), WalletError> {
         trace!("Set online mode with API");
         if self.is_online().await {
             // user have to set in offline mode himself first
@@ -812,7 +812,7 @@ impl Wallet {
         // create the network handler
         let network_handler = NetworkHandler::with_api(Arc::clone(&self), daemon_api).await?;
         // start the task
-        network_handler.start().await?;
+        network_handler.start(auto_reconnect).await?;
         *self.network_handler.lock().await = Some(network_handler);
 
         Ok(())
@@ -834,7 +834,7 @@ impl Wallet {
     // rescan the wallet from the given topoheight
     // that will delete all transactions above the given topoheight and all balances
     // then it will re-fetch all transactions and balances from daemon
-    pub async fn rescan(&self, topoheight: u64) -> Result<(), WalletError> {
+    pub async fn rescan(&self, topoheight: u64, auto_reconnect: bool) -> Result<(), WalletError> {
         trace!("Rescan wallet from topoheight {}", topoheight);
         if !self.is_online().await {
             // user have to set it online
@@ -875,7 +875,7 @@ impl Wallet {
                 }
             }
             debug!("Starting again network handler");
-            network_handler.start().await.context("Error while restarting network handler")?;
+            network_handler.start(auto_reconnect).await.context("Error while restarting network handler")?;
         } else {
             return Err(WalletError::NotOnlineMode)
         }

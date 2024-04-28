@@ -25,6 +25,7 @@ use actix_web_actors::ws::{
     WebsocketContext
 };
 use anyhow::Context;
+use indexmap::IndexSet;
 use log::{debug, error, trace, warn};
 use lru::LruCache;
 use rand::{
@@ -35,28 +36,29 @@ use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 use xelis_common::{
-    crypto::{
-        PublicKey,
-        Hash
-    },
-    time::{
-        TimestampMillis,
-        get_current_time_in_millis
-    },
     api::daemon::{
-        GetBlockTemplateResult,
-        SubmitBlockParams
+        GetMinerWorkResult,
+        SubmitMinerWorkParams
     },
-    serializer::Serializer,
     block::{
         BlockHeader,
-        BlockMiner
+        MinerWork
+    },
+    crypto::{
+        Hash,
+        Hashable,
+        PublicKey
     },
     difficulty::Difficulty,
     immutable::Immutable,
     rpc_server::{
-        RpcResponseError,
-        InternalRpcError
+        InternalRpcError,
+        RpcResponseError
+    },
+    serializer::Serializer,
+    time::{
+        get_current_time_in_millis,
+        TimestampMillis
     }
 };
 use crate::{
@@ -75,7 +77,7 @@ pub type SharedGetWorkServer<S> = Arc<GetWorkServer<S>>;
 #[derive(Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")] 
 pub enum Response {
-    NewJob(GetBlockTemplateResult),
+    NewJob(GetMinerWorkResult),
     BlockAccepted,
     BlockRejected(String)
 }
@@ -94,9 +96,11 @@ pub struct Miner {
     // worker name
     name: String,
     // blocks accepted by us since he is connected
-    blocks_accepted: usize,
+    blocks_accepted: IndexSet<Hash>,
     // blocks rejected since he is connected
-    blocks_rejected: usize
+    blocks_rejected: usize,
+    // timestamp of the last invalid block received
+    last_invalid_block: TimestampMillis
 }
 
 impl Miner {
@@ -106,8 +110,9 @@ impl Miner {
             first_seen: get_current_time_in_millis(),
             key,
             name,
-            blocks_accepted: 0,
-            blocks_rejected: 0
+            blocks_accepted: IndexSet::new(),
+            blocks_rejected: 0,
+            last_invalid_block: 0
         }
     }
 
@@ -124,13 +129,14 @@ impl Miner {
     }
 
     pub fn get_blocks_accepted(&self) -> usize {
-        self.blocks_accepted
+        self.blocks_accepted.len()
     }
 }
 
 impl Display for Miner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Miner[address={}, name={}, accepted={}, rejected={}]", self.key.as_address(self.mainnet), self.name, self.blocks_accepted, self.blocks_rejected)
+        let valid_blocks = self.blocks_accepted.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",");
+        write!(f, "Miner[address={}, name={}, accepted={} ({}), rejected={}]", self.key.as_address(self.mainnet), self.name, self.blocks_accepted.len(), valid_blocks, self.blocks_rejected)
     }
 }
 
@@ -156,7 +162,7 @@ impl<S: Storage> StreamHandler<Result<Message, ProtocolError>> for GetWorkWebSoc
             Ok(Message::Text(text)) => {
                 debug!("New message incoming from miner: {}", text);
                 let address = ctx.address();
-                let template: SubmitBlockParams = match serde_json::from_slice(text.as_bytes()) {
+                let submitted_work: SubmitMinerWorkParams = match serde_json::from_slice(text.as_bytes()) {
                     Ok(template) => template,
                     Err(e) => {
                         debug!("Error while decoding message from {:?}: {}", address, e);
@@ -165,7 +171,7 @@ impl<S: Storage> StreamHandler<Result<Message, ProtocolError>> for GetWorkWebSoc
                 };
 
                 let server = self.server.clone();
-                ctx.wait(actix::fut::wrap_future(server.handle_block_for(address, template)));
+                ctx.wait(actix::fut::wrap_future(server.handle_block_for(address, submitted_work)));
             },
             Ok(Message::Close(reason)) => {
                 ctx.close(reason);
@@ -251,7 +257,7 @@ impl<S: Storage> GetWorkServer<S> {
                     error!("No mining job found! How is it possible ?");
                     InternalRpcError::CustomStr("No mining job found")
                 })?;
-                job = BlockMiner::new(header.get_work_hash(), get_current_time_in_millis());
+                job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
                 height = header.height;
                 difficulty = *diff;
             } else {
@@ -260,7 +266,7 @@ impl<S: Storage> GetWorkServer<S> {
                 let header = self.blockchain.get_block_template_for_storage(&storage, DEV_PUBLIC_KEY.clone()).await.context("Error while retrieving block template")?;
                 (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
 
-                job = BlockMiner::new(header.get_work_hash(), get_current_time_in_millis());
+                job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
                 height = header.height;
 
                 // save the mining job, and set it as last job
@@ -276,8 +282,9 @@ impl<S: Storage> GetWorkServer<S> {
         job.set_miner(Cow::Owned(key));
         OsRng.fill_bytes(job.get_extra_nonce());
 
+        let topoheight = self.blockchain.get_topo_height();
         debug!("Sending job to new miner");
-        addr.send(Response::NewJob(GetBlockTemplateResult { template: job.to_hex(), height, difficulty })).await.context("error while sending block template")??;
+        addr.send(Response::NewJob(GetMinerWorkResult { template: job.to_hex(), height, topoheight, difficulty })).await.context("error while sending block template")??;
         Ok(())
     }
 
@@ -311,7 +318,7 @@ impl<S: Storage> GetWorkServer<S> {
     // we retrieve the block header saved in cache using the mining job "header_work_hash"
     // its used to check that the job come from our server
     // when it's found, we merge the miner job inside the block header
-    async fn accept_miner_job(&self, job: BlockMiner<'_>) -> Result<Response, InternalRpcError> {
+    async fn accept_miner_job(&self, job: MinerWork<'_>) -> Result<(Response, Hash), InternalRpcError> {
         trace!("accept miner job");
         if job.get_miner().is_none() {
             return Err(InternalRpcError::InvalidRequest);
@@ -323,11 +330,7 @@ impl<S: Storage> GetWorkServer<S> {
             if let Some((header, _)) = mining_jobs.peek(job.get_header_work_hash()) {
                 // job is found in cache, clone it and put miner data inside
                 miner_header = header.clone();
-                let (_, timestamp, nonce, miner, extra_nonce) = job.take();
-                miner_header.nonce = nonce;
-                miner_header.extra_nonce = extra_nonce;
-                miner_header.set_miner(miner.ok_or(InternalRpcError::InvalidRequest)?.into_owned());
-                miner_header.timestamp = timestamp;
+                miner_header.apply_miner_work(job);
             } else {
                 // really old job, or miner send invalid job
                 debug!("Job {} was not found in cache", job.get_header_work_hash());
@@ -336,11 +339,12 @@ impl<S: Storage> GetWorkServer<S> {
         }
 
         let block = self.blockchain.build_block_from_header(Immutable::Owned(miner_header)).await.context("Error while building block from header")?;
+        let block_hash = block.hash();
         Ok(match self.blockchain.add_new_block(block, true, true).await {
-            Ok(_) => Response::BlockAccepted,
+            Ok(_) => (Response::BlockAccepted, block_hash),
             Err(e) => {
                 debug!("Error while accepting miner block: {}", e);
-                Response::BlockRejected(e.to_string())
+                (Response::BlockRejected(e.to_string()), block_hash)
             }
         })
     }
@@ -348,19 +352,19 @@ impl<S: Storage> GetWorkServer<S> {
     // handle the incoming mining job from the miner
     // decode the block miner, and using its header work hash, retrieve the block header
     // if its block is rejected, resend him the job
-    pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, template: SubmitBlockParams) {
+    pub async fn handle_block_for(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, submitted_work: SubmitMinerWorkParams) {
         trace!("handle block for");
-        let response = match BlockMiner::from_hex(template.block_template) {
+        let (response, hash) = match MinerWork::from_hex(submitted_work.miner_work) {
             Ok(job) => match self.accept_miner_job(job).await {
-                Ok(response) => response,
+                Ok((response, hash)) => (response, Some(hash)),
                 Err(e) => {
                     debug!("Error while accepting miner job: {}", e);
-                    Response::BlockRejected(e.to_string())
+                    (Response::BlockRejected(e.to_string()), None)
                 }
             },
             Err(e) => {
                 debug!("Error while decoding block miner: {}", e);
-                Response::BlockRejected(e.to_string())
+                (Response::BlockRejected(e.to_string()), None)
             }
         };
 
@@ -370,12 +374,14 @@ impl<S: Storage> GetWorkServer<S> {
             if let Some(miner) = miners.get_mut(&addr) {
                 match &response {
                     Response::BlockAccepted => {
-                        debug!("Miner {} found a block!", miner);
-                        miner.blocks_accepted += 1;
+                        let hash = hash.unwrap();
+                        debug!("Miner {} found block {}!", miner, hash);
+                        miner.blocks_accepted.insert(hash);
                     },
                     Response::BlockRejected(_) => {
                         debug!("Miner {} sent an invalid block", miner);
                         miner.blocks_rejected += 1;
+                        miner.last_invalid_block = get_current_time_in_millis();
                     },
                     _ => {}
                 }
@@ -457,7 +463,7 @@ impl<S: Storage> GetWorkServer<S> {
             (header, difficulty)
         };
 
-        let mut job = BlockMiner::new(header.get_work_hash(), header.timestamp);
+        let mut job = MinerWork::new(header.get_work_hash(), header.timestamp);
         let height = header.height;
 
         // save the header used for job in cache
@@ -473,6 +479,7 @@ impl<S: Storage> GetWorkServer<S> {
         let mut miners = self.miners.lock().await;
         miners.retain(|addr, _| addr.connected());
 
+        let topoheight = self.blockchain.get_topo_height();
         for (addr, miner) in miners.iter() {
             debug!("Notifying {} for new job", miner);
             let addr = addr.clone();
@@ -484,7 +491,7 @@ impl<S: Storage> GetWorkServer<S> {
             // New task for each miner in case a miner is slow
             // we don't want to wait for him
             tokio::spawn(async move {
-                match addr.send(Response::NewJob(GetBlockTemplateResult { template, height, difficulty })).await {
+                match addr.send(Response::NewJob(GetMinerWorkResult { template, height, topoheight, difficulty })).await {
                     Ok(request) => {
                         if let Err(e) = request {
                             warn!("Error while sending new job to addr {:?}: {}", addr, e);

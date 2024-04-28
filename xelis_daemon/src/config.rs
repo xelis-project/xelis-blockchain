@@ -118,6 +118,10 @@ pub const P2P_DEFAULT_MAX_PEERS: usize = 32;
 pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
 // Peer wait on error accept new p2p connections in seconds
 pub const P2P_PEER_WAIT_ON_ERROR: u64 = 15;
+// Delay in second to connect to priority nodes
+pub const P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY: u64 = 5;
+// Default number of concurrent tasks for incoming p2p connections
+pub const P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT: usize = 4;
 
 // Peer rules
 // number of seconds to reset the counter
@@ -126,7 +130,7 @@ pub const PEER_FAIL_TIME_RESET: u64 = 30 * 60;
 // number of fail to disconnect the peer
 pub const PEER_FAIL_LIMIT: u8 = 50;
 // number of fail during handshake before temp ban
-pub const PEER_FAIL_TO_CONNECT_LIMIT: u8 = 10;
+pub const PEER_FAIL_TO_CONNECT_LIMIT: u8 = 3;
 // number of seconds to temp ban the peer in case of fail reached
 // Set to 15 minutes
 pub const PEER_TEMP_BAN_TIME: u64 = 15 * 60;
@@ -134,11 +138,15 @@ pub const PEER_TEMP_BAN_TIME: u64 = 15 * 60;
 // Set to 1 minute
 pub const PEER_TEMP_BAN_TIME_ON_CONNECT: u64 = 60;
 // millis until we timeout
-pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15000;
+pub const PEER_TIMEOUT_REQUEST_OBJECT: u64 = 15_000;
 // millis until we timeout during a bootstrap request
-pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60000;
+pub const PEER_TIMEOUT_BOOTSTRAP_STEP: u64 = 60_000;
 // millis until we timeout during a handshake
-pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 5000;
+pub const PEER_TIMEOUT_INIT_CONNECTION: u64 = 5_000;
+// millis until we timeout during outgoing connection try
+pub const PEER_TIMEOUT_INIT_OUTGOING_CONNECTION: u64 = 30_000;
+// millis until we timeout during a handshake
+pub const PEER_TIMEOUT_DISCONNECT: u64 = 1_500;
 // 16 additional bytes are for AEAD from ChaCha20Poly1305
 pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
 // Peer TX cache size
@@ -146,6 +154,8 @@ pub const PEER_MAX_PACKET_SIZE: u32 = MAX_BLOCK_SIZE as u32 + 16;
 pub const PEER_TX_CACHE_SIZE: usize = 10240;
 // Peer Block cache size
 pub const PEER_BLOCK_CACHE_SIZE: usize = 1024;
+// Peer packet channel size
+pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 
 // Genesis block to have the same starting point for every nodes
 // Genesis block in hexadecimal format

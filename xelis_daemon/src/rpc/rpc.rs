@@ -68,7 +68,8 @@ use xelis_common::{
     async_handler,
     block::{
         Block,
-        BlockHeader
+        BlockHeader,
+        MinerWork
     },
     config::{
         MAXIMUM_SUPPLY,
@@ -262,9 +263,9 @@ pub async fn get_transaction_response_for_hash<S: Storage>(storage: &S, mempool:
 
 // Get a Peer Entry based on peer data
 pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
-    let top_block_hash = peer.get_top_block_hash().lock().await.clone();
-    let peers = peer.get_peers().lock().await.clone();
-    let cumulative_difficulty = peer.get_cumulative_difficulty().lock().await;
+    let top_block_hash = { peer.get_top_block_hash().lock().await.clone() };
+    let peers = { peer.get_peers().lock().await.clone() };
+    let cumulative_difficulty = { peer.get_cumulative_difficulty().lock().await.clone() };
     PeerEntry {
         id: peer.get_id(),
         addr: Cow::Borrowed(peer.get_connection().get_address()),
@@ -277,7 +278,7 @@ pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
         last_ping: peer.get_last_ping(),
         peers: Cow::Owned(peers),
         pruned_topoheight: peer.get_pruned_topoheight(),
-        cumulative_difficulty: Cow::Owned(*cumulative_difficulty),
+        cumulative_difficulty: Cow::Owned(cumulative_difficulty),
         connected_on: peer.get_connection().connected_on()
     }
 }
@@ -397,14 +398,20 @@ async fn get_block_template<S: Storage>(context: Context, body: Value) -> Result
     let block = blockchain.get_block_template_for_storage(&storage, params.address.into_owned().to_public_key()).await.context("Error while retrieving block template")?;
     let (difficulty, _) = blockchain.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
     let height = block.height;
-    Ok(json!(GetBlockTemplateResult { template: block.to_hex(), height, difficulty }))
+    let topoheight = blockchain.get_topo_height();
+    Ok(json!(GetBlockTemplateResult { template: block.to_hex(), height, topoheight, difficulty }))
 }
 
 async fn submit_block<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SubmitBlockParams = parse_params(body)?;
-    let header = BlockHeader::from_hex(params.block_template)?;
+    let mut header = BlockHeader::from_hex(params.block_template)?;
+    if let Some(work) = params.miner_work {
+        let work = MinerWork::from_hex(work)?;
+        header.apply_miner_work(work);
+    }
+
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    // TODO add block hashing blob on block template
+
     let block = blockchain.build_block_from_header(Immutable::Owned(header)).await.context("Error while building block from header")?;
     blockchain.add_new_block(block, true, true).await.context("Error while adding new block to chain")?;
     Ok(json!(true))
@@ -638,7 +645,7 @@ async fn p2p_status<S: Storage>(context: Context, body: Value) -> Result<Value, 
     }
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let p2p = blockchain.get_p2p().read().await;
+    let p2p = { blockchain.get_p2p().read().await.clone() };
     match p2p.as_ref() {
         Some(p2p) => {
             let tag = p2p.get_tag();
@@ -668,7 +675,7 @@ async fn get_peers<S: Storage>(context: Context, body: Value) -> Result<Value, I
         return Err(InternalRpcError::UnexpectedParams)
     }
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    let p2p = blockchain.get_p2p().read().await;
+    let p2p = { blockchain.get_p2p().read().await.clone() };
     match p2p.as_ref() {
         Some(p2p) => {
             let peer_list = p2p.get_peer_list().read().await;

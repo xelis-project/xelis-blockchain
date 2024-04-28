@@ -1,7 +1,7 @@
 #! /bin/bash
 
-# support: ARM64, x86_64 linux, Windows x86_64
-targets=("aarch64-unknown-linux-gnu" "x86_64-unknown-linux-musl" "x86_64-unknown-linux-gnu" "x86_64-pc-windows-gnu")
+# support: ARM64, ARMv7, x86_64 linux, Windows x86_64
+targets=("aarch64-unknown-linux-gnu" "armv7-unknown-linux-gnueabihf" "x86_64-unknown-linux-musl" "x86_64-unknown-linux-gnu" "x86_64-pc-windows-gnu")
 binaries=("xelis_daemon" "xelis_miner" "xelis_wallet")
 extra_files=("README.md" "API.md")
 
@@ -19,9 +19,7 @@ sudo systemctl start docker
 # compile all binaries for all targets
 echo "Compiling binaries for all targets"
 for target in "${targets[@]}"; do
-    for binary in "${binaries[@]}"; do
-        cross build --profile release-with-lto --bin $binary --target $target
-    done
+    cross build --target $target --profile release-with-lto
 done
 
 echo "Deleting build folder"

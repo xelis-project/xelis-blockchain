@@ -98,16 +98,46 @@ pub struct GetBlockTemplateParams<'a> {
     pub address: Cow<'a, Address>
 }
 
-#[derive(Serialize, Deserialize, PartialEq)]
+#[derive(Serialize, Deserialize)]
 pub struct GetBlockTemplateResult {
-    pub template: String, // template is BlockMiner in hex format
-    pub height: u64, // block height
-    pub difficulty: Difficulty // difficulty required for valid block
+    // block_template is Block Header in hexadecimal format
+    // miner jobs can be created from it
+    pub template: String,
+    // Blockchain height
+    pub height: u64,
+    // Topoheight of the daemon
+    pub topoheight: u64,
+    // Difficulty target for the POW challenge
+    pub difficulty: Difficulty,
+}
+
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct GetMinerWorkResult {
+    // template is miner job in hex format
+    pub template: String,
+    // block height
+    pub height: u64,
+    // topoheight of the daemon
+    // this is for visual purposes only
+    pub topoheight: u64,
+    // difficulty required for valid block POW
+    pub difficulty: Difficulty
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SubmitMinerWorkParams {
+    // hex: represent block miner in hexadecimal format
+    // NOTE: alias block_template is used for backward compatibility < 1.9.4
+    #[serde(alias = "miner_work", alias = "block_template")]
+    pub miner_work: String,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SubmitBlockParams {
-    pub block_template: String, // hex: represent the BlockHeader (Block)
+    // hex: represent the BlockHeader (Block)
+    pub block_template: String,
+    // optional miner work to apply to the block template
+    pub miner_work: Option<String>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -115,7 +145,6 @@ pub struct GetBalanceParams<'a> {
     pub address: Cow<'a, Address>,
     pub asset: Cow<'a, Hash>
 }
-
 
 #[derive(Serialize, Deserialize)]
 pub struct HasBalanceParams<'a> {
@@ -524,7 +553,7 @@ pub struct PeerPeerListUpdatedEvent {
     // Peer ID of the peer that sent us the new peer list
     pub peer_id: u64,
     // Peerlist received from this peer
-    pub peerlist: Vec<SocketAddr>
+    pub peerlist: IndexSet<SocketAddr>
 }
 
 // Value of NotifyEvent::PeerStateUpdated

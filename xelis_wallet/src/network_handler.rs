@@ -1,14 +1,15 @@
 use std::{
-    sync::Arc,
     collections::{
         HashMap,
         HashSet
-    }
+    },
+    sync::Arc,
+    time::Duration
 };
 use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, trace, warn};
-use tokio::{task::JoinHandle, sync::Mutex};
+use tokio::{sync::Mutex, task::JoinHandle, time::sleep};
 use xelis_common::{
     account::CiphertextCache,
     api::{
@@ -30,6 +31,7 @@ use xelis_common::{
     utils::sanitize_daemon_address
 };
 use crate::{
+    config::AUTO_RECONNECT_INTERVAL,
     daemon_api::DaemonAPI,
     entry::{
         EntryData,
@@ -94,7 +96,7 @@ impl NetworkHandler {
     }
 
     // Start the internal loop to sync all missed blocks and all newly added blocks
-    pub async fn start(self: &Arc<Self>) -> Result<(), NetworkError> {
+    pub async fn start(self: &Arc<Self>, auto_reconnect: bool) -> Result<(), NetworkError> {
         trace!("Starting network handler");
 
         if self.is_running().await {
@@ -111,20 +113,38 @@ impl NetworkHandler {
 
         let zelf = Arc::clone(&self);
         *self.task.lock().await = Some(tokio::spawn(async move {
-            let res =  zelf.start_syncing().await;
-            if let Err(e) = res.as_ref() {
-                error!("Error while syncing: {}", e);
+            loop {
+                let res =  zelf.start_syncing().await;
+                if let Err(e) = res.as_ref() {
+                    error!("Error while syncing: {}", e);
+                }
+
+                // Notify that we are offline
+                zelf.wallet.propagate_event(Event::Offline).await;
+
+                if !auto_reconnect {
+                    // Turn off the websocket connection
+                    if let Err(e) = zelf.api.disconnect().await {
+                        debug!("Error while closing websocket connection: {}", e);
+                    }
+
+                    break res;
+                } else {
+                    if !zelf.api.is_online() {
+                        debug!("API is offline, trying to reconnect");
+                        if !zelf.api.reconnect().await? {
+                            error!("Couldn't reconnect to server, trying again in {} seconds", AUTO_RECONNECT_INTERVAL);
+                            sleep(Duration::from_secs(AUTO_RECONNECT_INTERVAL)).await;
+                        } else {
+                            // Notify that we are back online
+                            zelf.wallet.propagate_event(Event::Online).await;
+                        }
+                    } else {
+                        warn!("Daemon is online but we couldn't sync, trying again in {} seconds", AUTO_RECONNECT_INTERVAL);
+                        sleep(Duration::from_secs(AUTO_RECONNECT_INTERVAL)).await;
+                    }
+                }
             }
-
-            // Turn off the websocket connection
-            if let Err(e) = zelf.api.disconnect().await {
-                debug!("Error while closing websocket connection: {}", e);
-            }
-
-            // Notify that we are offline
-            zelf.wallet.propagate_event(Event::Offline).await;
-
-            res
         }));
 
 

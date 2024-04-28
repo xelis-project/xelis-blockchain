@@ -90,12 +90,16 @@ pub struct SplitAddressResult {
 
 #[derive(Serialize, Deserialize)]
 pub struct RescanParams {
-    pub until_topoheight: Option<u64>
+    pub until_topoheight: Option<u64>,
+    #[serde(default = "default_false_value")]
+    pub auto_reconnect: bool
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SetOnlineModeParams {
-    pub daemon_address: String
+    pub daemon_address: String,
+    #[serde(default = "default_false_value")]
+    pub auto_reconnect: bool,
 }
 
 #[derive(Serialize, Deserialize)]

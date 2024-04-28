@@ -54,7 +54,8 @@ use crate::{
         DEFAULT_CACHE_SIZE, DEFAULT_P2P_BIND_ADDRESS, DEFAULT_RPC_BIND_ADDRESS, DEV_FEES,
         DEV_PUBLIC_KEY, EMISSION_SPEED_FACTOR, GENESIS_BLOCK_DIFFICULTY, MAX_BLOCK_SIZE,
         MILLIS_PER_SECOND, P2P_DEFAULT_MAX_PEERS, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
-        SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT
+        SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT, STABLE_LIMIT, TIMESTAMP_IN_FUTURE_LIMIT,
+        P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT
     },
     core::{
         blockdag,
@@ -137,6 +138,10 @@ pub struct Config {
     /// Disable GetWork Server (WebSocket for miners).
     #[clap(long)]
     pub disable_getwork_server: bool,
+    /// Disable RPC Server
+    /// This will also disable the GetWork Server as it is loaded on RPC server.
+    #[clap(long)]
+    pub disable_rpc_server: bool,
     /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME).
     #[clap(long)]
     pub simulator: Option<Simulator>,
@@ -176,13 +181,16 @@ pub struct Config {
     /// and/or shared to others nodes as a potential new peer to connect to.
     /// 
     /// Note that it may prevent to have new incoming peers.
-    #[clap(long, default_value = "false")]
+    #[clap(long)]
     pub disable_ip_sharing: bool,
-    /// Disable outgoing connections from peers.
+    /// Disable P2P outgoing connections from peers.
     /// 
     /// This is useful for seed nodes under heavy load or for nodes that don't want to connect to others.
-    #[clap(long, default_value = "false")]
-    pub disable_outgoing_connections: bool
+    #[clap(long)]
+    pub disable_p2p_outgoing_connections: bool,
+    /// Limit of concurrent tasks accepting new incoming connections.
+    #[clap(long, default_value_t = P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT)]
+    pub p2p_concurrency_task_count_limit: usize
 }
 
 pub struct Blockchain<S: Storage> {
@@ -318,7 +326,7 @@ impl<S: Storage> Blockchain<S> {
                 exclusive_nodes.push(addr);
             }
 
-            match P2pServer::new(config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing, config.disable_outgoing_connections) {
+            match P2pServer::new(config.p2p_concurrency_task_count_limit, config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing, config.disable_p2p_outgoing_connections) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
@@ -339,7 +347,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // create RPC Server
-        {
+        if !config.disable_rpc_server {
             info!("RPC Server will listen on: {}", config.rpc_bind_address);
             match DaemonRpcServer::new(config.rpc_bind_address, Arc::clone(&arc), config.disable_getwork_server).await {
                 Ok(server) => *arc.rpc.write().await = Some(server),
