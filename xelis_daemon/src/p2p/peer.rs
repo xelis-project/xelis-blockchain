@@ -576,29 +576,31 @@ impl Peer {
     // Close the peer connection and remove it from the peer list
     pub async fn close(&self) -> Result<(), P2pError> {
         trace!("Closing connection with {}", self);
-        // Notify the writer task to exit
-        let res = self.exit_channel.send(()).map_err(|e| P2pError::SendError(e.to_string()));
 
         // Remove this peer from peer list
-        let mut peer_list = self.peer_list.write().await;
-        peer_list.remove_peer(self.get_id()).await?;
+        let res = {
+            let mut peer_list = self.peer_list.write().await;
+            peer_list.remove_peer(self.get_id()).await
+        };
 
-        res?;
+        // Notify the writer task to exit
+        self.exit_channel.send(())
+            .map_err(|e| P2pError::SendError(e.to_string()))?;
 
-        Ok(())
+        res
     }
 
     // Close the peer connection and remove it from the peer list
     pub async fn close_internal(&self) -> Result<(), P2pError> {
         trace!("Closing internal connection with {}", self);
-        {
+        let res = {
             // Remove this peer from peer list
             let mut peer_list = self.peer_list.write().await;
-            peer_list.remove_peer(self.get_id()).await?;
-        }
+            peer_list.remove_peer(self.get_id()).await
+        };
         self.get_connection().close().await?;
 
-        Ok(())
+        res
     }
 
     // Send a packet to the peer

@@ -1287,9 +1287,6 @@ impl<S: Storage> P2pServer<S> {
                     debug!("Error while writing to {}: {}", peer, e);
                 }
 
-                // clean shutdown
-                rx.close();
-
                 // Close the peer if not already closed
                 if !peer.get_connection().is_closed() {
                     debug!("Closing connection with {} from write task", addr);
@@ -1297,6 +1294,10 @@ impl<S: Storage> P2pServer<S> {
                         debug!("Error while closing {} from write side: {}", peer, e);
                     }
                 }
+
+
+                // clean shutdown
+                rx.close();
 
                 trace!("Handle connection read side task for {} has been finished", addr);
             })
