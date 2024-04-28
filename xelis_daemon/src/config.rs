@@ -122,6 +122,11 @@ pub const P2P_PEER_WAIT_ON_ERROR: u64 = 15;
 pub const P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY: u64 = 5;
 // Default number of concurrent tasks for incoming p2p connections
 pub const P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT: usize = 4;
+// Heartbeat interval in seconds to check if peer is still alive
+pub const P2P_HEARTBEAT_INTERVAL: u64 = P2P_PING_DELAY / 2;
+// Timeout in seconds
+// If we didn't receive any packet from a peer during this time, we disconnect it
+pub const P2P_PING_TIMEOUT: u64 = P2P_PING_DELAY * 3;
 
 // Peer rules
 // number of seconds to reset the counter

@@ -39,7 +39,7 @@ use crate::{
         CHAIN_SYNC_TOP_BLOCKS, MILLIS_PER_SECOND, NETWORK_ID, P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY,
         P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT,
         PEER_FAIL_LIMIT, PEER_MAX_PACKET_SIZE, PEER_TIMEOUT_INIT_CONNECTION, PEER_TIMEOUT_INIT_OUTGOING_CONNECTION,
-        PRUNE_SAFETY_LIMIT, STABLE_LIMIT
+        PRUNE_SAFETY_LIMIT, STABLE_LIMIT, P2P_PING_TIMEOUT, P2P_HEARTBEAT_INTERVAL
     },
     core::{
         blockchain::Blockchain,
@@ -1215,6 +1215,7 @@ impl<S: Storage> P2pServer<S> {
     async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut Rx) -> Result<(), P2pError> {
         let mut server_exit = self.exit_sender.subscribe();
         let mut peer_exit = peer.get_exit_receiver();
+        let mut interval = interval(Duration::from_secs(P2P_HEARTBEAT_INTERVAL));
         loop {
             select! {
                 biased;
@@ -1227,6 +1228,16 @@ impl<S: Storage> P2pServer<S> {
                     debug!("Peer {} has exited, stopping...", peer);
                     peer.get_connection().close().await?;
                     break;
+                },
+                _ = interval.tick() => {
+                    trace!("Checkinf heartbeat of {}", peer);
+                    // Last time we got a ping packet from him
+                    let last_ping = peer.get_last_ping();
+                    if last_ping != 0 && get_current_time_in_seconds() - last_ping > P2P_PING_TIMEOUT {
+                        warn!("Peer {} has not sent a ping packet for {} seconds, closing connection...", peer, P2P_PING_TIMEOUT);
+                        peer.close_internal().await?;
+                        break;
+                    }
                 },
                 // all packets to be sent to the peer are received here
                 Some(bytes) = rx.recv() => {
