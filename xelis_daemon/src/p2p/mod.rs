@@ -39,7 +39,7 @@ use crate::{
         CHAIN_SYNC_TOP_BLOCKS, MILLIS_PER_SECOND, NETWORK_ID, P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY,
         P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT,
         PEER_FAIL_LIMIT, PEER_MAX_PACKET_SIZE, PEER_TIMEOUT_INIT_CONNECTION, PEER_TIMEOUT_INIT_OUTGOING_CONNECTION,
-        PRUNE_SAFETY_LIMIT, STABLE_LIMIT, P2P_PING_TIMEOUT, P2P_HEARTBEAT_INTERVAL
+        PRUNE_SAFETY_LIMIT, STABLE_LIMIT, P2P_PING_TIMEOUT, P2P_HEARTBEAT_INTERVAL, PEER_SEND_BYTES_TIMEOUT
     },
     core::{
         blockchain::Blockchain,
@@ -196,12 +196,14 @@ impl<S: Storage> P2pServer<S> {
         // create mspc channel for connections to peers
         let (connections_sender, connections_receiver) = mpsc::channel(max_peers);
         let (blocks_processor, blocks_processor_receiver) = mpsc::channel(TIPS_LIMIT * STABLE_LIMIT as usize);
-        let object_tracker = ObjectTracker::new(blockchain.clone());
+
+        // Channel used to broadcast the stop message
+        let (exit_sender, exit_receiver) = broadcast::channel(1);
+        let object_tracker = ObjectTracker::new(blockchain.clone(), exit_receiver);
 
         let (sender, event_receiver) = channel::<Arc<Peer>>(max_peers); 
         let peer_list = PeerList::new(max_peers, format!("{}peerlist-{}.json", dir_path.unwrap_or_default(), blockchain.get_network().to_string().to_lowercase()), Some(sender));
 
-        let (exit_sender, _) = broadcast::channel(1);
 
         let server = Self {
             peer_id,
@@ -1243,7 +1245,7 @@ impl<S: Storage> P2pServer<S> {
                 Some(bytes) = rx.recv() => {
                     // there is a overhead of 4 for each packet (packet size u32 4 bytes, packet id u8 is counted in the packet size)
                     trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[4], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len());
-                    peer.get_connection().send_bytes(&bytes).await?;
+                    timeout(Duration::from_millis(PEER_SEND_BYTES_TIMEOUT), peer.get_connection().send_bytes(&bytes)).await??;
                     trace!("data sucessfully sent!");
                 }
             };

@@ -161,6 +161,9 @@ pub const PEER_TX_CACHE_SIZE: usize = 10240;
 pub const PEER_BLOCK_CACHE_SIZE: usize = 1024;
 // Peer packet channel size
 pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
+// Peer timeout for packet channel
+// Millis
+pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
 // Genesis block to have the same starting point for every nodes
 // Genesis block in hexadecimal format
