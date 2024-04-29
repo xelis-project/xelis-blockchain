@@ -21,7 +21,8 @@ use tokio::{sync::{mpsc::Sender, RwLock}, time::timeout};
 use xelis_common::{
     serializer::Serializer,
     time::{TimestampSeconds, get_current_time_in_seconds},
-    api::daemon::Direction
+    api::daemon::Direction,
+    utils::spawn_task
 };
 use std::sync::Arc;
 use bytes::Bytes;
@@ -235,17 +236,20 @@ impl PeerList {
     }
 
     pub async fn close_all(&mut self) {
+        trace!("closing all peers");
         for (_, peer) in self.peers.drain() {
             debug!("Closing {}", peer);
             if let Err(e) = peer.signal_exit().await {
                 debug!("Error while trying to signal exit to {}: {}", peer, e);
             }
 
-            match timeout(Duration::from_secs(PEER_TIMEOUT_DISCONNECT), peer.get_connection().close()).await {
-                Err(e) => error!("Error while trying to close peer {}, deadline elapsed: {}", peer.get_connection().get_address(), e),
-                Ok(Err(e)) => error!("Error while trying to close peer {}: {}", peer.get_connection().get_address(), e),
-                Ok(Ok(())) => debug!("Peer {} closed", peer.get_connection().get_address())
-            }
+            spawn_task(format!("p2p-disconnect-{}", peer.get_connection().get_address()), async move {
+                match timeout(Duration::from_secs(PEER_TIMEOUT_DISCONNECT), peer.get_connection().close()).await {
+                    Err(e) => error!("Error while trying to close peer {}, deadline elapsed: {}", peer.get_connection().get_address(), e),
+                    Ok(Err(e)) => error!("Error while trying to close peer {}: {}", peer.get_connection().get_address(), e),
+                    Ok(Ok(())) => debug!("Peer {} closed", peer.get_connection().get_address())
+                }
+            });
         }
 
         if let Err(e) = self.save_peers_to_file() {
