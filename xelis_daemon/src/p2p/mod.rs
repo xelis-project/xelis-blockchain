@@ -870,8 +870,8 @@ impl<S: Storage> P2pServer<S> {
 
         // Try to not reuse the same peer between each sync
         if let Some((previous_peer, err)) = previous_peer {
-            if peers.len() > 1 || *err {
-                debug!("removing previous peer {} from random selection, err: {}", previous_peer, err);
+            if peers.len() > 1 || (*err && !previous_peer.is_priority()) {
+                debug!("removing previous peer {} from random selection, err: {}, priority: {}", previous_peer, err, previous_peer.is_priority());
                 // We don't need to preserve the order
                 peers.swap_remove(previous_peer);
             }
