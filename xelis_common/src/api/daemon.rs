@@ -473,6 +473,20 @@ pub struct GetDifficultyResult {
     pub hashrate_formatted: String
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct ValidateAddressParams<'a> {
+    pub address: Cow<'a, Address>,
+    #[serde(default)]
+    pub allow_integrated: bool
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ExtractKeyFromAddressParams<'a> {
+    pub address: Cow<'a, Address>,
+    #[serde(default)]
+    pub tx_as_hex: bool
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
