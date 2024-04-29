@@ -61,6 +61,8 @@ use xelis_common::{
             GetMempoolCacheParams,
             IsAccountRegisteredParams,
             GetAccountRegistrationParams,
+            CreateMinerWorkParams,
+            CreateMinerWorkResult
         },
         RPCTransaction,
         RPCTransactionType as RPCTransactionType
@@ -291,6 +293,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_topoheight", async_handler!(get_topoheight::<S>));
     handler.register_method("get_stableheight", async_handler!(get_stableheight::<S>));
     handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
+    handler.register_method("create_miner_work", async_handler!(create_miner_work::<S>));
     handler.register_method("get_block_at_topoheight", async_handler!(get_block_at_topoheight::<S>));
     handler.register_method("get_blocks_at_height", async_handler!(get_blocks_at_height::<S>));
     handler.register_method("get_block_by_hash", async_handler!(get_block_by_hash::<S>));
@@ -400,6 +403,27 @@ async fn get_block_template<S: Storage>(context: Context, body: Value) -> Result
     let height = block.height;
     let topoheight = blockchain.get_topo_height();
     Ok(json!(GetBlockTemplateResult { template: block.to_hex(), height, topoheight, difficulty }))
+}
+
+async fn create_miner_work<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: CreateMinerWorkParams = parse_params(body)?;
+    
+    let header = BlockHeader::from_hex(params.template.into_owned())?;
+    let mut work = MinerWork::from_block(header);
+    if let Some(address) = params.address {
+        if !address.is_normal() {
+            return Err(InternalRpcError::AnyError(ApiError::ExpectedNormalAddress.into()))
+        }
+    
+        let blockchain: &Arc<Blockchain<S>> = context.get()?;
+        if address.is_mainnet() != blockchain.get_network().is_mainnet() {
+            return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+        }
+
+        work.set_miner(Cow::Owned(address.into_owned().to_public_key()));
+    }
+
+    Ok(json!(CreateMinerWorkResult { miner_work: work.to_hex() }))
 }
 
 async fn submit_block<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
