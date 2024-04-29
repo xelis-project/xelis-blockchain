@@ -99,6 +99,20 @@ pub struct GetBlockTemplateParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct CreateMinerWorkParams<'a> {
+    // Block Template in hexadecimal format
+    pub template: Cow<'a, String>,
+    // Address of the miner, if empty, it will use the address from template
+    pub address: Option<Cow<'a, Address>>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CreateMinerWorkResult {
+    // MinerWork struct in hexadecimal format
+    pub miner_work: String
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GetBlockTemplateResult {
     // block_template is Block Header in hexadecimal format
     // miner jobs can be created from it
