@@ -423,6 +423,10 @@ impl Mempool {
 
         deleted_transactions
     }
+
+    pub async fn stop(&mut self) {
+        self.clear();
+    }
 }
 
 impl SortedTx {

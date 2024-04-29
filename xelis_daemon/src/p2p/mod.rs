@@ -818,7 +818,7 @@ impl<S: Storage> P2pServer<S> {
             let hash = storage.get_hash_at_topo_height(our_topoheight).await?;
             storage.get_cumulative_difficulty_for_block_hash(&hash).await?
         };
-        
+
         let peer_list = self.peer_list.read().await;
         trace!("peer list locked for select random best peer");
 

@@ -380,6 +380,7 @@ impl<S: Storage> Blockchain<S> {
         {
             let mut p2p = self.p2p.write().await;
             if let Some(p2p) = p2p.take() {
+                info!("Stopping P2p Server...");
                 p2p.stop().await;
             }
         }
@@ -387,15 +388,23 @@ impl<S: Storage> Blockchain<S> {
         {
             let mut rpc = self.rpc.write().await;
             if let Some(rpc) = rpc.take() {
+                info!("Stopping RPC Server...");
                 rpc.stop().await;
             }
         }
 
         {
+            info!("Stopping storage...");
             let mut storage = self.storage.write().await;
             if let Err(e) = storage.stop().await {
                 error!("Error while stopping storage: {}", e);
             }
+        }
+
+        {
+            info!("Stopping mempool...");
+            let mut mempool = self.mempool.write().await;
+            mempool.stop().await;
         }
 
         info!("All modules are now stopped!");
@@ -405,7 +414,7 @@ impl<S: Storage> Blockchain<S> {
     // Clear the mempool also in case of not being up-to-date
     pub async fn reload_from_disk(&self) -> Result<(), BlockchainError> {
         trace!("Reloading chain from disk");
-        let storage = self.storage.read().await;
+        let storage = self.storage.write().await;
         let topoheight = storage.get_top_topoheight()?;
         let height = storage.get_top_height()?;
         self.topoheight.store(topoheight, Ordering::SeqCst);
