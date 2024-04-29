@@ -443,6 +443,72 @@ No parameters
 }
 ```
 
+#### Validate Address
+Validate a wallet address by accepting or not integrated address.
+
+##### Method `validate_address`
+
+##### Parameters
+|       Name       |   Type  | Required |                         Note                        |
+|:----------------:|:-------:|:--------:|:---------------------------------------------------:|
+|      address     | Address | Required |               wallet address to verify              |
+| allow_integrated | Boolean | Optional | Allow integrated addresses. By default set to false |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "validate_address",
+    "params": {
+        "address": "xel:vs3mfyywt0fjys0rgslue7mm4wr23xdgejsjk0ld7f2kxng4d4nqqnkdufz",
+        "allow_integrated": false
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
+
+#### Extract Key From Address
+Extract public key from a wallet address
+
+##### Method `extract_key_from_address`
+
+##### Parameters
+|    Name   |   Type  | Required |                                         Note                                         |
+|:---------:|:-------:|:--------:|:------------------------------------------------------------------------------------:|
+|  address  | Address | Required |                               wallet address to verify                               |
+| tx_as_hex | Boolean | Optional | Returns Public Key as hexadecimal. By default set to false and returns a byte array. |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "extract_key_from_address",
+    "params": {
+        "address": "xel:vs3mfyywt0fjys0rgslue7mm4wr23xdgejsjk0ld7f2kxng4d4nqqnkdufz",
+        "tx_as_hex": true
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": "6423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66"
+}
+```
+
 #### Get Block Template
 Retrieve the block template (Block Header) for PoW work.
 
