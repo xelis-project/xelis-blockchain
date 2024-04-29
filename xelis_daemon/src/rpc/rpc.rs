@@ -286,19 +286,16 @@ pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
 }
 
 // This function is used to register all the RPC methods
-pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>) {
+pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>, allow_mining_methods: bool) {
     info!("Registering RPC methods...");
     handler.register_method("get_version", async_handler!(version::<S>));
     handler.register_method("get_height", async_handler!(get_height::<S>));
     handler.register_method("get_topoheight", async_handler!(get_topoheight::<S>));
     handler.register_method("get_stableheight", async_handler!(get_stableheight::<S>));
-    handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
-    handler.register_method("create_miner_work", async_handler!(create_miner_work::<S>));
     handler.register_method("get_block_at_topoheight", async_handler!(get_block_at_topoheight::<S>));
     handler.register_method("get_blocks_at_height", async_handler!(get_blocks_at_height::<S>));
     handler.register_method("get_block_by_hash", async_handler!(get_block_by_hash::<S>));
     handler.register_method("get_top_block", async_handler!(get_top_block::<S>));
-    handler.register_method("submit_block", async_handler!(submit_block::<S>));
     handler.register_method("get_balance", async_handler!(get_balance::<S>));
     handler.register_method("has_balance", async_handler!(has_balance::<S>));
     handler.register_method("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight::<S>));
@@ -330,6 +327,12 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_dev_fee_thresholds", async_handler!(get_dev_fee_thresholds::<S>));
     handler.register_method("get_size_on_disk", async_handler!(get_size_on_disk::<S>));
     handler.register_method("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
+
+    if allow_mining_methods {
+        handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
+        handler.register_method("create_miner_work", async_handler!(create_miner_work::<S>));
+        handler.register_method("submit_block", async_handler!(submit_block::<S>));
+    }
 }
 
 async fn version<S: Storage>(_: Context, body: Value) -> Result<Value, InternalRpcError> {
