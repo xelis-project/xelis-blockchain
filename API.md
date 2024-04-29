@@ -413,6 +413,36 @@ No parameters
 }
 ```
 
+#### Get Difficulty
+Retrieve current difficulty and associated network hashrate.
+
+##### Method `get_difficulty`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_difficulty",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "difficulty": "79746345000",
+        "hashrate": "5316423000",
+        "hashrate_formatted": "5.32 GH/s"
+    }
+}
+```
+
 #### Get Block Template
 Retrieve the block template (Block Header) for PoW work.
 
