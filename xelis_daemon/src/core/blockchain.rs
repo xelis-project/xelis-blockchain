@@ -380,7 +380,6 @@ impl<S: Storage> Blockchain<S> {
         {
             let mut p2p = self.p2p.write().await;
             if let Some(p2p) = p2p.take() {
-                info!("Stopping P2p Server...");
                 p2p.stop().await;
             }
         }
@@ -388,13 +387,11 @@ impl<S: Storage> Blockchain<S> {
         {
             let mut rpc = self.rpc.write().await;
             if let Some(rpc) = rpc.take() {
-                info!("Stopping RPC Server...");
                 rpc.stop().await;
             }
         }
 
         {
-            info!("Stopping storage...");
             let mut storage = self.storage.write().await;
             if let Err(e) = storage.stop().await {
                 error!("Error while stopping storage: {}", e);
@@ -402,7 +399,6 @@ impl<S: Storage> Blockchain<S> {
         }
 
         {
-            info!("Stopping mempool...");
             let mut mempool = self.mempool.write().await;
             mempool.stop().await;
         }

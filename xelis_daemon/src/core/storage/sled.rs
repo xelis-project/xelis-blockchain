@@ -1017,6 +1017,7 @@ impl Storage for SledStorage {
     }
 
     async fn stop(&mut self) -> Result<(), BlockchainError> {
+        info!("Stopping Storage...");
         info!("Flushing Sled database");
         self.db.flush_async().await?;
         info!("Sled database flushed");

@@ -10,7 +10,7 @@ use std::{
 };
 use serde::{Serialize, Deserialize};
 use indexmap::IndexSet;
-use log::{trace, debug, warn};
+use log::{debug, info, trace, warn};
 use xelis_common::{
     time::{TimestampSeconds, get_current_time_in_seconds},
     crypto::elgamal::Ciphertext,
@@ -425,6 +425,7 @@ impl Mempool {
     }
 
     pub async fn stop(&mut self) {
+        info!("Stopping mempool...");
         self.clear();
     }
 }
