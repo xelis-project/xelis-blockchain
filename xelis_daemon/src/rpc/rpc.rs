@@ -64,7 +64,9 @@ use xelis_common::{
             SizeOnDiskResult,
             SubmitBlockParams,
             SubmitTransactionParams,
-            TransactionResponse
+            TransactionResponse,
+            ValidateAddressParams,
+            ExtractKeyFromAddressParams
         },
         RPCTransaction,
         RPCTransactionType as RPCTransactionType
@@ -331,6 +333,8 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_size_on_disk", async_handler!(get_size_on_disk::<S>));
     handler.register_method("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
     handler.register_method("get_difficulty", async_handler!(get_difficulty::<S>));
+    handler.register_method("validate_address", async_handler!(validate_address::<S>));
+    handler.register_method("extract_key_from_address", async_handler!(extract_key_from_address::<S>));
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
@@ -1156,6 +1160,7 @@ async fn get_difficulty<S: Storage>(context: Context, body: Value) -> Result<Val
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
+
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let difficulty = blockchain.get_difficulty().await;
     let hashrate = difficulty / BLOCK_TIME;
@@ -1165,4 +1170,25 @@ async fn get_difficulty<S: Storage>(context: Context, body: Value) -> Result<Val
         hashrate_formatted,
         difficulty,
     }))
+}
+
+
+async fn validate_address<S: Storage>(_: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: ValidateAddressParams = parse_params(body)?;
+
+    if !params.allow_integrated {
+        Ok(json!(params.address.is_normal()))
+    } else {
+        Ok(json!(true))
+    }
+}
+
+async fn extract_key_from_address<S: Storage>(_: Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: ExtractKeyFromAddressParams = parse_params(body)?;
+
+    if params.tx_as_hex {
+        Ok(json!(params.address.get_public_key().to_hex()))
+    } else {
+        Ok(json!(params.address.get_public_key()))
+    }
 }
