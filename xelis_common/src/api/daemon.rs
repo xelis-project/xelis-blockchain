@@ -466,6 +466,13 @@ pub struct GetMempoolCacheResult {
     balances: HashMap<Hash, CiphertextCache>
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct GetDifficultyResult {
+    pub difficulty: Difficulty,
+    pub hashrate: Difficulty,
+    pub hashrate_formatted: String
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {

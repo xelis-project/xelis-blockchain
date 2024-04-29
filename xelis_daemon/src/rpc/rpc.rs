@@ -14,7 +14,8 @@ use crate::{
         mempool::Mempool,
         storage::Storage
     },
-    p2p::peer::Peer
+    p2p::peer::Peer,
+    BLOCK_TIME
 };
 use super::{InternalRpcError, ApiError};
 use xelis_common::{
@@ -22,10 +23,12 @@ use xelis_common::{
         daemon::{
             AccountHistoryEntry,
             AccountHistoryType,
-            RPCBlockResponse,
             BlockType,
+            CreateMinerWorkParams,
+            CreateMinerWorkResult,
             GetAccountAssetsParams,
             GetAccountHistoryParams,
+            GetAccountRegistrationParams,
             GetAccountsParams,
             GetAssetParams,
             GetAssetsParams,
@@ -37,11 +40,14 @@ use xelis_common::{
             GetBlockTemplateParams,
             GetBlockTemplateResult,
             GetBlocksAtHeightParams,
+            GetDifficultyResult,
             GetHeightRangeParams,
             GetInfoResult,
+            GetMempoolCacheParams,
             GetNonceAtTopoHeightParams,
             GetNonceParams,
             GetNonceResult,
+            GetPeersResponse,
             GetTopBlockParams,
             GetTopoHeightRangeParams,
             GetTransactionParams,
@@ -50,19 +56,15 @@ use xelis_common::{
             HasBalanceResult,
             HasNonceParams,
             HasNonceResult,
+            IsAccountRegisteredParams,
             IsTxExecutedInBlockParams,
             P2pStatusResult,
-            GetPeersResponse,
             PeerEntry,
+            RPCBlockResponse,
             SizeOnDiskResult,
             SubmitBlockParams,
             SubmitTransactionParams,
-            TransactionResponse,
-            GetMempoolCacheParams,
-            IsAccountRegisteredParams,
-            GetAccountRegistrationParams,
-            CreateMinerWorkParams,
-            CreateMinerWorkResult
+            TransactionResponse
         },
         RPCTransaction,
         RPCTransactionType as RPCTransactionType
@@ -95,7 +97,8 @@ use xelis_common::{
     transaction::{
         Transaction,
         TransactionType
-    }
+    },
+    utils::format_hashrate
 };
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
@@ -327,6 +330,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_dev_fee_thresholds", async_handler!(get_dev_fee_thresholds::<S>));
     handler.register_method("get_size_on_disk", async_handler!(get_size_on_disk::<S>));
     handler.register_method("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
+    handler.register_method("get_difficulty", async_handler!(get_difficulty::<S>));
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
@@ -1146,4 +1150,19 @@ async fn get_mempool_cache<S: Storage>(context: Context, body: Value) -> Result<
         .context("Account not found while retrieving mempool cache")?;
 
     Ok(json!(cache))
+}
+
+async fn get_difficulty<S: Storage>(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let difficulty = blockchain.get_difficulty().await;
+    let hashrate = difficulty / BLOCK_TIME;
+    let hashrate_formatted = format_hashrate(hashrate.into());
+    Ok(json!(GetDifficultyResult {
+        hashrate,
+        hashrate_formatted,
+        difficulty,
+    }))
 }
