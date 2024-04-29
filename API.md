@@ -555,6 +555,49 @@ Block Header can be serialized/deserialized using following order on byte array:
 }
 ```
 
+#### Create Miner Work
+Create a work for miner based on a block template set in parameter.
+
+A `MinerWork` struct is created from the block header work hash which represent the immutable part.
+
+For the mutable part that can be updated by the miner we have the following field:
+- timestamp (u64) big endian format
+- nonce (u64) big endian format
+- miner key (32 bytes)
+- extra nonce (32 bytes)
+
+##### Method `create_miner_work`
+
+##### Parameters
+|   Name   |      Type     | Required |                               Note                              |
+|:--------:|:-------------:|:--------:|:---------------------------------------------------------------:|
+| template | BlockTemplate | Required |     Block Template from which the MinerWork will be created     |
+|  address |    Address    | Optional | Miner address for rewards. By default use address from template |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "create_miner_work",
+    "id": 1,
+    "params": {
+        "template": "00000000000000c19a0000018f2c14497300000000000000005dc86515e4adbb394b11dcdd25efcb78a08729b6230065dbb9a3c85f960af89901a0ea4d7c7dee70a12b14e95c1385e06ecd6a14e1a63a8302ce3c1e4dd7994c2f00006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66",
+        "address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "miner_work": "dd7cbd9dbb0854a66c455963050e5cf7fb22f3c4ba5d4a26d142d80ba70418cc0000018f2c14497300000000000000005dc86515e4adbb394b11dcdd25efcb78a08729b6230065dbb9a3c85f960af8996423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66"
+    }
+}
+```
+
 #### Submit Block
 Submit a block header in hexadecimal format to the daemon.
 
