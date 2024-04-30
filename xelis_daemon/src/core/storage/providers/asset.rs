@@ -8,7 +8,7 @@ use xelis_common::{
     serializer::Serializer,
 };
 use crate::core::{
-    error::BlockchainError,
+    error::{BlockchainError, DiskContext},
     storage::SledStorage,
 };
 
@@ -52,7 +52,7 @@ impl AssetProvider for SledStorage {
 
     async fn get_asset(&self, asset: &Hash) -> Result<AssetData, BlockchainError> {
         trace!("get asset registration topoheight {}", asset);
-        self.load_from_disk(&self.assets, asset.as_bytes())
+        self.load_from_disk(&self.assets, asset.as_bytes(), DiskContext::Asset)
     }
 
     // we are forced to read from disk directly because cache may don't have all assets in memory

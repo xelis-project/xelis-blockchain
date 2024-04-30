@@ -5,7 +5,7 @@ use xelis_common::{
     serializer::Serializer
 };
 use crate::core::{
-    error::BlockchainError,
+    error::{BlockchainError, DiskContext},
     storage::{SledStorage, Tips},
 };
 
@@ -36,7 +36,7 @@ impl BlocksAtHeightProvider for SledStorage {
 
     async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError> {
         trace!("get blocks at height {}", height);
-        self.load_from_disk(&self.blocks_at_height, &height.to_be_bytes())
+        self.load_from_disk(&self.blocks_at_height, &height.to_be_bytes(), DiskContext::BlocksAtHeight)
     }
 
     async fn set_blocks_at_height(&self, tips: Tips, height: u64) -> Result<(), BlockchainError> {

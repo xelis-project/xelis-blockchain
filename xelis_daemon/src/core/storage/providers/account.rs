@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use xelis_common::{crypto::PublicKey, serializer::Serializer};
-use crate::core::{error::BlockchainError, storage::SledStorage};
+use crate::core::{error::{BlockchainError, DiskContext}, storage::SledStorage};
 
 #[async_trait]
 pub trait AccountProvider {
@@ -35,7 +35,7 @@ fn prefixed_db_key_no_u64(topoheight: &[u8], key: &PublicKey) -> [u8; 40] {
 #[async_trait]
 impl AccountProvider for SledStorage {
     async fn get_account_registration_topoheight(&self, key: &PublicKey) -> Result<u64, BlockchainError> {
-        self.load_from_disk(&self.registrations, key.as_bytes())
+        self.load_from_disk(&self.registrations, key.as_bytes(), DiskContext::AccountRegistrationTopoHeight)
     }
 
     async fn set_account_registration_topoheight(&mut self, key: &PublicKey, topoheight: u64) -> Result<(), BlockchainError> {

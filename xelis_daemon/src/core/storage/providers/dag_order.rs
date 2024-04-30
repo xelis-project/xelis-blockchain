@@ -5,7 +5,7 @@ use xelis_common::{
     serializer::Serializer
 };
 use crate::core::{
-    error::BlockchainError,
+    error::{BlockchainError, DiskContext},
     storage::SledStorage,
 };
 
@@ -61,7 +61,7 @@ impl DagOrderProvider for SledStorage {
 
     async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         trace!("get topoheight for hash: {}", hash);
-        self.get_cacheable_data(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await
+        self.get_cacheable_data(&self.topo_by_hash, &self.topo_by_hash_cache, &hash, DiskContext::GetTopoHeightForHash).await
     }
 
     async fn get_hash_at_topo_height(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
@@ -71,11 +71,11 @@ impl DagOrderProvider for SledStorage {
             if let Some(value) = hash_at_topo.get(&topoheight) {
                 return Ok(value.clone())
             }
-            let hash: Hash = self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes())?;
+            let hash: Hash = self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes(), DiskContext::GetBlockHashAtTopoHeight(topoheight))?;
             hash_at_topo.put(topoheight, hash.clone());
             hash
         } else {
-            self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes())?
+            self.load_from_disk(&self.hash_at_topo, &topoheight.to_be_bytes(), DiskContext::GetBlockHashAtTopoHeight(topoheight))?
         };
 
         Ok(hash)

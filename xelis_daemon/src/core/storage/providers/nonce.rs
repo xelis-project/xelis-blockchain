@@ -9,7 +9,7 @@ use xelis_common::{
     serializer::Serializer
 };
 use crate::core::{
-    error::BlockchainError,
+    error::{BlockchainError, DiskContext},
     storage::{sled::ACCOUNTS_COUNT, SledStorage},
 };
 
@@ -104,7 +104,7 @@ impl NonceProvider for SledStorage {
 
     async fn get_last_topoheight_for_nonce(&self, key: &PublicKey) -> Result<u64, BlockchainError> {
         trace!("get last topoheight for nonce {}", key.as_address(self.is_mainnet()));
-        self.load_from_disk(&self.nonces, key.as_bytes())
+        self.load_from_disk(&self.nonces, key.as_bytes(), DiskContext::LastTopoheightForNonce)
     }
 
     async fn has_nonce(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
@@ -152,7 +152,7 @@ impl NonceProvider for SledStorage {
             return Err(BlockchainError::NoNonce(key.as_address(self.is_mainnet())))
         }
 
-        let topoheight = self.load_from_disk(&self.nonces, key.as_bytes())?;
+        let topoheight = self.load_from_disk(&self.nonces, key.as_bytes(), DiskContext::LastNonce)?;
         Ok((topoheight, self.get_nonce_at_exact_topoheight(key, topoheight).await?))
     }
 
@@ -160,7 +160,7 @@ impl NonceProvider for SledStorage {
         trace!("get nonce at topoheight {} for {}", topoheight, key.as_address(self.is_mainnet()));
 
         let key = self.get_versioned_nonce_key(key, topoheight);
-        self.load_from_disk(&self.versioned_nonces, &key)
+        self.load_from_disk(&self.versioned_nonces, &key, DiskContext::NonceAtTopoHeight)
     }
 
     // topoheight is inclusive bounds
