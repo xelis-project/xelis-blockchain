@@ -425,7 +425,7 @@ impl<'a, S: Storage> ChainState<'a, S> {
 
     // Reward a miner for the block mined
     pub async fn reward_miner(&mut self, miner: &'a PublicKey, reward: u64) -> Result<(), BlockchainError> {
-        debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.storage.is_mainnet()), reward, self.topoheight);
+        debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.storage.is_mainnet()), format_xelis(reward), self.topoheight);
         let miner_balance = self.internal_get_receiver_balance(miner, &XELIS_ASSET).await?;
         *miner_balance += reward;
 
