@@ -49,18 +49,23 @@ pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
 pub const STABLE_LIMIT: u64 = 8; // in how many height we consider the block stable
 
 // Emission rules
-// 15%, 10%, 5% per block going to dev address
-pub const DEV_FEES: [DevFeeThreshold; 3] = [
+// 15% (6 months), 10% (6 months), 5% per block going to dev address
+// NOTE: The explained emission above was the expected one
+// But due to a bug in the function to calculate the dev fee reward,
+// the actual emission was directly set to 10% per block
+// New emission rules are: 10% during 1.5 years, then 5% for the rest
+// This is the same for the project but reduce a bit the mining cost as they earn 5% more
+pub const DEV_FEES: [DevFeeThreshold; 2] = [
+    // Activated for 3M blocks
     DevFeeThreshold {
         height: 0,
-        fee_percentage: 15
-    },
-    DevFeeThreshold {
-        height: 1_250_000, // after ~6 months it's reduced to 10%
         fee_percentage: 10
     },
+    // Activated for the rest
     DevFeeThreshold {
-        height: 3_000_000, // after ~1 year it's reduced to 5%
+        // after ~1.5 year it's reduced to 5%
+        // 3 250 000 blocks * 15s of block time / 60s / 60m / 24h / 365d = 1.5 years
+        height: 3_250_000, 
         fee_percentage: 5
     }
 ];

@@ -2503,13 +2503,14 @@ pub fn get_block_reward(supply: u64) -> u64 {
 
 // Returns the fee percentage for a block at a given height
 pub fn get_block_dev_fee(height: u64) -> u64 {
+    let mut percentage = 0;
     for threshold in DEV_FEES.iter() {
-        if height <= threshold.height {
-            return threshold.fee_percentage
+        if height >= threshold.height {
+            percentage = threshold.fee_percentage;
         }
     }
 
-    0
+    percentage
 }
 
 // Compute the combined merkle root of the tips
@@ -2536,5 +2537,21 @@ mod tests {
         assert_eq!(side_block_reward_percentage(1), SIDE_BLOCK_REWARD_PERCENT / 2);
         assert_eq!(side_block_reward_percentage(2), SIDE_BLOCK_REWARD_PERCENT / 4);
         assert_eq!(side_block_reward_percentage(3), SIDE_BLOCK_REWARD_MIN_PERCENT);
+    }
+
+    #[test]
+    fn test_block_dev_fee() {
+        assert_eq!(get_block_dev_fee(0), 10);
+        assert_eq!(get_block_dev_fee(1), 10);
+
+        // ~ current height
+        assert_eq!(get_block_dev_fee(55_000), 10);
+
+        // End of the first threshold, we pass to 5%
+        assert_eq!(get_block_dev_fee(3_250_000), 5);
+
+        assert_eq!(get_block_dev_fee(DEV_FEES[0].height), 10);
+        assert_eq!(get_block_dev_fee(DEV_FEES[1].height), 5);
+        assert_eq!(get_block_dev_fee(DEV_FEES[1].height + 1), 5);
     }
 }
