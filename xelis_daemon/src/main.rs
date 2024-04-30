@@ -518,7 +518,7 @@ async fn pop_blocks<S: Storage>(manager: &CommandManager, mut arguments: Argumen
     let amount = arguments.get_value("amount")?.to_number()?;
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    if amount == 0 || amount >= blockchain.get_height() {
+    if amount == 0 || amount >= blockchain.get_topo_height() {
         return Err(anyhow::anyhow!("Invalid amount of blocks to pop").into());
     }
 
