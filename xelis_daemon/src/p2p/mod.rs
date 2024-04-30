@@ -1236,8 +1236,13 @@ impl<S: Storage> P2pServer<S> {
                     // Last time we got a ping packet from him
                     let last_ping = peer.get_last_ping();
                     if last_ping != 0 && get_current_time_in_seconds() - last_ping > P2P_PING_TIMEOUT {
-                        debug!("Peer {} has not sent a ping packet for {} seconds, closing connection...", peer, P2P_PING_TIMEOUT);
+                        debug!("{} has not sent a ping packet for {} seconds, closing connection...", peer, P2P_PING_TIMEOUT);
                         peer.close_internal().await?;
+                        break;
+                    }
+
+                    if peer.get_connection().is_closed() {
+                        debug!("{} has closed the connection, stopping...", peer);
                         break;
                     }
                 },
@@ -1248,7 +1253,7 @@ impl<S: Storage> P2pServer<S> {
                     timeout(Duration::from_millis(PEER_SEND_BYTES_TIMEOUT), peer.get_connection().send_bytes(&bytes)).await??;
                     trace!("data sucessfully sent!");
                 }
-            };
+            }
         }
         Ok(())
     }
