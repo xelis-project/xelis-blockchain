@@ -66,7 +66,8 @@ use xelis_common::{
             SubmitTransactionParams,
             TransactionResponse,
             ValidateAddressParams,
-            ExtractKeyFromAddressParams
+            ExtractKeyFromAddressParams,
+            ValidateAddressResult
         },
         RPCTransaction,
         RPCTransactionType as RPCTransactionType
@@ -1177,9 +1178,13 @@ async fn validate_address<S: Storage>(_: Context, body: Value) -> Result<Value, 
     let params: ValidateAddressParams = parse_params(body)?;
 
     if !params.allow_integrated {
-        Ok(json!(params.address.is_normal()))
+        Ok(json!(ValidateAddressResult {
+            is_valid: params.address.is_normal()
+        }))
     } else {
-        Ok(json!(true))
+        Ok(json!(ValidateAddressResult {
+            is_valid: true
+        }))
     }
 }
 

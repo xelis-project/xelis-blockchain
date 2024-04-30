@@ -481,6 +481,11 @@ pub struct ValidateAddressParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct ValidateAddressResult {
+    pub is_valid: bool
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct ExtractKeyFromAddressParams<'a> {
     pub address: Cow<'a, Address>,
     #[serde(default)]

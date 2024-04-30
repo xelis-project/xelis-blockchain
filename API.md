@@ -470,9 +470,11 @@ Validate a wallet address by accepting or not integrated address.
 ##### Response
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": true
+  "id": 1,
+  "jsonrpc": "2.0",
+  "result": {
+    "is_valid": true
+  }
 }
 ```
 
