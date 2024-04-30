@@ -870,7 +870,7 @@ impl Storage for SledStorage {
                     .context(format!("Error while retrieving nonce at exact topoheight {highest_topoheight}"))?;
 
                 while let Some(previous_topoheight) = version.get_previous_topoheight() {
-                    if previous_topoheight < topoheight {
+                    if previous_topoheight <= topoheight {
                         // we find the new highest version which is under new topoheight
                         trace!("New highest version nonce for {} is at topoheight {}", pkey.as_address(self.is_mainnet()), previous_topoheight);
                         if self.nonces.insert(&key, &previous_topoheight.to_be_bytes())?.is_none() {
@@ -907,7 +907,7 @@ impl Storage for SledStorage {
                         .context(format!("Error while retrieving balance at exact topoheight {highest_topoheight}"))?;
 
                     while let Some(previous_topoheight) = version.get_previous_topoheight() {
-                        if previous_topoheight < topoheight {
+                        if previous_topoheight <= topoheight {
                             // we find the new highest version which is under new topoheight
                             trace!("New highest version balance for {} is at topoheight {} with asset {}", pkey.as_address(self.is_mainnet()), previous_topoheight, asset);
                             self.balances.insert(&key, &previous_topoheight.to_be_bytes())?;
