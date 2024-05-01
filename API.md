@@ -485,7 +485,9 @@ Extract public key from a wallet address
 |    Name   |   Type  | Required |                                         Note                                         |
 |:---------:|:-------:|:--------:|:------------------------------------------------------------------------------------:|
 |  address  | Address | Required |                               wallet address to verify                               |
-| tx_as_hex | Boolean | Optional | Returns Public Key as hexadecimal. By default set to false and returns a byte array. |
+|  as_hex   | Boolean | Optional | Returns Public Key as hexadecimal. By default set to false and returns a byte array. |
+
+NOTE: If `as_hex` is `false`, the response result will contains a field named `bytes` instead of `hex`.
 
 ##### Request
 ```json
@@ -495,7 +497,7 @@ Extract public key from a wallet address
     "method": "extract_key_from_address",
     "params": {
         "address": "xel:vs3mfyywt0fjys0rgslue7mm4wr23xdgejsjk0ld7f2kxng4d4nqqnkdufz",
-        "tx_as_hex": true
+        "as_hex": true
     }
 }
 ```
@@ -505,7 +507,9 @@ Extract public key from a wallet address
 {
     "id": 1,
     "jsonrpc": "2.0",
-    "result": "6423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66"
+    "result": {
+		"hex": "6423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66"
+	}
 }
 ```
 
