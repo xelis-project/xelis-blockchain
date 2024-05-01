@@ -54,7 +54,7 @@ where
         let params = request.params.take().unwrap_or(Value::Null);
         // Add the data
         context.store(self.get_data().clone());
-        let result = handler(context, params).await.map_err(|err| RpcResponseError::new(request.id, err))?;
+        let result = handler(context, params).await.map_err(|err| RpcResponseError::new(request.id.clone(), err))?;
         Ok(json!({
             "jsonrpc": JSON_RPC_VERSION,
             "id": request.id,

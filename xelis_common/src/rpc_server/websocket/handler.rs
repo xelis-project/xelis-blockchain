@@ -9,6 +9,7 @@ use crate::{
     api::{EventResult, SubscribeParams},
     context::Context,
     rpc_server::{
+        Id,
         InternalRpcError,
         RPCHandler,
         RpcRequest,
@@ -21,7 +22,7 @@ use super::{WebSocketSessionShared, WebSocketHandler};
 
 // generic websocket handler supporting event subscriptions 
 pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: Serialize + DeserializeOwned + Send + Eq + Hash + Clone + 'static> {
-    sessions: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<E, Option<usize>>>>,
+    sessions: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<E, Option<Id>>>>,
     handler: RPCHandler<T>
 }
 
@@ -66,7 +67,7 @@ where
         }
     }
 
-    async fn subscribe_session_to_event(&self, session: &WebSocketSessionShared<Self>, event: E, id: Option<usize>) -> Result<(), RpcResponseError> {
+    async fn subscribe_session_to_event(&self, session: &WebSocketSessionShared<Self>, event: E, id: Option<Id>) -> Result<(), RpcResponseError> {
         let mut sessions = self.sessions.lock().await;
         let events = sessions.entry(session.clone()).or_insert_with(HashMap::new);
         if events.contains_key(&event) {
@@ -77,7 +78,7 @@ where
         Ok(())
     }
 
-    async fn unsubscribe_session_from_event(&self, session: &WebSocketSessionShared<Self>, event: E, id: Option<usize>) -> Result<(), RpcResponseError> {
+    async fn unsubscribe_session_from_event(&self, session: &WebSocketSessionShared<Self>, event: E, id: Option<Id>) -> Result<(), RpcResponseError> {
         let mut sessions = self.sessions.lock().await;
         let events = sessions.entry(session.clone()).or_insert_with(HashMap::new);
         if !events.contains_key(&event) {
@@ -89,8 +90,8 @@ where
     }
 
     fn parse_event(&self, request: &mut RpcRequest) -> Result<E, RpcResponseError> {
-        let value = request.params.take().ok_or_else(|| RpcResponseError::new(request.id, InternalRpcError::ExpectedParams))?;
-        let params: SubscribeParams<E> = serde_json::from_value(value).map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e)))?;
+        let value = request.params.take().ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::ExpectedParams))?;
+        let params: SubscribeParams<E> = serde_json::from_value(value).map_err(|e| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidParams(e)))?;
         Ok(params.notify.into_owned())
     }
 
@@ -99,12 +100,12 @@ where
         let response: Value = match request.method.as_str() {
             "subscribe" => {
                 let event = self.parse_event(&mut request)?;
-                self.subscribe_session_to_event(&session, event, request.id).await?;
+                self.subscribe_session_to_event(&session, event, request.id.clone()).await?;
                 json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(json!(true))))
             },
             "unsubscribe" => {
                 let event = self.parse_event(&mut request)?;
-                self.unsubscribe_session_from_event(&session, event, request.id).await?;
+                self.unsubscribe_session_from_event(&session, event, request.id.clone()).await?;
                 json!(RpcResponse::new(Cow::Borrowed(&request.id), Cow::Owned(json!(true))))
             },
             _ => {
