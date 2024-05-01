@@ -66,6 +66,7 @@ use xelis_common::{
             SubmitTransactionParams,
             TransactionResponse,
             ValidateAddressParams,
+            ValidateAddressResult,
             ExtractKeyFromAddressParams,
             ExtractKeyFromAddressResult
         },
@@ -1200,11 +1201,10 @@ async fn get_difficulty<S: Storage>(context: Context, body: Value) -> Result<Val
 async fn validate_address<S: Storage>(_: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: ValidateAddressParams = parse_params(body)?;
 
-    if !params.allow_integrated {
-        Ok(json!(params.address.is_normal()))
-    } else {
-        Ok(json!(true))
-    }
+    Ok(json!(ValidateAddressResult {
+        is_valid: params.address.is_normal() || (!params.address.is_normal() && params.allow_integrated),
+        is_integrated: !params.address.is_normal(),
+    }))
 }
 
 async fn extract_key_from_address<S: Storage>(_: Context, body: Value) -> Result<Value, InternalRpcError> {
