@@ -675,7 +675,7 @@ where
             context.store(self.handler.get_data().clone());
             // Store the session
             context.store(session.clone());
-            self.handler.execute_method(&context, request).await.map(|v| Some(v))
+            self.handler.execute_method(&context, request).await
         }
     }
 }
