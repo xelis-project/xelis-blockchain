@@ -489,7 +489,14 @@ pub struct ValidateAddressParams<'a> {
 pub struct ExtractKeyFromAddressParams<'a> {
     pub address: Cow<'a, Address>,
     #[serde(default)]
-    pub tx_as_hex: bool
+    pub as_hex: bool
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractKeyFromAddressResult {
+    Bytes(Vec<u8>),
+    Hex(String)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
