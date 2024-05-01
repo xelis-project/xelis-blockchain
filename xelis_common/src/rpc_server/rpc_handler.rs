@@ -60,6 +60,12 @@ where
         }
     }
 
+    pub fn parse_request_from_bytes(&self, body: &[u8]) -> Result<RpcRequest, RpcResponseError> {
+        let request: Value = serde_json::from_slice(body)
+            .map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
+        self.parse_request(request)
+    }
+
     pub fn parse_request(&self, body: Value) -> Result<RpcRequest, RpcResponseError> {
         let request: RpcRequest = serde_json::from_value(body).map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
         if request.jsonrpc != JSON_RPC_VERSION {
