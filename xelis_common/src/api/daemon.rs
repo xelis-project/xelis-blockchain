@@ -45,7 +45,12 @@ pub struct RPCBlockResponse<'a> {
     pub block_type: BlockType,
     pub difficulty: Cow<'a, Difficulty>,
     pub supply: Option<u64>,
+    // Reward can be split into two parts
     pub reward: Option<u64>,
+    // Miner reward (the one that found the block)
+    pub miner_reward: Option<u64>,
+    // And Dev Fee reward if enabled
+    pub dev_reward: Option<u64>,
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
     pub total_fees: Option<u64>,
     pub total_size_in_bytes: usize,
