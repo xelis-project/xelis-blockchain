@@ -1197,7 +1197,6 @@ async fn get_difficulty<S: Storage>(context: Context, body: Value) -> Result<Val
     }))
 }
 
-
 async fn validate_address<S: Storage>(_: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: ValidateAddressParams = parse_params(body)?;
 

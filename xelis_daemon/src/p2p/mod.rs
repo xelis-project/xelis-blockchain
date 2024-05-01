@@ -1152,61 +1152,72 @@ impl<S: Storage> P2pServer<S> {
     // Task for all blocks propagation
     async fn blocks_processing_task(self: Arc<Self>, mut receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>) {
         debug!("Starting blocks processing task");
-        while let Some((peer, header, block_hash)) = receiver.recv().await {
-            if !self.is_running() {
-                debug!("blocks processing task is stopped!");
-                break;
-            }
+        let mut server_exit = self.exit_sender.subscribe();
 
-            let mut response_blockers: Vec<ResponseBlocker> = Vec::new();
-            for hash in header.get_txs_hashes() {
-                let contains = { // we don't lock one time because we may wait on p2p response
-                    // Check in ObjectTracker
-                    if let Some(response_blocker) = self.object_tracker.get_response_blocker_for_requested_object(hash).await {
-                        trace!("{} is already requested, waiting on response blocker for block {}", hash, block_hash);
-                        response_blockers.push(response_blocker);
-                        true
-                    } else {
-                        self.blockchain.has_tx(hash).await.unwrap_or(false)
+        loop {
+            select! {
+                biased;
+                _ = server_exit.recv() => {
+                    debug!("Exit message received, stopping blocks processing task");
+                    break;
+                }
+                msg = receiver.recv() => {
+                    let Some((peer, header, block_hash)) = msg else {
+                        debug!("No more blocks to process, stopping blocks processing task");
+                        break;
+                    };
+
+                    let mut response_blockers: Vec<ResponseBlocker> = Vec::new();
+                    for hash in header.get_txs_hashes() {
+                        let contains = { // we don't lock one time because we may wait on p2p response
+                            // Check in ObjectTracker
+                            if let Some(response_blocker) = self.object_tracker.get_response_blocker_for_requested_object(hash).await {
+                                trace!("{} is already requested, waiting on response blocker for block {}", hash, block_hash);
+                                response_blockers.push(response_blocker);
+                                true
+                            } else {
+                                self.blockchain.has_tx(hash).await.unwrap_or(false)
+                            }
+                        };
+
+                        if !contains { // retrieve one by one to prevent acquiring the lock for nothing
+                            debug!("Requesting TX {} to {} for block {}", hash, peer, block_hash);
+                            if let Err(e) = self.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone()), false).await {
+                                    error!("Error while requesting TX {} to {} for block {}: {}", hash, peer, block_hash, e);
+                                    peer.increment_fail_count();
+                                    continue;
+                            }
+
+                            if let Some(response_blocker) = self.object_tracker.get_response_blocker_for_requested_object(hash).await {
+                                response_blockers.push(response_blocker);
+                            }
+                        }
                     }
-                };
 
-                if !contains { // retrieve one by one to prevent acquiring the lock for nothing
-                    debug!("Requesting TX {} to {} for block {}", hash, peer, block_hash);
-                    if let Err(e) = self.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone()), false).await {
-                            error!("Error while requesting TX {} to {} for block {}: {}", hash, peer, block_hash, e);
+                    // Wait on all already requested txs
+                    for mut blocker in response_blockers {
+                        if let Err(e) = blocker.recv().await {
+                            // It's mostly a closed channel error, so we can ignore it
+                            debug!("Error while waiting on response blocker: {}", e);
+                        }
+                    }
+
+                    // add immediately the block to chain as we are synced with
+                    let block = match self.blockchain.build_block_from_header(Immutable::Owned(header)).await {
+                        Ok(block) => block,
+                        Err(e) => {
+                            error!("Error while building block {} from peer {}: {}", block_hash, peer, e);
                             peer.increment_fail_count();
                             continue;
+                        }
+                    };
+        
+                    debug!("Adding received block {} from {} to chain", block_hash, peer);
+                    if let Err(e) = self.blockchain.add_new_block(block, true, false).await {
+                        error!("Error while adding new block from {}: {}", peer, e);
+                        peer.increment_fail_count();
                     }
-
-                    if let Some(response_blocker) = self.object_tracker.get_response_blocker_for_requested_object(hash).await {
-                        response_blockers.push(response_blocker);
-                    }
                 }
-            }
-
-            // Wait on all already requested txs
-            for mut blocker in response_blockers {
-                if let Err(e) = blocker.recv().await {
-                    // It's mostly a closed channel error, so we can ignore it
-                    debug!("Error while waiting on response blocker: {}", e);
-                }
-            }
-
-            // add immediately the block to chain as we are synced with
-            let block = match self.blockchain.build_block_from_header(Immutable::Owned(header)).await {
-                Ok(block) => block,
-                Err(e) => {
-                    error!("Error while building block {} from peer {}: {}", block_hash, peer, e);
-                    peer.increment_fail_count();
-                    continue;
-                }
-            };
-
-            debug!("Adding received block {} from {} to chain", block_hash, peer);
-            if let Err(e) = self.blockchain.add_new_block(block, true, false).await {
-                error!("Error while adding new block from {}: {}", peer, e);
-                peer.increment_fail_count();
             }
         }
 
