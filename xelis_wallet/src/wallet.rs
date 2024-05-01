@@ -1003,7 +1003,7 @@ impl XSWDNodeMethodHandler for Arc<Wallet> {
         if let Some(network_handler) = network_handler.as_ref() {
             if network_handler.is_running().await {
                 let api = network_handler.get_api();
-                let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id, InternalRpcError::Custom(e.to_string())))?;
+                let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::Custom(e.to_string())))?;
 
                 return Ok(json!({
                     "jsonrpc": JSON_RPC_VERSION,

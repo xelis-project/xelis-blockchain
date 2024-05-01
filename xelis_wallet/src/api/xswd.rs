@@ -55,6 +55,7 @@ use xelis_common::{
             WebSocketServer,
             WebSocketSessionShared
         },
+        Id,
         InternalRpcError,
         RPCHandler,
         RpcRequest,
@@ -361,7 +362,7 @@ where
     // All applications connected to the wallet
     applications: RwLock<HashMap<WebSocketSessionShared<Self>, AppStateShared>>,
     // Applications listening for events
-    listeners: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<NotifyEvent, Option<usize>>>>,
+    listeners: Mutex<HashMap<WebSocketSessionShared<Self>, HashMap<NotifyEvent, Option<Id>>>>,
     // This is used to limit to one at a time a permission request
     permission_handler_semaphore: Semaphore
 }
@@ -419,12 +420,12 @@ where
 
     async fn verify_permission_for_request(&self, app: &AppStateShared, request: &RpcRequest) -> Result<(), RpcResponseError> {
         let _permit = self.permission_handler_semaphore.acquire().await
-            .map_err(|_| RpcResponseError::new(request.id, InternalRpcError::CustomStr("Permission handler semaphore error")))?;
+            .map_err(|_| RpcResponseError::new(request.id.clone(), InternalRpcError::CustomStr("Permission handler semaphore error")))?;
         let mut permissions = app.permissions.lock().await;
 
         // We acquired the lock, lets check that the app is still registered
         if !self.has_app_with_id(&app.id).await {
-            return Err(RpcResponseError::new(request.id, InternalRpcError::CustomStr("Application not found")))
+            return Err(RpcResponseError::new(request.id.clone(), InternalRpcError::CustomStr("Application not found")))
         }
 
         let permission = permissions.get(&request.method).map(|v| *v).unwrap_or(Permission::Ask);
@@ -433,25 +434,25 @@ where
             Permission::Ask => {
                 let result = self.handler.get_data()
                 .request_permission(app, PermissionRequest::Request(request)).await
-                .map_err(|msg| RpcResponseError::new(request.id, InternalRpcError::Custom(msg.to_string())))?;
+                .map_err(|msg| RpcResponseError::new(request.id.clone(), InternalRpcError::Custom(msg.to_string())))?;
 
                 match result {
                     PermissionResult::Allow => Ok(()),
-                    PermissionResult::Deny => Err(RpcResponseError::new(request.id, PERMISSION_DENIED_ERROR)),
+                    PermissionResult::Deny => Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR)),
                     PermissionResult::AlwaysAllow => {
                         permissions.insert(request.method.clone(), Permission::AcceptAlways);
                         Ok(())
                     },
                     PermissionResult::AlwaysDeny => {
                         permissions.insert(request.method.clone(), Permission::AcceptAlways);
-                        Err(RpcResponseError::new(request.id, PERMISSION_DENIED_ERROR))
+                        Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR))
                     }   
                 }
             }
             // User has already accepted this method
             Permission::AcceptAlways => Ok(()),
             // User has denied access to this method
-            Permission::DenyAlways => Err(RpcResponseError::new(request.id, PERMISSION_DENIED_ERROR))
+            Permission::DenyAlways => Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR))
         }
     }
 
@@ -569,7 +570,7 @@ where
     }
 
     // register a new event listener for the specified connection/application
-    async fn subscribe_session_to_event(&self, session: &WebSocketSessionShared<Self>, event: NotifyEvent, id: Option<usize>) -> Result<(), RpcResponseError> {
+    async fn subscribe_session_to_event(&self, session: &WebSocketSessionShared<Self>, event: NotifyEvent, id: Option<Id>) -> Result<(), RpcResponseError> {
         let mut listeners = self.listeners.lock().await;
         let events = listeners.entry(session.clone()).or_insert_with(HashMap::new);
 
@@ -583,9 +584,9 @@ where
     }
 
     // unregister an event listener for the specified connection/application
-    async fn unsubscribe_session_from_event(&self, session: &WebSocketSessionShared<Self>, event: NotifyEvent, id: Option<usize>) -> Result<(), RpcResponseError> {
+    async fn unsubscribe_session_from_event(&self, session: &WebSocketSessionShared<Self>, event: NotifyEvent, id: Option<Id>) -> Result<(), RpcResponseError> {
         let mut listeners = self.listeners.lock().await;
-        let events = listeners.get_mut(session).ok_or_else(|| RpcResponseError::new(id, InternalRpcError::EventNotSubscribed))?;
+        let events = listeners.get_mut(session).ok_or_else(|| RpcResponseError::new(id.clone(), InternalRpcError::EventNotSubscribed))?;
 
         if events.remove(&event).is_none() {
             return Err(RpcResponseError::new(id, InternalRpcError::EventNotSubscribed));
@@ -660,8 +661,8 @@ where
         if is_subscribe || is_unsubscribe {
             // retrieve the event variant
             let event = serde_json::from_value(
-                request.params.ok_or_else(|| RpcResponseError::new(request.id, InternalRpcError::ExpectedParams))?)
-                .map_err(|e| RpcResponseError::new(request.id, InternalRpcError::InvalidParams(e))
+                request.params.ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::ExpectedParams))?)
+                .map_err(|e| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidParams(e))
             )?;
             if is_subscribe {
                 self.subscribe_session_to_event(session, event, request.id).await.map(|_| None)
