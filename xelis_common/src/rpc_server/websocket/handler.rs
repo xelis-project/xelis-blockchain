@@ -95,19 +95,19 @@ where
         Ok(params.notify.into_owned())
     }
 
-    async fn execute_method_internal(&self, context: &Context, value: Value) -> Result<Value, RpcResponseError> {
+    async fn execute_method_internal(&self, context: &Context, value: Value) -> Result<Option<Value>, RpcResponseError> {
         let mut request = self.handler.parse_request(value)?;
         let method = request.method.clone();
         match method.as_str() {
             "subscribe" => {
                 let event = self.parse_event(&mut request)?;
                 self.subscribe_session_to_event(context.get::<WebSocketSessionShared<Self>>().unwrap(), event, request.id.clone()).await?;
-                Ok(json!(true))
+                Ok(Some(Value::Bool(true)))
             },
             "unsubscribe" => {
                 let event = self.parse_event(&mut request)?;
                 self.unsubscribe_session_from_event(context.get::<WebSocketSessionShared<Self>>().unwrap(), event, request.id.clone()).await?;
-                Ok(json!(true))
+                Ok(Some(Value::Bool(true)))
             },
             _ => self.handler.execute_method(context, request).await
         }
@@ -121,11 +121,8 @@ where
         context.store(session.clone());
         context.store(self.handler.get_data().clone());
 
-        if request.is_object() {
-            return self.execute_method_internal(&context, request).await
-        } 
-
         match request {
+            e @ Value::Object(_) => self.execute_method_internal(&context, e).await.map(|e| e.unwrap_or(Value::Null)),
             Value::Array(requests) => {
                 let mut responses = Vec::new();
                 for value in requests {

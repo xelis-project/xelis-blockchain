@@ -37,12 +37,8 @@ where
         let request: Value = serde_json::from_slice(body)
             .map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
 
-        if request.is_object() {
-            let response = self.execute_method(&context, self.parse_request(request)?).await?;
-            return Ok(response.unwrap_or(Value::Null));
-        }
-
         match request {
+            e @ Value::Object(_) => self.execute_method(&context, self.parse_request(e)?).await.map(|e| e.unwrap_or(Value::Null)),
             Value::Array(requests) => {
                 let mut responses = Vec::new();
                 for value in requests {
