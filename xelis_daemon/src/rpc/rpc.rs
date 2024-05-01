@@ -175,6 +175,10 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
             }
         }).collect::<Vec<RPCTransaction<'_>>>();
 
+    let (dev_reward, miner_reward) = get_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
+        (Some(dev_reward), Some(miner_reward))
+    }).unwrap_or((None, None));
+
     Ok(json!(RPCBlockResponse {
         hash: Cow::Borrowed(hash),
         topoheight,
@@ -183,6 +187,8 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
         difficulty: Cow::Borrowed(&difficulty),
         supply,
         reward,
+        dev_reward,
+        miner_reward,
         total_fees: Some(total_fees),
         total_size_in_bytes,
         extra_nonce: Cow::Borrowed(header.get_extra_nonce()),
@@ -195,6 +201,18 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
         txs_hashes: Cow::Borrowed(header.get_txs_hashes()),
         transactions
     }))
+}
+
+fn get_block_rewards(height: u64, reward: Option<u64>) -> Option<(u64, u64)> {
+    if let Some(reward) = reward {
+        let dev_fee_percentage = get_block_dev_fee(height);
+        let dev_reward = reward * dev_fee_percentage / 100;
+        let miner_reward = reward - dev_reward;
+
+        Some((dev_reward, miner_reward))
+    } else {
+        None
+    }
 }
 
 // Get a block response based on data in chain and from parameters
@@ -218,6 +236,9 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
         }
 
         let mainnet = blockchain.get_network().is_mainnet();
+        let (dev_reward, miner_reward) = get_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
+            (Some(dev_reward), Some(miner_reward))
+        }).unwrap_or((None, None));
 
         json!(RPCBlockResponse {
             hash: Cow::Borrowed(hash),
@@ -227,6 +248,8 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
             difficulty: Cow::Owned(difficulty),
             supply,
             reward,
+            dev_reward,
+            miner_reward,
             total_fees: None,
             total_size_in_bytes,
             extra_nonce: Cow::Borrowed(header.get_extra_nonce()),
