@@ -38,25 +38,28 @@ where
             .map_err(|_| RpcResponseError::new(None, InternalRpcError::ParseBodyError))?;
 
         if request.is_object() {
-            let request = self.parse_request(request)?;
-            self.execute_method(&context, request).await
-        } else if request.is_array() {
-            let mut responses = Vec::new();
-            for value in request.as_array().ok_or_else(|| RpcResponseError::new(None, InternalRpcError::InvalidRequest))? {
-                if value.is_object() {
-                    let request = self.parse_request(value.clone())?;
-                    let response = match self.execute_method(&context, request).await {
-                        Ok(response) => json!(response),
-                        Err(e) => e.to_json()
-                    };
-                    responses.push(response);
-                } else {
-                    responses.push(RpcResponseError::new(None, InternalRpcError::InvalidRequest).to_json());
+            let response = self.execute_method(&context, self.parse_request(request)?).await?;
+            return Ok(response.unwrap_or(Value::Null));
+        }
+
+        match request {
+            Value::Array(requests) => {
+                let mut responses = Vec::new();
+                for value in requests {
+                    if value.is_object() {
+                        let request = self.parse_request(value)?;
+                        let response = match self.execute_method(&context, request).await {
+                            Ok(response) => json!(response),
+                            Err(e) => e.to_json()
+                        };
+                        responses.push(response);
+                    } else {
+                        responses.push(RpcResponseError::new(None, InternalRpcError::InvalidRequest).to_json());
+                    }
                 }
-            }
-            Ok(serde_json::to_value(responses).unwrap())
-        } else {
-            Err(RpcResponseError::new(None, InternalRpcError::InvalidRequest))
+                Ok(serde_json::to_value(responses).map_err(|_| RpcResponseError::new(None, InternalRpcError::CustomStr("error while serializing response")))?)
+            },
+            _ => return Err(RpcResponseError::new(None, InternalRpcError::InvalidRequest))
         }
     }
 
@@ -78,7 +81,7 @@ where
         self.methods.contains_key(method_name)
     }
 
-    pub async fn execute_method<'a>(&'a self, context: &'a Context, mut request: RpcRequest) -> Result<Value, RpcResponseError> {
+    pub async fn execute_method<'a>(&'a self, context: &'a Context, mut request: RpcRequest) -> Result<Option<Value>, RpcResponseError> {
         let handler = match self.methods.get(&request.method) {
             Some(handler) => handler,
             None => return Err(RpcResponseError::new(request.id, InternalRpcError::MethodNotFound(request.method)))
@@ -86,11 +89,15 @@ where
         trace!("executing '{}' RPC method", request.method);
         let params = request.params.take().unwrap_or(Value::Null);
         let result = handler(context, params).await.map_err(|err| RpcResponseError::new(request.id.clone(), err))?;
-        Ok(json!({
-            "jsonrpc": JSON_RPC_VERSION,
-            "id": request.id,
-            "result": result
-        }))
+        Ok(if request.id.is_some() {
+            Some(json!({
+                "jsonrpc": JSON_RPC_VERSION,
+                "id": request.id,
+                "result": result
+            }))
+        } else {
+            None
+        })
     }
 
     // register a new RPC method handler
