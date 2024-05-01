@@ -216,7 +216,7 @@ impl NetworkHandler {
         // create Coinbase entry if its our address and we're looking for XELIS asset
         if miner == *address.get_public_key() {
             debug!("Block {} at topoheight {} is mined by us", block_hash, topoheight);
-            if let Some(reward) = block.reward {
+            if let Some(reward) = block.miner_reward {
                 let coinbase = EntryData::Coinbase { reward };
                 let entry = TransactionEntry::new(block_hash.clone(), topoheight, coinbase);
 
