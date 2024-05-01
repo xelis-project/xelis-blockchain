@@ -66,7 +66,8 @@ use xelis_common::{
             SubmitTransactionParams,
             TransactionResponse,
             ValidateAddressParams,
-            ExtractKeyFromAddressParams
+            ExtractKeyFromAddressParams,
+            ExtractKeyFromAddressResult
         },
         RPCTransaction,
         RPCTransactionType as RPCTransactionType
@@ -1209,9 +1210,9 @@ async fn validate_address<S: Storage>(_: Context, body: Value) -> Result<Value, 
 async fn extract_key_from_address<S: Storage>(_: Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: ExtractKeyFromAddressParams = parse_params(body)?;
 
-    if params.tx_as_hex {
-        Ok(json!(params.address.get_public_key().to_hex()))
+    if params.as_hex {
+        Ok(json!(ExtractKeyFromAddressResult::Hex(params.address.get_public_key().to_hex())))
     } else {
-        Ok(json!(params.address.get_public_key()))
+        Ok(json!(ExtractKeyFromAddressResult::Bytes(params.address.get_public_key().to_bytes())))
     }
 }
