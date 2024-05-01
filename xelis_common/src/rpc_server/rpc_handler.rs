@@ -1,6 +1,6 @@
 use std::{collections::HashMap, pin::Pin, future::Future};
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::{json, Map, Value};
 use crate::context::Context;
 
 use super::{InternalRpcError, RpcResponseError, RpcRequest, JSON_RPC_VERSION};
@@ -74,6 +74,10 @@ where
     }
 }
 
-pub fn parse_params<P: DeserializeOwned>(value: Value) -> Result<P, InternalRpcError> {
+pub fn parse_params<P: DeserializeOwned>(mut value: Value) -> Result<P, InternalRpcError> {
+    if value.is_null() {
+        value = Value::Object(Map::new());
+    }
+
     serde_json::from_value(value).map_err(|e| InternalRpcError::InvalidParams(e))
 }
