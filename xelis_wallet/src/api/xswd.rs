@@ -611,7 +611,7 @@ where
 
             // Application is already registered, verify permission and call the method
             if let Some(app) = app_state {
-                let mut request: RpcRequest = self.handler.parse_request(message)?;
+                let mut request: RpcRequest = self.handler.parse_request_from_bytes(message)?;
                 // Redirect all node methods to the node method handler
                 if request.method.starts_with("node.") {
                     // Remove the 5 first chars (node.)
@@ -672,9 +672,10 @@ where
         } else {
             // Call the method
             let mut context = Context::default();
+            context.store(self.handler.get_data().clone());
             // Store the session
             context.store(session.clone());
-            self.handler.execute_method(context, request).await.map(|v| Some(v))
+            self.handler.execute_method(&context, request).await.map(|v| Some(v))
         }
     }
 }

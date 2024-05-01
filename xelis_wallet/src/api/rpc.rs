@@ -82,7 +82,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
 }
 
 // Retrieve the version of the wallet
-async fn get_version(_: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_version(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
@@ -90,7 +90,7 @@ async fn get_version(_: Context, body: Value) -> Result<Value, InternalRpcError>
 }
 
 // Retrieve the network of the wallet
-async fn get_network(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_network(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
@@ -101,7 +101,7 @@ async fn get_network(context: Context, body: Value) -> Result<Value, InternalRpc
 }
 
 // Retrieve the current nonce of the wallet
-async fn get_nonce(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_nonce(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
@@ -113,7 +113,7 @@ async fn get_nonce(context: Context, body: Value) -> Result<Value, InternalRpcEr
 }
 
 // Retrieve the current topoheight until which the wallet is synced
-async fn get_topoheight(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_topoheight(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
@@ -125,7 +125,7 @@ async fn get_topoheight(context: Context, body: Value) -> Result<Value, Internal
 }
 
 // Retrieve the wallet address
-async fn get_address(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_address(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAddressParams = parse_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
@@ -139,7 +139,7 @@ async fn get_address(context: Context, body: Value) -> Result<Value, InternalRpc
 }
 
 // Split an integrated address into its address and data
-async fn split_address(_: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn split_address(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SplitAddressParams = parse_params(body)?;
     let address = params.address;
 
@@ -153,7 +153,7 @@ async fn split_address(_: Context, body: Value) -> Result<Value, InternalRpcErro
 }
 
 // Rescan the wallet from the provided topoheight (or from the beginning if not provided)
-async fn rescan(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn rescan(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: RescanParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     wallet.rescan(params.until_topoheight.unwrap_or(0), params.auto_reconnect).await.context("Error while rescanning wallet")?;
@@ -162,7 +162,7 @@ async fn rescan(context: Context, body: Value) -> Result<Value, InternalRpcError
 
 // Retrieve the balance of the wallet for a specific asset
 // By default, it will returns 0 if no balance is found on disk
-async fn get_balance(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_balance(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBalanceParams = parse_params(body)?;
     let asset = params.asset.unwrap_or(XELIS_ASSET);
     let wallet: &Arc<Wallet> = context.get()?;
@@ -175,7 +175,7 @@ async fn get_balance(context: Context, body: Value) -> Result<Value, InternalRpc
 }
 
 // Check if the wallet has a balance for a specific asset
-async fn has_balance(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn has_balance(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBalanceParams = parse_params(body)?;
     let asset = params.asset.unwrap_or(XELIS_ASSET);
     let wallet: &Arc<Wallet> = context.get()?;
@@ -186,7 +186,7 @@ async fn has_balance(context: Context, body: Value) -> Result<Value, InternalRpc
 }
 
 // Retrieve all tracked assets by wallet
-async fn get_tracked_assets(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_tracked_assets(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
@@ -199,7 +199,7 @@ async fn get_tracked_assets(context: Context, body: Value) -> Result<Value, Inte
 }
 
 // Retrieve decimals used by an asset
-async fn get_asset_precision(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_asset_precision(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetAssetPrecisionParams = parse_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
@@ -209,7 +209,7 @@ async fn get_asset_precision(context: Context, body: Value) -> Result<Value, Int
 }
 
 // Retrieve a transaction from the wallet storage using its hash
-async fn get_transaction(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_transaction(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetTransactionParams = parse_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
@@ -220,7 +220,7 @@ async fn get_transaction(context: Context, body: Value) -> Result<Value, Interna
 }
 
 // Build a transaction and broadcast it if requested
-async fn build_transaction(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn build_transaction(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: BuildTransactionParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     // request ask to broadcast the TX but wallet is not connected to any daemon
@@ -256,7 +256,7 @@ async fn build_transaction(context: Context, body: Value) -> Result<Value, Inter
 }
 
 // Estimate fees for a transaction
-async fn estimate_fees(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn estimate_fees(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: EstimateFeesParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let fees = wallet.estimate_fees(params.tx_type).await.context("Error while estimating fees")?;
@@ -265,7 +265,7 @@ async fn estimate_fees(context: Context, body: Value) -> Result<Value, InternalR
 }
 
 // List transactions from the wallet storage
-async fn list_transactions(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn list_transactions(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: ListTransactionsParams = parse_params(body)?;
     if let Some(addr) = &params.address {
         if !addr.is_normal() {
@@ -287,7 +287,7 @@ async fn list_transactions(context: Context, body: Value) -> Result<Value, Inter
 }
 
 // Check if the wallet is currently connected to a daemon
-async fn is_online(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn is_online(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
@@ -298,7 +298,7 @@ async fn is_online(context: Context, body: Value) -> Result<Value, InternalRpcEr
 }
 
 // Connect the wallet to a daemon if not already connected
-async fn set_online_mode(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn set_online_mode(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: SetOnlineModeParams = parse_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
@@ -312,7 +312,7 @@ async fn set_online_mode(context: Context, body: Value) -> Result<Value, Interna
 }
 
 // Connect the wallet to a daemon if not already connected
-async fn set_offline_mode(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn set_offline_mode(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
@@ -328,7 +328,7 @@ async fn set_offline_mode(context: Context, body: Value) -> Result<Value, Intern
 }
 
 // Sign any data converted in bytes format
-async fn sign_data(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn sign_data(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: DataElement = parse_params(body)?;
 
     let wallet: &Arc<Wallet> = context.get()?;
@@ -353,7 +353,7 @@ async fn get_tree_name(context: &Context, tree: String) -> Result<String, Intern
 }
 
 // Returns all keys available in the selected tree using the Query filter
-async fn get_matching_keys(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_matching_keys(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetMatchingKeysParams = parse_params(body)?;
     if let Some(query) = &params.query {
         if query.is_for_element() {
@@ -370,7 +370,7 @@ async fn get_matching_keys(context: Context, body: Value) -> Result<Value, Inter
 }
 
 // Retrieve the data from the encrypted storage using its key and tree
-async fn get_value_from_key(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_value_from_key(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetValueFromKeyParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
@@ -382,7 +382,7 @@ async fn get_value_from_key(context: Context, body: Value) -> Result<Value, Inte
 }
 
 // Store data in the requested tree with the key set
-async fn store(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn store(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: StoreParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
@@ -392,7 +392,7 @@ async fn store(context: Context, body: Value) -> Result<Value, InternalRpcError>
 }
 
 // Delete data in the requested tree with the key set
-async fn delete(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn delete(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: DeleteParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
@@ -402,7 +402,7 @@ async fn delete(context: Context, body: Value) -> Result<Value, InternalRpcError
 }
 
 // Verify if the key is present in the requested tree
-async fn has_key(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn has_key(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: HasKeyParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
     let tree = get_tree_name(&context, params.tree).await?;
@@ -412,7 +412,7 @@ async fn has_key(context: Context, body: Value) -> Result<Value, InternalRpcErro
 }
 
 // Search in DB all entries based on filters set
-async fn query_db(context: Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn query_db(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: QueryDBParams = parse_params(body)?;
     if let Some(query) = &params.key {
         if query.is_for_element() {
