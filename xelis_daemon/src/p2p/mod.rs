@@ -1132,18 +1132,30 @@ impl<S: Storage> P2pServer<S> {
     // We use a channel to avoid having to pass the Blockchain<S> to the Peerlist & Peers
     async fn event_loop(self: Arc<Self>, mut receiver: Receiver<Arc<Peer>>) {
         debug!("Starting event loop task...");
-        while let Some(peer) = receiver.recv().await {
-            if !self.is_running() {
-                break;
-            }
+        let mut server_exit = self.exit_sender.subscribe();
 
-            if peer.sharable() {
-                if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
-                    if rpc.is_event_tracked(&NotifyEvent::PeerDisconnected).await {
-                        debug!("Notifying clients with PeerDisconnected event");
-                        rpc.notify_clients_with(&NotifyEvent::PeerDisconnected, get_peer_entry(&peer).await).await;
+        loop {
+            select! {
+                _ = server_exit.recv() => {
+                    debug!("Exit message received, stopping event loop task");
+                    break;
+                },
+                peer = receiver.recv() => {
+                    if let Some(peer) = peer {
+                        if peer.sharable() {
+                            if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
+                                if rpc.is_event_tracked(&NotifyEvent::PeerDisconnected).await {
+                                    debug!("Notifying clients with PeerDisconnected event");
+                                    rpc.notify_clients_with(&NotifyEvent::PeerDisconnected, get_peer_entry(&peer).await).await;
+                                }
+                            }
+                        }
+                    } else {
+                        debug!("No more events to notify, stopping event loop task");
+                        break;
                     }
                 }
+
             }
         }
         debug!("Event loop task is stopped!");
