@@ -738,12 +738,12 @@ async fn get_peers<S: Storage>(context: &Context, body: Value) -> Result<Value, 
     let p2p = { blockchain.get_p2p().read().await.clone() };
     match p2p.as_ref() {
         Some(p2p) => {
-            let peer_list = p2p.get_peer_list().read().await;
+            let peer_list = p2p.get_peer_list();
             let mut peers = Vec::new();
-            let peers_availables = peer_list.get_peers().values();
+            let peers_availables = peer_list.get_cloned_peers().await;
             let total_peers = peers_availables.len();
             let mut sharable_peers = 0;
-            for p in peers_availables.filter(|p| p.sharable()) {
+            for p in peers_availables.iter().filter(|p| p.sharable()) {
                 peers.push(get_peer_entry(p).await);
                 sharable_peers += 1;
             }
