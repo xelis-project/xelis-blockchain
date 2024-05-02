@@ -690,65 +690,67 @@ async fn clear_caches<S: Storage>(manager: &CommandManager, _: ArgumentManager) 
 }
 
 async fn blacklist<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    // let context = manager.get_context().lock()?;
-    // let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    // match blockchain.get_p2p().read().await.as_ref() {
-    //     Some(p2p) => {
-    //         if arguments.has_argument("address") {
-    //             let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
-    //             let mut peer_list = p2p.get_peer_list().write().await;
-    //             if peer_list.is_blacklisted(&address) {
-    //                 peer_list.set_graylist_for_peer(&address);
-    //                 manager.message(format!("Peer {} is not blacklisted anymore", address));
-    //             } else {
-    //                 peer_list.blacklist_address(&address).await;
-    //                 manager.message(format!("Peer {} has been blacklisted", address));
-    //             }
-    //         } else {
-    //             let peer_list = p2p.get_peer_list().read().await;
-    //             let blacklist = peer_list.get_blacklist();
-    //             manager.message(format!("Current blacklist ({}):", blacklist.len()));
-    //             for (ip, peer) in blacklist {
-    //                 manager.message(format!("- {}: {}", ip, peer));
-    //             }
-    //         }
-    //     },
-    //     None => {
-    //         manager.error("P2P is not enabled");
-    //     }
-    // };
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_p2p().read().await.as_ref() {
+        Some(p2p) => {
+            if arguments.has_argument("address") {
+                let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+                let peer_list = p2p.get_peer_list();
+                if peer_list.is_blacklisted(&address).await {
+                    peer_list.set_graylist_for_peer(&address).await;
+                    manager.message(format!("Peer {} is not blacklisted anymore", address));
+                } else {
+                    peer_list.blacklist_address(&address).await;
+                    manager.message(format!("Peer {} has been blacklisted", address));
+                }
+            } else {
+                let peer_list = p2p.get_peer_list();
+                let stored_peers = peer_list.get_stored_peers().read().await;
+                let blacklist = peer_list.get_blacklist(&stored_peers);
+                manager.message(format!("Current blacklist ({}):", blacklist.len()));
+                for (ip, peer) in blacklist {
+                    manager.message(format!("- {}: {}", ip, peer));
+                }
+            }
+        },
+        None => {
+            manager.error("P2P is not enabled");
+        }
+    };
 
     Ok(())
 }
 
 async fn whitelist<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
-    // let context = manager.get_context().lock()?;
-    // let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    // match blockchain.get_p2p().read().await.as_ref() {
-    //     Some(p2p) => {
-    //         if arguments.has_argument("address") {
-    //             let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
-    //             let mut peer_list = p2p.get_peer_list().write().await;
-    //             if peer_list.is_whitelisted(&address) {
-    //                 peer_list.set_graylist_for_peer(&address);
-    //                 manager.message(format!("Peer {} is not whitelisted anymore", address));
-    //             } else {
-    //                 peer_list.whitelist_address(&address);
-    //                 manager.message(format!("Peer {} has been whitelisted", address));
-    //             }
-    //         } else {
-    //             let peer_list = p2p.get_peer_list().read().await;
-    //             let whitelist = peer_list.get_whitelist();
-    //             manager.message(format!("Current whitelist ({}):", whitelist.len()));
-    //             for (ip, peer) in whitelist {
-    //                 manager.message(format!("- {}: {}", ip, peer));
-    //             }
-    //         }
-    //     },
-    //     None => {
-    //         manager.error("P2P is not enabled");
-    //     }
-    // };
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_p2p().read().await.as_ref() {
+        Some(p2p) => {
+            if arguments.has_argument("address") {
+                let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+                let peer_list = p2p.get_peer_list();
+                if peer_list.is_whitelisted(&address).await {
+                    peer_list.set_graylist_for_peer(&address).await;
+                    manager.message(format!("Peer {} is not whitelisted anymore", address));
+                } else {
+                    peer_list.whitelist_address(&address).await;
+                    manager.message(format!("Peer {} has been whitelisted", address));
+                }
+            } else {
+                let peer_list = p2p.get_peer_list();
+                let stored_peers = peer_list.get_stored_peers().read().await;
+                let whitelist = peer_list.get_whitelist(&stored_peers);
+                manager.message(format!("Current whitelist ({}):", whitelist.len()));
+                for (ip, peer) in whitelist {
+                    manager.message(format!("- {}: {}", ip, peer));
+                }
+            }
+        },
+        None => {
+            manager.error("P2P is not enabled");
+        }
+    };
 
     Ok(())
 }

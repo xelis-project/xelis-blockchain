@@ -205,7 +205,7 @@ impl PeerList {
         }
         info!("New peer connected: {}", peer);
 
-        self.update_peer(&peer);
+        self.update_peer(&peer).await;
 
         peer
     }
@@ -240,6 +240,11 @@ impl PeerList {
 
     pub fn get_peers(&self) -> &RwLock<HashMap<u64, Arc<Peer>>> {
         &self.peers
+    }
+
+    // Get stored peers locked
+    pub fn get_stored_peers(&self) -> &RwLock<HashMap<IpAddr, StoredPeer>> {
+        &self.stored_peers
     }
 
     pub async fn get_cloned_peers(&self) -> HashSet<Arc<Peer>> {
@@ -395,26 +400,26 @@ impl PeerList {
         }
     }
 
-    // fn get_list_with_state<'a>(&'a self, stored_peers: &'a HashMap<IpAddr, StoredPeer>, state: &StoredPeerState) -> Vec<(&'a IpAddr, &'a StoredPeer)> {
-    //     stored_peers.iter().filter(|(_, stored_peer)| *stored_peer.get_state() == *state).collect()
-    // }
+    fn get_list_with_state<'a>(&'a self, stored_peers: &'a HashMap<IpAddr, StoredPeer>, state: &StoredPeerState) -> Vec<(&'a IpAddr, &'a StoredPeer)> {
+        stored_peers.iter().filter(|(_, stored_peer)| *stored_peer.get_state() == *state).collect()
+    }
 
-    // pub async fn get_blacklist<'a>(&'a self) -> Vec<(&'a IpAddr, &'a StoredPeer)> {
-    //     let stored_peers = self.stored_peers.read().await;
-    //     self.get_list_with_state(&stored_peers, &StoredPeerState::Blacklist)
-    // }
+    // Get all peers blacklisted from peerlist
+    pub fn get_blacklist<'a>(&'a self, stored_peers: &'a HashMap<IpAddr, StoredPeer>) -> Vec<(&'a IpAddr, &'a StoredPeer)> {
+        self.get_list_with_state(stored_peers, &StoredPeerState::Blacklist)
+    }
 
-    // pub async fn get_whitelist<'a>(&'a self) -> Vec<(&'a IpAddr, &'a StoredPeer)> {
-    //     let stored_peers = self.stored_peers.read().await;
-    //     self.get_list_with_state(&stored_peers, &StoredPeerState::Blacklist)
-    // }
+    // Retrieve whitelist stored peers
+    pub fn get_whitelist<'a>(&'a self, stored_peers: &'a HashMap<IpAddr, StoredPeer>) -> Vec<(&'a IpAddr, &'a StoredPeer)> {
+        self.get_list_with_state(stored_peers, &StoredPeerState::Blacklist)
+    }
 
     // blacklist a peer address
     // if this peer is already known, change its state to blacklist
     // otherwise create a new StoredPeer with state blacklist
     // disconnect the peer if present in peerlist
     pub async fn blacklist_address(&self, ip: &IpAddr) {
-        self.set_state_to_address(ip, StoredPeerState::Blacklist);
+        self.set_state_to_address(ip, StoredPeerState::Blacklist).await;
 
         let potential_peer = {
             let peers = self.peers.read().await;
@@ -454,8 +459,8 @@ impl PeerList {
     // whitelist a peer address
     // if this peer is already known, change its state to whitelist
     // otherwise create a new StoredPeer with state whitelist
-    pub fn whitelist_address(&self, ip: &IpAddr) {
-        self.set_state_to_address(ip, StoredPeerState::Whitelist);
+    pub async fn whitelist_address(&self, ip: &IpAddr) {
+        self.set_state_to_address(ip, StoredPeerState::Whitelist).await;
     }
 
     pub async fn find_peer_to_connect(&self) -> Option<SocketAddr> {

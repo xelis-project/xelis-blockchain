@@ -286,14 +286,19 @@ impl<S: Storage> P2pServer<S> {
                         break;
                     }
         
-                    // let connect = if self.peer_list.size().await >= self.max_peers {
-                    //     // if we have already reached the limit, we ignore this new connection
-                    //     None
-                    // } else {
-                    //     let potential_nodes = nodes.iter().filter(|node| !self.peer_list.is_connected_to_addr(node));
-                    //     potential_nodes.choose(&mut rand::thread_rng()).copied()
-                    // }; TODO
-                    let connect = None;
+                    let connect = if self.peer_list.size().await >= self.max_peers {
+                        // if we have already reached the limit, we ignore this new connection
+                        None
+                    } else {
+                        let mut potential_nodes = Vec::new();
+                        for node in &nodes {
+                            if !self.peer_list.is_connected_to_addr(&node).await {
+                                potential_nodes.push(node);
+                            }
+                        }
+
+                        potential_nodes.into_iter().choose(&mut rand::thread_rng()).copied()
+                    };
                     if let Some(node) = connect {
                         trace!("Trying to connect to priority node: {}", node);
                         if let Err(e) = sender.send(node).await {
