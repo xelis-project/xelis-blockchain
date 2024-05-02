@@ -2,7 +2,8 @@ use crate::{
     config::{
         PEER_FAIL_TIME_RESET, PEER_BLOCK_CACHE_SIZE, PEER_TX_CACHE_SIZE,
         PEER_TEMP_BAN_TIME, PEER_TIMEOUT_BOOTSTRAP_STEP,
-        PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS
+        PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS,
+        PEER_PACKET_CHANNEL_SIZE
     },
     p2p::packet::PacketWrapper
 };
@@ -66,8 +67,8 @@ use log::{
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
 
-pub type Tx = mpsc::UnboundedSender<Bytes>;
-pub type Rx = mpsc::UnboundedReceiver<Bytes>;
+pub type Tx = mpsc::Sender<Bytes>;
+pub type Rx = mpsc::Receiver<Bytes>;
 
 // A Peer represents a connection to another node in the network
 // It is used to propagate and receive blocks / transactions and do chain sync
@@ -149,7 +150,7 @@ impl Peer {
         }
 
         let (exit_channel, _) = broadcast::channel(1);
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(PEER_PACKET_CHANNEL_SIZE);
 
         (Self {
             connection,
@@ -618,7 +619,7 @@ impl Peer {
     // Send packet bytes to the peer
     // This will send the bytes to the writer task through its channel
     pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), P2pError> {
-        self.tx.send(bytes)
+        self.tx.send(bytes).await
             .map_err(|e| P2pError::SendError(e.to_string()))
     }
 }
