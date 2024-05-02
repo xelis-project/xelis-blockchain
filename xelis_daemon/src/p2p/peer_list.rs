@@ -197,17 +197,26 @@ impl PeerList {
         Ok(())
     }
 
-    pub async fn add_peer(&self, id: u64, peer: Peer) -> Arc<Peer> {
-        let peer = Arc::new(peer);
+    // Add a new peer to the list
+    // This will returns an error if peerlist is full
+    pub async fn add_peer(&self, peer: &Arc<Peer>, max_peers: usize) -> Result<(), P2pError> {
         {
             let mut peers = self.peers.write().await;
-            peers.insert(id, Arc::clone(&peer));
+            if peers.len() >= max_peers {
+                return Err(P2pError::PeerListFull);
+            }
+
+            if peers.contains_key(&peer.get_id()) {
+                return Err(P2pError::PeerIdAlreadyUsed(peer.get_id()));
+            }
+
+            peers.insert(peer.get_id(), Arc::clone(&peer));
         }
         info!("New peer connected: {}", peer);
 
         self.update_peer(&peer).await;
 
-        peer
+        Ok(())
     }
 
     async fn update_peer(&self, peer: &Peer) {

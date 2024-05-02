@@ -285,7 +285,7 @@ impl<S: Storage> P2pServer<S> {
                         debug!("Maintains seed nodes task is stopped!");
                         break;
                     }
-        
+
                     let connect = if self.peer_list.size().await >= self.max_peers {
                         // if we have already reached the limit, we ignore this new connection
                         None
@@ -373,15 +373,22 @@ impl<S: Storage> P2pServer<S> {
                             debug!("blocks processing task is stopped!");
                             break;
                         }
-            
-                        match self.handle_new_peer(peer, rx).await {
+
+                        let peer = Arc::new(peer);
+                        match self.handle_new_peer(&peer, rx).await {
                             Ok(_) => {},
                             Err(e) => match e {
                                 P2pError::PeerListFull => {
                                     debug!("Peer list is full, we can't accept new connections");
+                                    if let Err(e) = peer.get_connection().close().await {
+                                        debug!("Error while closing unhandled connection: {}", e);
+                                    }
                                 },
                                 _ => {
                                     error!("Error while handling new connection: {}", e);
+                                    if let Err(e) = peer.get_connection().close().await {
+                                        debug!("Error while closing unhandled connection: {}", e);
+                                    }
                                 }
                             }
                         }
@@ -664,23 +671,14 @@ impl<S: Storage> P2pServer<S> {
         Ok(handshake)
     }
 
-    async fn handle_new_peer(self: &Arc<Self>, peer: Peer, rx: Rx) -> Result<(), P2pError> {
+    async fn handle_new_peer(self: &Arc<Self>, peer: &Arc<Peer>, rx: Rx) -> Result<(), P2pError> {
         // we can save the peer in our peerlist
         let peer_id = peer.get_id(); // keep in memory the peer_id outside connection (because of moved value)
-        let peer = {
-            if self.has_peer_id_used(&peer_id).await {
-                return Err(P2pError::PeerIdAlreadyUsed(peer_id));
-            }
+        if self.is_internal_id(peer_id) {
+            return Err(P2pError::PeerIdAlreadyUsed(peer_id));
+        }
 
-            if self.accept_new_connections().await {
-                trace!("Adding peer to peer list: {}", peer);
-                self.peer_list.add_peer(peer_id, peer).await
-            } else {
-                debug!("Peer list is full, closing connection with {}", peer);
-                peer.get_connection().close().await?;
-                return Err(P2pError::PeerListFull);
-            }
-        };
+        self.peer_list.add_peer(peer, self.get_max_peers()).await?;
 
         if peer.sharable() {
             trace!("Locking RPC Server to notify PeerConnected event");
@@ -693,7 +691,7 @@ impl<S: Storage> P2pServer<S> {
             trace!("End locking for PeerConnected event");
         }
 
-        self.handle_connection(peer, rx).await
+        self.handle_connection(peer.clone(), rx).await
     }
 
     // Verify that we don't have any exclusive nodes configured OR that we are part of this list
@@ -2240,9 +2238,13 @@ impl<S: Storage> P2pServer<S> {
         self.peer_list.get_best_topoheight().await
     }
 
+    pub fn is_internal_id(&self, id: u64) -> bool {
+        id == self.peer_id
+    }
+
     // Verify if this peer id is already used by a peer
     pub async fn has_peer_id_used(&self, peer_id: &u64) -> bool {
-        self.peer_id == *peer_id || self.peer_list.has_peer(peer_id).await
+        self.is_internal_id(*peer_id) || self.peer_list.has_peer(peer_id).await
     }
 
     // Check if we are already connected to a socket address (IPv4 or IPv6) including its port
