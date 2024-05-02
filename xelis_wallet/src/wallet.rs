@@ -857,6 +857,8 @@ impl Wallet {
                 // balances will be re-fetched from daemon
                 storage.delete_balances().await?;
                 storage.delete_assets().await?;
+                // unconfirmed balances are going to be outdated, we delete them
+                storage.delete_unconfirmed_balances().await?;
 
                 debug!("Retrieve current wallet nonce");
                 let nonce_result = network_handler.get_api()
