@@ -1823,8 +1823,20 @@ impl<S: Storage> P2pServer<S> {
         let packet_id = packet.get_id();
         // Handle the packet
         if let Err(e) = self.handle_incoming_packet(&peer, packet).await {
-            error!("Error occured while handling incoming packet #{} from {}: {}", packet_id, peer, e);
-            peer.increment_fail_count();
+            match e {
+                P2pError::Disconnected => {
+                    debug!("Peer {} has disconnected, stopping...", peer);
+                    return Err(e)
+                },
+                P2pError::SendError(_) => {
+                    debug!("Error while sending packet to peer: {}", e);
+                    return Err(e)
+                },
+                e => {
+                    error!("Error occured while handling incoming packet #{} from {}: {}", packet_id, peer, e);
+                    peer.increment_fail_count();
+                }
+            }
         }
 
         Ok(())

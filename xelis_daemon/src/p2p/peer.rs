@@ -600,14 +600,21 @@ impl Peer {
     // Close the peer connection and remove it from the peer list
     pub async fn close_internal(&self) -> Result<(), P2pError> {
         trace!("Closing internal connection with {}", self);
-        let res = {
-            // Remove this peer from peer list
-            let mut peer_list = self.peer_list.write().await;
-            peer_list.remove_peer(self.get_id()).await
-        };
-        self.get_connection().close().await?;
+        let res_notify = self.exit_channel.send(()).map_err(|e| P2pError::SendError(e.to_string()));
 
-        res
+        if !self.get_connection().is_closed() {            
+            let res = {
+                // Remove this peer from peer list
+                let mut peer_list = self.peer_list.write().await;
+                peer_list.remove_peer(self.get_id()).await
+            };
+            self.get_connection().close().await?;
+            res?;
+        }
+
+        res_notify?;
+
+        Ok(())
     }
 
     // Send a packet to the peer
