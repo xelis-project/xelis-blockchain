@@ -629,7 +629,7 @@ impl Storage for SledStorage {
             // if the highest topoheight for this account is less than the snapshot topoheight
             // update it to the topoheight
             // otherwise, delete the previous topoheight in VersionedBalance which is under topoheight
-            if highest_balance_topoheight < topoheight {
+            if highest_balance_topoheight <= topoheight {
                 // save the new highest topoheight
                 self.balances.insert(&key_bytes, &topoheight.to_be_bytes())?;
                 // remove the previous topoheight
@@ -672,7 +672,7 @@ impl Storage for SledStorage {
             // if the highest topoheight for this account is less than the snapshot topoheight
             // update it to the topoheight
             // otherwise, delete the previous topoheight in VersionedNonce which is under topoheight
-            if highest_topoheight < topoheight {
+            if highest_topoheight <= topoheight {
                 // save the new highest topoheight
                 self.nonces.insert(&key_bytes, &topoheight.to_be_bytes())?;
                 // remove the previous topoheight
@@ -710,7 +710,7 @@ impl Storage for SledStorage {
 
             // if the registration topoheight for this account is less than the snapshot topoheight
             // update it to the topoheight
-            if registration_topo < topoheight {
+            if registration_topo <= topoheight {
                 // Delete the prefixed registration
                 buf[0..8].copy_from_slice(&value);
                 buf[8..40].copy_from_slice(&key);

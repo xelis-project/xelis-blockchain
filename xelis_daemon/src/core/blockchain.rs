@@ -540,7 +540,7 @@ impl<S: Storage> Blockchain<S> {
         // find new stable point based on a sync block under the limit topoheight
         let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight::<S>(&storage, topoheight, self.get_height()).await?;
         debug!("Located sync topoheight found: {}", located_sync_topoheight);
-        
+
         if located_sync_topoheight > last_pruned_topoheight {
             // create snapshots of balances to located_sync_topoheight
             storage.create_snapshot_balances_at_topoheight(located_sync_topoheight).await?;
