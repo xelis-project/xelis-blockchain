@@ -641,7 +641,7 @@ impl Storage for SledStorage {
             } else {
                 // find the first VersionedBalance which is under topoheight
                 while let Some(previous_topoheight) = versioned_balance.get_previous_topoheight() {
-                    if previous_topoheight < topoheight {
+                    if previous_topoheight <= topoheight {
                         versioned_balance.set_previous_topoheight(None);
                         // save it
                         let key = self.get_versioned_balance_key(&key, &asset, topoheight);
@@ -684,7 +684,7 @@ impl Storage for SledStorage {
             } else {
                 // find the first VersionedBalance which is under topoheight
                 while let Some(previous_topoheight) = versioned_nonce.get_previous_topoheight() {
-                    if previous_topoheight < topoheight {
+                    if previous_topoheight <= topoheight {
                         versioned_nonce.set_previous_topoheight(None);
                         // save it
                         let key = self.get_versioned_nonce_key(&key, topoheight);
@@ -702,6 +702,7 @@ impl Storage for SledStorage {
     }
 
     async fn create_snapshot_registrations_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
+        trace!("create snapshot registrations at topoheight {}", topoheight);
         // tree where PublicKey are stored with the registration topoheight in it
         let mut buf = [0u8; 40];
         for el in self.registrations.iter() {
