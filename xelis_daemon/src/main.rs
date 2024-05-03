@@ -583,6 +583,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let height = blockchain.get_height();
     let topoheight = blockchain.get_topo_height();
     let stableheight = blockchain.get_stable_height();
+    let stable_topoheight = blockchain.get_stable_topoheight();
     let difficulty = blockchain.get_difficulty().await;
 
     let storage = blockchain.get_storage().read().await;
@@ -598,6 +599,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
 
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
+    manager.message(format!("Stable Topo Height: {}", stable_topoheight));
     manager.message(format!("Topo Height: {}", topoheight));
     manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
     manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / BLOCK_TIME).into())));

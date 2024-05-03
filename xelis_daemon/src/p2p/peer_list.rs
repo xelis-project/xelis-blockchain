@@ -271,13 +271,14 @@ impl PeerList {
             let mut peers = self.peers.write().await;
             peers.drain().collect::<Vec<(u64, Arc<Peer>)>>()
         };
+        info!("Closing {} peers", peers.len());
         for (_, peer) in peers {
             debug!("Closing {}", peer);
-            if let Err(e) = peer.signal_exit().await {
-                debug!("Error while trying to signal exit to {}: {}", peer, e);
-            }
-
             spawn_task(format!("p2p-disconnect-{}", peer.get_connection().get_address()), async move {
+                if let Err(e) = peer.signal_exit().await {
+                    debug!("Error while trying to signal exit to {}: {}", peer, e);
+                }
+
                 match timeout(Duration::from_secs(PEER_TIMEOUT_DISCONNECT), peer.close_internal()).await {
                     Err(e) => debug!("Error while trying to close peer {}, deadline elapsed: {}", peer.get_connection().get_address(), e),
                     Ok(Err(e)) => debug!("Error while trying to close peer {}: {}", peer.get_connection().get_address(), e),
