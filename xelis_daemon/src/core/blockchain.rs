@@ -1306,10 +1306,14 @@ impl<S: Storage> Blockchain<S> {
                         first_seen: Some(get_current_time_in_seconds()),
                         data,
                     };
+                    let json = json!(data);
 
-                    if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
-                        debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
-                    }
+                    let rpc = rpc.clone();
+                    spawn_task("rpc-notify-tx", async move {
+                        if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json).await {
+                            debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
+                        }
+                    });
                 }
             }
         }
