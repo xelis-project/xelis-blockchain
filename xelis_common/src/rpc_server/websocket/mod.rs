@@ -40,9 +40,6 @@ use tokio::{
         timeout
     }
 };
-
-use crate::utils::spawn_task;
-
 pub use self::{
     handler::EventWebSocketHandler,
     http_request::HttpRequest
@@ -179,7 +176,7 @@ pub trait WebSocketHandler: Sized + Sync + Send {
     }
 
     // called when a new message is received
-    async fn on_message(&self, _: WebSocketSessionShared<Self>, _: Bytes) -> Result<(), anyhow::Error> {
+    async fn on_message(&self, _: &WebSocketSessionShared<Self>, _: Bytes) -> Result<(), anyhow::Error> {
         Ok(())
     }
 
@@ -357,13 +354,9 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                     match msg {
                         Message::Text(text) => {
                             debug!("Received text message for session #{}: {}", session.id, text);
-                            let zelf = Arc::clone(&self);
-                            let session = session.clone();
-                            spawn_task(format!("ws-on-msg-{}", session.id), async move {
-                                if let Err(e) = zelf.handler.on_message(session, text.into_bytes()).await {
-                                    debug!("Error while calling on_message: {}", e);
-                                }
-                            });
+                            if let Err(e) = self.handler.on_message(&session, text.into_bytes()).await {
+                                debug!("Error while calling on_message: {}", e);
+                            }
                         },
                         Message::Close(reason) => {
                             debug!("Received close message for session #{}: {:?}", session.id, reason);
