@@ -15,8 +15,7 @@ use crate::{
         RpcRequest,
         RpcResponse,
         RpcResponseError
-    },
-    utils::spawn_task
+    }
 };
 use super::{WebSocketSessionShared, WebSocketHandler};
 
@@ -58,11 +57,9 @@ where
             if let Some(id) = subscriptions.get(event) {
                 let response = json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value)));
                 let session = session.clone();
-                spawn_task(format!("notify-ws-{}", session.id), async move {
-                    if let Err(e) = session.send_text(response.to_string()).await {
-                        debug!("Error occured while notifying a new event: {}", e);
-                    };
-                });
+                if let Err(e) = session.send_text(response.to_string()).await {
+                    debug!("Error occured while notifying a new event: {}", e);
+                };
             }
         }
     }
