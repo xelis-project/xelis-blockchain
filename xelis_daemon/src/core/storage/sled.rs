@@ -644,9 +644,9 @@ impl Storage for SledStorage {
                 let mut current_version_topoheight = highest_balance_topoheight;
                 while let Some(previous_topoheight) = versioned_balance.get_previous_topoheight() {
                     if previous_topoheight <= topoheight {
-                        versioned_balance.set_previous_topoheight(Some(topoheight));
                         // update the current versioned balance that refer to the pruned versioned balance
                         {
+                            versioned_balance.set_previous_topoheight(Some(topoheight));
                             let key = self.get_versioned_balance_key(&key, &asset, current_version_topoheight);
                             self.versioned_balances.insert(key, versioned_balance.to_bytes())?;
                         }
@@ -700,11 +700,11 @@ impl Storage for SledStorage {
                 let mut current_version_topoheight = highest_topoheight;
                 while let Some(previous_topoheight) = versioned_nonce.get_previous_topoheight() {
                     if previous_topoheight <= topoheight {
-                        versioned_nonce.set_previous_topoheight(Some(topoheight));
                         // update the current versioned balance that refer to the pruned versioned balance
                         {
+                            versioned_nonce.set_previous_topoheight(Some(topoheight));
                             let key = self.get_versioned_nonce_key(&key, current_version_topoheight);
-                            self.versioned_balances.insert(key, versioned_nonce.to_bytes())?;
+                            self.versioned_nonces.insert(key, versioned_nonce.to_bytes())?;
                         }
                         
                         // Now update the previous version which is under topoheight
@@ -712,7 +712,7 @@ impl Storage for SledStorage {
                             let mut previous_version = self.get_nonce_at_exact_topoheight(&key, previous_topoheight).await?;
                             previous_version.set_previous_topoheight(None);
                             let key = self.get_versioned_nonce_key(&key, topoheight);
-                            self.versioned_balances.insert(key, previous_version.to_bytes())?;
+                            self.versioned_nonces.insert(key, previous_version.to_bytes())?;
                         }
                         break;
                     }
