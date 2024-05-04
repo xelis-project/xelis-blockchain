@@ -615,6 +615,7 @@ impl Storage for SledStorage {
         self.delete_versioned_tree_below_topoheight(&self.versioned_nonces, topoheight)
     }
 
+    // The first versioned balance that is under the topoheight is bumped to topoheight
     async fn create_snapshot_balances_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
         // asset tree where PublicKey are stored with the highest balance topoheight in it
         for el in self.balances.iter() {
@@ -640,17 +641,29 @@ impl Storage for SledStorage {
                 self.versioned_balances.insert(key, versioned_balance.to_bytes())?;
             } else {
                 // find the first VersionedBalance which is under topoheight
+                let mut current_version_topoheight = highest_balance_topoheight;
                 while let Some(previous_topoheight) = versioned_balance.get_previous_topoheight() {
                     if previous_topoheight <= topoheight {
-                        versioned_balance.set_previous_topoheight(None);
-                        // save it
-                        let key = self.get_versioned_balance_key(&key, &asset, topoheight);
-                        self.versioned_balances.insert(key, versioned_balance.to_bytes())?;
+                        versioned_balance.set_previous_topoheight(Some(topoheight));
+                        // update the current versioned balance that refer to the pruned versioned balance
+                        {
+                            let key = self.get_versioned_balance_key(&key, &asset, current_version_topoheight);
+                            self.versioned_balances.insert(key, versioned_balance.to_bytes())?;
+                        }
+                        
+                        // Now update the previous version which is under topoheight
+                        {
+                            let mut previous_version = self.get_balance_at_exact_topoheight(&key, &asset, previous_topoheight).await?;
+                            previous_version.set_previous_topoheight(None);
+                            let key = self.get_versioned_balance_key(&key, &asset, topoheight);
+                            self.versioned_balances.insert(key, previous_version.to_bytes())?;
+                        }
                         break;
                     }
 
                     // keep searching
                     versioned_balance = self.get_balance_at_exact_topoheight(&key, &asset, previous_topoheight).await?;
+                    current_version_topoheight = previous_topoheight;
                 }
             }
         }
@@ -658,6 +671,7 @@ impl Storage for SledStorage {
         Ok(())
     }
 
+    // The first versioned balance that is under the topoheight is bumped to topoheight
     async fn create_snapshot_nonces_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
         // tree where VersionedNonce are stored
         // tree where PublicKey are stored with the highest noce topoheight in it
@@ -683,17 +697,29 @@ impl Storage for SledStorage {
                 self.versioned_nonces.insert(key, versioned_nonce.to_bytes())?;
             } else {
                 // find the first VersionedBalance which is under topoheight
+                let mut current_version_topoheight = highest_topoheight;
                 while let Some(previous_topoheight) = versioned_nonce.get_previous_topoheight() {
                     if previous_topoheight <= topoheight {
-                        versioned_nonce.set_previous_topoheight(None);
-                        // save it
-                        let key = self.get_versioned_nonce_key(&key, topoheight);
-                        self.versioned_nonces.insert(key, versioned_nonce.to_bytes())?;
+                        versioned_nonce.set_previous_topoheight(Some(topoheight));
+                        // update the current versioned balance that refer to the pruned versioned balance
+                        {
+                            let key = self.get_versioned_nonce_key(&key, current_version_topoheight);
+                            self.versioned_balances.insert(key, versioned_nonce.to_bytes())?;
+                        }
+                        
+                        // Now update the previous version which is under topoheight
+                        {
+                            let mut previous_version = self.get_nonce_at_exact_topoheight(&key, previous_topoheight).await?;
+                            previous_version.set_previous_topoheight(None);
+                            let key = self.get_versioned_nonce_key(&key, topoheight);
+                            self.versioned_balances.insert(key, previous_version.to_bytes())?;
+                        }
                         break;
                     }
 
                     // keep searching
                     versioned_nonce = self.get_nonce_at_exact_topoheight(&key, previous_topoheight).await?;
+                    current_version_topoheight = previous_topoheight;
                 }
             }
         }
