@@ -1678,25 +1678,26 @@ impl<S: Storage> P2pServer<S> {
                 let page_id = request.page().unwrap_or(0);
                 let skip = page_id as usize * NOTIFY_MAX_LEN;
 
-                let mempool = self.blockchain.get_mempool().read().await;
-                let nonces_cache = mempool.get_caches();
-                let all_txs = nonces_cache.values()
-                    .flat_map(|v| v.get_txs())
-                    .skip(skip).take(NOTIFY_MAX_LEN)
-                    .map(|tx| Cow::Borrowed(tx.as_ref()))
-                    .collect::<IndexSet<_>>();
-
-                let next_page = {
+                let packet = {
+                    let mempool = self.blockchain.get_mempool().read().await;
+                    let nonces_cache = mempool.get_caches();
+                    let txs = nonces_cache.values()
+                        .flat_map(|v| v.get_txs())
+                        .skip(skip).take(NOTIFY_MAX_LEN)
+                        .map(|tx| Cow::Borrowed(tx.as_ref()))
+                        .collect::<IndexSet<_>>();
                     let mempool_size = mempool.size();
-                    if all_txs.len() == NOTIFY_MAX_LEN && mempool_size > skip && mempool_size - skip > NOTIFY_MAX_LEN {
-                        Some(page_id + 1)
-                    } else {
-                        None
-                    }
+                    let next_page = {
+                        if txs.len() == NOTIFY_MAX_LEN && mempool_size > skip && mempool_size - skip > NOTIFY_MAX_LEN {
+                            Some(page_id + 1)
+                        } else {
+                            None
+                        }
+                    };
+                    Packet::NotifyInventoryResponse(NotifyInventoryResponse::new(next_page, Cow::Owned(txs))).to_bytes()
                 };
 
-                let packet = NotifyInventoryResponse::new(next_page, Cow::Owned(all_txs));
-                peer.send_packet(Packet::NotifyInventoryResponse(packet)).await?
+                peer.send_bytes(Bytes::from(packet)).await?
             },
             Packet::NotifyInventoryResponse(inventory) => {
                 trace!("Received a notify inventory from {}", peer);
