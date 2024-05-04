@@ -443,6 +443,12 @@ impl Prompt {
         };
         prompt.setup_logger(level, dir_path, filename_log, disable_file_logging)?;
 
+        #[cfg(feature = "tracing")]
+        {
+            info!("Tracing enabled");
+            console_subscriber::init();
+        }
+
         if prompt.state.is_interactive() {
             let (input_sender, input_receiver) = mpsc::unbounded_channel::<String>();
             let state = Arc::clone(&prompt.state);

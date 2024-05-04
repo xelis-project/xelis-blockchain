@@ -135,6 +135,7 @@ pub fn sanitize_daemon_address(target: &str) -> String {
 
 // Spawn a new task with a name
 // If the tokio_unstable feature is enabled, the task will be named
+#[inline(always)]
 pub fn spawn_task<Fut, S: Into<String>>(name: S, future: Fut) -> JoinHandle<Fut::Output>
 where
     Fut: Future + Send + 'static,
