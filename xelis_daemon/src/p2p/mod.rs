@@ -24,11 +24,13 @@ use xelis_common::{
     difficulty::CumulativeDifficulty,
     immutable::Immutable,
     serializer::Serializer,
+    thread_pool::ThreadPool,
     time::{
         get_current_time_in_millis,
         get_current_time_in_seconds,
         TimestampMillis
-    }, utils::spawn_task
+    },
+    utils::spawn_task
 };
 use crate::{
     config::{
@@ -94,8 +96,7 @@ use tokio::{
             Receiver,
             Sender
         },
-        Mutex,
-        Semaphore
+        Mutex
     },
     task::JoinHandle,
     time::{interval, sleep, timeout}
@@ -170,9 +171,7 @@ pub struct P2pServer<S: Storage> {
     // Are we syncing the chain with another peer
     is_syncing: AtomicBool,
     // Exit channel to notify all tasks to stop
-    exit_sender: broadcast::Sender<()>,
-    // Semaphore for incoming connections to prevent tasks count
-    listen_semaphore: Semaphore,
+    exit_sender: broadcast::Sender<()>
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -225,14 +224,13 @@ impl<S: Storage> P2pServer<S> {
             is_syncing: AtomicBool::new(false),
             outgoing_connections_disabled: AtomicBool::new(disable_outgoing_connections),
             exit_sender,
-            listen_semaphore: Semaphore::new(concurrency),
         };
 
         let arc = Arc::new(server);
         {
             let zelf = Arc::clone(&arc);
             spawn_task("p2p-engine", async move {
-                if let Err(e) = zelf.start(connections_receiver, blocks_processor_receiver, event_receiver, use_peerlist).await {
+                if let Err(e) = zelf.start(connections_receiver, blocks_processor_receiver, event_receiver, use_peerlist, concurrency).await {
                     error!("Unexpected error on P2p module: {}", e);
                 }
             });
@@ -314,7 +312,7 @@ impl<S: Storage> P2pServer<S> {
 
     // connect to seed nodes, start p2p server
     // and wait on all new connections
-    async fn start(self: &Arc<Self>, receiver: Receiver<MessageChannel>, blocks_processor_receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>, event_receiver: Receiver<Arc<Peer>>, use_peerlist: bool) -> Result<(), P2pError> {
+    async fn start(self: &Arc<Self>, receiver: Receiver<MessageChannel>, blocks_processor_receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>, event_receiver: Receiver<Arc<Peer>>, use_peerlist: bool, concurrency: usize) -> Result<(), P2pError> {
         let listener = TcpListener::bind(self.get_bind_address()).await?;
         info!("P2p Server will listen on: {}", self.get_bind_address());
 
@@ -356,7 +354,7 @@ impl<S: Storage> P2pServer<S> {
 
         let (tx, mut rx) = channel(1);
         spawn_task("p2p-outgoing-connections", Arc::clone(&self).handle_outgoing_connections(priority_connections, receiver, tx.clone()));
-        spawn_task("p2p-incoming-connections", Arc::clone(&self).handle_incoming_connections(listener, tx));
+        spawn_task("p2p-incoming-connections", Arc::clone(&self).handle_incoming_connections(listener, tx, concurrency));
 
         let mut exit_receiver = self.exit_sender.subscribe();
         loop {
@@ -495,13 +493,8 @@ impl<S: Storage> P2pServer<S> {
         debug!("handle outgoing connections task has exited");
     }
 
-    async fn handle_incoming_connection(self: &Arc<Self>, res: io::Result<(TcpStream, SocketAddr)>, tx: &Sender<(Peer, Rx)>) -> Result<(), P2pError> {
+    async fn handle_incoming_connection(self: &Arc<Self>, res: io::Result<(TcpStream, SocketAddr)>, thread_pool: &ThreadPool, tx: &Sender<(Peer, Rx)>) -> Result<(), P2pError> {
         let (mut stream, addr) = res?;
-
-        // Prevent creating a too high count of tasks
-        trace!("Acquiring semaphore for incoming connection {}", addr);
-        let _guard = self.listen_semaphore.acquire().await?;
-        trace!("Semaphore acquired for incoming connection {}", addr);
 
         // Verify if we can accept new connections
         let reject = !self.is_compatible_with_exclusive_nodes(&addr)
@@ -520,15 +513,7 @@ impl<S: Storage> P2pServer<S> {
         let connection = Connection::new(stream, addr, false);
         let zelf = Arc::clone(&self);
         let tx = tx.clone();
-        spawn_task("p2p-incoming-connection", async move {
-            let _permit = match zelf.listen_semaphore.acquire().await {
-                Ok(permit) => permit,
-                Err(e) => {
-                    error!("Error while acquiring semaphore for incoming connection {}: {}", addr, e);
-                    return;
-                }
-            };
-
+        thread_pool.execute(async move {
             let mut buffer = [0; 512];
             match zelf.create_verified_peer(&mut buffer, connection, false).await {
                 Ok((peer, rx)) => {
@@ -541,12 +526,13 @@ impl<S: Storage> P2pServer<S> {
                     zelf.peer_list.increase_fail_count_for_stored_peer(&addr.ip(), true).await;
                 }
             };
-        });
+        }).await?;
 
         Ok(())
     }
 
-    async fn handle_incoming_connections(self: Arc<Self>, listener: TcpListener, tx: Sender<(Peer, Rx)>) {
+    async fn handle_incoming_connections(self: Arc<Self>, listener: TcpListener, tx: Sender<(Peer, Rx)>, concurrency: usize) {
+        let mut thread_pool = ThreadPool::new(concurrency);
         let mut exit_receiver = self.exit_sender.subscribe();
         loop {
             select! {
@@ -561,12 +547,14 @@ impl<S: Storage> P2pServer<S> {
                         break;
                     }
 
-                    self.handle_incoming_connection(res, &tx).await.unwrap_or_else(|e| {
+                    self.handle_incoming_connection(res, &thread_pool, &tx).await.unwrap_or_else(|e| {
                         debug!("Error while handling incoming connection: {}", e);
                     });
                 }
             }
         }
+
+        thread_pool.stop();
 
         debug!("incoming connections task has exited");
     }
