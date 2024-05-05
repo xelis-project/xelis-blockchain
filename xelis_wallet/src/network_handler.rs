@@ -793,8 +793,13 @@ impl NetworkHandler {
                 res = on_block_ordered.next() => {
                     trace!("on_block_ordered_event");
                     let event = res?;
-                    let block = self.api.get_block_with_txs_at_topoheight(event.topoheight).await?;
-                    self.sync(&address, Some(block)).await?;
+                    let mut storage = self.wallet.get_storage().write().await;
+                    if let Some(hash) = storage.get_block_hash_for_topoheight(event.topoheight).ok() {
+                        let topoheight = event.topoheight;
+                        if topoheight != 0 && hash != *event.block_hash {
+                            storage.delete_changes_above_topoheight(topoheight - 1)?;
+                        }
+                    }
                 },
                 res = on_transaction_orphaned.next() => {
                     trace!("on_transaction_orphaned_event");
