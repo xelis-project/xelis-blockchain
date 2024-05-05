@@ -323,7 +323,7 @@ impl NetworkHandler {
             if let Some(entry) = entry {
                 // New transaction entry that may be linked to us, check if TX was executed
                 if !self.api.is_tx_executed_in_block(&tx.hash, &block_hash).await? {
-                    debug!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx.hash, block_hash);
+                    warn!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx.hash, block_hash);
                     continue;
                 }
 
