@@ -33,7 +33,8 @@ use tokio::{
             Receiver,
             Sender
         },
-        Mutex
+        Mutex,
+        RwLock
     },
     time::{
         error::Elapsed,
@@ -187,7 +188,7 @@ pub trait WebSocketHandler: Sized + Sync + Send {
 }
 
 pub struct WebSocketServer<H: WebSocketHandler + 'static> {
-    sessions: Mutex<HashSet<WebSocketSessionShared<H>>>,
+    sessions: RwLock<HashSet<WebSocketSessionShared<H>>>,
     id_counter: AtomicU64,
     handler: H
 }
@@ -195,7 +196,7 @@ pub struct WebSocketServer<H: WebSocketHandler + 'static> {
 impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     pub fn new(handler: H) -> WebSocketServerShared<H> {
         Arc::new(Self {
-            sessions: Mutex::new(HashSet::new()),
+            sessions: RwLock::new(HashSet::new()),
             id_counter: AtomicU64::new(0),
             handler
         })
@@ -210,12 +211,12 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
 
     // Returns the number of connections
     pub async fn count_connections(&self) -> usize {
-        self.sessions.lock().await.len()
+        self.sessions.read().await.len()
     }
 
     // Turns off all connections
     pub async fn clear_connections(&self) -> Result<(), WebSocketError> {
-        let mut sessions = self.sessions.lock().await;
+        let mut sessions = self.sessions.write().await;
         for session in sessions.drain() {
             session.close(None).await?;
         }
@@ -229,7 +230,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     }
 
     // Returns all sessions managed by this server
-    pub fn get_sessions(&self) -> &Mutex<HashSet<WebSocketSessionShared<H>>> {
+    pub fn get_sessions(&self) -> &RwLock<HashSet<WebSocketSessionShared<H>>> {
         &self.sessions
     }
 
@@ -251,7 +252,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
 
         {
             debug!("Inserting session #{} into sessions", id);
-            let mut sessions = self.sessions.lock().await;
+            let mut sessions = self.sessions.write().await;
             let res = sessions.insert(Arc::clone(&session));
             debug!("Session #{} has been inserted into sessions: {}", id, res);
         }
@@ -274,9 +275,13 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         }
         trace!("session closed");
 
-        let mut sessions = self.sessions.lock().await;
-        trace!("sessions locked");
-        if sessions.remove(session) {
+        let deleted = {
+            let mut sessions = self.sessions.write().await;
+            trace!("sessions locked");
+            sessions.remove(session)
+        };
+
+        if deleted {
             debug!("deleted session #{}", session.id);
             // call on_close
             if let Err(e) = self.handler.on_close(&session).await {
@@ -303,12 +308,12 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             select! {
                 // heartbeat
                 _ = interval.tick() => {
+                    debug!("Sending ping to session #{}", session.id);
                     if session.is_closed().await {
                         debug!("Session is closed, stopping heartbeat");
                         break None;
                     }
 
-                    trace!("Sending ping to session #{}", session.id);
                     if let Err(e) = session.ping().await {
                         debug!("Error while sending ping to session #{}: {}", session.id, e);
                         break None;
@@ -336,6 +341,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                 },
                 // wait for next message
                 res = stream.next() => {
+                    debug!("Received stream message for session #{}", session.id);
                     let msg = match res {
                         Some(msg) => match msg {
                             Ok(msg) => msg,
