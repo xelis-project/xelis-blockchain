@@ -1,7 +1,7 @@
 use std::{collections::{HashMap, HashSet}, hash::Hash, borrow::Cow};
 use actix_web::web::Bytes;
 use async_trait::async_trait;
-use log::debug;
+use log::{trace, debug};
 use serde_json::{Value, json};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::RwLock;
@@ -21,7 +21,7 @@ use super::{WebSocketSessionShared, WebSocketHandler};
 
 // generic websocket handler supporting event subscriptions 
 pub struct EventWebSocketHandler<T: Sync + Send + Clone + 'static, E: Serialize + DeserializeOwned + Sync + Send + Eq + Hash + Clone + 'static> {
-    sessions: RwLock<HashMap<WebSocketSessionShared<Self>, HashMap<E, Option<Id>>>>,
+    events: RwLock<HashMap<WebSocketSessionShared<Self>, HashMap<E, Option<Id>>>>,
     handler: RPCHandler<T>
 }
 
@@ -32,18 +32,22 @@ where
 {
     pub fn new(handler: RPCHandler<T>) -> Self {
         Self {
-            sessions: RwLock::new(HashMap::new()),
+            events: RwLock::new(HashMap::new()),
             handler
         }
     }
 
     pub async fn get_tracked_events(&self) -> HashSet<E> {
-        let sessions = self.sessions.read().await;
+        trace!("getting tracked events");
+        let sessions = self.events.read().await;
+        trace!("tracked events sessions locked");
         HashSet::from_iter(sessions.values().map(|e| e.keys().cloned()).flatten())
     }
 
     pub async fn is_event_tracked(&self, event: &E) -> bool {
-        let sessions = self.sessions.read().await;
+        trace!("checking if event is tracked");
+        let sessions = self.events.read().await;
+        trace!("tracked events sessions locked");
         sessions
             .values()
             .find(|e| e.keys().into_iter().find(|x| *x == event).is_some())
@@ -52,20 +56,31 @@ where
 
     pub async fn notify(&self, event: &E, value: Value) {
         let value = json!(EventResult { event: Cow::Borrowed(event), value });
-        let sessions = self.sessions.read().await;
+        debug!("notifying event");
+        let sessions = {
+            let events = self.events.read().await;
+            trace!("events locked for propagation");
+            events.clone()
+        };
+
         for (session, subscriptions) in sessions.iter() {
             if let Some(id) = subscriptions.get(event) {
                 let response = json!(RpcResponse::new(Cow::Borrowed(&id), Cow::Borrowed(&value)));
-                let session = session.clone();
+                trace!("sending event to #{}", session.id);
                 if let Err(e) = session.send_text(response.to_string()).await {
                     debug!("Error occured while notifying a new event: {}", e);
                 };
+                trace!("event sent to #{}", session.id);
             }
         }
+
+        debug!("end event propagation");
     }
 
     async fn subscribe_session_to_event(&self, session: &WebSocketSessionShared<Self>, event: E, id: Option<Id>) -> Result<(), RpcResponseError> {
-        let mut sessions = self.sessions.write().await;
+        trace!("subscribing session to event");
+        let mut sessions = self.events.write().await;
+        trace!("subscribe events locked");
         let events = sessions.entry(session.clone()).or_insert_with(HashMap::new);
         if events.contains_key(&event) {
             return Err(RpcResponseError::new(id, InternalRpcError::EventAlreadySubscribed));
@@ -76,7 +91,10 @@ where
     }
 
     async fn unsubscribe_session_from_event(&self, session: &WebSocketSessionShared<Self>, event: E, id: Option<Id>) -> Result<(), RpcResponseError> {
-        let mut sessions = self.sessions.write().await;
+        trace!("unsubscribing session from event");
+        let mut sessions = self.events.write().await;
+        trace!("unsubscribe events locked");
+        
         let events = sessions.entry(session.clone()).or_insert_with(HashMap::new);
         if !events.contains_key(&event) {
             return Err(RpcResponseError::new(id, InternalRpcError::EventNotSubscribed));
@@ -151,9 +169,10 @@ where
     E: Serialize + DeserializeOwned + Sync + Send + Eq + Hash + Clone + 'static
 {
     async fn on_close(&self, session: &WebSocketSessionShared<Self>) -> Result<(), anyhow::Error> {
-        debug!("closing websocket connection");
-        let mut sessions = self.sessions.write().await;
+        trace!("deleting ws session from events");
+        let mut sessions = self.events.write().await;
         sessions.remove(session);
+        trace!("session deleted from events");
         Ok(())
     }
 
