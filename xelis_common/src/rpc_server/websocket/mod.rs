@@ -29,9 +29,9 @@ use tokio::{
     select,
     sync::{
         mpsc::{
-            channel,
-            Receiver,
-            Sender
+            unbounded_channel,
+            UnboundedReceiver,
+            UnboundedSender
         },
         Mutex,
         RwLock
@@ -75,7 +75,7 @@ pub struct WebSocketSession<H: WebSocketHandler + 'static> {
     server: WebSocketServerShared<H>,
     inner: Mutex<Option<Session>>,
     // Sender to send messages to the session
-    channel: Sender<InnerMessage>
+    channel: UnboundedSender<InnerMessage>
 }
 
 impl<H> WebSocketSession<H>
@@ -84,7 +84,7 @@ where
 {
     // Send a text message to the session
     pub async fn send_text<S: Into<String>>(self: &Arc<Self>, value: S) -> Result<(), WebSocketError> {
-        self.channel.send(InnerMessage::Text(value.into())).await
+        self.channel.send(InnerMessage::Text(value.into()))
             .map_err(|_| WebSocketError::ChannelClosed)?;
 
         Ok(())
@@ -118,7 +118,7 @@ where
 
     // Close the session
     pub async fn close(&self, reason: Option<CloseReason>) -> Result<(), WebSocketError> {
-        self.channel.send(InnerMessage::Close(reason)).await
+        self.channel.send(InnerMessage::Close(reason))
             .map_err(|_| WebSocketError::ChannelClosed)?;
 
         Ok(())
@@ -241,7 +241,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
         let id = self.next_id();
         debug!("Created new WebSocketSession with id {}", id);
 
-        let (tx, rx) = channel(100);
+        let (tx, rx) = unbounded_channel();
         let session = Arc::new(WebSocketSession {
             id,
             request: request.into(),
@@ -277,7 +277,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
 
         let deleted = {
             let mut sessions = self.sessions.write().await;
-            trace!("sessions locked");
+            trace!("sessions locked, size: {}", sessions.len());
             sessions.remove(session)
         };
 
@@ -294,7 +294,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
     // Internal function to handle a WebSocket connection
     // This will send a ping every 5 seconds and close the connection if no pong is received within 30 seconds
     // It will also translate all messages to the handler
-    async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: MessageStream, mut rx: Receiver<InnerMessage>) {
+    async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: MessageStream, mut rx: UnboundedReceiver<InnerMessage>) {
         // call on_connection
         if let Err(e) = self.handler.on_connection(&session).await {
             debug!("Error while calling on_connection: {}", e);
@@ -384,6 +384,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                         },
                         msg => {
                             debug!("Received websocket message not supported: {:?}", msg);
+                            break None;
                         }
                     }
                 }
