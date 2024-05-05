@@ -712,35 +712,34 @@ impl NetworkHandler {
             if should_sync_blocks {
                 self.sync_new_blocks(&address, wallet_topoheight, false).await?;
             }
-        } else if daemon_topoheight > wallet_topoheight {
-            trace!("daemon topoheight is greater than wallet topoheight");
-            // We didn't had to resync, sync only necessary blocks
-            if let Some(block) = event {
-                // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
-                if let Some(topoheight) = block.topoheight {
-                    if let Some((assets, mut nonce)) = self.process_block(address, block, topoheight).await? {
-                        trace!("We must sync head state");
-                        {
-                            let storage = self.wallet.get_storage().read().await;
-                            // Verify that its a higher nonce than our locally stored
-                            // Because if we are building queued transactions, it may break our queue
-                            // Our we couldn't submit new txs before they get removed from mempool
-                            let stored_nonce = storage.get_nonce().unwrap_or(0);
-                            if nonce.is_some_and(|n| n <= stored_nonce) {
-                                nonce = None;
-                            }
+        }
+
+        if let Some(block) = event {
+            trace!("new block event received");
+            // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
+            if let Some(topoheight) = block.topoheight {
+                if let Some((assets, mut nonce)) = self.process_block(address, block, topoheight).await? {
+                    trace!("We must sync head state");
+                    {
+                        let storage = self.wallet.get_storage().read().await;
+                        // Verify that its a higher nonce than our locally stored
+                        // Because if we are building queued transactions, it may break our queue
+                        // Our we couldn't submit new txs before they get removed from mempool
+                        let stored_nonce = storage.get_nonce().unwrap_or(0);
+                        if nonce.is_some_and(|n| n <= stored_nonce) {
+                            nonce = None;
                         }
-                        // A change happened in this block, lets update balance and nonce
-                        self.sync_head_state(&address, Some(assets), nonce, false).await?;
                     }
-                } else {
-                    // It is a block that got directly orphaned by DAG, ignore it
-                    debug!("Block {} is not ordered, skipping it", block.hash);
+                    // A change happened in this block, lets update balance and nonce
+                    self.sync_head_state(&address, Some(assets), nonce, false).await?;
                 }
             } else {
-                // No event, sync blocks by hand
-                self.sync_new_blocks(address, wallet_topoheight, true).await?;
+                // It is a block that got directly orphaned by DAG, ignore it
+                debug!("Block {} is not ordered, skipping it", block.hash);
             }
+        } else {
+            // No event, sync blocks by hand
+            self.sync_new_blocks(address, wallet_topoheight, true).await?;
         }
 
         // Update the topoheight and block hash for wallet
