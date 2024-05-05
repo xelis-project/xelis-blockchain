@@ -318,6 +318,11 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                 // heartbeat
                 _ = interval.tick() => {
                     debug!("Sending ping to session #{}", session.id);
+                    if last_pong_received.elapsed() > KEEP_ALIVE_TIME_OUT {
+                        debug!("session #{} didn't respond in time from our ping", session.id);
+                        break None;
+                    }
+
                     if session.is_closed().await {
                         debug!("Session is closed, stopping heartbeat");
                         break None;
@@ -325,11 +330,6 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
 
                     if let Err(e) = session.ping().await {
                         debug!("Error while sending ping to session #{}: {}", session.id, e);
-                        break None;
-                    }
-
-                    if last_pong_received.elapsed() > KEEP_ALIVE_TIME_OUT {
-                        debug!("session #{} didn't respond in time from our ping", session.id);
                         break None;
                     }
                 },
