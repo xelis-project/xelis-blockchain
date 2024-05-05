@@ -128,6 +128,12 @@ impl<T> From<PoisonError<T>> for PromptError {
     }
 }
 
+impl From<PromptError> for CommandError {
+    fn from(err: PromptError) -> Self {
+        Self::Any(err.into())
+    }
+}
+
 // State used to be shared between stdin thread and Prompt instance
 struct State {
     prompt: Mutex<Option<String>>,
