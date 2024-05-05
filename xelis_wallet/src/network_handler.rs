@@ -797,7 +797,12 @@ impl NetworkHandler {
                     if let Some(hash) = storage.get_block_hash_for_topoheight(event.topoheight).ok() {
                         let topoheight = event.topoheight;
                         if topoheight != 0 && hash != *event.block_hash {
+                            warn!("DAG reorg detected at topoheight {}, deleting all changes above", topoheight);
                             storage.delete_changes_above_topoheight(topoheight - 1)?;
+                            if storage.get_synced_topoheight().unwrap_or(0) > topoheight {
+                                warn!("We are above the reorg, restart syncing from {}", topoheight);
+                                storage.set_synced_topoheight(topoheight)?;
+                            }
                         }
                     }
                 },
