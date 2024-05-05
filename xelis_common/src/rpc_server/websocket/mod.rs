@@ -49,7 +49,12 @@ pub use self::{
 pub type WebSocketServerShared<H> = Arc<WebSocketServer<H>>;
 pub type WebSocketSessionShared<H> = Arc<WebSocketSession<H>>;
 
+// Constants
+// timeout in seconds for sending a message
+const MESSAGE_TIME_OUT: Duration = Duration::from_secs(1);
+// interval in seconds to send a ping message
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
+// timeout in seconds to receive a pong message
 const KEEP_ALIVE_TIME_OUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
@@ -95,7 +100,7 @@ where
     async fn ping(&self) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         let session = inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?;
-        session.ping(b"").await?;
+        timeout(MESSAGE_TIME_OUT, session.ping(b"")).await??;
         Ok(())
     }
 
@@ -104,7 +109,7 @@ where
     async fn pong(&self) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         let session = inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?;
-        session.pong(b"").await?;
+        timeout(MESSAGE_TIME_OUT, session.pong(b"")).await??;
         Ok(())
     }
 
@@ -112,7 +117,7 @@ where
     async fn send_text_internal<S: Into<String>>(&self, value: S) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         let session = inner.as_mut().ok_or(WebSocketError::SessionAlreadyClosed)?;
-        timeout(Duration::from_secs(1), session.text(value.into())).await??;
+        timeout(MESSAGE_TIME_OUT, session.text(value.into())).await??;
         Ok(())
     }
 
@@ -128,7 +133,7 @@ where
     async fn close_internal(&self, reason: Option<CloseReason>) -> Result<(), WebSocketError> {
         let mut inner = self.inner.lock().await;
         let session = inner.take().ok_or(WebSocketError::SessionAlreadyClosed)?;
-        session.close(reason).await?;
+        timeout(MESSAGE_TIME_OUT, session.close(reason)).await??;
         Ok(())
     }
 
@@ -216,8 +221,12 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
 
     // Turns off all connections
     pub async fn clear_connections(&self) -> Result<(), WebSocketError> {
-        let mut sessions = self.sessions.write().await;
-        for session in sessions.drain() {
+        let sessions = {
+            let mut sessions = self.sessions.write().await;
+            sessions.drain().collect::<Vec<_>>()
+        };
+
+        for session in sessions {
             session.close(None).await?;
         }
 
