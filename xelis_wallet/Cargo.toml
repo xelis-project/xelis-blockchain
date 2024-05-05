@@ -1,6 +1,6 @@
 [package]
 name = "xelis_wallet"
-version = "1.9.5"
+version = "1.10.0"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 

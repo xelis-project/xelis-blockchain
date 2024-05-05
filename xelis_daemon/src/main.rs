@@ -181,6 +181,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("difficulty_dataset", "Create a dataset for difficulty from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(difficulty_dataset::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
     command_manager.add_command(Command::new("p2p_outgoing_connections", "Accept/refuse to connect to outgoing nodes", CommandHandler::Async(async_handler!(p2p_outgoing_connections::<S>))))?;
+    command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
 
 
     // Don't keep the lock for ever
@@ -206,8 +207,8 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         let topoheight = blockchain.get_topo_height();
         let (peers, median) = match &p2p {
             Some(p2p) => {
-                let peer_list = p2p.get_peer_list().read().await;
-                (peer_list.size(), peer_list.get_median_topoheight(Some(topoheight)))
+                let peer_list = p2p.get_peer_list();
+                (peer_list.size().await, peer_list.get_median_topoheight(Some(topoheight)).await)
             },
             None => (0, blockchain.get_topo_height())
         };
@@ -363,8 +364,8 @@ async fn kick_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManag
         Some(p2p) => {
             let addr: SocketAddr = args.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
             let peer = {
-                let peer_list = p2p.get_peer_list().read().await;
-                peer_list.get_peer_by_addr(&addr).cloned()
+                let peer_list = p2p.get_peer_list();
+                peer_list.get_peer_by_addr(&addr).await
             };
 
             if let Some(peer) = peer {
@@ -411,11 +412,11 @@ async fn list_peers<S: Storage>(manager: &CommandManager, _: ArgumentManager) ->
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
-            let peer_list = p2p.get_peer_list().read().await;
-            for peer in peer_list.get_peers().values() {
+            let peer_list = p2p.get_peer_list();
+            for peer in peer_list.get_peers().read().await.values() {
                 manager.message(format!("{}", peer));
             }
-            manager.message(format!("Total peer(s) count: {}", peer_list.size()));
+            manager.message(format!("Total peer(s) count: {}", peer_list.size().await));
         },
         None => {
             manager.message("No P2p server running!");
@@ -517,7 +518,7 @@ async fn pop_blocks<S: Storage>(manager: &CommandManager, mut arguments: Argumen
     let amount = arguments.get_value("amount")?.to_number()?;
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    if amount == 0 || amount >= blockchain.get_height() {
+    if amount == 0 || amount >= blockchain.get_topo_height() {
         return Err(anyhow::anyhow!("Invalid amount of blocks to pop").into());
     }
 
@@ -582,13 +583,14 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let height = blockchain.get_height();
     let topoheight = blockchain.get_topo_height();
     let stableheight = blockchain.get_stable_height();
+    let stable_topoheight = blockchain.get_stable_topoheight();
     let difficulty = blockchain.get_difficulty().await;
 
     let storage = blockchain.get_storage().read().await;
     let tips = storage.get_tips().await.context("Error while retrieving tips")?;
     let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await.context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await.context("Error while retrieving average block time")?;
-    let supply = blockchain.get_supply().await.context("Error while retrieving supply")?;
+    let supply = storage.get_supply_at_topo_height(topoheight).await.context("Error while retrieving supply")?;
     let accounts_count = storage.count_accounts().await.context("Error while counting accounts")?;
     let transactions_count = storage.count_transactions().await.context("Error while counting transactions")?;
     let blocks_count = storage.count_blocks().await.context("Error while counting blocks")?;
@@ -597,6 +599,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
 
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
+    manager.message(format!("Stable Topo Height: {}", stable_topoheight));
     manager.message(format!("Topo Height: {}", topoheight));
     manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
     manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / BLOCK_TIME).into())));
@@ -666,8 +669,8 @@ async fn clear_p2p_peerlist<S: Storage>(manager: &CommandManager, _: ArgumentMan
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     match blockchain.get_p2p().read().await.as_ref() {
         Some(p2p) => {
-            let mut peerlist = p2p.get_peer_list().write().await;
-            peerlist.clear_peerlist();
+            let peerlist = p2p.get_peer_list();
+            peerlist.clear_peerlist().await;
             manager.message("P2P peerlist cleared");
         },
         None => {
@@ -695,17 +698,18 @@ async fn blacklist<S: Storage>(manager: &CommandManager, mut arguments: Argument
         Some(p2p) => {
             if arguments.has_argument("address") {
                 let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
-                let mut peer_list = p2p.get_peer_list().write().await;
-                if peer_list.is_blacklisted(&address) {
-                    peer_list.set_graylist_for_peer(&address);
+                let peer_list = p2p.get_peer_list();
+                if peer_list.is_blacklisted(&address).await {
+                    peer_list.set_graylist_for_peer(&address).await;
                     manager.message(format!("Peer {} is not blacklisted anymore", address));
                 } else {
                     peer_list.blacklist_address(&address).await;
                     manager.message(format!("Peer {} has been blacklisted", address));
                 }
             } else {
-                let peer_list = p2p.get_peer_list().read().await;
-                let blacklist = peer_list.get_blacklist();
+                let peer_list = p2p.get_peer_list();
+                let stored_peers = peer_list.get_stored_peers().read().await;
+                let blacklist = peer_list.get_blacklist(&stored_peers);
                 manager.message(format!("Current blacklist ({}):", blacklist.len()));
                 for (ip, peer) in blacklist {
                     manager.message(format!("- {}: {}", ip, peer));
@@ -727,17 +731,18 @@ async fn whitelist<S: Storage>(manager: &CommandManager, mut arguments: Argument
         Some(p2p) => {
             if arguments.has_argument("address") {
                 let address: IpAddr = arguments.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
-                let mut peer_list = p2p.get_peer_list().write().await;
-                if peer_list.is_whitelisted(&address) {
-                    peer_list.set_graylist_for_peer(&address);
+                let peer_list = p2p.get_peer_list();
+                if peer_list.is_whitelisted(&address).await {
+                    peer_list.set_graylist_for_peer(&address).await;
                     manager.message(format!("Peer {} is not whitelisted anymore", address));
                 } else {
-                    peer_list.whitelist_address(&address);
+                    peer_list.whitelist_address(&address).await;
                     manager.message(format!("Peer {} has been whitelisted", address));
                 }
             } else {
-                let peer_list = p2p.get_peer_list().read().await;
-                let whitelist = peer_list.get_whitelist();
+                let peer_list = p2p.get_peer_list();
+                let stored_peers = peer_list.get_stored_peers().read().await;
+                let whitelist = peer_list.get_whitelist(&stored_peers);
                 manager.message(format!("Current whitelist ({}):", whitelist.len()));
                 for (ip, peer) in whitelist {
                     manager.message(format!("- {}: {}", ip, peer));
@@ -841,6 +846,23 @@ async fn p2p_outgoing_connections<S: Storage>(manager: &CommandManager, _: Argum
             let current = p2p.is_outgoing_connections_disabled();
             p2p.set_disable_outgoing_connections(!current);
             manager.message(format!("Outgoing connections are now {}", if current { "enabled" } else { "disabled" }));
+        },
+        None => {
+            manager.error("P2P is not enabled");
+        }
+    };
+
+    Ok(())
+}
+
+async fn add_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_p2p().read().await.as_ref() {
+        Some(p2p) => {
+            let addr: SocketAddr = args.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
+            p2p.try_to_connect_to_peer(addr, false).await;
+            manager.message(format!("Trying to connect to peer {}", addr));
         },
         None => {
             manager.error("P2P is not enabled");

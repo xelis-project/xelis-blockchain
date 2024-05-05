@@ -299,3 +299,32 @@ impl Display for BlockHeader {
         write!(f, "BlockHeader[height: {}, tips: [{}], timestamp: {}, nonce: {}, extra_nonce: {}, txs: {}]", self.height, tips.join(", "), self.timestamp, self.nonce, hex::encode(self.extra_nonce), self.txs_hashes.len())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use indexmap::IndexSet;
+    use crate::{crypto::{Hash, Hashable, KeyPair}, serializer::Serializer};
+    use super::BlockHeader;
+
+    #[test]
+    fn test_block_template() {
+        let mut tips = IndexSet::new();
+        tips.insert(Hash::zero());
+
+        let miner = KeyPair::new().get_public_key().compress();
+        let header = BlockHeader::new(0, 0, 0, tips, [0u8; 32], miner, IndexSet::new());
+
+        let serialized = header.to_bytes();
+        assert!(serialized.len() == header.size());
+
+        let deserialized = BlockHeader::from_bytes(&serialized).unwrap();
+        assert!(header.hash() == deserialized.hash());
+    }
+
+    #[test]
+    fn test_block_template_from_hex() {
+        let serialized = "00000000000000002d0000018f1cbd697000000000000000000eded85557e887b45989a727b6786e1bd250de65042d9381822fa73d01d2c4ff01d3a0154853dbb01dc28c9102e9d94bea355b8ee0d82c3e078ac80841445e86520000d67ad13934337b85c34985491c437386c95de0d97017131088724cfbedebdc55".to_owned();
+        let header = BlockHeader::from_hex(serialized.clone()).unwrap();
+        assert!(header.to_hex() == serialized);
+    }
+}

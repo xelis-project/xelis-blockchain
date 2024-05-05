@@ -48,30 +48,30 @@ When a new block has been accepted and included in the chain by the daemon.
 ##### On Event
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": {
-        "block_type": "Normal",
-        "cumulative_difficulty": "9909351292695001",
-        "difficulty": "85713090000",
-        "event": "new_block",
-        "extra_nonce": "cb4a04b8cd2913f0947c323c8a2fe4d3623047f1e8a9f4e5f717aaf6ec5da70e",
-        "hash": "0000000008ef82aeb890b919803e19985c430311ddd34aa9b0cb2d40a6dffb87",
-        "height": 106173,
-        "miner": "xet:4fcjmjxs6dyq7d3xl95m26wzfwrluz2tcqdtfp6fpc7rah2kmqusqdr3c66",
-        "nonce": 121282154,
-        "reward": 144997766,
-        "supply": 15506012755620,
-        "timestamp": 1713028338116,
-        "tips": [
-            "0000000000beaccfbb05ffc3b33536daffa85a90cbbf4761287376a65dcac859"
-        ],
-        "topoheight": 107219,
-        "total_fees": 0,
-        "total_size_in_bytes": 124,
-        "txs_hashes": [],
-        "version": 0
-    }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"block_type": "Normal",
+		"cumulative_difficulty": "9909351292695001",
+		"difficulty": "85713090000",
+		"event": "new_block",
+		"extra_nonce": "cb4a04b8cd2913f0947c323c8a2fe4d3623047f1e8a9f4e5f717aaf6ec5da70e",
+		"hash": "0000000008ef82aeb890b919803e19985c430311ddd34aa9b0cb2d40a6dffb87",
+		"height": 106173,
+		"miner": "xet:4fcjmjxs6dyq7d3xl95m26wzfwrluz2tcqdtfp6fpc7rah2kmqusqdr3c66",
+		"nonce": 121282154,
+		"reward": 144997766,
+		"supply": 15506012755620,
+		"timestamp": 1713028338116,
+		"tips": [
+			"0000000000beaccfbb05ffc3b33536daffa85a90cbbf4761287376a65dcac859"
+		],
+		"topoheight": 107219,
+		"total_fees": 0,
+		"total_size_in_bytes": 124,
+		"txs_hashes": [],
+		"version": 0
+	}
 }
 ```
 
@@ -413,6 +413,109 @@ No parameters
 }
 ```
 
+#### Get Difficulty
+Retrieve current difficulty and associated network hashrate.
+
+##### Method `get_difficulty`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_difficulty",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"difficulty": "79746345000",
+		"hashrate": "5316423000",
+		"hashrate_formatted": "5.32 GH/s"
+	}
+}
+```
+
+#### Validate Address
+Validate a wallet address by accepting or not integrated address.
+
+##### Method `validate_address`
+
+##### Parameters
+|       Name       |   Type  | Required |                         Note                        |
+|:----------------:|:-------:|:--------:|:---------------------------------------------------:|
+|      address     | Address | Required |               wallet address to verify              |
+| allow_integrated | Boolean | Optional | Allow integrated addresses. By default set to false |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "validate_address",
+	"params": {
+		"address": "xel:vs3mfyywt0fjys0rgslue7mm4wr23xdgejsjk0ld7f2kxng4d4nqqnkdufz",
+		"allow_integrated": false
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"is_integrated": false,
+		"is_valid": true
+	}
+}
+```
+
+#### Extract Key From Address
+Extract public key from a wallet address
+
+##### Method `extract_key_from_address`
+
+##### Parameters
+|    Name   |   Type  | Required |                                         Note                                         |
+|:---------:|:-------:|:--------:|:------------------------------------------------------------------------------------:|
+|  address  | Address | Required |                               wallet address to verify                               |
+|  as_hex   | Boolean | Optional | Returns Public Key as hexadecimal. By default set to false and returns a byte array. |
+
+NOTE: If `as_hex` is `false`, the response result will contains a field named `bytes` instead of `hex`.
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "extract_key_from_address",
+	"params": {
+		"address": "xel:vs3mfyywt0fjys0rgslue7mm4wr23xdgejsjk0ld7f2kxng4d4nqqnkdufz",
+		"as_hex": true
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"hex": "6423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66"
+	}
+}
+```
+
 #### Get Block Template
 Retrieve the block template (Block Header) for PoW work.
 
@@ -448,14 +551,57 @@ Block Header can be serialized/deserialized using following order on byte array:
 ##### Response
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": {
-        "difficulty": "15000",
-        "height": 45,
-        "template": "00000000000000002d0000018f1cbd697000000000000000000eded85557e887b45989a727b6786e1bd250de65042d9381822fa73d01d2c4ff01d3a0154853dbb01dc28c9102e9d94bea355b8ee0d82c3e078ac80841445e86520000d67ad13934337b85c34985491c437386c95de0d97017131088724cfbedebdc55",
-        "topoheight": 44
-    }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"difficulty": "15000",
+		"height": 45,
+		"template": "00000000000000002d0000018f1cbd697000000000000000000eded85557e887b45989a727b6786e1bd250de65042d9381822fa73d01d2c4ff01d3a0154853dbb01dc28c9102e9d94bea355b8ee0d82c3e078ac80841445e86520000d67ad13934337b85c34985491c437386c95de0d97017131088724cfbedebdc55",
+		"topoheight": 44
+	}
+}
+```
+
+#### Create Miner Work
+Create a work for miner based on a block template set in parameter.
+
+A `MinerWork` struct is created from the block header work hash which represent the immutable part.
+
+For the mutable part that can be updated by the miner we have the following field:
+- timestamp (u64) big endian format
+- nonce (u64) big endian format
+- miner key (32 bytes)
+- extra nonce (32 bytes)
+
+##### Method `create_miner_work`
+
+##### Parameters
+|   Name   |      Type     | Required |                               Note                              |
+|:--------:|:-------------:|:--------:|:---------------------------------------------------------------:|
+| template | BlockTemplate | Required |     Block Template from which the MinerWork will be created     |
+|  address |    Address    | Optional | Miner address for rewards. By default use address from template |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "create_miner_work",
+	"id": 1,
+	"params": {
+		"template": "00000000000000c19a0000018f2c14497300000000000000005dc86515e4adbb394b11dcdd25efcb78a08729b6230065dbb9a3c85f960af89901a0ea4d7c7dee70a12b14e95c1385e06ecd6a14e1a63a8302ce3c1e4dd7994c2f00006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66",
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"miner_work": "dd7cbd9dbb0854a66c455963050e5cf7fb22f3c4ba5d4a26d142d80ba70418cc0000018f2c14497300000000000000005dc86515e4adbb394b11dcdd25efcb78a08729b6230065dbb9a3c85f960af8996423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66"
+	}
 }
 ```
 
@@ -530,7 +676,9 @@ Retrieve a block at a specific topo height
 		"height": 10,
 		"miner": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
 		"nonce": 432581,
-		"reward": 146229945,
+		"reward": 146229454,
+		"miner_reward": 131606509,
+		"dev_reward": 14622945,
 		"supply": 1608530035,
 		"timestamp": 1711135323375,
 		"tips": [
@@ -584,7 +732,9 @@ Retrieve all blocks at a specific height
 			"height": 23,
 			"miner": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
 			"nonce": 13171398,
-			"reward": 146229794,
+			"reward": 146229454,
+			"miner_reward": 131606509,
+			"dev_reward": 14622945,
 			"supply": 3509518265,
 			"timestamp": 1711135431639,
 			"tips": [
@@ -639,7 +789,9 @@ Retrieve a block by its hash
 		"height": 69,
 		"miner": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
 		"nonce": 133614499,
-		"reward": 146229256,
+		"reward": 146229454,
+		"miner_reward": 131606509,
+		"dev_reward": 14622945,
 		"supply": 10279945002,
 		"timestamp": 1711310140627,
 		"tips": [
@@ -691,7 +843,9 @@ Retrieve the highest block based on the topological height
 		"height": 21875,
 		"miner": "xet:sj7cfaalq5l5qlvtwlf4zmgrzv3jje08dc6dpgc5zjk6djqqvyrsqly8rex",
 		"nonce": 35440241,
-		"reward": 145975015,
+		"reward": 146229454,
+		"miner_reward": 131606509,
+		"dev_reward": 14622945,
 		"supply": 3209375196561,
 		"timestamp": 1711663576873,
 		"tips": [
@@ -5532,7 +5686,9 @@ NOTE: Bounds are inclusive.
 			"height": 0,
 			"miner": "xet:3tr88r8vvx3qxvgr7gdja5kae784v8htc7ayaj4nxlzgflhchlmqqdmycjf",
 			"nonce": 0,
-			"reward": 146230061,
+			"reward": 146229454,
+			"miner_reward": 131606509,
+			"dev_reward": 14622945,
 			"supply": 146230061,
 			"timestamp": 1708339574098,
 			"tips": [],
@@ -5551,7 +5707,9 @@ NOTE: Bounds are inclusive.
 			"height": 1,
 			"miner": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
 			"nonce": 2969302,
-			"reward": 146230050,
+			"reward": 146229454,
+			"miner_reward": 131606509,
+			"dev_reward": 14622945,
 			"supply": 292460111,
 			"timestamp": 1711135309926,
 			"tips": [
@@ -5572,7 +5730,9 @@ NOTE: Bounds are inclusive.
 			"height": 2,
 			"miner": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
 			"nonce": 12047121,
-			"reward": 146230038,
+			"reward": 146229454,
+			"miner_reward": 131606509,
+			"dev_reward": 14622945,
 			"supply": 438690149,
 			"timestamp": 1711135311567,
 			"tips": [
@@ -5629,7 +5789,9 @@ NOTE: Bounds are inclusive.
 			"height": 0,
 			"miner": "xet:3tr88r8vvx3qxvgr7gdja5kae784v8htc7ayaj4nxlzgflhchlmqqdmycjf",
 			"nonce": 0,
-			"reward": 146230061,
+			"reward": 146229454,
+			"miner_reward": 131606509,
+			"dev_reward": 14622945,
 			"supply": 146230061,
 			"timestamp": 1708339574098,
 			"tips": [],
@@ -5648,7 +5810,9 @@ NOTE: Bounds are inclusive.
 			"height": 1,
 			"miner": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
 			"nonce": 2969302,
-			"reward": 146230050,
+			"reward": 146229454,
+			"miner_reward": 131606509,
+			"dev_reward": 14622945,
 			"supply": 292460111,
 			"timestamp": 1711135309926,
 			"tips": [
@@ -5669,7 +5833,9 @@ NOTE: Bounds are inclusive.
 			"height": 2,
 			"miner": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
 			"nonce": 12047121,
-			"reward": 146230038,
+			"reward": 146229454,
+			"miner_reward": 131606509,
+			"dev_reward": 14622945,
 			"supply": 438690149,
 			"timestamp": 1711135311567,
 			"tips": [
@@ -5733,103 +5899,103 @@ This includes nonce range (min/max) used, final output balances expected per ass
 ##### Request
 ```json
 {
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "get_mempool_cache",
-    "params": {
-        "address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk"
-    }
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_mempool_cache",
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk"
+	}
 }
 ```
 
 ##### Response
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": {
-        "balances": {
-            "0000000000000000000000000000000000000000000000000000000000000000": {
-                "commitment": [
-                    244,
-                    202,
-                    158,
-                    128,
-                    207,
-                    119,
-                    30,
-                    237,
-                    144,
-                    243,
-                    146,
-                    197,
-                    136,
-                    223,
-                    240,
-                    34,
-                    50,
-                    232,
-                    217,
-                    160,
-                    125,
-                    120,
-                    125,
-                    135,
-                    65,
-                    192,
-                    213,
-                    220,
-                    116,
-                    235,
-                    120,
-                    122
-                ],
-                "handle": [
-                    122,
-                    13,
-                    209,
-                    236,
-                    109,
-                    230,
-                    21,
-                    124,
-                    148,
-                    244,
-                    88,
-                    0,
-                    117,
-                    99,
-                    188,
-                    49,
-                    90,
-                    214,
-                    225,
-                    239,
-                    229,
-                    183,
-                    230,
-                    142,
-                    10,
-                    56,
-                    82,
-                    96,
-                    70,
-                    232,
-                    110,
-                    104
-                ]
-            }
-        },
-        "max": 2829,
-        "min": 2825,
-        "txs": [
-            "78148376846b2a8ce1f3b248a65bd5ed4e22ebb6ac98514377a4ea47d08cb2a8",
-            "d8b1d090eea0812e99c1384137240773079dcd79a4fbfe4d78d395288ff1823a",
-            "c82cba8d5472dc2c1d6d38dd30ee3726d32638001e0c54903905c4f0c814ae6a",
-            "2f4bf1ea35fc8ef33961a465ac0cf0dc2c6010daaee423ed06ffdcdf2b9c0d6d",
-            "f1c8425a7f3bea049dbdcaf905ef447d43ca41763740b54d2958baac15d0d3ae"
-        ]
-    }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"balances": {
+			"0000000000000000000000000000000000000000000000000000000000000000": {
+				"commitment": [
+					244,
+					202,
+					158,
+					128,
+					207,
+					119,
+					30,
+					237,
+					144,
+					243,
+					146,
+					197,
+					136,
+					223,
+					240,
+					34,
+					50,
+					232,
+					217,
+					160,
+					125,
+					120,
+					125,
+					135,
+					65,
+					192,
+					213,
+					220,
+					116,
+					235,
+					120,
+					122
+				],
+				"handle": [
+					122,
+					13,
+					209,
+					236,
+					109,
+					230,
+					21,
+					124,
+					148,
+					244,
+					88,
+					0,
+					117,
+					99,
+					188,
+					49,
+					90,
+					214,
+					225,
+					239,
+					229,
+					183,
+					230,
+					142,
+					10,
+					56,
+					82,
+					96,
+					70,
+					232,
+					110,
+					104
+				]
+			}
+		},
+		"max": 2829,
+		"min": 2825,
+		"txs": [
+			"78148376846b2a8ce1f3b248a65bd5ed4e22ebb6ac98514377a4ea47d08cb2a8",
+			"d8b1d090eea0812e99c1384137240773079dcd79a4fbfe4d78d395288ff1823a",
+			"c82cba8d5472dc2c1d6d38dd30ee3726d32638001e0c54903905c4f0c814ae6a",
+			"2f4bf1ea35fc8ef33961a465ac0cf0dc2c6010daaee423ed06ffdcdf2b9c0d6d",
+			"f1c8425a7f3bea049dbdcaf905ef447d43ca41763740b54d2958baac15d0d3ae"
+		]
+	}
 }
 ```
 
@@ -5920,25 +6086,25 @@ When a new transaction is detected by the wallet.
 ##### On Event
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": {
-        "event": "new_transaction",
-        "hash": "b84adead7fe1c0499f92826c08f4f67f8e5133981465b7b9cf0b34649e11f1e0",
-        "outgoing": {
-            "fee": 125000,
-            "nonce": 3530,
-            "transfers": [
-                {
-                    "amount": 100000000,
-                    "asset": "0000000000000000000000000000000000000000000000000000000000000000",
-                    "destination": "xet:6elhr5zvx5wl2ljjl82l6yxxxqkxjvcr38kcq9qef3nurm2r2arsq89z4ll",
-                    "extra_data": null
-                }
-            ]
-        },
-        "topoheight": 107853
-    }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"event": "new_transaction",
+		"hash": "b84adead7fe1c0499f92826c08f4f67f8e5133981465b7b9cf0b34649e11f1e0",
+		"outgoing": {
+			"fee": 125000,
+			"nonce": 3530,
+			"transfers": [
+				{
+					"amount": 100000000,
+					"asset": "0000000000000000000000000000000000000000000000000000000000000000",
+					"destination": "xet:6elhr5zvx5wl2ljjl82l6yxxxqkxjvcr38kcq9qef3nurm2r2arsq89z4ll",
+					"extra_data": null
+				}
+			]
+		},
+		"topoheight": 107853
+	}
 }
 ```
 
@@ -5991,11 +6157,11 @@ When the wallet is in online mode (connected to a daemon).
 ##### On Event
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": {
-        "event": "online"
-    }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"event": "online"
+	}
 }
 ```
 
@@ -6008,11 +6174,11 @@ When the wallet is in offline mode (not connected to any daemon).
 ##### On Event
 ```json
 {
-    "id": 1,
-    "jsonrpc": "2.0",
-    "result": {
-        "event": "offline"
-    }
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"event": "offline"
+	}
 }
 ```
 

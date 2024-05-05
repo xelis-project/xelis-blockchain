@@ -1,9 +1,11 @@
-use tokio::task::{Builder, JoinHandle};
+use tokio::task::JoinHandle;
+#[cfg(all(tokio_unstable, feature = "tracing"))]
+use tokio::task::Builder;
 use std::{
     net::SocketAddr,
     future::Future,
 };
-
+use log::trace;
 use crate::{
     config::{
         COIN_DECIMALS,
@@ -132,14 +134,24 @@ pub fn sanitize_daemon_address(target: &str) -> String {
 }
 
 // Spawn a new task with a name
+// If the tokio_unstable feature is enabled, the task will be named
+#[inline(always)]
 pub fn spawn_task<Fut, S: Into<String>>(name: S, future: Fut) -> JoinHandle<Fut::Output>
 where
     Fut: Future + Send + 'static,
     Fut::Output: Send + 'static,
 {
     let name_str = name.into();
-    let name = name_str.as_str();
-    Builder::new().name(name).spawn(future).expect(name)
+    trace!("Spawning task: {}", name_str);
+    #[cfg(all(tokio_unstable, feature = "tracing"))]
+    {
+        let name = name_str.as_str();
+        Builder::new().name(name).spawn(future).expect(name)
+    }
+    #[cfg(not(all(tokio_unstable, feature = "tracing")))]
+    {
+        tokio::spawn(future)
+    }
 }
 
 #[cfg(test)]

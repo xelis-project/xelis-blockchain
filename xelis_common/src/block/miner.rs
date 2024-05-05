@@ -17,7 +17,7 @@ use crate::{
     time::TimestampMillis,
 };
 
-use super::{EXTRA_NONCE_SIZE, BLOCK_WORK_SIZE};
+use super::{BlockHeader, BLOCK_WORK_SIZE, EXTRA_NONCE_SIZE};
 
 // This structure is used by xelis-miner which allow to compute a valid block POW hash
 #[derive(Clone, Debug)]
@@ -41,6 +41,17 @@ impl<'a> MinerWork<'a> {
             nonce: 0,
             miner: None,
             extra_nonce: [0u8; EXTRA_NONCE_SIZE],
+            cache: None
+        }
+    }
+
+    pub fn from_block(header: BlockHeader) -> Self {
+        Self {
+            header_work_hash: header.get_work_hash(),
+            timestamp: header.get_timestamp(),
+            nonce: 0,
+            miner: Some(Cow::Owned(header.miner)),
+            extra_nonce: header.extra_nonce,
             cache: None
         }
     }

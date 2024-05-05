@@ -216,7 +216,7 @@ impl NetworkHandler {
         // create Coinbase entry if its our address and we're looking for XELIS asset
         if miner == *address.get_public_key() {
             debug!("Block {} at topoheight {} is mined by us", block_hash, topoheight);
-            if let Some(reward) = block.reward {
+            if let Some(reward) = block.miner_reward {
                 let coinbase = EntryData::Coinbase { reward };
                 let entry = TransactionEntry::new(block_hash.clone(), topoheight, coinbase);
 
@@ -323,7 +323,7 @@ impl NetworkHandler {
             if let Some(entry) = entry {
                 // New transaction entry that may be linked to us, check if TX was executed
                 if !self.api.is_tx_executed_in_block(&tx.hash, &block_hash).await? {
-                    debug!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx.hash, block_hash);
+                    warn!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx.hash, block_hash);
                     continue;
                 }
 
@@ -712,35 +712,34 @@ impl NetworkHandler {
             if should_sync_blocks {
                 self.sync_new_blocks(&address, wallet_topoheight, false).await?;
             }
-        } else if daemon_topoheight > wallet_topoheight {
-            trace!("daemon topoheight is greater than wallet topoheight");
-            // We didn't had to resync, sync only necessary blocks
-            if let Some(block) = event {
-                // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
-                if let Some(topoheight) = block.topoheight {
-                    if let Some((assets, mut nonce)) = self.process_block(address, block, topoheight).await? {
-                        trace!("We must sync head state");
-                        {
-                            let storage = self.wallet.get_storage().read().await;
-                            // Verify that its a higher nonce than our locally stored
-                            // Because if we are building queued transactions, it may break our queue
-                            // Our we couldn't submit new txs before they get removed from mempool
-                            let stored_nonce = storage.get_nonce().unwrap_or(0);
-                            if nonce.is_some_and(|n| n <= stored_nonce) {
-                                nonce = None;
-                            }
+        }
+
+        if let Some(block) = event {
+            trace!("new block event received");
+            // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
+            if let Some(topoheight) = block.topoheight {
+                if let Some((assets, mut nonce)) = self.process_block(address, block, topoheight).await? {
+                    trace!("We must sync head state");
+                    {
+                        let storage = self.wallet.get_storage().read().await;
+                        // Verify that its a higher nonce than our locally stored
+                        // Because if we are building queued transactions, it may break our queue
+                        // Our we couldn't submit new txs before they get removed from mempool
+                        let stored_nonce = storage.get_nonce().unwrap_or(0);
+                        if nonce.is_some_and(|n| n <= stored_nonce) {
+                            nonce = None;
                         }
-                        // A change happened in this block, lets update balance and nonce
-                        self.sync_head_state(&address, Some(assets), nonce, false).await?;
                     }
-                } else {
-                    // It is a block that got directly orphaned by DAG, ignore it
-                    debug!("Block {} is not ordered, skipping it", block.hash);
+                    // A change happened in this block, lets update balance and nonce
+                    self.sync_head_state(&address, Some(assets), nonce, false).await?;
                 }
             } else {
-                // No event, sync blocks by hand
-                self.sync_new_blocks(address, wallet_topoheight, true).await?;
+                // It is a block that got directly orphaned by DAG, ignore it
+                debug!("Block {} is not ordered, skipping it", block.hash);
             }
+        } else {
+            // No event, sync blocks by hand
+            self.sync_new_blocks(address, wallet_topoheight, true).await?;
         }
 
         // Update the topoheight and block hash for wallet
@@ -767,7 +766,15 @@ impl NetworkHandler {
 
         // Thanks to websocket, we can be notified when a new block is added in chain
         // this allows us to have a instant sync of each new block instead of polling periodically
-        let mut receiver = self.api.on_new_block_event().await?;
+        let mut on_new_block = self.api.on_new_block_event().await?;
+
+        // Because DAG can reorder any blocks in stable height, its possible we missed some txs because they were not executed
+        // when the block was added. We must check on DAG reorg for each block just to be sure
+        let mut on_block_ordered = self.api.on_block_ordered_event().await?;
+
+        // For better security, verify that an orphaned TX isn't in our ledger
+        // This is rare event but may happen if someone try to do something shady
+        let mut on_transaction_orphaned = self.api.on_transaction_orphaned_event().await?;
 
         // Network events to detect if we are online or offline
         let mut on_connection = self.api.on_connection().await;
@@ -777,10 +784,37 @@ impl NetworkHandler {
             tokio::select! {
                 // Wait on a new block, we don't parse the block directly as it may
                 // have reorg the chain
-                res = receiver.next() => {
+                res = on_new_block.next() => {
                     trace!("on_new_block_event");
                     let event = res?;
                     self.sync(&address, Some(event)).await?;
+                },
+                res = on_block_ordered.next() => {
+                    trace!("on_block_ordered_event");
+                    let event = res?;
+                    let mut storage = self.wallet.get_storage().write().await;
+                    if let Some(hash) = storage.get_block_hash_for_topoheight(event.topoheight).ok() {
+                        let topoheight = event.topoheight;
+                        if topoheight != 0 && hash != *event.block_hash {
+                            warn!("DAG reorg detected at topoheight {}, deleting all changes above", topoheight);
+                            storage.delete_changes_above_topoheight(topoheight - 1)?;
+                            if storage.get_synced_topoheight().unwrap_or(0) > topoheight {
+                                warn!("We are above the reorg, restart syncing from {}", topoheight);
+                                storage.set_synced_topoheight(topoheight)?;
+                            }
+                        }
+                    }
+                },
+                res = on_transaction_orphaned.next() => {
+                    trace!("on_transaction_orphaned_event");
+                    let event = res?;
+                    let tx = event.data;
+
+                    let mut storage = self.wallet.get_storage().write().await;
+                    if storage.has_transaction(&tx.hash)? {
+                        warn!("Transaction {} was orphaned, deleting it", tx.hash);
+                        storage.delete_transaction(&tx.hash)?;
+                    }
                 },
                 // Detect network events
                 res = on_connection.recv() => {

@@ -15,7 +15,7 @@ use xelis_common::{
     varuint::VarUint
 };
 use crate::core::{
-    error::BlockchainError,
+    error::{BlockchainError, DiskContext},
     storage::SledStorage,
 };
 
@@ -67,12 +67,12 @@ impl DifficultyProvider for SledStorage {
 
     async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
         trace!("get difficulty for hash {}", hash);
-        self.load_from_disk(&self.difficulty, hash.as_bytes())
+        self.load_from_disk(&self.difficulty, hash.as_bytes(), DiskContext::DifficultyForBlockHash)
     }
 
     async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError> {
         trace!("get cumulative difficulty for hash {}", hash);
-        self.get_cacheable_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash).await
+        self.get_cacheable_data(&self.cumulative_difficulty, &self.cumulative_difficulty_cache, hash, DiskContext::CumulativeDifficultyForBlockHash).await
     }
 
     async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Immutable<IndexSet<Hash>>, BlockchainError> {
@@ -98,7 +98,7 @@ impl DifficultyProvider for SledStorage {
 
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Arc<BlockHeader>, BlockchainError> {
         trace!("get block by hash: {}", hash);
-        self.get_cacheable_arc_data(&self.blocks, &self.blocks_cache, hash).await
+        self.get_cacheable_arc_data(&self.blocks, &self.blocks_cache, hash, DiskContext::GetBlockHeaderByHash).await
     }
 
     async fn set_cumulative_difficulty_for_block_hash(&mut self, hash: &Hash, cumulative_difficulty: CumulativeDifficulty) -> Result<(), BlockchainError> {
@@ -109,7 +109,7 @@ impl DifficultyProvider for SledStorage {
 
     async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
         trace!("get p for hash {}", hash);
-        self.load_from_disk(&self.difficulty_covariance, hash.as_bytes())
+        self.load_from_disk(&self.difficulty_covariance, hash.as_bytes(), DiskContext::EstimatedCovarianceForBlockHash)
     }
 
     async fn set_estimated_covariance_for_block_hash(&mut self, hash: &Hash, p: VarUint) -> Result<(), BlockchainError> {

@@ -398,6 +398,11 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
+        {
+            let mut mempool = self.mempool.write().await;
+            mempool.stop().await;
+        }
+
         info!("All modules are now stopped!");
     }
 
@@ -405,7 +410,7 @@ impl<S: Storage> Blockchain<S> {
     // Clear the mempool also in case of not being up-to-date
     pub async fn reload_from_disk(&self) -> Result<(), BlockchainError> {
         trace!("Reloading chain from disk");
-        let storage = self.storage.read().await;
+        let storage = self.storage.write().await;
         let topoheight = storage.get_top_topoheight()?;
         let height = storage.get_top_height()?;
         self.topoheight.store(topoheight, Ordering::SeqCst);
@@ -535,7 +540,7 @@ impl<S: Storage> Blockchain<S> {
         // find new stable point based on a sync block under the limit topoheight
         let located_sync_topoheight = self.locate_nearest_sync_block_for_topoheight::<S>(&storage, topoheight, self.get_height()).await?;
         debug!("Located sync topoheight found: {}", located_sync_topoheight);
-        
+
         if located_sync_topoheight > last_pruned_topoheight {
             // create snapshots of balances to located_sync_topoheight
             storage.create_snapshot_balances_at_topoheight(located_sync_topoheight).await?;
@@ -726,15 +731,18 @@ impl<S: Storage> Blockchain<S> {
     where
         P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
     {
+        debug!("Finding tip base for {} at height {}", hash, height);
         let mut cache = self.tip_base_cache.lock().await;
 
         let mut stack: VecDeque<Hash> = VecDeque::new();
         stack.push_back(hash.clone());
 
         let mut bases: IndexSet<(Hash, u64)> = IndexSet::new();
+        let mut processed = HashSet::new();
 
         'main: while let Some(current_hash) = stack.pop_back() {
             trace!("Finding tip base for {} at height {}", current_hash, height);
+            processed.insert(current_hash.clone());
             if pruned_topoheight > 0 && provider.is_block_topological_ordered(&current_hash).await {
                 let topoheight = provider.get_topo_height_for_hash(&current_hash).await?;
                 // Node is pruned, we only prune chain to stable height / sync block so we can return the hash
@@ -783,8 +791,10 @@ impl<S: Storage> Blockchain<S> {
                     continue 'main;
                 }
 
-                // Tip was not sync, we need to find its tip base too
-                stack.push_back(tip_hash.clone());
+                if !processed.contains(tip_hash) {
+                    // Tip was not sync, we need to find its tip base too
+                    stack.push_back(tip_hash.clone());
+                }
             }
         }
 
@@ -1301,10 +1311,14 @@ impl<S: Storage> Blockchain<S> {
                         first_seen: Some(get_current_time_in_seconds()),
                         data,
                     };
+                    let json = json!(data);
 
-                    if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json!(data)).await {
-                        debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
-                    }
+                    let rpc = rpc.clone();
+                    spawn_task("rpc-notify-tx", async move {
+                        if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json).await {
+                            debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
+                        }
+                    });
                 }
             }
         }
@@ -2498,13 +2512,14 @@ pub fn get_block_reward(supply: u64) -> u64 {
 
 // Returns the fee percentage for a block at a given height
 pub fn get_block_dev_fee(height: u64) -> u64 {
+    let mut percentage = 0;
     for threshold in DEV_FEES.iter() {
-        if height <= threshold.height {
-            return threshold.fee_percentage
+        if height >= threshold.height {
+            percentage = threshold.fee_percentage;
         }
     }
 
-    0
+    percentage
 }
 
 // Compute the combined merkle root of the tips
@@ -2531,5 +2546,21 @@ mod tests {
         assert_eq!(side_block_reward_percentage(1), SIDE_BLOCK_REWARD_PERCENT / 2);
         assert_eq!(side_block_reward_percentage(2), SIDE_BLOCK_REWARD_PERCENT / 4);
         assert_eq!(side_block_reward_percentage(3), SIDE_BLOCK_REWARD_MIN_PERCENT);
+    }
+
+    #[test]
+    fn test_block_dev_fee() {
+        assert_eq!(get_block_dev_fee(0), 10);
+        assert_eq!(get_block_dev_fee(1), 10);
+
+        // ~ current height
+        assert_eq!(get_block_dev_fee(55_000), 10);
+
+        // End of the first threshold, we pass to 5%
+        assert_eq!(get_block_dev_fee(3_250_000), 5);
+
+        assert_eq!(get_block_dev_fee(DEV_FEES[0].height), 10);
+        assert_eq!(get_block_dev_fee(DEV_FEES[1].height), 5);
+        assert_eq!(get_block_dev_fee(DEV_FEES[1].height + 1), 5);
     }
 }

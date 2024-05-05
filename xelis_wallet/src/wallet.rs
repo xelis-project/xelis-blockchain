@@ -677,7 +677,7 @@ impl Wallet {
     pub async fn create_transaction(&self, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<Transaction, WalletError> {
         trace!("create transaction");
         let mut storage = self.storage.write().await;
-        let (mut state, transaction) = self.create_transaction_with_storage(&mut storage, transaction_type, fee).await?;
+        let (mut state, transaction) = self.create_transaction_with_storage(&storage, transaction_type, fee).await?;
 
         state.apply_changes(&mut storage).await?;
 
@@ -688,7 +688,7 @@ impl Wallet {
     // also check that we have enough funds for the transaction
     // This will returns the transaction builder state along the transaction
     // You must handle "apply changes" to the storage
-    pub async fn create_transaction_with_storage(&self, storage: &mut EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(TransactionBuilderState, Transaction), WalletError> {
+    pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(TransactionBuilderState, Transaction), WalletError> {
         trace!("create transaction with storage");
         let nonce = storage.get_nonce().unwrap_or(0);
 
@@ -857,6 +857,8 @@ impl Wallet {
                 // balances will be re-fetched from daemon
                 storage.delete_balances().await?;
                 storage.delete_assets().await?;
+                // unconfirmed balances are going to be outdated, we delete them
+                storage.delete_unconfirmed_balances().await?;
 
                 debug!("Retrieve current wallet nonce");
                 let nonce_result = network_handler.get_api()
@@ -1003,7 +1005,7 @@ impl XSWDNodeMethodHandler for Arc<Wallet> {
         if let Some(network_handler) = network_handler.as_ref() {
             if network_handler.is_running().await {
                 let api = network_handler.get_api();
-                let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id, InternalRpcError::Custom(e.to_string())))?;
+                let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::Custom(e.to_string())))?;
 
                 return Ok(json!({
                     "jsonrpc": JSON_RPC_VERSION,

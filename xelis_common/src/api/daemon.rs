@@ -45,7 +45,12 @@ pub struct RPCBlockResponse<'a> {
     pub block_type: BlockType,
     pub difficulty: Cow<'a, Difficulty>,
     pub supply: Option<u64>,
+    // Reward can be split into two parts
     pub reward: Option<u64>,
+    // Miner reward (the one that found the block)
+    pub miner_reward: Option<u64>,
+    // And Dev Fee reward if enabled
+    pub dev_reward: Option<u64>,
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
     pub total_fees: Option<u64>,
     pub total_size_in_bytes: usize,
@@ -96,6 +101,20 @@ pub struct GetBlockByHashParams<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct GetBlockTemplateParams<'a> {
     pub address: Cow<'a, Address>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CreateMinerWorkParams<'a> {
+    // Block Template in hexadecimal format
+    pub template: Cow<'a, String>,
+    // Address of the miner, if empty, it will use the address from template
+    pub address: Option<Cow<'a, Address>>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CreateMinerWorkResult {
+    // MinerWork struct in hexadecimal format
+    pub miner_work: String
 }
 
 #[derive(Serialize, Deserialize)]
@@ -450,6 +469,40 @@ pub struct GetMempoolCacheResult {
     txs: Vec<Hash>,
     // All "final" cached balances used
     balances: HashMap<Hash, CiphertextCache>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetDifficultyResult {
+    pub difficulty: Difficulty,
+    pub hashrate: Difficulty,
+    pub hashrate_formatted: String
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ValidateAddressParams<'a> {
+    pub address: Cow<'a, Address>,
+    #[serde(default)]
+    pub allow_integrated: bool
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ValidateAddressResult {
+    pub is_valid: bool,
+    pub is_integrated: bool
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ExtractKeyFromAddressParams<'a> {
+    pub address: Cow<'a, Address>,
+    #[serde(default)]
+    pub as_hex: bool
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractKeyFromAddressResult {
+    Bytes(Vec<u8>),
+    Hex(String)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -16,6 +16,8 @@ pub mod queue;
 pub mod varuint;
 pub mod time;
 
+pub mod thread_pool;
+
 #[cfg(feature = "json_rpc")]
 pub mod json_rpc;
 

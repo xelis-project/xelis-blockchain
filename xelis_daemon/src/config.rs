@@ -49,18 +49,23 @@ pub const PRUNE_SAFETY_LIMIT: u64 = STABLE_LIMIT * 10;
 pub const STABLE_LIMIT: u64 = 8; // in how many height we consider the block stable
 
 // Emission rules
-// 15%, 10%, 5% per block going to dev address
-pub const DEV_FEES: [DevFeeThreshold; 3] = [
+// 15% (6 months), 10% (6 months), 5% per block going to dev address
+// NOTE: The explained emission above was the expected one
+// But due to a bug in the function to calculate the dev fee reward,
+// the actual emission was directly set to 10% per block
+// New emission rules are: 10% during 1.5 years, then 5% for the rest
+// This is the same for the project but reduce a bit the mining cost as they earn 5% more
+pub const DEV_FEES: [DevFeeThreshold; 2] = [
+    // Activated for 3M blocks
     DevFeeThreshold {
         height: 0,
-        fee_percentage: 15
-    },
-    DevFeeThreshold {
-        height: 1_250_000, // after ~6 months it's reduced to 10%
         fee_percentage: 10
     },
+    // Activated for the rest
     DevFeeThreshold {
-        height: 3_000_000, // after ~1 year it's reduced to 5%
+        // after ~1.5 year it's reduced to 5%
+        // 3 250 000 blocks * 15s of block time / 60s / 60m / 24h / 365d = 1.5 years
+        height: 3_250_000, 
         fee_percentage: 5
     }
 ];
@@ -122,6 +127,11 @@ pub const P2P_PEER_WAIT_ON_ERROR: u64 = 15;
 pub const P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY: u64 = 5;
 // Default number of concurrent tasks for incoming p2p connections
 pub const P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT: usize = 4;
+// Heartbeat interval in seconds to check if peer is still alive
+pub const P2P_HEARTBEAT_INTERVAL: u64 = P2P_PING_DELAY / 2;
+// Timeout in seconds
+// If we didn't receive any packet from a peer during this time, we disconnect it
+pub const P2P_PING_TIMEOUT: u64 = P2P_PING_DELAY * 6;
 
 // Peer rules
 // number of seconds to reset the counter
@@ -156,6 +166,9 @@ pub const PEER_TX_CACHE_SIZE: usize = 10240;
 pub const PEER_BLOCK_CACHE_SIZE: usize = 1024;
 // Peer packet channel size
 pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
+// Peer timeout for packet channel
+// Millis
+pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
 // Genesis block to have the same starting point for every nodes
 // Genesis block in hexadecimal format
@@ -193,7 +206,7 @@ pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
 }
 
 // Mainnet seed nodes
-const MAINNET_SEED_NODES: [&str; 5] = [
+const MAINNET_SEED_NODES: [&str; 7] = [
     // France
     "51.210.117.23:2125",
     // US
@@ -203,7 +216,11 @@ const MAINNET_SEED_NODES: [&str; 5] = [
     // Singapore
     "139.99.89.27:2125",
     // Poland
-    "51.68.142.141:2125"
+    "51.68.142.141:2125",
+    // Great Britain
+    "51.195.220.137:2125",
+    // "Canada"
+    "66.70.179.137:2125"
 ];
 
 // Testnet seed nodes

@@ -264,7 +264,7 @@ const HANDLER_CHANNEL_BUFFER: usize = 16;
 const TIME_OUT: Duration = Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT);
 
 impl ObjectTracker {
-    pub fn new<S: Storage>(blockchain: Arc<Blockchain<S>>) -> SharedObjectTracker {
+    pub fn new<S: Storage>(blockchain: Arc<Blockchain<S>>, server_exit: broadcast::Receiver<()>) -> SharedObjectTracker {
         let (request_sender, request_receiver) = mpsc::channel(REQUESTER_CHANNEL_BUFFER);
         let (handler_sender, handler_receiver) = mpsc::channel(HANDLER_CHANNEL_BUFFER);
 
@@ -278,24 +278,26 @@ impl ObjectTracker {
         
         // start the requester task loop which send requests to peers
         {
+            let server_exit = server_exit.resubscribe();
             let zelf = zelf.clone();
             spawn_task("p2p-tracker-requester", async move {
-                zelf.requester_loop(request_receiver).await;
+                zelf.requester_loop(request_receiver, server_exit).await;
             });
         }
 
         // start the handler task loop which handle the responses based on request queue order
         {
+            let server_exit = server_exit.resubscribe();
             let zelf = zelf.clone();
             spawn_task("p2p-tracker-handler", async move {
-                zelf.handler_loop(blockchain, handler_receiver).await;
+                zelf.handler_loop(blockchain, handler_receiver, server_exit).await;
             });
         }
 
         {
             let zelf = zelf.clone();
             spawn_task("p2p-tracker-clean", async move {
-                zelf.task_clean_cache().await;
+                zelf.task_clean_cache(server_exit).await;
             });
         }
 
@@ -303,11 +305,18 @@ impl ObjectTracker {
     }
 
     // Task to clean the expired cache
-    async fn task_clean_cache(&self) {
+    async fn task_clean_cache(&self, mut on_exit: broadcast::Receiver<()>) {
         let mut interval = interval(Duration::from_secs(5));
         loop {
-            interval.tick().await;
-            self.cache.clean(TIME_OUT).await;
+            select! {
+                biased;
+                _ = on_exit.recv() => {
+                    break;
+                },
+                _ = interval.tick() => {
+                    self.cache.clean(TIME_OUT).await;
+                }
+            }
         }
     }
 
@@ -338,13 +347,16 @@ impl ObjectTracker {
     }
 
     // Task loop to handle all responses in order
-    async fn handler_loop<S: Storage>(&self, blockchain: Arc<Blockchain<S>>, mut handler_receiver: Receiver<OwnedObjectResponse>) {
+    async fn handler_loop<S: Storage>(&self, blockchain: Arc<Blockchain<S>>, mut handler_receiver: Receiver<OwnedObjectResponse>, mut server_exit: broadcast::Receiver<()>) {
         debug!("Starting handler loop...");
         // Interval timer is necessary in case we don't receive any response from peer but we don't want to block the queue
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         loop {
             select! {
                 biased;
+                _ = server_exit.recv() => {
+                    break;
+                },
                 response = handler_receiver.recv() => {
                     if let Some(response) = response {
                         trace!("Received object response: {}", response.get_hash());
@@ -398,10 +410,23 @@ impl ObjectTracker {
     }
 
     // Task loop to request all objects in order
-    async fn requester_loop(&self, mut request_receiver: Receiver<Hash>) {
+    async fn requester_loop(&self, mut request_receiver: Receiver<Hash>, mut server_exit: broadcast::Receiver<()>) {
         debug!("Starting requester loop...");
-        while let Some(hash) = request_receiver.recv().await {
-            self.request_object_from_peer_internal(hash).await
+        loop {
+            select! {
+                biased;
+                _ = server_exit.recv() => {
+                    break;
+                },
+                hash = request_receiver.recv() => {
+                    if let Some(hash) = hash {
+                        self.request_object_from_peer_internal(hash).await;
+                    } else {
+                        // channel closed
+                        break;
+                    }
+                }
+            }
         }
     }
 

@@ -2,7 +2,8 @@ use crate::{
     config::{
         PEER_FAIL_TIME_RESET, PEER_BLOCK_CACHE_SIZE, PEER_TX_CACHE_SIZE,
         PEER_TEMP_BAN_TIME, PEER_TIMEOUT_BOOTSTRAP_STEP,
-        PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS
+        PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS,
+        PEER_PACKET_CHANNEL_SIZE
     },
     p2p::packet::PacketWrapper
 };
@@ -66,8 +67,8 @@ use log::{
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
 
-pub type Tx = mpsc::UnboundedSender<Bytes>;
-pub type Rx = mpsc::UnboundedReceiver<Bytes>;
+pub type Tx = mpsc::Sender<Bytes>;
+pub type Rx = mpsc::Receiver<Bytes>;
 
 // A Peer represents a connection to another node in the network
 // It is used to propagate and receive blocks / transactions and do chain sync
@@ -149,7 +150,7 @@ impl Peer {
         }
 
         let (exit_channel, _) = broadcast::channel(1);
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(PEER_PACKET_CHANNEL_SIZE);
 
         (Self {
             connection,
@@ -558,15 +559,14 @@ impl Peer {
         let res = self.exit_channel.send(()).map_err(|e| P2pError::SendError(e.to_string()));
 
         {
-            let mut peer_list = self.peer_list.write().await;
             trace!("Locked peer list for temp ban {}", self);
             if !self.is_priority() {
-                peer_list.temp_ban_address(&self.get_connection().get_address().ip(), PEER_TEMP_BAN_TIME).await;
+                self.peer_list.temp_ban_address(&self.get_connection().get_address().ip(), PEER_TEMP_BAN_TIME).await;
             } else {
                 debug!("{} is a priority peer, closing only", self);
             }
     
-            peer_list.remove_peer(self.get_id()).await?;
+            self.peer_list.remove_peer(self.get_id()).await?;
         }
         res?;
         
@@ -585,10 +585,7 @@ impl Peer {
         trace!("Closing connection with {}", self);
 
         // Remove this peer from peer list
-        let res = {
-            let mut peer_list = self.peer_list.write().await;
-            peer_list.remove_peer(self.get_id()).await
-        };
+        let res = self.peer_list.remove_peer(self.get_id()).await;
 
         // Notify the writer task to exit
         self.signal_exit().await?;
@@ -599,14 +596,17 @@ impl Peer {
     // Close the peer connection and remove it from the peer list
     pub async fn close_internal(&self) -> Result<(), P2pError> {
         trace!("Closing internal connection with {}", self);
-        let res = {
-            // Remove this peer from peer list
-            let mut peer_list = self.peer_list.write().await;
-            peer_list.remove_peer(self.get_id()).await
-        };
-        self.get_connection().close().await?;
+        let res_notify = self.exit_channel.send(()).map_err(|e| P2pError::SendError(e.to_string()));
 
-        res
+        if !self.get_connection().is_closed() {            
+            let res = self.peer_list.remove_peer(self.get_id()).await;
+            self.get_connection().close().await?;
+            res?;
+        }
+
+        res_notify?;
+
+        Ok(())
     }
 
     // Send a packet to the peer
@@ -618,7 +618,7 @@ impl Peer {
     // Send packet bytes to the peer
     // This will send the bytes to the writer task through its channel
     pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), P2pError> {
-        self.tx.send(bytes)
+        self.tx.send(bytes).await
             .map_err(|e| P2pError::SendError(e.to_string()))
     }
 }

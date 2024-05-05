@@ -24,10 +24,68 @@ pub enum DiskContext {
     GetTopBlock,
     #[error("get top metadata")]
     GetTopMetadata,
-    #[error("get topo height for hash '{}'", _0)]
-    GetTopoHeight(Hash),
-    #[error("get block hash for height '{}'", _0)]
-    GetBlockHash(u64),
+    #[error("get topo height for hash")]
+    GetTopoHeightForHash,
+    #[error("get block hash for topoheight '{}'", _0)]
+    GetBlockHashAtTopoHeight(u64),
+    #[error("get transaction")]
+    GetTransaction,
+    #[error("get account registration topoheight")]
+    AccountRegistrationTopoHeight,
+    #[error("get asset")]
+    Asset,
+    #[error("get last balance")]
+    LastBalance,
+    #[error("get balance at topoheight")]
+    BalanceAtTopoHeight,
+    #[error("get last topoheight for balance")]
+    LastTopoHeightForBalance,
+    #[error("get block reward at topoheight")]
+    BlockRewardAtTopoHeight,
+    #[error("get supply at topoheight")]
+    SupplyAtTopoHeight,
+    #[error("get blocks at height")]
+    BlocksAtHeight,
+    #[error("get block executor for tx")]
+    BlockExecutorForTx,
+    #[error("get blocks for tx")]
+    TxBlocks,
+    #[error("get difficulty for block hash")]
+    DifficultyForBlockHash,
+    #[error("get cumulative difficulty for block hash")]
+    CumulativeDifficultyForBlockHash,
+    #[error("get block header by hash")]
+    GetBlockHeaderByHash,
+    #[error("get estimated covariance for block hash")]
+    EstimatedCovarianceForBlockHash,
+    #[error("get balances merkle hash at topoheight")]
+    BalancesMerkleHashAtTopoHeight,
+    #[error("get last topoheight for nonce")]
+    LastTopoheightForNonce,
+    #[error("get last nonce")]
+    LastNonce,
+    #[error("get nonce at topoheight")]
+    NonceAtTopoHeight,
+    // Extra
+    #[error("get network")]
+    Network,
+    #[error("get tips")]
+    Tips,
+    #[error("get pruned topoheight")]
+    PrunedTopoHeight,
+    #[error("get assets count")]
+    AssetsCount,
+    #[error("get txs count")]
+    TxsCount,
+    #[error("get blocks count")]
+    BlocksCount,
+    #[error("get accounts count")]
+    AccountsCount,
+    #[error("get top topoheight")]
+    TopTopoHeight,
+    #[error("get top height")]
+    TopHeight,
+    // Default
     #[error("delete data")]
     DeleteData,
     #[error("load data")]

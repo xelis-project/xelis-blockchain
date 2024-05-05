@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{crypto::Hash, serializer::Serializer};
-use crate::core::{error::BlockchainError, storage::SledStorage};
+use crate::core::{error::{BlockchainError, DiskContext}, storage::SledStorage};
 
 // Merkle Hash provider allow to give a Hash at a specific topoheight
 // The merkle hash only contains account balances
@@ -21,7 +21,7 @@ pub trait MerkleHashProvider {
 impl MerkleHashProvider for SledStorage {
     async fn get_balances_merkle_hash_at_topoheight(&self, topoheight: u64) -> Result<Hash, BlockchainError> {
         trace!("get merkle hash at topoheight {}", topoheight);
-        self.load_from_disk(&self.merkle_hashes, &topoheight.to_bytes())
+        self.load_from_disk(&self.merkle_hashes, &topoheight.to_bytes(), DiskContext::BalancesMerkleHashAtTopoHeight)
     }
 
     async fn set_balances_merkle_hash_at_topoheight(&mut self, topoheight: u64, merkle_proof: &Hash) -> Result<(), BlockchainError> {

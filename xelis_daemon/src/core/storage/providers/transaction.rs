@@ -47,7 +47,7 @@ impl SledStorage {
 impl TransactionProvider for SledStorage {
     async fn get_transaction(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
         trace!("get transaction for hash {}", hash);
-        self.get_cacheable_arc_data(&self.transactions, &self.transactions_cache, hash).await
+        self.get_cacheable_arc_data(&self.transactions, &self.transactions_cache, hash, DiskContext::GetTransaction).await
     }
 
     async fn get_transaction_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {

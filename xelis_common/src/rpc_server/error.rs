@@ -5,6 +5,8 @@ use thiserror::Error;
 use anyhow::Error as AnyError;
 use crate::{serializer::ReaderError, rpc_server::JSON_RPC_VERSION};
 
+use super::Id;
+
 #[derive(Error, Debug)]
 pub enum InternalRpcError {
     #[error("Invalid context")]
@@ -53,12 +55,12 @@ impl InternalRpcError {
 
 #[derive(Debug)]
 pub struct RpcResponseError {
-    id: Option<usize>,
+    id: Option<Id>,
     error: InternalRpcError
 }
 
 impl RpcResponseError {
-    pub fn new(id: Option<usize>, error: InternalRpcError) -> Self {
+    pub fn new(id: Option<Id>, error: InternalRpcError) -> Self {
         Self {
             id,
             error
@@ -66,7 +68,7 @@ impl RpcResponseError {
     }
 
     pub fn get_id(&self) -> Value {
-        match self.id {
+        match &self.id {
             Some(id) => json!(id),
             None => Value::Null
         }

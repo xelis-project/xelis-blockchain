@@ -128,6 +128,12 @@ impl<T> From<PoisonError<T>> for PromptError {
     }
 }
 
+impl From<PromptError> for CommandError {
+    fn from(err: PromptError) -> Self {
+        Self::Any(err.into())
+    }
+}
+
 // State used to be shared between stdin thread and Prompt instance
 struct State {
     prompt: Mutex<Option<String>>,
@@ -443,6 +449,12 @@ impl Prompt {
         };
         prompt.setup_logger(level, dir_path, filename_log, disable_file_logging)?;
 
+        #[cfg(feature = "tracing")]
+        {
+            info!("Tracing enabled");
+            console_subscriber::init();
+        }
+
         if prompt.state.is_interactive() {
             let (input_sender, input_receiver) = mpsc::unbounded_channel::<String>();
             let state = Arc::clone(&prompt.state);
@@ -744,6 +756,9 @@ impl Prompt {
         .level_for("actix_server", log::LevelFilter::Warn)
         .level_for("actix_web", log::LevelFilter::Off)
         .level_for("actix_http", log::LevelFilter::Off)
+        .level_for("tracing", log::LevelFilter::Off)
+        .level_for("runtime", log::LevelFilter::Off)
+        .level_for("tokio", log::LevelFilter::Off)
         .level_for("mio", log::LevelFilter::Warn)
         .level_for("tokio_tungstenite", log::LevelFilter::Warn)
         .level_for("tungstenite", log::LevelFilter::Warn)

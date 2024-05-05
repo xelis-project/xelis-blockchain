@@ -7,7 +7,7 @@ use xelis_common::{
     crypto::Hash
 };
 
-use crate::core::{error::BlockchainError, storage::SledStorage};
+use crate::core::{error::{BlockchainError, DiskContext}, storage::SledStorage};
 
 use super::{BlockProvider, DagOrderProvider, DifficultyProvider};
 
@@ -40,12 +40,12 @@ impl BlockDagProvider for SledStorage {
 
     fn get_block_reward_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {
         trace!("get block reward at topo height {}", topoheight);
-        Ok(self.load_from_disk(&self.rewards, &topoheight.to_be_bytes())?)
+        Ok(self.load_from_disk(&self.rewards, &topoheight.to_be_bytes(), DiskContext::BlockRewardAtTopoHeight)?)
     }
 
     async fn get_supply_at_topo_height(&self, topoheight: u64) -> Result<u64, BlockchainError> {
         trace!("get supply at topo height {}", topoheight);
-        self.load_from_disk(&self.supply, &topoheight.to_be_bytes())
+        self.load_from_disk(&self.supply, &topoheight.to_be_bytes(), DiskContext::SupplyAtTopoHeight)
     }
 
     fn set_block_reward_at_topo_height(&mut self, topoheight: u64, reward: u64) -> Result<(), BlockchainError> {

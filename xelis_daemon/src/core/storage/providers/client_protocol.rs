@@ -9,7 +9,7 @@ use xelis_common::{
     serializer::Serializer
 };
 use crate::core::{
-    error::BlockchainError,
+    error::{BlockchainError, DiskContext},
     storage::{
         SledStorage,
         Tips
@@ -56,7 +56,7 @@ pub trait ClientProtocolProvider {
 impl ClientProtocolProvider for SledStorage {
     fn get_block_executor_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
         trace!("get block executer for tx {}", tx);
-        self.load_from_disk(&self.txs_executed, tx.as_bytes())
+        self.load_from_disk(&self.txs_executed, tx.as_bytes(), DiskContext::BlockExecutorForTx)
     }
 
     fn set_tx_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
@@ -100,7 +100,7 @@ impl ClientProtocolProvider for SledStorage {
     fn add_block_linked_to_tx_if_not_present(&mut self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
         trace!("add block {} linked to tx {} if not present", block, tx);
         let mut hashes: HashSet<Cow<'_, Hash>> = if self.has_tx_blocks(tx)? {
-            self.load_from_disk(&self.tx_blocks, tx.as_bytes())?
+            self.load_from_disk(&self.tx_blocks, tx.as_bytes(), DiskContext::TxBlocks)?
         } else {
             HashSet::new()
         };
@@ -115,7 +115,7 @@ impl ClientProtocolProvider for SledStorage {
 
     fn get_blocks_for_tx(&self, hash: &Hash) -> Result<Tips, BlockchainError> {
         trace!("get blocks for tx {}", hash);
-        self.load_from_disk(&self.tx_blocks, hash.as_bytes())
+        self.load_from_disk(&self.tx_blocks, hash.as_bytes(), DiskContext::TxBlocks)
     }
 
     fn add_block_for_tx(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
