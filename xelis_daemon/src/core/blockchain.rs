@@ -731,15 +731,18 @@ impl<S: Storage> Blockchain<S> {
     where
         P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider
     {
+        debug!("Finding tip base for {} at height {}", hash, height);
         let mut cache = self.tip_base_cache.lock().await;
 
         let mut stack: VecDeque<Hash> = VecDeque::new();
         stack.push_back(hash.clone());
 
         let mut bases: IndexSet<(Hash, u64)> = IndexSet::new();
+        let mut processed = HashSet::new();
 
         'main: while let Some(current_hash) = stack.pop_back() {
             trace!("Finding tip base for {} at height {}", current_hash, height);
+            processed.insert(current_hash.clone());
             if pruned_topoheight > 0 && provider.is_block_topological_ordered(&current_hash).await {
                 let topoheight = provider.get_topo_height_for_hash(&current_hash).await?;
                 // Node is pruned, we only prune chain to stable height / sync block so we can return the hash
@@ -788,8 +791,10 @@ impl<S: Storage> Blockchain<S> {
                     continue 'main;
                 }
 
-                // Tip was not sync, we need to find its tip base too
-                stack.push_back(tip_hash.clone());
+                if !processed.contains(tip_hash) {
+                    // Tip was not sync, we need to find its tip base too
+                    stack.push_back(tip_hash.clone());
+                }
             }
         }
 
