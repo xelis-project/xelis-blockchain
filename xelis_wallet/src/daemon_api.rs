@@ -33,7 +33,8 @@ use xelis_common::{
         GetAssetParams,
         GetMempoolCacheParams,
         GetMempoolCacheResult,
-        IsAccountRegisteredParams
+        IsAccountRegisteredParams,
+        TransactionOrphanedEvent
     },
     account::VersionedBalance,
     crypto::{
@@ -96,6 +97,11 @@ impl DaemonAPI {
 
     pub async fn on_block_ordered_event(&self) -> Result<EventReceiver<BlockOrderedEvent>> {
         let receiver = self.client.subscribe_event(NotifyEvent::BlockOrdered).await?;
+        Ok(receiver)
+    }
+
+    pub async fn on_transaction_orphaned_event(&self) -> Result<EventReceiver<TransactionOrphanedEvent>> {
+        let receiver = self.client.subscribe_event(NotifyEvent::TransactionOrphaned).await?;
         Ok(receiver)
     }
 

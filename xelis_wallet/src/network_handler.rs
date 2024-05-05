@@ -772,6 +772,11 @@ impl NetworkHandler {
         // Because DAG can reorder any blocks in stable height, its possible we missed some txs because they were not executed
         // when the block was added. We must check on DAG reorg for each block just to be sure
         let mut on_block_ordered = self.api.on_block_ordered_event().await?;
+
+        // For better security, verify that an orphaned TX isn't in our ledger
+        // This is rare event but may happen if someone try to do something shady
+        let mut on_transaction_orphaned = self.api.on_transaction_orphaned_event().await?;
+
         // Network events to detect if we are online or offline
         let mut on_connection = self.api.on_connection().await;
         let mut on_connection_lost = self.api.on_connection_lost().await;
@@ -790,6 +795,17 @@ impl NetworkHandler {
                     let event = res?;
                     let block = self.api.get_block_with_txs_at_topoheight(event.topoheight).await?;
                     self.sync(&address, Some(block)).await?;
+                },
+                res = on_transaction_orphaned.next() => {
+                    trace!("on_transaction_orphaned_event");
+                    let event = res?;
+                    let tx = event.data;
+
+                    let mut storage = self.wallet.get_storage().write().await;
+                    if storage.has_transaction(&tx.hash)? {
+                        warn!("Transaction {} was orphaned, deleting it", tx.hash);
+                        storage.delete_transaction(&tx.hash)?;
+                    }
                 },
                 // Detect network events
                 res = on_connection.recv() => {
