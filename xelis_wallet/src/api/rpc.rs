@@ -233,13 +233,19 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     }
 
     // create the TX
-    let tx = wallet.create_transaction(params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64))).await
+    // The lock is kept until the TX is applied to the storage
+    // So even if we have few requests building a TX, they wait for the previous one to be applied
+    let mut storage = wallet.get_storage().write().await;
+    let (mut state, tx) = wallet.create_transaction_with_storage(&storage, params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64))).await
         .context("Error while creating transaction")?;
 
     // if requested, broadcast the TX ourself
     if params.broadcast {
         wallet.submit_transaction(&tx).await.context("Couldn't broadcast transaction")?;
     }
+
+    state.apply_changes(&mut storage).await
+        .context("Error while applying state changes")?;
 
     // returns the created TX and its hash
     Ok(json!(TransactionResponse {
