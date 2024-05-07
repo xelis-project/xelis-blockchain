@@ -366,9 +366,11 @@ impl Mempool {
                 if !delete_cache && !hashes.is_empty() {
                     let mut state = MempoolState::new(&self, storage, topoheight);
                     let mut txs = Vec::with_capacity(cache.txs.len());
+                    let mut txs_hashes = Vec::with_capacity(cache.txs.len());
                     for tx_hash in &cache.txs {
                         if let Some(sorted_tx) = self.txs.get(tx_hash) {
                             txs.push(sorted_tx.get_tx());
+                            txs_hashes.push(tx_hash);
                         } else {
                             // Shouldn't happen
                             warn!("TX {} not found in mempool while verifying, deleting whole cache", tx_hash);
@@ -377,19 +379,21 @@ impl Mempool {
                         }
                     }
 
-                    // Instead of verifiying each TX one by one, we verify them all at once
-                    // This is much faster and is basically the same because:
-                    // If one TX is invalid, all next TXs are invalid
-                    // NOTE: this can be revert easily in case we are deleting valid TXs also,
-                    // But will be slower during high traffic
-                    if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
-                        warn!("Error while verifying TXs for sender {}: {}", key.as_address(self.mainnet), e);
-                        // We may have only one TX invalid, but because they are all linked to each others we delete the whole cache
-                        delete_cache = true;
-                    } else {
-                        // Update balances cache
-                        if let Some(balances) = state.get_sender_balances(&key) {
-                            cache.set_balances(balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect());
+                    if !delete_cache {
+                        // Instead of verifiying each TX one by one, we verify them all at once
+                        // This is much faster and is basically the same because:
+                        // If one TX is invalid, all next TXs are invalid
+                        // NOTE: this can be revert easily in case we are deleting valid TXs also,
+                        // But will be slower during high traffic
+                        if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
+                            warn!("Error while verifying TXs ({}) for sender {}: {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), e);
+                            // We may have only one TX invalid, but because they are all linked to each others we delete the whole cache
+                            delete_cache = true;
+                        } else {
+                            // Update balances cache
+                            if let Some(balances) = state.get_sender_balances(&key) {
+                                cache.set_balances(balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect());
+                            }
                         }
                     }
                 }
