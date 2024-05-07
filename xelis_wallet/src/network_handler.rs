@@ -801,6 +801,7 @@ impl NetworkHandler {
                             if storage.get_synced_topoheight().unwrap_or(0) > topoheight {
                                 warn!("We are above the reorg, restart syncing from {}", topoheight);
                                 storage.set_synced_topoheight(topoheight)?;
+                                storage.set_top_block_hash(&event.block_hash)?;
                             }
                         }
                     }
