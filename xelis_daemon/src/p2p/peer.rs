@@ -66,9 +66,22 @@ use log::{
 // This is done to be awaitable with a timeout
 pub type RequestedObjects = HashMap<ObjectRequest, Sender<OwnedObjectResponse>>;
 
-
 pub type Tx = mpsc::Sender<Bytes>;
 pub type Rx = mpsc::Receiver<Bytes>;
+
+// Enum used to track the state of a task
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TaskState {
+    // not started yet
+    Inactive,
+    // running
+    Active,
+    // task has been cancelled
+    Exiting,
+    // Task has exited
+    Finished,
+    Unknown,
+}
 
 // A Peer represents a connection to another node in the network
 // It is used to propagate and receive blocks / transactions and do chain sync
@@ -136,7 +149,10 @@ pub struct Peer {
     // Channel to send bytes to the writer task
     tx: Tx,
     // Channel to notify the tasks to exit
-    exit_channel: broadcast::Sender<()>
+    exit_channel: broadcast::Sender<()>,
+    // Tracking dedicated tasks
+    read_task: Mutex<TaskState>,
+    write_task: Mutex<TaskState>,
 }
 
 impl Peer {
@@ -183,7 +199,9 @@ impl Peer {
             outgoing_address,
             sharable,
             exit_channel,
-            tx
+            tx,
+            read_task: Mutex::new(TaskState::Inactive),
+            write_task: Mutex::new(TaskState::Inactive),
         }, rx)
     }
 
@@ -621,6 +639,22 @@ impl Peer {
         self.tx.send(bytes).await
             .map_err(|e| P2pError::SendError(e.to_string()))
     }
+
+    pub async fn set_read_task_state(&self, state: TaskState) {
+        *self.read_task.lock().await = state;
+    }
+
+    pub async fn set_write_task_state(&self, state: TaskState) {
+        *self.write_task.lock().await = state;
+    }
+
+    pub async fn get_read_task_state(&self) -> TaskState {
+        *self.read_task.lock().await
+    }
+
+    pub async fn get_write_task_state(&self) -> TaskState {
+        *self.write_task.lock().await
+    }
 }
 
 impl Display for Peer {
@@ -649,7 +683,10 @@ impl Display for Peer {
             "No".to_string()
         };
 
-        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, top hash: {}, height: {}, pruned: {}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}]",
+        let read_task = self.read_task.try_lock().map(|v| *v).unwrap_or(TaskState::Unknown);
+        let write_task = self.write_task.try_lock().map(|v| *v).unwrap_or(TaskState::Unknown);
+
+        write!(f, "Peer[connection: {}, id: {}, topoheight: {}, top hash: {}, height: {}, pruned: {}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}, tasks: {:?}/{:?}]",
             self.get_connection(),
             self.get_id(),
             self.get_topoheight(),
@@ -661,7 +698,9 @@ impl Display for Peer {
             self.get_version(),
             self.get_fail_count(),
             self.is_out(),
-            peers
+            peers,
+            read_task,
+            write_task
         )
     }
 }

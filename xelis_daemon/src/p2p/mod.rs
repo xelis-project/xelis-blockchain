@@ -80,7 +80,7 @@ use self::{
         Packet,
         PacketWrapper
     },
-    peer::{Peer, Rx},
+    peer::{Peer, TaskState, Rx},
     peer_list::{PeerList, SharedPeerList},
     tracker::{ObjectTracker, SharedObjectTracker}
 };
@@ -1222,7 +1222,7 @@ impl<S: Storage> P2pServer<S> {
                     break;
                 },
                 _ = interval.tick() => {
-                    trace!("Checkinf heartbeat of {}", peer);
+                    trace!("Checking heartbeat of {}", peer);
                     // Last time we got a ping packet from him
                     let last_ping = peer.get_last_ping();
                     if last_ping != 0 && get_current_time_in_seconds() - last_ping > P2P_PING_TIMEOUT {
@@ -1295,11 +1295,15 @@ impl<S: Storage> P2pServer<S> {
             let zelf = Arc::clone(self);
             let peer = Arc::clone(&peer);
             spawn_task(format!("p2p-handle-write-{}", peer.get_connection().get_address()), async move {
+                peer.set_write_task_state(TaskState::Active).await;
+
                 let addr = *peer.get_connection().get_address();
                 trace!("Handle connection write side task for {} has been started", addr);
                 if let Err(e) = zelf.handle_connection_write_side(&peer, &mut rx).await {
                     debug!("Error while writing to {}: {}", peer, e);
                 }
+
+                peer.set_write_task_state(TaskState::Exiting).await;
 
                 // Close the peer if not already closed
                 if !peer.get_connection().is_closed() {
@@ -1309,10 +1313,10 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
 
-
                 // clean shutdown
                 rx.close();
 
+                peer.set_write_task_state(TaskState::Finished).await;
                 trace!("Handle connection read side task for {} has been finished", addr);
             })
         };
@@ -1322,11 +1326,14 @@ impl<S: Storage> P2pServer<S> {
             let zelf = Arc::clone(&self);
             let peer = Arc::clone(&peer);
             spawn_task(format!("p2p-handle-read-{}", peer.get_connection().get_address()), async move {
+                peer.set_read_task_state(TaskState::Active).await;
                 let addr = *peer.get_connection().get_address();
                 trace!("Handle connection read side task for {} has been started", addr);
                 if let Err(e) = zelf.handle_connection_read_side(&peer, write_task).await {
                     debug!("Error while running read part from peer {}: {}", peer, e);
                 }
+
+                peer.set_read_task_state(TaskState::Exiting).await;
 
                 // Verify that the connection is closed
                 // Write task should be responsible for closing the connection
@@ -1337,6 +1344,7 @@ impl<S: Storage> P2pServer<S> {
                         debug!("Error while closing {} from read side: {}", peer, e);
                     }
                 }
+                peer.set_read_task_state(TaskState::Finished).await;
 
                 trace!("Handle connection read side task for {} has been finished", addr);
             });
