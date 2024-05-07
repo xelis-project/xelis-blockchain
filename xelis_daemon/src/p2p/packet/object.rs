@@ -78,6 +78,7 @@ impl Display for ObjectRequest {
     }
 }
 
+#[derive(Debug)]
 pub enum OwnedObjectResponse {
     Block(Block, Hash),
     BlockHeader(BlockHeader, Hash),
