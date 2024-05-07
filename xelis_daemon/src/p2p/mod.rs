@@ -964,6 +964,8 @@ impl<S: Storage> P2pServer<S> {
 
     // broadcast generic ping packet every 10s
     // if we have to send our peerlist to all peers, we calculate the ping for each peer
+    // instead of being done in each write task of peer, we do it one time so we don't have
+    // several lock on the chain and on peerlist
     async fn ping_loop(self: Arc<Self>) {
         debug!("Starting ping loop...");
 
@@ -981,17 +983,21 @@ impl<S: Storage> P2pServer<S> {
             let mut ping = self.build_generic_ping_packet().await;
             trace!("generic ping packet finished");
 
+            // Get all connected peers
+            let all_peers = self.peer_list.get_cloned_peers().await;
+
             let current_time = get_current_time_in_seconds();
             // check if its time to send our peerlist
             if current_time > last_peerlist_update + P2P_PING_PEER_LIST_DELAY {
                 trace!("Sending ping packet with peerlist...");
-                last_peerlist_update = current_time;
-                trace!("locking peer list for ping loop extended");
-                trace!("peer list locked for ping loop extended");
-                let all_peers = self.peer_list.get_cloned_peers().await;
                 for peer in all_peers.iter() {
                     let new_peers = ping.get_mut_peers();
                     new_peers.clear();
+
+                    if peer.get_connection().is_closed() {
+                        debug!("{} is closed, skipping ping packet", peer);
+                        continue;
+                    }
 
                     // Is it a peer from our local network
                     let is_local_peer = is_local_address(peer.get_connection().get_address());
@@ -1045,18 +1051,21 @@ impl<S: Storage> P2pServer<S> {
                         peer.set_last_ping_sent(current_time);
                     }
                 }
+
+                // update the last time we sent our peerlist
+                // We don't use previous current_time variable because it may have been
+                // delayed due to the packet sending
+                last_peerlist_update = get_current_time_in_seconds();
             } else {
                 trace!("Sending generic ping packet...");
                 let packet = Packet::Ping(Cow::Owned(ping));
                 let bytes = Bytes::from(packet.to_bytes());
-                trace!("Locking peerlist... (generic ping)");
-                trace!("End locking peerlist... (generic ping)");
                 // broadcast directly the ping packet asap to all peers
-                for peer in self.peer_list.get_cloned_peers().await {
-                    trace!("broadcast generic ping packet to {}", peer);
-                    if current_time - peer.get_last_ping_sent() > P2P_PING_DELAY {
+                for peer in all_peers {
+                    if current_time - peer.get_last_ping_sent() > P2P_PING_DELAY && !peer.get_connection().is_closed() {
+                        trace!("broadcast generic ping packet to {}", peer);
                         if let Err(e) = peer.send_bytes(bytes.clone()).await {
-                            error!("Error while trying to broadcast directly ping packet to {}: {}", peer, e);
+                            error!("Error while trying to send ping packet to {}: {}", peer, e);
                         } else {
                             peer.set_last_ping_sent(current_time);
                         }
