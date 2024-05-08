@@ -306,7 +306,7 @@ impl Mempool {
                     }
                 }
                 delete_cache = true;
-            } else if cache.get_min() < nonce {
+            } else if cache.get_min() <= nonce {
                 trace!("Deleting TXs for owner {} with nonce < {}", key.as_address(self.mainnet), nonce);
                 // txs hashes to delete
                 let mut hashes: HashSet<Arc<Hash>> = HashSet::with_capacity(cache.txs.len());

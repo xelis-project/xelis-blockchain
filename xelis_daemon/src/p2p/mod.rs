@@ -1705,7 +1705,7 @@ impl<S: Storage> P2pServer<S> {
                 peer.send_bytes(Bytes::from(packet)).await?
             },
             Packet::NotifyInventoryResponse(inventory) => {
-                trace!("Received a notify inventory from {}", peer);
+                debug!("Received a notify inventory from {}: {} txs", peer, inventory.len());
                 if !peer.has_requested_inventory() {
                     warn!("Received a notify inventory from {} but we didn't request it", peer);
                     return Err(P2pError::InvalidPacket)
