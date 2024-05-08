@@ -298,13 +298,6 @@ impl Mempool {
             // otherwise the cache is still up to date
             if cache.get_min() > nonce {
                 trace!("All TXs for key {} are orphaned, deleting them", key.as_address(self.mainnet));
-                // We can delete all these TXs as they got automatically orphaned
-                // Because of the suite being broked
-                for hash in cache.txs.iter() {
-                    if self.txs.remove(hash).is_none() {
-                        warn!("TX {} not found in mempool while deleting", hash);
-                    }
-                }
                 delete_cache = true;
             } else if cache.get_min() <= nonce {
                 trace!("Deleting TXs for owner {} with nonce < {}", key.as_address(self.mainnet), nonce);
