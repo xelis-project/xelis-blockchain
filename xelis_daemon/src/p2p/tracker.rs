@@ -385,7 +385,9 @@ impl ObjectTracker {
                     Some(response) => {
                         let (_, request) = queue.pop().unwrap();
                         if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast(), request.get_peer()).await {
-                            debug!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
+                            if request.get_group_id().is_none() {
+                                warn!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
+                            }
                             self.clean_queue(&mut queue, request.get_peer().get_id(), request.get_group_id().map(|v| (v, e))).await;
                         }
                     },
