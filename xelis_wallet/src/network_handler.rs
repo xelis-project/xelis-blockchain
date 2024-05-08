@@ -219,22 +219,28 @@ impl NetworkHandler {
             if let Some(reward) = block.miner_reward {
                 let coinbase = EntryData::Coinbase { reward };
                 let entry = TransactionEntry::new(block_hash.clone(), topoheight, coinbase);
-
                 assets_changed.insert(XELIS_ASSET);
 
-                {
+                let broadcast = {
                     let mut storage = self.wallet.get_storage().write().await;
-                    storage.save_transaction(entry.get_hash(), &entry)?;
-
-                    // Store the changes for history
-                    if !changes_stored {
-                        storage.add_topoheight_to_changes(topoheight, &block_hash)?;
-                        changes_stored = true;
+                    if storage.has_transaction(entry.get_hash())? {
+                        false
+                    } else {
+                        storage.save_transaction(entry.get_hash(), &entry)?;
+    
+                        // Store the changes for history
+                        if !changes_stored {
+                            storage.add_topoheight_to_changes(topoheight, &block_hash)?;
+                            changes_stored = true;
+                        }
+                        true
                     }
-                }
+                };
 
                 // Propagate the event to the wallet
-                self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
+                if broadcast {
+                    self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
+                }
             } else {
                 warn!("No reward for block {} at topoheight {}", block_hash, topoheight);
             }
@@ -702,6 +708,7 @@ impl NetworkHandler {
         trace!("sync");
         // First, locate the last topoheight valid for syncing
         let (daemon_topoheight, daemon_block_hash, wallet_topoheight, sync_back) = self.locate_sync_topoheight_and_clean().await?;
+        debug!("Daemon topoheight: {}, wallet topoheight: {}, sync back: {}", daemon_topoheight, wallet_topoheight, sync_back);
 
         // Sync back is requested, sync the head state again
         if sync_back {
@@ -802,6 +809,12 @@ impl NetworkHandler {
                                 warn!("We are above the reorg, restart syncing from {}", topoheight);
                                 storage.set_synced_topoheight(topoheight)?;
                                 storage.set_top_block_hash(&event.block_hash)?;
+                            }
+
+                            // Sync this block again as it may have some TXs executed
+                            let block = self.api.get_block_at_topoheight(topoheight).await?;
+                            if let Some((assets, _)) = self.process_block(&address, block, topoheight).await? {
+                                debug!("Found changes for assets: {}", assets.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "));
                             }
                         }
                     }
