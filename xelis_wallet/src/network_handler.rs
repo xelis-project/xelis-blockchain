@@ -327,6 +327,18 @@ impl NetworkHandler {
             };
 
             if let Some(entry) = entry {
+                let is_tx_stored = {
+                    let storage = self.wallet.get_storage().read().await;
+                    storage.has_transaction(&tx.hash)?
+                };
+
+                // Even if we probably scanned it before and a DAG reorg happened,
+                // It shouldn't be found because it got deleted from storage
+                if is_tx_stored {
+                    debug!("Transaction {} was already stored, skipping", tx.hash);
+                    continue;
+                }
+
                 // New transaction entry that may be linked to us, check if TX was executed
                 if !self.api.is_tx_executed_in_block(&tx.hash, &block_hash).await? {
                     warn!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx.hash, block_hash);
@@ -339,26 +351,18 @@ impl NetworkHandler {
                 }
 
                 let entry = TransactionEntry::new(tx.hash.into_owned(), topoheight, entry);
-                let propagate = {
+                {
                     let mut storage = self.wallet.get_storage().write().await;
-                    let found = storage.has_transaction(entry.get_hash())?;
-                    // Even if we probably scanned it before and a DAG reorg happened,
-                    // It shouldn't be found because it got deleted from storage
-                    if !found {
-                        storage.save_transaction(entry.get_hash(), &entry)?;
-                        // Store the changes for history
-                        if !changes_stored {
-                            storage.add_topoheight_to_changes(topoheight, &block_hash)?;
-                            changes_stored = true;
-                        }
+                    storage.save_transaction(entry.get_hash(), &entry)?;
+                    // Store the changes for history
+                    if !changes_stored {
+                        storage.add_topoheight_to_changes(topoheight, &block_hash)?;
+                        changes_stored = true;
                     }
-                    !found
-                };
-
-                if propagate {
-                    // Propagate the event to the wallet
-                    self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
                 }
+
+                // Propagate the event to the wallet
+                self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
             }
         }
 
