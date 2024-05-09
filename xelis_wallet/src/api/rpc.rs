@@ -156,7 +156,7 @@ async fn split_address(_: &Context, body: Value) -> Result<Value, InternalRpcErr
 async fn rescan(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: RescanParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    wallet.rescan(params.until_topoheight.unwrap_or(0), params.auto_reconnect).await.context("Error while rescanning wallet")?;
+    wallet.rescan(params.until_topoheight.unwrap_or(0), params.auto_reconnect).await?;
     Ok(json!(true))
 }
 
@@ -225,7 +225,7 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     let wallet: &Arc<Wallet> = context.get()?;
     // request ask to broadcast the TX but wallet is not connected to any daemon
     if !wallet.is_online().await && params.broadcast {
-        return Err(WalletError::NotOnlineMode).context("Cannot broadcast TX")?
+        return Err(WalletError::NotOnlineMode)?
     }
 
     if !params.broadcast && !params.tx_as_hex {
@@ -236,8 +236,7 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     // The lock is kept until the TX is applied to the storage
     // So even if we have few requests building a TX, they wait for the previous one to be applied
     let mut storage = wallet.get_storage().write().await;
-    let (mut state, tx) = wallet.create_transaction_with_storage(&storage, params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64))).await
-        .context("Error while creating transaction")?;
+    let (mut state, tx) = wallet.create_transaction_with_storage(&storage, params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64))).await?;
 
     // if requested, broadcast the TX ourself
     if params.broadcast {
@@ -265,7 +264,7 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
 async fn estimate_fees(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: EstimateFeesParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    let fees = wallet.estimate_fees(params.tx_type).await.context("Error while estimating fees")?;
+    let fees = wallet.estimate_fees(params.tx_type).await?;
 
     Ok(json!(fees))
 }
@@ -312,7 +311,7 @@ async fn set_online_mode(context: &Context, body: Value) -> Result<Value, Intern
         return Err(InternalRpcError::InvalidRequestStr("Wallet is already connected to a daemon"))
     }
 
-    wallet.set_online_mode(&params.daemon_address, params.auto_reconnect).await.context("Error while setting online mode")?;
+    wallet.set_online_mode(&params.daemon_address, params.auto_reconnect).await?;
 
     Ok(json!(true))
 }
@@ -328,7 +327,7 @@ async fn set_offline_mode(context: &Context, body: Value) -> Result<Value, Inter
         return Err(InternalRpcError::InvalidRequestStr("Wallet is already in offline mode"))
     }
 
-    wallet.set_offline_mode().await.context("Error while setting offline mode")?;
+    wallet.set_offline_mode().await?;
 
     Ok(json!(true))
 }
