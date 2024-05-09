@@ -57,6 +57,8 @@ pub enum JsonRPCError {
     },
     #[error("Server did not respond to the request")]
     NoResponse,
+    #[error("No response in the given time")]
+    TimedOut,
     #[error("Server returned a response without result")]
     MissingResult,
     #[error("Error while (de)serializing JSON data: {}", _0)]
