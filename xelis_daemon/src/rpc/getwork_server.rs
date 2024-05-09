@@ -179,7 +179,7 @@ impl<S: Storage> StreamHandler<Result<Message, ProtocolError>> for GetWorkWebSoc
             },
             msg => {
                 debug!("Abnormal message received: {:?}. Closing connection", msg);
-                let error = RpcResponseError::new(None, InternalRpcError::InvalidRequest);
+                let error = RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest);
                 ctx.text(error.to_json().to_string());
                 ctx.close(None);
             }
@@ -256,7 +256,7 @@ impl<S: Storage> GetWorkServer<S> {
             if let Some(hash) = hash.as_ref().filter(|_| self.is_rate_limited().0) {
                 let (header, diff) = mining_jobs.peek(hash).ok_or_else(|| {
                     error!("No mining job found! How is it possible ?");
-                    InternalRpcError::CustomStr("No mining job found")
+                    InternalRpcError::InternalError("No mining job found")
                 })?;
                 job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
                 height = header.height;
@@ -322,7 +322,7 @@ impl<S: Storage> GetWorkServer<S> {
     async fn accept_miner_job(&self, job: MinerWork<'_>) -> Result<(Response, Hash), InternalRpcError> {
         trace!("accept miner job");
         if job.get_miner().is_none() {
-            return Err(InternalRpcError::InvalidRequest);
+            return Err(InternalRpcError::InvalidJSONRequest);
         }
 
         let mut miner_header;
@@ -335,7 +335,7 @@ impl<S: Storage> GetWorkServer<S> {
             } else {
                 // really old job, or miner send invalid job
                 debug!("Job {} was not found in cache", job.get_header_work_hash());
-                return Err(InternalRpcError::CustomStr("Job was not found in cache"))
+                return Err(InternalRpcError::InvalidParams("Job was not found in cache"))
             };
         }
 
