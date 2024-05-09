@@ -104,7 +104,10 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
 
 
     let builder = TransactionBuilder::new(0, account.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
+    let estimated_size = builder.estimate_size();
     let tx = builder.build(&mut state, &account.keypair).unwrap();
+    assert!(estimated_size == tx.size());
+    assert!(tx.to_bytes().len() == estimated_size);
 
     tx
 }

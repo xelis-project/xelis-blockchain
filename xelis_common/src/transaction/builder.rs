@@ -44,7 +44,7 @@ use crate::{
 };
 use thiserror::Error;
 use super::{
-    aead::{derive_aead_key_from_opening, PlaintextData},
+    aead::{derive_aead_key_from_opening, PlaintextData, TAG_SIZE},
     BurnPayload,
     Reference,
     Role,
@@ -296,7 +296,7 @@ impl TransactionBuilder {
 
                     if let Some(extra_data) = &transfer.extra_data {
                         // 2 represents u16 length
-                        size += 2 + extra_data.size();
+                        size += 2 + TAG_SIZE + extra_data.size();
                     }
                 }
                 transfers.len()
