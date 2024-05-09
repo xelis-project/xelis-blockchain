@@ -257,7 +257,7 @@ impl TransactionBuilder {
 
     /// Estimate by hand the bytes size of a final TX
     // Returns bytes size and transfers count
-    fn estimate_size(&self) -> usize {
+    pub fn estimate_size(&self) -> usize {
         let assets_used = self.data.used_assets().len();
         // Version byte
         let mut size = 1

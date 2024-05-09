@@ -366,7 +366,8 @@ impl Serializer for TransactionType {
                 1 + payload.size()
             },
             TransactionType::Transfers(txs) => {
-                let mut size = 1;
+                // 1 byte for variant, 1 byte for count of transfers
+                let mut size = 1 + 1;
                 for tx in txs {
                     size += tx.size();
                 }
