@@ -44,9 +44,9 @@ pub enum InternalRpcError {
     #[error(transparent)]
     SerializeResponse(SerdeError),
     // Custom errors must have a code between -3 and -31999
-    #[error("{}", _0)]
+    #[error("{}", _1)]
     Custom(i16, String),
-    #[error("{}", _0)]
+    #[error("{}", _1)]
     CustomStr(i16, &'static str),
 }
 
