@@ -4,7 +4,7 @@ use xelis_common::{
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{builder::{AccountState, FeeHelper}, Reference}
 };
-use crate::{storage::{Balance, EncryptedStorage}, wallet::WalletError};
+use crate::{storage::{Balance, EncryptedStorage}, error::WalletError};
 
 // State used to estimate fees for a transaction
 // Because fees can be higher if a destination account is not registered

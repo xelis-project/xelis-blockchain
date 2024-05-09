@@ -47,7 +47,7 @@ use crate::{
         TransactionEntry,
         Transfer
     },
-    wallet::WalletError
+    error::WalletError
 };
 use log::error;
 

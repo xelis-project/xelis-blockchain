@@ -7,6 +7,7 @@ pub mod network_handler;
 pub mod entry;
 pub mod mnemonics;
 pub mod transaction_builder;
+pub mod error;
 
 #[cfg(feature = "api_server")]
 pub mod api;

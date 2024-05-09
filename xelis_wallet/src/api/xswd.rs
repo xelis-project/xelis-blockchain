@@ -33,6 +33,7 @@ use serde_json::{
     Value,
     json
 };
+use thiserror::Error;
 use tokio::sync::{
     Mutex,
     RwLock,
@@ -99,6 +100,44 @@ where
 {
     websocket: Arc<WebSocketServer<XSWDWebSocketHandler<W>>>,
     handle: ServerHandle
+}
+
+#[derive(Error, Debug)]
+pub enum XSWDError {
+    #[error("Permission denied")]
+    PermissionDenied,
+    #[error("Application not found")]
+    ApplicationNotFound,
+    #[error("Invalid application data")]
+    InvalidApplicationData,
+    #[error("Invalid application ID")]
+    InvalidApplicationId,
+    #[error("Application ID already used")]
+    ApplicationIdAlreadyUsed,
+    #[error("Invalid hexadecimal for application ID")]
+    InvalidHexaApplicationId,
+    #[error("Application name is too long")]
+    ApplicationNameTooLong,
+    #[error("Application description is too long")]
+    ApplicationDescriptionTooLong,
+    #[error("Invalid URL format")]
+    InvalidURLFormat,
+    #[error("Invalid origin")]
+    InvalidOrigin,
+    #[error("Too many permissions")]
+    TooManyPermissions,
+    #[error("Application permissions are not signed")]
+    ApplicationPermissionsNotSigned,
+    #[error("Invalid signature for application data")]
+    InvalidSignatureForApplicationData
+}
+
+impl From<XSWDError> for InternalRpcError {
+    fn from(e: XSWDError) -> Self {
+        let msg = e.to_string();
+        let id = e as i16;
+        InternalRpcError::Custom(id, msg)
+    }
 }
 
 #[async_trait]
@@ -261,8 +300,6 @@ impl Serializer for ApplicationData {
     }
 }
 
-const PERMISSION_DENIED_ERROR: InternalRpcError = InternalRpcError::CustomStr("Permission denied");
-
 impl<W> XSWD<W>
 where
     W: Clone + Send + Sync + XSWDPermissionHandler + XSWDNodeMethodHandler + 'static
@@ -420,12 +457,12 @@ where
 
     async fn verify_permission_for_request(&self, app: &AppStateShared, request: &RpcRequest) -> Result<(), RpcResponseError> {
         let _permit = self.permission_handler_semaphore.acquire().await
-            .map_err(|_| RpcResponseError::new(request.id.clone(), InternalRpcError::CustomStr("Permission handler semaphore error")))?;
+            .map_err(|_| RpcResponseError::new(request.id.clone(), InternalRpcError::InternalError("Permission handler semaphore error")))?;
         let mut permissions = app.permissions.lock().await;
 
         // We acquired the lock, lets check that the app is still registered
         if !self.has_app_with_id(&app.id).await {
-            return Err(RpcResponseError::new(request.id.clone(), InternalRpcError::CustomStr("Application not found")))
+            return Err(RpcResponseError::new(request.id.clone(), XSWDError::ApplicationNotFound))
         }
 
         let permission = permissions.get(&request.method).map(|v| *v).unwrap_or(Permission::Ask);
@@ -434,78 +471,78 @@ where
             Permission::Ask => {
                 let result = self.handler.get_data()
                 .request_permission(app, PermissionRequest::Request(request)).await
-                .map_err(|msg| RpcResponseError::new(request.id.clone(), InternalRpcError::Custom(msg.to_string())))?;
+                .map_err(|msg| RpcResponseError::new(request.id.clone(), InternalRpcError::Custom(0, msg.to_string())))?;
 
                 match result {
                     PermissionResult::Allow => Ok(()),
-                    PermissionResult::Deny => Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR)),
+                    PermissionResult::Deny => Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied)),
                     PermissionResult::AlwaysAllow => {
                         permissions.insert(request.method.clone(), Permission::AcceptAlways);
                         Ok(())
                     },
                     PermissionResult::AlwaysDeny => {
                         permissions.insert(request.method.clone(), Permission::AcceptAlways);
-                        Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR))
+                        Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied))
                     }   
                 }
             }
             // User has already accepted this method
             Permission::AcceptAlways => Ok(()),
             // User has denied access to this method
-            Permission::DenyAlways => Err(RpcResponseError::new(request.id.clone(), PERMISSION_DENIED_ERROR))
+            Permission::DenyAlways => Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied))
         }
     }
 
     async fn add_application(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Value, RpcResponseError> {
         // Application is not registered, register it
         let app_data: ApplicationData = serde_json::from_slice::<ApplicationData>(&message)
-            .map_err(|_| RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid JSON format for application data")))?;
+            .map_err(|_| RpcResponseError::new(None, XSWDError::InvalidApplicationData))?;
         // Sanity check
         {
             if app_data.id.len() != 64 {
-                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid application ID")))
+                return Err(RpcResponseError::new(None, XSWDError::InvalidApplicationId))
             }
 
             hex::decode(&app_data.id)
-                .map_err(|_| RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid hexadecimal for application ID")))?;
+                .map_err(|_| RpcResponseError::new(None, XSWDError::InvalidHexaApplicationId))?;
 
             if app_data.name.len() > 32 {
-                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application name is too long")))
+                return Err(RpcResponseError::new(None, XSWDError::ApplicationNameTooLong))
             }
 
             if app_data.description.len() > 255 {
-                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application description is too long")))
+                return Err(RpcResponseError::new(None, XSWDError::ApplicationDescriptionTooLong))
             }
 
             if let Some(url) = &app_data.url {
                 if url.len() > 255 {
-                    return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application URL is too long")))
+                    return Err(RpcResponseError::new(None, XSWDError::InvalidURLFormat))
                 }
 
                 if !url.starts_with("http://") && !url.starts_with("https://") {
-                    return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid URL format")))
+                    return Err(RpcResponseError::new(None, XSWDError::InvalidURLFormat))
                 }
 
                 // Check if we have a header origin
                 if let Some(origin) = session.get_request().headers().get("Origin") {
                     // We have a header origin, check that its equal to the url passed in param
                     if origin != url {
-                        return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Origin header is not equal to the URL")))
+                        return Err(RpcResponseError::new(None, XSWDError::InvalidOrigin))
                     }
                 }
             }
 
             if app_data.permissions.len() != 0 && app_data.signature.is_none() {
-                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application permissions are not signed")))
+                return Err(RpcResponseError::new(None, XSWDError::ApplicationPermissionsNotSigned))
             }
 
             if app_data.signature.is_some() {
                 // TODO: verify the signature
-                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application signature not supported yet")))
+                return Err(RpcResponseError::new(None, XSWDError::InvalidSignatureForApplicationData))
             }
 
             if app_data.permissions.len() > 255 {
-                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Too many permissions")))
+                return Err(RpcResponseError::new(None, XSWDError::TooManyPermissions))
             }
         }
 
@@ -518,17 +555,17 @@ where
             let key = wallet.get_public_key().await
                 .map_err(|e| {
                     error!("error while retrieving public key: {}", e);
-                    RpcResponseError::new(None, InternalRpcError::CustomStr("Error while retrieving public key"))
+                    RpcResponseError::new(None, InternalRpcError::InternalError("Error while retrieving wallet public key"))
                 })?;
 
             if signature.verify(bytes, key) {
-                return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Invalid signature for application data")));
+                return Err(RpcResponseError::new(None, XSWDError::InvalidSignatureForApplicationData));
             }
         }
 
         // Verify that this app ID is not already in use:
         if self.has_app_with_id(&app_data.id).await {
-            return Err(RpcResponseError::new(None, InternalRpcError::CustomStr("Application ID already in use")))
+            return Err(RpcResponseError::new(None, XSWDError::ApplicationIdAlreadyUsed))
         }
 
         let has_signature = app_data.signature.is_some();
@@ -540,7 +577,7 @@ where
 
         // Request permission to user
         let _permit = self.permission_handler_semaphore.acquire().await
-            .map_err(|_| RpcResponseError::new(None, InternalRpcError::CustomStr("Permission handler semaphore error")))?;
+            .map_err(|_| RpcResponseError::new(None, InternalRpcError::InternalError("Permission handler semaphore error")))?;
 
         state.set_requesting(true);
         let permission = match wallet.request_permission(&state, PermissionRequest::Application(has_signature)).await {
@@ -555,8 +592,8 @@ where
         if !permission.is_positive() {
             let mut applications = self.applications.write().await;
             applications.remove(session)
-                .ok_or_else(|| RpcResponseError::new(None, InternalRpcError::CustomStr("Application not found")))?;
-            return Err(RpcResponseError::new(None, PERMISSION_DENIED_ERROR))
+                .ok_or_else(|| RpcResponseError::new(None, XSWDError::ApplicationNotFound))?;
+            return Err(RpcResponseError::new(None, XSWDError::PermissionDenied))
         }
 
         Ok(json!({
@@ -662,7 +699,7 @@ where
             // retrieve the event variant
             let event = serde_json::from_value(
                 request.params.ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::ExpectedParams))?)
-                .map_err(|e| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidParams(e))
+                .map_err(|e| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidJSONParams(e))
             )?;
             if is_subscribe {
                 self.subscribe_session_to_event(session, event, request.id).await.map(|_| None)
