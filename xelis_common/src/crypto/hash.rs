@@ -61,10 +61,6 @@ pub fn pow_hash(work: &[u8]) -> Result<Hash, XelisHashError> {
 }
 
 pub fn pow_hash_with_scratch_pad(input: &mut [u8; BYTES_ARRAY_INPUT], scratch_pad: &mut ScratchPad) -> Result<Hash, XelisHashError> {
-    if input.len() > BYTES_ARRAY_INPUT {
-        return Err(XelisHashError);
-    }
-
     xelis_hash(input, scratch_pad.as_mut_slice()).map(|bytes| Hash::new(bytes))
 }
 
