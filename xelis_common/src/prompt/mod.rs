@@ -120,6 +120,8 @@ pub enum PromptError {
     ReaderError(#[from] ReaderError),
     #[error(transparent)]
     CommandError(#[from] CommandError),
+    #[error(transparent)]
+    Any(#[from] Error)
 }
 
 impl<T> From<PoisonError<T>> for PromptError {
@@ -449,6 +451,13 @@ impl Prompt {
         };
         prompt.setup_logger(level, dir_path, filename_log, disable_file_logging)?;
 
+        #[cfg(target_os = "windows")]
+        {
+            if let Err(e) = Self::adjust_win_console() {
+                error!("Error while adjusting windows console: {}", e);
+            }
+        }
+
         #[cfg(feature = "tracing")]
         {
             info!("Tracing enabled");
@@ -470,6 +479,16 @@ impl Prompt {
         }
 
         Ok(Arc::new(prompt))
+    }
+
+    #[cfg(target_os = "windows")]
+    fn adjust_win_console() -> Result<(), Error> {
+        let console = win32console::console::WinConsole::input();
+        let mut mode = console.get_mode()?;
+        mode = (mode & !win32console::console::ConsoleMode::ENABLE_QUICK_EDIT_MODE)
+            | win32console::console::ConsoleMode::ENABLE_EXTENDED_FLAGS;
+        console.set_mode(mode)?;
+        Ok(())
     }
 
     // Start the thread to read stdin and handle events
