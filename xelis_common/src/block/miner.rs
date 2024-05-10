@@ -8,7 +8,7 @@ use crate::{
         pow_hash_with_scratch_pad,
         Hash,
         Hashable,
-        Input,
+        AlignedInput,
         PublicKey,
         ScratchPad,
         XelisHashError
@@ -30,7 +30,7 @@ pub struct MinerWork<'a> {
     // Can also be used to spread more the work job and increase its work capacity
     extra_nonce: [u8; EXTRA_NONCE_SIZE],
     // Cache in case of hashing
-    cache: Option<Input>
+    cache: Option<AlignedInput>
 }
 
 impl<'a> MinerWork<'a> {
@@ -71,7 +71,7 @@ impl<'a> MinerWork<'a> {
     #[inline(always)]
     pub fn get_pow_hash(&mut self, scratch_pad: &mut ScratchPad) -> Result<Hash, XelisHashError> {
         if self.cache.is_none() {
-            let mut input = Input::default();
+            let mut input = AlignedInput::default();
             input.as_mut_slice()?[0..BLOCK_WORK_SIZE].copy_from_slice(&self.to_bytes());
             self.cache = Some(input);
         }
