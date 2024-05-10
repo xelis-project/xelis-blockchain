@@ -92,7 +92,7 @@ pub struct NodeConfig {
     #[clap(long)]
     disable_file_logging: bool,
     /// Disable the log filename date based
-    /// If disabled, the log file will be named xelis-wallet.log instead of YYYY-MM-DD.xelis-wallet.log
+    /// If disabled, the log file will be named xelis-daemon.log instead of YYYY-MM-DD.xelis-daemon.log
     #[clap(long)]
     disable_file_log_date_based: bool,
     /// Log filename
