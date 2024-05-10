@@ -907,8 +907,14 @@ async fn seed(manager: &CommandManager, mut arguments: ArgumentManager) -> Resul
 async fn nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
-    let nonce = wallet.get_nonce().await;
+    let storage = wallet.get_storage().read().await;
+    let nonce = storage.get_nonce()?;
+    let unconfirmed_nonce = storage.get_unconfirmed_nonce();
     manager.message(format!("Nonce: {}", nonce));
+    if nonce != unconfirmed_nonce {
+        manager.message(format!("Unconfirmed nonce: {}", unconfirmed_nonce));
+    }
+
     Ok(())
 }
 
@@ -920,6 +926,7 @@ async fn set_nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), C
     let wallet: &Arc<Wallet> = context.get()?;
     let mut storage = wallet.get_storage().write().await;
     storage.set_nonce(value)?;
+    storage.set_unconfirmed_nonce(value);
     manager.message(format!("New nonce is: {}", value));
     Ok(())
 }
