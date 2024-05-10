@@ -102,6 +102,10 @@ pub struct MinerConfig {
     /// Disable the log file
     #[clap(long)]
     disable_file_logging: bool,
+    /// Disable the log filename date based
+    /// If disabled, the log file will be named xelis-wallet.log instead of YYYY-MM-DD.xelis-wallet.log
+    #[clap(long)]
+    disable_file_log_date_based: bool,
     /// Log filename
     /// 
     /// By default filename is xelis-miner.log.
@@ -155,7 +159,7 @@ const UPDATE_EVERY_NONCE: u64 = 10;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based)?;
 
     let detected_threads = match thread::available_parallelism() {
         Ok(value) => value.get() as u16,
