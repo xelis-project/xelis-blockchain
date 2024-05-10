@@ -612,7 +612,7 @@ impl Wallet {
     // You must handle "apply changes" to the storage
     pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(TransactionBuilderState, Transaction), WalletError> {
         trace!("create transaction with storage");
-        let nonce = storage.get_nonce().unwrap_or(0);
+        let nonce = storage.get_unconfirmed_nonce();
 
         // Build the state for the builder
         let used_assets = transaction_type.used_assets();

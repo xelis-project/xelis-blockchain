@@ -81,7 +81,7 @@ impl TransactionBuilderState {
         for (asset, balance) in self.balances.drain() {
             storage.set_unconfirmed_balance_for(asset, balance).await?;
         }
-        storage.set_nonce(self.nonce)?;
+        storage.set_unconfirmed_nonce(self.nonce);
 
         Ok(())
     }

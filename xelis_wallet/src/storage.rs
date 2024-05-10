@@ -3,7 +3,6 @@ use std::{
     num::NonZeroUsize
 };
 use indexmap::IndexMap;
-use log::trace;
 use lru::LruCache;
 use sled::{
     Tree,
@@ -49,7 +48,7 @@ use crate::{
     },
     error::WalletError
 };
-use log::error;
+use log::{trace, debug, error};
 
 // keys used to retrieve from storage
 const NONCE_KEY: &[u8] = b"NONCE";
@@ -129,6 +128,8 @@ pub struct EncryptedStorage {
     // so we can build several txs without having to wait for the confirmation
     // We store it in a VecDeque so for each TX we have an entry and can just retrieve it
     unconfirmed_balances_cache: Mutex<HashMap<Hash, VecDeque<Balance>>>,
+    // This is used to store the nonce used to create new transactions
+    unconfirmed_nonce: Option<u64>,
     assets_cache: Mutex<LruCache<Hash, u8>>,
     // Cache for the synced topoheight
     synced_topoheight: Option<u64>
@@ -147,6 +148,7 @@ impl EncryptedStorage {
             inner,
             balances_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             unconfirmed_balances_cache: Mutex::new(HashMap::new()),
+            unconfirmed_nonce: None,
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
         };
@@ -676,6 +678,7 @@ impl EncryptedStorage {
     // Delete all unconfirmed balances from this wallet
     pub async fn delete_unconfirmed_balances(&mut self) -> Result<()> {
         self.unconfirmed_balances_cache.lock().await.clear();
+        self.unconfirmed_nonce = None;
         Ok(())
     }
 
@@ -706,9 +709,28 @@ impl EncryptedStorage {
         self.load_from_disk(&self.extra, NONCE_KEY)
     }
 
-    // Set the new nonce uised to create new transactions
+    // Get the unconfirmed nonce to use to build ordered TXs
+    // It will fallback to the real nonce if not set
+    pub fn get_unconfirmed_nonce(&self) -> u64 {
+        trace!("get unconfirmed nonce");
+        self.unconfirmed_nonce.unwrap_or_else(|| self.get_nonce().unwrap_or(0))
+    }
+
+    // Set the unconfirmed nonce used to build TXs
+    pub fn set_unconfirmed_nonce(&mut self, nonce: u64) {
+        trace!("set unconfirmed nonce to {}", nonce);
+        self.unconfirmed_nonce = Some(nonce);
+    }
+
+    // Set the new nonce used to create new transactions
+    // If the unconfirmed nonce is lower than the new nonce, we reset it
     pub fn set_nonce(&mut self, nonce: u64) -> Result<()> {
         trace!("set nonce to {}", nonce);
+        if self.unconfirmed_nonce.is_some_and(|n| n <= nonce) {
+            debug!("unconfirmed nonce is lower than the new nonce, resetting it");
+            self.unconfirmed_nonce = None;
+        }
+
         self.save_to_disk(&self.extra, NONCE_KEY, &nonce.to_be_bytes())
     }
 
