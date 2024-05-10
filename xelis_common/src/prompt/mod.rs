@@ -441,7 +441,7 @@ type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, T2) -> LocalBoxFuture<'a, R> + 'a>;
 
 impl Prompt {
-    pub fn new(level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool, file_log_date_based: bool) -> Result<ShareablePrompt, PromptError> {
+    pub fn new(level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool, disable_file_log_date_based: bool) -> Result<ShareablePrompt, PromptError> {
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
         let prompt = Self {
             state: Arc::new(State::new()),
@@ -449,7 +449,7 @@ impl Prompt {
             read_input_receiver: AsyncMutex::new(read_input_receiver),
             read_input_sender,
         };
-        prompt.setup_logger(level, dir_path, filename_log, disable_file_logging, file_log_date_based)?;
+        prompt.setup_logger(level, dir_path, filename_log, disable_file_logging, disable_file_log_date_based)?;
 
         #[cfg(target_os = "windows")]
         {
@@ -713,7 +713,7 @@ impl Prompt {
     }
 
     // configure fern and print prompt message after each new output
-    fn setup_logger(&self, level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool, file_log_date_based: bool) -> Result<(), fern::InitError> {
+    fn setup_logger(&self, level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool, disable_file_log_date_based: bool) -> Result<(), fern::InitError> {
         let colors = ColoredLevelConfig::new()
             .debug(Color::Green)
             .info(Color::Cyan)
@@ -769,7 +769,8 @@ impl Prompt {
                 ))
             });
 
-            if file_log_date_based {
+            // Don't rotate the log file based on date ourself if its disabled
+            if !disable_file_log_date_based {
                 file_log = file_log.chain(fern::DateBased::new(logs_path, format!("%Y-%m-%d.{filename_log}")));
             } else {
                 file_log = file_log.chain(fern::log_file(format!("{}/{}", dir_path, filename_log))?)
