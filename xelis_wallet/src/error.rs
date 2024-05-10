@@ -6,6 +6,7 @@ use xelis_common::{
 };
 use anyhow::Error;
 
+#[repr(usize)]
 #[derive(Error, Debug)]
 pub enum WalletError {
     #[error("Transaction too big: {} bytes, max is {} bytes", _0, _1)]
@@ -78,8 +79,15 @@ pub enum WalletError {
     AEADCipherFormatError(#[from] CipherFormatError),
 }
 
+impl WalletError {
+    // Return the id for the variant
+    pub fn id(&self) -> usize {
+        unsafe { *(self as *const Self as *const _) }
+    }
+}
+
 impl From<WalletError> for InternalRpcError {
     fn from(e: WalletError) -> Self {
-        InternalRpcError::Custom(0, e.to_string())
+        InternalRpcError::Custom(100 + e.id() as i16, e.to_string())
     }
 }
