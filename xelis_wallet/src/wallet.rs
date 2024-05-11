@@ -30,7 +30,8 @@ use xelis_common::{
         Address,
         KeyPair,
         PublicKey,
-        Signature
+        Signature,
+        Hashable,
     },
     network::Network,
     serializer::Serializer,
@@ -653,6 +654,7 @@ impl Wallet {
         let transaction = builder.build(&mut state, &self.keypair)
             .map_err(|e| WalletError::Any(e.into()))?;
 
+        debug!("Transaction created: {} with nonce {} and reference {}", transaction.hash(), transaction.get_nonce(), transaction.get_reference());
         Ok((state, transaction))
     }
 
@@ -683,9 +685,11 @@ impl Wallet {
                         trace!("Network handler is running, checking if keys are registered");
                         for key in used_keys {
                             let addr = key.to_address(self.network.is_mainnet());
-                            trace!("Checking if {} is registered in stable height", addr);
+                            debug!("Checking if {} is registered in stable height", addr);
                             if network_handler.get_api().is_account_registered(&addr, true).await? {
                                 state.add_registered_key(addr.to_public_key());
+                            } else {
+                                debug!("Key {} is not registered in stable height", addr);
                             }
                         }
                     }
