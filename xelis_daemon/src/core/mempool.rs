@@ -273,11 +273,11 @@ impl Mempool {
         // All deleted sorted txs with their hashes
         let mut deleted_transactions: Vec<(Arc<Hash>, SortedTx)> = Vec::new();
 
-        let mut cache = HashMap::new();
+        let mut caches = HashMap::new();
         // Swap the nonces_cache with cache, so we iterate over cache and reinject it in nonces_cache
-        std::mem::swap(&mut cache, &mut self.caches);
+        std::mem::swap(&mut caches, &mut self.caches);
 
-        for (key, mut cache) in cache {
+        for (key, mut cache) in caches {
             trace!("Cleaning up mempool for owner {}", key.as_address(self.mainnet));
             let nonce = match storage.get_last_nonce(&key).await {
                 Ok((_, version)) => version.get_nonce(),
@@ -357,7 +357,6 @@ impl Mempool {
                 // TODO: there may be a way to optimize this even more, by checking if deleted TXs are those who got mined
                 // Which mean, expected balances are still up to date with chain state
                 if !delete_cache && !hashes.is_empty() {
-                    let mut state = MempoolState::new(&self, storage, topoheight);
                     let mut txs = Vec::with_capacity(cache.txs.len());
                     let mut txs_hashes = Vec::with_capacity(cache.txs.len());
                     for tx_hash in &cache.txs {
@@ -378,6 +377,8 @@ impl Mempool {
                         // If one TX is invalid, all next TXs are invalid
                         // NOTE: this can be revert easily in case we are deleting valid TXs also,
                         // But will be slower during high traffic
+                        debug!("Verifying TXs ({}) for sender {} at topoheight {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), topoheight);
+                        let mut state = MempoolState::new(&self, storage, topoheight);
                         if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
                             warn!("Error while verifying TXs ({}) for sender {}: {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), e);
                             // We may have only one TX invalid, but because they are all linked to each others we delete the whole cache

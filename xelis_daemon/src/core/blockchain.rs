@@ -2158,7 +2158,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        info!("Processed block {} at height {} in {:?} with {} txs (DAG: {})", block_hash, block.get_height(), start.elapsed(), block.get_txs_count(), block_is_ordered);
+        info!("Processed block {} at height {} in {}ms with {} txs (DAG: {})", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count(), block_is_ordered);
 
         // Broadcast to p2p nodes
         if broadcast {
