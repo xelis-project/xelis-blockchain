@@ -977,7 +977,8 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
                 }
             }
 
-            for tx_hash in block_header.get_transactions() {
+            // Reverse the order of transactions to get the latest first
+            for tx_hash in block_header.get_transactions().iter().rev() {
                 trace!("Searching tx {} in block {}", tx_hash, hash);
                 let tx = storage.get_transaction(tx_hash).await.context(format!("Error while retrieving transaction {tx_hash} from block {hash}"))?;
                 let is_sender = *tx.get_source() == *key;
