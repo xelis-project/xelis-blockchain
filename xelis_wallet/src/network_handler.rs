@@ -619,7 +619,7 @@ impl NetworkHandler {
 
         trace!("assets: {}", assets.len());
 
-        let mut balances: HashMap<&Hash, CiphertextCache>  = HashMap::new();
+        let mut balances: HashMap<&Hash, CiphertextCache> = HashMap::new();
         // Store newly detected assets
         // Get the final balance of each asset
         for asset in &assets {
@@ -714,15 +714,12 @@ impl NetworkHandler {
         let (daemon_topoheight, daemon_block_hash, wallet_topoheight, sync_back) = self.locate_sync_topoheight_and_clean().await?;
         debug!("Daemon topoheight: {}, wallet topoheight: {}, sync back: {}", daemon_topoheight, wallet_topoheight, sync_back);
 
+        let mut sync_new_blocks = false;
         // Sync back is requested, sync the head state again
         if sync_back {
             trace!("sync back");
             // Now sync head state, this will helps us to determinate if we should sync blocks or not
-            let should_sync_blocks = self.sync_head_state(&address, None, None, true).await?;
-            // we have something that changed, sync transactions
-            if should_sync_blocks {
-                self.sync_new_blocks(&address, wallet_topoheight, false).await?;
-            }
+            sync_new_blocks = self.sync_head_state(&address, None, None, true).await?;
         }
 
         if let Some(block) = event {
@@ -742,14 +739,19 @@ impl NetworkHandler {
                         }
                     }
                     // A change happened in this block, lets update balance and nonce
-                    self.sync_head_state(&address, Some(assets), nonce, false).await?;
+                    sync_new_blocks |= self.sync_head_state(&address, Some(assets), nonce, false).await?;
                 }
             } else {
                 // It is a block that got directly orphaned by DAG, ignore it
                 debug!("Block {} is not ordered, skipping it", block.hash);
             }
         } else {
-            // No event, sync blocks by hand
+            sync_new_blocks = true;
+        }
+
+        // we have something that changed, sync transactions
+        if sync_new_blocks {
+            debug!("Syncing new blocks");
             self.sync_new_blocks(address, wallet_topoheight, true).await?;
         }
 
