@@ -1,3 +1,4 @@
+use std::fmt;
 use crate::{
     crypto::{
         elgamal::{CompressedCiphertext, CompressedCommitment, CompressedHandle, CompressedPublicKey},
@@ -28,6 +29,12 @@ pub const MAX_TRANSFER_COUNT: usize = 255;
 pub struct Reference {
     pub hash: Hash,
     pub topoheight: u64,
+}
+
+impl fmt::Display for Reference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Reference[hash: {}, topoheight: {}]", self.hash, self.topoheight)
+    }
 }
 
 impl PartialEq for Reference {
