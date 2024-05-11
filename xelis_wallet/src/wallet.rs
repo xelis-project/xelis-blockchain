@@ -617,13 +617,19 @@ impl Wallet {
         // Build the state for the builder
         let used_assets = transaction_type.used_assets();
 
-        // state used to build the transaction
-        let mut state = TransactionBuilderState::new(
-            self.network.is_mainnet(),
+        let reference = if let Some(reference) = storage.get_last_tx_reference() {
+            reference.clone()
+        } else {
             Reference {
                 topoheight: storage.get_synced_topoheight()?,
                 hash: storage.get_top_block_hash()?
-            },
+            }
+        };
+
+        // state used to build the transaction
+        let mut state = TransactionBuilderState::new(
+            self.network.is_mainnet(),
+            reference,
             nonce
         );
 
@@ -634,7 +640,7 @@ impl Wallet {
                 return Err(WalletError::BalanceNotFound(asset));
             }
 
-            let balance = storage.get_unconfirmed_balance_for(&asset).await?;
+            let (balance, _) = storage.get_unconfirmed_balance_for(&asset).await?;
             state.add_balance(asset, balance);
         }
 

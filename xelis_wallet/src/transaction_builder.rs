@@ -82,6 +82,7 @@ impl TransactionBuilderState {
             storage.set_unconfirmed_balance_for(asset, balance).await?;
         }
         storage.set_unconfirmed_nonce(self.nonce);
+        storage.set_last_tx_reference(self.reference.clone());
 
         Ok(())
     }

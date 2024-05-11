@@ -31,7 +31,8 @@ use xelis_common::{
         ReaderError,
         Serializer,
         Writer
-    }
+    },
+    transaction::Reference
 };
 use anyhow::{
     Context,
@@ -130,6 +131,9 @@ pub struct EncryptedStorage {
     unconfirmed_balances_cache: Mutex<HashMap<Hash, VecDeque<Balance>>>,
     // This is used to store the nonce used to create new transactions
     unconfirmed_nonce: Option<u64>,
+    // Last reference used to build a transaction
+    last_tx_reference: Option<Reference>,
+    // Cache for the assets with their decimals
     assets_cache: Mutex<LruCache<Hash, u8>>,
     // Cache for the synced topoheight
     synced_topoheight: Option<u64>
@@ -149,6 +153,7 @@ impl EncryptedStorage {
             balances_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             unconfirmed_balances_cache: Mutex::new(HashMap::new()),
             unconfirmed_nonce: None,
+            last_tx_reference: None,
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
         };
@@ -477,21 +482,21 @@ impl EncryptedStorage {
 
     // Retrieve the unconfirmed balance for this asset if present
     // otherwise, fall back on the confirmed balance
-    pub async fn get_unconfirmed_balance_for(&self, asset: &Hash) -> Result<Balance> {
+    pub async fn get_unconfirmed_balance_for(&self, asset: &Hash) -> Result<(Balance, bool)> {
         trace!("get unconfirmed balance for {}", asset);
         let cache = self.unconfirmed_balances_cache.lock().await;
         if let Some(balances) = cache.get(asset) {
             // get the latest unconfirmed balance
             if let Some(balance) = balances.back() {
-                return Ok(Balance {
+                return Ok((Balance {
                     amount: balance.amount,
                     ciphertext: balance.ciphertext.clone()
-                });
+                }, true));
             }
         }
 
         // Fallback
-        self.get_balance_for(asset).await
+        self.get_balance_for(asset).await.map(|balance| (balance, false))
     }
 
     // Retrieve the unconfirmed balance decoded for this asset if present
@@ -544,6 +549,7 @@ impl EncryptedStorage {
         // for this, we simply go through all versions available and delete them all until we find the one we are looking for
         {
             let mut cache = self.unconfirmed_balances_cache.lock().await;
+            let mut delete_entry = false;
             if let Some(balances) = cache.get_mut(asset) {
                 while let Some(mut b) = balances.pop_front() {
                     if *b.ciphertext.compressed() == *balance.ciphertext.compressed() {
@@ -551,6 +557,18 @@ impl EncryptedStorage {
                         break;
                     }
                 }
+                delete_entry = balances.is_empty();
+            }
+
+            if delete_entry {
+                debug!("no more unconfirmed balance cache for {}", asset);
+                cache.remove(asset);
+            }
+
+            if cache.is_empty() {
+                debug!("no more unconfirmed balance cache, cleaning nonce and last tx reference");
+                self.unconfirmed_nonce = None;
+                self.last_tx_reference = None;
             }
         }
 
@@ -679,6 +697,7 @@ impl EncryptedStorage {
     pub async fn delete_unconfirmed_balances(&mut self) -> Result<()> {
         self.unconfirmed_balances_cache.lock().await.clear();
         self.unconfirmed_nonce = None;
+        self.last_tx_reference = None;
         Ok(())
     }
 
@@ -714,6 +733,18 @@ impl EncryptedStorage {
     pub fn get_unconfirmed_nonce(&self) -> u64 {
         trace!("get unconfirmed nonce");
         self.unconfirmed_nonce.unwrap_or_else(|| self.get_nonce().unwrap_or(0))
+    }
+
+    // Get the last reference used to build a transaction
+    pub fn get_last_tx_reference(&self) -> &Option<Reference> {
+        trace!("get last tx reference");
+        &self.last_tx_reference
+    }
+
+    // Set the last reference used to build a transaction
+    pub fn set_last_tx_reference(&mut self, reference: Reference) {
+        trace!("set last tx reference to {} at topoheight {}", reference.hash, reference.topoheight);
+        self.last_tx_reference = Some(reference);
     }
 
     // Set the unconfirmed nonce used to build TXs
