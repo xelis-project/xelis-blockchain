@@ -177,6 +177,8 @@ impl TransferWithCommitment {
 }
 
 impl TransactionTypeBuilder {
+
+    // Get the assets used in the transaction
     pub fn used_assets(&self) -> HashSet<Hash> {
         let mut consumed = HashSet::new();
 
@@ -197,13 +199,14 @@ impl TransactionTypeBuilder {
         consumed
     }
 
-    pub fn used_keys(&self) -> HashSet<CompressedPublicKey> {
-        let mut used_keys = HashSet::new();
+    // Get the destination keys used in the transaction
+    pub fn used_keys(&self) -> Vec<CompressedPublicKey> {
+        let mut used_keys = Vec::new();
 
         match &self {
             TransactionTypeBuilder::Transfers(transfers) => {
                 for transfer in transfers {
-                    used_keys.insert(transfer.destination.get_public_key().clone());
+                    used_keys.push(transfer.destination.get_public_key().clone());
                 }
             }
             TransactionTypeBuilder::Burn(_) => {}
