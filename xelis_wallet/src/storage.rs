@@ -547,13 +547,16 @@ impl EncryptedStorage {
     pub async fn set_balance_for(&mut self, asset: &Hash, mut balance: Balance) -> Result<()> {
         // Clear the cache of all outdated balances
         // for this, we simply go through all versions available and delete them all until we find the one we are looking for
+        // The unconfirmed balances cache may not work during front running
+        // As we only scan the final balances for each asset, if we get any incoming TX, compressed balance
+        // will be different and we will not be able to find the unconfirmed balance
         {
             let mut cache = self.unconfirmed_balances_cache.lock().await;
             let mut delete_entry = false;
             if let Some(balances) = cache.get_mut(asset) {
                 while let Some(mut b) = balances.pop_front() {
                     if *b.ciphertext.compressed() == *balance.ciphertext.compressed() {
-                        trace!("unconfirmed balance previously stored found for {}", asset);
+                        debug!("unconfirmed balance previously stored found for {}", asset);
                         break;
                     }
                 }
@@ -563,13 +566,14 @@ impl EncryptedStorage {
             if delete_entry {
                 debug!("no more unconfirmed balance cache for {}", asset);
                 cache.remove(asset);
+
+                // If we have no more unconfirmed balance, we can clean the last tx reference
+                if cache.is_empty() {
+                    debug!("no more unconfirmed balance cache, cleaning last tx reference ({:?})", self.last_tx_reference);
+                    self.last_tx_reference = None;
+                }
             }
 
-            if cache.is_empty() {
-                debug!("no more unconfirmed balance cache, cleaning nonce and last tx reference");
-                self.unconfirmed_nonce = None;
-                self.last_tx_reference = None;
-            }
         }
 
         self.save_to_disk(&self.balances, asset.as_bytes(), &balance.to_bytes())?;
