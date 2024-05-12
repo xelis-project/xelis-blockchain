@@ -432,7 +432,9 @@ pub struct Prompt {
     input_receiver: Mutex<Option<UnboundedReceiver<String>>>,
     // This following channel is used to cancel the read_input method
     read_input_sender: Sender<()>,
-    read_input_receiver: AsyncMutex<Receiver<()>>
+    read_input_receiver: AsyncMutex<Receiver<()>>,
+    // Should we set colors or not
+    disable_colors: bool
 }
 
 pub type ShareablePrompt = Arc<Prompt>;
@@ -441,13 +443,14 @@ type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, T2) -> LocalBoxFuture<'a, R> + 'a>;
 
 impl Prompt {
-    pub fn new(level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool, disable_file_log_date_based: bool) -> Result<ShareablePrompt, PromptError> {
+    pub fn new(level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool, disable_file_log_date_based: bool, disable_colors: bool) -> Result<ShareablePrompt, PromptError> {
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
         let prompt = Self {
             state: Arc::new(State::new()),
             input_receiver: Mutex::new(None),
             read_input_receiver: AsyncMutex::new(read_input_receiver),
             read_input_sender,
+            disable_colors
         };
         prompt.setup_logger(level, dir_path, filename_log, disable_file_logging, disable_file_log_date_based)?;
 
@@ -613,13 +616,13 @@ impl Prompt {
                 return Ok(input);
             }
             let escaped_colors = self.state.ascii_escape_regex.replace_all(&original_prompt, "");
-            prompt = colorize_string(Color::Red, &escaped_colors.into_owned());
+            prompt = self.colorize_string(Color::Red, &escaped_colors.into_owned());
         }
     }
 
     pub async fn ask_confirmation(&self) -> Result<bool, PromptError> {
         let res = self.read_valid_str_value(
-            colorize_str(Color::Green, "Confirm ? (Y/N): "),
+            self.colorize_str(Color::Green, "Confirm ? (Y/N): "),
             vec!["y", "n"]
         ).await?;
         Ok(res == "y")
@@ -722,6 +725,7 @@ impl Prompt {
 
         let base = fern::Dispatch::new();
 
+        let disable_colors = self.disable_colors;
         let state = Arc::clone(&self.state);
         let stdout_log = fern::Dispatch::new()
             .format(move |out, message, record| {
@@ -730,14 +734,25 @@ impl Prompt {
                 if record.level() != Level::Error && record.level() != Level::Debug {
                     target_with_pad = " ".to_owned() + &target_with_pad;
                 }
-                let res = out.finish(format_args!(
-                    "\x1b[2K\r\x1B[90m{} {}\x1B[0m \x1B[{}m{}\x1B[0m \x1B[90m>\x1B[0m {}",
-                    chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
-                    colors.color(record.level()),
-                    Color::BrightBlue.to_fg_str(),
-                    target_with_pad,
-                    message
-                ));
+                let res = if disable_colors {
+                    out.finish(format_args!(
+                        "\x1b[2K\r{} {}{} > {}",
+                        chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
+                        record.level(),
+                        target_with_pad,
+                        message
+                    ))
+                } else {
+                    out.finish(format_args!(
+                        "\x1b[2K\r\x1B[90m{} {}\x1B[0m \x1B[{}m{}\x1B[0m \x1B[90m>\x1B[0m {}",
+                        chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
+                        colors.color(record.level()),
+                        Color::BrightBlue.to_fg_str(),
+                        target_with_pad,
+                        message
+                    ))
+                };
+
                 if let Err(e) = state.show() {
                     error!("Error on prompt refresh: {}", e);
                 }
@@ -793,6 +808,26 @@ impl Prompt {
 
         Ok(())
     }
+
+    // colorize a string with a specific color
+    // if colors are disabled, the message is returned as is
+    pub fn colorize_string(&self, color: Color, message: &String) -> String {
+        if self.disable_colors {
+            return message.to_string();
+        }
+
+        format!("\x1B[{}m{}\x1B[0m", color.to_fg_str(), message)
+    }
+
+    // colorize a string with a specific color
+    // No color is set if colors are disabled
+    pub fn colorize_str(&self, color: Color, message: &str) -> String {
+        if self.disable_colors {
+            return message.to_string();
+        }
+
+        format!("\x1B[{}m{}\x1B[0m", color.to_fg_str(), message)
+    }
 }
 
 impl Drop for Prompt {
@@ -805,12 +840,4 @@ impl Drop for Prompt {
             } 
         }
     }
-}
-
-pub fn colorize_string(color: Color, message: &String) -> String {
-    format!("\x1B[{}m{}\x1B[0m", color.to_fg_str(), message)
-}
-
-pub fn colorize_str(color: Color, message: &str) -> String {
-    format!("\x1B[{}m{}\x1B[0m", color.to_fg_str(), message)
 }
