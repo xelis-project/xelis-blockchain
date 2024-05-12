@@ -117,11 +117,6 @@ use std::{
 use bytes::Bytes;
 use rand::{seq::IteratorRandom, Rng};
 
-enum MessageChannel {
-    Exit,
-    Connect((SocketAddr, bool))
-}
-
 // P2pServer is a fully async TCP server
 // Each connection will block on a data to send or to receive
 // useful for low end hardware
@@ -139,7 +134,7 @@ pub struct P2pServer<S: Storage> {
     // reference to the chain to add blocks/txs
     blockchain: Arc<Blockchain<S>>,
     // this sender allows to create a queue system in one task only
-    connections_sender: Sender<MessageChannel>,
+    connections_sender: Sender<(SocketAddr, bool)>,
     // used to requests objects to peers and avoid requesting the same object to multiple peers
     object_tracker: SharedObjectTracker,
     // used to check if the server is running or not in tasks
@@ -244,8 +239,8 @@ impl<S: Storage> P2pServer<S> {
         info!("Stopping P2p Server...");
         self.is_running.store(false, Ordering::Release);
 
-        if let Err(e) = self.connections_sender.send(MessageChannel::Exit).await {
-            error!("Error while sending Exit message to stop accepting new connections: {}", e);
+        if let Err(e) = self.exit_sender.send(()) {
+            error!("Error while sending Exit message to stop all tasks: {}", e);
         }
 
         info!("Waiting for all peers to be closed...");
@@ -312,7 +307,7 @@ impl<S: Storage> P2pServer<S> {
 
     // connect to seed nodes, start p2p server
     // and wait on all new connections
-    async fn start(self: &Arc<Self>, receiver: Receiver<MessageChannel>, blocks_processor_receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>, event_receiver: Receiver<Arc<Peer>>, use_peerlist: bool, concurrency: usize) -> Result<(), P2pError> {
+    async fn start(self: &Arc<Self>, receiver: Receiver<(SocketAddr, bool)>, blocks_processor_receiver: Receiver<(Arc<Peer>, BlockHeader, Hash)>, event_receiver: Receiver<Arc<Peer>>, use_peerlist: bool, concurrency: usize) -> Result<(), P2pError> {
         let listener = TcpListener::bind(self.get_bind_address()).await?;
         info!("P2p Server will listen on: {}", self.get_bind_address());
 
@@ -404,7 +399,7 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
-    async fn handle_outgoing_connections(self: Arc<Self>, mut priority_connections: Receiver<SocketAddr>, mut receiver: Receiver<MessageChannel>, tx: Sender<(Peer, Rx)>) {
+    async fn handle_outgoing_connections(self: Arc<Self>, mut priority_connections: Receiver<SocketAddr>, mut receiver: Receiver<(SocketAddr, bool)>, tx: Sender<(Peer, Rx)>) {
         // only allocate one time the buffer for this packet
         let mut handshake_buffer = [0; 512];
         let mut exit_receiver = self.exit_sender.subscribe();
@@ -427,16 +422,7 @@ impl<S: Storage> P2pServer<S> {
                 },
                 res = receiver.recv() => {
                     match res {
-                        Some(msg) => match msg {
-                            MessageChannel::Connect((addr, priority)) => {
-                                trace!("New outgoing connection received");
-                                (addr, priority)
-                            },
-                            MessageChannel::Exit => {
-                                debug!("Received Exit message, exiting task");
-                                break;
-                            }
-                        },
+                        Some(msg) => msg,
                         None => {
                             error!("Error while receiving outgoing connection, exiting task");
                             break;
@@ -697,7 +683,7 @@ impl<S: Storage> P2pServer<S> {
             return;
         }
 
-        if let Err(e) = self.connections_sender.send(MessageChannel::Connect((addr, priority))).await {
+        if let Err(e) = self.connections_sender.send((addr, priority)).await {
             error!("Error while trying to connect to address {} (priority = {}): {}", addr, priority, e);
         }
     }
