@@ -51,7 +51,6 @@ use xelis_common::{
         Difficulty
     },
     prompt::{
-        self,
         command::CommandManager,
         LogLevel,
         Prompt,
@@ -106,6 +105,9 @@ pub struct MinerConfig {
     /// If disabled, the log file will be named xelis-miner.log instead of YYYY-MM-DD.xelis-miner.log
     #[clap(long)]
     disable_file_log_date_based: bool,
+    /// Disable the usage of colors in log
+    #[clap(long)]
+    disable_log_color: bool,
     /// Log filename
     /// 
     /// By default filename is xelis-miner.log.
@@ -159,7 +161,7 @@ const UPDATE_EVERY_NONCE: u64 = 10;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color)?;
 
     let detected_threads = match thread::available_parallelism() {
         Ok(value) => value.get() as u16,
@@ -458,23 +460,23 @@ async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
     let closure = |_: &_, _: _| async {
         let topoheight_str = format!(
             "{}: {}",
-            prompt::colorize_str(Color::Yellow, "TopoHeight"),
-            prompt::colorize_string(Color::Green, &format!("{}", CURRENT_TOPO_HEIGHT.load(Ordering::SeqCst))),
+            prompt.colorize_str(Color::Yellow, "TopoHeight"),
+            prompt.colorize_string(Color::Green, &format!("{}", CURRENT_TOPO_HEIGHT.load(Ordering::SeqCst))),
         );
         let blocks_found = format!(
             "{}: {}",
-            prompt::colorize_str(Color::Yellow, "Accepted"),
-            prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_FOUND.load(Ordering::SeqCst))),
+            prompt.colorize_str(Color::Yellow, "Accepted"),
+            prompt.colorize_string(Color::Green, &format!("{}", BLOCKS_FOUND.load(Ordering::SeqCst))),
         );
         let blocks_rejected = format!(
             "{}: {}",
-            prompt::colorize_str(Color::Yellow, "Rejected"),
-            prompt::colorize_string(Color::Green, &format!("{}", BLOCKS_REJECTED.load(Ordering::SeqCst))),
+            prompt.colorize_str(Color::Yellow, "Rejected"),
+            prompt.colorize_string(Color::Green, &format!("{}", BLOCKS_REJECTED.load(Ordering::SeqCst))),
         );
         let status = if WEBSOCKET_CONNECTED.load(Ordering::SeqCst) {
-            prompt::colorize_str(Color::Green, "Online")
+            prompt.colorize_str(Color::Green, "Online")
         } else {
-            prompt::colorize_str(Color::Red, "Offline")
+            prompt.colorize_str(Color::Red, "Offline")
         };
         let hashrate = {
             let mut last_time = HASHRATE_LAST_TIME.lock().await;
@@ -483,19 +485,19 @@ async fn run_prompt(prompt: ShareablePrompt) -> Result<()> {
             let hashrate = 1000f64 / (last_time.elapsed().as_millis() as f64 / counter as f64);
             *last_time = Instant::now();
 
-            prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(hashrate)))
+            prompt.colorize_string(Color::Green, &format!("{}", format_hashrate(hashrate)))
         };
 
         Ok(
             format!(
                 "{} | {} | {} | {} | {} | {} {} ",
-                prompt::colorize_str(Color::Blue, "XELIS Miner"),
+                prompt.colorize_str(Color::Blue, "XELIS Miner"),
                 topoheight_str,
                 blocks_found,
                 blocks_rejected,
                 hashrate,
                 status,
-                prompt::colorize_str(Color::BrightBlack, ">>")
+                prompt.colorize_str(Color::BrightBlack, ">>")
             )
         )
     };
