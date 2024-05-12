@@ -286,10 +286,20 @@ impl Mempool {
                     // that means the key is not in storage anymore, so we can delete safely
                     // we just have to skip this iteration so it's not getting re-injected
                     warn!("Error while getting nonce for owner {}, he maybe has no nonce anymore, skipping: {}", key.as_address(self.mainnet), e);
+
+                    // Delete all txs from this cache
+                    for tx in cache.txs {
+                        if let Some(sorted_tx) = self.txs.remove(&tx) {
+                            deleted_transactions.push((tx, sorted_tx));
+                        } else {
+                            warn!("TX {} not found in mempool while deleting due to nonce error", tx);
+                        }
+                    }
+
                     continue;
                 }
             };
-            trace!("Owner {} has nonce {}, cache min: {}, max: {}", key.as_address(self.mainnet), nonce, cache.get_min(), cache.get_max());
+            debug!("Owner {} has nonce {}, cache min: {}, max: {}", key.as_address(self.mainnet), nonce, cache.get_min(), cache.get_max());
 
             let mut delete_cache = false;
             // Check if the minimum nonce is higher than the new nonce, that means
@@ -297,10 +307,20 @@ impl Mempool {
             // or, check and delete txs if the nonce is lower than the new nonce
             // otherwise the cache is still up to date
             if cache.get_min() > nonce {
-                trace!("All TXs for key {} are orphaned, deleting them", key.as_address(self.mainnet));
+                debug!("All TXs for key {} are orphaned, deleting them", key.as_address(self.mainnet));
+
+                // Don't let ghost TXs in mempool
+                for tx in cache.txs.drain(..) {
+                    if let Some(sorted_tx) = self.txs.remove(&tx) {
+                        deleted_transactions.push((tx, sorted_tx));
+                    } else {
+                        warn!("TX {} not found in mempool (orphaned due to nonce)", tx);
+                    }
+                }
+
                 delete_cache = true;
             } else if cache.get_min() <= nonce {
-                trace!("Deleting TXs for owner {} with nonce < {}", key.as_address(self.mainnet), nonce);
+                debug!("Verifying TXs for owner {} with nonce <= {}", key.as_address(self.mainnet), nonce);
                 // txs hashes to delete
                 let mut hashes: HashSet<Arc<Hash>> = HashSet::with_capacity(cache.txs.len());
 
@@ -327,7 +347,7 @@ impl Mempool {
 
                             // Update cache lowest bounds
                             if let Some(v) = min.clone() {
-                                if  v > tx_nonce {
+                                if v > tx_nonce {
                                     min = Some(tx_nonce);
                                 }
                             } else {
