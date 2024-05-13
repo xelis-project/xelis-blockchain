@@ -119,9 +119,9 @@ Each balances, transaction assets values are in encrypted form and nobody can de
 ## Mining
 
 Mining capabilities of XELIS are a bit differents from others chains because of standards being not implemented.
-Each job send to a miner is a `BlockMiner` instance in hex format.
+Each job send to a miner is a `MinerWork` instance in hex format.
 
-The `BlockMiner` is in following format:
+The `MinerWork` is in following format:
 - header work hash: 32 bytes
 - timestamp (u64 for milliseconds): 8 bytes (BigEndian)
 - nonce (u64): 8 bytes (BigEndian)
@@ -137,18 +137,19 @@ Header work hash is the immutable part of a block work, its a hash calculated us
 
 The header work has to be equal to 73 bytes exactly and its hash to 32 bytes.
 
-**NOTE**: Miner key is not included in the immutable of the block work to be have generic block template that can be compatible with any miner. 
+**WARNING**: Miner key is not included in the immutable of the block work (aka header work hash).
+This is done so a block template can be generic and easily updatable for any miner without re-generating a new block template each time.
 
-All hashes are calculated using the `Blake3` hashing algorithm except the Proof-Of-Work hash.
+For pool development, you must verify that the miner public key in a received share is yours as it can be updated.
 
-POW Hash should be calculated from the `BlockMiner` format and compared against the target difficulty.
+All hashes are calculated using the `Blake3` hashing algorithm except the Proof-Of-Work hash, which use [xelis-hash](https://github.com/xelis-project/xelis-hash).
 
-NOTE: It is recommended to use the GetWork WebSocket server to be notified of new block work and submit correct work.
+POW Hash should be calculated from the `MinerWork` format and compared against the target difficulty.
 
-Mining jobs are send only when a new block is found or when a new TX is added in mempool.
+**NOTE**: It is recommended to use the GetWork WebSocket server to be notified of new block work and submit correct work.
+
+Mining jobs from GetWork are only sent when a new block is found or when a new TX is added in mempool.
 Miners software are recommended to update themselves the block timestamp (or at least every 500ms) for best network difficulty calculation.
-
-The POW Hashing algorithm is [xelis-hash](https://github.com/xelis-project/xelis-hash).
 
 ## Client Protocol
 
