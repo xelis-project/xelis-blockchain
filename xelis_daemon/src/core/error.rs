@@ -12,6 +12,7 @@ use xelis_common::{
     },
     difficulty::DifficultyError,
     prompt::PromptError,
+    rpc_server::InternalRpcError,
     serializer::ReaderError,
     time::TimestampMillis,
     transaction::verify::VerificationError
@@ -92,6 +93,7 @@ pub enum DiskContext {
     LoadData,
 }
 
+#[repr(usize)]
 #[derive(Error, Debug)]
 pub enum BlockchainError {
     #[error("Block is not ordered")]
@@ -302,6 +304,19 @@ pub enum BlockchainError {
     TransactionProof(ProofVerificationError),
     #[error("Error while generating pow hash")]
     POWHashError(#[from] XelisHashError),
+}
+
+impl BlockchainError {
+    pub unsafe fn id(&self) -> usize {
+        *(self as *const Self as *const _)
+    }
+}
+
+impl From<BlockchainError> for InternalRpcError {
+    fn from(value: BlockchainError) -> Self {
+        let id = unsafe { value.id() } as i16;
+        InternalRpcError::CustomAny(200 + id, value.into())
+    }
 }
 
 impl<T> From<PoisonError<T>> for BlockchainError {
