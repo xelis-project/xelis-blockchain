@@ -376,7 +376,7 @@ impl Mempool {
                 // Cache is not empty yet, but we deleted some TXs from it, balances may be out-dated, verify TXs left
                 // TODO: there may be a way to optimize this even more, by checking if deleted TXs are those who got mined
                 // Which mean, expected balances are still up to date with chain state
-                if !delete_cache && !hashes.is_empty() {
+                if !delete_cache {
                     let mut txs = Vec::with_capacity(cache.txs.len());
                     let mut txs_hashes = Vec::with_capacity(cache.txs.len());
                     for tx_hash in &cache.txs {
