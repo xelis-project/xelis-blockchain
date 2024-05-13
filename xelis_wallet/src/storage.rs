@@ -133,6 +133,9 @@ pub struct EncryptedStorage {
     unconfirmed_nonce: Option<u64>,
     // Last reference used to build a transaction
     last_tx_reference: Option<Reference>,
+    // Last transaction hash created
+    // This is used to determine if we should erase the last unconfirmed balance or not
+    last_tx_hash_created: Option<Hash>,
     // Cache for the assets with their decimals
     assets_cache: Mutex<LruCache<Hash, u8>>,
     // Cache for the synced topoheight
@@ -154,6 +157,7 @@ impl EncryptedStorage {
             unconfirmed_balances_cache: Mutex::new(HashMap::new()),
             unconfirmed_nonce: None,
             last_tx_reference: None,
+            last_tx_hash_created: None,
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
         };
@@ -559,6 +563,12 @@ impl EncryptedStorage {
                         debug!("unconfirmed balance previously stored found for {}", asset);
                         break;
                     }
+
+                    if balances.is_empty() && self.last_tx_hash_created.is_some() {
+                        debug!("no matching unconfirmed balance found for asset {} but last TX still not processed, inject back", asset);
+                        balances.push_front(b);
+                        break;
+                    }
                 }
                 delete_entry = balances.is_empty();
             }
@@ -569,11 +579,12 @@ impl EncryptedStorage {
 
                 // If we have no more unconfirmed balance, we can clean the last tx reference
                 if cache.is_empty() {
-                    debug!("no more unconfirmed balance cache, cleaning last tx reference ({:?})", self.last_tx_reference);
+                    debug!("no more unconfirmed balance cache, cleaning tx cache ({:?})", self.last_tx_reference);
                     self.last_tx_reference = None;
+                    self.last_tx_hash_created = None;
+                    self.unconfirmed_nonce = None;
                 }
             }
-
         }
 
         self.save_to_disk(&self.balances, asset.as_bytes(), &balance.to_bytes())?;
@@ -699,9 +710,12 @@ impl EncryptedStorage {
 
     // Delete all unconfirmed balances from this wallet
     pub async fn delete_unconfirmed_balances(&mut self) -> Result<()> {
+        trace!("delete unconfirmed balances");
         self.unconfirmed_balances_cache.lock().await.clear();
         self.unconfirmed_nonce = None;
         self.last_tx_reference = None;
+        self.last_tx_hash_created = None;
+
         Ok(())
     }
 
@@ -717,6 +731,12 @@ impl EncryptedStorage {
     // with no access to the decrypted master key
     pub fn save_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
         trace!("save transaction {}", hash);
+
+        if self.last_tx_hash_created.as_ref().is_some_and(|h| *h == *hash) {
+            debug!("Transaction {} has been executed, deleting cache", hash);
+            self.set_last_tx_hash(None);
+        }
+
         self.save_to_disk(&self.transactions, hash.as_bytes(), &transaction.to_bytes())
     }
 
@@ -749,6 +769,18 @@ impl EncryptedStorage {
     pub fn set_last_tx_reference(&mut self, reference: Reference) {
         trace!("set last tx reference to {} at topoheight {}", reference.hash, reference.topoheight);
         self.last_tx_reference = Some(reference);
+    }
+
+    // Set the last TX hash created
+    pub fn set_last_tx_hash(&mut self, hash: Option<Hash>) {
+        trace!("set last tx hash to {:?}", hash);
+        self.last_tx_hash_created = hash;
+    }
+
+    // Get the last TX hash created
+    pub fn get_last_tx_hash(&self) -> Option<&Hash> {
+        trace!("get last tx hash");
+        self.last_tx_hash_created.as_ref()
     }
 
     // Set the unconfirmed nonce used to build TXs

@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs::{create_dir_all, File},
     io::{Read, Write},
     path::Path,
@@ -654,7 +655,10 @@ impl Wallet {
         let transaction = builder.build(&mut state, &self.keypair)
             .map_err(|e| WalletError::Any(e.into()))?;
 
-        debug!("Transaction created: {} with nonce {} and reference {}", transaction.hash(), transaction.get_nonce(), transaction.get_reference());
+        let tx_hash = transaction.hash();
+        debug!("Transaction created: {} with nonce {} and reference {}", tx_hash, transaction.get_nonce(), transaction.get_reference());
+        state.set_tx_hash_built(tx_hash);
+
         Ok((state, transaction))
     }
 
@@ -678,19 +682,26 @@ impl Wallet {
         if let FeeBuilder::Multiplier(_) = fee {
             // To pay exact fees needed, we must verify that we don't have to pay more than needed
             let used_keys = transaction_type.used_keys();
+            let mut processed_keys = HashSet::new();
             if !used_keys.is_empty() {
                 trace!("Checking if destination keys are registered");
                 if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
                     if network_handler.is_running().await {
                         trace!("Network handler is running, checking if keys are registered");
                         for key in used_keys {
-                            let addr = key.to_address(self.network.is_mainnet());
-                            debug!("Checking if {} is registered in stable height", addr);
-                            if network_handler.get_api().is_account_registered(&addr, true).await? {
-                                state.add_registered_key(addr.to_public_key());
-                            } else {
-                                debug!("Key {} is not registered in stable height", addr);
+                            if processed_keys.contains(&key) {
+                                continue;
                             }
+
+                            let addr = key.as_address(self.network.is_mainnet());
+                            trace!("Checking if {} is registered in stable height", addr);
+                            let registered = network_handler.get_api().is_account_registered(&addr, true).await?;
+                            trace!("registered: {}", registered);
+                            if registered {
+                                state.add_registered_key(addr.to_public_key());
+                            }
+
+                            processed_keys.insert(key);
                         }
                     }
                 }

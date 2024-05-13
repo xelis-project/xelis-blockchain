@@ -46,6 +46,7 @@ pub struct TransactionBuilderState {
     balances: HashMap<Hash, Balance>,
     reference: Reference,
     nonce: u64,
+    tx_hash_built: Option<Hash>
 }
 
 impl TransactionBuilderState {
@@ -57,7 +58,8 @@ impl TransactionBuilderState {
             mainnet,
             balances: HashMap::new(),
             reference,
-            nonce
+            nonce,
+            tx_hash_built: None
         }
     }
 
@@ -77,12 +79,18 @@ impl TransactionBuilderState {
         self.inner.registered_keys.insert(key);
     }
 
+    // This must be called once the TX has been built
+    pub fn set_tx_hash_built(&mut self, tx_hash: Hash) {
+        self.tx_hash_built = Some(tx_hash);
+    }
+
     pub async fn apply_changes(&mut self, storage: &mut EncryptedStorage) -> Result<(), WalletError> {
         for (asset, balance) in self.balances.drain() {
             storage.set_unconfirmed_balance_for(asset, balance).await?;
         }
         storage.set_unconfirmed_nonce(self.nonce);
         storage.set_last_tx_reference(self.reference.clone());
+        storage.set_last_tx_hash(self.tx_hash_built.take());
 
         Ok(())
     }
