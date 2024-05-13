@@ -220,7 +220,7 @@ fn get_block_rewards(height: u64, reward: Option<u64>) -> Option<(u64, u64)> {
 // Get a block response based on data in chain and from parameters
 pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash, include_txs: bool) -> Result<Value, InternalRpcError> {
     if !storage.has_block_with_hash(&hash).await.context("Error while checking if block exist")? {
-        return Err(InternalRpcError::AnyError(BlockchainError::BlockNotFound(hash.clone()).into()))
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::BlockNotFound(hash.clone()).into()))
     }
 
     let value: Value = if include_txs {
@@ -425,12 +425,12 @@ async fn get_top_block<S: Storage>(context: &Context, body: Value) -> Result<Val
 async fn get_block_template<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBlockTemplateParams = parse_params(body)?;
     if !params.address.is_normal() {
-        return Err(InternalRpcError::AnyError(ApiError::ExpectedNormalAddress.into()))
+        return Err(InternalRpcError::InvalidParamsAny(ApiError::ExpectedNormalAddress.into()))
     }
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
-        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     let storage = blockchain.get_storage().read().await;
@@ -448,12 +448,12 @@ async fn create_miner_work<S: Storage>(context: &Context, body: Value) -> Result
     let mut work = MinerWork::from_block(header);
     if let Some(address) = params.address {
         if !address.is_normal() {
-            return Err(InternalRpcError::AnyError(ApiError::ExpectedNormalAddress.into()))
+            return Err(InternalRpcError::InvalidParamsAny(ApiError::ExpectedNormalAddress.into()))
         }
     
         let blockchain: &Arc<Blockchain<S>> = context.get()?;
         if address.is_mainnet() != blockchain.get_network().is_mainnet() {
-            return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+            return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
         }
 
         work.set_miner(Cow::Owned(address.into_owned().to_public_key()));
@@ -481,7 +481,7 @@ async fn get_balance<S: Storage>(context: &Context, body: Value) -> Result<Value
     let params: GetBalanceParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
-        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     let storage = blockchain.get_storage().read().await;
@@ -496,7 +496,7 @@ async fn has_balance<S: Storage>(context: &Context, body: Value) -> Result<Value
     let params: HasBalanceParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
-        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     let key = params.address.get_public_key();
@@ -560,7 +560,7 @@ async fn get_balance_at_topoheight<S: Storage>(context: &Context, body: Value) -
     }
 
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
-        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     let storage = blockchain.get_storage().read().await;
@@ -572,7 +572,7 @@ async fn has_nonce<S: Storage>(context: &Context, body: Value) -> Result<Value, 
     let params: HasNonceParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
-        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     let storage = blockchain.get_storage().read().await;
@@ -589,7 +589,7 @@ async fn get_nonce<S: Storage>(context: &Context, body: Value) -> Result<Value, 
     let params: GetNonceParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
-        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     let storage = blockchain.get_storage().read().await;
@@ -608,7 +608,7 @@ async fn get_nonce_at_topoheight<S: Storage>(context: &Context, body: Value) -> 
     }
 
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
-        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     let storage = blockchain.get_storage().read().await;
@@ -686,7 +686,7 @@ async fn submit_transaction<S: Storage>(context: &Context, body: Value) -> Resul
 
     let transaction = Transaction::from_hex(params.data)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    blockchain.add_tx_to_mempool(transaction, true).await.map_err(|e| InternalRpcError::AnyError(e.into()))?;
+    blockchain.add_tx_to_mempool(transaction, true).await.map_err(|e| InternalRpcError::InvalidParamsAny(e.into()))?;
     Ok(json!(true))
 }
 
@@ -726,7 +726,7 @@ async fn p2p_status<S: Storage>(context: &Context, body: Value) -> Result<Value,
                 max_peers
             }))
         },
-        None => Err(InternalRpcError::AnyError(ApiError::NoP2p.into()))
+        None => Err(InternalRpcError::InvalidParamsAny(ApiError::NoP2p.into()))
     }
 }
 
@@ -753,7 +753,7 @@ async fn get_peers<S: Storage>(context: &Context, body: Value) -> Result<Value, 
                 hidden_peers: total_peers - sharable_peers,
             }))
         },
-        None => Err(InternalRpcError::AnyError(ApiError::NoP2p.into()))
+        None => Err(InternalRpcError::InvalidParamsAny(ApiError::NoP2p.into()))
     }
 }
 
@@ -918,7 +918,7 @@ async fn get_account_history<S: Storage>(context: &Context, body: Value) -> Resu
     let params: GetAccountHistoryParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
-        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     let key = params.address.get_public_key();
@@ -1048,7 +1048,7 @@ async fn get_account_assets<S: Storage>(context: &Context, body: Value) -> Resul
     let params: GetAccountAssetsParams = parse_params(body)?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
-        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     let key = params.address.get_public_key();
@@ -1167,12 +1167,12 @@ async fn get_size_on_disk<S: Storage>(context: &Context, body: Value) -> Result<
 async fn get_mempool_cache<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetMempoolCacheParams = parse_params(body)?;
     if !params.address.is_normal() {
-        return Err(InternalRpcError::AnyError(ApiError::ExpectedNormalAddress.into()))    
+        return Err(InternalRpcError::InvalidParamsAny(ApiError::ExpectedNormalAddress.into()))    
     }
     
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
-        return Err(InternalRpcError::AnyError(BlockchainError::InvalidNetwork.into()))
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
     let mempool = blockchain.get_mempool().read().await;
