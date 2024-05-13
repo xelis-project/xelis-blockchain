@@ -102,7 +102,7 @@ where
     handle: ServerHandle
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, Copy)]
 pub enum XSWDError {
     #[error("Permission denied")]
     PermissionDenied,
@@ -134,9 +134,9 @@ pub enum XSWDError {
 
 impl From<XSWDError> for InternalRpcError {
     fn from(e: XSWDError) -> Self {
-        let msg = e.to_string();
+        let err = e.into();
         let id = e as i16;
-        InternalRpcError::Custom(id, msg)
+        InternalRpcError::CustomAny(10 + id, err)
     }
 }
 
@@ -471,7 +471,7 @@ where
             Permission::Ask => {
                 let result = self.handler.get_data()
                 .request_permission(app, PermissionRequest::Request(request)).await
-                .map_err(|msg| RpcResponseError::new(request.id.clone(), InternalRpcError::Custom(0, msg.to_string())))?;
+                .map_err(|err| RpcResponseError::new(request.id.clone(), InternalRpcError::CustomAny(0, err)))?;
 
                 match result {
                     PermissionResult::Allow => Ok(()),

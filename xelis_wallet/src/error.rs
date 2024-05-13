@@ -81,13 +81,14 @@ pub enum WalletError {
 
 impl WalletError {
     // Return the id for the variant
-    pub fn id(&self) -> usize {
-        unsafe { *(self as *const Self as *const _) }
+    pub unsafe fn id(&self) -> usize {
+        *(self as *const Self as *const _)
     }
 }
 
 impl From<WalletError> for InternalRpcError {
     fn from(e: WalletError) -> Self {
-        InternalRpcError::Custom(100 + e.id() as i16, e.to_string())
+        let id = unsafe { e.id() };
+        InternalRpcError::Custom(100 + id as i16, e.to_string())
     }
 }
