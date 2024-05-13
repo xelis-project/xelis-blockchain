@@ -473,7 +473,7 @@ async fn submit_block<S: Storage>(context: &Context, body: Value) -> Result<Valu
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     let block = blockchain.build_block_from_header(Immutable::Owned(header)).await.context("Error while building block from header")?;
-    blockchain.add_new_block(block, true, true).await.context("Error while adding new block to chain")?;
+    blockchain.add_new_block(block, true, true).await?;
     Ok(json!(true))
 }
 
@@ -684,9 +684,12 @@ async fn submit_transaction<S: Storage>(context: &Context, body: Value) -> Resul
         return Err(InternalRpcError::InvalidJSONRequest).context(format!("Transaction size cannot be greater than {}", human_bytes(MAX_TRANSACTION_SIZE as f64)))?
     }
 
-    let transaction = Transaction::from_hex(params.data)?;
+    let transaction = Transaction::from_hex(params.data)
+        .map_err(|err| InternalRpcError::InvalidParamsAny(err.into()))?;
+
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
-    blockchain.add_tx_to_mempool(transaction, true).await.map_err(|e| InternalRpcError::InvalidParamsAny(e.into()))?;
+    blockchain.add_tx_to_mempool(transaction, true).await?;
+
     Ok(json!(true))
 }
 
