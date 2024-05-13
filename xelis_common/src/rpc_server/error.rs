@@ -23,6 +23,8 @@ pub enum InternalRpcError {
     InvalidJSONParams(#[from] SerdeError),
     #[error("Invalid params: {}", _0)]
     InvalidParams(&'static str),
+    #[error("Invalid params: {}", _0)]
+    InvalidParamsAny(AnyError),
     #[error("Expected parameters for this method but was not present")]
     ExpectedParams,
     #[error("Unexpected parameters for this method")]
@@ -45,6 +47,8 @@ pub enum InternalRpcError {
     SerializeResponse(SerdeError),
     // Custom errors must have a code between -3 and -31999
     #[error("{}", _1)]
+    CustomAny(i16, AnyError),
+    #[error("{}", _1)]
     Custom(i16, String),
     #[error("{}", _1)]
     CustomStr(i16, &'static str),
@@ -57,7 +61,7 @@ impl InternalRpcError {
             Self::ParseBodyError => -32700,
             Self::InvalidJSONRequest | Self::InvalidRequestStr(_) | InternalRpcError::InvalidVersion => -32600,
             Self::MethodNotFound(_) => -32601,
-            Self::InvalidJSONParams(_) | Self::InvalidParams(_) | InternalRpcError::UnexpectedParams | InternalRpcError::ExpectedParams => -32602,
+            Self::InvalidJSONParams(_) | Self::InvalidParams(_) |  Self::InvalidParamsAny(_) | InternalRpcError::UnexpectedParams | InternalRpcError::ExpectedParams => -32602,
             // Internal errors
             Self::InternalError(_) => -32603,
             // 32000 to -32099	Server error (Reserved for implementation-defined server-errors)
@@ -70,7 +74,7 @@ impl InternalRpcError {
             Self::EventNotSubscribed => -1,
             Self::EventAlreadySubscribed => -2,
             // Custom errors
-            Self::Custom(code, _) | Self::CustomStr(code, _) => *code,
+            Self::Custom(code, _) | Self::CustomStr(code, _) | Self::CustomAny(code, _) => *code,
         }
     }
 }

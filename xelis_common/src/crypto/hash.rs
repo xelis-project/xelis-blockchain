@@ -109,7 +109,7 @@ impl<'a> Deserialize<'a> for Hash {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where D: serde::Deserializer<'a> {
         let hex = String::deserialize(deserializer)?;
-        if hex.len() != 64 {
+        if hex.len() != HASH_SIZE * 2 {
             return Err(SerdeError::custom("Invalid hex length"))
         }
 
