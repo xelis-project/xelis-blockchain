@@ -151,10 +151,10 @@ struct State {
 }
 
 impl State {
-    fn new() -> Self {
+    fn new(allow_interactive: bool) -> Self {
         // enable the raw mode for terminal
         // so we can read each event/action
-        let interactive = !crossterminal::enable_raw_mode().is_err();
+        let interactive = if allow_interactive { !crossterminal::enable_raw_mode().is_err() } else { false };
         if interactive {
             warn!("Non-interactive mode enabled");
         }
@@ -443,10 +443,10 @@ type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, T2) -> LocalBoxFuture<'a, R> + 'a>;
 
 impl Prompt {
-    pub fn new(level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool, disable_file_log_date_based: bool, disable_colors: bool) -> Result<ShareablePrompt, PromptError> {
+    pub fn new(level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool, disable_file_log_date_based: bool, disable_colors: bool, interactive: bool) -> Result<ShareablePrompt, PromptError> {
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
         let prompt = Self {
-            state: Arc::new(State::new()),
+            state: Arc::new(State::new(interactive)),
             input_receiver: Mutex::new(None),
             read_input_receiver: AsyncMutex::new(read_input_receiver),
             read_input_sender,
