@@ -524,9 +524,11 @@ Block Header can be serialized/deserialized using following order on byte array:
 - 8 bytes for height (u64) big endian format
 - 8 bytes for timestamp (u64) big endian format
 - 8 bytes for nonce (u64) big endian format
+- 32 bytes for extra nonce (this space is free and can be used to spread more the work or write anything)
 - 1 byte for tips count
 - 32 bytes per hash (count of elements is based on previous byte)
-- 32 bytes for extra nonce (this space is free and can be used to spread more the work or write anything)
+- 2 bytes for txs hashes count (u16) big endian format
+- 32 bytes per hash (count of elements is based on previous value)
 - 32 bytes for miner public key
 
 ##### Method `get_block_template`
