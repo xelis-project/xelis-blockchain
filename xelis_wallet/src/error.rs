@@ -9,6 +9,8 @@ use anyhow::Error;
 #[repr(usize)]
 #[derive(Error, Debug)]
 pub enum WalletError {
+    #[error("Invalid builder state, tx hash not built")]
+    TxNotBuilt,
     #[error("Transaction too big: {} bytes, max is {} bytes", _0, _1)]
     TransactionTooBig(usize, usize),
     #[error("Invalid key pair")]

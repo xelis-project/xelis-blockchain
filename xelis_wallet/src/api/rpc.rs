@@ -44,7 +44,7 @@ use crate::{
     error::WalletError
 };
 use super::xswd::XSWDWebSocketHandler;
-use log::info;
+use log::{info, warn};
 
 // Register all RPC methods
 pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
@@ -240,7 +240,11 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
 
     // if requested, broadcast the TX ourself
     if params.broadcast {
-        wallet.submit_transaction(&tx).await?;
+        if let Err(e) = wallet.submit_transaction(&tx).await {
+            warn!("Clearing Tx cache because of broadcasting error: {}", e);
+            storage.clear_tx_cache();
+            return Err(e.into());
+        }
     }
 
     state.apply_changes(&mut storage).await

@@ -619,8 +619,8 @@ impl Wallet {
         // Build the state for the builder
         let used_assets = transaction_type.used_assets();
 
-        let reference = if let Some(reference) = storage.get_last_tx_reference() {
-            reference.clone()
+        let reference = if let Some(cache) = storage.get_tx_cache() {
+            cache.reference.clone()
         } else {
             Reference {
                 topoheight: storage.get_synced_topoheight()?,
@@ -802,6 +802,7 @@ impl Wallet {
                 storage.delete_assets().await?;
                 // unconfirmed balances are going to be outdated, we delete them
                 storage.delete_unconfirmed_balances().await?;
+                storage.clear_tx_cache();
 
                 debug!("Retrieve current wallet nonce");
                 let nonce_result = network_handler.get_api()

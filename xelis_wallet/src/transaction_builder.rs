@@ -4,7 +4,7 @@ use xelis_common::{
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
     transaction::{builder::{AccountState, FeeHelper}, Reference}
 };
-use crate::{storage::{Balance, EncryptedStorage}, error::WalletError};
+use crate::{error::WalletError, storage::{Balance, EncryptedStorage, TxCache}};
 
 // State used to estimate fees for a transaction
 // Because fees can be higher if a destination account is not registered
@@ -85,12 +85,16 @@ impl TransactionBuilderState {
     }
 
     pub async fn apply_changes(&mut self, storage: &mut EncryptedStorage) -> Result<(), WalletError> {
+        let last_tx_hash_created = self.tx_hash_built.take().ok_or(WalletError::TxNotBuilt)?;
         for (asset, balance) in self.balances.drain() {
             storage.set_unconfirmed_balance_for(asset, balance).await?;
         }
-        storage.set_unconfirmed_nonce(self.nonce);
-        storage.set_last_tx_reference(self.reference.clone());
-        storage.set_last_tx_hash(self.tx_hash_built.take());
+
+        storage.set_tx_cache(TxCache {
+            reference: self.reference.clone(),
+            nonce: self.nonce,
+            last_tx_hash_created,
+        });
 
         Ok(())
     }

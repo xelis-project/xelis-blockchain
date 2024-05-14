@@ -106,6 +106,17 @@ pub struct Storage {
     db: Db
 }
 
+#[derive(Debug, Clone)]
+pub struct TxCache {
+    // This is used to store the nonce used to create new transactions
+    pub nonce: u64,
+    // Last reference used to build a transaction
+    pub reference: Reference,
+    // Last transaction hash created
+    // This is used to determine if we should erase the last unconfirmed balance or not
+    pub last_tx_hash_created: Hash,
+}
+
 // Implement an encrypted storage system 
 pub struct EncryptedStorage {
     // cipher used to encrypt/decrypt/hash data
@@ -129,13 +140,7 @@ pub struct EncryptedStorage {
     // so we can build several txs without having to wait for the confirmation
     // We store it in a VecDeque so for each TX we have an entry and can just retrieve it
     unconfirmed_balances_cache: Mutex<HashMap<Hash, VecDeque<Balance>>>,
-    // This is used to store the nonce used to create new transactions
-    unconfirmed_nonce: Option<u64>,
-    // Last reference used to build a transaction
-    last_tx_reference: Option<Reference>,
-    // Last transaction hash created
-    // This is used to determine if we should erase the last unconfirmed balance or not
-    last_tx_hash_created: Option<Hash>,
+    tx_cache: Option<TxCache>,
     // Cache for the assets with their decimals
     assets_cache: Mutex<LruCache<Hash, u8>>,
     // Cache for the synced topoheight
@@ -155,9 +160,7 @@ impl EncryptedStorage {
             inner,
             balances_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             unconfirmed_balances_cache: Mutex::new(HashMap::new()),
-            unconfirmed_nonce: None,
-            last_tx_reference: None,
-            last_tx_hash_created: None,
+            tx_cache: None,
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
         };
@@ -564,7 +567,7 @@ impl EncryptedStorage {
                         break;
                     }
 
-                    if balances.is_empty() && self.last_tx_hash_created.is_some() {
+                    if balances.is_empty() && self.tx_cache.is_some() {
                         debug!("no matching unconfirmed balance found for asset {} but last TX still not processed, inject back", asset);
                         balances.push_front(b);
                         break;
@@ -579,10 +582,8 @@ impl EncryptedStorage {
 
                 // If we have no more unconfirmed balance, we can clean the last tx reference
                 if cache.is_empty() {
-                    debug!("no more unconfirmed balance cache, cleaning tx cache ({:?})", self.last_tx_reference);
-                    self.last_tx_reference = None;
-                    self.last_tx_hash_created = None;
-                    self.unconfirmed_nonce = None;
+                    debug!("no more unconfirmed balance cache, cleaning tx cache ({:?})", self.tx_cache);
+                    self.tx_cache = None;
                 }
             }
         }
@@ -712,11 +713,15 @@ impl EncryptedStorage {
     pub async fn delete_unconfirmed_balances(&mut self) -> Result<()> {
         trace!("delete unconfirmed balances");
         self.unconfirmed_balances_cache.lock().await.clear();
-        self.unconfirmed_nonce = None;
-        self.last_tx_reference = None;
-        self.last_tx_hash_created = None;
+        self.clear_tx_cache();
 
         Ok(())
+    }
+
+    // Delete tx cache
+    pub fn clear_tx_cache(&mut self) {
+        trace!("clear tx cache");
+        self.tx_cache = None;
     }
 
     // Delete all assets from this wallet
@@ -732,9 +737,9 @@ impl EncryptedStorage {
     pub fn save_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
         trace!("save transaction {}", hash);
 
-        if self.last_tx_hash_created.as_ref().is_some_and(|h| *h == *hash) {
+        if self.tx_cache.as_ref().is_some_and(|c| c.last_tx_hash_created == *hash) {
             debug!("Transaction {} has been executed, deleting cache", hash);
-            self.set_last_tx_hash(None);
+            self.tx_cache = None;
         }
 
         self.save_to_disk(&self.transactions, hash.as_bytes(), &transaction.to_bytes())
@@ -756,48 +761,25 @@ impl EncryptedStorage {
     // It will fallback to the real nonce if not set
     pub fn get_unconfirmed_nonce(&self) -> u64 {
         trace!("get unconfirmed nonce");
-        self.unconfirmed_nonce.unwrap_or_else(|| self.get_nonce().unwrap_or(0))
+        self.tx_cache.as_ref().map(|c| c.nonce).unwrap_or_else(|| self.get_nonce().unwrap_or(0))
     }
 
-    // Get the last reference used to build a transaction
-    pub fn get_last_tx_reference(&self) -> &Option<Reference> {
-        trace!("get last tx reference");
-        &self.last_tx_reference
+    // Set the TX cache to use it has reference for next txs
+    pub fn set_tx_cache(&mut self, tx_cache: TxCache) {
+        trace!("set tx cache");
+        self.tx_cache = Some(tx_cache);
     }
 
-    // Set the last reference used to build a transaction
-    pub fn set_last_tx_reference(&mut self, reference: Reference) {
-        trace!("set last tx reference to {} at topoheight {}", reference.hash, reference.topoheight);
-        self.last_tx_reference = Some(reference);
-    }
-
-    // Set the last TX hash created
-    pub fn set_last_tx_hash(&mut self, hash: Option<Hash>) {
-        trace!("set last tx hash to {:?}", hash);
-        self.last_tx_hash_created = hash;
-    }
-
-    // Get the last TX hash created
-    pub fn get_last_tx_hash(&self) -> Option<&Hash> {
-        trace!("get last tx hash");
-        self.last_tx_hash_created.as_ref()
-    }
-
-    // Set the unconfirmed nonce used to build TXs
-    pub fn set_unconfirmed_nonce(&mut self, nonce: u64) {
-        trace!("set unconfirmed nonce to {}", nonce);
-        self.unconfirmed_nonce = Some(nonce);
+    // Get the TX Cache used to build ordered TX
+    pub fn get_tx_cache(&self) -> Option<&TxCache> {
+        trace!("get tx cache");
+        self.tx_cache.as_ref()
     }
 
     // Set the new nonce used to create new transactions
     // If the unconfirmed nonce is lower than the new nonce, we reset it
     pub fn set_nonce(&mut self, nonce: u64) -> Result<()> {
         trace!("set nonce to {}", nonce);
-        if self.unconfirmed_nonce.is_some_and(|n| n <= nonce) {
-            debug!("unconfirmed nonce is lower than the new nonce, resetting it");
-            self.unconfirmed_nonce = None;
-        }
-
         self.save_to_disk(&self.extra, NONCE_KEY, &nonce.to_be_bytes())
     }
 

@@ -408,6 +408,7 @@ impl NetworkHandler {
                     // Because if we are building queued transactions, it may break our queue
                     // Our we couldn't submit new txs before they get removed from mempool
                     if let Some(nonce) = nonce.filter(|n| highest_nonce.as_ref().map(|h| *h < *n).unwrap_or(true)) {
+                        debug!("Storing new highest nonce {}", nonce);
                         storage.set_nonce(nonce)?;
                         *highest_nonce = Some(nonce);
                     }
@@ -654,6 +655,7 @@ impl NetworkHandler {
                 let mut storage = self.wallet.get_storage().write().await;
                 if storage.get_nonce().map(|n| n != new_nonce).unwrap_or(true) {
                     // Store the new nonce
+                    debug!("Storing new nonce {}", new_nonce);
                     storage.set_nonce(new_nonce)?;
                     should_sync_blocks = true;
                 }
@@ -840,6 +842,11 @@ impl NetworkHandler {
                     if storage.has_transaction(&tx.hash)? {
                         warn!("Transaction {} was orphaned, deleting it", tx.hash);
                         storage.delete_transaction(&tx.hash)?;
+                    }
+
+                    if storage.get_tx_cache().is_some_and(|cache| cache.last_tx_hash_created == *tx.hash) {
+                        warn!("Transaction {} was orphaned, deleting it from cache", tx.hash);
+                        storage.clear_tx_cache();
                     }
                 },
                 // Detect network events
