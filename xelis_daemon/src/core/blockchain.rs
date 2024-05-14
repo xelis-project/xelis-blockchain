@@ -1929,6 +1929,7 @@ impl<S: Storage> Blockchain<S> {
                         if !nonce_checker.use_nonce(chain_state.get_storage(), tx.get_source(), tx.get_nonce(), highest_topo).await? {
                             warn!("Malicious TX {}, it is a potential double spending with same nonce {}, skipping...", tx_hash, tx.get_nonce());
                             // TX will be orphaned
+                            orphaned_transactions.insert(tx_hash.clone());
                             continue;
                         }
 
@@ -1937,6 +1938,7 @@ impl<S: Storage> Blockchain<S> {
                         if let Err(e) = tx.apply_with_partial_verify(chain_state.as_mut()).await {
                             warn!("Error while executing TX {} with current DAG org: {}", tx_hash, e);
                             // TX may be orphaned if not added again in good order in next blocks
+                            orphaned_transactions.insert(tx_hash.clone());
                             continue;
                         }
 
