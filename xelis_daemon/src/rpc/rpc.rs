@@ -71,7 +71,9 @@ use xelis_common::{
             ExtractKeyFromAddressResult
         },
         RPCTransaction,
-        RPCTransactionType as RPCTransactionType
+        RPCTransactionType as RPCTransactionType,
+        SplitAddressParams,
+        SplitAddressResult,
     },
     async_handler,
     block::{
@@ -359,6 +361,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
     handler.register_method("get_difficulty", async_handler!(get_difficulty::<S>));
     handler.register_method("validate_address", async_handler!(validate_address::<S>));
+    handler.register_method("split_address", async_handler!(split_address::<S>));
     handler.register_method("extract_key_from_address", async_handler!(extract_key_from_address::<S>));
 
     if allow_mining_methods {
@@ -1218,4 +1221,19 @@ async fn extract_key_from_address<S: Storage>(_: &Context, body: Value) -> Resul
     } else {
         Ok(json!(ExtractKeyFromAddressResult::Bytes(params.address.get_public_key().to_bytes())))
     }
+}
+
+
+// Split an integrated address into its address and data
+async fn split_address<S: Storage>(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: SplitAddressParams = parse_params(body)?;
+    let address = params.address;
+
+    let (data, address) = address.extract_data();
+    let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address"))?;
+
+    Ok(json!(SplitAddressResult {
+        address,
+        integrated_data
+    }))
 }
