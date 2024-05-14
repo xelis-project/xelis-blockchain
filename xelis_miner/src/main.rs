@@ -108,6 +108,10 @@ pub struct MinerConfig {
     /// Disable the usage of colors in log
     #[clap(long)]
     disable_log_color: bool,
+    /// Disable terminal interactive mode
+    /// You will not be able to write CLI commands in it or to have an updated prompt
+    #[clap(long)]
+    disable_interactive_mode: bool,
     /// Log filename
     /// 
     /// By default filename is xelis-miner.log.
@@ -161,7 +165,7 @@ const UPDATE_EVERY_NONCE: u64 = 10;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode)?;
 
     let detected_threads = match thread::available_parallelism() {
         Ok(value) => value.get() as u16,
