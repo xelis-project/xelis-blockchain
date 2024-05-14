@@ -726,6 +726,7 @@ impl Prompt {
         let base = fern::Dispatch::new();
 
         let disable_colors = self.disable_colors;
+        let interactive = self.state.is_interactive();
         let state = Arc::clone(&self.state);
         let stdout_log = fern::Dispatch::new()
             .format(move |out, message, record| {
@@ -736,7 +737,8 @@ impl Prompt {
                 }
                 let res = if disable_colors {
                     out.finish(format_args!(
-                        "\x1b[2K\r{} {}{} > {}",
+                        "\x1b[2K{}{} {}{} > {}",
+                        if interactive { "\r" } else { "" },
                         chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
                         record.level(),
                         target_with_pad,
@@ -744,7 +746,8 @@ impl Prompt {
                     ))
                 } else {
                     out.finish(format_args!(
-                        "\x1b[2K\r\x1B[90m{} {}\x1B[0m \x1B[{}m{}\x1B[0m \x1B[90m>\x1B[0m {}",
+                        "\x1b[2K{}\x1B[90m{} {}\x1B[0m \x1B[{}m{}\x1B[0m \x1B[90m>\x1B[0m {}",
+                        if interactive { "\r" } else { "" },
                         chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
                         colors.color(record.level()),
                         Color::BrightBlue.to_fg_str(),
@@ -753,9 +756,12 @@ impl Prompt {
                     ))
                 };
 
-                if let Err(e) = state.show() {
-                    error!("Error on prompt refresh: {}", e);
+                if interactive {
+                    if let Err(e) = state.show() {
+                        error!("Error on prompt refresh: {}", e);
+                    }
                 }
+
                 res
             })
             .chain(std::io::stdout())
