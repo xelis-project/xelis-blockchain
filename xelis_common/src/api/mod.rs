@@ -175,3 +175,17 @@ impl<'a> From<RPCTransaction<'a>> for Transaction {
 // We create a type above it so for deserialize we can use this type directly
 // and not have to specify the lifetime
 pub type TransactionResponse = RPCTransaction<'static>;
+
+#[derive(Serialize, Deserialize)]
+pub struct SplitAddressParams {
+    // address which must be in integrated form
+    pub address: Address
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SplitAddressResult {
+    // Normal address
+    pub address: Address,
+    // Encoded data from address
+    pub integrated_data: DataElement
+}
