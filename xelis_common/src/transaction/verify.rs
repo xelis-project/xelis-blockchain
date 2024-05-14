@@ -65,8 +65,8 @@ pub trait BlockchainVerificationState<'a, E> {
 pub enum VerificationError<T> {
     #[error("State error: {0}")]
     State(T),
-    #[error("Invalid nonce")]
-    InvalidNonce,
+    #[error("Invalid nonce, got {} expected {}", _0, _1)]
+    InvalidNonce(u64, u64),
     #[error("Sender is receiver")]
     SenderIsReceiver,
     #[error("Invalid signature")]
@@ -201,7 +201,7 @@ impl Transaction {
             .map_err(VerificationError::State)?;
 
         if account_nonce != self.nonce {
-            return Err(VerificationError::InvalidNonce);
+            return Err(VerificationError::InvalidNonce(account_nonce, self.nonce));
         }
 
         // Nonce is valid, update it for next transactions if any

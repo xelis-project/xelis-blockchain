@@ -317,7 +317,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
             select! {
                 // heartbeat
                 _ = interval.tick() => {
-                    debug!("Sending ping to session #{}", session.id);
+                    trace!("Sending ping to session #{}", session.id);
                     if last_pong_received.elapsed() > KEEP_ALIVE_TIME_OUT {
                         debug!("session #{} didn't respond in time from our ping", session.id);
                         break None;
@@ -336,7 +336,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                 Some(msg) = rx.recv() => {
                     match msg {
                         InnerMessage::Text(text) => {
-                            debug!("Sending text message to session #{}: {}", session.id, text);
+                            trace!("Sending text message to session #{}: {}", session.id, text);
                             if let Err(e) = session.send_text_internal(text).await {
                                 debug!("Error while sending text message to session #{}: {}", session.id, e);
                                 break Some(CloseReason::from(CloseCode::Error));
@@ -350,7 +350,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                 },
                 // wait for next message
                 res = stream.next() => {
-                    debug!("Received stream message for session #{}", session.id);
+                    trace!("Received stream message for session #{}", session.id);
                     let msg = match res {
                         Some(msg) => match msg {
                             Ok(msg) => msg,
@@ -368,13 +368,13 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static {
                     // handle message
                     match msg {
                         Message::Text(text) => {
-                            debug!("Received text message for session #{}: {}", session.id, text);
+                            trace!("Received text message for session #{}: {}", session.id, text);
                             if let Err(e) = self.handler.on_message(&session, text.into_bytes()).await {
                                 debug!("Error while calling on_message: {}", e);
                             }
                         },
                         Message::Close(reason) => {
-                            debug!("Received close message for session #{}: {:?}", session.id, reason);
+                            trace!("Received close message for session #{}: {:?}", session.id, reason);
                             break reason;
                         },
                         Message::Ping(data) => {
