@@ -928,7 +928,8 @@ async fn set_nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), C
     let wallet: &Arc<Wallet> = context.get()?;
     let mut storage = wallet.get_storage().write().await;
     storage.set_nonce(value)?;
-    storage.set_unconfirmed_nonce(value);
+    storage.clear_tx_cache();
+
     manager.message(format!("New nonce is: {}", value));
     Ok(())
 }
