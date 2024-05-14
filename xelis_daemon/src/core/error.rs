@@ -15,7 +15,8 @@ use xelis_common::{
     rpc_server::InternalRpcError,
     serializer::ReaderError,
     time::TimestampMillis,
-    transaction::verify::VerificationError, utils::format_xelis
+    transaction::verify::VerificationError,
+    utils::format_xelis
 };
 use human_bytes::human_bytes;
 
