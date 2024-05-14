@@ -367,11 +367,16 @@ impl State {
     }
 
     fn show_with_prompt_and_input(&self, prompt: &String, input: &String) -> Result<(), PromptError> {
+        // if not interactive, we don't need to show anything
+        if !self.is_interactive() {
+            return Ok(())
+        }
+
         let current_count = self.count_lines(&format!("\r{}{}", prompt, input));
         let previous_count = self.previous_prompt_line.swap(current_count, Ordering::SeqCst);
 
         // > 1 because prompt line is already counted below
-        if self.is_interactive() && previous_count > 1 {
+        if previous_count > 1 {
             print!("\x1B[{}A\x1B[J", previous_count - 1);
         }
 
