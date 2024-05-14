@@ -1290,16 +1290,23 @@ impl<S: Storage> Blockchain<S> {
         if broadcast {
             // P2p broadcast to others peers
             if let Some(p2p) = self.p2p.read().await.as_ref() {
-                p2p.broadcast_tx_hash(hash.clone()).await;
+                let p2p = p2p.clone();
+                let hash = hash.clone();
+                spawn_task("tx-notify-p2p", async move {
+                    p2p.broadcast_tx_hash(hash).await;
+                });
             }
 
             // broadcast to websocket this tx
             if let Some(rpc) = self.rpc.read().await.as_ref() {
                 // Notify miners if getwork is enabled
                 if let Some(getwork) = rpc.getwork_server() {
-                    if let Err(e) = getwork.notify_new_job_rate_limited().await {
-                        debug!("Error while notifying miners for new tx: {}", e);
-                    }
+                    let getwork = getwork.clone();
+                    spawn_task("tx-notify-new-job", async move {
+                        if let Err(e) = getwork.notify_new_job_rate_limited().await {
+                            debug!("Error while notifying miners for new tx: {}", e);
+                        }
+                    });
                 }
 
                 if rpc.is_event_tracked(&NotifyEvent::TransactionAddedInMempool).await {
@@ -2138,11 +2145,11 @@ impl<S: Storage> Blockchain<S> {
                 // Clone only if its necessary
                 if !orphan_event_tracked {
                     if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, tx_hash, false).await {
-                        debug!("Error while adding back orphaned tx: {}", e);
+                        warn!("Error while adding back orphaned tx: {}", e);
                     }
                 } else {
                     if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx.clone(), tx_hash.clone(), false).await {
-                        debug!("Error while adding back orphaned tx: {}, broadcasting event", e);
+                        warn!("Error while adding back orphaned tx: {}, broadcasting event", e);
                         // We couldn't add it back to mempool, let's notify this event
                         let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
                         let data = TransactionResponse {

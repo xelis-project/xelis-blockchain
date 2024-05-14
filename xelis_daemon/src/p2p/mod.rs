@@ -270,7 +270,7 @@ impl<S: Storage> P2pServer<S> {
             select! {
                 biased;
                 _ = exit_receiver.recv() => {
-                    debug!("Received Exit message, exiting task");
+                    debug!("Received exit message, exiting maintains seed nodes task");
                     break;
                 },
                 _ = interval.tick() => {
@@ -356,7 +356,7 @@ impl<S: Storage> P2pServer<S> {
             select! {
                 biased;
                 _ = exit_receiver.recv() => {
-                    debug!("Received Exit message, exiting task");
+                    debug!("Received exit message, exiting handle peer task");
                     break;
                 },
                 res = rx.recv() => match res {
@@ -407,7 +407,7 @@ impl<S: Storage> P2pServer<S> {
             let (addr, priority) = select! {
                 biased;
                 _ = exit_receiver.recv() => {
-                    debug!("Received Exit message, exiting task");
+                    debug!("Received exit message, exiting outgoing connections task");
                     break;
                 },
                 res = priority_connections.recv() => {
@@ -523,7 +523,7 @@ impl<S: Storage> P2pServer<S> {
         loop {
             select! {
                 _ = exit_receiver.recv() => {
-                    debug!("Received Exit message, exiting task");
+                    debug!("Received exit message, exiting incoming connections task");
                     break;
                 }
                 res = listener.accept() => {
@@ -754,6 +754,7 @@ impl<S: Storage> P2pServer<S> {
     // This will lock the storage for us
     async fn build_generic_ping_packet(&self) -> Ping<'_> {
         let storage = self.blockchain.get_storage().read().await;
+        debug!("locking storage to build generic ping packet");
         self.build_generic_ping_packet_with_storage(&*storage).await
     }
 
@@ -2265,15 +2266,16 @@ impl<S: Storage> P2pServer<S> {
     pub async fn broadcast_tx_hash(&self, tx: Hash) {
         debug!("Broadcasting tx hash {}", tx);
         let ping = self.build_generic_ping_packet().await;
-        trace!("Ping packet has been generated for tx broadcast");
+        debug!("Ping packet has been generated for tx broadcast");
         let current_topoheight = ping.get_topoheight();
         let packet = Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(&tx), Cow::Owned(ping)));
         // transform packet to bytes (so we don't need to transform it for each peer)
         let bytes = Bytes::from(packet.to_bytes());
         trace!("Locking peer list for tx broadcast");
+        let peers = self.peer_list.get_cloned_peers().await;
         trace!("Lock acquired for tx broadcast");
 
-        for peer in self.peer_list.get_cloned_peers().await {
+        for peer in peers {
             // check that the peer is not too far from us
             // otherwise we may spam him for nothing
             let peer_topoheight = peer.get_topoheight();

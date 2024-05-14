@@ -15,7 +15,7 @@ use xelis_common::{
     rpc_server::InternalRpcError,
     serializer::ReaderError,
     time::TimestampMillis,
-    transaction::verify::VerificationError
+    transaction::verify::VerificationError, utils::format_xelis
 };
 use human_bytes::human_bytes;
 
@@ -146,9 +146,9 @@ pub enum BlockchainError {
     TxAlreadyInBlock(Hash),
     #[error("Duplicate registration tx for address '{}' found in same block", _0)]
     DuplicateRegistration(Address), // address
-    #[error("Invalid Tx fee, expected at least {}, got {}", _0, _1)]
+    #[error("Invalid Tx fee, expected at least {}, got {}", format_xelis(*_0), format_xelis(*_1))]
     InvalidTxFee(u64, u64),
-    #[error("Fees are lower for this TX than the overrided TX, expected at least {}, got {}", _0, _1)]
+    #[error("Fees are lower for this TX than the overrided TX, expected at least {}, got {}", format_xelis(*_0), format_xelis(*_1))]
     FeesToLowToOverride(u64, u64),
     #[error("No account found for {}", _0)]
     AccountNotFound(Address),
@@ -296,8 +296,8 @@ pub enum BlockchainError {
     DecompressionError(#[from] DecompressionError),
     #[error(transparent)]
     Any(#[from] anyhow::Error),
-    #[error("Invalid nonce")]
-    InvalidNonce,
+    #[error("Invalid nonce: expected {}, got {}", _0, _1)]
+    InvalidNonce(u64, u64),
     #[error("Sender cannot be receiver")]
     SenderIsReceiver,
     #[error("Invalid transaction proof: {}", _0)]
@@ -328,7 +328,7 @@ impl<T> From<PoisonError<T>> for BlockchainError {
 impl From<VerificationError<BlockchainError>> for BlockchainError {
     fn from(value: VerificationError<BlockchainError>) -> Self {
         match value {
-            VerificationError::InvalidNonce => BlockchainError::InvalidNonce,
+            VerificationError::InvalidNonce(expected, got) => BlockchainError::InvalidNonce(expected, got),
             VerificationError::SenderIsReceiver => BlockchainError::NoSenderOutput,
             VerificationError::InvalidSignature => BlockchainError::InvalidTransactionSignature,
             VerificationError::State(s) => s,
