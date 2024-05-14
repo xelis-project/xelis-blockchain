@@ -83,6 +83,14 @@ impl Address {
         }
     }
 
+    // Get the extra data in the address if present
+    pub fn get_extra_data(&self) -> Option<&DataElement> {
+        match &self.addr_type {
+            AddressType::Data(data) => Some(data),
+            _ => None
+        }
+    }
+
     // Check if the address is a normal address (no data integrated)
     pub fn is_normal(&self) -> bool {
         match self.addr_type {

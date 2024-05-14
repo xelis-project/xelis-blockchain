@@ -297,7 +297,7 @@ impl TransactionBuilder {
                     // Extra data byte flag
                     + 1;
 
-                    if let Some(extra_data) = &transfer.extra_data {
+                    if let Some(extra_data) = transfer.extra_data.as_ref().or(transfer.destination.get_extra_data()) {
                         // 2 represents u16 length
                         size += 2 + TAG_SIZE + extra_data.size();
                     }
