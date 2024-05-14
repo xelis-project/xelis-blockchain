@@ -475,7 +475,7 @@ async fn submit_block<S: Storage>(context: &Context, body: Value) -> Result<Valu
 
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
-    let block = blockchain.build_block_from_header(Immutable::Owned(header)).await.context("Error while building block from header")?;
+    let block = blockchain.build_block_from_header(Immutable::Owned(header)).await?;
     blockchain.add_new_block(block, true, true).await?;
     Ok(json!(true))
 }
