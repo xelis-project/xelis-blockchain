@@ -113,6 +113,10 @@ pub struct Config {
     /// Disable the usage of colors in log
     #[clap(long)]
     disable_log_color: bool,
+    /// Disable terminal interactive mode
+    /// You will not be able to write CLI commands in it or to have an updated prompt
+    #[clap(long)]
+    disable_interactive_mode: bool,
     /// Log filename
     /// 
     /// By default filename is xelis-wallet.log.
@@ -166,7 +170,7 @@ impl ecdlp::ProgressTableGenerationReportFunction for LogProgressTableGeneration
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode)?;
 
     #[cfg(feature = "api_server")]
     {
