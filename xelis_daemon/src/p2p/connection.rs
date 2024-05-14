@@ -1,4 +1,4 @@
-use crate::config::PEER_TIMEOUT_INIT_CONNECTION;
+use crate::config::{PEER_TIMEOUT_DISCONNECT, PEER_TIMEOUT_INIT_CONNECTION};
 use super::{
     encryption::Encryption,
     error::P2pError,
@@ -350,11 +350,11 @@ impl Connection {
     // This must be called only from the write connection task
     pub async fn close(&self) -> P2pResult<()> {
         trace!("Closing internal connection with {}", self.addr);
-        self.closed.store(true, Ordering::Relaxed);
+        self.closed.store(true, Ordering::SeqCst);
 
         // sometimes the peer is not removed on other peer side
         let mut stream = self.write.lock().await;
-        stream.shutdown().await?;
+        timeout(Duration::from_secs(PEER_TIMEOUT_DISCONNECT), stream.shutdown()).await??;
 
         Ok(())
     }
@@ -407,7 +407,7 @@ impl Connection {
 
     // Verify if the connection is closed
     pub fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::Relaxed)
+        self.closed.load(Ordering::SeqCst)
     }
 }
 

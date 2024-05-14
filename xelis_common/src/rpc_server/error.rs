@@ -9,14 +9,22 @@ use super::Id;
 
 #[derive(Error, Debug)]
 pub enum InternalRpcError {
+    #[error("Internal error: {}", _0)]
+    InternalError(&'static str),
     #[error("Invalid context")]
     InvalidContext,
     #[error("Invalid body in request")]
     ParseBodyError,
-    #[error("Invalid request")]
-    InvalidRequest,
+    #[error("Invalid JSON request")]
+    InvalidJSONRequest,
+    #[error("Invalid request: {}", _0)]
+    InvalidRequestStr(&'static str),
     #[error("Invalid params: {}", _0)]
-    InvalidParams(#[from] SerdeError),
+    InvalidJSONParams(#[from] SerdeError),
+    #[error("Invalid params: {}", _0)]
+    InvalidParams(&'static str),
+    #[error("Invalid params: {}", _0)]
+    InvalidParamsAny(AnyError),
     #[error("Expected parameters for this method but was not present")]
     ExpectedParams,
     #[error("Unexpected parameters for this method")]
@@ -35,20 +43,38 @@ pub enum InternalRpcError {
     EventNotSubscribed,
     #[error("Event is already subscribed")]
     EventAlreadySubscribed,
-    #[error("{}", _0)]
-    Custom(String),
-    #[error("{}", _0)]
-    CustomStr(&'static str)
+    #[error(transparent)]
+    SerializeResponse(SerdeError),
+    // Custom errors must have a code between -3 and -31999
+    #[error("{}", _1)]
+    CustomAny(i16, AnyError),
+    #[error("{}", _1)]
+    Custom(i16, String),
+    #[error("{}", _1)]
+    CustomStr(i16, &'static str),
 }
 
 impl InternalRpcError {
     pub fn get_code(&self) -> i16 {
         match self {
+            // JSON RPC errors
             Self::ParseBodyError => -32700,
-            Self::InvalidRequest | InternalRpcError::InvalidVersion => -32600,
+            Self::InvalidJSONRequest | Self::InvalidRequestStr(_) | InternalRpcError::InvalidVersion => -32600,
             Self::MethodNotFound(_) => -32601,
-            Self::InvalidParams(_) | InternalRpcError::UnexpectedParams => -32602,
-            _ => -32603
+            Self::InvalidJSONParams(_) | Self::InvalidParams(_) |  Self::InvalidParamsAny(_) | InternalRpcError::UnexpectedParams | InternalRpcError::ExpectedParams => -32602,
+            // Internal errors
+            Self::InternalError(_) => -32603,
+            // 32000 to -32099	Server error (Reserved for implementation-defined server-errors)
+            Self::DeserializerError(_) => -32000,
+            Self::InvalidContext => -32001,
+            Self::ClientNotFound => -32002,
+            InternalRpcError::SerializeResponse(_) => -32003,
+            InternalRpcError::AnyError(_) => -32004,
+            // Events invalid requests
+            Self::EventNotSubscribed => -1,
+            Self::EventAlreadySubscribed => -2,
+            // Custom errors
+            Self::Custom(code, _) | Self::CustomStr(code, _) | Self::CustomAny(code, _) => *code,
         }
     }
 }
@@ -60,10 +86,10 @@ pub struct RpcResponseError {
 }
 
 impl RpcResponseError {
-    pub fn new(id: Option<Id>, error: InternalRpcError) -> Self {
+    pub fn new<T: Into<InternalRpcError>>(id: Option<Id>, error: T) -> Self {
         Self {
             id,
-            error
+            error: error.into()
         }
     }
 

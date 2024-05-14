@@ -1290,16 +1290,23 @@ impl<S: Storage> Blockchain<S> {
         if broadcast {
             // P2p broadcast to others peers
             if let Some(p2p) = self.p2p.read().await.as_ref() {
-                p2p.broadcast_tx_hash(hash.clone()).await;
+                let p2p = p2p.clone();
+                let hash = hash.clone();
+                spawn_task("tx-notify-p2p", async move {
+                    p2p.broadcast_tx_hash(hash).await;
+                });
             }
 
             // broadcast to websocket this tx
             if let Some(rpc) = self.rpc.read().await.as_ref() {
                 // Notify miners if getwork is enabled
                 if let Some(getwork) = rpc.getwork_server() {
-                    if let Err(e) = getwork.notify_new_job_rate_limited().await {
-                        debug!("Error while notifying miners for new tx: {}", e);
-                    }
+                    let getwork = getwork.clone();
+                    spawn_task("tx-notify-new-job", async move {
+                        if let Err(e) = getwork.notify_new_job_rate_limited().await {
+                            debug!("Error while notifying miners for new tx: {}", e);
+                        }
+                    });
                 }
 
                 if rpc.is_event_tracked(&NotifyEvent::TransactionAddedInMempool).await {
@@ -1396,14 +1403,14 @@ impl<S: Storage> Blockchain<S> {
             for hash in tips {
                 if best_tip != hash {
                     if !self.validate_tips(storage, &best_tip, &hash).await? {
-                        debug!("Tip {} is invalid, not selecting it because difficulty can't be less than 91% of {}", hash, best_tip);
+                        warn!("Tip {} is invalid, not selecting it because difficulty can't be less than 91% of {}", hash, best_tip);
                         continue;
                     }
 
                     let distance = self.calculate_distance_from_mainchain(storage, &hash).await?;
                     debug!("Distance from mainchain for tip {} is {}", hash, distance);
                     if distance <= current_height && current_height - distance >= STABLE_LIMIT {
-                        debug!("Tip {} is not selected for mining: too far from mainchain (distance: {}, height: {})", hash, distance, current_height);
+                        warn!("Tip {} is not selected for mining: too far from mainchain (distance: {}, height: {})", hash, distance, current_height);
                         continue;
                     }
                 }
@@ -1420,9 +1427,7 @@ impl<S: Storage> Blockchain<S> {
         let mut sorted_tips = blockdag::sort_tips(storage, tips.into_iter()).await?;
         if sorted_tips.len() > TIPS_LIMIT {
             let dropped_tips = sorted_tips.drain(TIPS_LIMIT..); // keep only first 3 heavier tips
-            for hash in dropped_tips {
-                debug!("Dropping tip {} because it is not in the first 3 heavier tips", hash);
-            }
+            debug!("Dropping tips {} because they are not in the first 3 heavier tips", dropped_tips.map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
         }
 
         let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
@@ -1992,13 +1997,13 @@ impl<S: Storage> Blockchain<S> {
         let best_height = storage.get_height_for_block_hash(best_tip).await?;
         let mut new_tips = Vec::new();
         for hash in tips {
-            let tip_base_distance = self.calculate_distance_from_mainchain(storage, &hash).await?;
-            trace!("tip base distance: {}, best height: {}", tip_base_distance, best_height);
-            if tip_base_distance <= best_height && best_height - tip_base_distance < STABLE_LIMIT - 1 {
+            let distance = self.calculate_distance_from_mainchain(storage, &hash).await?;
+            trace!("tip base distance: {}, best height: {}", distance, best_height);
+            if distance <= current_height && current_height - distance >= STABLE_LIMIT {
+                warn!("Rusty TIP declared stale {} with best height: {}, tip base distance: {}", hash, best_height, distance);
+            } else {
                 trace!("Adding {} as new tips", hash);
                 new_tips.push(hash);
-            } else {
-                warn!("Rusty TIP declared stale {} with best height: {}, tip base distance: {}", hash, best_height, tip_base_distance);
             }
         }
 
@@ -2090,12 +2095,14 @@ impl<S: Storage> Blockchain<S> {
         // Check if the event is tracked
         let orphan_event_tracked = should_track_events.contains(&NotifyEvent::TransactionOrphaned);
 
-        // Clean mempool from old txs
-        let mempool_deleted_txs = {
+        // Clean mempool from old txs if the DAG has been updated
+        let mempool_deleted_txs = if highest_topo >= current_topoheight {
             debug!("Locking mempool write mode");
             let mut mempool = self.mempool.write().await;
             debug!("mempool write mode ok");
             mempool.clean_up(&*storage, highest_topo).await
+        } else {
+            Vec::new()
         };
 
         if orphan_event_tracked {
@@ -2140,11 +2147,11 @@ impl<S: Storage> Blockchain<S> {
                 // Clone only if its necessary
                 if !orphan_event_tracked {
                     if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, tx_hash, false).await {
-                        debug!("Error while adding back orphaned tx: {}", e);
+                        warn!("Error while adding back orphaned tx: {}", e);
                     }
                 } else {
                     if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(&storage, tx.clone(), tx_hash.clone(), false).await {
-                        debug!("Error while adding back orphaned tx: {}, broadcasting event", e);
+                        warn!("Error while adding back orphaned tx: {}, broadcasting event", e);
                         // We couldn't add it back to mempool, let's notify this event
                         let data = RPCTransaction::from_tx(&tx, &tx_hash, storage.is_mainnet());
                         let data = TransactionResponse {
@@ -2160,7 +2167,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        info!("Processed block {} at height {} in {:?} with {} txs (DAG: {})", block_hash, block.get_height(), start.elapsed(), block.get_txs_count(), block_is_ordered);
+        info!("Processed block {} at height {} in {}ms with {} txs (DAG: {})", block_hash, block.get_height(), start.elapsed().as_millis(), block.get_txs_count(), block_is_ordered);
 
         // Broadcast to p2p nodes
         if broadcast {

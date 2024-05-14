@@ -36,7 +36,6 @@ use xelis_common::{
             ArgType
         },
         LogLevel,
-        self,
         ShareablePrompt
     },
     rpc_server::WebSocketServerHandler,
@@ -91,6 +90,17 @@ pub struct NodeConfig {
     /// Disable the log file
     #[clap(long)]
     disable_file_logging: bool,
+    /// Disable the log filename date based
+    /// If disabled, the log file will be named xelis-daemon.log instead of YYYY-MM-DD.xelis-daemon.log
+    #[clap(long)]
+    disable_file_log_date_based: bool,
+    /// Disable the usage of colors in log
+    #[clap(long)]
+    disable_log_color: bool,
+    /// Disable terminal interactive mode
+    /// You will not be able to write CLI commands in it or to have an updated prompt
+    #[clap(long)]
+    disable_interactive_mode: bool,
     /// Log filename
     /// 
     /// By default filename is xelis-daemon.log.
@@ -115,7 +125,7 @@ const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_P
 async fn main() -> Result<()> {
     let mut config: NodeConfig = NodeConfig::parse();
 
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode)?;
     info!("XELIS Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
 
@@ -232,11 +242,12 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         };
 
         trace!("Retrieving network hashrate");
-        let network_hashrate = (blockchain.get_difficulty().await / BLOCK_TIME).into();
+        let network_hashrate: f64 = (blockchain.get_difficulty().await / BLOCK_TIME).into();
 
         trace!("Building prompt message");
         Ok( 
             build_prompt_message(
+                &prompt,
                 topoheight,
                 median,
                 network_hashrate,
@@ -252,49 +263,49 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     prompt.start(Duration::from_secs(1), Box::new(async_handler!(closure)), Some(&command_manager)).await
 }
 
-fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrate: f64, peers_count: usize, rpc_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
+fn build_prompt_message(prompt: &ShareablePrompt, topoheight: u64, median_topoheight: u64, network_hashrate: f64, peers_count: usize, rpc_count: usize, miners_count: usize, mempool: usize, network: Network) -> String {
     let topoheight_str = format!(
         "{}: {}/{}",
-        prompt::colorize_str(Color::Yellow, "TopoHeight"),
-        prompt::colorize_string(Color::Green, &format!("{}", topoheight)),
-        prompt::colorize_string(Color::Green, &format!("{}", median_topoheight))
+        prompt.colorize_str(Color::Yellow, "TopoHeight"),
+        prompt.colorize_string(Color::Green, &format!("{}", topoheight)),
+        prompt.colorize_string(Color::Green, &format!("{}", median_topoheight))
     );
     let network_hashrate_str = format!(
         "{}: {}",
-        prompt::colorize_str(Color::Yellow, "Network"),
-        prompt::colorize_string(Color::Green, &format!("{}", format_hashrate(network_hashrate))),
+        prompt.colorize_str(Color::Yellow, "Network"),
+        prompt.colorize_string(Color::Green, &format!("{}", format_hashrate(network_hashrate))),
     );
     let mempool_str = format!(
         "{}: {}",
-        prompt::colorize_str(Color::Yellow, "Mempool"),
-        prompt::colorize_string(Color::Green, &format!("{}", mempool))
+        prompt.colorize_str(Color::Yellow, "Mempool"),
+        prompt.colorize_string(Color::Green, &format!("{}", mempool))
     );
     let peers_str = format!(
         "{}: {}",
-        prompt::colorize_str(Color::Yellow, "Peers"),
-        prompt::colorize_string(Color::Green, &format!("{}", peers_count))
+        prompt.colorize_str(Color::Yellow, "Peers"),
+        prompt.colorize_string(Color::Green, &format!("{}", peers_count))
     );
     let rpc_str = format!(
         "{}: {}",
-        prompt::colorize_str(Color::Yellow, "RPC"),
-        prompt::colorize_string(Color::Green, &format!("{}", rpc_count))
+        prompt.colorize_str(Color::Yellow, "RPC"),
+        prompt.colorize_string(Color::Green, &format!("{}", rpc_count))
     );
     let miners_str = format!(
         "{}: {}",
-        prompt::colorize_str(Color::Yellow, "Miners"),
-        prompt::colorize_string(Color::Green, &format!("{}", miners_count))
+        prompt.colorize_str(Color::Yellow, "Miners"),
+        prompt.colorize_string(Color::Green, &format!("{}", miners_count))
     );
 
     let network_str = if !network.is_mainnet() {
         format!(
             "{} ",
-            prompt::colorize_string(Color::Red, &network.to_string())
+            prompt.colorize_string(Color::Red, &network.to_string())
         )
     } else { "".into() };
 
     format!(
         "{} | {} | {} | {} | {} | {} | {} {}{} ",
-        prompt::colorize_str(Color::Blue, "XELIS"),
+        prompt.colorize_str(Color::Blue, "XELIS"),
         topoheight_str,
         network_hashrate_str,
         mempool_str,
@@ -302,7 +313,7 @@ fn build_prompt_message(topoheight: u64, median_topoheight: u64, network_hashrat
         rpc_str,
         miners_str,
         network_str,
-        prompt::colorize_str(Color::BrightBlack, ">>")
+        prompt.colorize_str(Color::BrightBlack, ">>")
     )
 }
 
@@ -441,14 +452,14 @@ async fn show_balance<S: Storage>(manager: &CommandManager, mut arguments: Argum
     let prompt = manager.get_prompt();
     // read address
     let str_address = prompt.read_input(
-        prompt::colorize_str(Color::Green, "Address: "),
+        prompt.colorize_str(Color::Green, "Address: "),
         false
     ).await.context("Error while reading address")?;
     let address = Address::from_string(&str_address).context("Invalid address")?;
 
     // Read asset
     let asset = prompt.read_hash(
-        prompt::colorize_str(Color::Green, "Asset (default XELIS): ")
+        prompt.colorize_str(Color::Green, "Asset (default XELIS): ")
     ).await.ok();
 
     let asset = asset.unwrap_or(XELIS_ASSET);

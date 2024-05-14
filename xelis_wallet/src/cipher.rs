@@ -11,7 +11,7 @@ use xelis_common::crypto::{
     HASH_SIZE,
     hash
 };
-use crate::{wallet::WalletError, config::SALT_SIZE};
+use crate::{error::WalletError, config::SALT_SIZE};
 
 
 pub struct Cipher {

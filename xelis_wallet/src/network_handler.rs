@@ -219,22 +219,28 @@ impl NetworkHandler {
             if let Some(reward) = block.miner_reward {
                 let coinbase = EntryData::Coinbase { reward };
                 let entry = TransactionEntry::new(block_hash.clone(), topoheight, coinbase);
-
                 assets_changed.insert(XELIS_ASSET);
 
-                {
+                let broadcast = {
                     let mut storage = self.wallet.get_storage().write().await;
-                    storage.save_transaction(entry.get_hash(), &entry)?;
-
-                    // Store the changes for history
-                    if !changes_stored {
-                        storage.add_topoheight_to_changes(topoheight, &block_hash)?;
-                        changes_stored = true;
+                    if storage.has_transaction(entry.get_hash())? {
+                        false
+                    } else {
+                        storage.save_transaction(entry.get_hash(), &entry)?;
+    
+                        // Store the changes for history
+                        if !changes_stored {
+                            storage.add_topoheight_to_changes(topoheight, &block_hash)?;
+                            changes_stored = true;
+                        }
+                        true
                     }
-                }
+                };
 
                 // Propagate the event to the wallet
-                self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
+                if broadcast {
+                    self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
+                }
             } else {
                 warn!("No reward for block {} at topoheight {}", block_hash, topoheight);
             }
@@ -321,6 +327,18 @@ impl NetworkHandler {
             };
 
             if let Some(entry) = entry {
+                let is_tx_stored = {
+                    let storage = self.wallet.get_storage().read().await;
+                    storage.has_transaction(&tx.hash)?
+                };
+
+                // Even if we probably scanned it before and a DAG reorg happened,
+                // It shouldn't be found because it got deleted from storage
+                if is_tx_stored {
+                    debug!("Transaction {} was already stored, skipping", tx.hash);
+                    continue;
+                }
+
                 // New transaction entry that may be linked to us, check if TX was executed
                 if !self.api.is_tx_executed_in_block(&tx.hash, &block_hash).await? {
                     warn!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx.hash, block_hash);
@@ -333,26 +351,18 @@ impl NetworkHandler {
                 }
 
                 let entry = TransactionEntry::new(tx.hash.into_owned(), topoheight, entry);
-                let propagate = {
+                {
                     let mut storage = self.wallet.get_storage().write().await;
-                    let found = storage.has_transaction(entry.get_hash())?;
-                    // Even if we probably scanned it before and a DAG reorg happened,
-                    // It shouldn't be found because it got deleted from storage
-                    if !found {
-                        storage.save_transaction(entry.get_hash(), &entry)?;
-                        // Store the changes for history
-                        if !changes_stored {
-                            storage.add_topoheight_to_changes(topoheight, &block_hash)?;
-                            changes_stored = true;
-                        }
+                    storage.save_transaction(entry.get_hash(), &entry)?;
+                    // Store the changes for history
+                    if !changes_stored {
+                        storage.add_topoheight_to_changes(topoheight, &block_hash)?;
+                        changes_stored = true;
                     }
-                    !found
-                };
-
-                if propagate {
-                    // Propagate the event to the wallet
-                    self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
                 }
+
+                // Propagate the event to the wallet
+                self.wallet.propagate_event(Event::NewTransaction(entry.serializable(self.wallet.get_network().is_mainnet()))).await;
             }
         }
 
@@ -398,6 +408,7 @@ impl NetworkHandler {
                     // Because if we are building queued transactions, it may break our queue
                     // Our we couldn't submit new txs before they get removed from mempool
                     if let Some(nonce) = nonce.filter(|n| highest_nonce.as_ref().map(|h| *h < *n).unwrap_or(true)) {
+                        debug!("Storing new highest nonce {}", nonce);
                         storage.set_nonce(nonce)?;
                         *highest_nonce = Some(nonce);
                     }
@@ -609,7 +620,7 @@ impl NetworkHandler {
 
         trace!("assets: {}", assets.len());
 
-        let mut balances: HashMap<&Hash, CiphertextCache>  = HashMap::new();
+        let mut balances: HashMap<&Hash, CiphertextCache> = HashMap::new();
         // Store newly detected assets
         // Get the final balance of each asset
         for asset in &assets {
@@ -644,6 +655,7 @@ impl NetworkHandler {
                 let mut storage = self.wallet.get_storage().write().await;
                 if storage.get_nonce().map(|n| n != new_nonce).unwrap_or(true) {
                     // Store the new nonce
+                    debug!("Storing new nonce {}", new_nonce);
                     storage.set_nonce(new_nonce)?;
                     should_sync_blocks = true;
                 }
@@ -702,16 +714,14 @@ impl NetworkHandler {
         trace!("sync");
         // First, locate the last topoheight valid for syncing
         let (daemon_topoheight, daemon_block_hash, wallet_topoheight, sync_back) = self.locate_sync_topoheight_and_clean().await?;
+        debug!("Daemon topoheight: {}, wallet topoheight: {}, sync back: {}", daemon_topoheight, wallet_topoheight, sync_back);
 
+        let mut sync_new_blocks = false;
         // Sync back is requested, sync the head state again
         if sync_back {
             trace!("sync back");
             // Now sync head state, this will helps us to determinate if we should sync blocks or not
-            let should_sync_blocks = self.sync_head_state(&address, None, None, true).await?;
-            // we have something that changed, sync transactions
-            if should_sync_blocks {
-                self.sync_new_blocks(&address, wallet_topoheight, false).await?;
-            }
+            sync_new_blocks = self.sync_head_state(&address, None, None, true).await?;
         }
 
         if let Some(block) = event {
@@ -731,14 +741,19 @@ impl NetworkHandler {
                         }
                     }
                     // A change happened in this block, lets update balance and nonce
-                    self.sync_head_state(&address, Some(assets), nonce, false).await?;
+                    sync_new_blocks |= self.sync_head_state(&address, Some(assets), nonce, false).await?;
                 }
             } else {
                 // It is a block that got directly orphaned by DAG, ignore it
                 debug!("Block {} is not ordered, skipping it", block.hash);
             }
         } else {
-            // No event, sync blocks by hand
+            sync_new_blocks = true;
+        }
+
+        // we have something that changed, sync transactions
+        if sync_new_blocks {
+            debug!("Syncing new blocks");
             self.sync_new_blocks(address, wallet_topoheight, true).await?;
         }
 
@@ -792,16 +807,29 @@ impl NetworkHandler {
                 res = on_block_ordered.next() => {
                     trace!("on_block_ordered_event");
                     let event = res?;
-                    let mut storage = self.wallet.get_storage().write().await;
-                    if let Some(hash) = storage.get_block_hash_for_topoheight(event.topoheight).ok() {
-                        let topoheight = event.topoheight;
-                        if topoheight != 0 && hash != *event.block_hash {
-                            warn!("DAG reorg detected at topoheight {}, deleting all changes above", topoheight);
-                            storage.delete_changes_above_topoheight(topoheight - 1)?;
-                            if storage.get_synced_topoheight().unwrap_or(0) > topoheight {
-                                warn!("We are above the reorg, restart syncing from {}", topoheight);
-                                storage.set_synced_topoheight(topoheight)?;
+                    let topoheight = event.topoheight;
+                    let mut process_block = false;
+                    {
+                        let mut storage = self.wallet.get_storage().write().await;
+                        if let Some(hash) = storage.get_block_hash_for_topoheight(topoheight).ok() {
+                            if topoheight != 0 && hash != *event.block_hash {
+                                warn!("DAG reorg detected at topoheight {}, deleting all changes above", topoheight);
+                                storage.delete_changes_above_topoheight(topoheight - 1)?;
+                                if storage.get_synced_topoheight().unwrap_or(0) > topoheight {
+                                    warn!("We are above the reorg, restart syncing from {}", topoheight);
+                                    storage.set_synced_topoheight(topoheight)?;
+                                    storage.set_top_block_hash(&event.block_hash)?;
+                                }
+                                process_block = true;
                             }
+                        }
+                    }
+
+                    if process_block {
+                        // Sync this block again as it may have some TXs executed
+                        let block = self.api.get_block_at_topoheight(topoheight).await?;
+                        if let Some((assets, _)) = self.process_block(&address, block, topoheight).await? {
+                            debug!("Found changes for assets: {}", assets.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "));
                         }
                     }
                 },
@@ -814,6 +842,11 @@ impl NetworkHandler {
                     if storage.has_transaction(&tx.hash)? {
                         warn!("Transaction {} was orphaned, deleting it", tx.hash);
                         storage.delete_transaction(&tx.hash)?;
+                    }
+
+                    if storage.get_tx_cache().is_some_and(|cache| cache.last_tx_hash_created == *tx.hash) {
+                        warn!("Transaction {} was orphaned, deleting it from cache", tx.hash);
+                        storage.clear_tx_cache();
                     }
                 },
                 // Detect network events

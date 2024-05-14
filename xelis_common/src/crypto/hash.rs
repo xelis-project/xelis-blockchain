@@ -15,7 +15,7 @@ pub use xelis_hash::{
     BYTES_ARRAY_INPUT,
     MEMORY_SIZE as POW_MEMORY_SIZE,
     ScratchPad,
-    Input
+    AlignedInput
 };
 
 pub const HASH_SIZE: usize = 32; // 32 bytes / 256 bits
@@ -53,7 +53,7 @@ pub fn pow_hash(work: &[u8]) -> Result<Hash, XelisHashError> {
     let mut scratchpad = ScratchPad::default();
 
     // Make sure the input has good alignment
-    let mut input = Input::default();
+    let mut input = AlignedInput::default();
     let slice = input.as_mut_slice()?;
     slice[..work.len()].copy_from_slice(work);
 
@@ -61,11 +61,7 @@ pub fn pow_hash(work: &[u8]) -> Result<Hash, XelisHashError> {
 }
 
 pub fn pow_hash_with_scratch_pad(input: &mut [u8; BYTES_ARRAY_INPUT], scratch_pad: &mut ScratchPad) -> Result<Hash, XelisHashError> {
-    if input.len() > BYTES_ARRAY_INPUT {
-        return Err(XelisHashError);
-    }
-
-    xelis_hash(input, scratch_pad.as_mut_slice()).map(|bytes| Hash::new(bytes))
+    xelis_hash(input, scratch_pad).map(|bytes| Hash::new(bytes))
 }
 
 impl Serializer for Hash {
@@ -113,7 +109,7 @@ impl<'a> Deserialize<'a> for Hash {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where D: serde::Deserializer<'a> {
         let hex = String::deserialize(deserializer)?;
-        if hex.len() != 64 {
+        if hex.len() != HASH_SIZE * 2 {
             return Err(SerdeError::custom("Invalid hex length"))
         }
 

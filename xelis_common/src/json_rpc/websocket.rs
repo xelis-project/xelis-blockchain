@@ -21,7 +21,7 @@ use tokio::{
     net::TcpStream,
     sync::{broadcast, oneshot, Mutex},
     task::JoinHandle,
-    time::sleep
+    time::{sleep, timeout}
 };
 use tokio_tungstenite::{
     WebSocketStream,
@@ -100,7 +100,9 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + C
     // This channel is called each time we connect
     online_channel: Mutex<Option<broadcast::Sender<()>>>,
     // Background task that keep alive WS connection
-    background_task: Mutex<Option<JoinHandle<()>>>
+    background_task: Mutex<Option<JoinHandle<()>>>,
+    // Timeout for a request
+    timeout_after: Duration,
 }
 
 pub const DEFAULT_AUTO_RECONNECT: Duration = Duration::from_secs(5);
@@ -133,7 +135,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
             online: AtomicBool::new(true),
             offline_channel: Mutex::new(None),
             online_channel: Mutex::new(None),
-            background_task: Mutex::new(None)
+            background_task: Mutex::new(None),
+            timeout_after: Duration::from_secs(5),
         });
 
         {
@@ -503,7 +506,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
         Ok(())
     }
 
-    async fn send_message_internal<P: Serialize>(&self, id: usize, method: &str, params: &P) -> JsonRPCResult<()> {
+    async fn send_message_internal<P: Serialize>(&self, id: Option<usize>, method: &str, params: &P) -> JsonRPCResult<()> {
         let mut ws = self.ws.lock().await;
         ws.send(Message::Text(serde_json::to_string(&json!({
             "jsonrpc": JSON_RPC_VERSION,
@@ -524,9 +527,12 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
             requests.insert(id, sender);
         }
 
-        self.send_message_internal(id, method, params).await?;
+        self.send_message_internal(Some(id), method, params).await?;
 
-        let response = receiver.await.or(Err(JsonRPCError::NoResponse))?;
+        let response = timeout(self.timeout_after, receiver).await
+            .or(Err(JsonRPCError::TimedOut))?
+            .or(Err(JsonRPCError::NoResponse))?;
+
         if let Some(error) = response.error {
             return Err(JsonRPCError::ServerError {
                 code: error.code,
@@ -538,5 +544,16 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
         let result = response.result.ok_or(JsonRPCError::NoResponse)?;
 
         Ok(serde_json::from_value(result)?)
+    }
+
+    // Send a request to the server without waiting for the response
+    pub async fn notify_with<P: Serialize>(&self, method: &str, params: &P) -> JsonRPCResult<()> {
+        self.send_message_internal(None, method, params).await?;
+        Ok(())
+    }
+
+    // Send a request to the server without waiting for the response
+    pub async fn notify<P: Serialize>(&self, method: &str) -> JsonRPCResult<()> {
+        self.notify_with(method, &Value::Null).await
     }
 }

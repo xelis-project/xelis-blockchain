@@ -273,11 +273,11 @@ impl Mempool {
         // All deleted sorted txs with their hashes
         let mut deleted_transactions: Vec<(Arc<Hash>, SortedTx)> = Vec::new();
 
-        let mut cache = HashMap::new();
+        let mut caches = HashMap::new();
         // Swap the nonces_cache with cache, so we iterate over cache and reinject it in nonces_cache
-        std::mem::swap(&mut cache, &mut self.caches);
+        std::mem::swap(&mut caches, &mut self.caches);
 
-        for (key, mut cache) in cache {
+        for (key, mut cache) in caches {
             trace!("Cleaning up mempool for owner {}", key.as_address(self.mainnet));
             let nonce = match storage.get_last_nonce(&key).await {
                 Ok((_, version)) => version.get_nonce(),
@@ -286,10 +286,20 @@ impl Mempool {
                     // that means the key is not in storage anymore, so we can delete safely
                     // we just have to skip this iteration so it's not getting re-injected
                     warn!("Error while getting nonce for owner {}, he maybe has no nonce anymore, skipping: {}", key.as_address(self.mainnet), e);
+
+                    // Delete all txs from this cache
+                    for tx in cache.txs {
+                        if let Some(sorted_tx) = self.txs.remove(&tx) {
+                            deleted_transactions.push((tx, sorted_tx));
+                        } else {
+                            warn!("TX {} not found in mempool while deleting due to nonce error", tx);
+                        }
+                    }
+
                     continue;
                 }
             };
-            trace!("Owner {} has nonce {}, cache min: {}, max: {}", key.as_address(self.mainnet), nonce, cache.get_min(), cache.get_max());
+            debug!("Owner {} has nonce {}, cache min: {}, max: {}", key.as_address(self.mainnet), nonce, cache.get_min(), cache.get_max());
 
             let mut delete_cache = false;
             // Check if the minimum nonce is higher than the new nonce, that means
@@ -297,17 +307,20 @@ impl Mempool {
             // or, check and delete txs if the nonce is lower than the new nonce
             // otherwise the cache is still up to date
             if cache.get_min() > nonce {
-                trace!("All TXs for key {} are orphaned, deleting them", key.as_address(self.mainnet));
-                // We can delete all these TXs as they got automatically orphaned
-                // Because of the suite being broked
-                for hash in cache.txs.iter() {
-                    if self.txs.remove(hash).is_none() {
-                        warn!("TX {} not found in mempool while deleting", hash);
+                debug!("All TXs for key {} are orphaned, deleting them", key.as_address(self.mainnet));
+
+                // Don't let ghost TXs in mempool
+                for tx in cache.txs.drain(..) {
+                    if let Some(sorted_tx) = self.txs.remove(&tx) {
+                        deleted_transactions.push((tx, sorted_tx));
+                    } else {
+                        warn!("TX {} not found in mempool (orphaned due to nonce)", tx);
                     }
                 }
+
                 delete_cache = true;
-            } else if cache.get_min() < nonce {
-                trace!("Deleting TXs for owner {} with nonce < {}", key.as_address(self.mainnet), nonce);
+            } else if cache.get_min() <= nonce {
+                debug!("Verifying TXs for owner {} with nonce <= {}", key.as_address(self.mainnet), nonce);
                 // txs hashes to delete
                 let mut hashes: HashSet<Arc<Hash>> = HashSet::with_capacity(cache.txs.len());
 
@@ -334,7 +347,7 @@ impl Mempool {
 
                             // Update cache lowest bounds
                             if let Some(v) = min.clone() {
-                                if  v > tx_nonce {
+                                if v > tx_nonce {
                                     min = Some(tx_nonce);
                                 }
                             } else {
@@ -363,12 +376,13 @@ impl Mempool {
                 // Cache is not empty yet, but we deleted some TXs from it, balances may be out-dated, verify TXs left
                 // TODO: there may be a way to optimize this even more, by checking if deleted TXs are those who got mined
                 // Which mean, expected balances are still up to date with chain state
-                if !delete_cache && !hashes.is_empty() {
-                    let mut state = MempoolState::new(&self, storage, topoheight);
+                if !delete_cache {
                     let mut txs = Vec::with_capacity(cache.txs.len());
+                    let mut txs_hashes = Vec::with_capacity(cache.txs.len());
                     for tx_hash in &cache.txs {
                         if let Some(sorted_tx) = self.txs.get(tx_hash) {
                             txs.push(sorted_tx.get_tx());
+                            txs_hashes.push(tx_hash);
                         } else {
                             // Shouldn't happen
                             warn!("TX {} not found in mempool while verifying, deleting whole cache", tx_hash);
@@ -377,19 +391,23 @@ impl Mempool {
                         }
                     }
 
-                    // Instead of verifiying each TX one by one, we verify them all at once
-                    // This is much faster and is basically the same because:
-                    // If one TX is invalid, all next TXs are invalid
-                    // NOTE: this can be revert easily in case we are deleting valid TXs also,
-                    // But will be slower during high traffic
-                    if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
-                        warn!("Error while verifying TXs for sender {}: {}", key.as_address(self.mainnet), e);
-                        // We may have only one TX invalid, but because they are all linked to each others we delete the whole cache
-                        delete_cache = true;
-                    } else {
-                        // Update balances cache
-                        if let Some(balances) = state.get_sender_balances(&key) {
-                            cache.set_balances(balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect());
+                    if !delete_cache {
+                        // Instead of verifiying each TX one by one, we verify them all at once
+                        // This is much faster and is basically the same because:
+                        // If one TX is invalid, all next TXs are invalid
+                        // NOTE: this can be revert easily in case we are deleting valid TXs also,
+                        // But will be slower during high traffic
+                        debug!("Verifying TXs ({}) for sender {} at topoheight {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), topoheight);
+                        let mut state = MempoolState::new(&self, storage, topoheight);
+                        if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
+                            warn!("Error while verifying TXs ({}) for sender {}: {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), e);
+                            // We may have only one TX invalid, but because they are all linked to each others we delete the whole cache
+                            delete_cache = true;
+                        } else {
+                            // Update balances cache
+                            if let Some(balances) = state.get_sender_balances(&key) {
+                                cache.set_balances(balances.into_iter().map(|(asset, ciphertext)| (asset.clone(), ciphertext)).collect());
+                            }
                         }
                     }
                 }

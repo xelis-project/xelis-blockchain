@@ -50,12 +50,12 @@ where
                         };
                         responses.push(response);
                     } else {
-                        responses.push(RpcResponseError::new(None, InternalRpcError::InvalidRequest).to_json());
+                        responses.push(RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest).to_json());
                     }
                 }
-                Ok(serde_json::to_value(responses).map_err(|_| RpcResponseError::new(None, InternalRpcError::CustomStr("error while serializing response")))?)
+                Ok(serde_json::to_value(responses).map_err(|err| RpcResponseError::new(None, InternalRpcError::SerializeResponse(err)))?)
             },
-            _ => return Err(RpcResponseError::new(None, InternalRpcError::InvalidRequest))
+            _ => return Err(RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest))
         }
     }
 
@@ -113,5 +113,5 @@ pub fn parse_params<P: DeserializeOwned>(mut value: Value) -> Result<P, Internal
         value = Value::Object(Map::new());
     }
 
-    serde_json::from_value(value).map_err(|e| InternalRpcError::InvalidParams(e))
+    serde_json::from_value(value).map_err(|e| InternalRpcError::InvalidJSONParams(e))
 }

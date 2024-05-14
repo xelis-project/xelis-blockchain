@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs::{create_dir_all, File},
     io::{Read, Write},
     path::Path,
@@ -28,10 +29,10 @@ use xelis_common::{
         ecdlp::{self, ECDLPTablesFileView},
         elgamal::{Ciphertext, DecryptHandle, PublicKey as DecompressedPublicKey},
         Address,
-        Hash,
         KeyPair,
         PublicKey,
-        Signature
+        Signature,
+        Hashable,
     },
     network::Network,
     serializer::Serializer,
@@ -44,10 +45,6 @@ use xelis_common::{
         },
         Reference,
         Transaction
-    },
-    utils::{
-        format_coin,
-        format_xelis
     }
 };
 use crate::{
@@ -58,9 +55,9 @@ use crate::{
         SALT_SIZE
     },
     daemon_api::DaemonAPI,
+    error::WalletError,
     mnemonics,
     network_handler::{
-        NetworkError,
         NetworkHandler,
         SharedNetworkHandler
     },
@@ -68,14 +65,13 @@ use crate::{
         EncryptedStorage,
         Storage
     },
-    transaction_builder::{EstimateFeesState, TransactionBuilderState}
+    transaction_builder::{
+        EstimateFeesState,
+        TransactionBuilderState
+    }
 };
-use chacha20poly1305::{
-    aead::OsRng,
-    Error as CryptoError
-};
+use chacha20poly1305::aead::OsRng;
 use rand::RngCore;
-use thiserror::Error;
 use log::{
     trace,
     debug,
@@ -111,78 +107,6 @@ use {
         oneshot::{Sender as OneshotSender, channel}
     }
 };
-
-#[derive(Error, Debug)]
-pub enum WalletError {
-    #[error("Transaction too big: {} bytes, max is {} bytes", _0, _1)]
-    TransactionTooBig(usize, usize),
-    #[error("Invalid key pair")]
-    InvalidKeyPair,
-    #[error("Invalid signature")]
-    InvalidSignature,
-    #[error("Expected a TX")]
-    ExpectedOneTx,
-    #[error("Too many txs included max is {}", u8::MAX)]
-    TooManyTx,
-    #[error("Transaction owner is the receiver")]
-    TxOwnerIsReceiver,
-    #[error("Error from crypto: {}", _0)]
-    CryptoError(CryptoError),
-    #[error("Unexpected error on database: {}", _0)]
-    DatabaseError(#[from] sled::Error),
-    #[error("Invalid encrypted value: minimum 25 bytes")]
-    InvalidEncryptedValue,
-    #[error("No salt found in storage")]
-    NoSalt,
-    #[error("Error while hashing: {}", _0)]
-    AlgorithmHashingError(String),
-    #[error("Error while fetching encrypted master key: not found in DB")]
-    NoMasterKeyFound,
-    #[error("Error while fetching password salt: not found in DB")]
-    NoPasswordSaltFound,
-    #[error("Invalid salt size stored in storage, expected 32 bytes")]
-    InvalidSaltSize,
-    #[error("Error while fetching password salt from DB")]
-    NoSaltFound,
-    #[error("Your wallet contains only {} instead of {} for asset {}", format_coin(*_0, *_2), format_coin(*_1, *_2), _3)]
-    NotEnoughFunds(u64, u64, u8, Hash),
-    #[error("Your wallet don't have enough funds to pay fees: expected {} but have only {}", format_xelis(*_0), format_xelis(*_1))]
-    NotEnoughFundsForFee(u64, u64),
-    #[error("Invalid address params")]
-    InvalidAddressParams,
-    #[error("Invalid extra data in this transaction, expected maximum {} bytes but got {} bytes", _0, _1)]
-    ExtraDataTooBig(usize, usize),
-    #[error("Wallet is not in online mode")]
-    NotOnlineMode,
-    #[error("Wallet is already in online mode")]
-    AlreadyOnlineMode,
-    #[error("Asset is already present on disk")]
-    AssetAlreadyRegistered,
-    #[error("Topoheight is too high to rescan")]
-    RescanTopoheightTooHigh,
-    #[error(transparent)]
-    Any(#[from] Error),
-    #[error("No API Server is running")]
-    NoAPIServer,
-    #[error("RPC Server is not running")]
-    RPCServerNotRunning,
-    #[error("RPC Server is already running")]
-    RPCServerAlreadyRunning,
-    #[error("Invalid fees provided, minimum fees calculated: {}, provided: {}", format_xelis(*_0), format_xelis(*_1))]
-    InvalidFeeProvided(u64, u64),
-    #[error("Wallet name cannot be empty")]
-    EmptyName,
-    #[error("No handler available for this request")]
-    NoHandlerAvailable,
-    #[error(transparent)]
-    NetworkError(#[from] NetworkError),
-    #[error("Balance for asset {} was not found", _0)]
-    BalanceNotFound(Hash),
-    #[error("No result found for ciphertext")]
-    CiphertextDecode,
-    #[error(transparent)]
-    AEADCipherFormatError(#[from] aead::CipherFormatError),
-}
 
 #[derive(Serialize, Clone)]
 #[serde(untagged)]
@@ -690,18 +614,24 @@ impl Wallet {
     // You must handle "apply changes" to the storage
     pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(TransactionBuilderState, Transaction), WalletError> {
         trace!("create transaction with storage");
-        let nonce = storage.get_nonce().unwrap_or(0);
+        let nonce = storage.get_unconfirmed_nonce();
 
         // Build the state for the builder
         let used_assets = transaction_type.used_assets();
 
-        // state used to build the transaction
-        let mut state = TransactionBuilderState::new(
-            self.network.is_mainnet(),
+        let reference = if let Some(cache) = storage.get_tx_cache() {
+            cache.reference.clone()
+        } else {
             Reference {
                 topoheight: storage.get_synced_topoheight()?,
                 hash: storage.get_top_block_hash()?
-            },
+            }
+        };
+
+        // state used to build the transaction
+        let mut state = TransactionBuilderState::new(
+            self.network.is_mainnet(),
+            reference,
             nonce
         );
 
@@ -712,7 +642,7 @@ impl Wallet {
                 return Err(WalletError::BalanceNotFound(asset));
             }
 
-            let balance = storage.get_unconfirmed_balance_for(&asset).await?;
+            let (balance, _) = storage.get_unconfirmed_balance_for(&asset).await?;
             state.add_balance(asset, balance);
         }
 
@@ -724,6 +654,10 @@ impl Wallet {
         // Build the final transaction
         let transaction = builder.build(&mut state, &self.keypair)
             .map_err(|e| WalletError::Any(e.into()))?;
+
+        let tx_hash = transaction.hash();
+        debug!("Transaction created: {} with nonce {} and reference {}", tx_hash, transaction.get_nonce(), transaction.get_reference());
+        state.set_tx_hash_built(tx_hash);
 
         Ok((state, transaction))
     }
@@ -748,17 +682,26 @@ impl Wallet {
         if let FeeBuilder::Multiplier(_) = fee {
             // To pay exact fees needed, we must verify that we don't have to pay more than needed
             let used_keys = transaction_type.used_keys();
+            let mut processed_keys = HashSet::new();
             if !used_keys.is_empty() {
                 trace!("Checking if destination keys are registered");
                 if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
                     if network_handler.is_running().await {
                         trace!("Network handler is running, checking if keys are registered");
                         for key in used_keys {
-                            let addr = key.to_address(self.network.is_mainnet());
+                            if processed_keys.contains(&key) {
+                                continue;
+                            }
+
+                            let addr = key.as_address(self.network.is_mainnet());
                             trace!("Checking if {} is registered in stable height", addr);
-                            if network_handler.get_api().is_account_registered(&addr, true).await? {
+                            let registered = network_handler.get_api().is_account_registered(&addr, true).await?;
+                            trace!("registered: {}", registered);
+                            if registered {
                                 state.add_registered_key(addr.to_public_key());
                             }
+
+                            processed_keys.insert(key);
                         }
                     }
                 }
@@ -859,6 +802,7 @@ impl Wallet {
                 storage.delete_assets().await?;
                 // unconfirmed balances are going to be outdated, we delete them
                 storage.delete_unconfirmed_balances().await?;
+                storage.clear_tx_cache();
 
                 debug!("Retrieve current wallet nonce");
                 let nonce_result = network_handler.get_api()
@@ -1005,7 +949,7 @@ impl XSWDNodeMethodHandler for Arc<Wallet> {
         if let Some(network_handler) = network_handler.as_ref() {
             if network_handler.is_running().await {
                 let api = network_handler.get_api();
-                let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::Custom(e.to_string())))?;
+                let response = api.call(&request.method, &request.params).await.map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::Custom(-31999, e.to_string())))?;
 
                 return Ok(json!({
                     "jsonrpc": JSON_RPC_VERSION,
@@ -1015,6 +959,6 @@ impl XSWDNodeMethodHandler for Arc<Wallet> {
             }
         }
 
-        Err(RpcResponseError::new(id, InternalRpcError::CustomStr("Wallet is not in online mode")))
+        Err(RpcResponseError::new(id, WalletError::NotOnlineMode))
     }
 }

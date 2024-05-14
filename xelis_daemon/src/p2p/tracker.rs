@@ -330,7 +330,7 @@ impl ObjectTracker {
     }
 
     // Handle the object response and returns the error if any
-    async fn handle_object_response_internal<S: Storage>(&self, blockchain: &Arc<Blockchain<S>>, response: OwnedObjectResponse, broadcast: bool) -> Result<(), P2pError> {
+    async fn handle_object_response_internal<S: Storage>(&self, blockchain: &Arc<Blockchain<S>>, response: OwnedObjectResponse, broadcast: bool, peer: &Arc<Peer>) -> Result<(), P2pError> {
         match response {
             OwnedObjectResponse::Transaction(tx, hash) => {
                 blockchain.add_tx_to_mempool_with_hash(tx, hash, broadcast).await?;
@@ -339,8 +339,8 @@ impl ObjectTracker {
                 // We don't broadcast it to others peers but we broadcast it to our miners in case
                 blockchain.add_new_block(block, broadcast, false).await?;
             }
-            _ => {
-                warn!("ObjectTracker received an invalid object response");
+            e => {
+                warn!("ObjectTracker received an invalid object response from {}: {:?}", peer, e);
             }
         }
         Ok(())
@@ -384,8 +384,10 @@ impl ObjectTracker {
                 match request.take_response() {
                     Some(response) => {
                         let (_, request) = queue.pop().unwrap();
-                        if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast()).await {
-                            debug!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
+                        if let Err(e) = self.handle_object_response_internal(&blockchain, response, request.broadcast(), request.get_peer()).await {
+                            if request.get_group_id().is_none() {
+                                warn!("Error while handling object response for {} in ObjectTracker from {}: {}", request.get_hash(), request.get_peer(), e);
+                            }
                             self.clean_queue(&mut queue, request.get_peer().get_id(), request.get_group_id().map(|v| (v, e))).await;
                         }
                     },

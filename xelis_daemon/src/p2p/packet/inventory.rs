@@ -66,6 +66,10 @@ impl<'a> NotifyInventoryResponse<'a> {
     pub fn get_txs(self) -> Cow<'a, IndexSet<Cow<'a, Hash>>> {
         self.txs
     }
+
+    pub fn len(&self) -> usize {
+        self.txs.len()
+    }
 }
 
 impl<'a> Serializer for NotifyInventoryResponse<'a> {

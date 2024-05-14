@@ -72,7 +72,7 @@ impl BlockHeader {
         }
     }
 
-    // Apply a BlockMiner to this block header to match the POW hash
+    // Apply a MinerWork to this block header to match the POW hash
     pub fn apply_miner_work(&mut self, work: MinerWork) {
         let (_, timestamp, nonce, miner, extra_nonce) = work.take();
         self.miner = miner.unwrap().into_owned();
@@ -171,7 +171,7 @@ impl BlockHeader {
         hash(&self.get_work())
     }
 
-    // This is similar as BlockMiner work
+    // This is similar to MinerWork
     fn get_serialized_header(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(BLOCK_WORK_SIZE);
         bytes.extend(self.get_work_hash().to_bytes());

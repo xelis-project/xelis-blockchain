@@ -120,6 +120,8 @@ pub enum PromptError {
     ReaderError(#[from] ReaderError),
     #[error(transparent)]
     CommandError(#[from] CommandError),
+    #[error(transparent)]
+    Any(#[from] Error)
 }
 
 impl<T> From<PoisonError<T>> for PromptError {
@@ -149,10 +151,10 @@ struct State {
 }
 
 impl State {
-    fn new() -> Self {
+    fn new(allow_interactive: bool) -> Self {
         // enable the raw mode for terminal
         // so we can read each event/action
-        let interactive = !crossterminal::enable_raw_mode().is_err();
+        let interactive = if allow_interactive { !crossterminal::enable_raw_mode().is_err() } else { false };
         if interactive {
             warn!("Non-interactive mode enabled");
         }
@@ -430,7 +432,9 @@ pub struct Prompt {
     input_receiver: Mutex<Option<UnboundedReceiver<String>>>,
     // This following channel is used to cancel the read_input method
     read_input_sender: Sender<()>,
-    read_input_receiver: AsyncMutex<Receiver<()>>
+    read_input_receiver: AsyncMutex<Receiver<()>>,
+    // Should we set colors or not
+    disable_colors: bool
 }
 
 pub type ShareablePrompt = Arc<Prompt>;
@@ -439,15 +443,23 @@ type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, T2) -> LocalBoxFuture<'a, R> + 'a>;
 
 impl Prompt {
-    pub fn new(level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool) -> Result<ShareablePrompt, PromptError> {
+    pub fn new(level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool, disable_file_log_date_based: bool, disable_colors: bool, interactive: bool) -> Result<ShareablePrompt, PromptError> {
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
         let prompt = Self {
-            state: Arc::new(State::new()),
+            state: Arc::new(State::new(interactive)),
             input_receiver: Mutex::new(None),
             read_input_receiver: AsyncMutex::new(read_input_receiver),
             read_input_sender,
+            disable_colors
         };
-        prompt.setup_logger(level, dir_path, filename_log, disable_file_logging)?;
+        prompt.setup_logger(level, dir_path, filename_log, disable_file_logging, disable_file_log_date_based)?;
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Err(e) = Self::adjust_win_console() {
+                error!("Error while adjusting windows console: {}", e);
+            }
+        }
 
         #[cfg(feature = "tracing")]
         {
@@ -470,6 +482,16 @@ impl Prompt {
         }
 
         Ok(Arc::new(prompt))
+    }
+
+    #[cfg(target_os = "windows")]
+    fn adjust_win_console() -> Result<(), Error> {
+        let console = win32console::console::WinConsole::input();
+        let mut mode = console.get_mode()?;
+        mode = (mode & !win32console::console::ConsoleMode::ENABLE_QUICK_EDIT_MODE)
+            | win32console::console::ConsoleMode::ENABLE_EXTENDED_FLAGS;
+        console.set_mode(mode)?;
+        Ok(())
     }
 
     // Start the thread to read stdin and handle events
@@ -594,13 +616,13 @@ impl Prompt {
                 return Ok(input);
             }
             let escaped_colors = self.state.ascii_escape_regex.replace_all(&original_prompt, "");
-            prompt = colorize_string(Color::Red, &escaped_colors.into_owned());
+            prompt = self.colorize_string(Color::Red, &escaped_colors.into_owned());
         }
     }
 
     pub async fn ask_confirmation(&self) -> Result<bool, PromptError> {
         let res = self.read_valid_str_value(
-            colorize_str(Color::Green, "Confirm ? (Y/N): "),
+            self.colorize_str(Color::Green, "Confirm ? (Y/N): "),
             vec!["y", "n"]
         ).await?;
         Ok(res == "y")
@@ -694,7 +716,7 @@ impl Prompt {
     }
 
     // configure fern and print prompt message after each new output
-    fn setup_logger(&self, level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool) -> Result<(), fern::InitError> {
+    fn setup_logger(&self, level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool, disable_file_log_date_based: bool) -> Result<(), fern::InitError> {
         let colors = ColoredLevelConfig::new()
             .debug(Color::Green)
             .info(Color::Cyan)
@@ -703,6 +725,8 @@ impl Prompt {
 
         let base = fern::Dispatch::new();
 
+        let disable_colors = self.disable_colors;
+        let interactive = self.state.is_interactive();
         let state = Arc::clone(&self.state);
         let stdout_log = fern::Dispatch::new()
             .format(move |out, message, record| {
@@ -711,17 +735,33 @@ impl Prompt {
                 if record.level() != Level::Error && record.level() != Level::Debug {
                     target_with_pad = " ".to_owned() + &target_with_pad;
                 }
-                let res = out.finish(format_args!(
-                    "\x1b[2K\r\x1B[90m{} {}\x1B[0m \x1B[{}m{}\x1B[0m \x1B[90m>\x1B[0m {}",
-                    chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
-                    colors.color(record.level()),
-                    Color::BrightBlue.to_fg_str(),
-                    target_with_pad,
-                    message
-                ));
-                if let Err(e) = state.show() {
-                    error!("Error on prompt refresh: {}", e);
+                let res = if disable_colors {
+                    out.finish(format_args!(
+                        "\x1b[2K{}{} {}{} > {}",
+                        if interactive { "\r" } else { "" },
+                        chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
+                        record.level(),
+                        target_with_pad,
+                        message
+                    ))
+                } else {
+                    out.finish(format_args!(
+                        "\x1b[2K{}\x1B[90m{} {}\x1B[0m \x1B[{}m{}\x1B[0m \x1B[90m>\x1B[0m {}",
+                        if interactive { "\r" } else { "" },
+                        chrono::Local::now().format("[%Y-%m-%d] (%H:%M:%S%.3f)"),
+                        colors.color(record.level()),
+                        Color::BrightBlue.to_fg_str(),
+                        target_with_pad,
+                        message
+                    ))
+                };
+
+                if interactive {
+                    if let Err(e) = state.show() {
+                        error!("Error on prompt refresh: {}", e);
+                    }
                 }
+
                 res
             })
             .chain(std::io::stdout())
@@ -734,7 +774,7 @@ impl Prompt {
                 create_dir_all(logs_path)?;
             }
 
-            let file_log = fern::Dispatch::new()
+            let mut file_log = fern::Dispatch::new()
             .level(level.into())
             .format(move |out, message, record| {
                 let pad = " ".repeat((30i16 - record.target().len() as i16).max(0) as usize);
@@ -748,7 +788,15 @@ impl Prompt {
                     pad,
                     message
                 ))
-            }).chain(fern::DateBased::new(logs_path, format!("%Y-%m-%d.{filename_log}")));
+            });
+
+            // Don't rotate the log file based on date ourself if its disabled
+            if !disable_file_log_date_based {
+                file_log = file_log.chain(fern::DateBased::new(logs_path, format!("%Y-%m-%d.{filename_log}")));
+            } else {
+                file_log = file_log.chain(fern::log_file(format!("{}/{}", dir_path, filename_log))?)
+            }
+            
             base = base.chain(file_log);
         }
 
@@ -766,6 +814,26 @@ impl Prompt {
 
         Ok(())
     }
+
+    // colorize a string with a specific color
+    // if colors are disabled, the message is returned as is
+    pub fn colorize_string(&self, color: Color, message: &String) -> String {
+        if self.disable_colors {
+            return message.to_string();
+        }
+
+        format!("\x1B[{}m{}\x1B[0m", color.to_fg_str(), message)
+    }
+
+    // colorize a string with a specific color
+    // No color is set if colors are disabled
+    pub fn colorize_str(&self, color: Color, message: &str) -> String {
+        if self.disable_colors {
+            return message.to_string();
+        }
+
+        format!("\x1B[{}m{}\x1B[0m", color.to_fg_str(), message)
+    }
 }
 
 impl Drop for Prompt {
@@ -778,12 +846,4 @@ impl Drop for Prompt {
             } 
         }
     }
-}
-
-pub fn colorize_string(color: Color, message: &String) -> String {
-    format!("\x1B[{}m{}\x1B[0m", color.to_fg_str(), message)
-}
-
-pub fn colorize_str(color: Color, message: &str) -> String {
-    format!("\x1B[{}m{}\x1B[0m", color.to_fg_str(), message)
 }

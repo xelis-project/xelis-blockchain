@@ -22,7 +22,6 @@ use xelis_common::{
     },
     network::Network,
     prompt::{
-        self,
         argument::{
             Arg,
             ArgType,
@@ -68,11 +67,7 @@ use {
     },
     xelis_common::{
         rpc_server::RpcRequest,
-        prompt::{
-            ShareablePrompt,
-            colorize_string,
-            colorize_str
-        }
+        prompt::ShareablePrompt
     },
     anyhow::Error,
     tokio::sync::mpsc::UnboundedReceiver
@@ -111,6 +106,17 @@ pub struct Config {
     /// Disable the log file
     #[clap(long)]
     disable_file_logging: bool,
+    /// Disable the log filename date based
+    /// If disabled, the log file will be named xelis-wallet.log instead of YYYY-MM-DD.xelis-wallet.log
+    #[clap(long)]
+    disable_file_log_date_based: bool,
+    /// Disable the usage of colors in log
+    #[clap(long)]
+    disable_log_color: bool,
+    /// Disable terminal interactive mode
+    /// You will not be able to write CLI commands in it or to have an updated prompt
+    #[clap(long)]
+    disable_interactive_mode: bool,
     /// Log filename
     /// 
     /// By default filename is xelis-wallet.log.
@@ -164,7 +170,7 @@ impl ecdlp::ProgressTableGenerationReportFunction for LogProgressTableGeneration
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode)?;
 
     #[cfg(feature = "api_server")]
     {
@@ -269,9 +275,9 @@ async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: Sharea
 async fn xswd_handle_request_application(prompt: &ShareablePrompt, app_state: AppStateShared, signed: bool) -> Result<PermissionResult, Error> {
     let mut message = format!("XSWD: Allow application {} ({}) to access your wallet\r\n(Y/N): ", app_state.get_name(), app_state.get_id());
     if signed {
-        message = colorize_str(Color::BrightYellow, "NOTE: Application authorizaion was already approved previously.\r\n") + &message;
+        message = prompt.colorize_str(Color::BrightYellow, "NOTE: Application authorizaion was already approved previously.\r\n") + &message;
     }
-    let accepted = prompt.read_valid_str_value(colorize_string(Color::Blue, &message), vec!["y", "n"]).await? == "y";
+    let accepted = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), vec!["y", "n"]).await? == "y";
     if accepted {
         Ok(PermissionResult::Allow)
     } else {
@@ -294,7 +300,7 @@ async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: App
         params
     );
 
-    let answer = prompt.read_valid_str_value(colorize_string(Color::Blue, &message), vec!["a", "d", "aa", "ad"]).await?;
+    let answer = prompt.read_valid_str_value(prompt.colorize_string(Color::Blue, &message), vec!["a", "d", "aa", "ad"]).await?;
     Ok(match answer.as_str() {
         "a" => PermissionResult::Allow,
         "d" => PermissionResult::Deny,
@@ -396,7 +402,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
 }
 
 // Function passed as param to prompt to build the prompt message shown
-async fn prompt_message_builder(_: &Prompt, command_manager: Option<&CommandManager>) -> Result<String, PromptError> {
+async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&CommandManager>) -> Result<String, PromptError> {
     if let Some(manager) = command_manager {
         let context = manager.get_context().lock()?;
         if let Ok(wallet) = context.get::<Arc<Wallet>>() {
@@ -404,42 +410,42 @@ async fn prompt_message_builder(_: &Prompt, command_manager: Option<&CommandMana
 
             let addr_str = {
                 let addr = &wallet.get_address().to_string()[..8];
-                prompt::colorize_str(Color::Yellow, addr)
+                prompt.colorize_str(Color::Yellow, addr)
             };
     
             let storage = wallet.get_storage().read().await;
             let topoheight_str = format!(
                 "{}: {}",
-                prompt::colorize_str(Color::Yellow, "TopoHeight"),
-                prompt::colorize_string(Color::Green, &format!("{}", storage.get_synced_topoheight().unwrap_or(0)))
+                prompt.colorize_str(Color::Yellow, "TopoHeight"),
+                prompt.colorize_string(Color::Green, &format!("{}", storage.get_synced_topoheight().unwrap_or(0)))
             );
             let balance = format!(
                 "{}: {}",
-                prompt::colorize_str(Color::Yellow, "Balance"),
-                prompt::colorize_string(Color::Green, &format_xelis(storage.get_plaintext_balance_for(&XELIS_ASSET).await.unwrap_or(0))),
+                prompt.colorize_str(Color::Yellow, "Balance"),
+                prompt.colorize_string(Color::Green, &format_xelis(storage.get_plaintext_balance_for(&XELIS_ASSET).await.unwrap_or(0))),
             );
             let status = if wallet.is_online().await {
-                prompt::colorize_str(Color::Green, "Online")
+                prompt.colorize_str(Color::Green, "Online")
             } else {
-                prompt::colorize_str(Color::Red, "Offline")
+                prompt.colorize_str(Color::Red, "Offline")
             };
             let network_str = if !network.is_mainnet() {
                 format!(
                     "{} ",
-                    prompt::colorize_string(Color::Red, &network.to_string())
+                    prompt.colorize_string(Color::Red, &network.to_string())
                 )
             } else { "".into() };
     
             return Ok(
                 format!(
                     "{} | {} | {} | {} | {} {}{} ",
-                    prompt::colorize_str(Color::Blue, "XELIS Wallet"),
+                    prompt.colorize_str(Color::Blue, "XELIS Wallet"),
                     addr_str,
                     topoheight_str,
                     balance,
                     status,
                     network_str,
-                    prompt::colorize_str(Color::BrightBlack, ">>")
+                    prompt.colorize_str(Color::BrightBlack, ">>")
                 )
             )
         }
@@ -448,8 +454,8 @@ async fn prompt_message_builder(_: &Prompt, command_manager: Option<&CommandMana
     Ok(
         format!(
             "{} {} ",
-            prompt::colorize_str(Color::Blue, "XELIS Wallet"),
-            prompt::colorize_str(Color::BrightBlack, ">>")
+            prompt.colorize_str(Color::Blue, "XELIS Wallet"),
+            prompt.colorize_str(Color::BrightBlack, ">>")
         )
     )
 }
@@ -603,11 +609,11 @@ async fn change_password(manager: &CommandManager, _: ArgumentManager) -> Result
 
     let prompt = manager.get_prompt();
 
-    let old_password = prompt.read_input(prompt::colorize_str(Color::BrightRed, "Current Password: "), true)
+    let old_password = prompt.read_input(prompt.colorize_str(Color::BrightRed, "Current Password: "), true)
         .await
         .context("Error while asking old password")?;
 
-    let new_password = prompt.read_input(prompt::colorize_str(Color::BrightRed, "New Password: "), true)
+    let new_password = prompt.read_input(prompt.colorize_str(Color::BrightRed, "New Password: "), true)
         .await
         .context("Error while asking new password")?;
 
@@ -625,13 +631,13 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
 
     // read address
     let str_address = prompt.read_input(
-        prompt::colorize_str(Color::Green, "Address: "),
+        prompt.colorize_str(Color::Green, "Address: "),
         false
     ).await.context("Error while reading address")?;
     let address = Address::from_string(&str_address).context("Invalid address")?;
 
     let asset = prompt.read_hash(
-        prompt::colorize_str(Color::Green, "Asset (default XELIS): ")
+        prompt.colorize_str(Color::Green, "Asset (default XELIS): ")
     ).await.ok();
 
     let asset = asset.unwrap_or(XELIS_ASSET);
@@ -645,7 +651,7 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
 
     // read amount
     let float_amount: f64 = prompt.read(
-        prompt::colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
+        prompt.colorize_string(Color::Green, &format!("Amount (max: {}): ", format_coin(max_balance, decimals)))
     ).await.context("Error while reading amount")?;
 
     let amount = (float_amount * 10u32.pow(decimals as u32) as f64) as u64;
@@ -680,7 +686,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
 
     // read address
     let str_address = prompt.read_input(
-        prompt::colorize_str(Color::Green, "Address: "),
+        prompt.colorize_str(Color::Green, "Address: "),
         false
     ).await.context("Error while reading address")?;
     let address = Address::from_string(&str_address).context("Invalid address")?;
@@ -688,7 +694,7 @@ async fn transfer_all(manager: &CommandManager, mut args: ArgumentManager) -> Re
     let mut asset = args.get_value("asset").and_then(|v| v.to_hash()).ok();
     if asset.is_none() {
         asset = prompt.read_hash(
-           prompt::colorize_str(Color::Green, "Asset (default XELIS): ")
+           prompt.colorize_str(Color::Green, "Asset (default XELIS): ")
        ).await.ok();
     }
 
@@ -898,7 +904,7 @@ async fn seed(manager: &CommandManager, mut arguments: ArgumentManager) -> Resul
 
     let seed = wallet.get_seed(language as usize)?;
     prompt.read_input(
-        prompt::colorize_string(Color::Green, &format!("Seed: {}\r\nPress ENTER to continue", seed)),
+        prompt.colorize_string(Color::Green, &format!("Seed: {}\r\nPress ENTER to continue", seed)),
         false
     ).await.context("Error while printing seed")?;
     Ok(())
@@ -907,8 +913,14 @@ async fn seed(manager: &CommandManager, mut arguments: ArgumentManager) -> Resul
 async fn nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
-    let nonce = wallet.get_nonce().await;
+    let storage = wallet.get_storage().read().await;
+    let nonce = storage.get_nonce()?;
+    let unconfirmed_nonce = storage.get_unconfirmed_nonce();
     manager.message(format!("Nonce: {}", nonce));
+    if nonce != unconfirmed_nonce {
+        manager.message(format!("Unconfirmed nonce: {}", unconfirmed_nonce));
+    }
+
     Ok(())
 }
 
@@ -920,6 +932,8 @@ async fn set_nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), C
     let wallet: &Arc<Wallet> = context.get()?;
     let mut storage = wallet.get_storage().write().await;
     storage.set_nonce(value)?;
+    storage.clear_tx_cache();
+
     manager.message(format!("New nonce is: {}", value));
     Ok(())
 }

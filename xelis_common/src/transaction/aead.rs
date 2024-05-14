@@ -26,6 +26,9 @@ use crate::{
 pub type AEADKey = chacha20poly1305::Key;
 pub type KDF = sha3::Sha3_256;
 
+// The size of the tag in bytes.
+pub const TAG_SIZE: usize = 16;
+
 // This error is thrown when the ciphertext is not in the expected format.
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 #[error("malformated ciphertext")]

@@ -106,7 +106,7 @@ where
 
     fn parse_event(&self, request: &mut RpcRequest) -> Result<E, RpcResponseError> {
         let value = request.params.take().ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::ExpectedParams))?;
-        let params: SubscribeParams<E> = serde_json::from_value(value).map_err(|e| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidParams(e)))?;
+        let params: SubscribeParams<E> = serde_json::from_value(value).map_err(|e| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidJSONParams(e)))?;
         Ok(params.notify.into_owned())
     }
 
@@ -148,12 +148,12 @@ where
                         };
                         responses.push(response);
                     } else {
-                        responses.push(RpcResponseError::new(None, InternalRpcError::InvalidRequest).to_json());
+                        responses.push(RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest).to_json());
                     }
                 }
-                Ok(serde_json::to_value(responses).map_err(|_| RpcResponseError::new(None, InternalRpcError::CustomStr("error while serializing response")))?)
+                Ok(serde_json::to_value(responses).map_err(|err| RpcResponseError::new(None, InternalRpcError::SerializeResponse(err)))?)
             },
-            _ => return Err(RpcResponseError::new(None, InternalRpcError::InvalidRequest))
+            _ => return Err(RpcResponseError::new(None, InternalRpcError::InvalidJSONRequest))
         }
     }
 

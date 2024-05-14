@@ -75,20 +75,6 @@ pub struct GetAddressParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SplitAddressParams {
-    // address which must be in integrated form
-    pub address: Address
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct SplitAddressResult {
-    // Normal address
-    pub address: Address,
-    // Encoded data from address
-    pub integrated_data: DataElement
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct RescanParams {
     pub until_topoheight: Option<u64>,
     #[serde(default = "default_false_value")]

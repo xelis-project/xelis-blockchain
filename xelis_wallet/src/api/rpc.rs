@@ -16,12 +16,12 @@ use xelis_common::{
             ListTransactionsParams,
             QueryDBParams,
             RescanParams,
-            SplitAddressParams,
-            SplitAddressResult,
             StoreParams,
             TransactionResponse,
             SetOnlineModeParams,
         },
+        SplitAddressParams,
+        SplitAddressResult,
         DataElement,
         DataHash
     },
@@ -39,12 +39,12 @@ use xelis_common::{
     transaction::builder::FeeBuilder
 };
 use serde_json::{Value, json};
-use crate::wallet::{
-    Wallet,
-    WalletError
+use crate::{
+    wallet::Wallet,
+    error::WalletError
 };
 use super::xswd::XSWDWebSocketHandler;
-use log::info;
+use log::{info, warn};
 
 // Register all RPC methods
 pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
@@ -144,7 +144,7 @@ async fn split_address(_: &Context, body: Value) -> Result<Value, InternalRpcErr
     let address = params.address;
 
     let (data, address) = address.extract_data();
-    let integrated_data = data.ok_or(InternalRpcError::CustomStr("Address is not an integrated address"))?;
+    let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address"))?;
 
     Ok(json!(SplitAddressResult {
         address,
@@ -156,7 +156,7 @@ async fn split_address(_: &Context, body: Value) -> Result<Value, InternalRpcErr
 async fn rescan(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: RescanParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    wallet.rescan(params.until_topoheight.unwrap_or(0), params.auto_reconnect).await.context("Error while rescanning wallet")?;
+    wallet.rescan(params.until_topoheight.unwrap_or(0), params.auto_reconnect).await?;
     Ok(json!(true))
 }
 
@@ -225,23 +225,26 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     let wallet: &Arc<Wallet> = context.get()?;
     // request ask to broadcast the TX but wallet is not connected to any daemon
     if !wallet.is_online().await && params.broadcast {
-        return Err(WalletError::NotOnlineMode).context("Cannot broadcast TX")?
+        return Err(WalletError::NotOnlineMode)?
     }
 
     if !params.broadcast && !params.tx_as_hex {
-        return Err(InternalRpcError::CustomStr("Invalid params, should either be broadcasted, or returned in hex format"))
+        return Err(InternalRpcError::InvalidParams("Invalid params, should either be broadcasted, or returned in hex format"))
     }
 
     // create the TX
     // The lock is kept until the TX is applied to the storage
     // So even if we have few requests building a TX, they wait for the previous one to be applied
     let mut storage = wallet.get_storage().write().await;
-    let (mut state, tx) = wallet.create_transaction_with_storage(&storage, params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64))).await
-        .context("Error while creating transaction")?;
+    let (mut state, tx) = wallet.create_transaction_with_storage(&storage, params.tx_type, params.fee.unwrap_or(FeeBuilder::Multiplier(1f64))).await?;
 
     // if requested, broadcast the TX ourself
     if params.broadcast {
-        wallet.submit_transaction(&tx).await.context("Couldn't broadcast transaction")?;
+        if let Err(e) = wallet.submit_transaction(&tx).await {
+            warn!("Clearing Tx cache because of broadcasting error: {}", e);
+            storage.clear_tx_cache();
+            return Err(e.into());
+        }
     }
 
     state.apply_changes(&mut storage).await
@@ -265,7 +268,7 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
 async fn estimate_fees(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: EstimateFeesParams = parse_params(body)?;
     let wallet: &Arc<Wallet> = context.get()?;
-    let fees = wallet.estimate_fees(params.tx_type).await.context("Error while estimating fees")?;
+    let fees = wallet.estimate_fees(params.tx_type).await?;
 
     Ok(json!(fees))
 }
@@ -275,7 +278,7 @@ async fn list_transactions(context: &Context, body: Value) -> Result<Value, Inte
     let params: ListTransactionsParams = parse_params(body)?;
     if let Some(addr) = &params.address {
         if !addr.is_normal() {
-            return Err(InternalRpcError::CustomStr("Address should be in normal format (not integrated address)"))
+            return Err(InternalRpcError::InvalidParams("Address should be in normal format (not integrated address)"))
         }
     }
 
@@ -309,10 +312,10 @@ async fn set_online_mode(context: &Context, body: Value) -> Result<Value, Intern
 
     let wallet: &Arc<Wallet> = context.get()?;
     if wallet.is_online().await {
-        return Err(InternalRpcError::CustomStr("Wallet is already connected to a daemon"))
+        return Err(InternalRpcError::InvalidRequestStr("Wallet is already connected to a daemon"))
     }
 
-    wallet.set_online_mode(&params.daemon_address, params.auto_reconnect).await.context("Error while setting online mode")?;
+    wallet.set_online_mode(&params.daemon_address, params.auto_reconnect).await?;
 
     Ok(json!(true))
 }
@@ -325,10 +328,10 @@ async fn set_offline_mode(context: &Context, body: Value) -> Result<Value, Inter
 
     let wallet: &Arc<Wallet> = context.get()?;
     if !wallet.is_online().await {
-        return Err(InternalRpcError::CustomStr("Wallet is already in offline mode"))
+        return Err(InternalRpcError::InvalidRequestStr("Wallet is already in offline mode"))
     }
 
-    wallet.set_offline_mode().await.context("Error while setting offline mode")?;
+    wallet.set_offline_mode().await?;
 
     Ok(json!(true))
 }
@@ -363,7 +366,7 @@ async fn get_matching_keys(context: &Context, body: Value) -> Result<Value, Inte
     let params: GetMatchingKeysParams = parse_params(body)?;
     if let Some(query) = &params.query {
         if query.is_for_element() {
-            return Err(InternalRpcError::CustomStr("Invalid key query, should be a QueryValue"))
+            return Err(InternalRpcError::InvalidParams("Invalid key query, should be a QueryValue"))
         }
     }
 
@@ -422,7 +425,7 @@ async fn query_db(context: &Context, body: Value) -> Result<Value, InternalRpcEr
     let params: QueryDBParams = parse_params(body)?;
     if let Some(query) = &params.key {
         if query.is_for_element() {
-            return Err(InternalRpcError::CustomStr("Invalid key query, should be a QueryValue"))
+            return Err(InternalRpcError::InvalidParams("Invalid key query, should be a QueryValue"))
         }
     }
 

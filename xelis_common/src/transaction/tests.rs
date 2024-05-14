@@ -104,7 +104,10 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
 
 
     let builder = TransactionBuilder::new(0, account.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
+    let estimated_size = builder.estimate_size();
     let tx = builder.build(&mut state, &account.keypair).unwrap();
+    assert!(estimated_size == tx.size());
+    assert!(tx.to_bytes().len() == estimated_size);
 
     tx
 }
@@ -231,7 +234,12 @@ async fn test_burn_tx_verify() {
             asset: XELIS_ASSET,
         });
         let builder = TransactionBuilder::new(0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
-        builder.build(&mut state, &alice.keypair).unwrap()
+        let estimated_size = builder.estimate_size();
+        let tx = builder.build(&mut state, &alice.keypair).unwrap();
+        assert!(estimated_size == tx.size());
+        assert!(tx.to_bytes().len() == estimated_size);
+
+        tx
     };
 
     let mut state = ChainState {
@@ -294,7 +302,12 @@ async fn test_max_transfers() {
     
         let data = TransactionTypeBuilder::Transfers(transfers);
         let builder = TransactionBuilder::new(0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
-        builder.build(&mut state, &alice.keypair).unwrap()
+        let estimated_size = builder.estimate_size();
+        let tx = builder.build(&mut state, &alice.keypair).unwrap();
+        assert!(estimated_size == tx.size());
+        assert!(tx.to_bytes().len() == estimated_size);
+
+        tx
     };
 
     // Create the chain state

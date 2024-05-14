@@ -44,7 +44,7 @@ use crate::{
 };
 use thiserror::Error;
 use super::{
-    aead::{derive_aead_key_from_opening, PlaintextData},
+    aead::{derive_aead_key_from_opening, PlaintextData, TAG_SIZE},
     BurnPayload,
     Reference,
     Role,
@@ -177,6 +177,8 @@ impl TransferWithCommitment {
 }
 
 impl TransactionTypeBuilder {
+
+    // Get the assets used in the transaction
     pub fn used_assets(&self) -> HashSet<Hash> {
         let mut consumed = HashSet::new();
 
@@ -197,13 +199,14 @@ impl TransactionTypeBuilder {
         consumed
     }
 
-    pub fn used_keys(&self) -> HashSet<CompressedPublicKey> {
-        let mut used_keys = HashSet::new();
+    // Get the destination keys used in the transaction
+    pub fn used_keys(&self) -> Vec<CompressedPublicKey> {
+        let mut used_keys = Vec::new();
 
         match &self {
             TransactionTypeBuilder::Transfers(transfers) => {
                 for transfer in transfers {
-                    used_keys.insert(transfer.destination.get_public_key().clone());
+                    used_keys.push(transfer.destination.get_public_key().clone());
                 }
             }
             TransactionTypeBuilder::Burn(_) => {}
@@ -257,7 +260,7 @@ impl TransactionBuilder {
 
     /// Estimate by hand the bytes size of a final TX
     // Returns bytes size and transfers count
-    fn estimate_size(&self) -> usize {
+    pub fn estimate_size(&self) -> usize {
         let assets_used = self.data.used_assets().len();
         // Version byte
         let mut size = 1
@@ -294,9 +297,9 @@ impl TransactionBuilder {
                     // Extra data byte flag
                     + 1;
 
-                    if let Some(extra_data) = &transfer.extra_data {
+                    if let Some(extra_data) = transfer.extra_data.as_ref().or(transfer.destination.get_extra_data()) {
                         // 2 represents u16 length
-                        size += 2 + extra_data.size();
+                        size += 2 + TAG_SIZE + extra_data.size();
                     }
                 }
                 transfers.len()

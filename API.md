@@ -479,6 +479,51 @@ Validate a wallet address by accepting or not integrated address.
 }
 ```
 
+#### Split Address
+Split address and integrated data in two differents fields.
+
+##### Method `split_address`
+
+##### Parameters
+|   Name  |   Type  | Required |                                 Note                                 |
+|:-------:|:-------:|:--------:|:--------------------------------------------------------------------:|
+| address | Address | Required | Address to split in two parts: original address, and integrated data |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "split_address",
+	"id": 1,
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32szqsrqyzkjar9d4esyqgpq4ehwmmjvsqqypgpq45x2mrvduqqzpthdaexceqpq4mk7unywvqsgqqpq4yx2mrvduqqzp2hdaexceqqqyzxvun0d5qqzp2cg4xyj5ct5udlg"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+		"integrated_data": {
+			"hello": "world",
+			"items": {
+				"sword": 5
+			},
+			"words": [
+				"Hello",
+				"World",
+				"from",
+				"XELIS"
+			]
+		}
+	}
+}
+```
+
 #### Extract Key From Address
 Extract public key from a wallet address
 
@@ -524,9 +569,11 @@ Block Header can be serialized/deserialized using following order on byte array:
 - 8 bytes for height (u64) big endian format
 - 8 bytes for timestamp (u64) big endian format
 - 8 bytes for nonce (u64) big endian format
+- 32 bytes for extra nonce (this space is free and can be used to spread more the work or write anything)
 - 1 byte for tips count
 - 32 bytes per hash (count of elements is based on previous byte)
-- 32 bytes for extra nonce (this space is free and can be used to spread more the work or write anything)
+- 2 bytes for txs hashes count (u16) big endian format
+- 32 bytes per hash (count of elements is based on previous value)
 - 32 bytes for miner public key
 
 ##### Method `get_block_template`
