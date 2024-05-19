@@ -15,7 +15,7 @@ use crate::{
     transaction::{TransactionType, MAX_TRANSFER_COUNT}
 };
 use super::{
-    aead::{
+    extra_data::{
         derive_aead_key_from_ct,
         derive_aead_key_from_opening,
         PlaintextData

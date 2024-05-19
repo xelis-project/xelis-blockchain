@@ -16,7 +16,7 @@ use crate::{
         Signature
     },
     transaction::{
-        aead::AEADCipher,
+        extra_data::AEADCipher,
         BurnPayload,
         Reference,
         SourceCommitment,

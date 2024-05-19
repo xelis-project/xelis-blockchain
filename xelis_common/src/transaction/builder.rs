@@ -44,7 +44,7 @@ use crate::{
 };
 use thiserror::Error;
 use super::{
-    aead::{derive_aead_key_from_opening, PlaintextData, TAG_SIZE},
+    extra_data::{derive_aead_key_from_opening, PlaintextData, TAG_SIZE},
     BurnPayload,
     Reference,
     Role,

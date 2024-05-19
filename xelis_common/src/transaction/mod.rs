@@ -12,11 +12,11 @@ use crate::{
 use bulletproofs::RangeProof;
 use log::debug;
 use serde::{Deserialize, Serialize};
-use self::aead::AEADCipher;
+use self::extra_data::AEADCipher;
 
 pub mod builder;
 pub mod verify;
-pub mod aead;
+pub mod extra_data;
 
 #[cfg(test)]
 mod tests;

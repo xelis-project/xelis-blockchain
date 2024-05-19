@@ -10,9 +10,11 @@ use thiserror::Error;
 use crate::{
     crypto::elgamal::{
         Ciphertext,
+        CompressedHandle,
         DecryptHandle,
         PedersenOpening,
         PrivateKey,
+        PublicKey,
         H
     },
     serializer::{
@@ -22,6 +24,8 @@ use crate::{
         Writer
     }
 };
+
+use super::Role;
 
 pub type AEADKey = chacha20poly1305::Key;
 pub type KDF = sha3::Sha3_256;
@@ -45,8 +49,57 @@ const NONCE: &[u8; 12] = b"xelis-crypto";
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct AEADCipher(pub Vec<u8>);
 
+// A wrapper around a Vec<u8>.
+// Inner data is not checked, so everything can be set as data to encrypt.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Zeroize)]
 pub struct PlaintextData(pub Vec<u8>);
+
+// New version of Extra Data due to the issue of commitment randomness reuse
+// https://gist.github.com/kayabaNerve/b754e9ed9fa4cc2c607f38a83aa3df2a
+// We create a new opening to be independant of the amount opening.
+// This is more secure and prevent bruteforce attack from the above link.
+// We need to store 64 bytes more than previous version due to the exclusive handles created.
+pub struct ExtraData {
+    cipher: AEADCipher,
+    sender_handle: CompressedHandle,
+    receiver_handle: CompressedHandle,
+}
+
+impl ExtraData {
+    // Create a new extra data that will encrypt the message for receiver & sender keys.
+    // Both will be able to decrypt it.
+    pub fn new(data: PlaintextData, sender: &PublicKey, receiver: &PublicKey) -> Self {
+        let opening = PedersenOpening::generate_new();
+        let k = derive_aead_key_from_opening(&opening);
+        Self {
+            cipher: data.encrypt_in_place(&k),
+            sender_handle: sender.decrypt_handle(&opening).compress(),
+            receiver_handle: receiver.decrypt_handle(&opening).compress(),
+        }
+    }
+
+    // Get the compressed handle based on its role
+    fn get_handle(&self, role: Role) -> &CompressedHandle {
+        match role {
+            Role::Sender => &self.sender_handle,
+            Role::Receiver => &self.receiver_handle,
+        }
+    }
+
+    // Decrypt in place the message using the private key and the role to determine the correct handle to use.
+    pub fn decrypt_in_place(self, private_key: &PrivateKey, role: Role) -> Result<PlaintextData, CipherFormatError> {
+        let handle = self.get_handle(role).decompress().map_err(|_| CipherFormatError)?;
+        let key = derive_aead_key_from_handle(private_key, &handle);
+        Ok(self.cipher.decrypt_in_place(&key)?)
+    }
+
+    // Decrypt the message using the private key and the role to determine the correct handle to use.
+    pub fn decrypt(&self, private_key: &PrivateKey, role: Role) -> Result<PlaintextData, CipherFormatError> {
+        let handle = self.get_handle(role).decompress().map_err(|_| CipherFormatError)?;
+        let key = derive_aead_key_from_handle(private_key, &handle);
+        Ok(self.cipher.decrypt(&key)?)
+    }
+}
 
 /// See [`derive_aead_key`].
 pub fn derive_aead_key_from_opening(opening: &PedersenOpening) -> AEADKey {
