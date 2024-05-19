@@ -37,7 +37,7 @@ use xelis_common::{
     network::Network,
     serializer::Serializer,
     transaction::{
-        aead::{self, AEADCipher},
+        extra_data::{self, AEADCipher},
         builder::{
             FeeBuilder,
             TransactionBuilder,
@@ -591,7 +591,7 @@ impl Wallet {
     // Decrypt the extra data from a transfer
     pub fn decrypt_extra_data(&self, cipher: AEADCipher, handle: &DecryptHandle) -> Result<DataElement, WalletError> {
         trace!("decrypt extra data");
-        let key = aead::derive_aead_key_from_handle(&self.keypair.get_private_key(), handle);
+        let key = extra_data::derive_aead_key_from_handle(&self.keypair.get_private_key(), handle);
         let plaintext = cipher.decrypt_in_place(&key)?;
         DataElement::from_bytes(&plaintext.0).map_err(|_| WalletError::CiphertextDecode)
     }
