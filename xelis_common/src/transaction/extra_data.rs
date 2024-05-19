@@ -175,3 +175,39 @@ impl Serializer for AEADCipher {
         Ok(AEADCipher(Vec::read(reader)?))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::crypto::KeyPair;
+
+    use super::*;
+
+    #[test]
+    fn test_encrypt_decrypt() {
+        let opening = PedersenOpening::generate_new();
+        let k = derive_aead_key_from_opening(&opening);
+        let bytes = vec![1, 2, 3, 4, 5];
+        let data = PlaintextData(bytes.clone());
+        let cipher = data.encrypt_in_place(&k);
+        let decrypted = cipher.decrypt_in_place(&k).unwrap();
+        assert_eq!(decrypted.0, bytes);
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_extra_data() {
+        let alice = KeyPair::new();
+        let bob = KeyPair::new();
+
+        let bytes = vec![1, 2, 3, 4, 5];
+        let data = PlaintextData(bytes.clone());
+        let extra_data = ExtraData::new(data, alice.get_public_key(), bob.get_public_key());
+
+        // Decrypt for alice
+        let decrypted = extra_data.decrypt(alice.get_private_key(), Role::Sender).unwrap();
+        assert_eq!(decrypted.0, bytes);
+
+        // Decrypt for bob
+        let decrypted = extra_data.decrypt(bob.get_private_key(), Role::Receiver).unwrap();
+        assert_eq!(decrypted.0, bytes);
+    }
+}
