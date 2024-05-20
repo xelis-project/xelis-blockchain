@@ -44,7 +44,7 @@ use crate::{
 };
 use thiserror::Error;
 use super::{
-    extra_data::{derive_aead_key_from_opening, PlaintextData, TAG_SIZE},
+    extra_data::{ExtraData, PlaintextData, TAG_SIZE},
     BurnPayload,
     Reference,
     Role,
@@ -298,8 +298,11 @@ impl TransactionBuilder {
                     + 1;
 
                     if let Some(extra_data) = transfer.extra_data.as_ref().or(transfer.destination.get_extra_data()) {
-                        // 2 represents u16 length
-                        size += 2 + TAG_SIZE + extra_data.size();
+                        // 2 represents u16 length of AEADCipher in extra data
+                        // 2 represents u16 length of UnknownExtraDataFormat
+                        // We have both length has we move one in the other
+                        // This mean new ExtraData version has 2 + 2 + 32 (sender) + 32 (receiver) + 16 (tag) bytes of overhead.
+                        size += 2 + 2 + (RISTRETTO_COMPRESSED_SIZE * 2) + TAG_SIZE + extra_data.size();
                     }
                 }
                 transfers.len()
@@ -590,9 +593,8 @@ impl TransactionBuilder {
                     // Encrypt the extra data if it exists
                     let extra_data = if let Some(extra_data) = transfer.inner.extra_data {
                         let bytes = extra_data.to_bytes();
-                        let key = derive_aead_key_from_opening(&transfer.amount_opening);
-                        let cipher = PlaintextData(bytes).encrypt_in_place(&key);
-                        if cipher.0.len() > EXTRA_DATA_LIMIT_SIZE {
+                        let cipher = ExtraData::new(PlaintextData(bytes), source_keypair.get_public_key(), &transfer.destination);
+                        if cipher.size() > EXTRA_DATA_LIMIT_SIZE {
                             return Err(GenerationError::EncryptedExtraDataTooLarge);
                         }
 

@@ -149,17 +149,21 @@ pub enum ExtraDataVariant {
 
 impl Serializer for ExtraData {
     fn write(&self, writer: &mut Writer) {
-        self.cipher.write(writer);
         self.sender_handle.write(writer); 
         self.receiver_handle.write(writer);
+        self.cipher.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(Self {
-            cipher: AEADCipher::read(reader)?,
             sender_handle: CompressedHandle::read(reader)?,
-            receiver_handle: CompressedHandle::read(reader)?
+            receiver_handle: CompressedHandle::read(reader)?,
+            cipher: AEADCipher::read(reader)?,
         })
+    }
+
+    fn size(&self) -> usize {
+        self.cipher.size() + self.sender_handle.size() + self.receiver_handle.size()
     }
 }
 
@@ -210,6 +214,12 @@ impl AEADCipher {
 impl From<AEADCipher> for UnknownExtraDataFormat {
     fn from(value: AEADCipher) -> Self {
         Self(value.0)
+    }
+}
+
+impl From<ExtraData> for UnknownExtraDataFormat {
+    fn from(value: ExtraData) -> Self {
+        Self(value.to_bytes())
     }
 }
 
