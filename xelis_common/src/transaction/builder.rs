@@ -596,7 +596,7 @@ impl TransactionBuilder {
                             return Err(GenerationError::EncryptedExtraDataTooLarge);
                         }
 
-                        Some(cipher)
+                        Some(cipher.into())
                     } else {
                         None
                     };

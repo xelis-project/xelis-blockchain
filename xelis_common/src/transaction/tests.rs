@@ -16,7 +16,6 @@ use crate::{
 };
 use super::{
     extra_data::{
-        derive_aead_key_from_ct,
         derive_aead_key_from_opening,
         PlaintextData
     },
@@ -147,24 +146,21 @@ fn test_encrypt_decrypt_two_parties() {
     // Verify the extra data from alice (sender)
     {
         let alice_ct = transfer.get_ciphertext(Role::Sender).decompress().unwrap();
-        let key = derive_aead_key_from_ct(&alice.keypair.get_private_key(), &alice_ct);
-        let decrypted = cipher.clone().decrypt_in_place(&key).unwrap();
-        assert_eq!(decrypted.0, payload.to_bytes());
+        let decrypted = cipher.decrypt_v1(&alice.keypair.get_private_key(), alice_ct.handle()).unwrap();
+        assert_eq!(decrypted, payload);
     }
 
     // Verify the extra data from bob (receiver)
     {
         let bob_ct = transfer.get_ciphertext(Role::Receiver).decompress().unwrap();
-        let key = derive_aead_key_from_ct(&bob.keypair.get_private_key(), &bob_ct);
-        let decrypted = cipher.clone().decrypt_in_place(&key).unwrap();
-        assert_eq!(decrypted.0, payload.to_bytes());
+        let decrypted = cipher.decrypt_v1(&bob.keypair.get_private_key(), bob_ct.handle()).unwrap();
+        assert_eq!(decrypted, payload);
     }
 
     // Verify the extra data from alice (sender) with the wrong key
     {
         let alice_ct = transfer.get_ciphertext(Role::Sender).decompress().unwrap();
-        let key = derive_aead_key_from_ct(&bob.keypair.get_private_key(), &alice_ct);
-        let decrypted = cipher.decrypt_in_place(&key);
+        let decrypted = cipher.decrypt_v1(&bob.keypair.get_private_key(), alice_ct.handle());
         assert!(decrypted.is_err());
     }
 }

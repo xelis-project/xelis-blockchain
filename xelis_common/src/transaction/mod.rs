@@ -12,7 +12,7 @@ use crate::{
 use bulletproofs::RangeProof;
 use log::debug;
 use serde::{Deserialize, Serialize};
-use self::extra_data::AEADCipher;
+use self::extra_data::UnknownExtraDataFormat;
 
 pub mod builder;
 pub mod verify;
@@ -60,7 +60,7 @@ pub struct TransferPayload {
     asset: Hash,
     destination: CompressedPublicKey,
     // we can put whatever we want up to EXTRA_DATA_LIMIT_SIZE bytes
-    extra_data: Option<AEADCipher>,
+    extra_data: Option<UnknownExtraDataFormat>,
     /// Represents the ciphertext along with `sender_handle` and `receiver_handle`.
     /// The opening is reused for both of the sender and receiver commitments.
     commitment: CompressedCommitment,
@@ -110,7 +110,7 @@ pub struct Transaction {
 
 impl TransferPayload {
     // Create a new transfer payload
-    pub fn new(asset: Hash, destination: CompressedPublicKey, extra_data: Option<AEADCipher>, commitment: CompressedCommitment, sender_handle: CompressedHandle, receiver_handle: CompressedHandle, ct_validity_proof: CiphertextValidityProof) -> Self {
+    pub fn new(asset: Hash, destination: CompressedPublicKey, extra_data: Option<UnknownExtraDataFormat>, commitment: CompressedCommitment, sender_handle: CompressedHandle, receiver_handle: CompressedHandle, ct_validity_proof: CiphertextValidityProof) -> Self {
         TransferPayload {
             asset,
             destination,
@@ -133,7 +133,7 @@ impl TransferPayload {
     }
 
     // Get the extra data if any
-    pub fn get_extra_data(&self) -> &Option<AEADCipher> {
+    pub fn get_extra_data(&self) -> &Option<UnknownExtraDataFormat> {
         &self.extra_data
     }
 
@@ -167,7 +167,7 @@ impl TransferPayload {
     }
 
     // Take all data
-    pub fn consume(self) -> (Hash, CompressedPublicKey, Option<AEADCipher>, CompressedCommitment, CompressedHandle, CompressedHandle) {
+    pub fn consume(self) -> (Hash, CompressedPublicKey, Option<UnknownExtraDataFormat>, CompressedCommitment, CompressedHandle, CompressedHandle) {
         (self.asset, self.destination, self.extra_data, self.commitment, self.sender_handle, self.receiver_handle)
     }
 }

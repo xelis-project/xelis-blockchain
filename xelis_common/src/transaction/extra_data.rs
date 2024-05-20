@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use chacha20poly1305::{
     aead::{Aead, Payload},
     AeadInPlace, ChaCha20Poly1305, KeyInit,
@@ -8,6 +10,7 @@ use zeroize::Zeroize;
 use thiserror::Error;
 
 use crate::{
+    api::DataElement,
     crypto::elgamal::{
         Ciphertext,
         CompressedHandle,
@@ -15,7 +18,8 @@ use crate::{
         PedersenOpening,
         PrivateKey,
         PublicKey,
-        H
+        H,
+        RISTRETTO_COMPRESSED_SIZE
     },
     serializer::{
         Reader,
@@ -49,10 +53,19 @@ const NONCE: &[u8; 12] = b"xelis-crypto";
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct AEADCipher(pub Vec<u8>);
 
+// Internal struct used for decrypt process
+struct AEADCipherInner<'a>(Cow<'a, Vec<u8>>);
+
 // A wrapper around a Vec<u8>.
 // Inner data is not checked, so everything can be set as data to encrypt.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Zeroize)]
 pub struct PlaintextData(pub Vec<u8>);
+
+// A wrapper around a Vec<u8>.
+// This is used for outside the wallet as we don't know what is used
+// Cipher format isn't validated
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct UnknownExtraDataFormat(pub Vec<u8>);
 
 // New version of Extra Data due to the issue of commitment randomness reuse
 // https://gist.github.com/kayabaNerve/b754e9ed9fa4cc2c607f38a83aa3df2a
@@ -65,9 +78,36 @@ pub struct ExtraData {
     receiver_handle: CompressedHandle,
 }
 
+impl UnknownExtraDataFormat {
+    pub fn decrypt_v2(&self, private_key: &PrivateKey, role: Role) -> Result<DataElement, CipherFormatError> {
+        let e = ExtraData::from_bytes(&self.0).map_err(|_| CipherFormatError)?;
+        let plaintext = e.decrypt(private_key, role)?;
+        DataElement::from_bytes(&plaintext.0).map_err(|_| CipherFormatError)
+    }
+
+    pub fn decrypt_v1(&self, private_key: &PrivateKey, handle: &DecryptHandle) -> Result<DataElement, CipherFormatError> {
+        let key = derive_aead_key_from_handle(private_key, handle);
+        let plaintext = AEADCipherInner(Cow::Borrowed(&self.0)).decrypt(&key)?;
+        DataElement::from_bytes(&plaintext.0).map_err(|_| CipherFormatError)
+    }
+
+    pub fn decrypt(&self, private_key: &PrivateKey, handle: &DecryptHandle, role: Role) -> Result<DataElement, CipherFormatError> {
+        // Try the new version
+        if self.0.len() >= RISTRETTO_COMPRESSED_SIZE * 2 + TAG_SIZE {
+            if let Ok(e) = self.decrypt_v2(private_key, role) {
+                return Ok(e)
+            }
+        }
+
+        // Otherwise, fallback on old version
+        self.decrypt_v1(private_key, handle)
+    }
+}
+
 impl ExtraData {
     // Create a new extra data that will encrypt the message for receiver & sender keys.
     // Both will be able to decrypt it.
+    // This is using V2
     pub fn new(data: PlaintextData, sender: &PublicKey, receiver: &PublicKey) -> Self {
         let opening = PedersenOpening::generate_new();
         let k = derive_aead_key_from_opening(&opening);
@@ -98,6 +138,28 @@ impl ExtraData {
         let handle = self.get_handle(role).decompress().map_err(|_| CipherFormatError)?;
         let key = derive_aead_key_from_handle(private_key, &handle);
         Ok(self.cipher.decrypt(&key)?)
+    }
+}
+
+pub enum ExtraDataVariant {
+    // Warning: should not be used anymore as cryptographically broken
+    V1(AEADCipher),
+    V2(ExtraData)
+}
+
+impl Serializer for ExtraData {
+    fn write(&self, writer: &mut Writer) {
+        self.cipher.write(writer);
+        self.sender_handle.write(writer); 
+        self.receiver_handle.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Self {
+            cipher: AEADCipher::read(reader)?,
+            sender_handle: CompressedHandle::read(reader)?,
+            receiver_handle: CompressedHandle::read(reader)?
+        })
     }
 }
 
@@ -141,6 +203,19 @@ impl AEADCipher {
 
     /// Warning: keys should not be reused
     pub fn decrypt(&self, key: &AEADKey) -> Result<PlaintextData, CipherFormatError> {
+        AEADCipherInner(Cow::Borrowed(&self.0)).decrypt(key)
+    }
+}
+
+impl From<AEADCipher> for UnknownExtraDataFormat {
+    fn from(value: AEADCipher) -> Self {
+        Self(value.0)
+    }
+}
+
+impl<'a> AEADCipherInner<'a> {
+    /// Warning: keys should not be reused
+    pub fn decrypt(&self, key: &AEADKey) -> Result<PlaintextData, CipherFormatError> {
         let c = ChaCha20Poly1305::new(&key);
         let res = c.decrypt(
             NONCE.into(),
@@ -166,15 +241,26 @@ impl PlaintextData {
     }
 }
 
+impl Serializer for UnknownExtraDataFormat {
+    fn write(&self, writer: &mut Writer) {
+        self.0.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Self(Vec::read(reader)?))
+    }
+}
+
 impl Serializer for AEADCipher {
     fn write(&self, writer: &mut Writer) {
         self.0.write(writer);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(AEADCipher(Vec::read(reader)?))
+        Ok(Self(Vec::read(reader)?))
     }
 }
+
 
 #[cfg(test)]
 mod tests {
