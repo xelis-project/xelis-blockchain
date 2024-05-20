@@ -28,6 +28,7 @@ use xelis_common::{
         Hash
     },
     serializer::Serializer,
+    transaction::Role,
     utils::{sanitize_daemon_address, spawn_task}
 };
 use crate::{
@@ -269,10 +270,10 @@ impl NetworkHandler {
                         let destination = transfer.destination.to_public_key();
                         if is_owner || destination == *address.get_public_key() {
                             // Get the right handle
-                            let handle = if is_owner {
-                                transfer.sender_handle
+                            let (role, handle) = if is_owner {
+                                (Role::Sender, transfer.sender_handle)
                             } else {
-                                transfer.receiver_handle
+                                (Role::Receiver, transfer.receiver_handle)
                             };
 
                             // Decompress commitment it if possible
@@ -294,7 +295,7 @@ impl NetworkHandler {
                             };
 
                             let extra_data = if let Some(cipher) = transfer.extra_data.into_owned() {
-                                self.wallet.decrypt_extra_data(cipher, &handle).ok()
+                                self.wallet.decrypt_extra_data(cipher, &handle, role).ok()
                             } else {
                                 None
                             };

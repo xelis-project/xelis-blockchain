@@ -29,21 +29,21 @@ use xelis_common::{
         ecdlp::{self, ECDLPTablesFileView},
         elgamal::{Ciphertext, DecryptHandle, PublicKey as DecompressedPublicKey},
         Address,
+        Hashable,
         KeyPair,
         PublicKey,
-        Signature,
-        Hashable,
+        Signature
     },
     network::Network,
-    serializer::Serializer,
     transaction::{
-        extra_data::{self, AEADCipher},
         builder::{
             FeeBuilder,
             TransactionBuilder,
             TransactionTypeBuilder
         },
+        extra_data::UnknownExtraDataFormat,
         Reference,
+        Role,
         Transaction
     }
 };
@@ -589,11 +589,9 @@ impl Wallet {
     }
 
     // Decrypt the extra data from a transfer
-    pub fn decrypt_extra_data(&self, cipher: AEADCipher, handle: &DecryptHandle) -> Result<DataElement, WalletError> {
+    pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: &DecryptHandle, role: Role) -> Result<DataElement, WalletError> {
         trace!("decrypt extra data");
-        let key = extra_data::derive_aead_key_from_handle(&self.keypair.get_private_key(), handle);
-        let plaintext = cipher.decrypt_in_place(&key)?;
-        DataElement::from_bytes(&plaintext.0).map_err(|_| WalletError::CiphertextDecode)
+        cipher.decrypt(&self.keypair.get_private_key(), handle, role).map_err(|_| WalletError::CiphertextDecode)
     }
 
     // Create a transaction with the given transaction type and fee
