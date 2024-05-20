@@ -1129,7 +1129,7 @@ dependencies = [
 
 [[package]]
 name = "either"
-version = "1.11.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a47c1c47d2f5964e29c61246e81db715514cd532db6b5116a25ea3c03d6780a2"
 
@@ -3399,7 +3399,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_common"
-version = "1.11.0"
+version = "1.12.0"
 dependencies = [
  "actix-rt",
  "actix-web",
@@ -3439,7 +3439,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_daemon"
-version = "1.11.0"
+version = "1.12.0"
 dependencies = [
  "actix",
  "actix-web",
@@ -3470,7 +3470,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_miner"
-version = "1.11.0"
+version = "1.12.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3488,7 +3488,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_wallet"
-version = "1.11.0"
+version = "1.12.0"
 dependencies = [
  "actix",
  "actix-web",
