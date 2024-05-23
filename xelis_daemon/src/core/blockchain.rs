@@ -145,6 +145,10 @@ pub struct Config {
     /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME).
     #[clap(long)]
     pub simulator: Option<Simulator>,
+    /// Skip PoW verification.
+    /// Warning: This is dangerous and should not be used in production.
+    #[clap(long)]
+    pub skip_pow_verification: bool,
     /// Disable the p2p connections.
     #[clap(long)]
     pub disable_p2p_server: bool,
@@ -214,8 +218,10 @@ pub struct Blockchain<S: Storage> {
     // current difficulty at tips
     // its used as cache to display current network hashrate
     difficulty: Mutex<Difficulty>,
-    // used to skip PoW verification
+    // if a simulator is set
     simulator: Option<Simulator>,
+    // if we should skip PoW verification
+    skip_pow_verification: bool,
     // current network type on which one we're using/connected to
     network: Network,
     // this cache is used to avoid to recompute the common base for each block and is mandatory
@@ -256,6 +262,10 @@ impl<S: Storage> Blockchain<S> {
                 error!("Boost sync and fast sync can't be enabled at the same time!");
                 return Err(BlockchainError::ConfigSyncMode.into())
             }
+
+            if config.skip_pow_verification {
+                warn!("PoW verification is disabled! This is dangerous in production!");
+            }
         }
 
         let on_disk = storage.has_blocks().await;
@@ -278,6 +288,7 @@ impl<S: Storage> Blockchain<S> {
             p2p: RwLock::new(None),
             rpc: RwLock::new(None),
             difficulty: Mutex::new(GENESIS_BLOCK_DIFFICULTY),
+            skip_pow_verification: config.skip_pow_verification || config.simulator.is_some(),
             simulator: config.simulator,
             network,
             tip_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
@@ -381,6 +392,11 @@ impl<S: Storage> Blockchain<S> {
     // Detect if the simulator task has been started
     pub fn is_simulator_enabled(&self) -> bool {
         self.simulator.is_some()
+    }
+
+    // Skip PoW verification flag
+    pub fn skip_pow_verification(&self) -> bool {
+        self.skip_pow_verification
     }
 
     // Stop all blockchain modules
@@ -1652,7 +1668,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // verify PoW and get difficulty for this block based on tips
-        let skip_pow = self.is_simulator_enabled();
+        let skip_pow = self.skip_pow_verification();
         let pow_hash = if skip_pow {
             // Simulator is enabled, we don't need to compute the PoW hash
             Hash::zero()
