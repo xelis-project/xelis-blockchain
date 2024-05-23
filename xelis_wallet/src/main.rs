@@ -463,7 +463,7 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
 // Open a wallet based on the wallet name and its password
 async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
-    let name = prompt.read_input("Wallet name: ".into(), false)
+    let name = prompt.read_input("Wallet name: ", false)
         .await.context("Error while reading wallet name")?;
 
     if name.is_empty() {
@@ -477,7 +477,7 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
         return Ok(())
     }
 
-    let password = prompt.read_input("Password: ".into(), true)
+    let password = prompt.read_input("Password: ", true)
         .await.context("Error while reading wallet password")?;
 
     let wallet = {
@@ -499,7 +499,7 @@ async fn open_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(),
 async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
 
-    let name = prompt.read_input("Wallet name: ".into(), false)
+    let name = prompt.read_input("Wallet name: ", false)
         .await.context("Error while reading wallet name")?;
 
     if name.is_empty() {
@@ -515,9 +515,9 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
     }
 
     // ask and verify password
-    let password = prompt.read_input("Password: ".into(), true)
+    let password = prompt.read_input("Password: ", true)
         .await.context("Error while reading password")?;
-    let confirm_password = prompt.read_input("Confirm Password: ".into(), true)
+    let confirm_password = prompt.read_input("Confirm Password: ", true)
         .await.context("Error while reading password")?;
 
     if password != confirm_password {
@@ -551,7 +551,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
 async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
 
-    let seed = prompt.read_input("Seed: ".into(), false)
+    let seed = prompt.read_input("Seed: ", false)
         .await.context("Error while reading seed")?;
 
     let words_count = seed.split_whitespace().count();
@@ -560,7 +560,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
         return Ok(())
     }
 
-    let name = prompt.read_input("Wallet name: ".into(), false)
+    let name = prompt.read_input("Wallet name: ", false)
         .await.context("Error while reading wallet name")?;
 
     if name.is_empty() {
@@ -576,9 +576,9 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<
     }
 
     // ask and verify password
-    let password = prompt.read_input("Password: ".into(), true)
+    let password = prompt.read_input("Password: ", true)
         .await.context("Error while reading password")?;
-    let confirm_password = prompt.read_input("Confirm Password: ".into(), true)
+    let confirm_password = prompt.read_input("Confirm Password: ", true)
         .await.context("Error while reading password")?;
 
     if password != confirm_password {
@@ -891,7 +891,7 @@ async fn seed(manager: &CommandManager, mut arguments: ArgumentManager) -> Resul
     let wallet: &Arc<Wallet> = context.get()?;
     let prompt =  manager.get_prompt();
 
-    let password = prompt.read_input("Password: ".into(), true)
+    let password = prompt.read_input("Password: ", true)
         .await.context("Error while reading password")?;
     // check if password is valid
     wallet.is_valid_password(password).await?;
