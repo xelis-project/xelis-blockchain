@@ -633,7 +633,7 @@ impl Prompt {
         Ok(res == "y")
     }
 
-    pub async fn read<F: FromStr>(&self, prompt: String) -> Result<F, PromptError>
+    pub async fn read<F: FromStr, S: ToString>(&self, prompt: S) -> Result<F, PromptError>
     where
         <F as FromStr>::Err: Display
     {
@@ -641,7 +641,7 @@ impl Prompt {
         value.parse().map_err(|e: F::Err| PromptError::ParseInputError(e.to_string()))
     }
 
-    pub async fn read_hash(&self, prompt: String) -> Result<Hash, PromptError> {
+    pub async fn read_hash<S: ToString>(&self, prompt: S) -> Result<Hash, PromptError> {
         let hash_hex = self.read_input(prompt, false).await?;
         Ok(Hash::from_hex(hash_hex)?)
     }
@@ -652,7 +652,7 @@ impl Prompt {
     }
 
     // read a message from the user and apply the input mask if necessary
-    pub async fn read_input(&self, prompt: String, apply_mask: bool) -> Result<String, PromptError> {
+    pub async fn read_input<S: ToString>(&self, prompt: S, apply_mask: bool) -> Result<String, PromptError> {
         // This is also used as a sempahore to have only one call at a time
         let mut canceler = self.read_input_receiver.lock().await;
 
@@ -683,7 +683,7 @@ impl Prompt {
         }
 
         // update the prompt to the requested one and keep blocking on the receiver
-        self.update_prompt(prompt)?;
+        self.update_prompt(prompt.to_string())?;
         let input = {
             let input = tokio::select! {
                 Some(()) = canceler.recv() => {
