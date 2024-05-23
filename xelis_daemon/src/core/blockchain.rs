@@ -1219,7 +1219,7 @@ impl<S: Storage> Blockchain<S> {
         trace!("Verifying proof of work for block {}", hash);
         let (difficulty, p) = self.get_difficulty_at_tips(provider, tips).await?;
         trace!("Difficulty at tips: {}", difficulty);
-        if self.is_simulator_enabled() || check_difficulty(hash, &difficulty)? {
+        if check_difficulty(hash, &difficulty)? {
             Ok((difficulty, p))
         } else {
             Err(BlockchainError::InvalidDifficulty)
@@ -1652,8 +1652,14 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // verify PoW and get difficulty for this block based on tips
-        let pow_hash = block.get_pow_hash()?;
-        debug!("POW hash: {}", pow_hash);
+        let skip_pow = self.is_simulator_enabled();
+        let pow_hash = if skip_pow {
+            // Simulator is enabled, we don't need to compute the PoW hash
+            Hash::zero()
+        } else {
+            block.get_pow_hash()?
+        };
+        debug!("POW hash: {}, skipped: {}", pow_hash, skip_pow);
         let (difficulty, p) = self.verify_proof_of_work(storage, &pow_hash, block.get_tips().iter()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
@@ -1736,7 +1742,7 @@ impl<S: Storage> Blockchain<S> {
                 batch.push(tx);
             }
 
-            trace!("proof verifications of {} TXs in block {}", batch.len(), block_hash);
+            debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|v| v.hash().to_string()).collect::<Vec<String>>().join(","), block_hash);
             // Verify all valid transactions in one batch
             Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
         }

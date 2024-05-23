@@ -23,8 +23,7 @@ use crate::core::{
         DifficultyProvider,
         MerkleHashProvider,
         PrunedTopoheightProvider,
-        Storage,
-        Tips
+        Storage
     }
 };
 use log::{debug, trace};
@@ -44,7 +43,7 @@ pub struct ChainValidator<'a, S: Storage> {
     // store all blocks data in topological order
     blocks: IndexMap<Hash, BlockData>,
     // store all blocks hashes at a specific height
-    blocks_at_height: IndexMap<u64, Tips>,
+    blocks_at_height: IndexMap<u64, IndexSet<Hash>>,
     // Blockchain reference used to verify current chain state
     blockchain: &'a Blockchain<S>,
     // This is used to compute the expected topoheight of each new block
@@ -140,7 +139,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
 
         // Store the block in both maps
         // One is for blocks at height and the other is for the block data
-        self.blocks_at_height.entry(header.get_height()).or_insert_with(Tips::new).insert(hash.clone());
+        self.blocks_at_height.entry(header.get_height()).or_insert_with(IndexSet::new).insert(hash.clone());
         self.blocks.insert(hash, BlockData { header: Arc::new(header), difficulty, cumulative_difficulty, p });
 
         Ok(())
@@ -274,7 +273,7 @@ impl<S: Storage> BlocksAtHeightProvider for ChainValidator<'_, S> {
     }
 
     // Retrieve the blocks hashes at a specific height
-    async fn get_blocks_at_height(&self, height: u64) -> Result<Tips, BlockchainError> {
+    async fn get_blocks_at_height(&self, height: u64) -> Result<IndexSet<Hash>, BlockchainError> {
         if let Some(tips) = self.blocks_at_height.get(&height) {
             return Ok(tips.clone())
         }
@@ -284,7 +283,7 @@ impl<S: Storage> BlocksAtHeightProvider for ChainValidator<'_, S> {
     }
 
     // This is used to store the blocks hashes at a specific height
-    async fn set_blocks_at_height(&self, _: Tips, _: u64) -> Result<(), BlockchainError> {
+    async fn set_blocks_at_height(&mut self, _: IndexSet<Hash>, _: u64) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 
@@ -294,7 +293,7 @@ impl<S: Storage> BlocksAtHeightProvider for ChainValidator<'_, S> {
     }
 
     // Remove a block hash at a specific height
-    async fn remove_block_hash_at_height(&self, _: &Hash, _: u64) -> Result<(), BlockchainError> {
+    async fn remove_block_hash_at_height(&mut self, _: &Hash, _: u64) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 }
