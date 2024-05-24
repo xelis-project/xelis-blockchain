@@ -1906,44 +1906,31 @@ impl<S: Storage> P2pServer<S> {
                     lowest_height = height;
                 }
 
-                // Sometimes, due to DAG reorg, we need to sync the side block before the main block
-                // This can happen because of the ZK proofs being invalid for the side block
-                // Block must be validated first, then cancelled by DAG internal reorg
-                {
-                    let blocks_at_height = storage.get_blocks_at_height(height).await?;
-                    let has_side = blocks_at_height.len() > 1;
-                    let has_side_next_height = if has_side || topoheight == top_topoheight || height == top_height {
-                        false
-                    } else {
-                        let next_blocks = storage.get_blocks_at_height(height + 1).await?;
-                        next_blocks.len() > 1
-                    };
-
-                    if has_side && !has_side_next_height {
-                        if !self.blockchain.is_side_block_internal(&*storage, &hash, top_topoheight).await? {
-                            let use_blocks_at_height = if let Some(last) = response_blocks.last() {
-                                !self.blockchain.is_side_block_internal(&*storage, last, top_topoheight).await?
-                            } else {
-                                false
-                            };
-    
-                            if use_blocks_at_height {
-                                warn!("Block {} at height {} is not a side block but has side blocks at its own height", hash, height);
-                                for block_hash in blocks_at_height {
-                                    if storage.is_block_topological_ordered(&block_hash).await {
-                                        response_blocks.insert(block_hash);
-                                        if response_blocks.len() >= accepted_response_size {
-                                            break;
-                                        }
-                                    }
-                                }
+                let mut swap = false;
+                if let Some(previous_hash) = response_blocks.last() {
+                    if storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
+                        if self.blockchain.is_side_block_internal(&*storage, &hash, top_topoheight).await? {
+                            let position = storage.get_block_position_in_order(&hash).await?;
+                            let previous_position = storage.get_block_position_in_order(&previous_hash).await?;
+                            // if the block is a side block, we need to check if it's in the right order
+                            if position < previous_position {
+                                swap = true;
                             }
                         }
                     }
                 }
 
-                trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
-                response_blocks.insert(hash);
+                if swap {
+                    trace!("for chain request, swapping hash {} at topoheight {}", hash, topoheight);
+                    let previous = response_blocks.pop();
+                    response_blocks.insert(hash);
+                    if let Some(previous) = previous {
+                        response_blocks.insert(previous);
+                    }
+                } else {
+                    trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
+                    response_blocks.insert(hash);
+                }
                 topoheight += 1;
             }
             lowest_common_height = Some(lowest_height);
@@ -2149,9 +2136,9 @@ impl<S: Storage> P2pServer<S> {
                     if self.allow_boost_sync() {
                         if let Some(notifier) = &mut notifier {
                             // Check if we don't have any message pending in the channel
-                            if notifier.try_recv().is_ok() {
+                            if let Ok(err) = notifier.try_recv() {
                                 debug!("An error has occured in batch while requesting chain in boost mode");
-                                return Err(P2pError::BoostSyncModeFailed.into());
+                                return Err(P2pError::BoostSyncModeFailed(Box::new(err)).into());
                             }
                         }
 
