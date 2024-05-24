@@ -482,7 +482,9 @@ pub struct GetDifficultyResult {
 pub struct ValidateAddressParams<'a> {
     pub address: Cow<'a, Address>,
     #[serde(default)]
-    pub allow_integrated: bool
+    pub allow_integrated: bool,
+    #[serde(default)]
+    pub max_integrated_data_size: Option<usize>
 }
 
 #[derive(Serialize, Deserialize)]
