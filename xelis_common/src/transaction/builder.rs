@@ -567,6 +567,7 @@ impl TransactionBuilder {
             range_proof_values.reserve(transfers.len());
             range_proof_openings.reserve(transfers.len());
 
+            let mut total_cipher_size = 0;
             let transfers = transfers
                 .into_iter()
                 .map(|transfer| {
@@ -594,9 +595,12 @@ impl TransactionBuilder {
                     let extra_data = if let Some(extra_data) = transfer.inner.extra_data {
                         let bytes = extra_data.to_bytes();
                         let cipher = ExtraData::new(PlaintextData(bytes), source_keypair.get_public_key(), &transfer.destination);
-                        if cipher.size() > EXTRA_DATA_LIMIT_SIZE {
+                        let cipher_size = cipher.size();
+                        if cipher_size > EXTRA_DATA_LIMIT_SIZE {
                             return Err(GenerationError::EncryptedExtraDataTooLarge);
                         }
+
+                        total_cipher_size += cipher_size;
 
                         Some(cipher.into())
                     } else {
@@ -614,6 +618,10 @@ impl TransactionBuilder {
                     })
                 })
                 .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+
+            if total_cipher_size > EXTRA_DATA_LIMIT_SIZE {
+                return Err(GenerationError::EncryptedExtraDataTooLarge);
+            }
 
             transfers
         } else {
