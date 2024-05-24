@@ -16,7 +16,7 @@ use crate::{
 };
 use super::{
     extra_data::{
-        derive_aead_key_from_opening,
+        derive_shared_key_from_opening,
         PlaintextData
     },
     builder::{
@@ -114,16 +114,15 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
 #[test]
 fn test_encrypt_decrypt() {
     let r = PedersenOpening::generate_new();
-    let key = derive_aead_key_from_opening(&r);
+    let key = derive_shared_key_from_opening(&r);
     let message = "Hello, World!".as_bytes().to_vec();
 
     let plaintext = PlaintextData(message.clone());
-    let cipher = plaintext.encrypt_in_place(&key);
+    let cipher = plaintext.encrypt_in_place_with_aead(&key);
     let decrypted = cipher.decrypt_in_place(&key).unwrap();
 
     assert_eq!(decrypted.0, message);
 }
-
 
 #[test]
 fn test_encrypt_decrypt_two_parties() {

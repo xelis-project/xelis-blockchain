@@ -46,6 +46,7 @@ tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
 # Used for U256
 primitive-types = { version = "0.12.2", features = ["serde"] }
 console-subscriber = { version = "0.2.0", optional = true }
+chacha20 = "0.9.1"
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"

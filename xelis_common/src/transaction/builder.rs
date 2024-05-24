@@ -44,7 +44,7 @@ use crate::{
 };
 use thiserror::Error;
 use super::{
-    extra_data::{ExtraData, PlaintextData, TAG_SIZE},
+    extra_data::{ExtraData, PlaintextData},
     BurnPayload,
     Reference,
     Role,
@@ -301,8 +301,8 @@ impl TransactionBuilder {
                         // 2 represents u16 length of AEADCipher in extra data
                         // 2 represents u16 length of UnknownExtraDataFormat
                         // We have both length has we move one in the other
-                        // This mean new ExtraData version has 2 + 2 + 32 (sender) + 32 (receiver) + 16 (tag) bytes of overhead.
-                        size += 2 + 2 + (RISTRETTO_COMPRESSED_SIZE * 2) + TAG_SIZE + extra_data.size();
+                        // This mean new ExtraData version has 2 + 2 + 32 (sender) + 32 (receiver) bytes of overhead.
+                        size += 2 + 2 + (RISTRETTO_COMPRESSED_SIZE * 2) + extra_data.size();
                     }
                 }
                 transfers.len()
