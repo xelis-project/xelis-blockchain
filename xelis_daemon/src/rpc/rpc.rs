@@ -1208,7 +1208,9 @@ async fn validate_address<S: Storage>(_: &Context, body: Value) -> Result<Value,
     let params: ValidateAddressParams = parse_params(body)?;
 
     Ok(json!(ValidateAddressResult {
-        is_valid: params.address.is_normal() || (!params.address.is_normal() && params.allow_integrated),
+        is_valid: (params.address.is_normal() || (!params.address.is_normal() && params.allow_integrated))
+            && params.max_integrated_data_size.and_then(|size| params.address.get_extra_data().map(|data| data.size() <= size))
+            .unwrap_or(true),
         is_integrated: !params.address.is_normal(),
     }))
 }
