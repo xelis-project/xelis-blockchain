@@ -523,7 +523,7 @@ impl NetworkHandler {
 
                 synced_topoheight
             } else {
-                0
+                storage.get_synced_topoheight().unwrap_or(0)
             }
         };
 
