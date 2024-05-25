@@ -271,13 +271,20 @@ impl NetworkHandler {
                 RPCTransactionType::Transfers(txs) => {
                     let mut transfers_in: Vec<TransferIn> = Vec::new();
                     let mut transfers_out: Vec<TransferOut> = Vec::new();
+
+                    // Used to check only once if we have processed this TX already
+                    let mut checked = false;
                     for transfer in txs {
                         let destination = transfer.destination.to_public_key();
                         if is_owner || destination == *address.get_public_key() {
-                            // Check if we already stored this TX
-                            if self.has_tx_stored(&tx.hash).await? {
-                                debug!("Transaction {} was already stored, skipping it", tx.hash);
-                                continue 'main;
+                            // Check only once if we have processed this TX already
+                            if !checked {
+                                // Check if we already stored this TX
+                                if self.has_tx_stored(&tx.hash).await? {
+                                    debug!("Transaction {} was already stored, skipping it", tx.hash);
+                                    continue 'main;
+                                }
+                                checked = true;
                             }
 
                             // Get the right handle
