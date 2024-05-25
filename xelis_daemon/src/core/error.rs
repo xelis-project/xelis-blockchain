@@ -83,6 +83,8 @@ pub enum DiskContext {
     BlocksCount,
     #[error("get accounts count")]
     AccountsCount,
+    #[error("get block execution order count")]
+    BlocksExecutionOrderCount,
     #[error("get top topoheight")]
     TopTopoHeight,
     #[error("get top height")]
@@ -92,6 +94,8 @@ pub enum DiskContext {
     DeleteData,
     #[error("load data")]
     LoadData,
+    #[error("search block position in order")]
+    SearchBlockPositionInOrder
 }
 
 #[repr(usize)]

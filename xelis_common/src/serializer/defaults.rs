@@ -20,12 +20,12 @@ impl Serializer for HashSet<Hash> {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let total_size = reader.total_size();
-        if total_size % 32 != 0 {
+        if total_size % HASH_SIZE != 0 {
             error!("Invalid size: {}, expected a multiple of 32 for hashes", total_size);
             return Err(ReaderError::InvalidSize)
         }
 
-        let count = total_size / 32;
+        let count = total_size / HASH_SIZE;
         let mut tips = HashSet::with_capacity(count);
         for _ in 0..count {
             let hash = reader.read_hash()?;

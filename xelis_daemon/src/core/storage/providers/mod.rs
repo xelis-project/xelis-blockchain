@@ -11,6 +11,7 @@ mod block;
 mod blockdag;
 mod merkle;
 mod account;
+mod block_execution_order;
 
 pub use asset::AssetProvider;
 pub use blocks_at_height::BlocksAtHeightProvider;
@@ -25,3 +26,4 @@ pub use block::BlockProvider;
 pub use blockdag::BlockDagProvider;
 pub use merkle::MerkleHashProvider;
 pub use account::AccountProvider;
+pub use block_execution_order::BlockExecutionOrderProvider;

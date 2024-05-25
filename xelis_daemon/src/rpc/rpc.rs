@@ -68,7 +68,9 @@ use xelis_common::{
             ValidateAddressParams,
             ValidateAddressResult,
             ExtractKeyFromAddressParams,
-            ExtractKeyFromAddressResult
+            ExtractKeyFromAddressResult,
+            GetTransactionExecutorParams,
+            GetTransactionExecutorResult
         },
         RPCTransaction,
         RPCTransactionType as RPCTransactionType,
@@ -342,6 +344,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("count_transactions", async_handler!(count_transactions::<S>));
     handler.register_method("submit_transaction", async_handler!(submit_transaction::<S>));
     handler.register_method("get_transaction", async_handler!(get_transaction::<S>));
+    handler.register_method("get_transaction_executor", async_handler!(get_transaction_executor::<S>));
     handler.register_method("p2p_status", async_handler!(p2p_status::<S>));
     handler.register_method("get_peers", async_handler!(get_peers::<S>));
     handler.register_method("get_mempool", async_handler!(get_mempool::<S>));
@@ -703,6 +706,22 @@ async fn get_transaction<S: Storage>(context: &Context, body: Value) -> Result<V
     let mempool = blockchain.get_mempool().read().await;
 
     get_transaction_response_for_hash(&*storage, &mempool, &params.hash).await
+}
+
+async fn get_transaction_executor<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetTransactionExecutorParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let block_executor = storage.get_block_executor_for_tx(&params.hash)?;
+    let block_topoheight = storage.get_topo_height_for_hash(&block_executor).await?;
+
+    Ok(json!(
+        GetTransactionExecutorResult {
+            block_topoheight,
+            block_hash: Cow::Borrowed(&block_executor)
+        }
+    ))
 }
 
 async fn p2p_status<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
@@ -1208,7 +1227,9 @@ async fn validate_address<S: Storage>(_: &Context, body: Value) -> Result<Value,
     let params: ValidateAddressParams = parse_params(body)?;
 
     Ok(json!(ValidateAddressResult {
-        is_valid: params.address.is_normal() || (!params.address.is_normal() && params.allow_integrated),
+        is_valid: (params.address.is_normal() || (!params.address.is_normal() && params.allow_integrated))
+            && params.max_integrated_data_size.and_then(|size| params.address.get_extra_data().map(|data| data.size() <= size))
+            .unwrap_or(true),
         is_integrated: !params.address.is_normal(),
     }))
 }

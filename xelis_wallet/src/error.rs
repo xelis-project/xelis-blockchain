@@ -2,7 +2,10 @@ use thiserror::Error;
 use chacha20poly1305::Error as CryptoError;
 use super::network_handler::NetworkError;
 use xelis_common::{
-    crypto::Hash, rpc_server::InternalRpcError, transaction::aead::CipherFormatError, utils::{format_coin, format_xelis}
+    crypto::Hash,
+    rpc_server::InternalRpcError,
+    transaction::extra_data::CipherFormatError,
+    utils::{format_coin, format_xelis}
 };
 use anyhow::Error;
 

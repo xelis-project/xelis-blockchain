@@ -15,9 +15,8 @@ use crate::{
     transaction::{TransactionType, MAX_TRANSFER_COUNT}
 };
 use super::{
-    aead::{
-        derive_aead_key_from_ct,
-        derive_aead_key_from_opening,
+    extra_data::{
+        derive_shared_key_from_opening,
         PlaintextData
     },
     builder::{
@@ -106,7 +105,7 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
     let builder = TransactionBuilder::new(0, account.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
     let estimated_size = builder.estimate_size();
     let tx = builder.build(&mut state, &account.keypair).unwrap();
-    assert!(estimated_size == tx.size());
+    assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
     assert!(tx.to_bytes().len() == estimated_size);
 
     tx
@@ -115,16 +114,15 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
 #[test]
 fn test_encrypt_decrypt() {
     let r = PedersenOpening::generate_new();
-    let key = derive_aead_key_from_opening(&r);
+    let key = derive_shared_key_from_opening(&r);
     let message = "Hello, World!".as_bytes().to_vec();
 
     let plaintext = PlaintextData(message.clone());
-    let cipher = plaintext.encrypt_in_place(&key);
+    let cipher = plaintext.encrypt_in_place_with_aead(&key);
     let decrypted = cipher.decrypt_in_place(&key).unwrap();
 
     assert_eq!(decrypted.0, message);
 }
-
 
 #[test]
 fn test_encrypt_decrypt_two_parties() {
@@ -146,25 +144,19 @@ fn test_encrypt_decrypt_two_parties() {
     let cipher = transfer.extra_data.clone().unwrap();
     // Verify the extra data from alice (sender)
     {
-        let alice_ct = transfer.get_ciphertext(Role::Sender).decompress().unwrap();
-        let key = derive_aead_key_from_ct(&alice.keypair.get_private_key(), &alice_ct);
-        let decrypted = cipher.clone().decrypt_in_place(&key).unwrap();
-        assert_eq!(decrypted.0, payload.to_bytes());
+        let decrypted = cipher.decrypt_v2(&alice.keypair.get_private_key(), Role::Sender).unwrap();
+        assert_eq!(decrypted, payload);
     }
 
     // Verify the extra data from bob (receiver)
     {
-        let bob_ct = transfer.get_ciphertext(Role::Receiver).decompress().unwrap();
-        let key = derive_aead_key_from_ct(&bob.keypair.get_private_key(), &bob_ct);
-        let decrypted = cipher.clone().decrypt_in_place(&key).unwrap();
-        assert_eq!(decrypted.0, payload.to_bytes());
+        let decrypted = cipher.decrypt_v2(&bob.keypair.get_private_key(), Role::Receiver).unwrap();
+        assert_eq!(decrypted, payload);
     }
 
     // Verify the extra data from alice (sender) with the wrong key
     {
-        let alice_ct = transfer.get_ciphertext(Role::Sender).decompress().unwrap();
-        let key = derive_aead_key_from_ct(&bob.keypair.get_private_key(), &alice_ct);
-        let decrypted = cipher.decrypt_in_place(&key);
+        let decrypted = cipher.decrypt_v2(&bob.keypair.get_private_key(), Role::Sender);
         assert!(decrypted.is_err());
     }
 }

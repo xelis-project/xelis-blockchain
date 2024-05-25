@@ -153,8 +153,8 @@ pub enum P2pError {
     BoostSyncModeBlockerResponseError(#[from] RecvError),
     #[error("Error while waiting on blocker in boost sync mode")]
     BoostSyncModeBlockerError,
-    #[error("Boost sync mode failed")]
-    BoostSyncModeFailed,
+    #[error("Boost sync mode failed: {}", _0)]
+    BoostSyncModeFailed(Box<P2pError>),
     #[error("Expected a block type")]
     ExpectedBlock,
     #[error("Expected a transaction type")]

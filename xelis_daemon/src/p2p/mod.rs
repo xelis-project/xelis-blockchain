@@ -479,6 +479,9 @@ impl<S: Storage> P2pServer<S> {
         debug!("handle outgoing connections task has exited");
     }
 
+    // This task will handle an incoming connection request
+    // It will verify if we can accept this connection
+    // If we can, we will create a new peer and send it to the listener
     async fn handle_incoming_connection(self: &Arc<Self>, res: io::Result<(TcpStream, SocketAddr)>, thread_pool: &ThreadPool, tx: &Sender<(Peer, Rx)>) -> Result<(), P2pError> {
         let (mut stream, addr) = res?;
 
@@ -517,6 +520,9 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
+    // This task will handle all incoming connections requests
+    // Based on the concurrency set, it will create a thread pool to handle requests and wait when
+    // a worker is free to accept a new connection
     async fn handle_incoming_connections(self: Arc<Self>, listener: TcpListener, tx: Sender<(Peer, Rx)>, concurrency: usize) {
         let mut thread_pool = ThreadPool::new(concurrency);
         let mut exit_receiver = self.exit_sender.subscribe();
@@ -1876,25 +1882,23 @@ impl<S: Storage> P2pServer<S> {
             let mut topoheight = common_point.get_topoheight();
             // lets add all blocks ordered hash
             let top_topoheight = self.blockchain.get_topo_height();
-            let stable_height = self.blockchain.get_stable_height();
             // used to detect if we find unstable height for alt tips
-            let mut potential_unstable_height = None;
-            // Search the lowest height
-            let mut lowest_height = self.blockchain.get_height();
+            let mut unstable_height = None;
+            let top_height = self.blockchain.get_height();
             // check to see if we should search for alt tips (and above unstable height)
             let should_search_alt_tips = top_topoheight - topoheight < accepted_response_size as u64;
+            if should_search_alt_tips {
+                debug!("Peer is near to be synced, will send him alt tips blocks");
+                unstable_height = Some(self.blockchain.get_stable_height() + 1);
+            }
+
+            // Search the lowest height
+            let mut lowest_height = top_height;
 
             // complete ChainResponse blocks until we are full or that we reach the top topheight
             while response_blocks.len() < accepted_response_size && topoheight <= top_topoheight {
                 trace!("looking for hash at topoheight {}", topoheight);
                 let hash = storage.get_hash_at_topo_height(topoheight).await?;
-                if should_search_alt_tips && potential_unstable_height.is_none() {
-                    let height = storage.get_height_for_block_hash(&hash).await?;
-                    if height >= stable_height {
-                        debug!("Found unstable height at {}", height);
-                        potential_unstable_height = Some(height);
-                    }
-                }
 
                 // Find the lowest height
                 let height = storage.get_height_for_block_hash(&hash).await?;
@@ -1902,14 +1906,37 @@ impl<S: Storage> P2pServer<S> {
                     lowest_height = height;
                 }
 
-                trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
-                response_blocks.insert(hash);
+                let mut swap = false;
+                if let Some(previous_hash) = response_blocks.last() {
+                    if storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
+                        if self.blockchain.is_side_block_internal(&*storage, &hash, top_topoheight).await? {
+                            let position = storage.get_block_position_in_order(&hash).await?;
+                            let previous_position = storage.get_block_position_in_order(&previous_hash).await?;
+                            // if the block is a side block, we need to check if it's in the right order
+                            if position < previous_position {
+                                swap = true;
+                            }
+                        }
+                    }
+                }
+
+                if swap {
+                    trace!("for chain request, swapping hash {} at topoheight {}", hash, topoheight);
+                    let previous = response_blocks.pop();
+                    response_blocks.insert(hash);
+                    if let Some(previous) = previous {
+                        response_blocks.insert(previous);
+                    }
+                } else {
+                    trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
+                    response_blocks.insert(hash);
+                }
                 topoheight += 1;
             }
             lowest_common_height = Some(lowest_height);
 
             // now, lets check if peer is near to be synced, and send him alt tips blocks
-            if let Some(mut height) = potential_unstable_height {
+            if let Some(mut height) = unstable_height {
                 let top_height = self.blockchain.get_height();
                 trace!("unstable height: {}, top height: {}", height, top_height);
                 while height <= top_height && top_blocks.len() < CHAIN_SYNC_TOP_BLOCKS {
@@ -2109,9 +2136,9 @@ impl<S: Storage> P2pServer<S> {
                     if self.allow_boost_sync() {
                         if let Some(notifier) = &mut notifier {
                             // Check if we don't have any message pending in the channel
-                            if notifier.try_recv().is_ok() {
+                            if let Ok(err) = notifier.try_recv() {
                                 debug!("An error has occured in batch while requesting chain in boost mode");
-                                return Err(P2pError::BoostSyncModeFailed.into());
+                                return Err(P2pError::BoostSyncModeFailed(Box::new(err)).into());
                             }
                         }
 

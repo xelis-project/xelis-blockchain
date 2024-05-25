@@ -51,6 +51,7 @@ pub(super) const ACCOUNTS_COUNT: &[u8; 4] = b"CACC";
 pub(super) const TXS_COUNT: &[u8; 4] = b"CTXS";
 const ASSETS_COUNT: &[u8; 4] = b"CAST";
 pub(super) const BLOCKS_COUNT: &[u8; 4] = b"CBLK";
+pub(super) const BLOCKS_EXECUTION_ORDER_COUNT: &[u8; 4] = b"EBLK";
 
 pub struct SledStorage {
     // Network used by the storage
@@ -60,6 +61,8 @@ pub struct SledStorage {
     pub(super) transactions: Tree,
     // all txs executed in block
     pub(super) txs_executed: Tree,
+    // all blocks execution order
+    pub(super) blocks_execution_order: Tree,
     // all blocks on disk
     pub(super) blocks: Tree,
     // all blocks height at specific height
@@ -133,7 +136,9 @@ pub struct SledStorage {
     // Count of transactions
     pub(super) transactions_count: AtomicU64,
     // Count of blocks
-    pub(super) blocks_count: AtomicU64
+    pub(super) blocks_count: AtomicU64,
+    // Count of blocks added in chain
+    pub(super) blocks_execution_count: AtomicU64
 }
 
 macro_rules! init_cache {
@@ -153,6 +158,7 @@ impl SledStorage {
             network,
             transactions: sled.open_tree("transactions")?,
             txs_executed: sled.open_tree("txs_executed")?,
+            blocks_execution_order: sled.open_tree("blocks_execution_order")?,
             blocks: sled.open_tree("blocks")?,
             blocks_at_height: sled.open_tree("blocks_at_height")?,
             extra: sled.open_tree("extra")?,
@@ -187,7 +193,8 @@ impl SledStorage {
             assets_count: AtomicU64::new(0),
             accounts_count: AtomicU64::new(0),
             transactions_count: AtomicU64::new(0),
-            blocks_count: AtomicU64::new(0)
+            blocks_count: AtomicU64::new(0),
+            blocks_execution_count: AtomicU64::new(0)
         };
 
         // Verify that we are opening a DB on same network
@@ -235,6 +242,12 @@ impl SledStorage {
         if let Ok(accounts_count) = storage.load_from_disk::<u64>(&storage.extra, ACCOUNTS_COUNT, DiskContext::AccountsCount) {
             debug!("Found accounts count: {}", accounts_count);
             storage.accounts_count.store(accounts_count, Ordering::SeqCst);
+        }
+
+        // Load the blocks execution count from disk if available
+        if let Ok(blocks_execution_count) = storage.load_from_disk::<u64>(&storage.extra, BLOCKS_EXECUTION_ORDER_COUNT, DiskContext::BlocksExecutionOrderCount) {
+            debug!("Found blocks execution count: {}", blocks_execution_count);
+            storage.blocks_execution_count.store(blocks_execution_count, Ordering::SeqCst);
         }
 
         Ok(storage)
@@ -920,18 +933,21 @@ impl Storage for SledStorage {
         for el in self.balances.iter() {
             let (key, value) = el?;
             let asset = Hash::from_bytes(&key[32..64])?;
-            let mut delete = true;
+            let mut delete = false;
 
-            
             // if the asset is not deleted, we can process it
             if !deleted_assets.contains(&asset) {
                 let highest_topoheight = u64::from_bytes(&value)?;
                 if highest_topoheight > topoheight && highest_topoheight >= pruned_topoheight {
                     // find the first version which is under topoheight
                     let pkey = PublicKey::from_bytes(&key[0..32])?;
+                    trace!("Highest topoheight for balance {} is {}, above {}", pkey.as_address(self.is_mainnet()), highest_topoheight, topoheight);
 
                     let mut version = self.get_balance_at_exact_topoheight(&pkey, &asset, highest_topoheight).await
                         .context(format!("Error while retrieving balance at exact topoheight {highest_topoheight}"))?;
+
+                    // Mark for deletion if we can't find a version under the new topoheight
+                    delete = true;
 
                     while let Some(previous_topoheight) = version.get_previous_topoheight() {
                         if previous_topoheight <= topoheight {
@@ -946,6 +962,8 @@ impl Storage for SledStorage {
                         version = self.get_balance_at_exact_topoheight(&pkey, &asset, previous_topoheight).await?;
                     }
                 }
+            } else {
+                delete = true;
             }
 
             if delete {

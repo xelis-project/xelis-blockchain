@@ -44,7 +44,7 @@ use crate::{
 };
 use thiserror::Error;
 use super::{
-    aead::{derive_aead_key_from_opening, PlaintextData, TAG_SIZE},
+    extra_data::{ExtraData, PlaintextData},
     BurnPayload,
     Reference,
     Role,
@@ -298,8 +298,11 @@ impl TransactionBuilder {
                     + 1;
 
                     if let Some(extra_data) = transfer.extra_data.as_ref().or(transfer.destination.get_extra_data()) {
-                        // 2 represents u16 length
-                        size += 2 + TAG_SIZE + extra_data.size();
+                        // 2 represents u16 length of AEADCipher in extra data
+                        // 2 represents u16 length of UnknownExtraDataFormat
+                        // We have both length has we move one in the other
+                        // This mean new ExtraData version has 2 + 2 + 32 (sender) + 32 (receiver) bytes of overhead.
+                        size += 2 + 2 + (RISTRETTO_COMPRESSED_SIZE * 2) + extra_data.size();
                     }
                 }
                 transfers.len()
@@ -564,6 +567,7 @@ impl TransactionBuilder {
             range_proof_values.reserve(transfers.len());
             range_proof_openings.reserve(transfers.len());
 
+            let mut total_cipher_size = 0;
             let transfers = transfers
                 .into_iter()
                 .map(|transfer| {
@@ -590,13 +594,15 @@ impl TransactionBuilder {
                     // Encrypt the extra data if it exists
                     let extra_data = if let Some(extra_data) = transfer.inner.extra_data {
                         let bytes = extra_data.to_bytes();
-                        let key = derive_aead_key_from_opening(&transfer.amount_opening);
-                        let cipher = PlaintextData(bytes).encrypt_in_place(&key);
-                        if cipher.0.len() > EXTRA_DATA_LIMIT_SIZE {
+                        let cipher = ExtraData::new(PlaintextData(bytes), source_keypair.get_public_key(), &transfer.destination);
+                        let cipher_size = cipher.size();
+                        if cipher_size > EXTRA_DATA_LIMIT_SIZE {
                             return Err(GenerationError::EncryptedExtraDataTooLarge);
                         }
 
-                        Some(cipher)
+                        total_cipher_size += cipher_size;
+
+                        Some(cipher.into())
                     } else {
                         None
                     };
@@ -612,6 +618,10 @@ impl TransactionBuilder {
                     })
                 })
                 .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+
+            if total_cipher_size > EXTRA_DATA_LIMIT_SIZE {
+                return Err(GenerationError::EncryptedExtraDataTooLarge);
+            }
 
             transfers
         } else {

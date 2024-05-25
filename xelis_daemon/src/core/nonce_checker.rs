@@ -7,6 +7,7 @@ use xelis_common::crypto::PublicKey;
 use super::{storage::Storage, error::BlockchainError};
 
 struct AccountEntry {
+    initial_nonce: u64,
     expected_nonce: u64,
     used_nonces: IndexMap<u64, u64>
 }
@@ -14,6 +15,7 @@ struct AccountEntry {
 impl AccountEntry {
     pub fn new(nonce: u64) -> Self {
         Self {
+            initial_nonce: nonce,
             expected_nonce: nonce,
             used_nonces: IndexMap::new()
         }
@@ -46,6 +48,20 @@ impl NonceChecker {
     pub fn new() -> Self {
         Self {
             cache: HashMap::new()
+        }
+    }
+
+    // Undo the nonce usage
+    // We remove it from the used nonces list and revert the expected nonce to the previous nonce if present.
+    pub fn undo_nonce(&mut self, key: &PublicKey, nonce: u64) {
+        if let Some(entry) = self.cache.get_mut(key) {
+            entry.used_nonces.shift_remove(&nonce);
+
+            if let Some((prev_nonce, _)) = entry.used_nonces.last() {
+                entry.expected_nonce = *prev_nonce + 1;
+            } else {
+                entry.expected_nonce = entry.initial_nonce;
+            }
         }
     }
 

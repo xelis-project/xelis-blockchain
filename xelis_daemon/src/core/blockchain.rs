@@ -94,7 +94,7 @@ use std::{
     },
     time::Instant
 };
-use tokio::sync::{Mutex, RwLock};
+use tokio::{sync::{Mutex, RwLock}, net::lookup_host};
 use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
@@ -145,6 +145,10 @@ pub struct Config {
     /// Enable the simulator (skip PoW verification, generate a new block for every BLOCK_TIME).
     #[clap(long)]
     pub simulator: Option<Simulator>,
+    /// Skip PoW verification.
+    /// Warning: This is dangerous and should not be used in production.
+    #[clap(long)]
+    pub skip_pow_verification: bool,
     /// Disable the p2p connections.
     #[clap(long)]
     pub disable_p2p_server: bool,
@@ -214,8 +218,10 @@ pub struct Blockchain<S: Storage> {
     // current difficulty at tips
     // its used as cache to display current network hashrate
     difficulty: Mutex<Difficulty>,
-    // used to skip PoW verification
+    // if a simulator is set
     simulator: Option<Simulator>,
+    // if we should skip PoW verification
+    skip_pow_verification: bool,
     // current network type on which one we're using/connected to
     network: Network,
     // this cache is used to avoid to recompute the common base for each block and is mandatory
@@ -256,6 +262,10 @@ impl<S: Storage> Blockchain<S> {
                 error!("Boost sync and fast sync can't be enabled at the same time!");
                 return Err(BlockchainError::ConfigSyncMode.into())
             }
+
+            if config.skip_pow_verification {
+                warn!("PoW verification is disabled! This is dangerous in production!");
+            }
         }
 
         let on_disk = storage.has_blocks().await;
@@ -278,6 +288,7 @@ impl<S: Storage> Blockchain<S> {
             p2p: RwLock::new(None),
             rpc: RwLock::new(None),
             difficulty: Mutex::new(GENESIS_BLOCK_DIFFICULTY),
+            skip_pow_verification: config.skip_pow_verification || config.simulator.is_some(),
             simulator: config.simulator,
             network,
             tip_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
@@ -333,7 +344,18 @@ impl<S: Storage> Blockchain<S> {
                         let addr: SocketAddr = match addr.parse() {
                             Ok(addr) => addr,
                             Err(e) => {
-                                error!("Error while parsing priority node address: {}", e);
+                                match lookup_host(&addr).await {
+                                    Ok(it) => {
+                                        info!("Valid host found for {}", addr);
+                                        for addr in it {
+                                            info!("Trying to connect to priority node with IP from DNS resolution: {}", addr);
+                                            p2p.try_to_connect_to_peer(addr, true).await;
+                                        }
+                                    },
+                                    Err(e2) => {
+                                        error!("Error while parsing priority node address: {}, {}", e, e2);
+                                    }
+                                };
                                 continue;
                             }
                         };
@@ -370,6 +392,11 @@ impl<S: Storage> Blockchain<S> {
     // Detect if the simulator task has been started
     pub fn is_simulator_enabled(&self) -> bool {
         self.simulator.is_some()
+    }
+
+    // Skip PoW verification flag
+    pub fn skip_pow_verification(&self) -> bool {
+        self.skip_pow_verification
     }
 
     // Stop all blockchain modules
@@ -1208,7 +1235,7 @@ impl<S: Storage> Blockchain<S> {
         trace!("Verifying proof of work for block {}", hash);
         let (difficulty, p) = self.get_difficulty_at_tips(provider, tips).await?;
         trace!("Difficulty at tips: {}", difficulty);
-        if self.is_simulator_enabled() || check_difficulty(hash, &difficulty)? {
+        if check_difficulty(hash, &difficulty)? {
             Ok((difficulty, p))
         } else {
             Err(BlockchainError::InvalidDifficulty)
@@ -1641,8 +1668,14 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // verify PoW and get difficulty for this block based on tips
-        let pow_hash = block.get_pow_hash()?;
-        debug!("POW hash: {}", pow_hash);
+        let skip_pow = self.skip_pow_verification();
+        let pow_hash = if skip_pow {
+            // Simulator is enabled, we don't need to compute the PoW hash
+            Hash::zero()
+        } else {
+            block.get_pow_hash()?
+        };
+        debug!("POW hash: {}, skipped: {}", pow_hash, skip_pow);
         let (difficulty, p) = self.verify_proof_of_work(storage, &pow_hash, block.get_tips().iter()).await?;
         debug!("PoW is valid for difficulty {}", difficulty);
 
@@ -1725,7 +1758,7 @@ impl<S: Storage> Blockchain<S> {
                 batch.push(tx);
             }
 
-            trace!("proof verifications of {} TXs in block {}", batch.len(), block_hash);
+            debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|v| v.hash().to_string()).collect::<Vec<String>>().join(","), block_hash);
             // Verify all valid transactions in one batch
             Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
         }
@@ -1736,6 +1769,7 @@ impl<S: Storage> Blockchain<S> {
         debug!("Saving block {} on disk", block_hash);
         // Add block to chain
         storage.save_block(block.clone(), &txs, difficulty, p, block_hash.clone()).await?;
+        storage.add_block_execution_to_order(&block_hash).await?;
 
         // Compute cumulative difficulty for block
         let cumulative_difficulty = {
@@ -1929,6 +1963,7 @@ impl<S: Storage> Blockchain<S> {
                         if !nonce_checker.use_nonce(chain_state.get_storage(), tx.get_source(), tx.get_nonce(), highest_topo).await? {
                             warn!("Malicious TX {}, it is a potential double spending with same nonce {}, skipping...", tx_hash, tx.get_nonce());
                             // TX will be orphaned
+                            orphaned_transactions.insert(tx_hash.clone());
                             continue;
                         }
 
@@ -1937,6 +1972,7 @@ impl<S: Storage> Blockchain<S> {
                         if let Err(e) = tx.apply_with_partial_verify(chain_state.as_mut()).await {
                             warn!("Error while executing TX {} with current DAG org: {}", tx_hash, e);
                             // TX may be orphaned if not added again in good order in next blocks
+                            orphaned_transactions.insert(tx_hash.clone());
                             continue;
                         }
 

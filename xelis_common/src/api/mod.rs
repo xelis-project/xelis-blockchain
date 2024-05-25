@@ -16,7 +16,7 @@ use crate::{
         Signature
     },
     transaction::{
-        aead::AEADCipher,
+        extra_data::UnknownExtraDataFormat,
         BurnPayload,
         Reference,
         SourceCommitment,
@@ -50,7 +50,7 @@ pub struct DataHash<'a, T: Clone> {
 pub struct RPCTransferPayload<'a> {
     pub asset: Cow<'a, Hash>,
     pub destination: Address,
-    pub extra_data: Cow<'a, Option<AEADCipher>>,
+    pub extra_data: Cow<'a, Option<UnknownExtraDataFormat>>,
     pub commitment: Cow<'a, CompressedCommitment>,
     pub sender_handle: Cow<'a, CompressedHandle>,
     pub receiver_handle: Cow<'a, CompressedHandle>,
