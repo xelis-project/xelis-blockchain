@@ -41,7 +41,7 @@ lazy_static! {
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ProofGenerationError {
-    #[error("invalid format")]
+    #[error(transparent)]
     Decompression(#[from] DecompressionError),
     #[error("not enough funds in the account")]
     InsufficientFunds,
