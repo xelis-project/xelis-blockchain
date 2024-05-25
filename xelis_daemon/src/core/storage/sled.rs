@@ -933,18 +933,21 @@ impl Storage for SledStorage {
         for el in self.balances.iter() {
             let (key, value) = el?;
             let asset = Hash::from_bytes(&key[32..64])?;
-            let mut delete = true;
+            let mut delete = false;
 
-            
             // if the asset is not deleted, we can process it
             if !deleted_assets.contains(&asset) {
                 let highest_topoheight = u64::from_bytes(&value)?;
                 if highest_topoheight > topoheight && highest_topoheight >= pruned_topoheight {
                     // find the first version which is under topoheight
                     let pkey = PublicKey::from_bytes(&key[0..32])?;
+                    trace!("Highest topoheight for balance {} is {}, above {}", pkey.as_address(self.is_mainnet()), highest_topoheight, topoheight);
 
                     let mut version = self.get_balance_at_exact_topoheight(&pkey, &asset, highest_topoheight).await
                         .context(format!("Error while retrieving balance at exact topoheight {highest_topoheight}"))?;
+
+                    // Mark for deletion if we can't find a version under the new topoheight
+                    delete = true;
 
                     while let Some(previous_topoheight) = version.get_previous_topoheight() {
                         if previous_topoheight <= topoheight {
@@ -959,6 +962,8 @@ impl Storage for SledStorage {
                         version = self.get_balance_at_exact_topoheight(&pkey, &asset, previous_topoheight).await?;
                     }
                 }
+            } else {
+                delete = true;
             }
 
             if delete {
