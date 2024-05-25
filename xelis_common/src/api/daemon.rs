@@ -257,6 +257,14 @@ pub struct GetTransactionParams<'a> {
     pub hash: Cow<'a, Hash>
 }
 
+pub type GetTransactionExecutorParams<'a> = GetTransactionParams<'a>;
+
+#[derive(Serialize, Deserialize)]
+pub struct GetTransactionExecutorResult<'a> {
+    pub block_topoheight: u64,
+    pub block_hash: Cow<'a, Hash>
+}
+
 // Direction is used for cache to knows from which context it got added
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Direction {
