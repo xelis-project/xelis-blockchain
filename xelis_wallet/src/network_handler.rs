@@ -251,7 +251,7 @@ impl NetworkHandler {
         let mut our_highest_nonce = None;
 
         // Verify all TXs one by one to find one for us
-        for tx in block.transactions.into_iter() {
+        'main: for tx in block.transactions.into_iter() {
             trace!("Checking transaction {}", tx.hash);
             let is_owner = *tx.source.get_public_key() == *address.get_public_key();
             let entry: Option<EntryData> = match tx.data {
@@ -277,7 +277,7 @@ impl NetworkHandler {
                             // Check if we already stored this TX
                             if self.has_tx_stored(&tx.hash).await? {
                                 debug!("Transaction {} was already stored, skipping it", tx.hash);
-                                continue;
+                                continue 'main;
                             }
 
                             // Get the right handle
