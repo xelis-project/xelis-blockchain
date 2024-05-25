@@ -340,10 +340,24 @@ impl NetworkHandler {
                     continue;
                 }
 
+                // Transaction found at which topoheight it was executed
+                let mut tx_topoheight = topoheight;
+
                 // New transaction entry that may be linked to us, check if TX was executed
                 if !self.api.is_tx_executed_in_block(&tx.hash, &block_hash).await? {
-                    warn!("Transaction {} was a good candidate but was not executed in block {}, skipping", tx.hash, block_hash);
-                    continue;
+                    warn!("Transaction {} was a good candidate but was not executed in block {}, searching its block executor", tx.hash, block_hash);
+                    // Don't skip the TX, we may have missed it
+                    match self.api.get_transaction_executor(&tx.hash).await {
+                        Ok(executor) => {
+                            tx_topoheight = executor.block_topoheight;
+                            debug!("Transaction {} was executed in block {} at topoheight {}", tx.hash, executor.block_hash, executor.block_topoheight);
+                        },
+                        Err(e) => {
+                            // Tx is maybe not executed, this is really rare event
+                            warn!("Error while fetching topoheight execution of transaction {}: {}", tx.hash, e);
+                            continue;
+                        }
+                    }
                 }
 
                 // Find the highest nonce
@@ -351,7 +365,8 @@ impl NetworkHandler {
                     our_highest_nonce = Some(tx.nonce);
                 }
 
-                let entry = TransactionEntry::new(tx.hash.into_owned(), topoheight, entry);
+                // Save the transaction
+                let entry = TransactionEntry::new(tx.hash.into_owned(), tx_topoheight, entry);
                 {
                     let mut storage = self.wallet.get_storage().write().await;
                     storage.save_transaction(entry.get_hash(), &entry)?;

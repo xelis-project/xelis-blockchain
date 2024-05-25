@@ -34,7 +34,9 @@ use xelis_common::{
         GetMempoolCacheParams,
         GetMempoolCacheResult,
         IsAccountRegisteredParams,
-        TransactionOrphanedEvent
+        TransactionOrphanedEvent,
+        GetTransactionExecutorParams,
+        GetTransactionExecutorResult
     },
     account::VersionedBalance,
     crypto::{
@@ -192,6 +194,13 @@ impl DaemonAPI {
             hash: Cow::Borrowed(hash)
         }).await.context(format!("Error while fetching transaction {}", hash))?;
         Ok(tx)
+    }
+
+    pub async fn get_transaction_executor(&self, hash: &Hash) -> Result<GetTransactionExecutorResult> {
+        let executor = self.client.call_with("get_transaction_executor", &GetTransactionExecutorParams {
+            hash: Cow::Borrowed(hash)
+        }).await?;
+        Ok(executor)
     }
 
     pub async fn submit_transaction(&self, transaction: &Transaction) -> Result<()> {
