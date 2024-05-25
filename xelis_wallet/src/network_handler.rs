@@ -258,6 +258,11 @@ impl NetworkHandler {
                 RPCTransactionType::Burn(payload) => {
                     let payload = payload.into_owned();
                     if is_owner {
+                        if self.has_tx_stored(&tx.hash).await? {
+                            debug!("Transaction burn {} was already stored, skipping it", tx.hash);
+                            continue;
+                        }
+
                         Some(EntryData::Burn { asset: payload.asset, amount: payload.amount })
                     } else {
                         None
@@ -269,6 +274,12 @@ impl NetworkHandler {
                     for transfer in txs {
                         let destination = transfer.destination.to_public_key();
                         if is_owner || destination == *address.get_public_key() {
+                            // Check if we already stored this TX
+                            if self.has_tx_stored(&tx.hash).await? {
+                                debug!("Transaction {} was already stored, skipping it", tx.hash);
+                                continue;
+                            }
+
                             // Get the right handle
                             let (role, handle) = if is_owner {
                                 (Role::Sender, transfer.sender_handle)
@@ -328,18 +339,6 @@ impl NetworkHandler {
             };
 
             if let Some(entry) = entry {
-                let is_tx_stored = {
-                    let storage = self.wallet.get_storage().read().await;
-                    storage.has_transaction(&tx.hash)?
-                };
-
-                // Even if we probably scanned it before and a DAG reorg happened,
-                // It shouldn't be found because it got deleted from storage
-                if is_tx_stored {
-                    debug!("Transaction {} was already stored, skipping", tx.hash);
-                    continue;
-                }
-
                 // Transaction found at which topoheight it was executed
                 let mut tx_topoheight = topoheight;
 
@@ -388,6 +387,12 @@ impl NetworkHandler {
             // Increase by one to get the new nonce
             Ok(Some((assets_changed, our_highest_nonce.map(|n| n + 1))))
         }
+    }
+
+    // Check if a transaction is stored in the wallet
+    async fn has_tx_stored(&self, hash: &Hash) -> Result<bool, Error> {
+        let storage = self.wallet.get_storage().read().await;
+        storage.has_transaction(hash)
     }
 
     // Scan the chain using a specific balance asset, this helps us to get a list of version to only requests blocks where changes happened
