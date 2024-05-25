@@ -1,6 +1,6 @@
 use std::{borrow::Cow, collections::HashSet};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::broadcast;
@@ -118,26 +118,26 @@ impl DaemonAPI {
     }
 
     pub async fn get_version(&self) -> Result<String> {
-        let version = self.client.call("get_version").await.context("Error while retrieving version from daemon")?;
+        let version = self.client.call("get_version").await?;
         Ok(version)
     }
 
     pub async fn get_info(&self) -> Result<GetInfoResult> {
-        let info = self.client.call("get_info").await.context("Error while retrieving info from chain")?;
+        let info = self.client.call("get_info").await?;
         Ok(info)
     }
 
     pub async fn get_asset(&self, asset: &Hash) -> Result<AssetData> {
         let assets = self.client.call_with("get_asset", &GetAssetParams {
             asset: Cow::Borrowed(asset)
-        }).await.context("Error while retrieving asset data")?;
+        }).await?;
         Ok(assets)
     }
 
     pub async fn get_account_assets(&self, address: &Address) -> Result<HashSet<Hash>> {
         let assets = self.client.call_with("get_account_assets", &GetAccountAssetsParams {
             address: Cow::Borrowed(address)
-        }).await.context("Error while retrieving account assets")?;
+        }).await?;
         Ok(assets)
     }
 
@@ -160,7 +160,7 @@ impl DaemonAPI {
         let balance = self.client.call_with("get_balance", &GetBalanceParams {
             address: Cow::Borrowed(address),
             asset: Cow::Borrowed(asset),
-        }).await.context("Error while retrieving balance")?;
+        }).await?;
         Ok(balance)
     }
 
@@ -169,7 +169,7 @@ impl DaemonAPI {
             topoheight,
             asset: Cow::Borrowed(asset),
             address: Cow::Borrowed(address)
-        }).await.context("Error while retrieving balance at topoheight")?;
+        }).await?;
         Ok(balance)
     }
 
@@ -177,7 +177,7 @@ impl DaemonAPI {
         let block = self.client.call_with("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
             topoheight,
             include_txs: false
-        }).await.context(format!("Error while fetching block at topoheight {}", topoheight))?;
+        }).await?;
         Ok(block)
     }
 
@@ -185,14 +185,14 @@ impl DaemonAPI {
         let block = self.client.call_with("get_block_at_topoheight", &GetBlockAtTopoHeightParams {
             topoheight,
             include_txs: true
-        }).await.context(format!("Error while fetching block with txs at topoheight {}", topoheight))?;
+        }).await?;
         Ok(block)
     }
 
     pub async fn get_transaction(&self, hash: &Hash) -> Result<Transaction> {
         let tx = self.client.call_with("get_transaction", &GetTransactionParams {
             hash: Cow::Borrowed(hash)
-        }).await.context(format!("Error while fetching transaction {}", hash))?;
+        }).await?;
         Ok(tx)
     }
 
@@ -213,7 +213,7 @@ impl DaemonAPI {
     pub async fn get_nonce(&self, address: &Address) -> Result<GetNonceResult> {
         let nonce = self.client.call_with("get_nonce", &GetNonceParams {
             address: Cow::Borrowed(address)
-        }).await.context(format!("Error while fetching nonce from address {}", address))?;
+        }).await?;
         Ok(nonce)
     }
 
@@ -221,14 +221,14 @@ impl DaemonAPI {
         let is_executed = self.client.call_with("is_tx_executed_in_block", &IsTxExecutedInBlockParams {
             tx_hash: Cow::Borrowed(tx_hash),
             block_hash: Cow::Borrowed(block_hash)
-        }).await.context(format!("Error while checking if tx {} is executed in block {}", tx_hash, block_hash))?;
+        }).await?;
         Ok(is_executed)
     }
 
     pub async fn get_mempool_cache(&self, address: &Address) -> Result<GetMempoolCacheResult> {
         let cache = self.client.call_with("get_mempool_cache", &GetMempoolCacheParams {
             address: Cow::Borrowed(address)
-        }).await.context("Error while fetching mempool cache")?;
+        }).await?;
         Ok(cache)
     }
 
@@ -236,7 +236,7 @@ impl DaemonAPI {
         let is_registered = self.client.call_with("is_account_registered", &IsAccountRegisteredParams {
             address: Cow::Borrowed(address),
             in_stable_height,
-        }).await.context("Error while checking if account is registered")?;
+        }).await?;
         Ok(is_registered)
     }
 }
