@@ -61,7 +61,7 @@ impl<T: DeserializeOwned> EventReceiver<T> {
         while let Err(e) = res {
             match e {
                 broadcast::error::RecvError::Lagged(_) => {
-                    trace!("EventReceiver lagged behind, catching up...");
+                    error!("EventReceiver lagged behind, catching up...");
                     res = self.inner.recv().await;
                 }
                 e => return Err(e.into())
@@ -450,7 +450,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
     }
 
     // Subscribe to an event
-    pub async fn subscribe_event<T: DeserializeOwned>(&self, event: E) -> JsonRPCResult<EventReceiver<T>> {
+    // Capacity represents the number of events that can be stored in the channel
+    pub async fn subscribe_event<T: DeserializeOwned>(&self, event: E, capacity: usize) -> JsonRPCResult<EventReceiver<T>> {
         // Returns a Receiver for this event if already registered
         {
             let ids = self.events_to_id.lock().await;
@@ -477,7 +478,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
         }
 
         // Create a channel to receive the event
-        let (sender, receiver) = broadcast::channel(1);
+        let (sender, receiver) = broadcast::channel(capacity);
         {
             let mut handlers = self.handler_by_id.lock().await;
             handlers.insert(id, sender);
