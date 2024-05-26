@@ -53,13 +53,19 @@ use xelis_common::{
 
 pub struct DaemonAPI {
     client: WebSocketJsonRPCClient<NotifyEvent>,
+    capacity: usize,
 }
 
 impl DaemonAPI {
     pub async fn new(daemon_address: String) -> Result<Self> {
+        Self::with_capacity(daemon_address, 64).await
+    }
+
+    pub async fn with_capacity(daemon_address: String, capacity: usize) -> Result<Self> {
         let client = WebSocketJsonRPCClientImpl::new(daemon_address).await?;
         Ok(Self {
-            client
+            client,
+            capacity
         })
     }
 
@@ -93,27 +99,27 @@ impl DaemonAPI {
     }
 
     pub async fn on_new_block_event(&self) -> Result<EventReceiver<NewBlockEvent>> {
-        let receiver = self.client.subscribe_event(NotifyEvent::NewBlock).await?;
+        let receiver = self.client.subscribe_event(NotifyEvent::NewBlock, self.capacity).await?;
         Ok(receiver)
     }
 
     pub async fn on_block_ordered_event(&self) -> Result<EventReceiver<BlockOrderedEvent>> {
-        let receiver = self.client.subscribe_event(NotifyEvent::BlockOrdered).await?;
+        let receiver = self.client.subscribe_event(NotifyEvent::BlockOrdered, self.capacity).await?;
         Ok(receiver)
     }
 
     pub async fn on_transaction_orphaned_event(&self) -> Result<EventReceiver<TransactionOrphanedEvent>> {
-        let receiver = self.client.subscribe_event(NotifyEvent::TransactionOrphaned).await?;
+        let receiver = self.client.subscribe_event(NotifyEvent::TransactionOrphaned, self.capacity).await?;
         Ok(receiver)
     }
 
     pub async fn on_stable_height_changed_event(&self) -> Result<EventReceiver<StableHeightChangedEvent>> {
-        let receiver = self.client.subscribe_event(NotifyEvent::StableHeightChanged).await?;
+        let receiver = self.client.subscribe_event(NotifyEvent::StableHeightChanged, self.capacity).await?;
         Ok(receiver)
     }
 
     pub async fn on_transaction_added_in_mempool_event(&self) -> Result<EventReceiver<TransactionAddedInMempoolEvent>> {
-        let receiver = self.client.subscribe_event(NotifyEvent::TransactionAddedInMempool).await?;
+        let receiver = self.client.subscribe_event(NotifyEvent::TransactionAddedInMempool, self.capacity).await?;
         Ok(receiver)
     }
 
