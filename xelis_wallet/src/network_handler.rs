@@ -260,7 +260,7 @@ impl NetworkHandler {
                     if is_owner {
                         if self.has_tx_stored(&tx.hash).await? {
                             debug!("Transaction burn {} was already stored, skipping it", tx.hash);
-                            continue;
+                            continue 'main;
                         }
 
                         Some(EntryData::Burn { asset: payload.asset, amount: payload.amount })
@@ -825,6 +825,7 @@ impl NetworkHandler {
 
         loop {
             tokio::select! {
+                biased;
                 // Wait on a new block, we don't parse the block directly as it may
                 // have reorg the chain
                 res = on_new_block.next() => {
@@ -832,33 +833,31 @@ impl NetworkHandler {
                     let event = res?;
                     self.sync(&address, Some(event)).await?;
                 },
+                // Wait on a new block ordered in DAG
                 res = on_block_ordered.next() => {
                     trace!("on_block_ordered_event");
                     let event = res?;
                     let topoheight = event.topoheight;
-                    let mut process_block = false;
                     {
                         let mut storage = self.wallet.get_storage().write().await;
                         if let Some(hash) = storage.get_block_hash_for_topoheight(topoheight).ok() {
-                            if topoheight != 0 && hash != *event.block_hash {
-                                warn!("DAG reorg detected at topoheight {}, deleting all changes above", topoheight);
-                                storage.delete_changes_above_topoheight(topoheight - 1)?;
-                                if storage.get_synced_topoheight().unwrap_or(0) > topoheight {
-                                    warn!("We are above the reorg, restart syncing from {}", topoheight);
-                                    storage.set_synced_topoheight(topoheight)?;
-                                    storage.set_top_block_hash(&event.block_hash)?;
-                                }
-                                process_block = true;
+                            if hash != *event.block_hash {
+                                warn!("DAG reorg detected at topoheight {}, deleting changes at this topoheight", topoheight);
+                                storage.delete_changes_at_topoheight(topoheight)?;
                             }
+                        } else {
+                            debug!("No block hash found for topoheight {}, syncing block {}", topoheight, event.block_hash);
                         }
                     }
 
-                    if process_block {
-                        // Sync this block again as it may have some TXs executed
-                        let block = self.api.get_block_at_topoheight(topoheight).await?;
-                        if let Some((assets, _)) = self.process_block(&address, block, topoheight).await? {
-                            debug!("Found changes for assets: {}", assets.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "));
-                        }
+                    // TODO delete all TXs & changes at this topoheight and above
+                    // We need to clean up the DB as we may have some TXs that are not executed anymore
+                    // and some others that got executed
+
+                    // Sync this block again as it may have some TXs executed
+                    let block = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
+                    if let Some((assets, _)) = self.process_block(&address, block, topoheight).await? {
+                        debug!("Found changes for assets: {}", assets.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "));
                     }
                 },
                 res = on_transaction_orphaned.next() => {
