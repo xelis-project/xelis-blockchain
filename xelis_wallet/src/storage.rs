@@ -619,6 +619,21 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // delete all transactions at the specified topoheight
+    // This will go through each transaction, deserialize it, check topoheight, and delete it if required
+    // Maybe we can optimize it by keeping a lookuptable of topoheight -> txs ?
+    pub fn delete_transactions_at_topoheight(&mut self, topoheight: u64) -> Result<()> {
+        for el in self.transactions.iter().values() {
+            let value = el?;
+            let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
+            if entry.get_topoheight() == topoheight {
+                self.delete_transaction(entry.get_hash())?;
+            }
+        }
+
+        Ok(())
+    }
+
     // Filter when the data is deserialized to not load all transactions in memory
     pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, query: Option<&Query>) -> Result<Vec<TransactionEntry>> {
         let mut transactions = Vec::new();
@@ -902,6 +917,15 @@ impl EncryptedStorage {
         }
 
         Ok(deleted)
+    }
+
+    // Delete changes at topoheight
+    // This will returns true if a changes was deleted
+    pub fn delete_changes_at_topoheight(&mut self, topoheight: u64) -> Result<()> {
+        trace!("delete changes at topoheight {}", topoheight);
+        self.delete_from_disk_with_encrypted_key(&self.changes_topoheight, &topoheight.to_be_bytes())?;
+
+        Ok(())
     }
 
     // Retrieve topoheight changes 
