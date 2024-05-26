@@ -853,6 +853,15 @@ impl NetworkHandler {
                             if hash != *event.block_hash {
                                 warn!("DAG reorg detected at topoheight {}, deleting changes at this topoheight", topoheight);
                                 storage.delete_changes_at_topoheight(topoheight)?;
+                                if topoheight == 0 {
+                                    debug!("Deleting all transactions due to reorg until 0");
+                                    storage.delete_transactions()?;
+                                } else {
+                                    // TODO we should make a faster way to delete all TXs above this topoheight
+                                    // Otherwise in future with millions of TXs, this may take few seconds.
+                                    debug!("Deleting transactions above {} due to DAG reorg", topoheight);
+                                    storage.delete_transactions_above_topoheight(topoheight)?;
+                                }
                             }
                         } else {
                             debug!("No block hash found for topoheight {}, syncing block {}", topoheight, event.block_hash);
