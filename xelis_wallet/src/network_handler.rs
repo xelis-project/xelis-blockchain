@@ -420,6 +420,7 @@ impl NetworkHandler {
             // add this topoheight in cache to not re-process it (blocks are independant of asset to have faster sync)
             // if its not already processed, do it
             if topoheight_processed.insert(topoheight) {
+                debug!("Processing topoheight {}", topoheight);
                 let response = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
                 let changes = self.process_block(address, response, topoheight).await?;
 
@@ -586,7 +587,7 @@ impl NetworkHandler {
             response.hash.into_owned()
         };
 
-        let mut storage = self.wallet.get_storage().write().await;        
+        let mut storage = self.wallet.get_storage().write().await;
         // Now let's clean everything
         if storage.delete_changes_above_topoheight(maximum)? {
             warn!("Cleaning transactions above topoheight {}", maximum);
