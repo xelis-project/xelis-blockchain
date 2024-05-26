@@ -488,6 +488,7 @@ impl NetworkHandler {
     // All transactions / changes above the last valid topoheight will be deleted
     // Returns daemon topoheight along wallet stable topoheight and if back sync is needed
     async fn locate_sync_topoheight_and_clean(&self) -> Result<(u64, Hash, u64, bool), NetworkError> {
+        trace!("locating sync topoheight and cleaning");
         let info = self.api.get_info().await?;
         let daemon_topoheight = info.topoheight;
         let daemon_block_hash = info.top_block_hash;
@@ -740,22 +741,20 @@ impl NetworkHandler {
     // then sync again the head state
     async fn sync(&self, address: &Address, event: Option<NewBlockEvent>) -> Result<(), Error> {
         trace!("sync");
-        // First, locate the last topoheight valid for syncing
-        let (daemon_topoheight, daemon_block_hash, wallet_topoheight, sync_back) = self.locate_sync_topoheight_and_clean().await?;
-        debug!("Daemon topoheight: {}, wallet topoheight: {}, sync back: {}", daemon_topoheight, wallet_topoheight, sync_back);
 
+        // Should we sync new blocks ?
         let mut sync_new_blocks = false;
-        // Sync back is requested, sync the head state again
-        if sync_back {
-            trace!("sync back");
-            // Now sync head state, this will helps us to determinate if we should sync blocks or not
-            sync_new_blocks = self.sync_head_state(&address, None, None, true).await?;
-        }
 
+        let wallet_topoheight: u64;
+        let daemon_topoheight: u64;
+        let daemon_block_hash: Hash;
+
+        // Handle the event
         if let Some(block) = event {
             trace!("new block event received");
             // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
             if let Some(topoheight) = block.topoheight {
+                let block_hash = block.hash.as_ref().clone();
                 if let Some((assets, mut nonce)) = self.process_block(address, block, topoheight).await? {
                     trace!("We must sync head state");
                     {
@@ -771,12 +770,27 @@ impl NetworkHandler {
                     // A change happened in this block, lets update balance and nonce
                     sync_new_blocks |= self.sync_head_state(&address, Some(assets), nonce, false).await?;
                 }
+
+                wallet_topoheight = topoheight;
+                daemon_topoheight = topoheight;
+                daemon_block_hash = block_hash;
             } else {
                 // It is a block that got directly orphaned by DAG, ignore it
-                debug!("Block {} is not ordered, skipping it", block.hash);
+                warn!("Block {} is not ordered, skipping it", block.hash);
+                return Ok(())
             }
         } else {
-            sync_new_blocks = true;
+            // First, locate the last topoheight valid for syncing
+            let sync_back;
+            (daemon_topoheight, daemon_block_hash, wallet_topoheight, sync_back) = self.locate_sync_topoheight_and_clean().await?;
+            debug!("Daemon topoheight: {}, wallet topoheight: {}, sync back: {}", daemon_topoheight, wallet_topoheight, sync_back);
+
+            // Sync back is requested, sync the head state again
+            if sync_back {
+                trace!("sync back");
+                // Now sync head state, this will helps us to determinate if we should sync blocks or not
+                sync_new_blocks = self.sync_head_state(&address, None, None, true).await?;
+            }
         }
 
         // we have something that changed, sync transactions
@@ -809,7 +823,6 @@ impl NetworkHandler {
 
         // Thanks to websocket, we can be notified when a new block is added in chain
         // this allows us to have a instant sync of each new block instead of polling periodically
-        let mut on_new_block = self.api.on_new_block_event().await?;
 
         // Because DAG can reorder any blocks in stable height, its possible we missed some txs because they were not executed
         // when the block was added. We must check on DAG reorg for each block just to be sure
@@ -828,15 +841,10 @@ impl NetworkHandler {
                 biased;
                 // Wait on a new block, we don't parse the block directly as it may
                 // have reorg the chain
-                res = on_new_block.next() => {
-                    trace!("on_new_block_event");
-                    let event = res?;
-                    self.sync(&address, Some(event)).await?;
-                },
                 // Wait on a new block ordered in DAG
                 res = on_block_ordered.next() => {
-                    trace!("on_block_ordered_event");
                     let event = res?;
+                    debug!("Block ordered event {} at {}", event.block_hash, event.topoheight);
                     let topoheight = event.topoheight;
                     {
                         let mut storage = self.wallet.get_storage().write().await;
@@ -856,13 +864,11 @@ impl NetworkHandler {
 
                     // Sync this block again as it may have some TXs executed
                     let block = self.api.get_block_with_txs_at_topoheight(topoheight).await?;
-                    if let Some((assets, _)) = self.process_block(&address, block, topoheight).await? {
-                        debug!("Found changes for assets: {}", assets.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "));
-                    }
+                    self.sync(&address, Some(block)).await?;
                 },
                 res = on_transaction_orphaned.next() => {
-                    trace!("on_transaction_orphaned_event");
                     let event = res?;
+                    debug!("on transaction orphaned event {}", event.data.hash);
                     let tx = event.data;
 
                     let mut storage = self.wallet.get_storage().write().await;

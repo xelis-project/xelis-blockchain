@@ -799,7 +799,7 @@ impl Wallet {
                 storage.delete_balances().await?;
                 storage.delete_assets().await?;
                 // unconfirmed balances are going to be outdated, we delete them
-                storage.delete_unconfirmed_balances().await?;
+                storage.delete_unconfirmed_balances().await;
                 storage.clear_tx_cache();
 
                 debug!("Retrieve current wallet nonce");

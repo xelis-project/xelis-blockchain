@@ -243,6 +243,7 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
         if let Err(e) = wallet.submit_transaction(&tx).await {
             warn!("Clearing Tx cache because of broadcasting error: {}", e);
             storage.clear_tx_cache();
+            storage.delete_unconfirmed_balances().await;
             return Err(e.into());
         }
     }

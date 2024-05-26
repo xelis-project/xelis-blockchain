@@ -719,18 +719,16 @@ impl EncryptedStorage {
     // Delete all balances from this wallet
     pub async fn delete_balances(&mut self) -> Result<()> {
         self.balances.clear()?;
-        self.delete_unconfirmed_balances().await?;
+        self.delete_unconfirmed_balances().await;
         self.balances_cache.lock().await.clear();
         Ok(())
     }
 
     // Delete all unconfirmed balances from this wallet
-    pub async fn delete_unconfirmed_balances(&mut self) -> Result<()> {
+    pub async fn delete_unconfirmed_balances(&mut self) {
         trace!("delete unconfirmed balances");
         self.unconfirmed_balances_cache.lock().await.clear();
         self.clear_tx_cache();
-
-        Ok(())
     }
 
     // Delete tx cache
