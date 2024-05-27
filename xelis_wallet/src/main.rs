@@ -991,6 +991,11 @@ async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager, tx: Transaction
         if let Err(e) = wallet.submit_transaction(&tx).await {
             manager.error(format!("Couldn't submit transaction: {}", e));
             manager.error("You can try to rescan your balance with the command 'rescan'");
+
+            // Maybe cache is corrupted, clear it
+            let mut storage = wallet.get_storage().write().await;
+            storage.clear_tx_cache();
+            storage.delete_unconfirmed_balances().await;
         } else {
             manager.message("Transaction submitted successfully!");
         }
