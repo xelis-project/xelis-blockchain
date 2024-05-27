@@ -4,7 +4,13 @@ use std::{
     net::SocketAddr
 };
 use indexmap::IndexSet;
-use serde::{Deserialize, Serialize, Serializer, Deserializer, de::Error};
+use serde::{
+    Deserialize,
+    Serialize,
+    Serializer,
+    Deserializer,
+    de::Error
+};
 use crate::{
     account::{CiphertextCache, VersionedBalance, VersionedNonce},
     block::EXTRA_NONCE_SIZE,
@@ -219,6 +225,13 @@ pub struct HasNonceResult {
 pub struct GetBalanceResult {
     pub version: VersionedBalance,
     pub topoheight: u64
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetStableBalanceResult {
+    pub version: VersionedBalance,
+    pub stable_topoheight: u64,
+    pub stable_block_hash: Hash 
 }
 
 #[derive(Serialize, Deserialize)]
