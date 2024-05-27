@@ -519,11 +519,23 @@ async fn get_stable_balance<S: Storage>(context: &Context, body: Value) -> Resul
         return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
     }
 
+    let top_topoheight = blockchain.get_topo_height();
     let stable_topoheight = blockchain.get_stable_topoheight();
     let storage = blockchain.get_storage().read().await;
-    let version = storage.get_balance_at_maximum_topoheight(params.address.get_public_key(), &params.asset, stable_topoheight).await?
-        .map(|(_, version)| version)
-        .ok_or(InternalRpcError::InvalidRequestStr("no stable balance found for this account"))?;
+
+    let mut stable_version = None;
+    if let Some((output_topoheight, version)) = storage.get_output_balance_at_maximum_topoheight(params.address.get_public_key(), &params.asset, top_topoheight).await? {
+        if output_topoheight >= stable_topoheight {
+            stable_version = Some((output_topoheight, version));
+        }
+    }
+
+    let (stable_topoheight, version) = if let Some((topoheight, version)) = stable_version {
+        (topoheight, version)
+    } else {
+        storage.get_balance_at_maximum_topoheight(params.address.get_public_key(), &params.asset, stable_topoheight).await?
+            .ok_or(InternalRpcError::InvalidRequestStr("no stable balance found for this account"))?
+    };
 
     Ok(json!(GetStableBalanceResult {
         version,
