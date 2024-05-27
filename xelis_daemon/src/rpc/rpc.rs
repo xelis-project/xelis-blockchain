@@ -35,6 +35,7 @@ use xelis_common::{
             GetBalanceAtTopoHeightParams,
             GetBalanceParams,
             GetBalanceResult,
+            GetStableBalanceResult,
             GetBlockAtTopoHeightParams,
             GetBlockByHashParams,
             GetBlockTemplateParams,
@@ -331,6 +332,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_block_by_hash", async_handler!(get_block_by_hash::<S>));
     handler.register_method("get_top_block", async_handler!(get_top_block::<S>));
     handler.register_method("get_balance", async_handler!(get_balance::<S>));
+    handler.register_method("get_stable_balance", async_handler!(get_stable_balance::<S>));
     handler.register_method("has_balance", async_handler!(has_balance::<S>));
     handler.register_method("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight::<S>));
     handler.register_method("get_info", async_handler!(get_info::<S>));
@@ -495,6 +497,26 @@ async fn get_balance<S: Storage>(context: &Context, body: Value) -> Result<Value
     Ok(json!(GetBalanceResult {
         version,
         topoheight
+    }))
+}
+
+async fn get_stable_balance<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetBalanceParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
+    }
+
+    let stable_topoheight = blockchain.get_stable_topoheight();
+    let storage = blockchain.get_storage().read().await;
+    let version = storage.get_balance_at_maximum_topoheight(params.address.get_public_key(), &params.asset, stable_topoheight).await?
+        .map(|(_, version)| version)
+        .ok_or(InternalRpcError::InvalidRequestStr("no stable balance found for this account"))?;
+
+    Ok(json!(GetStableBalanceResult {
+        version,
+        stable_topoheight,
+        stable_block_hash: storage.get_hash_at_topo_height(stable_topoheight).await.context("Error while retrieving hash at topo height")?
     }))
 }
 
