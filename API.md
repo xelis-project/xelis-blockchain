@@ -1611,7 +1611,7 @@ Submit a transaction in hex format to daemon mempool.
 ##### Parameters
 | Name |  Type  | Required |            Note           |
 |:----:|:------:|:--------:|:-------------------------:|
-|  hex | String | Required | Transaction in HEX format |
+|  data | String | Required | Transaction in HEX format |
 
 ##### Request
 ```json
