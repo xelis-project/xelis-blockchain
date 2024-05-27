@@ -326,7 +326,11 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_version", async_handler!(version::<S>));
     handler.register_method("get_height", async_handler!(get_height::<S>));
     handler.register_method("get_topoheight", async_handler!(get_topoheight::<S>));
-    handler.register_method("get_stableheight", async_handler!(get_stableheight::<S>));
+    // Retro compatibility, use stable_height
+    handler.register_method("get_stableheight", async_handler!(get_stable_height::<S>));
+    handler.register_method("get_stable_height", async_handler!(get_stable_height::<S>));
+    handler.register_method("get_stable_topoheight", async_handler!(get_stable_topoheight::<S>));
+
     handler.register_method("get_block_at_topoheight", async_handler!(get_block_at_topoheight::<S>));
     handler.register_method("get_blocks_at_height", async_handler!(get_blocks_at_height::<S>));
     handler.register_method("get_block_by_hash", async_handler!(get_block_by_hash::<S>));
@@ -399,12 +403,20 @@ async fn get_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Va
     Ok(json!(blockchain.get_topo_height()))
 }
 
-async fn get_stableheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn get_stable_height<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     if body != Value::Null {
         return Err(InternalRpcError::UnexpectedParams)
     }
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     Ok(json!(blockchain.get_stable_height()))
+}
+
+async fn get_stable_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    Ok(json!(blockchain.get_stable_topoheight()))
 }
 
 async fn get_block_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
