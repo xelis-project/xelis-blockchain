@@ -66,6 +66,8 @@ const TOPOHEIGHT_KEY: &[u8] = b"TOPH";
 // represent the daemon top block hash
 const TOP_BLOCK_HASH_KEY: &[u8] = b"TOPBH";
 const NETWORK: &[u8] = b"NET";
+// Last coinbase reward topoheight
+const LCRT: &[u8] = b"LCRT";
 
 // Default cache size
 const DEFAULT_CACHE_SIZE: usize = 100;
@@ -144,7 +146,11 @@ pub struct EncryptedStorage {
     // Cache for the assets with their decimals
     assets_cache: Mutex<LruCache<Hash, u8>>,
     // Cache for the synced topoheight
-    synced_topoheight: Option<u64>
+    synced_topoheight: Option<u64>,
+    // Topoheight of the last coinbase reward
+    // This is used to determine if we should
+    // use a stable balance or not
+    last_coinbase_reward_topoheight: Option<u64>,
 }
 
 impl EncryptedStorage {
@@ -163,6 +169,7 @@ impl EncryptedStorage {
             tx_cache: None,
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
+            last_coinbase_reward_topoheight: None
         };
 
         if storage.has_network()? {
@@ -172,6 +179,11 @@ impl EncryptedStorage {
             }
         } else {
             storage.set_network(&network)?;
+        }
+
+        // Load one-time the last coinbase reward topoheight
+        if storage.contains_data(&storage.extra, LCRT)? {
+            storage.last_coinbase_reward_topoheight = Some(storage.load_from_disk(&storage.extra, LCRT)?);
         }
 
         Ok(storage)
@@ -794,6 +806,27 @@ impl EncryptedStorage {
     pub fn set_nonce(&mut self, nonce: u64) -> Result<()> {
         trace!("set nonce to {}", nonce);
         self.save_to_disk(&self.extra, NONCE_KEY, &nonce.to_be_bytes())
+    }
+
+    // Store the last coinbase reward topoheight
+    // This is used to determine if we should use a stable balance or not
+    pub fn set_last_coinbase_reward_topoheight(&mut self, topoheight: u64) -> Result<()> {
+        trace!("set last coinbase reward topoheight to {}", topoheight);
+        if let Some(last_coinbase_reward_topoheight) = self.last_coinbase_reward_topoheight {
+            if last_coinbase_reward_topoheight <= topoheight {
+                debug!("last coinbase reward topoheight ({}) already set to a higher value ({}), ignoring", last_coinbase_reward_topoheight, topoheight);
+                return Ok(());
+            }
+        }
+
+        self.last_coinbase_reward_topoheight = Some(topoheight);
+        self.save_to_disk(&self.extra, LCRT, &topoheight.to_be_bytes())
+    }
+
+    // Get the last coinbase reward topoheight
+    pub fn get_last_coinbase_reward_topoheight(&self) -> Option<u64> {
+        trace!("get last coinbase reward topoheight");
+        self.last_coinbase_reward_topoheight
     }
 
     // Store the private key

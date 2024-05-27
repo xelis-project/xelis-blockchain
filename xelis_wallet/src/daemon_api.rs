@@ -36,7 +36,8 @@ use xelis_common::{
         IsAccountRegisteredParams,
         TransactionOrphanedEvent,
         GetTransactionExecutorParams,
-        GetTransactionExecutorResult
+        GetTransactionExecutorResult,
+        GetStableBalanceResult
     },
     account::VersionedBalance,
     crypto::{
@@ -273,5 +274,20 @@ impl DaemonAPI {
             in_stable_height,
         }).await?;
         Ok(is_registered)
+    }
+
+    pub async fn get_stable_topoheight(&self) -> Result<u64> {
+        trace!("get_stable_topoheight");
+        let topoheight = self.client.call("get_stable_topoheight").await?;
+        Ok(topoheight)
+    }
+
+    pub async fn get_stable_balance(&self, address: &Address, asset: &Hash) -> Result<GetStableBalanceResult> {
+        trace!("get_stable_balance");
+        let balance = self.client.call_with("get_stable_balance", &GetBalanceParams {
+            address: Cow::Borrowed(address),
+            asset: Cow::Borrowed(asset),
+        }).await?;
+        Ok(balance)
     }
 }

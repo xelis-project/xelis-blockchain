@@ -25,6 +25,7 @@ use xelis_common::{
         DataElement
     },
     asset::AssetWithData,
+    config::XELIS_ASSET,
     crypto::{
         ecdlp::{self, ECDLPTablesFileView},
         elgamal::{Ciphertext, DecryptHandle, PublicKey as DecompressedPublicKey},
@@ -62,8 +63,7 @@ use crate::{
         SharedNetworkHandler
     },
     storage::{
-        EncryptedStorage,
-        Storage
+        Balance, EncryptedStorage, Storage
     },
     transaction_builder::{
         EstimateFeesState,
@@ -75,8 +75,9 @@ use rand::RngCore;
 use log::{
     trace,
     debug,
+    info,
+    warn,
     error,
-    info
 };
 
 #[cfg(feature = "api_server")]
@@ -577,15 +578,18 @@ impl Wallet {
         Ok(())
     }
 
+    fn decrypt_ciphertext_internal(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
+        trace!("decrypt ciphertext internal");
+        let view = ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get());
+        self.keypair.get_private_key()
+            .decrypt(&view, &ciphertext)
+            .ok_or(WalletError::CiphertextDecode)
+    }
+
     // Wallet has to be under a Arc to be shared to the spawn_blocking function
     pub async fn decrypt_ciphertext(self: Arc<Self>, ciphertext: Ciphertext) -> Result<u64, WalletError> {
         trace!("decrypt ciphertext");
-        tokio::task::spawn_blocking(move || {
-            let view = ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get());
-            self.keypair.get_private_key()
-                .decrypt(&view, &ciphertext)
-                .ok_or(WalletError::CiphertextDecode)
-        }).await.context("Error while decrypting ciphertext")?
+        tokio::task::spawn_blocking(move || self.decrypt_ciphertext_internal(&ciphertext)).await.context("Error while decrypting ciphertext")?
     }
 
     // Decrypt the extra data from a transfer
@@ -610,6 +614,7 @@ impl Wallet {
     // also check that we have enough funds for the transaction
     // This will returns the transaction builder state along the transaction
     // You must handle "apply changes" to the storage
+    // Warning: this is locking the network handler to access to the daemon api
     pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(TransactionBuilderState, Transaction), WalletError> {
         trace!("create transaction with storage");
         let nonce = storage.get_unconfirmed_nonce();
@@ -617,8 +622,49 @@ impl Wallet {
         // Build the state for the builder
         let used_assets = transaction_type.used_assets();
 
-        let reference = if let Some(cache) = storage.get_tx_cache() {
-            cache.reference.clone()
+        let mut reference = None;
+         if let Some(cache) = storage.get_tx_cache() {
+            reference = Some(cache.reference.clone());
+        }
+
+        // Lets prevent any front running due to mining
+        if reference.is_none() && used_assets.contains(&XELIS_ASSET) {
+            if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight() {
+                debug!("Wallet got a coinbase reward at topoheight: {}, verify that its not unstable", topoheight);
+                if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
+                    let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
+                    // Last mining reward is above stable topoheight, this may increase orphans rate
+                    // To avoid this, we will use the last balance version in stable topoheight as reference
+                    if topoheight > stable_topoheight {
+                        warn!("Last mining reward is above stable topoheight, searching stable reference");
+                        let stable_point = network_handler.get_api().get_stable_balance(&self.get_address(), &XELIS_ASSET).await?;
+                        debug!("Using stable reference for XELIS asset: {} at topoheight {}", stable_point.stable_block_hash, stable_point.stable_topoheight);
+
+                        // Build the stable reference
+                        reference = Some(Reference {
+                            topoheight: stable_point.stable_topoheight,
+                            hash: stable_point.stable_block_hash
+                        });
+
+                        // Store the stable balance version into unconfirmed balance
+                        // So it will be fetch later by state
+                        let mut ciphertext = stable_point.version.take_balance();
+                        debug!("decrypting stable balance for XELIS asset");
+                        let amount = self.decrypt_ciphertext_internal(ciphertext.decompressed().map_err(|_| WalletError::CiphertextDecode)?)?;
+                        let balance = Balance {
+                            amount,
+                            ciphertext
+                        };
+
+                        storage.set_unconfirmed_balance_for(XELIS_ASSET, balance).await?;
+                    }
+                }
+            }
+        }
+
+        // Get the final reference to use
+        let reference = if let Some(reference) = reference {
+            reference
         } else {
             Reference {
                 topoheight: storage.get_synced_topoheight()?,
