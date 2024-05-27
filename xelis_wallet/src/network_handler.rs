@@ -224,6 +224,11 @@ impl NetworkHandler {
 
                 let broadcast = {
                     let mut storage = self.wallet.get_storage().write().await;
+
+                    // Mark it as last coinbase reward topoheight
+                    // it is internally checked if its higher or not
+                    storage.set_last_coinbase_reward_topoheight(topoheight)?;
+
                     if storage.has_transaction(entry.get_hash())? {
                         false
                     } else {

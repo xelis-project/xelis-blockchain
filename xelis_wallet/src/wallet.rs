@@ -635,6 +635,7 @@ impl Wallet {
                     let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
                     // Last mining reward is above stable topoheight, this may increase orphans rate
                     // To avoid this, we will use the last balance version in stable topoheight as reference
+                    debug!("stable topoheight: {}, topoheight: {}", stable_topoheight, topoheight);
                     if topoheight > stable_topoheight {
                         warn!("Last mining reward is above stable topoheight, searching stable reference");
                         let stable_point = network_handler.get_api().get_stable_balance(&self.get_address(), &XELIS_ASSET).await?;
