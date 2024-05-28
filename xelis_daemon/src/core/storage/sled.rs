@@ -453,6 +453,10 @@ impl Storage for SledStorage {
 
         // delete topoheight<->hash pointers
         let hash = self.delete_cacheable_data(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await?;
+
+        trace!("Deleting block execution order");
+        self.delete_data::<_, u64>(&self.blocks_execution_order, &None, &hash).await?;
+
         trace!("Hash is {hash} at topo {topoheight}");
 
         self.delete_cacheable_data::<Hash, u64>(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
