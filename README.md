@@ -62,7 +62,7 @@ Others objectives in mind are:
 
 - Expected Block Time is `15` seconds
 - Address prefix is `xel` on mainnet and `xet` for testnet/devnet
-- Transaction fee is based on various parameters (fee is `0.0001` XEL per KB, `0.01` XEL per account creation, `0.00005` XEL per transfer)
+- Transaction fee is based on various parameters (fee is `0.0001` XEL per KB, `0.001` XEL per account creation, `0.00005` XEL per transfer)
 - Up to `8` decimals
 - Maximum supply: `18.4` millions
 - Maximum block size: `1.25` MB
