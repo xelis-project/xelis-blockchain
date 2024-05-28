@@ -530,8 +530,10 @@ To build a release (optimized) version:
 `cargo build --release`
 
 ### Build from workspace
-To build a version from workspace (parent folder) directly, use the option `--bin` with `xelis_daemon`, `xelis_miner` or `xelis_wallet` as value.
+To build a specific binary from workspace (parent folder) directly, use the option `--bin` with `xelis_daemon`, `xelis_miner` or `xelis_wallet` as value.
 Example: `cargo build --release --bin xelis_miner`
+
+To build all at once just use `cargo build --release`
 
 You can also build a debug version (just remove `--release` option) or run it directly from cargo:
 `cargo run`
@@ -543,11 +545,9 @@ To build using Docker, use the following command, using the `app` build argument
 ## Funding
 
 XELIS is a community driven project and is not funded by any company or organization.
-To helps the development, the success and provide a better support of XELIS, we set a dev fee percentage starting at 15% on block reward.
+To helps the development, the success and provide a better support of XELIS, we set a dev fee percentage starting at 10% on block reward.
 
 Current dev fee curve is as following:
 
-- 15% from block 0 to 1 250 000 (expected time is ~6 months with side blocks from blockDAG)
-- 10% from block 1 250 001 to 3 000 000 (expected time is another ~6 months with side blocks from blockDAG and network growing)
-- 5% from 3 000 001 until the project being developed and stable enough to reduce it.
-- 
+- 10% from block 0 to 3,250,000 (expected time is ~1.5 years with BlockDAG).
+- 5% from 3,250,001 until the project being developed is stable on major facets of the ecosystem in order to reduce it.
