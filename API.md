@@ -390,7 +390,7 @@ No parameters
 #### Get Stable Height
 Retrieve current stable height of the chain.
 
-##### Method `get_stableheight`
+##### Method `get_stable_height`
 
 ##### Parameters
 No parameters
@@ -399,7 +399,7 @@ No parameters
 ```json
 {
 	"jsonrpc": "2.0",
-	"method": "get_stableheight",
+	"method": "get_stable_height",
 	"id": 1
 }
 ```
@@ -410,6 +410,32 @@ No parameters
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": 15
+}
+```
+
+#### Get Stable TopoHeight
+Retrieve current stable topoheight of the chain.
+
+##### Method `get_stable_topoheight`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_stable_topoheight",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 18
 }
 ```
 
@@ -1023,8 +1049,6 @@ NOTE: `topoheight` field isn't returned because you're requesting an exact topoh
 #### Get Balance
 Get up-to-date asset's balance for a specific address
 
-NOTE: Balance is returned in atomic units
-
 ##### Method `get_balance`
 
 ##### Parameters
@@ -1133,6 +1157,124 @@ NOTE: Balance is returned in atomic units
 ```
 NOTE: `balance_type` values are: `input`, `output` or `both`.
 This determine what changes happened on the encrypted balance.
+
+#### Get Stable Balance
+Same as `get_balance`, Get up-to-date asset's balance for a specific address.
+
+The only difference is its searching first for:
+- the latest balance with a output included (even in in unstable height)
+- If not found, the latest available balance in stable height.
+
+This difference is made so that ZK Proofs are less likely to be invalidated.
+The reference (block hash, topoheight) is also included in the response.
+
+##### Method `get_stable_balance`
+
+##### Parameters
+|   Name  |   Type  | Required |                Note               |
+|:-------:|:-------:|:--------:|:---------------------------------:|
+| address | Address | Required | Valid address registered on chain |
+|  asset  |   Hash  | Required |    Asset ID registered on chain   |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_balance",
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"stable_topoheight": 21337,
+		"stable_block_hash": "3a4584239039a9024e205c18a2f81b9f5d1eaa8a8e22a3e384aeada1124590f3",
+		"version": {
+			"balance_type": "input",
+			"final_balance": {
+				"commitment": [
+					22,
+					183,
+					144,
+					165,
+					136,
+					210,
+					70,
+					241,
+					198,
+					222,
+					153,
+					185,
+					106,
+					129,
+					206,
+					59,
+					87,
+					170,
+					84,
+					46,
+					92,
+					255,
+					123,
+					37,
+					13,
+					46,
+					151,
+					145,
+					178,
+					174,
+					229,
+					112
+				],
+				"handle": [
+					178,
+					229,
+					67,
+					191,
+					17,
+					36,
+					76,
+					48,
+					173,
+					11,
+					225,
+					181,
+					151,
+					61,
+					47,
+					241,
+					96,
+					181,
+					250,
+					151,
+					110,
+					224,
+					65,
+					49,
+					211,
+					10,
+					25,
+					33,
+					120,
+					110,
+					103,
+					10
+				]
+			},
+			"output_balance": null,
+			"previous_topoheight": 11982
+		}
+	}
+}
+```
 
 #### Has Balance
 Verify if address has a balance on-chain registered for requested asset.
