@@ -157,6 +157,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::COIN_VALUE;
+
+    #[test]
+    fn test_xelis_format() {
+        assert_eq!(format_xelis(FEE_PER_ACCOUNT_CREATION), "0.00100000");
+        assert_eq!(format_xelis(FEE_PER_KB), "0.00010000");
+        assert_eq!(format_xelis(FEE_PER_TRANSFER), "0.00005000");
+        assert_eq!(format_xelis(COIN_VALUE), "1.00000000");
+    }
 
     #[test]
     fn test_difficulty_format_zero() {
