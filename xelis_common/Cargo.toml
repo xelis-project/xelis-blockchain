@@ -55,7 +55,6 @@ win32console = "0.1.5"
 tokio = { version = "1.36", features = ["full"] }
 
 [features]
-nightly = ["xelis-hash/nightly"]
 json_rpc = ["dep:reqwest"]
 prompt = ["dep:tokio"]
 clap = ["dep:clap"]
