@@ -224,3 +224,14 @@ pub struct TransactionEntry {
     #[serde(flatten)]
     pub entry: EntryType,
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct EstimateExtraDataSizeParams {
+    pub destinations: Vec<Address>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EstimateExtraDataSizeResult {
+    // Integrated data size
+    pub size: usize,
+}

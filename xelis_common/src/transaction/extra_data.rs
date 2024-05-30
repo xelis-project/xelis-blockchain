@@ -135,6 +135,12 @@ impl ExtraData {
         }
     }
 
+    // Estimate the final size for the extra data based on the plaintext format
+    pub fn estimate_size(data: &DataElement) -> usize {
+        let cipher = Cipher(data.to_bytes());
+        cipher.size() + (RISTRETTO_COMPRESSED_SIZE * 2)
+    }
+
     // Get the compressed handle based on its role
     fn get_handle(&self, role: Role) -> &CompressedHandle {
         match role {
@@ -294,6 +300,11 @@ impl Serializer for UnknownExtraDataFormat {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(Self(Vec::read(reader)?))
     }
+
+    fn size(&self) -> usize {
+        // 2 represents the u16 size of the vector
+        2 + self.0.len()
+    }
 }
 
 impl Serializer for AEADCipher {
@@ -304,6 +315,11 @@ impl Serializer for AEADCipher {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(Self(Vec::read(reader)?))
     }
+
+    fn size(&self) -> usize {
+        // 2 represents the u16 size of the vector
+        2 + self.0.len()
+    }
 }
 
 impl Serializer for Cipher {
@@ -313,6 +329,11 @@ impl Serializer for Cipher {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(Self(Vec::read(reader)?))
+    }
+
+    fn size(&self) -> usize {
+        // 2 represents the u16 size of the vector
+        2 + self.0.len()
     }
 }
 

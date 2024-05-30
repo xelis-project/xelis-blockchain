@@ -68,8 +68,8 @@ pub enum GenerationError<T> {
     SenderIsReceiver,
     #[error("Extra data too large")]
     ExtraDataTooLarge,
-    #[error("Encrypted extra data is too large")]
-    EncryptedExtraDataTooLarge,
+    #[error("Encrypted extra data is too large, we got {0} bytes, limit is {1} bytes")]
+    EncryptedExtraDataTooLarge(usize, usize),
     #[error("Address is not on the same network as us")]
     InvalidNetwork,
     #[error("Extra data was provied with an integrated address")]
@@ -302,7 +302,7 @@ impl TransactionBuilder {
                         // 2 represents u16 length of UnknownExtraDataFormat
                         // We have both length has we move one in the other
                         // This mean new ExtraData version has 2 + 2 + 32 (sender) + 32 (receiver) bytes of overhead.
-                        size += 2 + 2 + (RISTRETTO_COMPRESSED_SIZE * 2) + extra_data.size();
+                        size += ExtraData::estimate_size(extra_data);
                     }
                 }
                 transfers.len()
@@ -597,7 +597,7 @@ impl TransactionBuilder {
                         let cipher = ExtraData::new(PlaintextData(bytes), source_keypair.get_public_key(), &transfer.destination);
                         let cipher_size = cipher.size();
                         if cipher_size > EXTRA_DATA_LIMIT_SIZE {
-                            return Err(GenerationError::EncryptedExtraDataTooLarge);
+                            return Err(GenerationError::EncryptedExtraDataTooLarge(cipher_size, EXTRA_DATA_LIMIT_SIZE));
                         }
 
                         total_cipher_size += cipher_size;
@@ -620,7 +620,7 @@ impl TransactionBuilder {
                 .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
             if total_cipher_size > EXTRA_DATA_LIMIT_SIZE {
-                return Err(GenerationError::EncryptedExtraDataTooLarge);
+                return Err(GenerationError::EncryptedExtraDataTooLarge(total_cipher_size, EXTRA_DATA_LIMIT_SIZE));
             }
 
             transfers
