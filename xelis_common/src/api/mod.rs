@@ -187,5 +187,7 @@ pub struct SplitAddressResult {
     // Normal address
     pub address: Address,
     // Encoded data from address
-    pub integrated_data: DataElement
+    pub integrated_data: DataElement,
+    // Integrated data size
+    pub size: usize
 }
