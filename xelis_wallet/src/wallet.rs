@@ -627,6 +627,10 @@ impl Wallet {
             reference = Some(cache.reference.clone());
         }
 
+        // Used to inject it in the state
+        // So once the state is applied, we verify if the last coinbase reward topoheight is still valid
+        let mut daemon_stable_topoheight = None;
+
         // Lets prevent any front running due to mining
         if reference.is_none() && used_assets.contains(&XELIS_ASSET) {
             if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight() {
@@ -659,6 +663,7 @@ impl Wallet {
 
                         storage.set_unconfirmed_balance_for(XELIS_ASSET, balance).await?;
                     }
+                    daemon_stable_topoheight = Some(stable_topoheight);
                 }
             }
         }
@@ -679,6 +684,10 @@ impl Wallet {
             reference,
             nonce
         );
+
+        if let Some(topoheight) = daemon_stable_topoheight {
+            state.set_stable_topoheight(topoheight);
+        }
 
         // Get all balances used
         for asset in used_assets {

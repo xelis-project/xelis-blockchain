@@ -227,7 +227,7 @@ impl NetworkHandler {
 
                     // Mark it as last coinbase reward topoheight
                     // it is internally checked if its higher or not
-                    storage.set_last_coinbase_reward_topoheight(topoheight)?;
+                    storage.set_last_coinbase_reward_topoheight(Some(topoheight))?;
 
                     if storage.has_transaction(entry.get_hash())? {
                         false

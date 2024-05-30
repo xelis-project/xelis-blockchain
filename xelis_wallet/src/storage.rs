@@ -810,15 +810,21 @@ impl EncryptedStorage {
 
     // Store the last coinbase reward topoheight
     // This is used to determine if we should use a stable balance or not
-    pub fn set_last_coinbase_reward_topoheight(&mut self, topoheight: u64) -> Result<()> {
-        trace!("set last coinbase reward topoheight to {}", topoheight);
-        if let Some(last_topo) = self.last_coinbase_reward_topoheight.filter(|v| *v > topoheight) {
-            debug!("last coinbase reward topoheight ({}) already set to a higher value ({}), ignoring", topoheight, last_topo);
-            return Ok(());
+    pub fn set_last_coinbase_reward_topoheight(&mut self, topoheight: Option<u64>) -> Result<()> {
+        trace!("set last coinbase reward topoheight to {:?}", topoheight);
+        if let Some(topoheight) = topoheight {
+            if let Some(last_topo) = self.last_coinbase_reward_topoheight.filter(|v| *v > topoheight) {
+                debug!("last coinbase reward topoheight ({}) already set to a higher value ({}), ignoring", topoheight, last_topo);
+                return Ok(());
+            }
+
+            self.save_to_disk(&self.extra, LCRT, &topoheight.to_be_bytes())?;
+        } else {
+            self.delete_from_disk(&self.extra, LCRT)?;
         }
 
-        self.last_coinbase_reward_topoheight = Some(topoheight);
-        self.save_to_disk(&self.extra, LCRT, &topoheight.to_be_bytes())
+        self.last_coinbase_reward_topoheight = topoheight;
+        Ok(())
     }
 
     // Get the last coinbase reward topoheight

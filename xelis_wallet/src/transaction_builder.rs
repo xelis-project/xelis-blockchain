@@ -46,7 +46,8 @@ pub struct TransactionBuilderState {
     balances: HashMap<Hash, Balance>,
     reference: Reference,
     nonce: u64,
-    tx_hash_built: Option<Hash>
+    tx_hash_built: Option<Hash>,
+    stable_topoheight: Option<u64>,
 }
 
 impl TransactionBuilderState {
@@ -59,7 +60,8 @@ impl TransactionBuilderState {
             balances: HashMap::new(),
             reference,
             nonce,
-            tx_hash_built: None
+            tx_hash_built: None,
+            stable_topoheight: None,
         }
     }
 
@@ -84,6 +86,12 @@ impl TransactionBuilderState {
         self.tx_hash_built = Some(tx_hash);
     }
 
+    // Set the stable topoheight detected during the TX building
+    pub fn set_stable_topoheight(&mut self, stable_topoheight: u64) {
+        self.stable_topoheight = Some(stable_topoheight);
+    }
+
+    // Apply the changes to the storage
     pub async fn apply_changes(&mut self, storage: &mut EncryptedStorage) -> Result<(), WalletError> {
         let last_tx_hash_created = self.tx_hash_built.take().ok_or(WalletError::TxNotBuilt)?;
         for (asset, balance) in self.balances.drain() {
@@ -95,6 +103,13 @@ impl TransactionBuilderState {
             nonce: self.nonce,
             last_tx_hash_created,
         });
+
+        // Lets verify if the last coinbase reward topoheight is still valid
+        if let Some(stable_topoheight) = self.stable_topoheight {
+            if storage.get_last_coinbase_reward_topoheight().is_some_and(|h| h < stable_topoheight) {
+                storage.set_last_coinbase_reward_topoheight(None)?;
+            }
+        }
 
         Ok(())
     }
