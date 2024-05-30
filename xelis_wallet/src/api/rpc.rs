@@ -19,6 +19,8 @@ use xelis_common::{
             StoreParams,
             TransactionResponse,
             SetOnlineModeParams,
+            EstimateExtraDataSizeParams,
+            EstimateExtraDataSizeResult,
         },
         SplitAddressParams,
         SplitAddressResult,
@@ -36,7 +38,7 @@ use xelis_common::{
         RPCHandler
     },
     serializer::Serializer,
-    transaction::builder::FeeBuilder
+    transaction::{builder::FeeBuilder, extra_data::ExtraData}
 };
 use serde_json::{Value, json};
 use crate::{
@@ -68,6 +70,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("set_offline_mode", async_handler!(set_offline_mode));
     handler.register_method("sign_data", async_handler!(sign_data));
     handler.register_method("estimate_fees", async_handler!(estimate_fees));
+    handler.register_method("estimate_extra_data_size", async_handler!(estimate_extra_data_size));
 
     // These functions allow to have an encrypted DB directly in the wallet storage
     // You can retrieve keys, values, have differents trees, and store values
@@ -150,6 +153,22 @@ async fn split_address(_: &Context, body: Value) -> Result<Value, InternalRpcErr
     Ok(json!(SplitAddressResult {
         address,
         integrated_data,
+        size
+    }))
+}
+
+// Estimate the extra data size for a list of destinations
+async fn estimate_extra_data_size(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: EstimateExtraDataSizeParams = parse_params(body)?;
+
+    let mut size = 0;
+    for data in &params.destinations {
+        if let Some(extra_data) = data.get_extra_data() {
+            size += ExtraData::estimate_size(extra_data)
+        }
+    }
+
+    Ok(json!(EstimateExtraDataSizeResult {
         size
     }))
 }
