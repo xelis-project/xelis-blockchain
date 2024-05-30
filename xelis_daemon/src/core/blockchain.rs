@@ -533,7 +533,7 @@ impl<S: Storage> Blockchain<S> {
 
         let block = self.build_block_from_header(Immutable::Owned(header)).await?;
         let block_height = block.get_height();
-        info!("Mined a new block {} at height {}", hash, block_height);
+        debug!("Mined a new block {} at height {}", hash, block_height);
         Ok(block)
     }
 
@@ -990,6 +990,16 @@ impl<S: Storage> Blockchain<S> {
         Ok(lowest_height)
     }
 
+    // Verify if the block is not too far from mainchain
+    // We calculate the distance from mainchain and compare it to the height
+    async fn verify_distance_from_mainchain<P>(&self, provider: &P, hash: &Hash, height: u64) -> Result<bool, BlockchainError>
+    where
+        P: DifficultyProvider + DagOrderProvider
+    {
+        let distance = self.calculate_distance_from_mainchain(provider, hash).await?;
+        Ok(!(distance <= height && height - distance >= STABLE_LIMIT))
+    }
+
     // Find tip work score internal for a block hash
     // this will recursively find all tips and their difficulty
     async fn find_tip_work_score_internal<'a, P>(&self, provider: &P, map: &mut HashMap<Hash, CumulativeDifficulty>, hash: &'a Hash, base_topoheight: u64) -> Result<(), BlockchainError>
@@ -1434,10 +1444,8 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
 
-                    let distance = self.calculate_distance_from_mainchain(storage, &hash).await?;
-                    debug!("Distance from mainchain for tip {} is {}", hash, distance);
-                    if distance <= current_height && current_height - distance >= STABLE_LIMIT {
-                        warn!("Tip {} is not selected for mining: too far from mainchain (distance: {}, height: {})", hash, distance, current_height);
+                    if !self.verify_distance_from_mainchain(storage, &hash, current_height).await? {
+                        warn!("Tip {} is not selected for mining: too far from mainchain at height: {}", hash, current_height);
                         continue;
                     }
                 }
@@ -1647,9 +1655,8 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("calculate distance from mainchain for tips: {}", hash);
-            let distance = self.calculate_distance_from_mainchain(storage, hash).await?;
-            if distance <= current_height && current_height - distance >= STABLE_LIMIT {
-                debug!("{} with hash {} have deviated too much, maximum allowed is {} (current height: {}, distance: {})", block, block_hash, STABLE_LIMIT, current_height, distance);
+            if !self.verify_distance_from_mainchain(storage, hash, current_height).await? {
+                debug!("{} with hash {} have deviated too much (current height: {})", block, block_hash, current_height);
                 return Err(BlockchainError::BlockDeviation)
             }
         }
@@ -2033,13 +2040,11 @@ impl<S: Storage> Blockchain<S> {
         let best_height = storage.get_height_for_block_hash(best_tip).await?;
         let mut new_tips = Vec::new();
         for hash in tips {
-            let distance = self.calculate_distance_from_mainchain(storage, &hash).await?;
-            trace!("tip base distance: {}, best height: {}", distance, best_height);
-            if distance <= current_height && current_height - distance >= STABLE_LIMIT {
-                warn!("Rusty TIP declared stale {} with best height: {}, tip base distance: {}", hash, best_height, distance);
-            } else {
+            if self.verify_distance_from_mainchain(storage, &hash, current_height).await? {
                 trace!("Adding {} as new tips", hash);
                 new_tips.push(hash);
+            } else {
+                warn!("Rusty TIP declared stale {} with best height: {}", hash, best_height);
             }
         }
 
