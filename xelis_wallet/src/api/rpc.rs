@@ -145,10 +145,12 @@ async fn split_address(_: &Context, body: Value) -> Result<Value, InternalRpcErr
 
     let (data, address) = address.extract_data();
     let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address"))?;
+    let size = integrated_data.size();
 
     Ok(json!(SplitAddressResult {
         address,
-        integrated_data
+        integrated_data,
+        size
     }))
 }
 
