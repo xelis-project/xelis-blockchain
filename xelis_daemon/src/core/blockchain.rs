@@ -17,6 +17,7 @@ use xelis_common::{
     },
     asset::AssetData,
     block::{
+        Algorithm,
         Block,
         BlockHeader,
         EXTRA_NONCE_SIZE
@@ -1370,11 +1371,6 @@ impl<S: Storage> Blockchain<S> {
         Ok(())
     }
 
-    // this will be used in future for hard fork versions
-    pub fn get_version_at_height(&self, _height: u64) -> u8 {
-        0
-    }
-
     // Get a block template for the new block work (mining)
     pub async fn get_block_template(&self, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
         let storage = self.storage.read().await;
@@ -1466,7 +1462,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
-        let block = BlockHeader::new(self.get_version_at_height(height), height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
+        let block = BlockHeader::new(get_version_at_height(height), height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
 
         Ok(block)
     }
@@ -1570,7 +1566,7 @@ impl<S: Storage> Blockchain<S> {
         let start = Instant::now();
 
         // Verify that the block is on the correct version
-        if block.get_version() != self.get_version_at_height(block.get_height()) {
+        if block.get_version() != get_version_at_height(block.get_height()) {
             return Err(BlockchainError::InvalidBlockVersion)
         }
 
@@ -2570,19 +2566,15 @@ pub fn get_block_dev_fee(height: u64) -> u64 {
     percentage
 }
 
-// Compute the combined merkle root of the tips
-// pub async fn build_merkle_tips_hash<'a, S: DifficultyProvider, I: Iterator<Item = &'a Hash> + ExactSizeIterator>(storage: &S, sorted_tips: I) -> Result<Hash, BlockchainError> {
-//     let mut merkles = Vec::with_capacity(sorted_tips.len());
-//     for hash in sorted_tips {
-//         let mut merkle_builder = MerkleBuilder::new();
-//         let header = storage.get_block_header_by_hash(hash).await?;
-//         merkle_builder.add(hash);
-//         merkle_builder.add(header.get_tips_merkle_hash());
-//         merkles.push(merkle_builder.build());
-//     }
+// This function returns the block version at a given height
+pub fn get_version_at_height(_height: u64) -> u8 {
+    0
+}
 
-//     Ok(get_combined_hash_for_tips(merkles.iter()))
-// }
+// This function returns the PoW algorithm at a given version
+pub fn get_pow_algorithm_for_version(_version: u8) -> Algorithm {
+    Algorithm::V1
+}
 
 #[cfg(test)]
 mod tests {

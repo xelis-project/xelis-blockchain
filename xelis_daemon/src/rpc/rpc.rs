@@ -6,6 +6,7 @@ use crate::{
     },
     core::{
         blockchain::{
+            get_pow_algorithm_for_version,
             get_block_dev_fee,
             get_block_reward,
             Blockchain
@@ -20,59 +21,7 @@ use crate::{
 use super::{InternalRpcError, ApiError};
 use xelis_common::{
     api::{
-        daemon::{
-            AccountHistoryEntry,
-            AccountHistoryType,
-            BlockType,
-            CreateMinerWorkParams,
-            CreateMinerWorkResult,
-            GetAccountAssetsParams,
-            GetAccountHistoryParams,
-            GetAccountRegistrationParams,
-            GetAccountsParams,
-            GetAssetParams,
-            GetAssetsParams,
-            GetBalanceAtTopoHeightParams,
-            GetBalanceParams,
-            GetBalanceResult,
-            GetStableBalanceResult,
-            GetBlockAtTopoHeightParams,
-            GetBlockByHashParams,
-            GetBlockTemplateParams,
-            GetBlockTemplateResult,
-            GetBlocksAtHeightParams,
-            GetDifficultyResult,
-            GetHeightRangeParams,
-            GetInfoResult,
-            GetMempoolCacheParams,
-            GetNonceAtTopoHeightParams,
-            GetNonceParams,
-            GetNonceResult,
-            GetPeersResponse,
-            GetTopBlockParams,
-            GetTopoHeightRangeParams,
-            GetTransactionParams,
-            GetTransactionsParams,
-            HasBalanceParams,
-            HasBalanceResult,
-            HasNonceParams,
-            HasNonceResult,
-            IsAccountRegisteredParams,
-            IsTxExecutedInBlockParams,
-            P2pStatusResult,
-            PeerEntry,
-            RPCBlockResponse,
-            SizeOnDiskResult,
-            SubmitBlockParams,
-            SubmitTransactionParams,
-            TransactionResponse,
-            ValidateAddressParams,
-            ValidateAddressResult,
-            ExtractKeyFromAddressParams,
-            ExtractKeyFromAddressResult,
-            GetTransactionExecutorParams,
-            GetTransactionExecutorResult
-        },
+        daemon::*,
         RPCTransaction,
         RPCTransactionType as RPCTransactionType,
         SplitAddressParams,
@@ -375,7 +324,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
 
     if allow_mining_methods {
         handler.register_method("get_block_template", async_handler!(get_block_template::<S>));
-        handler.register_method("create_miner_work", async_handler!(create_miner_work::<S>));
+        handler.register_method("get_miner_work", async_handler!(get_miner_work::<S>));
         handler.register_method("submit_block", async_handler!(submit_block::<S>));
     }
 }
@@ -461,16 +410,24 @@ async fn get_block_template<S: Storage>(context: &Context, body: Value) -> Resul
     Ok(json!(GetBlockTemplateResult { template: block.to_hex(), height, topoheight, difficulty }))
 }
 
-async fn create_miner_work<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
-    let params: CreateMinerWorkParams = parse_params(body)?;
-    
+async fn get_miner_work<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: GetMinerWorkParams = parse_params(body)?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
     let header = BlockHeader::from_hex(params.template.into_owned())?;
+    let (difficulty, _) = {
+        let storage = blockchain.get_storage().read().await;
+        blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?
+    };
+    let version = header.get_version();
+    let height = header.get_height();
+
     let mut work = MinerWork::from_block(header);
     if let Some(address) = params.address {
         if !address.is_normal() {
             return Err(InternalRpcError::InvalidParamsAny(ApiError::ExpectedNormalAddress.into()))
         }
-    
+
         let blockchain: &Arc<Blockchain<S>> = context.get()?;
         if address.is_mainnet() != blockchain.get_network().is_mainnet() {
             return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
@@ -479,7 +436,10 @@ async fn create_miner_work<S: Storage>(context: &Context, body: Value) -> Result
         work.set_miner(Cow::Owned(address.into_owned().to_public_key()));
     }
 
-    Ok(json!(CreateMinerWorkResult { miner_work: work.to_hex() }))
+    let algorithm = get_pow_algorithm_for_version(version);
+    let topoheight = blockchain.get_topo_height();
+
+    Ok(json!(GetMinerWorkResult { miner_work: work.to_hex(), algorithm, difficulty, height, topoheight }))
 }
 
 async fn submit_block<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
