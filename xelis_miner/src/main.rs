@@ -36,13 +36,11 @@ use xelis_common::{
         SubmitMinerWorkParams,
     },
     async_handler,
-    block::MinerWork,
+    block::{MinerWork, Worker, Algorithm},
     config::VERSION,
     crypto::{
         Address,
         Hash,
-        Hashable,
-        ScratchPad
     },
     difficulty::{
         check_difficulty_against_target,
@@ -136,7 +134,7 @@ pub struct MinerConfig {
 
 #[derive(Clone)]
 enum ThreadNotification<'a> {
-    NewJob(MinerWork<'a>, Difficulty, u64), // block work, difficulty, height
+    NewJob(Algorithm, MinerWork<'a>, Difficulty, u64), // POW algorithm, block work, difficulty, height
     WebSocketClosed, // WebSocket connection has been closed
     Exit // all threads must stop
 }
@@ -232,15 +230,19 @@ fn benchmark(threads: usize, iterations: usize) {
         let start = Instant::now();
         let mut handles = vec![];
         for _ in 0..bench {
-            let mut job = MinerWork::new(Hash::zero(), get_current_time_in_millis());
+            let job = MinerWork::new(Hash::zero(), get_current_time_in_millis());
+            let mut worker = Worker::new();
+            worker.set_work(job, Algorithm::V1).unwrap();
+
             let handle = thread::spawn(move || {
-                let mut scratch_pad = ScratchPad::default();
+                let mut tries = 0;
                 for _ in 0..iterations {
-                    let _ = job.get_pow_hash(&mut scratch_pad).unwrap();
-                    job.increase_nonce().unwrap();
-                    if job.nonce() % UPDATE_EVERY_NONCE == 0 {
-                        job.set_timestamp(get_current_time_in_millis()).unwrap();
+                    let _ = worker.get_pow_hash().unwrap();
+                    worker.increase_nonce().unwrap();
+                    if tries % UPDATE_EVERY_NONCE == 0 {
+                        worker.set_timestamp(get_current_time_in_millis()).unwrap();
                     }
+                    tries += 1;
                 }
             });
             handles.push(handle);
@@ -341,10 +343,10 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
             match serde_json::from_slice::<SocketMessage>(text.as_bytes())? {
                 SocketMessage::NewJob(job) => {
                     info!("New job received: difficulty {} at height {}", format_difficulty(job.difficulty), job.height);
-                    let block = MinerWork::from_hex(job.template).context("Error while decoding new job received from daemon")?;
+                    let block = MinerWork::from_hex(job.miner_work).context("Error while decoding new job received from daemon")?;
                     CURRENT_TOPO_HEIGHT.store(job.topoheight, Ordering::SeqCst);
 
-                    if let Err(e) = job_sender.send(ThreadNotification::NewJob(block, job.difficulty, job.height)) {
+                    if let Err(e) = job_sender.send(ThreadNotification::NewJob(job.algorithm, block, job.difficulty, job.height)) {
                         error!("Error while sending new job to threads: {}", e);
                     }
                 },
@@ -379,10 +381,9 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
 fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotification<'static>>, block_sender: mpsc::Sender<MinerWork<'static>>) -> Result<(), Error> {
     let builder = thread::Builder::new().name(format!("Mining Thread #{}", id));
     builder.spawn(move || {
-        let mut job: MinerWork;
+        let mut worker = Worker::new();
         let mut hash: Hash;
 
-        let mut scratch_pad = ScratchPad::default();
         info!("Mining Thread #{}: started", id);
         'main: loop {
             let message = match job_receiver.blocking_recv() {
@@ -409,12 +410,12 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
                     info!("Exiting Mining Thread #{}...", id);
                     break 'main;
                 },
-                ThreadNotification::NewJob(new_job, expected_difficulty, height) => {
+                ThreadNotification::NewJob(algorithm, mut new_job, expected_difficulty, height) => {
                     debug!("Mining Thread #{} received a new job", id);
-                    job = new_job;
                     // set thread id in extra nonce for more work spread between threads
                     // u16 support up to 65535 threads
-                    job.set_thread_id_u16(id);
+                    new_job.set_thread_id_u16(id);
+                    worker.set_work(new_job, algorithm).unwrap();
 
                     let difficulty_target = match compute_difficulty_target(&expected_difficulty) {
                         Ok(value) => value,
@@ -425,25 +426,29 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
                     };
 
                     // Solve block
-                    hash = job.get_pow_hash(&mut scratch_pad).unwrap();
+                    hash = worker.get_pow_hash().unwrap();
+                    let mut tries = 0;
                     while !check_difficulty_against_target(&hash, &difficulty_target) {
-                        job.increase_nonce().unwrap();
+                        worker.increase_nonce().unwrap();
                         // check if we have a new job pending
                         // Only update every N iterations to avoid too much CPU usage
-                        if job.nonce() % UPDATE_EVERY_NONCE == 0 {
+                        if tries % UPDATE_EVERY_NONCE == 0 {
                             if !job_receiver.is_empty() {
                                 continue 'main;
                             }
-                            job.set_timestamp(get_current_time_in_millis()).unwrap();
+                            worker.set_timestamp(get_current_time_in_millis()).unwrap();
                             HASHRATE_COUNTER.fetch_add(UPDATE_EVERY_NONCE as usize, Ordering::SeqCst);
                         }
 
-                        hash = job.get_pow_hash(&mut scratch_pad).unwrap();
+                        hash = worker.get_pow_hash().unwrap();
+                        tries += 1;
                     }
 
                     // compute the reference hash for easier finding of the block
-                    let block_hash = job.hash();
+                    let block_hash = worker.get_block_hash().unwrap();
                     info!("Thread #{}: block {} found at height {} with difficulty {}", id, block_hash, height, format_difficulty(difficulty_from_hash(&hash)));
+
+                    let job = worker.take_work().unwrap();
                     if let Err(_) = block_sender.blocking_send(job) {
                         error!("Mining Thread #{}: error while sending block found with hash {}", id, block_hash);
                         continue 'main;
