@@ -635,8 +635,9 @@ Block Header can be serialized/deserialized using following order on byte array:
 }
 ```
 
-#### Create Miner Work
-Create a work for miner based on a block template set in parameter.
+#### Get Miner Work
+Get a miner work based on a block template set in parameter.
+It is working the same as GetWork Server
 
 A `MinerWork` struct is created from the block header work hash which represent the immutable part.
 
@@ -646,7 +647,11 @@ For the mutable part that can be updated by the miner we have the following fiel
 - miner key (32 bytes)
 - extra nonce (32 bytes)
 
-##### Method `create_miner_work`
+NOTE: `topoheight` field is only the current node topoheight, it is included for visual only.
+
+Due to DAG, you are not mining on a topoheight (which is set later dynamically by DAG order) but on a height.
+
+##### Method `get_miner_work`
 
 ##### Parameters
 |   Name   |      Type     | Required |                               Note                              |
@@ -658,7 +663,7 @@ For the mutable part that can be updated by the miner we have the following fiel
 ```json
 {
 	"jsonrpc": "2.0",
-	"method": "create_miner_work",
+	"method": "get_miner_work",
 	"id": 1,
 	"params": {
 		"template": "00000000000000c19a0000018f2c14497300000000000000005dc86515e4adbb394b11dcdd25efcb78a08729b6230065dbb9a3c85f960af89901a0ea4d7c7dee70a12b14e95c1385e06ecd6a14e1a63a8302ce3c1e4dd7994c2f00006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66",
@@ -673,6 +678,10 @@ For the mutable part that can be updated by the miner we have the following fiel
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": {
+		"algorithm": 0,
+		"height": 57,
+		"difficulty": "27915000",
+		"topoheight": 68,
 		"miner_work": "dd7cbd9dbb0854a66c455963050e5cf7fb22f3c4ba5d4a26d142d80ba70418cc0000018f2c14497300000000000000005dc86515e4adbb394b11dcdd25efcb78a08729b6230065dbb9a3c85f960af8996423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66"
 	}
 }
