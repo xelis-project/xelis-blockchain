@@ -4,7 +4,7 @@ mod miner;
 
 pub use header::BlockHeader;
 pub use block::Block;
-pub use miner::MinerWork;
+pub use miner::{MinerWork, Worker, Algorithm};
 
 use crate::crypto::{Hash, HASH_SIZE};
 

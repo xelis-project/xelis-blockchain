@@ -13,7 +13,7 @@ use serde::{
 };
 use crate::{
     account::{CiphertextCache, VersionedBalance, VersionedNonce},
-    block::EXTRA_NONCE_SIZE,
+    block::{EXTRA_NONCE_SIZE, Algorithm},
     crypto::{Address, Hash},
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
@@ -110,17 +110,11 @@ pub struct GetBlockTemplateParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct CreateMinerWorkParams<'a> {
+pub struct GetMinerWorkParams<'a> {
     // Block Template in hexadecimal format
     pub template: Cow<'a, String>,
     // Address of the miner, if empty, it will use the address from template
     pub address: Option<Cow<'a, Address>>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct CreateMinerWorkResult {
-    // MinerWork struct in hexadecimal format
-    pub miner_work: String
 }
 
 #[derive(Serialize, Deserialize)]
@@ -138,15 +132,17 @@ pub struct GetBlockTemplateResult {
 
 #[derive(Serialize, Deserialize, PartialEq)]
 pub struct GetMinerWorkResult {
+    // algorithm to use
+    pub algorithm: Algorithm,
     // template is miner job in hex format
-    pub template: String,
+    pub miner_work: String,
     // block height
     pub height: u64,
+    // difficulty required for valid block POW
+    pub difficulty: Difficulty,
     // topoheight of the daemon
     // this is for visual purposes only
     pub topoheight: u64,
-    // difficulty required for valid block POW
-    pub difficulty: Difficulty
 }
 
 #[derive(Serialize, Deserialize)]
