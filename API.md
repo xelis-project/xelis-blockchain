@@ -1190,7 +1190,7 @@ The reference (block hash, topoheight) is also included in the response.
 {
 	"jsonrpc": "2.0",
 	"id": 1,
-	"method": "get_balance",
+	"method": "get_stable_balance",
 	"params": {
 		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
 		"asset": "0000000000000000000000000000000000000000000000000000000000000000"
