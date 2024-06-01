@@ -1194,14 +1194,19 @@ impl<S: Storage> Blockchain<S> {
         I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
         I::IntoIter: ExactSizeIterator
     {
+        // Get the height at the tips
+        let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
+
+        // Get the version at the current height
+        let version = get_version_at_height(height);
+
         if tips.len() == 0 { // Genesis difficulty
-            return Ok((GENESIS_BLOCK_DIFFICULTY, difficulty::P))
+            return Ok((GENESIS_BLOCK_DIFFICULTY, difficulty::get_covariance_p(version)))
         }
 
-        let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
         // Simulator is enabled, don't calculate difficulty
         if height <= 1 || self.is_simulator_enabled() {
-            return Ok((get_minimum_difficulty(self.get_network()), difficulty::P))
+            return Ok((get_minimum_difficulty(self.get_network()), difficulty::get_covariance_p(version)))
         }
 
         // Search the highest difficulty available
@@ -1219,7 +1224,8 @@ impl<S: Storage> Blockchain<S> {
 
         // Get the minimum difficulty configured
         let minimum_difficulty = get_minimum_difficulty(self.get_network());
-        let (difficulty, p_new) = difficulty::calculate_difficulty(parent_newest_tip_timestamp, newest_tip_timestamp, biggest_difficulty, p, minimum_difficulty);
+
+        let (difficulty, p_new) = difficulty::calculate_difficulty(parent_newest_tip_timestamp, newest_tip_timestamp, biggest_difficulty, p, minimum_difficulty, version);
         Ok((difficulty, p_new))
     }
 
