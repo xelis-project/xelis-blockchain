@@ -2426,11 +2426,18 @@ impl<S: Storage> Blockchain<S> {
         } else {
             0
         };
-        let (new_height, new_topoheight, txs) = storage.pop_blocks(current_height, current_topoheight, count, until).await?;
+        let (new_height, new_topoheight, mut txs) = storage.pop_blocks(current_height, current_topoheight, count, until).await?;
         debug!("New topoheight: {} (diff: {})", new_topoheight, current_topoheight - new_topoheight);
+
+        // Clean mempool from old txs if the DAG has been updated
+        {
+            let mut mempool = self.mempool.write().await;
+            txs.extend(mempool.drain());
+        }
 
         // Try to add all txs back to mempool if possible
         // We try to prevent lost/to be orphaned
+        // We try to add back all txs already in mempool just in case
         {
             for (hash, tx) in txs {
                 debug!("Trying to add TX {} to mempool again", hash);
@@ -2439,7 +2446,6 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
         }
-
         self.height.store(new_height, Ordering::Release);
         self.topoheight.store(new_topoheight, Ordering::Release);
         // update stable height if it's allowed

@@ -262,6 +262,18 @@ impl Mempool {
         self.caches.clear();
     }
 
+    // Drain all txs from mempool
+    pub fn drain(&mut self) -> Vec<(Hash, Arc<Transaction>)> {
+        let mut txs = Vec::with_capacity(self.txs.len());
+        for (hash, sorted_tx) in self.txs.drain() {
+            txs.push((hash.as_ref().clone(), sorted_tx.consume()));
+        }
+
+        self.caches.clear();
+
+        txs
+    }
+
     // delete all old txs not compatible anymore with current state of chain
     // this is called when a new block is added to the chain
     // Because of DAG reorg, we can't only check updated keys from new block,
