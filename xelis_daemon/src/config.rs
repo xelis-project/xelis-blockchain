@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
 use xelis_common::{
-    api::daemon::DevFeeThreshold,
+    api::daemon::{DevFeeThreshold, HardFork},
     crypto::{
         Address,
         Hash,
@@ -170,40 +170,15 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 // Millis
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
-// Genesis block to have the same starting point for every nodes
-// Genesis block in hexadecimal format
-const MAINNET_GENESIS_BLOCK: &str = "0000000000000000000000018efc057580000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
-const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018f116b47cf000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
-
-// Genesis block getter
-// This is necessary to prevent having the same Genesis Block for differents network
-// Dev returns none to generate a new genesis block each time it starts a chain
-pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
-    match network {
-        Network::Mainnet => Some(MAINNET_GENESIS_BLOCK),
-        Network::Testnet => Some(TESTNET_GENESIS_BLOCK),
-        Network::Dev => None
+// Hard Forks configured
+pub const HARD_FORKS: [HardFork; 1] = [
+    HardFork {
+        height: 0,
+        version: 0,
+        changelog: "Initial version",
     }
-}
+];
 
-lazy_static! {
-    // Developer public key is lazily converted from address to support any network
-    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
-}
-
-// Genesis block hash for both networks
-// It must be the same as the hash of the genesis block
-const MAINNET_GENESIS_BLOCK_HASH: Hash = Hash::new([175, 118, 37, 203, 175, 200, 25, 148, 9, 202, 29, 120, 93, 128, 36, 209, 146, 193, 217, 36, 61, 51, 24, 194, 114, 113, 121, 208, 237, 163, 27, 55]);
-const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([171, 50, 219, 186, 28, 164, 189, 225, 197, 167, 187, 143, 213, 59, 217, 238, 51, 242, 133, 181, 188, 235, 151, 50, 110, 33, 185, 188, 100, 146, 23, 132]);
-
-// Genesis block hash based on network selected
-pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
-    match network {
-        Network::Mainnet => &MAINNET_GENESIS_BLOCK_HASH,
-        Network::Testnet => &TESTNET_GENESIS_BLOCK_HASH,
-        Network::Dev => panic!("Dev network has no fix genesis block hash"),
-    }
-}
 
 // Mainnet seed nodes
 const MAINNET_SEED_NODES: [&str; 7] = [
@@ -228,6 +203,41 @@ const TESTNET_SEED_NODES: [&str; 1] = [
     // US
     "74.208.251.149:2125",
 ];
+
+// Genesis block to have the same starting point for every nodes
+// Genesis block in hexadecimal format
+const MAINNET_GENESIS_BLOCK: &str = "0000000000000000000000018efc057580000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
+const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018f116b47cf000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
+
+// Genesis block hash for both networks
+// It must be the same as the hash of the genesis block
+const MAINNET_GENESIS_BLOCK_HASH: Hash = Hash::new([175, 118, 37, 203, 175, 200, 25, 148, 9, 202, 29, 120, 93, 128, 36, 209, 146, 193, 217, 36, 61, 51, 24, 194, 114, 113, 121, 208, 237, 163, 27, 55]);
+const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([171, 50, 219, 186, 28, 164, 189, 225, 197, 167, 187, 143, 213, 59, 217, 238, 51, 242, 133, 181, 188, 235, 151, 50, 110, 33, 185, 188, 100, 146, 23, 132]);
+
+// Genesis block getter
+// This is necessary to prevent having the same Genesis Block for differents network
+// Dev returns none to generate a new genesis block each time it starts a chain
+pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
+    match network {
+        Network::Mainnet => Some(MAINNET_GENESIS_BLOCK),
+        Network::Testnet => Some(TESTNET_GENESIS_BLOCK),
+        Network::Dev => None
+    }
+}
+
+lazy_static! {
+    // Developer public key is lazily converted from address to support any network
+    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
+}
+
+// Genesis block hash based on network selected
+pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
+    match network {
+        Network::Mainnet => &MAINNET_GENESIS_BLOCK_HASH,
+        Network::Testnet => &TESTNET_GENESIS_BLOCK_HASH,
+        Network::Dev => panic!("Dev network has no fix genesis block hash"),
+    }
+}
 
 // Get seed nodes based on the network used
 pub const fn get_seed_nodes(network: &Network) -> &[&str] {
