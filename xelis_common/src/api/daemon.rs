@@ -464,6 +464,16 @@ pub struct DevFeeThreshold {
     pub fee_percentage: u64
 }
 
+// Struct to define hard fork
+pub struct HardFork {
+    // block height to start hard fork
+    pub height: u64,
+    // Block version to use
+    pub version: u8,
+    // All the changes that will be applied
+    pub changelog: &'static str
+}
+
 // Struct to returns the size of the blockchain on disk
 #[derive(Serialize, Deserialize)]
 pub struct SizeOnDiskResult {
