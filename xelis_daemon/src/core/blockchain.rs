@@ -1724,15 +1724,15 @@ impl<S: Storage> Blockchain<S> {
                 debug!("Verifying TX {}", tx_hash);
                 // check that the TX included is not executed in stable height or in block TIPS
                 if chain_state.get_storage().is_tx_executed_in_a_block(hash)? {
-                    let block_executed = chain_state.get_storage().get_block_executor_for_tx(hash)?;
-                    debug!("Tx {} was executed in {}", hash, block_executed);
-                    let block_height = chain_state.get_storage().get_height_for_block_hash(&block_executed).await?;
+                    let block_executor = chain_state.get_storage().get_block_executor_for_tx(hash)?;
+                    debug!("Tx {} was executed in {}", hash, block_executor);
+                    let block_executor_height = chain_state.get_storage().get_height_for_block_hash(&block_executor).await?;
                     // if the tx was executed below stable height, reject whole block!
-                    if block_height <= stable_height {
-                        debug!("Block {} contains a dead tx {}", block_hash, tx_hash);
-                        return Err(BlockchainError::DeadTx(tx_hash))
+                    if block_executor_height <= stable_height {
+                        debug!("Block {} contains a dead tx {} from stable height {}", block_hash, tx_hash, stable_height);
+                        return Err(BlockchainError::DeadTxFromStableHeight(block_hash, tx_hash, stable_height, block_executor))
                     } else {
-                        debug!("Tx {} was executed in block {} at height {} (stable height: {})", tx_hash, block, block_height, stable_height);
+                        debug!("Tx {} was executed in block {} at height {} (stable height: {})", tx_hash, block, block_executor_height, stable_height);
                         // now we should check that the TX was not executed in our TIP branch
                         // because that mean the miner was aware of the TX execution and still include it
                         if all_parents_txs.is_none() {
@@ -1746,7 +1746,7 @@ impl<S: Storage> Blockchain<S> {
                             // reject the whole block
                             if txs.contains(&tx_hash) {
                                 debug!("Malicious Block {} formed, contains a dead tx {}", block_hash, tx_hash);
-                                return Err(BlockchainError::DeadTx(tx_hash))
+                                return Err(BlockchainError::DeadTxFromTips(block_hash, tx_hash))
                             } else {
                                 // otherwise, all looks good but because the TX was executed in another branch, we skip verification
                                 // DAG will choose which branch will execute the TX

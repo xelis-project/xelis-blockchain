@@ -1135,17 +1135,17 @@ impl<S: Storage> P2pServer<S> {
         debug!("Starting blocks processing task");
         let mut server_exit = self.exit_sender.subscribe();
 
-        loop {
+        'main: loop {
             select! {
                 biased;
                 _ = server_exit.recv() => {
                     debug!("Exit message received, stopping blocks processing task");
-                    break;
+                    break 'main;
                 }
                 msg = receiver.recv() => {
                     let Some((peer, header, block_hash)) = msg else {
                         debug!("No more blocks to process, stopping blocks processing task");
-                        break;
+                        break 'main;
                     };
 
                     let mut response_blockers: Vec<ResponseBlocker> = Vec::new();
@@ -1166,7 +1166,7 @@ impl<S: Storage> P2pServer<S> {
                             if let Err(e) = self.object_tracker.request_object_from_peer(Arc::clone(&peer), ObjectRequest::Transaction(hash.clone()), false).await {
                                     error!("Error while requesting TX {} to {} for block {}: {}", hash, peer, block_hash, e);
                                     peer.increment_fail_count();
-                                    continue;
+                                    continue 'main;
                             }
 
                             if let Some(response_blocker) = self.object_tracker.get_response_blocker_for_requested_object(hash).await {
@@ -1179,7 +1179,9 @@ impl<S: Storage> P2pServer<S> {
                     for mut blocker in response_blockers {
                         if let Err(e) = blocker.recv().await {
                             // It's mostly a closed channel error, so we can ignore it
-                            debug!("Error while waiting on response blocker: {}", e);
+                            warn!("Error while waiting on response blocker: {}", e);
+                            peer.increment_fail_count();
+                            continue 'main;
                         }
                     }
 
@@ -1189,7 +1191,7 @@ impl<S: Storage> P2pServer<S> {
                         Err(e) => {
                             error!("Error while building block {} from peer {}: {}", block_hash, peer, e);
                             peer.increment_fail_count();
-                            continue;
+                            continue 'main;
                         }
                     };
         
@@ -2025,6 +2027,10 @@ impl<S: Storage> P2pServer<S> {
         // merge both list together
         blocks.extend(top_blocks);
 
+        if pop_count > 0 {
+            warn!("{} sent us a pop count request of {} with {} blocks", peer, pop_count, blocks_len);
+        }
+
         // if node asks us to pop blocks, check that the peer's height/topoheight is in advance on us
         let peer_topoheight = peer.get_topoheight();
         if pop_count > 0
@@ -2347,7 +2353,7 @@ impl<S: Storage> P2pServer<S> {
             // or, check that peer height as difference of maximum 1 block
             // (block height is always + 1 above the highest tip height, so we can just check that peer height is not above block height + 1, it's enough in 90% of time)
             // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
-            if (peer_height >= block.get_height() && peer_height - block.get_height() < STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
+            if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
                 trace!("locking blocks propagation for peer {}", peer);
                 let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
                 trace!("end locking blocks propagation for peer {}", peer);

@@ -275,8 +275,10 @@ pub enum BlockchainError {
     NoNonceChanges(Address),
     #[error("Overflow detected")]
     Overflow,
-    #[error("Error, block include a dead tx {}", _0)]
-    DeadTx(Hash),
+    #[error("Error, block {} include a dead tx {} from stable height {} executed in block {}", _0, _1, _2, _3)]
+    DeadTxFromStableHeight(Hash, Hash, u64, Hash),
+    #[error("Error, block {} include a dead tx from tips {}", _0, _1)]
+    DeadTxFromTips(Hash, Hash),
     #[error("A non-zero value is required for burn")]
     NoValueForBurn,
     #[error("TX {} is already in blockchain", _0)]
