@@ -1,9 +1,22 @@
 use xelis_common::block::Algorithm;
+use crate::config::HARD_FORKS;
 
 // Get the version of the hard fork at a given height
 // and returns true if there is a hard fork (version change) at that height
-pub fn has_hard_fork_at_height(_height: u64) -> (bool, u8) {
-    (false, 0)
+pub fn has_hard_fork_at_height(height: u64) -> (bool, u8) {
+    let mut version = 0;
+    let mut hard_fork = false;
+    for hardfork in HARD_FORKS {
+        if height >= hardfork.height {
+            version = hardfork.version;
+        }
+
+        if height == hardfork.height {
+            hard_fork = true;
+            break;
+        }
+    }
+    (hard_fork, version)
 }
 
 // This function returns the block version at a given height
