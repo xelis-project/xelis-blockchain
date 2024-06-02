@@ -6,11 +6,11 @@ use crate::{
     },
     core::{
         blockchain::{
-            get_pow_algorithm_for_version,
             get_block_dev_fee,
             get_block_reward,
             Blockchain
         },
+        hard_fork::get_pow_algorithm_for_version,
         error::BlockchainError,
         mempool::Mempool,
         storage::Storage

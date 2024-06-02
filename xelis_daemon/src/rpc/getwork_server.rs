@@ -64,7 +64,8 @@ use xelis_common::{
 };
 use crate::{
     core::{
-        blockchain::{get_pow_algorithm_for_version, Blockchain},
+        blockchain::Blockchain,
+        hard_fork::get_pow_algorithm_for_version,
         storage::Storage
     },
     config::{

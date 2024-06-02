@@ -17,7 +17,6 @@ use xelis_common::{
     },
     asset::AssetData,
     block::{
-        Algorithm,
         Block,
         BlockHeader,
         EXTRA_NONCE_SIZE
@@ -68,6 +67,7 @@ use crate::{
         storage::{DagOrderProvider, DifficultyProvider, Storage},
         tx_selector::{TxSelector, TxSelectorEntry},
         state::{ChainState, ApplicableChainState},
+        hard_fork::*
     },
     p2p::P2pServer,
     rpc::{
@@ -1198,14 +1198,14 @@ impl<S: Storage> Blockchain<S> {
         let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
 
         // Get the version at the current height
-        let version = get_version_at_height(height);
+        let (has_hard_fork, version) = has_hard_fork_at_height(height);
 
         if tips.len() == 0 { // Genesis difficulty
             return Ok((GENESIS_BLOCK_DIFFICULTY, difficulty::get_covariance_p(version)))
         }
 
         // Simulator is enabled, don't calculate difficulty
-        if height <= 1 || self.is_simulator_enabled() {
+        if height <= 1 || self.is_simulator_enabled() || has_hard_fork {
             return Ok((get_minimum_difficulty(self.get_network()), difficulty::get_covariance_p(version)))
         }
 
@@ -2446,6 +2446,7 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
         }
+
         self.height.store(new_height, Ordering::Release);
         self.topoheight.store(new_topoheight, Ordering::Release);
         // update stable height if it's allowed
@@ -2576,16 +2577,6 @@ pub fn get_block_dev_fee(height: u64) -> u64 {
     }
 
     percentage
-}
-
-// This function returns the block version at a given height
-pub fn get_version_at_height(_height: u64) -> u8 {
-    0
-}
-
-// This function returns the PoW algorithm at a given version
-pub fn get_pow_algorithm_for_version(_version: u8) -> Algorithm {
-    Algorithm::V1
 }
 
 #[cfg(test)]
