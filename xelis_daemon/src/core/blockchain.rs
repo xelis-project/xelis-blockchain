@@ -520,7 +520,8 @@ impl<S: Storage> Blockchain<S> {
             let (difficulty, _) = self.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await?;
             (block, difficulty)
         };
-        let mut hash = header.get_pow_hash()?;
+        let algorithm = get_pow_algorithm_for_version(header.get_version());
+        let mut hash = header.get_pow_hash(algorithm)?;
         let mut current_height = self.get_height();
         while !self.is_simulator_enabled() && !check_difficulty(&hash, &difficulty)? {
             if self.get_height() != current_height {
@@ -529,7 +530,7 @@ impl<S: Storage> Blockchain<S> {
             }
             header.nonce += 1;
             header.timestamp = get_current_time_in_millis();
-            hash = header.get_pow_hash()?;
+            hash = header.get_pow_hash(algorithm)?;
         }
 
         let block = self.build_block_from_header(Immutable::Owned(header)).await?;
@@ -1571,8 +1572,11 @@ impl<S: Storage> Blockchain<S> {
     pub async fn add_new_block_for_storage(&self, storage: &mut S, block: Block, broadcast: bool, mining: bool) -> Result<(), BlockchainError> {
         let start = Instant::now();
 
+        // Expected version for this block
+        let version = get_version_at_height(block.get_height());
+
         // Verify that the block is on the correct version
-        if block.get_version() != get_version_at_height(block.get_height()) {
+        if block.get_version() != version {
             return Err(BlockchainError::InvalidBlockVersion)
         }
 
@@ -1682,7 +1686,8 @@ impl<S: Storage> Blockchain<S> {
             // Simulator is enabled, we don't need to compute the PoW hash
             Hash::zero()
         } else {
-            block.get_pow_hash()?
+            let algorithm = get_pow_algorithm_for_version(version);
+            block.get_pow_hash(algorithm)?
         };
         debug!("POW hash: {}, skipped: {}", pow_hash, skip_pow);
         let (difficulty, p) = self.verify_proof_of_work(storage, &pow_hash, block.get_tips().iter()).await?;

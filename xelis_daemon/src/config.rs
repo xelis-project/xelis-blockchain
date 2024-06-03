@@ -179,7 +179,6 @@ pub const HARD_FORKS: [HardFork; 1] = [
     }
 ];
 
-
 // Mainnet seed nodes
 const MAINNET_SEED_NODES: [&str; 7] = [
     // France
