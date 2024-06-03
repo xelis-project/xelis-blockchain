@@ -6,24 +6,25 @@ use crate::{
     crypto::{
         elgamal::RISTRETTO_COMPRESSED_SIZE,
         hash,
-        pow_hash_with_scratch_pad,
-        AlignedInput,
         Hash,
         Hashable,
         PublicKey,
-        ScratchPad,
-        XelisHashError
     },
     serializer::{Reader, ReaderError, Serializer, Writer},
     time::TimestampMillis,
+};
+use xelis_hash::{
+    Error as XelisHashError,
+    v1,
+    v2,
 };
 
 use super::{BlockHeader, BLOCK_WORK_SIZE, EXTRA_NONCE_SIZE};
 
 pub enum WorkVariant {
     Uninitialized,
-    V1(ScratchPad, [u8; BLOCK_WORK_SIZE]),
-    V2()
+    V1(v1::ScratchPad, [u8; BLOCK_WORK_SIZE]),
+    V2(v2::ScratchPad, [u8; BLOCK_WORK_SIZE]),
 }
 
 impl WorkVariant {
@@ -31,7 +32,7 @@ impl WorkVariant {
         Some(match self {
             WorkVariant::Uninitialized => return None,
             WorkVariant::V1(_, _) => Algorithm::V1,
-            WorkVariant::V2() => Algorithm::V2
+            WorkVariant::V2(_, _) => Algorithm::V2
         })
     }
 }
@@ -93,21 +94,24 @@ impl<'a> Worker<'a> {
         if self.variant.get_algorithm() != Some(kind) {
             match kind {
                 Algorithm::V1 => {
-                    let scratch_pad = ScratchPad::default();
+                    let scratch_pad = v1::ScratchPad::default();
                     let mut slice = [0u8; BLOCK_WORK_SIZE];
                     slice.copy_from_slice(&work.to_bytes());
     
                     self.variant = WorkVariant::V1(scratch_pad, slice);
                 },
                 Algorithm::V2 => {
-                    self.variant = WorkVariant::V2();
+                    let scratch_pad = v2::ScratchPad::default();
+                    let mut slice = [0u8; BLOCK_WORK_SIZE];
+                    slice.copy_from_slice(&work.to_bytes());
+                    self.variant = WorkVariant::V2(scratch_pad, slice);
                 }
             }
         } else {
             match &mut self.variant {
                 WorkVariant::Uninitialized => unreachable!(),
                 WorkVariant::V1(_, input) => input.copy_from_slice(&work.to_bytes()),
-                WorkVariant::V2() => unimplemented!()
+                WorkVariant::V2(_, input) => input.copy_from_slice(&work.to_bytes()),
             };
         }
         self.work = Some(work);
@@ -123,9 +127,7 @@ impl<'a> Worker<'a> {
                 match &mut self.variant {
                     WorkVariant::Uninitialized => return Err(WorkerError::Uninitialized),
                     WorkVariant::V1(_, input) => input[40..48].copy_from_slice(&work.nonce().to_be_bytes()),
-                    WorkVariant::V2() => {
-                        unimplemented!()
-                    }
+                    WorkVariant::V2(_, input) => input[40..48].copy_from_slice(&work.nonce().to_be_bytes())
                 }
             },
             None => return Err(WorkerError::MissingWork)
@@ -142,9 +144,7 @@ impl<'a> Worker<'a> {
                 match &mut self.variant {
                     WorkVariant::Uninitialized => return Err(WorkerError::Uninitialized),
                     WorkVariant::V1(_, input) => input[32..40].copy_from_slice(&work.timestamp().to_be_bytes()),
-                    WorkVariant::V2() => {
-                        unimplemented!()
-                    }
+                    WorkVariant::V2(_, input) => input[32..40].copy_from_slice(&work.timestamp().to_be_bytes()),
                 }
             },
             None => return Err(WorkerError::MissingWork),
@@ -159,12 +159,14 @@ impl<'a> Worker<'a> {
             WorkVariant::Uninitialized => return Err(WorkerError::Uninitialized),
             WorkVariant::V1(scratch_pad, work) => {
                 // Compute the POW hash
-                let mut input = AlignedInput::default();
+                let mut input = v1::AlignedInput::default();
                 let slice = input.as_mut_slice()?;
                 slice[0..BLOCK_WORK_SIZE].copy_from_slice(work.as_ref());
-                pow_hash_with_scratch_pad(slice, scratch_pad)?
+                v1::xelis_hash(slice, scratch_pad).map(|bytes| Hash::new(bytes))?
             },
-            WorkVariant::V2() => unimplemented!()
+            WorkVariant::V2(scratch_pad, work) => {
+                v2::xelis_hash(work, scratch_pad).map(|bytes| Hash::new(bytes))?
+            }
         };
 
         Ok(hash)
@@ -176,7 +178,7 @@ impl<'a> Worker<'a> {
         let hash = match &self.variant {
             WorkVariant::Uninitialized => return Err(WorkerError::Uninitialized),
             WorkVariant::V1(_, input) => hash(input),
-            WorkVariant::V2() => unimplemented!()
+            WorkVariant::V2(_, input) => hash(input),
         };
 
         Ok(hash)
@@ -330,10 +332,10 @@ mod tests {
         };
         let work_hex = work.to_hex();
 
-        let mut input = AlignedInput::default();
+        let mut input = v1::AlignedInput::default();
         let slice = input.as_mut_slice().unwrap();
         slice[0..BLOCK_WORK_SIZE].copy_from_slice(&work.to_bytes());
-        let expected_hash = pow_hash_with_scratch_pad(slice, &mut ScratchPad::default()).unwrap();
+        let expected_hash = v1::xelis_hash(slice, &mut v1::ScratchPad::default()).map(|bytes| Hash::new(bytes)).unwrap();
         let block_hash = work.hash();
 
         let mut worker = Worker::new();
