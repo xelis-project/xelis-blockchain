@@ -171,11 +171,25 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
 // Hard Forks configured
-pub const HARD_FORKS: [HardFork; 1] = [
+const HARD_FORKS: [HardFork; 1] = [
     HardFork {
         height: 0,
         version: 0,
         changelog: "Initial version",
+    }
+];
+
+// Testnet / Devnet hard forks
+const TESTNET_HARD_FORKS: [HardFork; 2] = [
+    HardFork {
+        height: 0,
+        version: 0,
+        changelog: "Initial version",
+    },
+    HardFork {
+        height: 5,
+        version: 1,
+        changelog: "xelis-hash v2",
     }
 ];
 
@@ -254,5 +268,13 @@ pub const fn get_minimum_difficulty(network: &Network) -> Difficulty {
     match network {
         Network::Mainnet => MAINNET_MINIMUM_DIFFICULTY,
         _ => OTHER_MINIMUM_DIFFICULTY,
+    }
+}
+
+// Get hard forks based on the network
+pub const fn get_hard_forks(network: &Network) -> &[HardFork] {
+    match network {
+        Network::Mainnet => &HARD_FORKS,
+        _ => &TESTNET_HARD_FORKS,
     }
 }

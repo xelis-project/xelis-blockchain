@@ -1199,7 +1199,7 @@ impl<S: Storage> Blockchain<S> {
         let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
 
         // Get the version at the current height
-        let (has_hard_fork, version) = has_hard_fork_at_height(height);
+        let (has_hard_fork, version) = has_hard_fork_at_height(self.get_network(), height);
 
         if tips.len() == 0 { // Genesis difficulty
             return Ok((GENESIS_BLOCK_DIFFICULTY, difficulty::get_covariance_p(version)))
@@ -1469,7 +1469,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
-        let block = BlockHeader::new(get_version_at_height(height), height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
+        let block = BlockHeader::new(get_version_at_height(self.get_network(), height), height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
 
         Ok(block)
     }
@@ -1573,7 +1573,7 @@ impl<S: Storage> Blockchain<S> {
         let start = Instant::now();
 
         // Expected version for this block
-        let version = get_version_at_height(block.get_height());
+        let version = get_version_at_height(self.get_network(), block.get_height());
 
         // Verify that the block is on the correct version
         if block.get_version() != version {
