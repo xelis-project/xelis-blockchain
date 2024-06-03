@@ -1,4 +1,4 @@
-use crate::serializer::{Writer, Serializer, ReaderError, Reader};
+use crate::{block::Algorithm, serializer::{Reader, ReaderError, Serializer, Writer}};
 use std::{
     fmt::{Display, Error, Formatter},
     convert::TryInto,
@@ -49,15 +49,20 @@ impl Hash {
     }
 }
 
-pub fn pow_hash(work: &[u8]) -> Result<Hash, XelisHashError> {
-    let mut scratchpad = ScratchPad::default();
+pub fn pow_hash(work: &[u8], algorithm: Algorithm) -> Result<Hash, XelisHashError> {
+    match algorithm {
+        Algorithm::V1 => {
+            let mut scratchpad = ScratchPad::default();
 
-    // Make sure the input has good alignment
-    let mut input = AlignedInput::default();
-    let slice = input.as_mut_slice()?;
-    slice[..work.len()].copy_from_slice(work);
-
-    pow_hash_with_scratch_pad(input.as_mut_slice()?, &mut scratchpad)
+            // Make sure the input has good alignment
+            let mut input = AlignedInput::default();
+            let slice = input.as_mut_slice()?;
+            slice[..work.len()].copy_from_slice(work);
+        
+            pow_hash_with_scratch_pad(input.as_mut_slice()?, &mut scratchpad)
+        },
+        _ => Err(XelisHashError)
+    }
 }
 
 pub fn pow_hash_with_scratch_pad(input: &mut [u8; BYTES_ARRAY_INPUT], scratch_pad: &mut ScratchPad) -> Result<Hash, XelisHashError> {

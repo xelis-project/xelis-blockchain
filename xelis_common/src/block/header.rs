@@ -17,7 +17,7 @@ use crate::{
     time::TimestampMillis
 };
 use xelis_hash::Error as XelisHashError;
-use super::{MinerWork, EXTRA_NONCE_SIZE};
+use super::{Algorithm, MinerWork, EXTRA_NONCE_SIZE};
 
 // Serialize the extra nonce in a hexadecimal string
 pub fn serialize_extra_nonce<S: serde::Serializer>(extra_nonce: &[u8; EXTRA_NONCE_SIZE], s: S) -> Result<S::Ok, S::Error> {
@@ -186,8 +186,8 @@ impl BlockHeader {
     }
 
     // compute the block POW hash
-    pub fn get_pow_hash(&self) -> Result<Hash, XelisHashError> {
-        pow_hash(&self.get_serialized_header())
+    pub fn get_pow_hash(&self, algorithm: Algorithm) -> Result<Hash, XelisHashError> {
+        pow_hash(&self.get_serialized_header(), algorithm)
     }
 
     pub fn get_transactions(&self) -> &IndexSet<Hash> {
