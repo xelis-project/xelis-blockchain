@@ -43,6 +43,13 @@ impl Hash {
     }
 }
 
+// Hash a byte array using the blake3 algorithm
+#[inline(always)]
+pub fn hash(value: &[u8]) -> Hash {
+    let result: [u8; HASH_SIZE] = blake3_hash(value).into();
+    Hash(result)
+}
+
 // Perform a PoW hash using the given algorithm
 pub fn pow_hash(work: &[u8], algorithm: Algorithm) -> Result<Hash, XelisHashError> {
     match algorithm {
@@ -124,12 +131,6 @@ pub trait Hashable: Serializer {
         let bytes = self.to_bytes();
         hash(&bytes)
     }
-}
-
-#[inline(always)]
-pub fn hash(value: &[u8]) -> Hash {
-    let result: [u8; HASH_SIZE] = blake3_hash(value).into();
-    Hash(result)
 }
 
 impl AsRef<[u8]> for Hash {
