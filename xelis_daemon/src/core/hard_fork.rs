@@ -32,3 +32,30 @@ pub fn get_pow_algorithm_for_version(version: u8) -> Algorithm {
         _ => unreachable!()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_has_hard_fork_at_height() {
+        let (hard_fork, version) = has_hard_fork_at_height(0);
+        assert_eq!(hard_fork, true);
+        assert_eq!(version, 0);
+
+        let (hard_fork, version) = has_hard_fork_at_height(1);
+        assert_eq!(hard_fork, false);
+        assert_eq!(version, 0);
+    }
+
+    #[test]
+    fn test_get_version_at_height() {
+        assert_eq!(get_version_at_height(0), 0);
+        assert_eq!(get_version_at_height(100_000), 0);
+    }
+
+    #[test]
+    fn test_get_pow_algorithm_for_version() {
+        assert_eq!(get_pow_algorithm_for_version(0), Algorithm::V1);
+    }
+}
