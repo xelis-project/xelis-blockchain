@@ -21,8 +21,11 @@ pub mod extra_data;
 #[cfg(test)]
 mod tests;
 
-// Maximum total size of payload across all transfers per transaction
+// Maximum size of extra data per transfer
 pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
+// Maximum total size of payload across all transfers per transaction
+pub const EXTRA_DATA_LIMIT_SUM_SIZE: usize = EXTRA_DATA_LIMIT_SIZE * 32;
+// Maximum number of transfers per transaction
 pub const MAX_TRANSFER_COUNT: usize = 255;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
