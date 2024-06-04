@@ -87,6 +87,12 @@ pub const SIDE_BLOCK_REWARD_MIN_PERCENT: u64 = 5;
 // Emission speed factor for the emission curve
 // It is used to calculate based on the supply the block reward
 pub const EMISSION_SPEED_FACTOR: u64 = 20;
+// 30% of the transaction fee is burned
+// This is to reduce the supply over time
+// and also to prevent spamming the network with low fee transactions
+// or free tx from miners
+// This should be enabled once Smart Contracts are released
+pub const TRANSACTION_FEE_BURN_PERCENT: u64 = 30;
 
 // Developer address for paying dev fees until Smart Contracts integration
 // (testnet/mainnet format is converted lazily later)
