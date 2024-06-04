@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, str::FromStr};
 use log::debug;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -38,10 +38,23 @@ impl WorkVariant {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[repr(u8)]
 pub enum Algorithm {
     V1 = 0,
     V2 = 1
+}
+
+impl FromStr for Algorithm {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "v1" => Ok(Algorithm::V1),
+            "v2" => Ok(Algorithm::V2),
+            _ => Err("invalid algorithm")
+        }
+    }
 }
 
 // This structure is used by xelis-miner which allow to compute a valid block POW hash
