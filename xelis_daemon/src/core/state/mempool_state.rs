@@ -180,6 +180,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     async fn pre_verify_tx<'b>(
         &'b mut self,
         tx: &Transaction,
+        _: u8
     ) -> Result<(), BlockchainError> {
         // Check the version
         if tx.get_version() != 0 {
