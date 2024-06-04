@@ -1329,7 +1329,8 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
-            mempool.add_tx(storage, current_topoheight, hash.clone(), tx.clone(), tx_size).await?;
+            let version = get_version_at_height(self.get_network(), self.get_height());
+            mempool.add_tx(storage, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
         }
 
         if broadcast {
@@ -1524,7 +1525,7 @@ impl<S: Storage> Blockchain<S> {
                 continue;
             }
 
-            if let Err(e) = tx.verify(&mut chain_state).await {
+            if let Err(e) = tx.verify(&mut chain_state, block.get_version()).await {
                 warn!("TX {} ({}) is not valid for mining: {}", hash, source.as_address(self.network.is_mainnet()), e);
                 failed_sources.insert(source);
             } else {
@@ -1601,7 +1602,7 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidTipsCount(block_hash, tips_count))
         }
 
-        let current_height = self.get_height();
+        let mut current_height = self.get_height();
         if tips_count == 0 && current_height != 0 {
             debug!("Expected at least one previous block for this block {}", block_hash);
             return Err(BlockchainError::ExpectedTips)
@@ -1774,7 +1775,7 @@ impl<S: Storage> Blockchain<S> {
 
             debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|v| v.hash().to_string()).collect::<Vec<String>>().join(","), block_hash);
             // Verify all valid transactions in one batch
-            Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
+            Transaction::verify_batch(batch.as_slice(), &mut chain_state, version).await?;
         }
 
         // Save transactions & block
@@ -2106,7 +2107,6 @@ impl<S: Storage> Blockchain<S> {
         // Store the new tips available
         storage.store_tips(&tips)?;
 
-        let mut current_height = current_height;
         if current_height == 0 || block.get_height() > current_height {
             debug!("storing new top height {}", block.get_height());
             storage.set_top_height(block.get_height())?;
@@ -2148,7 +2148,8 @@ impl<S: Storage> Blockchain<S> {
             debug!("Locking mempool write mode");
             let mut mempool = self.mempool.write().await;
             debug!("mempool write mode ok");
-            mempool.clean_up(&*storage, highest_topo).await
+            let version = get_version_at_height(self.get_network(), current_height);
+            mempool.clean_up(&*storage, highest_topo, version).await
         } else {
             Vec::new()
         };

@@ -69,9 +69,9 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub async fn add_tx<S: Storage>(&mut self, storage: &S, topoheight: u64, hash: Hash, tx: Arc<Transaction>, size: usize) -> Result<(), BlockchainError> {
+    pub async fn add_tx<S: Storage>(&mut self, storage: &S, topoheight: u64, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: u8) -> Result<(), BlockchainError> {
         let mut state = MempoolState::new(&self, storage, topoheight);
-        tx.verify(&mut state).await?;
+        tx.verify(&mut state, block_version).await?;
 
         let balances = state.get_sender_balances(tx.get_source())
             .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(storage.is_mainnet())))?
@@ -279,7 +279,7 @@ impl Mempool {
     // Because of DAG reorg, we can't only check updated keys from new block,
     // as a block could be orphaned and the nonce order would change
     // So we need to check all keys from mempool and compare it from storage
-    pub async fn clean_up<S: Storage>(&mut self, storage: &S, topoheight: u64) -> Vec<(Arc<Hash>, SortedTx)> {
+    pub async fn clean_up<S: Storage>(&mut self, storage: &S, topoheight: u64, block_version: u8) -> Vec<(Arc<Hash>, SortedTx)> {
         trace!("Cleaning up mempool...");
 
         // All deleted sorted txs with their hashes
@@ -411,7 +411,7 @@ impl Mempool {
                         // But will be slower during high traffic
                         debug!("Verifying TXs ({}) for sender {} at topoheight {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), topoheight);
                         let mut state = MempoolState::new(&self, storage, topoheight);
-                        if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
+                        if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state, block_version).await {
                             warn!("Error while verifying TXs ({}) for sender {}: {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), e);
                             // We may have only one TX invalid, but because they are all linked to each others we delete the whole cache
                             delete_cache = true;

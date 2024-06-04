@@ -179,8 +179,10 @@ pub enum BlockchainError {
     InvalidTransactionNonce(u64, u64),
     #[error("Invalid transaction, sender trying to send coins to himself: {}", _0)]
     InvalidTransactionToSender(Hash),
-    #[error("Invalid extra data in this transaction, expected maximum {} bytes but got {} bytes", _0, _1)]
-    InvalidTransactionExtraDataTooBig(usize, usize),
+    #[error("Invalid extra data in this transaction")]
+    InvalidTransactionExtraData,
+    #[error("Invalid extra data in transfer")]
+    InvalidTransferExtraData,
     #[error("Invalid network state")]
     InvalidNetwork,
     #[error("Error while retrieving block by hash: {} not found", _0)]
@@ -311,6 +313,10 @@ pub enum BlockchainError {
     TransactionProof(ProofVerificationError),
     #[error("Error while generating pow hash")]
     POWHashError(#[from] XelisHashError),
+    #[error("Transfer count is invalid")]
+    TransferCount,
+    #[error("Invalid commitments assets")]
+    Commitments
 }
 
 impl BlockchainError {
@@ -339,7 +345,11 @@ impl From<VerificationError<BlockchainError>> for BlockchainError {
             VerificationError::SenderIsReceiver => BlockchainError::NoSenderOutput,
             VerificationError::InvalidSignature => BlockchainError::InvalidTransactionSignature,
             VerificationError::State(s) => s,
-            VerificationError::Proof(proof) => BlockchainError::TransactionProof(proof)
+            VerificationError::Proof(proof) => BlockchainError::TransactionProof(proof),
+            VerificationError::TransferCount => BlockchainError::TransferCount,
+            VerificationError::Commitments => BlockchainError::Commitments,
+            VerificationError::TransactionExtraDataSize => BlockchainError::InvalidTransactionExtraData,
+            VerificationError::TransferExtraDataSize => BlockchainError::InvalidTransferExtraData,
         }
     }
 }
