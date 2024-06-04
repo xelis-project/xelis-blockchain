@@ -90,9 +90,9 @@ pub struct MinerConfig {
     /// Set log level
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
-    /// Enable the benchmark mode
+    /// Enable the benchmark mode with the specified algorithm
     #[clap(long)]
-    benchmark: bool,
+    benchmark: Option<Algorithm>,
     /// Iterations to run the benchmark
     #[clap(long, default_value_t = 100)]
     iterations: usize,
@@ -181,9 +181,9 @@ async fn main() -> Result<()> {
 
     info!("Total threads to use: {} (detected: {})", threads, detected_threads);
 
-    if config.benchmark {
+    if let Some(algorithm) = config.benchmark {
         info!("Benchmark mode enabled, miner will try up to {} threads", threads);
-        benchmark(threads as usize, config.iterations);
+        benchmark(threads as usize, config.iterations, algorithm);
         info!("Benchmark finished");
         return Ok(())
     }
@@ -223,7 +223,9 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn benchmark(threads: usize, iterations: usize) {
+// Benchmark the miner with the specified number of threads and iterations
+// It will output the total time, total iterations, time per PoW and hashrate for each number of threads
+fn benchmark(threads: usize, iterations: usize, algorithm: Algorithm) {
     info!("{0: <10} | {1: <10} | {2: <16} | {3: <13} | {4: <13}", "Threads", "Total Time", "Total Iterations", "Time/PoW (ms)", "Hashrate");
 
     for bench in 1..=threads {
@@ -232,7 +234,7 @@ fn benchmark(threads: usize, iterations: usize) {
         for _ in 0..bench {
             let job = MinerWork::new(Hash::zero(), get_current_time_in_millis());
             let mut worker = Worker::new();
-            worker.set_work(job, Algorithm::V1).unwrap();
+            worker.set_work(job, algorithm).unwrap();
 
             let handle = thread::spawn(move || {
                 let mut tries = 0;
