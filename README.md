@@ -78,12 +78,6 @@ Others objectives in mind are:
 
 - Default RPC Server port is `8081`
 
-## Roadmap
-
-- Include extra fees when sending coins to a not-yet registered address
-- Support of Smart Contracts (xelis-vm)
-- Privacy (through Homomorphic Encryption)
-
 ## BlockDAG
 
 XELIS use a blockDAG with following rules:
