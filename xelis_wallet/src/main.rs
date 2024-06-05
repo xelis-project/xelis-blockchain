@@ -154,7 +154,12 @@ pub struct Config {
     /// XSWD Server configuration
     #[cfg(feature = "api_server")]
     #[clap(long)]
-    enable_xswd: bool
+    enable_xswd: bool,
+    /// Disable the history scan
+    /// This will prevent syncing old TXs/blocks
+    /// Only blocks / transactions caught by the network handler will be stored, not the old ones
+    #[clap(long)]
+    disable_history_scan: bool
 }
 
 /// This struct is used to log the progress of the table generation
@@ -323,6 +328,8 @@ async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] promp
             info!("Online mode enabled");
         }
     }
+
+    wallet.set_history_scan(!config.disable_history_scan);
 
     #[cfg(feature = "api_server")]
     {

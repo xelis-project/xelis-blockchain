@@ -227,6 +227,7 @@ impl NetworkHandler {
 
                     // Mark it as last coinbase reward topoheight
                     // it is internally checked if its higher or not
+                    debug!("Storing last coinbase reward topoheight {}", topoheight);
                     storage.set_last_coinbase_reward_topoheight(Some(topoheight))?;
 
                     if storage.has_transaction(entry.get_hash())? {
@@ -475,18 +476,22 @@ impl NetworkHandler {
             if let Some(previous) = previous_topoheight {
                 // don't sync already synced blocks
                 if min_topoheight >= previous {
-                    return Ok(())
+                    debug!("Reached minimum topoheight {}, topo: {}", min_topoheight, previous);
+                    break;
                 }
 
                 topoheight = previous;
                 version = self.api.get_balance_at_topoheight(address, asset, previous).await?;
             } else {
-                return Ok(())
+                debug!("Reached the end of the chain at topoheight {}", topoheight);
+                break;
             }
 
             // Only first iteration is the highest one
             highest_version = false;
         }
+
+        Ok(())
     }
 
     // Locate the last topoheight valid for syncing, this support soft forks, DAG reorgs, etc...
@@ -921,17 +926,24 @@ impl NetworkHandler {
             let storage = self.wallet.get_storage().read().await;
             storage.get_assets().await?
         };
-
-        // cache for all topoheight we already processed
-        // this will prevent us to request more than one time the same topoheight
-        let mut topoheight_processed = HashSet::new();
-
+        
         // get balance and transactions for each asset
-        let mut highest_nonce = None;
-        for asset in assets {
-            debug!("calling get balances and transactions {}", current_topoheight);
-            if let Err(e) = self.get_balance_and_transactions(&mut topoheight_processed, &address, &asset, current_topoheight, balances, &mut highest_nonce).await {
-                error!("Error while syncing balance for asset {}: {}", asset, e);
+        if self.wallet.get_history_scan() {
+            // cache for all topoheight we already processed
+            // this will prevent us to request more than one time the same topoheight
+            let mut topoheight_processed = HashSet::new();
+            let mut highest_nonce = None;
+            for asset in assets {
+                debug!("calling get balances and transactions {}", current_topoheight);
+                if let Err(e) = self.get_balance_and_transactions(&mut topoheight_processed, &address, &asset, current_topoheight, balances, &mut highest_nonce).await {
+                    error!("Error while syncing balance for asset {}: {}", asset, e);
+                }
+            }
+        } else {
+            // We don't need to scan the history, we can just sync the head state
+            debug!("calling sync head state");
+            if let Err(e) = self.sync_head_state(&self.wallet.get_address(), Some(assets), None, true).await {
+                error!("Error while syncing head state: {}", e);
             }
         }
         Ok(())

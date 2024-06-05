@@ -3,7 +3,7 @@ use std::{
     fs::{create_dir_all, File},
     io::{Read, Write},
     path::Path,
-    sync::Arc
+    sync::{atomic::{AtomicBool, Ordering}, Arc}
 };
 use anyhow::{Error, Context};
 use serde::Serialize;
@@ -225,7 +225,10 @@ pub struct Wallet {
     // Event broadcaster
     event_broadcaster: Mutex<Option<BroadcastSender<Event>>>,
     // Precomputed tables byte array
-    precomputed_tables: PrecomputedTablesShared
+    precomputed_tables: PrecomputedTablesShared,
+    // If the wallet should scan also blocks and transactions history
+    // Set to true by default
+    history_scan: AtomicBool
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -276,7 +279,8 @@ impl Wallet {
             #[cfg(feature = "api_server")]
             xswd_channel: RwLock::new(None),
             event_broadcaster: Mutex::new(None),
-            precomputed_tables
+            precomputed_tables,
+            history_scan: AtomicBool::new(true)
         };
 
         Arc::new(zelf)
@@ -429,6 +433,17 @@ impl Wallet {
         // Close the event broadcaster
         // So all subscribers will be notified
         self.close_events_channel().await;
+    }
+
+    // Disable/enable the history scan
+    // This is used by the network handler to avoid scanning history if requested
+    pub fn set_history_scan(&self, value: bool) {
+        self.history_scan.store(value, Ordering::SeqCst);
+    }
+
+    // Get the history scan flag
+    pub fn get_history_scan(&self) -> bool {
+        self.history_scan.load(Ordering::SeqCst)
     }
 
     // Propagate a new event to registered listeners
