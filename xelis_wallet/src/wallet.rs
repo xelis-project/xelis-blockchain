@@ -228,7 +228,9 @@ pub struct Wallet {
     precomputed_tables: PrecomputedTablesShared,
     // If the wallet should scan also blocks and transactions history
     // Set to true by default
-    history_scan: AtomicBool
+    history_scan: AtomicBool,
+    // flag to prioritize the usage of stable balance version when its online
+    force_stable_balance: AtomicBool,
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -280,7 +282,8 @@ impl Wallet {
             xswd_channel: RwLock::new(None),
             event_broadcaster: Mutex::new(None),
             precomputed_tables,
-            history_scan: AtomicBool::new(true)
+            history_scan: AtomicBool::new(true),
+            force_stable_balance: AtomicBool::new(false)
         };
 
         Arc::new(zelf)
@@ -444,6 +447,16 @@ impl Wallet {
     // Get the history scan flag
     pub fn get_history_scan(&self) -> bool {
         self.history_scan.load(Ordering::SeqCst)
+    }
+
+    // Disable/enable the stable balance flag
+    pub fn set_stable_balance(&self, value: bool) {
+        self.force_stable_balance.store(value, Ordering::SeqCst);
+    }
+
+    // Get the stable balance flag
+    pub fn get_stable_balance(&self) -> bool {
+        self.force_stable_balance.load(Ordering::SeqCst)
     }
 
     // Propagate a new event to registered listeners
@@ -647,38 +660,49 @@ impl Wallet {
         let mut daemon_stable_topoheight = None;
 
         // Lets prevent any front running due to mining
-        if reference.is_none() && used_assets.contains(&XELIS_ASSET) {
-            if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight() {
-                debug!("Wallet got a coinbase reward at topoheight: {}, verify that its not unstable", topoheight);
-                if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
+        let force_stable_balance = self.get_stable_balance();
+        if (reference.is_none() && used_assets.contains(&XELIS_ASSET)) || force_stable_balance {
+            // debug!("Wallet got a coinbase reward at topoheight: {}, verify that its not unstable", topoheight);
+            if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
+                // Last mining reward is above stable topoheight, this may increase orphans rate
+                // To avoid this, we will use the last balance version in stable topoheight as reference
+                let use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight() {
                     let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
-                    // Last mining reward is above stable topoheight, this may increase orphans rate
-                    // To avoid this, we will use the last balance version in stable topoheight as reference
+                    daemon_stable_topoheight = Some(stable_topoheight);
                     debug!("stable topoheight: {}, topoheight: {}", stable_topoheight, topoheight);
-                    if topoheight > stable_topoheight {
-                        warn!("Last mining reward is above stable topoheight, searching stable reference");
-                        let stable_point = network_handler.get_api().get_stable_balance(&self.get_address(), &XELIS_ASSET).await?;
-                        debug!("Using stable reference for XELIS asset: {} at topoheight {}", stable_point.stable_block_hash, stable_point.stable_topoheight);
+                    topoheight > stable_topoheight
+                } else {
+                    force_stable_balance
+                };
 
-                        // Build the stable reference
-                        reference = Some(Reference {
-                            topoheight: stable_point.stable_topoheight,
-                            hash: stable_point.stable_block_hash
-                        });
-
+                if use_stable_balance {
+                    warn!("Using stable balance for TX creation");
+                    let address = self.get_address();
+                    for asset in &used_assets {
+                        debug!("Searching stable balance for asset {}", asset);
+                        let stable_point = network_handler.get_api().get_stable_balance(&address, &asset).await?;
+    
                         // Store the stable balance version into unconfirmed balance
                         // So it will be fetch later by state
                         let mut ciphertext = stable_point.version.take_balance();
-                        debug!("decrypting stable balance for XELIS asset");
+                        debug!("decrypting stable balance for asset {}", asset);
                         let amount = self.decrypt_ciphertext_internal(ciphertext.decompressed().map_err(|_| WalletError::CiphertextDecode)?)?;
                         let balance = Balance {
                             amount,
                             ciphertext
                         };
-
-                        storage.set_unconfirmed_balance_for(XELIS_ASSET, balance).await?;
+    
+                        storage.set_unconfirmed_balance_for(asset.clone(), balance).await?;
+                        // Build the stable reference
+                        // We need to find the highest stable point
+                        if reference.is_none() || reference.as_ref().is_some_and(|r| r.topoheight < stable_point.stable_topoheight) {
+                            reference = Some(Reference {
+                                topoheight: stable_point.stable_topoheight,
+                                hash: stable_point.stable_block_hash
+                            });
+                        }
                     }
-                    daemon_stable_topoheight = Some(stable_topoheight);
+
                 }
             }
         }

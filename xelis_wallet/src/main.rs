@@ -159,7 +159,11 @@ pub struct Config {
     /// This will prevent syncing old TXs/blocks
     /// Only blocks / transactions caught by the network handler will be stored, not the old ones
     #[clap(long)]
-    disable_history_scan: bool
+    disable_history_scan: bool,
+    /// Force the wallet to use a stable balance only during transactions creation.
+    /// This will prevent the wallet to use unstable balance and prevent any orphaned transaction due to DAG reorg.
+    /// This is only working if the wallet is in online mode.
+    force_stable_balance: bool
 }
 
 /// This struct is used to log the progress of the table generation
