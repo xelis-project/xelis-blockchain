@@ -2401,7 +2401,7 @@ impl<S: Storage> P2pServer<S> {
                 || topoheight > our_topoheight
                 || topoheight < PRUNE_SAFETY_LIMIT
             {
-                warn!("Invalid begin topoheight (received {}, our is {}, pruned: {}) received from {}", topoheight, our_topoheight, pruned_topoheight, peer);
+                warn!("Invalid begin topoheight (received {}, our is {}, pruned: {}) received from {} on step {:?}", topoheight, our_topoheight, pruned_topoheight, peer, request_kind);
                 return Err(P2pError::InvalidRequestedTopoheight.into())
             }
 
@@ -2648,8 +2648,8 @@ impl<S: Storage> P2pServer<S> {
                             debug!("Request balances for asset {}", asset);
     
                             // save all balances for this asset
-                            let mut storage = self.blockchain.get_storage().write().await;
                             for key in keys.iter() {
+                                debug!("Requesting balance for key {} and asset {} at topo {}", key.as_address(self.blockchain.get_network().is_mainnet()), asset, stable_topoheight);
                                 let StepResponse::AccountBalance(balance) = peer.request_boostrap_chain(StepRequest::AccountBalance(Cow::Borrowed(&key), Cow::Borrowed(&asset), our_topoheight, stable_topoheight)).await? else {
                                     // shouldn't happen
                                     error!("Received an invalid StepResponse (how ?) while fetching balances");
@@ -2657,6 +2657,7 @@ impl<S: Storage> P2pServer<S> {
                                 };
                                 // check that the account have balance for this asset
                                 if let Some(account) = balance {
+                                    let mut storage = self.blockchain.get_storage().write().await;
                                     debug!("Saving balance {} summary for {}", asset, key.as_address(self.blockchain.get_network().is_mainnet()));
                                     storage.set_last_balance_to(key, &asset, account.stable_version.topoheight, &account.stable_version.version).await?;
                                     if let Some(output) = account.output_version.filter(|v| v.topoheight != account.stable_version.topoheight) {

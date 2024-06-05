@@ -223,13 +223,13 @@ impl Serializer for StepRequest<'_> {
             },
             3 => {
                 let key = Cow::<'_, PublicKey>::read(reader)?;
+                let asset = Cow::<'_, Hash>::read(reader)?;
                 let min = reader.read_u64()?;
                 let max = reader.read_u64()?;
                 if min > max {
                     debug!("Invalid min topoheight in Step Request");
                     return Err(ReaderError::InvalidValue)
                 }
-                let asset = Cow::<'_, Hash>::read(reader)?;
 
                 Self::AccountBalance(key, asset, min, max)
             },
