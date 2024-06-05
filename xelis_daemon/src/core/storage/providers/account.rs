@@ -13,8 +13,9 @@ pub trait AccountProvider {
     // Check if account is registered
     async fn is_account_registered(&self, key: &PublicKey) -> Result<bool, BlockchainError>;
 
-    // Check if account is registered below topoheight
-    async fn is_account_registered_below_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<bool, BlockchainError>;
+    // Check if account is registered at topoheight
+    // This will check that the registration topoheight is less or equal to the given topoheight
+    async fn is_account_registered_at_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<bool, BlockchainError>;
 
     // Delete all registrations at a certain topoheight
     async fn delete_registrations_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
@@ -57,13 +58,13 @@ impl AccountProvider for SledStorage {
         Ok(false)
     }
 
-    async fn is_account_registered_below_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<bool, BlockchainError> {
+    async fn is_account_registered_at_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<bool, BlockchainError> {
         if !self.is_account_registered(key).await? {
             return Ok(false);
         }
 
         let registration_topoheight = self.get_account_registration_topoheight(key).await?;
-        Ok(registration_topoheight < topoheight)
+        Ok(registration_topoheight <= topoheight)
     }
 
     async fn delete_registrations_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError> {
