@@ -163,6 +163,7 @@ pub struct Config {
     /// Force the wallet to use a stable balance only during transactions creation.
     /// This will prevent the wallet to use unstable balance and prevent any orphaned transaction due to DAG reorg.
     /// This is only working if the wallet is in online mode.
+    #[clap(long)]
     force_stable_balance: bool
 }
 
