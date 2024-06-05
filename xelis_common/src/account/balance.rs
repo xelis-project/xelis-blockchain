@@ -153,6 +153,67 @@ impl VersionedBalance {
     }
 }
 
+#[derive(Debug)]
+pub struct Balance {
+    // At which topoheight the balance was stored
+    pub topoheight: u64,
+    pub version: VersionedBalance
+}
+
+impl Serializer for Balance {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let topoheight = reader.read_u64()?;
+        let version = VersionedBalance::read(reader)?;
+
+        Ok(Self {
+            topoheight,
+            version
+        })
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u64(&self.topoheight);
+        self.version.write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.topoheight.size()
+        + self.version.size()
+    }
+}
+
+#[derive(Debug)]
+pub struct AccountSummary {
+    // last output balance stored on chain
+    // It can be None if the account has no output balance
+    // or if the output balance is already in stable_version
+    pub output_version: Option<Balance>,
+    // last balance stored on chain below or equal to stable topoheight
+    pub stable_version: Balance 
+}
+
+impl Serializer for AccountSummary {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let output_version = Option::read(reader)?;
+        let stable_version = Balance::read(reader)?;
+
+        Ok(Self {
+            output_version,
+            stable_version
+        })
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.output_version.write(writer);
+        self.stable_version.write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.output_version.size()
+        + self.stable_version.size()
+    }
+}
+
 impl Default for VersionedBalance {
     fn default() -> Self {
         Self::zero()
