@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use log::{trace, error};
 use xelis_common::{
-    account::{AccountSummary, Balance, VersionedBalance},
+    account::{AccountSummary, VersionedBalance},
     crypto::{
         Hash,
         PublicKey
@@ -312,7 +312,7 @@ impl BalanceProvider for SledStorage {
         trace!("get account summary {} for {} at maximum topoheight {}", asset, key.as_address(self.is_mainnet()), max_topoheight);
 
         // first search if we have a valid balance at the maximum topoheight
-        if let Some((topo, mut version)) = self.get_balance_at_maximum_topoheight(key, asset, max_topoheight).await? {
+        if let Some((topo, version)) = self.get_balance_at_maximum_topoheight(key, asset, max_topoheight).await? {
             if topo < min_topoheight {
                 trace!("No changes found for {} above min topoheight {}", key.as_address(self.is_mainnet()), min_topoheight);
                 return Ok(None)
@@ -321,13 +321,9 @@ impl BalanceProvider for SledStorage {
             let mut previous = version.get_previous_topoheight();
             let has_output = version.contains_output();
 
-            version.set_previous_topoheight(None);
             let mut account = AccountSummary {
                 output_version: None,
-                stable_version: Balance {
-                    topoheight: topo,
-                    version
-                }
+                stable_version: version.as_balance(topo)
             };
 
             // We have an output in it, we can return the account
@@ -343,11 +339,7 @@ impl BalanceProvider for SledStorage {
                     trace!("Output balance found for {} at topoheight {}", key.as_address(self.is_mainnet()), topo);
                     previous_version.set_previous_topoheight(None);
 
-                    account.output_version = Some(Balance {
-                        topoheight: topo,
-                        version: previous_version
-                    });
-                    account.stable_version.version.set_previous_topoheight(Some(topo));
+                    account.output_version = Some(previous_version.as_balance(topo));
                     break;
                 }
 

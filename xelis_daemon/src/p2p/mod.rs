@@ -2436,14 +2436,21 @@ impl<S: Storage> P2pServer<S> {
                 };
                 StepResponse::Assets(assets, page)
             },
-            StepRequest::AccountBalance(key, asset, min, max) => {
+            StepRequest::Balances(key, asset, min, max) => {
                 if min > max {
                     warn!("Invalid range for account balance");
                     return Err(P2pError::InvalidPacket.into())
                 }
 
-                let balance = storage.get_account_summary_for(&key, &asset, min, max).await?;
-                StepResponse::AccountBalance(balance)
+                let mut balances = Vec::with_capacity(MAX_ITEMS_PER_PAGE);
+                for key in key.iter() {
+                    trace!("Requesting balance for {} requested by {} for bootstrap chain", key.as_address(true), peer);
+                    let balance = storage.get_account_summary_for(&key, &asset, min, max).await?;
+                    balances.push(balance);
+                }
+
+                trace!("Sending {} balances to {}", balances.len(), peer);
+                StepResponse::Balances(balances)
             },
             StepRequest::Nonces(topoheight, keys) => {
                 let mut nonces = Vec::with_capacity(keys.len());
@@ -2645,24 +2652,27 @@ impl<S: Storage> P2pServer<S> {
 
                         // Request every asset balances
                         for asset in assets {
-                            debug!("Request balances for asset {}", asset);
-    
+                            debug!("Requesting balances for asset {} at topo {}", asset, stable_topoheight);
+                            let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(Cow::Borrowed(&keys), Cow::Borrowed(&asset), our_topoheight, stable_topoheight)).await? else {
+                                // shouldn't happen
+                                error!("Received an invalid StepResponse (how ?) while fetching balances");
+                                return Err(P2pError::InvalidPacket.into())
+                            };
+
                             // save all balances for this asset
-                            for key in keys.iter() {
-                                debug!("Requesting balance for key {} and asset {} at topo {}", key.as_address(self.blockchain.get_network().is_mainnet()), asset, stable_topoheight);
-                                let StepResponse::AccountBalance(balance) = peer.request_boostrap_chain(StepRequest::AccountBalance(Cow::Borrowed(&key), Cow::Borrowed(&asset), our_topoheight, stable_topoheight)).await? else {
-                                    // shouldn't happen
-                                    error!("Received an invalid StepResponse (how ?) while fetching balances");
-                                    return Err(P2pError::InvalidPacket.into())
-                                };
+                            for (key, balance) in keys.iter().zip(balances) {
                                 // check that the account have balance for this asset
                                 if let Some(account) = balance {
-                                    let mut storage = self.blockchain.get_storage().write().await;
                                     debug!("Saving balance {} summary for {}", asset, key.as_address(self.blockchain.get_network().is_mainnet()));
-                                    storage.set_last_balance_to(key, &asset, account.stable_version.topoheight, &account.stable_version.version).await?;
-                                    if let Some(output) = account.output_version.filter(|v| v.topoheight != account.stable_version.topoheight) {
-                                        storage.set_balance_at_topoheight(&asset, output.topoheight, key, &output.version).await?;
+                                    let ((stable_topo, stable), output) = account.as_versions();
+                                    let mut storage = self.blockchain.get_storage().write().await;
+                                    storage.set_last_balance_to(key, &asset, stable_topo, &stable).await?;
+
+                                    // save the output balance if it's different from the stable one
+                                    if let Some((topo, output)) = output{
+                                        storage.set_balance_at_topoheight(&asset, topo, key, &output).await?;
                                     }
+
                                     // TODO clean up old balances
                                 } else {
                                     debug!("No balance for key {} at topoheight {}", key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
