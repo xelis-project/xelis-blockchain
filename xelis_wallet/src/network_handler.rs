@@ -791,6 +791,7 @@ impl NetworkHandler {
                 return Ok(())
             }
         } else {
+            debug!("No event received, verify that we are on the right chain");
             // First, locate the last topoheight valid for syncing
             let sync_back;
             (daemon_topoheight, daemon_block_hash, wallet_topoheight, sync_back) = self.locate_sync_topoheight_and_clean().await?;
@@ -827,6 +828,7 @@ impl NetworkHandler {
     // Because of potential forks and DAG reorg during attacks,
     // we verify the last valid topoheight where changes happened
     async fn start_syncing(self: &Arc<Self>) -> Result<(), Error> {
+        debug!("Starting syncing");
         // Generate only one time the address
         let address = self.wallet.get_address();
         // Do a first sync to be up-to-date with the daemon
