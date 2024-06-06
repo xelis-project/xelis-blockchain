@@ -797,11 +797,12 @@ impl NetworkHandler {
             (daemon_topoheight, daemon_block_hash, wallet_topoheight, sync_back) = self.locate_sync_topoheight_and_clean().await?;
             debug!("Daemon topoheight: {}, wallet topoheight: {}, sync back: {}", daemon_topoheight, wallet_topoheight, sync_back);
 
-            // Sync back is requested, sync the head state again
-            if sync_back {
+            sync_new_blocks |= sync_back;
+            // Sync back is not requested, sync the head state
+            if !sync_back {
                 trace!("sync back");
                 // Now sync head state, this will helps us to determinate if we should sync blocks or not
-                sync_new_blocks = self.sync_head_state(&address, None, None, true).await?;
+                sync_new_blocks |= self.sync_head_state(&address, None, None, true).await?;
             }
         }
 
