@@ -13,9 +13,10 @@ use indexmap::IndexSet;
 use log::{debug, info, trace, warn};
 use xelis_common::{
     time::{TimestampSeconds, get_current_time_in_seconds},
-    crypto::elgamal::Ciphertext,
     network::Network,
+    serializer::Serializer,
     crypto::{
+        elgamal::Ciphertext,
         Hash,
         PublicKey
     },
@@ -412,7 +413,12 @@ impl Mempool {
                         debug!("Verifying TXs ({}) for sender {} at topoheight {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), topoheight);
                         let mut state = MempoolState::new(&self, storage, topoheight);
                         if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state, block_version).await {
-                            warn!("Error while verifying TXs ({}) for sender {}: {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), e);
+                            warn!("Error while verifying TXs for sender {}: {}", key.as_address(self.mainnet), e);
+                            for (hash, tx) in txs_hashes.iter().zip(txs) {
+                                warn!("- Deleting TX {} with {} and nonce {}", hash, tx.get_reference(), tx.get_nonce());
+                                debug!("TX hex: {}", tx.to_hex());
+                            }
+
                             // We may have only one TX invalid, but because they are all linked to each others we delete the whole cache
                             delete_cache = true;
                         } else {
