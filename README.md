@@ -108,8 +108,6 @@ Longest chain is the one selected by nodes. But for tips branches conflicts, cum
 Homomorphic Encryption (HE) will allow to add privacy on transactions and accounts by doing computation while staying in encrypted form.
 Each balances, transaction assets values are in encrypted form and nobody can determine the real value of it except involved parties.
 
-**NOTE**: This part is not yet deployed and is under heavy work.
-
 ## Mining
 
 Mining capabilities of XELIS are a bit differents from others chains because of standards being not implemented.
