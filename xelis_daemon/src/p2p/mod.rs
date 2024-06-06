@@ -938,7 +938,8 @@ impl<S: Storage> P2pServer<S> {
                         false
                     }
                 } else {
-                    if let Err(e) = self.request_sync_chain_for(&peer, &mut last_chain_sync).await {
+                    let previous_err = previous_peer.map(|(_, err)| err).unwrap_or(false);
+                    if let Err(e) = self.request_sync_chain_for(&peer, &mut last_chain_sync, previous_err).await {
                         warn!("Error occured on chain sync with {}: {}", peer, e);
                         true
                     } else {
@@ -1966,7 +1967,7 @@ impl<S: Storage> P2pServer<S> {
     // It also contains a CommonPoint which is a block hash point where we have the same topoheight as our peer
     // Based on the lowest height of the chain sent, we may need to rewind some blocks
     // NOTE: Only a priority node can rewind below the stable height 
-    async fn handle_chain_response(&self, peer: &Arc<Peer>, mut response: ChainResponse, requested_max_size: usize) -> Result<(), BlockchainError> {
+    async fn handle_chain_response(&self, peer: &Arc<Peer>, mut response: ChainResponse, requested_max_size: usize, skip_stable_height_check: bool) -> Result<(), BlockchainError> {
         trace!("handle chain response from {}", peer);
         let response_size = response.blocks_size();
 
@@ -1992,7 +1993,7 @@ impl<S: Storage> P2pServer<S> {
             let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
             trace!("block height: {}, stable height: {}, topoheight: {}, hash: {}", block_height, self.blockchain.get_stable_height(), topoheight, common_point.get_hash());
             // We are under the stable height, rewind is necessary
-            let mut count = if lowest_height <= self.blockchain.get_stable_height() || peer.is_priority() {
+            let mut count = if skip_stable_height_check || peer.is_priority() || lowest_height <= self.blockchain.get_stable_height() {
                 let our_topoheight = self.blockchain.get_topo_height();
                 if our_topoheight > topoheight {
                     our_topoheight - topoheight
@@ -2792,7 +2793,7 @@ impl<S: Storage> P2pServer<S> {
     // we send up to CHAIN_SYNC_REQUEST_MAX_BLOCKS blocks id (combinaison of block hash and topoheight)
     // we add at the end the genesis block to be sure to be on the same chain as others peers
     // its used to find a common point with the peer to which we ask the chain
-    pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>, last_chain_sync: &mut TimestampMillis) -> Result<(), BlockchainError> {
+    pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>, last_chain_sync: &mut TimestampMillis, skip_stable_height_check: bool) -> Result<(), BlockchainError> {
         trace!("Requesting chain from {}", peer);
 
         // This can be configured by the node operator, it will be adjusted between protocol bounds
@@ -2818,7 +2819,7 @@ impl<S: Storage> P2pServer<S> {
         // Update last chain sync time
         *last_chain_sync = get_current_time_in_millis();
 
-        self.handle_chain_response(peer, response, requested_max_size).await
+        self.handle_chain_response(peer, response, requested_max_size, skip_stable_height_check).await
     }
 
     // Clear all p2p connections by kicking peers
