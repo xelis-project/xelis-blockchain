@@ -1992,7 +1992,7 @@ impl<S: Storage> P2pServer<S> {
             let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
             trace!("block height: {}, stable height: {}, topoheight: {}, hash: {}", block_height, self.blockchain.get_stable_height(), topoheight, common_point.get_hash());
             // We are under the stable height, rewind is necessary
-            let mut count = if lowest_height <= self.blockchain.get_stable_height() {
+            let mut count = if lowest_height <= self.blockchain.get_stable_height() || peer.is_priority() {
                 let our_topoheight = self.blockchain.get_topo_height();
                 if our_topoheight > topoheight {
                     our_topoheight - topoheight
