@@ -2,11 +2,13 @@
 All rights reserved to XELIS
 
 Skoof is a meme fork of XELIS which dedicated to typical nasty man about 30-50 years old, looking older than he actually is, due to bad physical condition, obesity, baldness, smoking, bad job, ugly wife and three kids etc. (Urban dictionary description)
+
 You can found photo of skoof on our website https://skoof.pro
 
 Mainnet started 5 June 2024.
 
 Do not mine this coin if you think it's a serious project. It's not for you. Always remember that you are here for meme fork.
+
 Read more information about our project in our discord https://discord.gg/jebGH7Uz
 
 ## Config
