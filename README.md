@@ -1,68 +1,21 @@
-# XELIS
-All rights reserved.
+# Skoof
+All rights reserved to XELIS
 
-A from scratch blockchain made in Rust and powered by Tokio, using account model. XELIS is based on an event-driven system combined with the native async/await and works with a unique and from scratch p2p system. This allow to be notified on any events happening on the network and to be able to react to them instead of checking periodically for updates.
+Skoof is a meme fork of XELIS which dedicated to typical nasty man about 30-50 years old, looking older than he actually is, due to bad physical condition, obesity, baldness, smoking, bad job, ugly wife and three kids etc. (Urban dictionary description)
+You can found photo of skoof on our website https://skoof.pro
 
-BlockDAG is enabled to improve the scalability and the security of the network. Homomorphic Encryption using ElGamal is used to provide privacy on transactions (transfered amounts) and balances.
+Mainnet started 5 June 2024.
 
-ElGamal cryptosystem was choosen because it's a well known and studied encryption algorithm which has homomorphism features. ElGamal is fast and is used in combination with Ristretto255 curve to provide a good level of security (~128 bits of security). Homomorphic operations available using ElGamal are addition/subtraction between ciphertexts and/or plaintext and multiplication against plaintext value.
-
-Account Model allows to have a more flexible system than UTXO model and to have a better privacy because there is no need to link inputs and outputs, which provide real fungibility. It allows also the fast-sync feature to only download the last state of the blockchain instead of downloading all the history.
-
-Pruning system is also available to reduce the size of the blockchain by removing old blocks and transactions.
-
-We also aims to enabled Smart Contracts support in the future.
-
-We provide different built-in networks:
-- Mainnet: Released April 20, 2024.
-- Testnet: Running
-- Devnet: this network is used for local development purpose where you want to create your own local chain. It has no peers
-
-## Acknowledgments
-
-[@cchudant](https://github.com/cchudant):
-- Optimized decoding RistrettoPoint implementation (ECDLP).
-- Twisted ElGamal implementation along ZK-Proofs integration for Confidential Transactions.
-- To read more, please see [XELIS-HE](https://github.com/xelis-project/xelis-he) framework created by him.
-
-[@deroholic](https://github.com/deroholic):
-- Difficulty adjustment algorithm using Kalman-Filter.
-
-Thank you to every people testing actively the code base, honest miners and every future contributors!
-
-## Main features
-
-The main features of XELIS are the following:
-- **BlockDAG**: reduce orphaned blocks rate.
-- **Egalitarian Mining**: any CPU or GPU can mine XELIS easily.
-- **Privacy**: Homomorphic Encryption allows to have encrypted balances and encrypted transfered amounts.
-- **Confidential Asset**: Any asset deployed on XELIS network will have the same privacy and functionality like XELIS. Not just a number in a Smart Contract.
-- **Event system**: every event happening on the network (daemon or wallet) can be detected and notified easily.
-- **Instant Sync**: Your wallet balances and history is synced in few seconds.
-- **Smart Contracts**: Create and deploy unstoppable decentralized applications.
-- **Integrated addresses**: introduce any data in your wallet address to share informations in a transaction.
-- **Easy to use**: We aims to provide the most easiest platform to build and use daily.
-
-## Objectives
-
-The main objectives of XELIS are:
-- Provide privacy on transactions / balances.
-- Provide Smart Contracts support.
-- Secure and fast.
-
-Others objectives in mind are:
-- Provide real custom assets working as the native coin.
-- Designed as CPU/GPU mining friendly to improve decentralization as possible.
-- Simple to use.
-- Community driven decisions.
+Do not mine this coin if you think it's a serious project. It's not for you. Always remember that you are here for meme fork.
+Read more information about our project in our discord https://discord.gg/jebGH7Uz
 
 ## Config
 
 ### Network
 
 - Expected Block Time is `15` seconds
-- Address prefix is `xel` on mainnet and `xet` for testnet/devnet
-- Transaction fee is `0.01000` XEL per KB
+- Address prefix is `skf` on mainnet and `xet` for testnet/devnet
+- Transaction fee is `0.01000` SKF per KB
 - Up to `8` decimals
 - Maximum supply: `18.4` millions
 - Maximum block size: `1.25` MB
@@ -71,55 +24,11 @@ Others objectives in mind are:
 
 ### Daemon
 
-- Default P2P port is `2125`
-- Defaut RPC Server port is `8080`
+- Default P2P port is `6665`
+- Defaut RPC Server port is `6666`
 
-### Wallet
-
-- Default RPC Server port is `8081`
-
-## Roadmap
-
-- Include extra fees when sending coins to a not-yet registered address
-- Support of Smart Contracts (xelis-vm)
-- Privacy (through Homomorphic Encryption)
-
-## BlockDAG
-
-XELIS use a blockDAG with following rules:
-- A block is considered `Sync Block` when the block height is less than `TOP_HEIGHT - STABLE_LIMIT` and it's the unique block at a specific height (or only ordered block at its height and don't have lower cumulative difficulty than previous blocks).
-- A block is considered `Side Block` when block height is less than or equal to height of past 8 topological blocks.
-- A block is considered `Orphaned` when the block is not ordered in DAG (no topological height for it).
-- A height is not unique anymore.
-- Topo height is unique for each block, but can change when the DAG is re-ordered up to `TOP_HEIGHT - STABLE_LIMIT`.
-- You can have up to 3 previous blocks in a block.
-- For mining, you have to mine on one of 3 of the most heavier tips.
-- Block should not have deviated too much from main chain / heavier tips.
-- Maximum 9% of difficulty difference between Tips selected in the same block.
-- Side Blocks receive only 30% of block reward.
-- Supply is re-calculated each time the block is re-ordered because its based on topo order.
-- Transactions and miner rewards are re-computed when a new block is added and the block there linked to is not yet in stable topo height. 
-- A same transaction can be added in more than a block if they are not in the same tip branch. Client protocol will execute it only one time.
-
-Topoheight represents how many unique blocks there is in the blockchain ordered by DAG.
-
-A block ordered is a valid and executed one.
-
-Topoheight order is unstable and may change until the blocks are in the stable height.
-
-Longest chain is the one selected by nodes. But for tips branches conflicts, cumulative difficulty is used to select the main chain.
-
-## Homomorphic Encryption
-
-Homomorphic Encryption (HE) will allow to add privacy on transactions and accounts by doing computation while staying in encrypted form.
-Each balances, transaction assets values are in encrypted form and nobody can determine the real value of it except involved parties.
-
-**NOTE**: This part is not yet deployed and is under heavy work.
 
 ## Mining
-
-Mining capabilities of XELIS are a bit differents from others chains because of standards being not implemented.
-Each job send to a miner is a `MinerWork` instance in hex format.
 
 The `MinerWork` is in following format:
 - header work hash: 32 bytes
@@ -525,7 +434,7 @@ Building this project requires a working [Rust](https://rustup.rs) (stable) tool
 It's expected to be cross-platform and guaranteed to work on Linux, Windows, MacOS platforms.
 
 ### Build from sub project
-Go to one of following folder you want to build from source: `xelis_daemon`, `xelis_miner` or `xelis_wallet`.
+Go to one of following folder you want to build from source: `skoof_daemon`, `skoof_miner` or `skoof_wallet`.
 To build a release (optimized) version:
 `cargo build --release`
 
