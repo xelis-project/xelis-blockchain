@@ -200,7 +200,7 @@ async fn test_tx_verify() {
         });
     }
 
-    tx.verify(&mut state, 0).await.unwrap();
+    tx.verify(&mut state).await.unwrap();
 }
 
 #[tokio::test]
@@ -261,7 +261,7 @@ async fn test_burn_tx_verify() {
         });
     }
 
-    tx.verify(&mut state, 0).await.unwrap();
+    tx.verify(&mut state).await.unwrap();
 }
 
 #[tokio::test]
@@ -331,7 +331,7 @@ async fn test_max_transfers() {
         });
     }
 
-    assert!(tx.verify(&mut state, 0).await.is_ok());
+    assert!(tx.verify(&mut state).await.is_ok());
 }
 
 #[async_trait]
@@ -341,7 +341,6 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     async fn pre_verify_tx<'b>(
         &'b mut self,
         _: &Transaction,
-        _: u8,
     ) -> Result<(), ()> {
         Ok(())
     }
@@ -390,6 +389,10 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
         new_nonce: u64
     ) -> Result<(), ()> {
         self.accounts.get_mut(account).map(|account| account.nonce = new_nonce).ok_or(())
+    }
+
+    fn get_block_version(&self) -> u8 {
+        0
     }
 }
 

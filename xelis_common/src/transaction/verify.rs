@@ -22,7 +22,6 @@ pub trait BlockchainVerificationState<'a, E> {
     async fn pre_verify_tx<'b>(
         &'b mut self,
         tx: &Transaction,
-        block_version: u8
     ) -> Result<(), E>;
 
     /// Get the balance ciphertext for a receiver account
@@ -60,6 +59,9 @@ pub trait BlockchainVerificationState<'a, E> {
         account: &'a CompressedPublicKey,
         new_nonce: u64
     ) -> Result<(), E>;
+
+    /// Get the block version in which TX is executed
+    fn get_block_version(&self) -> u8;
 }
 
 #[derive(Error, Debug, Clone)]
@@ -199,11 +201,10 @@ impl Transaction {
         &'a self,
         state: &mut B,
         sigma_batch_collector: &mut BatchCollector,
-        block_version: u8
     ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationError<E>>
     {
         trace!("Pre-verifying transaction");
-        state.pre_verify_tx(&self, block_version).await
+        state.pre_verify_tx(&self).await
             .map_err(VerificationError::State)?;
 
         // First, check the nonce
@@ -248,7 +249,7 @@ impl Transaction {
             }
 
             // TODO: this is temporary until the hardfork has passed
-            let max_size = if block_version == 0 {
+            let max_size = if state.get_block_version() == 0 {
                 EXTRA_DATA_LIMIT_SIZE
             } else {
                 EXTRA_DATA_LIMIT_SUM_SIZE
@@ -431,13 +432,12 @@ impl Transaction {
     pub async fn verify_batch<'a, T: AsRef<Transaction>, E, B: BlockchainVerificationState<'a, E>>(
         txs: &'a [T],
         state: &mut B,
-        block_version: u8,
     ) -> Result<(), VerificationError<E>> {
         trace!("Verifying batch of {} transactions", txs.len());
         let mut sigma_batch_collector = BatchCollector::default();
         let mut prepared = Vec::with_capacity(txs.len());
         for tx in txs {
-            let (transcript, commitments) = tx.as_ref().pre_verify(state, &mut sigma_batch_collector, block_version).await?;
+            let (transcript, commitments) = tx.as_ref().pre_verify(state, &mut sigma_batch_collector).await?;
             prepared.push((transcript, commitments));
         }
 
@@ -464,10 +464,9 @@ impl Transaction {
     pub async fn verify<'a, E, B: BlockchainVerificationState<'a, E>>(
         &'a self,
         state: &mut B,
-        block_version: u8,
     ) -> Result<(), VerificationError<E>> {
         let mut sigma_batch_collector = BatchCollector::default();
-        let (mut transcript, commitments) = self.pre_verify(state, &mut sigma_batch_collector, block_version).await?;
+        let (mut transcript, commitments) = self.pre_verify(state, &mut sigma_batch_collector).await?;
 
         trace!("Verifying sigma proofs");
         sigma_batch_collector
