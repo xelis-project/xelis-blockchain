@@ -71,8 +71,8 @@ impl Mempool {
 
     // All checks are made in Blockchain before calling this function
     pub async fn add_tx<S: Storage>(&mut self, storage: &S, topoheight: u64, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: u8) -> Result<(), BlockchainError> {
-        let mut state = MempoolState::new(&self, storage, topoheight);
-        tx.verify(&mut state, block_version).await?;
+        let mut state = MempoolState::new(&self, storage, topoheight, block_version);
+        tx.verify(&mut state).await?;
 
         let balances = state.get_sender_balances(tx.get_source())
             .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(storage.is_mainnet())))?
@@ -411,8 +411,8 @@ impl Mempool {
                         // NOTE: this can be revert easily in case we are deleting valid TXs also,
                         // But will be slower during high traffic
                         debug!("Verifying TXs ({}) for sender {} at topoheight {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), topoheight);
-                        let mut state = MempoolState::new(&self, storage, topoheight);
-                        if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state, block_version).await {
+                        let mut state = MempoolState::new(&self, storage, topoheight, block_version);
+                        if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
                             warn!("Error while verifying TXs for sender {}: {}", key.as_address(self.mainnet), e);
                             for (hash, tx) in txs_hashes.iter().zip(txs) {
                                 warn!("- Deleting TX {} with {} and nonce {}", hash, tx.get_reference(), tx.get_nonce());

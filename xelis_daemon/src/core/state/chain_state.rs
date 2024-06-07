@@ -137,7 +137,9 @@ pub struct ChainState<'a, S: Storage> {
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
     // Current topoheight of the snapshot
-    topoheight: u64
+    topoheight: u64,
+    // Block header version
+    block_version: u8,
 }
 
 // Chain State that can be applied to the mutable storage
@@ -172,9 +174,9 @@ impl<'a, S: Storage> AsMut<ChainState<'a, S>> for ApplicableChainState<'a, S> {
 }
 
 impl<'a, S: Storage> ApplicableChainState<'a, S> {
-    pub fn new(storage: &'a mut S, topoheight: u64) -> Self {
+    pub fn new(storage: &'a mut S, topoheight: u64, block_version: u8) -> Self {
         Self {
-            inner: ChainState::with(StorageReference::Mutable(storage), topoheight)
+            inner: ChainState::with(StorageReference::Mutable(storage), topoheight, block_version)
         }
     }
 
@@ -200,7 +202,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             // But Bob built its ZK Proof with the balance before Alice's transaction
             for (asset, echange) in account.assets.drain() {
                 trace!("{} {} updated for {} at topoheight {}", echange.version, asset, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
-                let Echange { version, output_sum, output_balance_used, new_version, .. } = echange;
+                let Echange { mut version, output_sum, output_balance_used, new_version, .. } = echange;
                 trace!("sender output sum: {:?}", output_sum.compress());
                 match balances.entry(asset) {
                     Entry::Occupied(mut o) => {
@@ -245,21 +247,36 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                         // We have no incoming update for this key
                         // Select the right final version
                         // For that, we must check if we used the output balance and/or if we are not on the last version 
-                        let mut version = if output_balance_used || !new_version {
+                        let version = if output_balance_used || !new_version {
                             // We must fetch again the version to sum it with the output
                             // This is necessary to build the final balance
-                            let mut version = self.inner.storage.get_new_versioned_balance(key, asset, self.inner.topoheight).await?;
+                            let mut new_version = self.inner.storage.get_new_versioned_balance(key, asset, self.inner.topoheight).await?;
                             // Substract the output sum
                             trace!("{} has no balance for {} at topoheight {}, substract output sum", key.as_address(self.inner.storage.is_mainnet()), asset, self.inner.topoheight);
-                            *version.get_mut_balance().computable()? -= output_sum;
-                            version
+                            *new_version.get_mut_balance().computable()? -= output_sum;
+
+                            if self.inner.block_version == 0 {
+                                new_version.set_balance_type(BalanceType::Output);
+                            } else {
+                                // Report the output balance to the next topoheight
+                                // So the edge case where:
+                                // Balance at topo 1000 is referenced
+                                // Balance updated at topo 1001 as input
+                                // TX A is built with reference 1000 but executed at topo 1002
+                                // TX B reference 1000 but output balance is at topo 1002 and it include the final balance of (TX A + input at 1001)
+                                // So we report the output balance for next TX verification
+                                new_version.set_output_balance(Some(version.take_balance_with(output_balance_used)));
+                                new_version.set_balance_type(BalanceType::Both);
+                            }
+
+                            new_version
                         } else {
                             // Version was based on final balance, all good, nothing to do
+                            version.set_balance_type(BalanceType::Output);
                             version
                         };
 
                         // We have some output, mark it
-                        version.set_balance_type(BalanceType::Output);
 
                         e.insert(version);
                     }
@@ -292,17 +309,18 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 }
 
 impl<'a, S: Storage> ChainState<'a, S> {
-    fn with(storage: StorageReference<'a, S>, topoheight: u64) -> Self {
+    fn with(storage: StorageReference<'a, S>, topoheight: u64, block_version: u8) -> Self {
         Self {
             storage,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
-            topoheight
+            topoheight,
+            block_version
         }
     }
 
-    pub fn new(storage: &'a S, topoheight: u64) -> Self {
-        Self::with(StorageReference::Immutable(storage), topoheight)
+    pub fn new(storage: &'a S, topoheight: u64, block_version: u8) -> Self {
+        Self::with(StorageReference::Immutable(storage), topoheight, block_version)
     }
 
     // Get the storage used by the chain state
@@ -440,7 +458,6 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     async fn pre_verify_tx<'b>(
         &'b mut self,
         tx: &Transaction,
-        _: u8
     ) -> Result<(), BlockchainError> {
         // Check the version
         if tx.get_version() != 0 {
@@ -521,5 +538,10 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         new_nonce: u64
     ) -> Result<(), BlockchainError> {
         self.internal_update_account_nonce(account, new_nonce).await
+    }
+
+    /// Get the block version
+    fn get_block_version(&self) -> u8 {
+        self.block_version
     }
 } 
