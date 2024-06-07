@@ -22,7 +22,7 @@ pub const MAXIMUM_SUPPLY: u64 = 18_400_000 * COIN_VALUE;
 
 // Addresses format
 // mainnet prefix address
-pub const PREFIX_ADDRESS: &str = "xel";
+pub const PREFIX_ADDRESS: &str = "skf";
 // testnet prefix address
 pub const TESTNET_PREFIX_ADDRESS: &str = "xet";
 
