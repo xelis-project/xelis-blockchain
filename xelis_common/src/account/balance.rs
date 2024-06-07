@@ -148,6 +148,10 @@ impl VersionedBalance {
         self.balance_type = balance_type;
     }
 
+    pub fn get_balance_type(&self) -> BalanceType {
+        self.balance_type
+    }
+
     pub fn consume(self) -> (CiphertextCache, Option<CiphertextCache>, BalanceType, Option<u64>) {
         (self.final_balance, self.output_balance, self.balance_type, self.previous_topoheight)
     }
