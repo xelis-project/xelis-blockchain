@@ -687,8 +687,10 @@ where
                             }
                         }
 
-                        session.get_server().delete_session(&session, None).await;
-    
+                        if let Err(e) = session.close(None).await {
+                            error!("Error while closing session: {}", e);
+                        }
+
                         Ok(None)
                     }
                 }
