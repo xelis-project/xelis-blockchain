@@ -455,6 +455,8 @@ where
         }
     }
 
+    // verify the permission for a request
+    // if the permission is not set, it will request it to the user
     async fn verify_permission_for_request(&self, app: &AppStateShared, request: &RpcRequest) -> Result<(), RpcResponseError> {
         let _permit = self.permission_handler_semaphore.acquire().await
             .map_err(|_| RpcResponseError::new(request.id.clone(), InternalRpcError::InternalError("Permission handler semaphore error")))?;
@@ -493,10 +495,9 @@ where
         }
     }
 
-    async fn add_application(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Value, RpcResponseError> {
-        // Application is not registered, register it
-        let app_data: ApplicationData = serde_json::from_slice::<ApplicationData>(&message)
-            .map_err(|_| RpcResponseError::new(None, XSWDError::InvalidApplicationData))?;
+    // register a new application
+    // if the application is already registered, it will return an error
+    async fn add_application(&self, session: &WebSocketSessionShared<Self>, app_data: ApplicationData) -> Result<Value, RpcResponseError> {
         // Sanity check
         {
             if app_data.id.len() != 64 {
@@ -639,6 +640,9 @@ where
         applications.values().find(|e| e.get_id() == id).is_some()
     }
 
+    // Internal method to handle the message received from the WebSocket connection
+    // This method will parse the message and call the appropriate method if app is registered
+    // Otherwise, it expects a JSON object with the application data to register it
     async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
         let (request, is_subscribe, is_unsubscribe) = {
             let app_state = {
@@ -676,8 +680,11 @@ where
 
                 (request, is_subscribe, is_unsubscribe)
             } else {
+                let app_data: ApplicationData = serde_json::from_slice::<ApplicationData>(&message)
+                    .map_err(|_| RpcResponseError::new(None, XSWDError::InvalidApplicationData))?;
+
                 // Application is not registered, register it
-                return match self.add_application(session, message).await {
+                return match self.add_application(session, app_data).await {
                     Ok(v) => Ok(Some(v)),
                     Err(e) => {
                         if !session.is_closed().await {
