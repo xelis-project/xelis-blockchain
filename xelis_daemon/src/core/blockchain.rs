@@ -344,26 +344,28 @@ impl<S: Storage> Blockchain<S> {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
-                        let addr: SocketAddr = match addr.parse() {
-                            Ok(addr) => addr,
-                            Err(e) => {
-                                match lookup_host(&addr).await {
-                                    Ok(it) => {
-                                        info!("Valid host found for {}", addr);
-                                        for addr in it {
-                                            info!("Trying to connect to priority node with IP from DNS resolution: {}", addr);
-                                            p2p.try_to_connect_to_peer(addr, true).await;
+                        for addr in addr.split(",") {
+                            let addr: SocketAddr = match addr.parse() {
+                                Ok(addr) => addr,
+                                Err(e) => {
+                                    match lookup_host(&addr).await {
+                                        Ok(it) => {
+                                            info!("Valid host found for {}", addr);
+                                            for addr in it {
+                                                info!("Trying to connect to priority node with IP from DNS resolution: {}", addr);
+                                                p2p.try_to_connect_to_peer(addr, true).await;
+                                            }
+                                        },
+                                        Err(e2) => {
+                                            error!("Error while parsing priority node address: {}, {}", e, e2);
                                         }
-                                    },
-                                    Err(e2) => {
-                                        error!("Error while parsing priority node address: {}, {}", e, e2);
-                                    }
-                                };
-                                continue;
-                            }
-                        };
-                        info!("Trying to connect to priority node: {}", addr);
-                        p2p.try_to_connect_to_peer(addr, true).await;
+                                    };
+                                    continue;
+                                }
+                            };
+                            info!("Trying to connect to priority node: {}", addr);
+                            p2p.try_to_connect_to_peer(addr, true).await;
+                        }
                     }
                     *arc.p2p.write().await = Some(p2p);
                 },
