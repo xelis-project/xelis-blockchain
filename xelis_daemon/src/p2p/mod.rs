@@ -1581,7 +1581,7 @@ impl<S: Storage> P2pServer<S> {
                             return Err(P2pError::InvalidPeerlist)
                         }
     
-                        if !self.is_connected_to_addr(addr).await && self.peer_list.has_peer_stored(&addr.ip()).await {
+                        if !self.is_connected_to_addr(addr).await && !self.peer_list.has_peer_stored(&addr.ip()).await {
                             if !self.peer_list.store_peer_address(*addr).await {
                                 debug!("{} already stored in peer list", addr);
                             }
