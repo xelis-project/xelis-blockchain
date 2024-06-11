@@ -328,14 +328,16 @@ impl<S: Storage> Blockchain<S> {
             // setup exclusive nodes
             let mut exclusive_nodes: Vec<SocketAddr> = Vec::with_capacity(config.exclusive_nodes.len());
             for peer in config.exclusive_nodes {
-                let addr: SocketAddr = match peer.parse() {
-                    Ok(addr) => addr,
-                    Err(e) => {
-                        error!("Error while parsing priority node address: {}", e);
-                        continue;
-                    }
-                };
-                exclusive_nodes.push(addr);
+                for peer in peer.split(",") {
+                    let addr: SocketAddr = match peer.parse() {
+                        Ok(addr) => addr,
+                        Err(e) => {
+                            error!("Error while parsing exclusive node address: {}", e);
+                            continue;
+                        }
+                    };
+                    exclusive_nodes.push(addr);
+                }
             }
 
             match P2pServer::new(config.p2p_concurrency_task_count_limit, config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing, config.disable_p2p_outgoing_connections) {
