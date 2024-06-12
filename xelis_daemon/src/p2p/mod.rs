@@ -1279,7 +1279,8 @@ impl<S: Storage> P2pServer<S> {
 
                     // check that we don't have too many fails
                     // otherwise disconnect peer
-                    if peer.get_fail_count() >= PEER_FAIL_LIMIT {
+                    // Priority nodes are not disconnected
+                    if peer.get_fail_count() >= PEER_FAIL_LIMIT && !peer.is_priority() {
                         warn!("High fail count detected for {}! Closing connection...", peer);
                         if let Err(e) = peer.close_and_temp_ban().await {
                             error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
