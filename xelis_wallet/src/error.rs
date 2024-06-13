@@ -3,10 +3,12 @@ use chacha20poly1305::Error as CryptoError;
 use super::network_handler::NetworkError;
 use xelis_common::{
     crypto::Hash,
-    rpc_server::InternalRpcError,
     transaction::extra_data::CipherFormatError,
     utils::{format_coin, format_xelis}
 };
+#[cfg(feature = "api_server")]
+use xelis_common::rpc_server::InternalRpcError;
+
 use anyhow::Error;
 
 #[repr(usize)]
@@ -91,6 +93,7 @@ impl WalletError {
     }
 }
 
+#[cfg(feature = "api_server")]
 impl From<WalletError> for InternalRpcError {
     fn from(e: WalletError) -> Self {
         let id = unsafe { e.id() };

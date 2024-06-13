@@ -70,8 +70,7 @@ use crate::{
         TransactionBuilderState
     }
 };
-use chacha20poly1305::aead::OsRng;
-use rand::RngCore;
+use rand::{rngs::OsRng, RngCore};
 use log::{
     trace,
     debug,
