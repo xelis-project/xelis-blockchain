@@ -10,6 +10,7 @@ use xelis_common::{
             BlockType,
             NotifyEvent,
             StableHeightChangedEvent,
+            StableTopoHeightChangedEvent,
             TransactionExecutedEvent,
             TransactionResponse
         },
@@ -2133,10 +2134,22 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
-            // Update caches
-            self.stable_height.store(stable_height, Ordering::SeqCst);
             // Search the topoheight of the stable block
             let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
+            if should_track_events.contains(&NotifyEvent::StableTopoHeightChanged) {
+                // detect the change in stable topoheight
+                let previous_stable_topoheight = self.get_stable_topoheight();
+                if stable_topoheight != previous_stable_topoheight {
+                    let value = json!(StableTopoHeightChangedEvent {
+                        previous_stable_topoheight,
+                        new_stable_topoheight: stable_topoheight
+                    });
+                    events.entry(NotifyEvent::StableTopoHeightChanged).or_insert_with(Vec::new).push(value);
+                }
+            }
+
+            // Update caches
+            self.stable_height.store(stable_height, Ordering::SeqCst);
             self.stable_topoheight.store(stable_topoheight, Ordering::SeqCst);
 
             trace!("update difficulty in cache");
@@ -2463,10 +2476,13 @@ impl<S: Storage> Blockchain<S> {
         if !stop_at_stable_height {
             let tips = storage.get_tips().await?;
             let (stable_hash, stable_height) = self.find_common_base::<S, _>(&storage, &tips).await?;
+            let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
 
             // if we have a RPC server, propagate the StableHeightChanged if necessary
             if let Some(rpc) = self.rpc.read().await.as_ref() {
                 let previous_stable_height = self.get_stable_height();
+                let previous_stable_topoheight = self.get_stable_topoheight();
+
                 if stable_height != previous_stable_height {
                     if rpc.is_event_tracked(&NotifyEvent::StableHeightChanged).await {
                         let rpc = rpc.clone();
@@ -2482,9 +2498,24 @@ impl<S: Storage> Blockchain<S> {
                         });
                     }
                 }
+
+                if stable_topoheight != previous_stable_topoheight {
+                    if rpc.is_event_tracked(&NotifyEvent::StableTopoHeightChanged).await {
+                        let rpc = rpc.clone();
+                        spawn_task("rpc-notify-stable-topoheight", async move {
+                            let event = json!(StableTopoHeightChangedEvent {
+                                previous_stable_topoheight,
+                                new_stable_topoheight: stable_topoheight
+                            });
+    
+                            if let Err(e) = rpc.notify_clients(&NotifyEvent::StableTopoHeightChanged, event).await {
+                                debug!("Error while broadcasting event StableTopoHeightChanged to websocket: {}", e);
+                            }
+                        });
+                    }
+                }
             }
             self.stable_height.store(stable_height, Ordering::SeqCst);
-            let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
             self.stable_topoheight.store(stable_topoheight, Ordering::SeqCst);
         }
 
