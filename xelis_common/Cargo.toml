@@ -31,7 +31,7 @@ chrono = "0.4.35"
 tokio = { version = "1.36", features = ["macros", "signal", "time", "sync"], optional = true }
 reqwest = { version = "0.11.25", default-features = false, features = ["json"], optional = true }
 clap = { version = "4.5.2", features = ["derive"], optional = true }
-crossterm = "0.27.0"
+crossterm = { version = "0.27.0", optional = true }
 indexmap = { version = "2.2.5", features = ["serde"] }
 actix-rt = { version = "2.9.0", optional = true }
 actix-web = { version = "4", optional = true }
@@ -52,13 +52,19 @@ chacha20 = "0.9.1"
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
 [dev-dependencies]
 tokio = { version = "1.36", features = ["full"] }
 
 [features]
 tokio = ["dep:tokio"]
 json_rpc = ["dep:reqwest", "dep:tokio-tungstenite"]
-prompt = ["tokio"]
+prompt = ["tokio", "dep:crossterm"]
 clap = ["dep:clap"]
 rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest"]
 tracing = ["dep:console-subscriber", "tokio", "tokio/tracing"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
