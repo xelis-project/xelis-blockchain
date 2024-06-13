@@ -60,9 +60,9 @@ tokio = { version = "1.36", features = ["full"] }
 
 [features]
 tokio = ["dep:tokio"]
-json_rpc = ["dep:reqwest", "dep:tokio-tungstenite"]
-prompt = ["tokio", "dep:crossterm"]
+json_rpc = ["dep:reqwest", "dep:futures-util", "dep:tokio-tungstenite"]
 clap = ["dep:clap"]
+prompt = ["clap", "tokio", "dep:crossterm"]
 rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest"]
 tracing = ["dep:console-subscriber", "tokio", "tokio/tracing"]
 
