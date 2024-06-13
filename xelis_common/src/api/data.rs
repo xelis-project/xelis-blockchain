@@ -99,13 +99,14 @@ impl Serializer for ValueType {
 #[serde(untagged)]
 pub enum DataElement {
     Value(DataValue),
-    // For two next variants, we support up to 255 (u8::MAX) elements maximum
-    Array(Vec<DataElement>),
-    Fields(HashMap<DataValue, DataElement>),
     // This is a specific type for optimized size of binary data
     // Because above variants rewrite for each element the byte of the element and of each value
     // It supports up to 65535 bytes (u16::MAX)
     Blob(Vec<u8>),
+    // For two next variants, we support up to 255 (u8::MAX) elements maximum
+    Array(Vec<DataElement>),
+    // Key-Value map with key as DataValue and value as DataElement
+    Fields(HashMap<DataValue, DataElement>),
 }
 
 impl DataElement {
@@ -629,5 +630,30 @@ mod tests {
 
         let val2: Vec<u64> = elem.into();
         assert_eq!(val, val2);
+    }
+
+    #[test]
+    fn test_blob() {
+        let data = vec![0u8; 1000];
+        let element: DataElement = data.clone().into();
+        let element2: Vec<u8> = element.into();
+        assert_eq!(data, element2);
+
+        let json = "[0, 55, 77, 99, 88, 77]";
+        let element: DataElement = serde_json::from_str(json).unwrap();
+        assert_eq!(element.kind(), ElementType::Blob);
+    }
+
+    #[test]
+    fn test_array() {
+        // Mixed types
+        let json = "[0, 55, 77, 99, 88, 77, false]";
+        let element: DataElement = serde_json::from_str(json).unwrap();
+        assert_eq!(element.kind(), ElementType::Array);
+
+        // Using integer types
+        let json = "[0, 55, 77, 99, 88, 777777]";
+        let element: DataElement = serde_json::from_str(json).unwrap();
+        assert_eq!(element.kind(), ElementType::Array);
     }
 }
