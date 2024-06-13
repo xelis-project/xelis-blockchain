@@ -43,7 +43,7 @@ regex = "1"
 # Query system
 serde_regex = "1.1.0"
 # WebSocket clients using tokio
-tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"], optional = true }
 # Used for U256
 primitive-types = { version = "0.12.2", features = ["serde"] }
 console-subscriber = { version = "0.2.0", optional = true }
@@ -56,8 +56,9 @@ win32console = "0.1.5"
 tokio = { version = "1.36", features = ["full"] }
 
 [features]
-json_rpc = ["dep:reqwest"]
-prompt = ["dep:tokio"]
+tokio = ["dep:tokio"]
+json_rpc = ["dep:reqwest", "dep:tokio-tungstenite"]
+prompt = ["tokio"]
 clap = ["dep:clap"]
-rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "dep:tokio", "dep:reqwest"]
-tracing = ["dep:console-subscriber", "tokio/tracing"]
+rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest"]
+tracing = ["dep:console-subscriber", "tokio", "tokio/tracing"]
