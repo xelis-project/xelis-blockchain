@@ -7,7 +7,7 @@ authors = ["Slixe <slixeprivate@gmail.com>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-xelis_common = { path = "../xelis_common", features = ["json_rpc"] }
+xelis_common = { path = "../xelis_common", features = ["tokio", "json_rpc"] }
 # Used to encrypt/decrypt data on disk
 chacha20poly1305 = "0.10.1"
 sled = "0.34.7"
@@ -28,7 +28,8 @@ indexmap = { version = "2.0.0", features = ["serde"] }
 log = "0.4"
 rand = "0.8.4"
 thiserror = "1.0.57"
-tokio = { version = "1", features = ["rt-multi-thread"] }
+# Used by CLI for multi-threading
+tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 anyhow = "1"
 fern = { version = "0.6", features = ["colored"] }
 serde = { version = "1", features = ["derive", "rc"] }
@@ -39,5 +40,8 @@ async-trait = "0.1.64"
 [features]
 # Set as default dependencies until https://github.com/rust-lang/cargo/issues/4663 is resolved for binary targets
 default = ["cli", "api_server"]
-cli = ["dep:clap", "xelis_common/prompt"]
-api_server = ["xelis_common/rpc_server", "dep:actix", "dep:actix-web", "dep:actix-web-httpauth"]
+cli = ["dep:tokio", "dep:clap", "xelis_common/prompt"]
+api_server = [ "xelis_common/rpc_server", "dep:actix", "dep:actix-web", "dep:actix-web-httpauth"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]

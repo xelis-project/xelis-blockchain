@@ -7,15 +7,19 @@ use std::{
 };
 use anyhow::{Error, Context};
 use serde::Serialize;
-use tokio::sync::{
-    broadcast::{
-        Sender as BroadcastSender,
-        Receiver as BroadcastReceiver
-    },
-    Mutex,
-    RwLock
-};
 use xelis_common::{
+    tokio::{
+        sync::{
+            broadcast::{
+                Sender as BroadcastSender,
+                Receiver as BroadcastReceiver
+            },
+            Mutex,
+            RwLock,
+            broadcast,
+        },
+        task::spawn_blocking
+    },
     api::{
         wallet::{
             BalanceChanged,
@@ -95,16 +99,22 @@ use {
         PermissionRequest,
         XSWDPermissionHandler
     },
-    xelis_common::rpc_server::{
-        RPCHandler,
-        RpcRequest,
-        InternalRpcError,
-        RpcResponseError,
-        JSON_RPC_VERSION
-    },
-    tokio::sync::{
-        mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel},
-        oneshot::{Sender as OneshotSender, channel}
+    xelis_common::{
+        rpc_server::{
+            RPCHandler,
+            RpcRequest,
+            InternalRpcError,
+            RpcResponseError,
+            JSON_RPC_VERSION
+        },
+        tokio::sync::{
+            mpsc::{
+                UnboundedSender,
+                UnboundedReceiver,
+                unbounded_channel
+            },
+            oneshot,
+        }
     }
 };
 
@@ -488,7 +498,7 @@ impl Wallet {
         match broadcaster.as_ref() {
             Some(broadcaster) => broadcaster.subscribe(),
             None => {
-                let (sender, receiver) = tokio::sync::broadcast::channel(10);
+                let (sender, receiver) = broadcast::channel(10);
                 *broadcaster = Some(sender);
                 receiver
             }
@@ -616,7 +626,7 @@ impl Wallet {
     // Wallet has to be under a Arc to be shared to the spawn_blocking function
     pub async fn decrypt_ciphertext(self: Arc<Self>, ciphertext: Ciphertext) -> Result<u64, WalletError> {
         trace!("decrypt ciphertext");
-        tokio::task::spawn_blocking(move || self.decrypt_ciphertext_internal(&ciphertext)).await.context("Error while decrypting ciphertext")?
+        spawn_blocking(move || self.decrypt_ciphertext_internal(&ciphertext)).await.context("Error while decrypting ciphertext")?
     }
 
     // Decrypt the extra data from a transfer
@@ -981,10 +991,10 @@ impl Wallet {
 
 #[cfg(feature = "api_server")]
 pub enum XSWDEvent {
-    RequestPermission(AppStateShared, RpcRequest, OneshotSender<Result<PermissionResult, Error>>),
+    RequestPermission(AppStateShared, RpcRequest, oneshot::Sender<Result<PermissionResult, Error>>),
     // bool represents if it was signed or not
-    RequestApplication(AppStateShared, bool, OneshotSender<Result<PermissionResult, Error>>),
-    CancelRequest(AppStateShared, OneshotSender<Result<(), Error>>)
+    RequestApplication(AppStateShared, bool, oneshot::Sender<Result<PermissionResult, Error>>),
+    CancelRequest(AppStateShared, oneshot::Sender<Result<(), Error>>)
 }
 
 #[cfg(feature = "api_server")]
@@ -995,7 +1005,7 @@ impl XSWDPermissionHandler for Arc<Wallet> {
             // no other way ?
             let app_state = app_state.clone();
             // create a callback channel to receive the answer
-            let (callback, receiver) = channel();
+            let (callback, receiver) = oneshot::channel();
             let event = match request {
                 PermissionRequest::Application(signed) => XSWDEvent::RequestApplication(app_state, signed, callback),
                 PermissionRequest::Request(request) => XSWDEvent::RequestPermission(app_state, request.clone(), callback)
@@ -1015,7 +1025,7 @@ impl XSWDPermissionHandler for Arc<Wallet> {
     // the one who has the lock is the one who is requesting so we don't need to check and can cancel directly
     async fn cancel_request_permission(&self, app: &AppStateShared) -> Result<(), Error> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
-            let (callback, receiver) = channel();
+            let (callback, receiver) = oneshot::channel();
             // Send XSWD Message
             sender.send(XSWDEvent::CancelRequest(app.clone(), callback))?;
 

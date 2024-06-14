@@ -48,8 +48,6 @@ use xelis_common::{
         format_xelis
     }
 };
-#[cfg(feature = "api_server")]
-use xelis_common::utils::spawn_task;
 use xelis_wallet::{
     wallet::Wallet,
     config::{DEFAULT_DAEMON_ADDRESS, DIR_PATH}
@@ -67,10 +65,13 @@ use {
     },
     xelis_common::{
         rpc_server::RpcRequest,
-        prompt::ShareablePrompt
+        prompt::ShareablePrompt,
+        tokio::{
+            spawn_task,
+            sync::mpsc::UnboundedReceiver
+        }
     },
     anyhow::Error,
-    tokio::sync::mpsc::UnboundedReceiver
 };
 
 // This struct is used to configure the RPC Server

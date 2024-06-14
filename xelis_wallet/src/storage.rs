@@ -8,8 +8,8 @@ use sled::{
     Tree,
     Db
 };
-use tokio::sync::Mutex;
 use xelis_common::{
+    tokio::sync::Mutex,
     account::CiphertextCache,
     api::{
         query::{

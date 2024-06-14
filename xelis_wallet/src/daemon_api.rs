@@ -3,8 +3,8 @@ use std::{borrow::Cow, collections::HashSet};
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
-use tokio::sync::broadcast;
 use xelis_common::{
+    tokio::sync::broadcast,
     json_rpc::{
         WebSocketJsonRPCClient,
         WebSocketJsonRPCClientImpl,

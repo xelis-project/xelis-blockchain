@@ -34,12 +34,15 @@ use serde_json::{
     json
 };
 use thiserror::Error;
-use tokio::sync::{
-    Mutex,
-    RwLock,
-    Semaphore
-};
 use xelis_common::{
+    tokio::{
+        sync::{
+            Mutex,
+            RwLock,
+            Semaphore
+        },
+        spawn_task
+    },
     api::{
         wallet::NotifyEvent,
         EventResult
@@ -68,8 +71,7 @@ use xelis_common::{
         ReaderError,
         Serializer,
         Writer
-    },
-    utils::spawn_task
+    }
 };
 use serde::{Deserialize, Serialize};
 use crate::config::XSWD_BIND_ADDRESS;

@@ -9,8 +9,13 @@ use std::{
 use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, trace, warn};
-use tokio::{sync::Mutex, task::JoinHandle, time::sleep};
 use xelis_common::{
+    tokio::{
+        sync::Mutex, task::{JoinHandle, JoinError},
+        time::sleep,
+        select,
+        spawn_task
+    },
     account::CiphertextCache,
     api::{
         daemon::{
@@ -29,7 +34,7 @@ use xelis_common::{
     },
     serializer::Serializer,
     transaction::Role,
-    utils::{sanitize_daemon_address, spawn_task}
+    utils::sanitize_daemon_address
 };
 use crate::{
     config::AUTO_RECONNECT_INTERVAL,
@@ -56,7 +61,7 @@ pub enum NetworkError {
     #[error("network handler is not running")]
     NotRunning,
     #[error(transparent)]
-    TaskError(#[from] tokio::task::JoinError),
+    TaskError(#[from] JoinError),
     #[error(transparent)]
     DaemonAPIError(#[from] Error),
     #[error("Network mismatch")]
@@ -851,7 +856,7 @@ impl NetworkHandler {
         let mut on_connection_lost = self.api.on_connection_lost().await;
 
         loop {
-            tokio::select! {
+            select! {
                 biased;
                 // Wait on a new block, we don't parse the block directly as it may
                 // have reorg the chain
