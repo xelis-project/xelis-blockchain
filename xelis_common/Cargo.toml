@@ -54,7 +54,7 @@ win32console = "0.1.5"
 # Tokio dependency for WASM
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
-tokio_with_wasm = { version = "*", features = ["macros", "sync", "time", "rt"], optional = true }
+tokio_with_wasm = { git = "https://github.com/Slixe/tokio-with-wasm", branch = "main", features = ["macros", "sync", "time", "rt"], optional = true }
 
 # Tokio dependency for non-WASM
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

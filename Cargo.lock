@@ -1883,9 +1883,9 @@ checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 
 [[package]]
 name = "memchr"
-version = "2.7.2"
+version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c8640c5d730cb13ebd907d8d04b52f55ac9a2eec55b440c8892f40d56c76c1d"
+checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 
 [[package]]
 name = "merlin"
@@ -2063,7 +2063,7 @@ checksum = "1e401f977ab385c9e4e3ab30627d6f26d00e2c73eef317493c4ec6d468726cf8"
 dependencies = [
  "cfg-if",
  "libc",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "smallvec",
  "windows-targets 0.52.5",
 ]
@@ -2311,9 +2311,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "469052894dcb553421e483e4209ee581a45100d31b4018de03e5a7ad86374a7e"
+checksum = "c82cf8cff14456045f55ec4241383baeff27af886adb72ffb2162f99911de0fd"
 dependencies = [
  "bitflags 2.5.0",
 ]
@@ -3014,8 +3014,7 @@ dependencies = [
 [[package]]
 name = "tokio_with_wasm"
 version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b246eed2d38499d7bb6865436e6791d64d3556a98f764d5cd77d71499d66c61c"
+source = "git+https://github.com/Slixe/tokio-with-wasm?branch=main#10d8c4560c60bcc52d7009f39603cd17e29802a6"
 dependencies = [
  "js-sys",
  "tokio",
@@ -3590,7 +3589,7 @@ dependencies = [
 [[package]]
 name = "xelis-hash"
 version = "0.1.0"
-source = "git+ssh://git@github.com/xelis-project/xelis-hash-v2.git?branch=master#3264177914bf13f6b43878cc550b171558acf07c"
+source = "git+ssh://git@github.com/xelis-project/xelis-hash-v2.git?branch=master#af7a84103366b78ef0e3f8bb766e7b7b89074cbd"
 dependencies = [
  "aes",
  "blake3",
