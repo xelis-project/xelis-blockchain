@@ -3,7 +3,10 @@ use std::{
 };
 
 use log::debug;
-use tokio::{sync::{mpsc, Mutex}, task::JoinHandle};
+use super::{
+    sync::{mpsc, Mutex},
+    task::JoinHandle
+};
 
 use crate::utils::spawn_task;
 

@@ -17,7 +17,7 @@ pub mod varuint;
 pub mod time;
 
 #[cfg(feature = "tokio")]
-pub mod thread_pool;
+pub mod tokio;
 
 #[cfg(feature = "json_rpc")]
 pub mod json_rpc;

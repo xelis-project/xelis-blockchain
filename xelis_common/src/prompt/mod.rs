@@ -2,6 +2,20 @@ pub mod command;
 pub mod argument;
 
 use crate::{
+    tokio::{
+        sync::{
+            mpsc::{
+                self,
+                UnboundedSender,
+                UnboundedReceiver,
+                Sender,
+                Receiver
+            },
+            oneshot,
+            Mutex as AsyncMutex
+        },
+        time::{interval, timeout}
+    },
     crypto::Hash,
     serializer::{Serializer, ReaderError},
 };
@@ -26,14 +40,6 @@ use std::{
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers, KeyEventKind},
     terminal as crossterminal,
-};
-use tokio::{
-    sync::{
-        mpsc::{self, UnboundedSender, UnboundedReceiver, Sender, Receiver},
-        oneshot,
-        Mutex as AsyncMutex
-    },
-    time::{interval, timeout}
 };
 use self::command::{CommandError, CommandManager};
 use anyhow::Error;
