@@ -29,10 +29,11 @@ use crate::{
         net::TcpStream,
         sync::{broadcast, oneshot, Mutex},
         task::JoinHandle,
-        time::{sleep, timeout}
+        time::{sleep, timeout},
+        spawn_task
     },
     api::SubscribeParams,
-    utils::{sanitize_daemon_address, spawn_task}
+    utils::sanitize_daemon_address
 };
 
 use super::{JSON_RPC_VERSION, JsonRPCError, JsonRPCResponse, JsonRPCResult};

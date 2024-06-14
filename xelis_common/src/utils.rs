@@ -1,6 +1,3 @@
-#[cfg(feature = "tokio")]
-use crate::tokio::{task, spawn as tokio_spawn};
-
 use std::net::SocketAddr;
 use crate::{
     config::{
@@ -127,28 +124,6 @@ pub fn sanitize_daemon_address(target: &str) -> String {
     }
 
     target
-}
-
-// Spawn a new task with a name
-// If the tokio_unstable feature is enabled, the task will be named
-#[inline(always)]
-#[cfg(feature = "tokio")]
-pub fn spawn_task<Fut, S: Into<String>>(name: S, future: Fut) -> task::JoinHandle<Fut::Output>
-where
-    Fut: std::future::Future + Send + 'static,
-    Fut::Output: Send + 'static,
-{
-    let name_str = name.into();
-    log::trace!("Spawning task: {}", name_str);
-    #[cfg(all(tokio_unstable, feature = "tracing"))]
-    {
-        let name = name_str.as_str();
-        task::Builder::new().name(name).spawn(future).expect(name)
-    }
-    #[cfg(not(all(tokio_unstable, feature = "tracing")))]
-    {
-        tokio_spawn(future)
-    }
 }
 
 #[cfg(test)]

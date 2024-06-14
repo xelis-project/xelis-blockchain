@@ -5,10 +5,9 @@ use std::{
 use log::debug;
 use super::{
     sync::{mpsc, Mutex},
-    task::JoinHandle
+    task::JoinHandle,
+    spawn_task
 };
-
-use crate::utils::spawn_task;
 
 type Job = Pin<Box<dyn Future<Output = ()> + Send>>;
 
