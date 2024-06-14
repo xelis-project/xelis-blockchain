@@ -2993,6 +2993,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio_with_wasm"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b246eed2d38499d7bb6865436e6791d64d3556a98f764d5cd77d71499d66c61c"
+dependencies = [
+ "js-sys",
+ "tokio",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3605,6 +3618,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-tungstenite",
+ "tokio_with_wasm",
  "win32console",
  "xelis-hash",
  "zeroize",
