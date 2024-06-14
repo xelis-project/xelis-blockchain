@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     fs::{create_dir_all, File},
     io::{Read, Write},
     path::Path,
@@ -29,7 +28,6 @@ use xelis_common::{
         DataElement
     },
     asset::AssetWithData,
-    config::XELIS_ASSET,
     crypto::{
         ecdlp::{self, ECDLPTablesFileView},
         elgamal::{Ciphertext, DecryptHandle},
@@ -59,27 +57,36 @@ use crate::{
         PASSWORD_HASH_SIZE,
         SALT_SIZE
     },
-    daemon_api::DaemonAPI,
     error::WalletError,
     mnemonics,
-    network_handler::{
-        NetworkHandler,
-        SharedNetworkHandler
-    },
     storage::{
-        Balance, EncryptedStorage, Storage
+        EncryptedStorage,
+        Storage
     },
     transaction_builder::{
         EstimateFeesState,
         TransactionBuilderState
     }
 };
+#[cfg(feature = "network_handler")]
+use {
+    std::collections::HashSet,
+    log::warn,
+    crate::{
+        network_handler::{
+            NetworkHandler,
+            SharedNetworkHandler
+        },
+        daemon_api::DaemonAPI,
+        storage::Balance,
+    },
+    xelis_common::config::XELIS_ASSET,
+};
 use rand::{rngs::OsRng, RngCore};
 use log::{
     trace,
     debug,
     info,
-    warn,
     error,
 };
 
@@ -222,6 +229,7 @@ pub struct Wallet {
     // so it can be shared to another thread for decrypting ciphertexts
     inner: Arc<InnerAccount>,
     // network handler for online mode to keep wallet synced
+    #[cfg(feature = "network_handler")]
     network_handler: Mutex<Option<SharedNetworkHandler>>,
     // network on which we are connected
     network: Network,
@@ -306,6 +314,7 @@ impl Wallet {
     fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared) -> Arc<Self> {
         let zelf = Self {
             storage: RwLock::new(storage),
+            #[cfg(feature = "network_handler")]
             network_handler: Mutex::new(None),
             network,
             #[cfg(feature = "api_server")]
@@ -450,6 +459,7 @@ impl Wallet {
         }
 
         // Stop gracefully the network handler
+        #[cfg(feature = "network_handler")]
         {
             let mut lock = self.network_handler.lock().await;
             if let Some(handler) = lock.take() {
@@ -682,49 +692,55 @@ impl Wallet {
 
         // Used to inject it in the state
         // So once the state is applied, we verify if the last coinbase reward topoheight is still valid
+        #[cfg(feature = "network_handler")]
         let mut daemon_stable_topoheight = None;
+        #[cfg(not(feature = "network_handler"))]
+        let daemon_stable_topoheight = None;
 
         // Lets prevent any front running due to mining
-        let force_stable_balance = self.get_stable_balance();
-        if (reference.is_none() && used_assets.contains(&XELIS_ASSET)) || force_stable_balance {
-            // debug!("Wallet got a coinbase reward at topoheight: {}, verify that its not unstable", topoheight);
-            if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
-                // Last mining reward is above stable topoheight, this may increase orphans rate
-                // To avoid this, we will use the last balance version in stable topoheight as reference
-                let use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight() {
-                    let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
-                    daemon_stable_topoheight = Some(stable_topoheight);
-                    debug!("stable topoheight: {}, topoheight: {}", stable_topoheight, topoheight);
-                    topoheight > stable_topoheight
-                } else {
-                    force_stable_balance
-                };
-
-                if use_stable_balance {
-                    warn!("Using stable balance for TX creation");
-                    let address = self.get_address();
-                    for asset in &used_assets {
-                        debug!("Searching stable balance for asset {}", asset);
-                        let stable_point = network_handler.get_api().get_stable_balance(&address, &asset).await?;
+        #[cfg(feature = "network_handler")]
+        {
+            let force_stable_balance = self.get_stable_balance();
+            if (reference.is_none() && used_assets.contains(&XELIS_ASSET)) || force_stable_balance {
+                // debug!("Wallet got a coinbase reward at topoheight: {}, verify that its not unstable", topoheight);
+                if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
+                    // Last mining reward is above stable topoheight, this may increase orphans rate
+                    // To avoid this, we will use the last balance version in stable topoheight as reference
+                    let use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight() {
+                        let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
+                        daemon_stable_topoheight = Some(stable_topoheight);
+                        debug!("stable topoheight: {}, topoheight: {}", stable_topoheight, topoheight);
+                        topoheight > stable_topoheight
+                    } else {
+                        force_stable_balance
+                    };
     
-                        // Store the stable balance version into unconfirmed balance
-                        // So it will be fetch later by state
-                        let mut ciphertext = stable_point.version.take_balance();
-                        debug!("decrypting stable balance for asset {}", asset);
-                        let amount = self.inner.decrypt_ciphertext(ciphertext.decompressed().map_err(|_| WalletError::CiphertextDecode)?)?;
-                        let balance = Balance {
-                            amount,
-                            ciphertext
-                        };
-    
-                        storage.set_unconfirmed_balance_for(asset.clone(), balance).await?;
-                        // Build the stable reference
-                        // We need to find the highest stable point
-                        if reference.is_none() || reference.as_ref().is_some_and(|r| r.topoheight < stable_point.stable_topoheight) {
-                            reference = Some(Reference {
-                                topoheight: stable_point.stable_topoheight,
-                                hash: stable_point.stable_block_hash
-                            });
+                    if use_stable_balance {
+                        warn!("Using stable balance for TX creation");
+                        let address = self.get_address();
+                        for asset in &used_assets {
+                            debug!("Searching stable balance for asset {}", asset);
+                            let stable_point = network_handler.get_api().get_stable_balance(&address, &asset).await?;
+        
+                            // Store the stable balance version into unconfirmed balance
+                            // So it will be fetch later by state
+                            let mut ciphertext = stable_point.version.take_balance();
+                            debug!("decrypting stable balance for asset {}", asset);
+                            let amount = self.inner.decrypt_ciphertext(ciphertext.decompressed().map_err(|_| WalletError::CiphertextDecode)?)?;
+                            let balance = Balance {
+                                amount,
+                                ciphertext
+                            };
+        
+                            storage.set_unconfirmed_balance_for(asset.clone(), balance).await?;
+                            // Build the stable reference
+                            // We need to find the highest stable point
+                            if reference.is_none() || reference.as_ref().is_some_and(|r| r.topoheight < stable_point.stable_topoheight) {
+                                reference = Some(Reference {
+                                    topoheight: stable_point.stable_topoheight,
+                                    hash: stable_point.stable_block_hash
+                                });
+                            }
                         }
                     }
                 }
@@ -763,6 +779,7 @@ impl Wallet {
             state.add_balance(asset, balance);
         }
 
+        #[cfg(feature = "network_handler")]
         self.add_registered_keys_for_fees_estimation(state.as_mut(), &fee, &transaction_type).await?;
 
         // Create the transaction builder
@@ -783,17 +800,20 @@ impl Wallet {
     // It will increase the local nonce by 1 if the TX is accepted by the daemon
     // returns error if the wallet is in offline mode or if the TX is rejected
     pub async fn submit_transaction(&self, transaction: &Transaction) -> Result<(), WalletError> {
-        trace!("submit transaction");
-        let network_handler = self.network_handler.lock().await;
-        if let Some(network_handler) = network_handler.as_ref() {
-            network_handler.get_api().submit_transaction(transaction).await?;
-            Ok(())
-        } else {
-            Err(WalletError::NotOnlineMode)
+        trace!("submit transaction {}", transaction.hash());
+        #[cfg(feature = "network_handler")]
+        {
+            let network_handler = self.network_handler.lock().await;
+            if let Some(network_handler) = network_handler.as_ref() {
+                network_handler.get_api().submit_transaction(transaction).await?;
+                return Ok(())
+            }
         }
+        Err(WalletError::NotOnlineMode)
     }
 
     // Search if possible all registered keys for the transaction type
+    #[cfg(feature = "network_handler")]
     pub async fn add_registered_keys_for_fees_estimation(&self, state: &mut EstimateFeesState, fee: &FeeBuilder, transaction_type: &TransactionTypeBuilder) -> Result<(), WalletError> {
         trace!("add registered keys for fees estimation");
         if let FeeBuilder::Multiplier(_) = fee {
@@ -834,6 +854,7 @@ impl Wallet {
         trace!("estimate fees");
         let mut state = EstimateFeesState::new();
 
+        #[cfg(feature = "network_handler")]
         self.add_registered_keys_for_fees_estimation(&mut state, &FeeBuilder::default(), &tx_type).await?;
 
         let builder = TransactionBuilder::new(0, self.get_public_key().clone(), tx_type, FeeBuilder::default());
@@ -844,8 +865,9 @@ impl Wallet {
     }
 
     // set wallet in online mode: start a communication task which will keep the wallet synced
+    #[cfg(feature = "network_handler")]
     pub async fn set_online_mode(self: &Arc<Self>, daemon_address: &String, auto_reconnect: bool) -> Result<(), WalletError> {
-        trace!("Set online mode");
+        trace!("Set online mode to daemon {} with auto reconnect set to {}", daemon_address, auto_reconnect);
         if self.is_online().await {
             // user have to set in offline mode himself first
             return Err(WalletError::AlreadyOnlineMode)
@@ -856,14 +878,14 @@ impl Wallet {
         // start the task
         network_handler.start(auto_reconnect).await?;
         *self.network_handler.lock().await = Some(network_handler);
-
         Ok(())
     }
 
     // set the wallet in online mode using a shared daemon API
     // this allows to share the same connection/Daemon API across several wallets to save resources
+    #[cfg(feature = "network_handler")]
     pub async fn set_online_mode_with_api(self: &Arc<Self>, daemon_api: Arc<DaemonAPI>, auto_reconnect: bool) -> Result<(), WalletError> {
-        trace!("Set online mode with API");
+        trace!("Set online mode with API with auto reconnect set to {}", auto_reconnect);
         if self.is_online().await {
             // user have to set in offline mode himself first
             return Err(WalletError::AlreadyOnlineMode)
@@ -874,13 +896,14 @@ impl Wallet {
         // start the task
         network_handler.start(auto_reconnect).await?;
         *self.network_handler.lock().await = Some(network_handler);
-
         Ok(())
     }
 
     // set wallet in offline mode: stop communication task if exists
+    #[cfg(feature = "network_handler")]
     pub async fn set_offline_mode(&self) -> Result<(), WalletError> {
         trace!("Set offline mode");
+
         let mut handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.take() {
             network_handler.stop().await?;
@@ -894,6 +917,7 @@ impl Wallet {
     // rescan the wallet from the given topoheight
     // that will delete all transactions above the given topoheight and all balances
     // then it will re-fetch all transactions and balances from daemon
+    #[cfg(feature = "network_handler")]
     pub async fn rescan(&self, topoheight: u64, auto_reconnect: bool) -> Result<(), WalletError> {
         trace!("Rescan wallet from topoheight {}", topoheight);
         if !self.is_online().await {
@@ -948,15 +972,17 @@ impl Wallet {
 
     // Check if the wallet is in online mode
     pub async fn is_online(&self) -> bool {
+        #[cfg(feature = "network_handler")]
         if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
-            network_handler.is_running().await
-        } else {
-            false
+            return network_handler.is_running().await
         }
+
+        false
     }
 
     // this function allow to user to get the network handler in case in want to stay in online mode
     // but want to pause / resume the syncing task through start/stop functions from it
+    #[cfg(feature = "network_handler")]
     pub async fn get_network_handler(&self) -> &Mutex<Option<Arc<NetworkHandler>>> {
         &self.network_handler
     }

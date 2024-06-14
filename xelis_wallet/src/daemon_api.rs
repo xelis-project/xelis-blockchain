@@ -71,6 +71,10 @@ impl DaemonAPI {
         })
     }
 
+    pub fn get_client(&self) -> &WebSocketJsonRPCClient<NotifyEvent> {
+        &self.client
+    }
+
     // is the websocket connection alive
     pub fn is_online(&self) -> bool {
         trace!("is_online");
