@@ -31,6 +31,7 @@ use tokio_tungstenite::{
     }
 };
 use xelis_common::{
+    tokio::spawn_task,
     api::daemon::{
         GetMinerWorkResult,
         SubmitMinerWorkParams,
@@ -59,8 +60,7 @@ use xelis_common::{
     utils::{
         format_difficulty,
         format_hashrate,
-        sanitize_daemon_address,
-        spawn_task
+        sanitize_daemon_address
     }
 };
 use clap::Parser;
