@@ -22,7 +22,7 @@ use xelis_common::{
     serializer::Serializer,
     time::{TimestampSeconds, get_current_time_in_seconds},
     api::daemon::Direction,
-    utils::spawn_task
+    tokio::spawn_task
 };
 use std::sync::Arc;
 use bytes::Bytes;

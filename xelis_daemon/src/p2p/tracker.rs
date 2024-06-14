@@ -23,7 +23,7 @@ use xelis_common::{
     crypto::Hash,
     queue::Queue,
     serializer::Serializer,
-    utils::spawn_task
+    tokio::spawn_task
 };
 use crate::{
     core::{

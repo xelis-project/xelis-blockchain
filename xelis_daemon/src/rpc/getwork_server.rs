@@ -60,7 +60,7 @@ use xelis_common::{
         get_current_time_in_millis,
         TimestampMillis
     },
-    utils::spawn_task
+    tokio::spawn_task
 };
 use crate::{
     core::{

@@ -45,7 +45,8 @@ use xelis_common::{
         TimestampMillis
     },
     transaction::{verify::BlockchainVerificationState, Transaction, TransactionType},
-    utils::{calculate_tx_fee, format_xelis, spawn_task},
+    utils::{calculate_tx_fee, format_xelis},
+    tokio::spawn_task,
     varuint::VarUint
 };
 use crate::{

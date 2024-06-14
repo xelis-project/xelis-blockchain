@@ -24,13 +24,12 @@ use xelis_common::{
     difficulty::CumulativeDifficulty,
     immutable::Immutable,
     serializer::Serializer,
-    thread_pool::ThreadPool,
+    tokio::{ThreadPool, spawn_task},
     time::{
         get_current_time_in_millis,
         get_current_time_in_seconds,
         TimestampMillis
-    },
-    utils::spawn_task
+    }
 };
 use crate::{
     config::{
