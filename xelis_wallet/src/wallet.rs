@@ -32,7 +32,7 @@ use xelis_common::{
     config::XELIS_ASSET,
     crypto::{
         ecdlp::{self, ECDLPTablesFileView},
-        elgamal::{Ciphertext, DecryptHandle, PublicKey as DecompressedPublicKey},
+        elgamal::{Ciphertext, DecryptHandle},
         Address,
         Hashable,
         KeyPair,
@@ -114,7 +114,8 @@ use {
                 unbounded_channel
             },
             oneshot,
-        }
+        },
+        crypto::elgamal::PublicKey as DecompressedPublicKey
     }
 };
 
@@ -217,10 +218,9 @@ pub const PRECOMPUTED_TABLES_L1: usize = 26;
 pub struct Wallet {
     // Encrypted Wallet Storage
     storage: RwLock<EncryptedStorage>,
-    // Private & Public key linked for this wallet
-    keypair: KeyPair,
-    // Compressed public key
-    public_key: PublicKey,
+    // Inner account with keys and precomputed tables
+    // so it can be shared to another thread for decrypting ciphertexts
+    inner: Arc<InnerAccount>,
     // network handler for online mode to keep wallet synced
     network_handler: Mutex<Option<SharedNetworkHandler>>,
     // network on which we are connected
@@ -233,13 +233,38 @@ pub struct Wallet {
     xswd_channel: RwLock<Option<UnboundedSender<XSWDEvent>>>,
     // Event broadcaster
     event_broadcaster: Mutex<Option<BroadcastSender<Event>>>,
-    // Precomputed tables byte array
-    precomputed_tables: PrecomputedTablesShared,
     // If the wallet should scan also blocks and transactions history
     // Set to true by default
     history_scan: AtomicBool,
     // flag to prioritize the usage of stable balance version when its online
     force_stable_balance: AtomicBool,
+}
+
+struct InnerAccount {
+    // Precomputed tables byte array
+    precomputed_tables: PrecomputedTablesShared,
+    // Private & Public key linked for this wallet
+    keypair: KeyPair,
+    // Compressed public key
+    public_key: PublicKey,
+}
+
+impl InnerAccount {
+    fn new(precomputed_tables: PrecomputedTablesShared, keypair: KeyPair) -> Arc<Self> {
+        Arc::new(Self {
+            precomputed_tables,
+            public_key: keypair.get_public_key().compress(),
+            keypair,
+        })
+    }
+
+    pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
+        trace!("decrypt ciphertext");
+        let view = ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get());
+        self.keypair.get_private_key()
+            .decrypt(&view, &ciphertext)
+            .ok_or(WalletError::CiphertextDecode)
+    }
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -281,8 +306,6 @@ impl Wallet {
     fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared) -> Arc<Self> {
         let zelf = Self {
             storage: RwLock::new(storage),
-            public_key: keypair.get_public_key().compress(),
-            keypair,
             network_handler: Mutex::new(None),
             network,
             #[cfg(feature = "api_server")]
@@ -290,9 +313,9 @@ impl Wallet {
             #[cfg(feature = "api_server")]
             xswd_channel: RwLock::new(None),
             event_broadcaster: Mutex::new(None),
-            precomputed_tables,
             history_scan: AtomicBool::new(true),
-            force_stable_balance: AtomicBool::new(false)
+            force_stable_balance: AtomicBool::new(false),
+            inner: InnerAccount::new(precomputed_tables, keypair)
         };
 
         Arc::new(zelf)
@@ -615,24 +638,17 @@ impl Wallet {
         Ok(())
     }
 
-    fn decrypt_ciphertext_internal(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
-        trace!("decrypt ciphertext internal");
-        let view = ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get());
-        self.keypair.get_private_key()
-            .decrypt(&view, &ciphertext)
-            .ok_or(WalletError::CiphertextDecode)
-    }
-
     // Wallet has to be under a Arc to be shared to the spawn_blocking function
-    pub async fn decrypt_ciphertext(self: Arc<Self>, ciphertext: Ciphertext) -> Result<u64, WalletError> {
+    pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext) -> Result<u64, WalletError> {
         trace!("decrypt ciphertext");
-        spawn_blocking(move || self.decrypt_ciphertext_internal(&ciphertext)).await.context("Error while decrypting ciphertext")?
+        let account = Arc::clone(&self.inner);
+        spawn_blocking(move || account.decrypt_ciphertext(&ciphertext)).await.context("Error while decrypting ciphertext")?
     }
 
     // Decrypt the extra data from a transfer
     pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: &DecryptHandle, role: Role) -> Result<DataElement, WalletError> {
         trace!("decrypt extra data");
-        cipher.decrypt(&self.keypair.get_private_key(), handle, role).map_err(|_| WalletError::CiphertextDecode)
+        cipher.decrypt(&self.inner.keypair.get_private_key(), handle, role).map_err(|_| WalletError::CiphertextDecode)
     }
 
     // Create a transaction with the given transaction type and fee
@@ -695,7 +711,7 @@ impl Wallet {
                         // So it will be fetch later by state
                         let mut ciphertext = stable_point.version.take_balance();
                         debug!("decrypting stable balance for asset {}", asset);
-                        let amount = self.decrypt_ciphertext_internal(ciphertext.decompressed().map_err(|_| WalletError::CiphertextDecode)?)?;
+                        let amount = self.inner.decrypt_ciphertext(ciphertext.decompressed().map_err(|_| WalletError::CiphertextDecode)?)?;
                         let balance = Balance {
                             amount,
                             ciphertext
@@ -750,10 +766,10 @@ impl Wallet {
         self.add_registered_keys_for_fees_estimation(state.as_mut(), &fee, &transaction_type).await?;
 
         // Create the transaction builder
-        let builder = TransactionBuilder::new(0, self.public_key.clone(), transaction_type, fee);
+        let builder = TransactionBuilder::new(0, self.get_public_key().clone(), transaction_type, fee);
 
         // Build the final transaction
-        let transaction = builder.build(&mut state, &self.keypair)
+        let transaction = builder.build(&mut state, &self.inner.keypair)
             .map_err(|e| WalletError::Any(e.into()))?;
 
         let tx_hash = transaction.hash();
@@ -820,7 +836,7 @@ impl Wallet {
 
         self.add_registered_keys_for_fees_estimation(&mut state, &FeeBuilder::default(), &tx_type).await?;
 
-        let builder = TransactionBuilder::new(0, self.public_key.clone(), tx_type, FeeBuilder::default());
+        let builder = TransactionBuilder::new(0, self.get_public_key().clone(), tx_type, FeeBuilder::default());
         let estimated_fees = builder.estimate_fees(&mut state)
             .map_err(|e| WalletError::Any(e.into()))?;
 
@@ -947,27 +963,27 @@ impl Wallet {
 
     // Create a signature of the given data
     pub fn sign_data(&self, data: &[u8]) -> Signature {
-        self.keypair.sign(data)
+        self.inner.keypair.sign(data)
     }
 
     // Get the public key of the wallet
     pub fn get_public_key(&self) -> &PublicKey {
-        &self.public_key
+        &self.inner.public_key
     }
 
     // Get the address of the wallet using its network used
     pub fn get_address(&self) -> Address {
-        self.keypair.get_public_key().to_address(self.get_network().is_mainnet())
+        self.get_public_key().clone().to_address(self.get_network().is_mainnet())
     }
 
     // Get the address with integrated data and using its network used
     pub fn get_address_with(&self, data: DataElement) -> Address {
-        self.keypair.get_public_key().to_address_with(self.get_network().is_mainnet(), data)
+        self.get_public_key().clone().to_address_with(self.get_network().is_mainnet(), data)
     }
 
     // Returns the seed using the language index provided
     pub fn get_seed(&self, language_index: usize) -> Result<String, Error> {
-        let words = mnemonics::key_to_words(self.keypair.get_private_key(), language_index)?;
+        let words = mnemonics::key_to_words(self.inner.keypair.get_private_key(), language_index)?;
         Ok(words.join(" "))
     }
 
@@ -1037,7 +1053,7 @@ impl XSWDPermissionHandler for Arc<Wallet> {
     }
 
     async fn get_public_key(&self) -> Result<&DecompressedPublicKey, Error> {
-        Ok(self.keypair.get_public_key())
+        Ok(self.inner.keypair.get_public_key())
     }
 }
 
