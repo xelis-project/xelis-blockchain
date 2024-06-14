@@ -17,16 +17,14 @@ use futures_util::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Value, json};
-use tokio_tungstenite::{
+use tokio_tungstenite_wasm::{
     WebSocketStream,
-    MaybeTlsStream,
-    connect_async,
-    tungstenite::Message
+    connect,
+    Message
 };
 use log::{debug, error, trace, warn};
 use crate::{
     tokio::{
-        net::TcpStream,
         sync::{broadcast, oneshot, Mutex},
         task::JoinHandle,
         time::{sleep, timeout},
@@ -81,7 +79,7 @@ pub type WebSocketJsonRPCClient<E> = Arc<WebSocketJsonRPCClientImpl<E>>;
 // A JSON-RPC Client over WebSocket protocol to support events
 // It can be used in multi-thread safely because each request/response are linked using the id attribute.
 pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> {
-    ws: Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>,
+    ws: Mutex<SplitSink<WebSocketStream, Message>>,
     count: AtomicUsize,
     requests: Mutex<HashMap<usize, oneshot::Sender<JsonRPCResponse>>>,
     // This contains all id sent to register to a event on daemon
@@ -109,12 +107,8 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + C
 pub const DEFAULT_AUTO_RECONNECT: Duration = Duration::from_secs(5);
 
 impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCClientImpl<E> {
-    async fn connect_to(target: &String) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, JsonRPCError> {
-        let (ws, response) = connect_async(target).await?;
-        let status = response.status();
-        if status.is_server_error() || status.is_client_error() {
-            return Err(JsonRPCError::ConnectionError(status.to_string()));
-        }
+    async fn connect_to(target: &String) -> Result<WebSocketStream, JsonRPCError> {
+        let ws = connect(target).await?;
 
         Ok(ws)
     }
@@ -295,7 +289,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
     }
 
     // Try to reconnect to the server
-    async fn try_reconnect(self: &Arc<Self>) -> Option<SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>> {
+    async fn try_reconnect(self: &Arc<Self>) -> Option<SplitStream<WebSocketStream>> {
         trace!("try reconnect");
         // We are not online anymore
         self.set_online(false);
@@ -376,7 +370,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
 
     // Task running in background to handle every messages from the WebSocket server
     // This includes Events propagated and responses to JSON-RPC requests
-    async fn read(self: Arc<Self>, mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>) -> Result<(), JsonRPCError> {
+    async fn read(self: Arc<Self>, mut read: SplitStream<WebSocketStream>) -> Result<(), JsonRPCError> {
         while let Some(res) = read.next().await {
             let msg = match res {
                 Ok(msg) => msg,

@@ -41,12 +41,12 @@ async-trait = "0.1.77"
 regex = "1"
 # Query system
 serde_regex = "1.1.0"
-# WebSocket clients using tokio
-tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"], optional = true }
 # Used for U256
 primitive-types = { version = "0.12.2", features = ["serde"] }
 console-subscriber = { version = "0.2.0", optional = true }
 chacha20 = "0.9.1"
+# WebSocket support
+tokio-tungstenite-wasm = { version = "*", features = ["rustls-tls-webpki-roots"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
@@ -54,7 +54,7 @@ win32console = "0.1.5"
 # Tokio dependency for WASM
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
-tokio_with_wasm = { version = "*", features = ["macros", "sync", "time", "rt"] }
+tokio_with_wasm = { version = "*", features = ["macros", "sync", "time", "rt"], optional = true }
 
 # Tokio dependency for non-WASM
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -64,8 +64,8 @@ tokio = { version = "1.36", default-features = false, features = ["macros", "sig
 tokio = { version = "1.36", features = ["full"] }
 
 [features]
-tokio = ["dep:tokio"]
-json_rpc = ["tokio", "dep:reqwest", "dep:futures-util", "dep:tokio-tungstenite"]
+tokio = ["dep:tokio", "dep:tokio_with_wasm"]
+json_rpc = ["tokio", "dep:reqwest", "dep:futures-util", "dep:tokio-tungstenite-wasm"]
 clap = ["dep:clap"]
 prompt = ["clap", "tokio", "dep:crossterm"]
 rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest"]

@@ -2980,6 +2980,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite-wasm"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e57a65894797a018b28345fa298a00c450a574aa9671e50b18218a6292a55ac"
+dependencies = [
+ "futures-channel",
+ "futures-util",
+ "http 1.1.0",
+ "httparse",
+ "js-sys",
+ "rustls",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3617,7 +3636,7 @@ dependencies = [
  "sha3",
  "thiserror",
  "tokio",
- "tokio-tungstenite",
+ "tokio-tungstenite-wasm",
  "tokio_with_wasm",
  "win32console",
  "xelis-hash",
