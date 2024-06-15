@@ -1,13 +1,11 @@
+mod backend;
+
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     num::NonZeroUsize
 };
 use indexmap::IndexMap;
 use lru::LruCache;
-use sled::{
-    Tree,
-    Db
-};
 use xelis_common::{
     tokio::sync::Mutex,
     account::CiphertextCache,
@@ -49,6 +47,7 @@ use crate::{
     },
     error::WalletError
 };
+use self::backend::{Db, Tree};
 use log::{trace, debug, error};
 
 // keys used to retrieve from storage
@@ -993,7 +992,7 @@ impl EncryptedStorage {
 
 impl Storage {
     pub fn new(name: String) -> Result<Self> {
-        let db = sled::open(name)?;
+        let db = backend::open(name)?;
 
         Ok(Self {
             db
