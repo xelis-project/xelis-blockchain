@@ -3013,8 +3013,8 @@ dependencies = [
 
 [[package]]
 name = "tokio_with_wasm"
-version = "0.5.3"
-source = "git+https://github.com/Slixe/tokio-with-wasm?branch=main#10d8c4560c60bcc52d7009f39603cd17e29802a6"
+version = "0.6.0"
+source = "git+https://github.com/Slixe/tokio-with-wasm?branch=main#ab485984922265d7d224f89b311a08d1ef79400f"
 dependencies = [
  "js-sys",
  "tokio",
