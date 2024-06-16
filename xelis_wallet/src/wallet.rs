@@ -1,9 +1,4 @@
-use std::{
-    fs::{create_dir_all, File},
-    io::{Read, Write},
-    path::Path,
-    sync::{atomic::{AtomicBool, Ordering}, Arc}
-};
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use anyhow::{Error, Context};
 use serde::Serialize;
 use xelis_common::{
@@ -59,6 +54,7 @@ use crate::{
     },
     error::WalletError,
     mnemonics,
+    precomputed_tables::{self, PrecomputedTablesShared},
     storage::{
         EncryptedStorage,
         Storage
@@ -86,7 +82,6 @@ use rand::{rngs::OsRng, RngCore};
 use log::{
     trace,
     debug,
-    info,
     error,
 };
 
@@ -170,58 +165,6 @@ impl Event {
 
 }
 
-// This is a 32 bytes aligned struct
-// It is necessary for the precomputed tables points
-#[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone)]
-#[repr(C, align(32))]
-struct Bytes32Alignment([u8; 32]);
-
-pub struct PrecomputedTables {
-    bytes: Vec<Bytes32Alignment>,
-    l1: usize,
-    bytes_count: usize,
-}
-
-// Allows to be used in several wallets at the same time
-pub type PrecomputedTablesShared = Arc<PrecomputedTables>;
-
-impl PrecomputedTables {
-    pub fn new(l1: usize) -> Self {
-        let bytes_count = ecdlp::table_generation::table_file_len(l1);
-        debug!("Precomputed tables size: {} bytes", bytes_count);
-        let mut n = bytes_count / 32;
-        if bytes_count % 32 != 0 {
-            n += 1;
-        }
-
-        let bytes = vec![Bytes32Alignment([0; 32]); n];
-
-        Self {
-            bytes,
-            l1,
-            bytes_count
-        }
-    }
-
-    pub fn get<'a>(&'a self) -> &'a [u8] {
-       &bytemuck::cast_slice(self.bytes.as_slice())[..self.bytes_count]
-    }
-
-    pub fn get_mut<'a>(&'a mut self) -> &'a mut [u8] {
-        &mut bytemuck::cast_slice_mut(self.bytes.as_mut_slice())[..self.bytes_count]
-    }
-
-    pub fn l1(&self) -> usize {
-        self.l1
-    }
-
-    pub fn bytes_count(&self) -> usize {
-        self.bytes_count
-    }
-}
-
-pub const PRECOMPUTED_TABLES_L1: usize = 26;
-
 pub struct Wallet {
     // Encrypted Wallet Storage
     storage: RwLock<EncryptedStorage>,
@@ -281,33 +224,12 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
     Ok(output)
 }
 
+const PRECOMPUTED_TABLES_L1: usize = 26;
+
 impl Wallet {
-    // This will read from file if exists, or generate and store it in file
-    // This must be call only one time, and can be cloned to be shared through differents wallets
+    // Read or generate precomputed tables based on the path and platform architecture
     pub fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared, Error> {
-        const N: usize = PRECOMPUTED_TABLES_L1;
-        let mut precomputed_tables = PrecomputedTables::new(N);
-
-        if let Some(path) = path.as_ref() {
-            let path = Path::new(&path);
-            if !path.exists() {
-                create_dir_all(path)?;
-            }
-        }
-        let path = path.unwrap_or_default();
-
-        // Try to read from file
-        if let Ok(mut file) = File::open(format!("{path}precomputed_tables_{N}.bin")) {
-            info!("Reading precomputed tables from file");
-            file.read_exact(precomputed_tables.get_mut())?;
-        } else {
-            // File does not exists, generate and store it
-            info!("Generating precomputed tables");
-            ecdlp::table_generation::create_table_file_with_progress_report(N, precomputed_tables.get_mut(), progress_report)?;
-            File::create(format!("{path}precomputed_tables_{N}.bin"))?.write_all(precomputed_tables.get())?;
-        }
-
-        Ok(Arc::new(precomputed_tables))
+        precomputed_tables::read_or_generate_precomputed_tables(path, progress_report, PRECOMPUTED_TABLES_L1)
     }
 
     // Create a new wallet with the specificed storage, keypair and its network

@@ -7,6 +7,8 @@ pub mod mnemonics;
 pub mod transaction_builder;
 pub mod error;
 
+pub mod precomputed_tables;
+
 #[cfg(feature = "network_handler")]
 pub mod daemon_api;
 

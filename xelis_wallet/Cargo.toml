@@ -42,6 +42,9 @@ async-trait = "0.1.64"
 web-sys = { version = "0.3.69", features = ["Window", "Storage"] }
 base64 = "0.22.1"
 
+[build-dependencies]
+curve25519-dalek = { version = "4.1.1", features = ["ecdlp"], git = "https://github.com/xelis-project/curve25519-dalek", branch = "main" }
+
 [features]
 # Set as default dependencies until https://github.com/rust-lang/cargo/issues/4663 is resolved for binary targets
 default = ["cli", "api_server"]

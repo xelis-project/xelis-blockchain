@@ -110,7 +110,7 @@ impl NetworkHandler {
         }
 
         if !self.api.is_online() {
-            debug!("API is offline, trying to reconnect");
+            debug!("API is offline, trying to reconnect #1");
             if !self.api.reconnect().await? {
                 error!("Couldn't reconnect to server");
                 return Err(NetworkError::NotRunning)
@@ -137,7 +137,7 @@ impl NetworkHandler {
                     break res;
                 } else {
                     if !zelf.api.is_online() {
-                        debug!("API is offline, trying to reconnect");
+                        debug!("API is offline, trying to reconnect #2");
                         if !zelf.api.reconnect().await? {
                             error!("Couldn't reconnect to server, trying again in {} seconds", AUTO_RECONNECT_INTERVAL);
                             sleep(Duration::from_secs(AUTO_RECONNECT_INTERVAL)).await;
