@@ -32,12 +32,12 @@ where
 {
     let name_str = name.into();
     log::trace!("Spawning task: {}", name_str);
-    #[cfg(all(tokio_unstable, feature = "tracing"))]
+    #[cfg(feature = "tracing")]
     {
         let name = name_str.as_str();
         task::Builder::new().name(name).spawn(future).expect(name)
     }
-    #[cfg(not(all(tokio_unstable, feature = "tracing")))]
+    #[cfg(not(feature = "tracing"))]
     {
         tokio::spawn(future)
     }
