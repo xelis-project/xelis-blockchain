@@ -13,7 +13,6 @@ use futures_util::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Value, json};
-use tokio::{select, sync::mpsc};
 use tokio_tungstenite_wasm::{
     WebSocketStream,
     connect,
@@ -22,10 +21,11 @@ use tokio_tungstenite_wasm::{
 use log::{debug, error, trace, warn};
 use crate::{
     tokio::{
-        sync::{broadcast, oneshot, Mutex},
+        sync::{broadcast, oneshot, Mutex, mpsc},
         task::JoinHandle,
         time::{sleep, timeout},
-        spawn_task
+        spawn_task,
+        select
     },
     api::SubscribeParams,
     utils::sanitize_daemon_address
