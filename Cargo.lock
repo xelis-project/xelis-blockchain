@@ -3706,7 +3706,6 @@ dependencies = [
  "chacha20poly1305",
  "clap",
  "crc32fast",
- "curve25519-dalek 4.1.2",
  "fern",
  "hex",
  "indexmap 2.2.6",
