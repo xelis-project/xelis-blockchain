@@ -73,5 +73,7 @@ pub enum JsonRPCError {
     #[error(transparent)]
     SocketError(#[from] TungsteniteError),
     #[error(transparent)]
-    Any(#[from] anyhow::Error)
+    Any(#[from] anyhow::Error),
+    #[error("Error while sending message")]
+    SendError
 }

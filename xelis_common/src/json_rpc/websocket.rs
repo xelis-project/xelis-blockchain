@@ -1,13 +1,9 @@
 use std::{
-    sync::{
-        atomic::{AtomicUsize, Ordering, AtomicBool},
-        Arc
-    },
-    collections::HashMap,
-    hash::Hash,
-    marker::PhantomData,
     borrow::Cow,
-    time::Duration
+    collections::HashMap, hash::Hash, marker::PhantomData, sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc
+    }, time::Duration
 };
 use anyhow::Error;
 use futures_util::{
@@ -17,6 +13,7 @@ use futures_util::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Value, json};
+use tokio::{select, sync::mpsc};
 use tokio_tungstenite_wasm::{
     WebSocketStream,
     connect,
@@ -76,11 +73,19 @@ impl<T: DeserializeOwned> EventReceiver<T> {
 // it has a tokio task running in background to handle all incoming messages
 pub type WebSocketJsonRPCClient<E> = Arc<WebSocketJsonRPCClientImpl<E>>;
 
+enum InternalMessage {
+    Send(String),
+    Close,
+    Reconnect,
+}
+
 // A JSON-RPC Client over WebSocket protocol to support events
 // It can be used in multi-thread safely because each request/response are linked using the id attribute.
 pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> {
-    ws: Mutex<SplitSink<WebSocketStream, Message>>,
+    ws: mpsc::Sender<InternalMessage>,
+    // This is the ID for the next request
     count: AtomicUsize,
+    // This contains all pending requests
     requests: Mutex<HashMap<usize, oneshot::Sender<JsonRPCResponse>>>,
     // This contains all id sent to register to a event on daemon
     // It stores the sender channel to propagate the event to apps 
@@ -115,12 +120,11 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
 
     pub async fn new(mut target: String) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
         target = sanitize_daemon_address(target.as_str());
-
         let ws = Self::connect_to(&target).await?;
-        
-        let (write, read) = ws.split();
+
+        let (sender, receiver) = mpsc::channel(64);
         let client = Arc::new(WebSocketJsonRPCClientImpl {
-            ws: Mutex::new(write),
+            ws: sender,
             count: AtomicUsize::new(0),
             requests: Mutex::new(HashMap::new()),
             handler_by_id: Mutex::new(HashMap::new()),
@@ -136,8 +140,8 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
 
         {
             let zelf = client.clone();
-            let handle = spawn_task("ws-subscribe-events", async move {
-                if let Err(e) = zelf.read(read).await {
+            let handle = spawn_task("ws-background-task", async move {
+                if let Err(e) = zelf.background_task(receiver, ws).await {
                     error!("Error in the WebSocket client ioloop: {:?}", e);
                 };
             });
@@ -231,11 +235,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
     pub async fn disconnect(&self) -> Result<(), Error> {
         self.set_auto_reconnect(None).await;
         self.set_online(false);
-        {
-            let mut ws = self.ws.lock().await;
-            ws.close().await?;
-        }
-
+        self.ws.send(InternalMessage::Close).await?;
         {
             let task = self.background_task.lock().await.take();
             if let Some(task) = task {
@@ -261,93 +261,94 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
             return Ok(false)
         }
 
-        let mut task = self.background_task.lock().await;
-        if let Some(task) = task.take() {
-            warn!("Task was not closed correctly!");
-            task.abort();
-        }
+        // TODO
+        // let mut task = self.read_task.lock().await;
+        // if let Some(task) = task.take() {
+        //     warn!("Task was not closed correctly!");
+        //     task.abort();
+        // }
 
-        {
-            let ws = Self::connect_to(&self.target).await?;
-            let (write, read) = ws.split();
-            {
-                let mut lock = self.ws.lock().await;
-                *lock = write;
-            }
+        // {
+        //     let ws = Self::connect_to(&self.target).await?;
+        //     let (write, read) = ws.split();
+        //     // {
+        //     //     let mut lock = self.ws.lock().await;
+        //     //     *lock.borrow_mut() = write;
+        //     // }
 
-            let zelf = self.clone();
-            let handle = spawn_task("WS ioloop", async move {
-                if let Err(e) = zelf.read(read).await {
-                    error!("Error in the WebSocket client ioloop: {:?}", e);
-                };
-            });
-            *task = Some(handle);
-        }
-        self.set_online(true);
+        //     let zelf = self.clone();
+        //     let handle = spawn_task("ws-read-task", async move {
+        //         if let Err(e) = zelf.read(read).await {
+        //             error!("Error in the WebSocket client ioloop: {:?}", e);
+        //         };
+        //     });
+        //     *task = Some(handle);
+        // }
+        // self.set_online(true);
 
         Ok(true)
     }
 
     // Try to reconnect to the server
-    async fn try_reconnect(self: &Arc<Self>) -> Option<SplitStream<WebSocketStream>> {
-        trace!("try reconnect");
-        // We are not online anymore
-        self.set_online(false);
+    // async fn try_reconnect(self: &Arc<Self>) -> Option<SplitStream<WebSocketStream>> {
+    //     trace!("try reconnect");
+    //     // We are not online anymore
+    //     self.set_online(false);
 
-        // Notify that we are offline
-        self.notify_connection_channel(&self.offline_channel).await;
+    //     // Notify that we are offline
+    //     self.notify_connection_channel(&self.offline_channel).await;
 
-        // Check if we should reconnect
-        let mut reconnect = {
-            let reconnect = self.auto_reconnect.lock().await;
-            reconnect.clone()
-        };
+    //     // Check if we should reconnect
+    //     let mut reconnect = {
+    //         let reconnect = self.auto_reconnect.lock().await;
+    //         reconnect.clone()
+    //     };
         
-        // Try to reconnect to the server
-        while let Some(duration) = reconnect.as_ref() {
-            sleep(*duration).await;
-            debug!("Trying to reconnect to the server...");
+    //     // Try to reconnect to the server
+    //     while let Some(duration) = reconnect.as_ref() {
+    //         sleep(*duration).await;
+    //         debug!("Trying to reconnect to the server...");
 
-            let ws = match Self::connect_to(&self.target).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    debug!("Error while reconnecting to the server: {:?}", e);
-                    reconnect = {
-                        let reconnect = self.auto_reconnect.lock().await;
-                        reconnect.clone()
-                    };
-                    continue;
-                }
-            };
+    //         let ws = match Self::connect_to(&self.target).await {
+    //             Ok(ws) => ws,
+    //             Err(e) => {
+    //                 debug!("Error while reconnecting to the server: {:?}", e);
+    //                 reconnect = {
+    //                     let reconnect = self.auto_reconnect.lock().await;
+    //                     reconnect.clone()
+    //                 };
+    //                 continue;
+    //             }
+    //         };
 
-            // We are connected again, set back everything
-            let (write, read) = ws.split();
-            {
-                let mut ws = self.ws.lock().await;
-                *ws = write;
-            }
+    //         // We are connected again, set back everything
+    //         let (write, read) = ws.split();
+    //         {
+    //             let mut ws = self.ws.lock().await;
+    //             *ws.borrow_mut() = write;
+    //         }
 
-            // Register all events again
-            {
-                let client = self.clone();
-                spawn_task("ws-subscribe-events", async move {
-                    if let Err(e) = client.resubscribe_events().await {
-                        error!("Error while resubscribing to events: {:?}", e);
-                    }
-                });
-            }
+    //         // Register all events again
+    //         {
+    //             let client = self.clone();
+    //             spawn_task("ws-subscribe-events", async move {
+    //                 if let Err(e) = client.resubscribe_events().await {
+    //                     error!("Error while resubscribing to events: {:?}", e);
+    //                 }
+    //             });
+    //         }
 
-            // We are online again
-            self.set_online(true);
+    //         // We are online again
+    //         self.set_online(true);
 
-            // Notify that we are online again
-            self.notify_connection_channel(&self.online_channel).await;
+    //         // Notify that we are online again
+    //         self.notify_connection_channel(&self.online_channel).await;
 
-            return Some(read)
-        }
+    //         return Some(read)
+    //     }
 
-        None
-    }
+    //     None
+    // }
 
     // Clear all pending requests to notifier the caller that the connection is lost
     async fn clear_requests(&self) {
@@ -368,60 +369,59 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
         }
     }
 
-    // Task running in background to handle every messages from the WebSocket server
-    // This includes Events propagated and responses to JSON-RPC requests
-    async fn read(self: Arc<Self>, mut read: SplitStream<WebSocketStream>) -> Result<(), JsonRPCError> {
-        while let Some(res) = read.next().await {
-            let msg = match res {
-                Ok(msg) => msg,
-                Err(e) => {
-                    // Try to reconnect to the server
-                    debug!("Error while reading from the websocket: {:?}", e);
-                    self.clear_requests().await;
-                    if let Some(new_read) = self.try_reconnect().await {
-                        read = new_read;
-                    }
-                    else {
-                        self.clear_events().await;
-                        return Err(JsonRPCError::ConnectionError(e.to_string()));
-                    }
-                    continue;
-                }
-            };
-
-            match msg {
-                Message::Text(text) => {
-                    let response: JsonRPCResponse = serde_json::from_str(&text)?;
-                    if let Some(id) = response.id {
-                        // send the response to the requester if it matches the ID
-                        {
-                            let mut requests = self.requests.lock().await;
-                            if let Some(sender) = requests.remove(&id) {
-                                if let Err(e) = sender.send(response) {
-                                    error!("Error sending response to the request: {:?}", e);
-                                }
-                                continue;
-                            }
+    async fn background_task(self: &Arc<Self>, mut receiver: mpsc::Receiver<InternalMessage>, ws: WebSocketStream) -> Result<(), JsonRPCError> {
+        let (mut write, mut read) = ws.split();
+        loop {
+            select! {
+                Some(msg) = (&mut receiver).recv() => {
+                    match msg {
+                        InternalMessage::Send(text) => {
+                            write.send(Message::Text(text)).await?;
+                        },
+                        InternalMessage::Close => {
+                            write.close().await?;
+                            break;
+                        },
+                        InternalMessage::Reconnect => {
+                            write.send(Message::Close(None)).await?;
                         }
-
-                        // Check if this ID corresponds to a event subscribed
-                        {
-                            let mut handlers = self.handler_by_id.lock().await;
-                            if let Some(sender) = handlers.get_mut(&id) {
-                                // Check that we still have someone who listen it
-                                if sender.receiver_count() > 0 {
-                                    if let Err(e) = sender.send(response.result.unwrap_or_default()) {
-                                        error!("Error sending event to the request: {:?}", e);
+                    }
+                },
+                Some(res) = read.next() => {
+                    let msg = res?;
+                    match msg {
+                        Message::Text(text) => {
+                            let response: JsonRPCResponse = serde_json::from_str(&text)?;
+                            if let Some(id) = response.id {
+                                // send the response to the requester if it matches the ID
+                                {
+                                    let mut requests = self.requests.lock().await;
+                                    if let Some(sender) = requests.remove(&id) {
+                                        if let Err(e) = sender.send(response) {
+                                            error!("Error sending response to the request: {:?}", e);
+                                        }
+                                        continue;
+                                    }
+                                }
+        
+                                // Check if this ID corresponds to a event subscribed
+                                {
+                                    let mut handlers = self.handler_by_id.lock().await;
+                                    if let Some(sender) = handlers.get_mut(&id) {
+                                        // Check that we still have someone who listen it
+                                        if let Err(e) = sender.send(response.result.unwrap_or_default()) {
+                                            debug!("Error sending event to the request: {:?}", e);
+                                        }
                                     }
                                 }
                             }
-                        }
+                        },
+                        Message::Close(_) => {
+                            break;
+                        },
+                        _ => {}
                     }
-                },
-                Message::Close(_) => {
-                    break;
-                },
-                _ => {}
+                }
             }
         }
 
@@ -503,13 +503,12 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
     }
 
     async fn send_message_internal<P: Serialize>(&self, id: Option<usize>, method: &str, params: &P) -> JsonRPCResult<()> {
-        let mut ws = self.ws.lock().await;
-        ws.send(Message::Text(serde_json::to_string(&json!({
+        self.ws.send(InternalMessage::Send(serde_json::to_string(&json!({
             "jsonrpc": JSON_RPC_VERSION,
             "method": method,
             "id": id,
             "params": params
-        }))?)).await?;
+        }))?)).await.map_err(|_| JsonRPCError::SendError)?;
 
         Ok(())
     }
