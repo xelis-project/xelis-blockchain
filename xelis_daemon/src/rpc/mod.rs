@@ -45,7 +45,7 @@ use xelis_common::{
         RPCServerHandler,
         WebSocketServerHandler
     },
-    utils::spawn_task,
+    tokio::spawn_task,
 };
 use std::{
     collections::HashSet,

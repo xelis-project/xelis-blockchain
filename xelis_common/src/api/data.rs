@@ -43,6 +43,8 @@ pub enum ElementType {
     Array,
     // Map<K, V> of elements
     Fields,
+    // Binary data
+    Blob,
 }
 
 impl ValueType {
@@ -97,9 +99,14 @@ impl Serializer for ValueType {
 #[serde(untagged)]
 pub enum DataElement {
     Value(DataValue),
+    // This is a specific type for optimized size of binary data
+    // Because above variants rewrite for each element the byte of the element and of each value
+    // It supports up to 65535 bytes (u16::MAX)
+    Blob(Vec<u8>),
     // For two next variants, we support up to 255 (u8::MAX) elements maximum
     Array(Vec<DataElement>),
-    Fields(HashMap<DataValue, DataElement>)
+    // Key-Value map with key as DataValue and value as DataElement
+    Fields(HashMap<DataValue, DataElement>),
 }
 
 impl DataElement {
@@ -138,6 +145,7 @@ impl DataElement {
             Self::Array(_) => ElementType::Array,
             Self::Fields(_) => ElementType::Fields,
             Self::Value(value) => ElementType::Value(value.kind()),
+            Self::Blob(_) => ElementType::Blob,
         }
     }
 
@@ -209,6 +217,7 @@ impl Serializer for DataElement {
                 }
                 Self::Fields(fields)
             },
+            3 => Self::Blob(Vec::read(reader)?),
             _ => return Err(ReaderError::InvalidValue)
         })
     }
@@ -234,6 +243,10 @@ impl Serializer for DataElement {
                     value.write(writer);
                 }
             }
+            Self::Blob(data) => {
+                writer.write_u8(3);
+                data.write(writer);
+            }
         }
     }
 
@@ -253,7 +266,8 @@ impl Serializer for DataElement {
                     size += key.size() + value.size();
                 }
                 size
-            }
+            },
+            Self::Blob(data) => 2 + data.len()
         }
     }
 }
@@ -597,11 +611,49 @@ mod tests {
     fn test_from_into() {
         let value = DataValue::U8(10);
         let element = DataElement::Value(value.clone());
+        assert_eq!(element.size(), element.to_bytes().len());
         let value2: u8 = element.into();
         assert_eq!(value2, 10);
 
         let array: DataElement = vec![0u64, 24u64, 37u64, 55u64].into();
         let array2: Vec<u64> = array.into();
         assert_eq!(array2, vec![0, 24, 37, 55]);
+    }
+
+    #[test]
+    fn test_serialize_vec_u64() {
+        let val = vec![0u64; 5];
+        let data: DataElement = val.clone().into();
+        let elem = DataElement::from_bytes(&data.to_bytes()).unwrap();
+        assert_eq!(data, elem);
+        assert_eq!(data.size(), elem.to_bytes().len());
+
+        let val2: Vec<u64> = elem.into();
+        assert_eq!(val, val2);
+    }
+
+    #[test]
+    fn test_blob() {
+        let data = vec![0u8; 1000];
+        let element: DataElement = data.clone().into();
+        let element2: Vec<u8> = element.into();
+        assert_eq!(data, element2);
+
+        let json = "[0, 55, 77, 99, 88, 77]";
+        let element: DataElement = serde_json::from_str(json).unwrap();
+        assert_eq!(element.kind(), ElementType::Blob);
+    }
+
+    #[test]
+    fn test_array() {
+        // Mixed types
+        let json = "[0, 55, 77, 99, 88, 77, false]";
+        let element: DataElement = serde_json::from_str(json).unwrap();
+        assert_eq!(element.kind(), ElementType::Array);
+
+        // Using integer types
+        let json = "[0, 55, 77, 99, 88, 777777]";
+        let element: DataElement = serde_json::from_str(json).unwrap();
+        assert_eq!(element.kind(), ElementType::Array);
     }
 }

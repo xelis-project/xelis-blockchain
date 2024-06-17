@@ -9,14 +9,8 @@ use serde::de::Error as SerdeError;
 use serde::{Deserialize, Serialize};
 use blake3::hash as blake3_hash;
 
-pub use xelis_hash::{
-    Error as XelisHashError,
-    xelis_hash,
-    BYTES_ARRAY_INPUT,
-    MEMORY_SIZE as POW_MEMORY_SIZE,
-    ScratchPad,
-    AlignedInput
-};
+pub use xelis_hash::Error as XelisHashError;
+use xelis_hash::{v1, v2};
 
 pub const HASH_SIZE: usize = 32; // 32 bytes / 256 bits
 
@@ -49,24 +43,31 @@ impl Hash {
     }
 }
 
+// Hash a byte array using the blake3 algorithm
+#[inline(always)]
+pub fn hash(value: &[u8]) -> Hash {
+    let result: [u8; HASH_SIZE] = blake3_hash(value).into();
+    Hash(result)
+}
+
+// Perform a PoW hash using the given algorithm
 pub fn pow_hash(work: &[u8], algorithm: Algorithm) -> Result<Hash, XelisHashError> {
     match algorithm {
         Algorithm::V1 => {
-            let mut scratchpad = ScratchPad::default();
+            let mut scratchpad = v1::ScratchPad::default();
 
             // Make sure the input has good alignment
-            let mut input = AlignedInput::default();
+            let mut input = v1::AlignedInput::default();
             let slice = input.as_mut_slice()?;
             slice[..work.len()].copy_from_slice(work);
         
-            pow_hash_with_scratch_pad(input.as_mut_slice()?, &mut scratchpad)
+            v1::xelis_hash(slice, &mut scratchpad).map(|bytes| Hash::new(bytes))
         },
-        _ => Err(XelisHashError)
+        Algorithm::V2 => {
+            let mut scratchpad = v2::ScratchPad::default();
+            v2::xelis_hash(work, &mut scratchpad).map(|bytes| Hash::new(bytes))
+        },
     }
-}
-
-pub fn pow_hash_with_scratch_pad(input: &mut [u8; BYTES_ARRAY_INPUT], scratch_pad: &mut ScratchPad) -> Result<Hash, XelisHashError> {
-    xelis_hash(input, scratch_pad).map(|bytes| Hash::new(bytes))
 }
 
 impl Serializer for Hash {
@@ -130,12 +131,6 @@ pub trait Hashable: Serializer {
         let bytes = self.to_bytes();
         hash(&bytes)
     }
-}
-
-#[inline(always)]
-pub fn hash(value: &[u8]) -> Hash {
-    let result: [u8; HASH_SIZE] = blake3_hash(value).into();
-    Hash(result)
 }
 
 impl AsRef<[u8]> for Hash {

@@ -1,12 +1,12 @@
-use xelis_common::block::Algorithm;
-use crate::config::HARD_FORKS;
+use xelis_common::{block::Algorithm, network::Network};
+use crate::config::get_hard_forks;
 
 // Get the version of the hard fork at a given height
 // and returns true if there is a hard fork (version change) at that height
-pub fn has_hard_fork_at_height(height: u64) -> (bool, u8) {
+pub fn has_hard_fork_at_height(network: &Network, height: u64) -> (bool, u8) {
     let mut version = 0;
     let mut hard_fork = false;
-    for hardfork in HARD_FORKS {
+    for hardfork in get_hard_forks(network) {
         if height >= hardfork.height {
             version = hardfork.version;
         }
@@ -20,8 +20,8 @@ pub fn has_hard_fork_at_height(height: u64) -> (bool, u8) {
 }
 
 // This function returns the block version at a given height
-pub fn get_version_at_height(height: u64) -> u8 {
-    has_hard_fork_at_height(height).1
+pub fn get_version_at_height(network: &Network, height: u64) -> u8 {
+    has_hard_fork_at_height(network, height).1
 }
 
 // This function returns the PoW algorithm at a given version
@@ -39,19 +39,24 @@ mod tests {
 
     #[test]
     fn test_has_hard_fork_at_height() {
-        let (hard_fork, version) = has_hard_fork_at_height(0);
+        let (hard_fork, version) = has_hard_fork_at_height(&Network::Testnet, 0);
         assert_eq!(hard_fork, true);
         assert_eq!(version, 0);
 
-        let (hard_fork, version) = has_hard_fork_at_height(1);
+        let (hard_fork, version) = has_hard_fork_at_height(&Network::Testnet, 1);
         assert_eq!(hard_fork, false);
         assert_eq!(version, 0);
+
+
+        let (hard_fork, version) = has_hard_fork_at_height(&Network::Testnet, 5);
+        assert_eq!(hard_fork, true);
+        assert_eq!(version, 1);
     }
 
     #[test]
     fn test_get_version_at_height() {
-        assert_eq!(get_version_at_height(0), 0);
-        assert_eq!(get_version_at_height(100_000), 0);
+        assert_eq!(get_version_at_height(&Network::Testnet, 0), 0);
+        assert_eq!(get_version_at_height(&Network::Testnet, 100_000), 1);
     }
 
     #[test]

@@ -192,7 +192,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
     command_manager.add_command(Command::new("p2p_outgoing_connections", "Accept/refuse to connect to outgoing nodes", CommandHandler::Async(async_handler!(p2p_outgoing_connections::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
-
+    command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -365,6 +365,19 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     }
     manager.message("Supply is valid");
 
+    Ok(())
+}
+
+// This is a debug command to see all unexecuted transactions in the chain that can happen due to DAG reorgs
+async fn list_unexecuted_transactions<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let unexecuted = storage.get_unexecuted_transactions().await.context("Error while retrieving unexecuted transactions")?;
+    manager.message(format!("Unexecuted transactions ({}):", unexecuted.len()));
+    for tx in unexecuted {
+        manager.message(format!("- {}", tx));
+    }
     Ok(())
 }
 

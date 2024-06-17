@@ -549,6 +549,9 @@ pub enum NotifyEvent {
     // When stable height has changed (different than the previous one)
     // it contains StableHeightChangedEvent struct as value
     StableHeightChanged,
+    // When stable topoheight has changed (different than the previous one)
+    // it contains StableTopoHeightChangedEvent struct as value
+    StableTopoHeightChanged,
     // When a transaction that was executed in a block is not reintroduced in mempool
     // It contains TransactionOrphanedEvent as value
     TransactionOrphaned,
@@ -609,6 +612,14 @@ pub struct StableHeightChangedEvent {
     pub previous_stable_height: u64,
     pub new_stable_height: u64
 }
+
+// Value of NotifyEvent::StableTopoHeightChanged
+#[derive(Serialize, Deserialize)]
+pub struct StableTopoHeightChangedEvent {
+    pub previous_stable_topoheight: u64,
+    pub new_stable_topoheight: u64
+}
+
 
 // Value of NotifyEvent::TransactionAddedInMempool
 pub type TransactionAddedInMempoolEvent = TransactionResponse<'static>;

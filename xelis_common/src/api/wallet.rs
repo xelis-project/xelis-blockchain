@@ -123,6 +123,13 @@ pub struct GetMatchingKeysParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct CountMatchingEntriesParams {
+    pub tree: String,
+    pub key: Option<Query>,
+    pub value: Option<Query>
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct StoreParams {
     pub tree: String,
     pub key: DataValue,

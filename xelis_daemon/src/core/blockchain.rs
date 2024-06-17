@@ -10,6 +10,7 @@ use xelis_common::{
             BlockType,
             NotifyEvent,
             StableHeightChangedEvent,
+            StableTopoHeightChangedEvent,
             TransactionExecutedEvent,
             TransactionResponse
         },
@@ -44,7 +45,8 @@ use xelis_common::{
         TimestampMillis
     },
     transaction::{verify::BlockchainVerificationState, Transaction, TransactionType},
-    utils::{calculate_tx_fee, format_xelis, spawn_task},
+    utils::{calculate_tx_fee, format_xelis},
+    tokio::spawn_task,
     varuint::VarUint
 };
 use crate::{
@@ -328,40 +330,44 @@ impl<S: Storage> Blockchain<S> {
             // setup exclusive nodes
             let mut exclusive_nodes: Vec<SocketAddr> = Vec::with_capacity(config.exclusive_nodes.len());
             for peer in config.exclusive_nodes {
-                let addr: SocketAddr = match peer.parse() {
-                    Ok(addr) => addr,
-                    Err(e) => {
-                        error!("Error while parsing priority node address: {}", e);
-                        continue;
-                    }
-                };
-                exclusive_nodes.push(addr);
+                for peer in peer.split(",") {
+                    let addr: SocketAddr = match peer.parse() {
+                        Ok(addr) => addr,
+                        Err(e) => {
+                            error!("Error while parsing exclusive node address: {}", e);
+                            continue;
+                        }
+                    };
+                    exclusive_nodes.push(addr);
+                }
             }
 
             match P2pServer::new(config.p2p_concurrency_task_count_limit, config.dir_path, config.tag, config.max_peers, config.p2p_bind_address, Arc::clone(&arc), exclusive_nodes.is_empty(), exclusive_nodes, config.allow_fast_sync, config.allow_boost_sync, config.max_chain_response_size, !config.disable_ip_sharing, config.disable_p2p_outgoing_connections) {
                 Ok(p2p) => {
                     // connect to priority nodes
                     for addr in config.priority_nodes {
-                        let addr: SocketAddr = match addr.parse() {
-                            Ok(addr) => addr,
-                            Err(e) => {
-                                match lookup_host(&addr).await {
-                                    Ok(it) => {
-                                        info!("Valid host found for {}", addr);
-                                        for addr in it {
-                                            info!("Trying to connect to priority node with IP from DNS resolution: {}", addr);
-                                            p2p.try_to_connect_to_peer(addr, true).await;
+                        for addr in addr.split(",") {
+                            let addr: SocketAddr = match addr.parse() {
+                                Ok(addr) => addr,
+                                Err(e) => {
+                                    match lookup_host(&addr).await {
+                                        Ok(it) => {
+                                            info!("Valid host found for {}", addr);
+                                            for addr in it {
+                                                info!("Trying to connect to priority node with IP from DNS resolution: {}", addr);
+                                                p2p.try_to_connect_to_peer(addr, true).await;
+                                            }
+                                        },
+                                        Err(e2) => {
+                                            error!("Error while parsing priority node address: {}, {}", e, e2);
                                         }
-                                    },
-                                    Err(e2) => {
-                                        error!("Error while parsing priority node address: {}, {}", e, e2);
-                                    }
-                                };
-                                continue;
-                            }
-                        };
-                        info!("Trying to connect to priority node: {}", addr);
-                        p2p.try_to_connect_to_peer(addr, true).await;
+                                    };
+                                    continue;
+                                }
+                            };
+                            info!("Trying to connect to priority node: {}", addr);
+                            p2p.try_to_connect_to_peer(addr, true).await;
+                        }
                     }
                     *arc.p2p.write().await = Some(p2p);
                 },
@@ -1199,7 +1205,7 @@ impl<S: Storage> Blockchain<S> {
         let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
 
         // Get the version at the current height
-        let (has_hard_fork, version) = has_hard_fork_at_height(height);
+        let (has_hard_fork, version) = has_hard_fork_at_height(self.get_network(), height);
 
         if tips.len() == 0 { // Genesis difficulty
             return Ok((GENESIS_BLOCK_DIFFICULTY, difficulty::get_covariance_p(version)))
@@ -1329,7 +1335,8 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
-            mempool.add_tx(storage, current_topoheight, hash.clone(), tx.clone(), tx_size).await?;
+            let version = get_version_at_height(self.get_network(), self.get_height());
+            mempool.add_tx(storage, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
         }
 
         if broadcast {
@@ -1469,7 +1476,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let height = blockdag::calculate_height_at_tips(storage, sorted_tips.iter()).await?;
-        let block = BlockHeader::new(get_version_at_height(height), height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
+        let block = BlockHeader::new(get_version_at_height(self.get_network(), height), height, get_current_time_in_millis(), sorted_tips, extra_nonce, address, IndexSet::new());
 
         Ok(block)
     }
@@ -1508,7 +1515,7 @@ impl<S: Storage> Blockchain<S> {
         // data used to verify txs
         let topoheight = self.get_topo_height();
         trace!("build chain state for block template");
-        let mut chain_state = ChainState::new(storage, topoheight);
+        let mut chain_state = ChainState::new(storage, topoheight, block.get_version());
 
         let mut failed_sources = HashSet::new();
         while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
@@ -1573,7 +1580,7 @@ impl<S: Storage> Blockchain<S> {
         let start = Instant::now();
 
         // Expected version for this block
-        let version = get_version_at_height(block.get_height());
+        let version = get_version_at_height(self.get_network(), block.get_height());
 
         // Verify that the block is on the correct version
         if block.get_version() != version {
@@ -1601,7 +1608,7 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidTipsCount(block_hash, tips_count))
         }
 
-        let current_height = self.get_height();
+        let mut current_height = self.get_height();
         if tips_count == 0 && current_height != 0 {
             debug!("Expected at least one previous block for this block {}", block_hash);
             return Err(BlockchainError::ExpectedTips)
@@ -1709,7 +1716,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("verifying {} TXs in block {}", txs_len, block_hash);
-            let mut chain_state = ChainState::new(storage, current_topoheight);
+            let mut chain_state = ChainState::new(storage, current_topoheight, version);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
             let mut batch = Vec::with_capacity(block.get_txs_count());
@@ -1959,7 +1966,7 @@ impl<S: Storage> Blockchain<S> {
                 let mut total_fees = 0;
                 // Chain State used for the verification
                 trace!("building chain state to execute TXs in block {}", block_hash);
-                let mut chain_state = ApplicableChainState::new(storage, highest_topo);
+                let mut chain_state = ApplicableChainState::new(storage, highest_topo, version);
 
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
@@ -2106,7 +2113,6 @@ impl<S: Storage> Blockchain<S> {
         // Store the new tips available
         storage.store_tips(&tips)?;
 
-        let mut current_height = current_height;
         if current_height == 0 || block.get_height() > current_height {
             debug!("storing new top height {}", block.get_height());
             storage.set_top_height(block.get_height())?;
@@ -2129,10 +2135,22 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
-            // Update caches
-            self.stable_height.store(stable_height, Ordering::SeqCst);
             // Search the topoheight of the stable block
             let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
+            if should_track_events.contains(&NotifyEvent::StableTopoHeightChanged) {
+                // detect the change in stable topoheight
+                let previous_stable_topoheight = self.get_stable_topoheight();
+                if stable_topoheight != previous_stable_topoheight {
+                    let value = json!(StableTopoHeightChangedEvent {
+                        previous_stable_topoheight,
+                        new_stable_topoheight: stable_topoheight
+                    });
+                    events.entry(NotifyEvent::StableTopoHeightChanged).or_insert_with(Vec::new).push(value);
+                }
+            }
+
+            // Update caches
+            self.stable_height.store(stable_height, Ordering::SeqCst);
             self.stable_topoheight.store(stable_topoheight, Ordering::SeqCst);
 
             trace!("update difficulty in cache");
@@ -2148,7 +2166,8 @@ impl<S: Storage> Blockchain<S> {
             debug!("Locking mempool write mode");
             let mut mempool = self.mempool.write().await;
             debug!("mempool write mode ok");
-            mempool.clean_up(&*storage, highest_topo).await
+            let version = get_version_at_height(self.get_network(), current_height);
+            mempool.clean_up(&*storage, highest_topo, version).await
         } else {
             Vec::new()
         };
@@ -2458,10 +2477,13 @@ impl<S: Storage> Blockchain<S> {
         if !stop_at_stable_height {
             let tips = storage.get_tips().await?;
             let (stable_hash, stable_height) = self.find_common_base::<S, _>(&storage, &tips).await?;
+            let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
 
             // if we have a RPC server, propagate the StableHeightChanged if necessary
             if let Some(rpc) = self.rpc.read().await.as_ref() {
                 let previous_stable_height = self.get_stable_height();
+                let previous_stable_topoheight = self.get_stable_topoheight();
+
                 if stable_height != previous_stable_height {
                     if rpc.is_event_tracked(&NotifyEvent::StableHeightChanged).await {
                         let rpc = rpc.clone();
@@ -2477,9 +2499,24 @@ impl<S: Storage> Blockchain<S> {
                         });
                     }
                 }
+
+                if stable_topoheight != previous_stable_topoheight {
+                    if rpc.is_event_tracked(&NotifyEvent::StableTopoHeightChanged).await {
+                        let rpc = rpc.clone();
+                        spawn_task("rpc-notify-stable-topoheight", async move {
+                            let event = json!(StableTopoHeightChangedEvent {
+                                previous_stable_topoheight,
+                                new_stable_topoheight: stable_topoheight
+                            });
+    
+                            if let Err(e) = rpc.notify_clients(&NotifyEvent::StableTopoHeightChanged, event).await {
+                                debug!("Error while broadcasting event StableTopoHeightChanged to websocket: {}", e);
+                            }
+                        });
+                    }
+                }
             }
             self.stable_height.store(stable_height, Ordering::SeqCst);
-            let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
             self.stable_topoheight.store(stable_topoheight, Ordering::SeqCst);
         }
 
@@ -2535,7 +2572,7 @@ pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current
     if let TransactionType::Transfers(transfers) = tx.get_data() {
         output_count = transfers.len();
         for transfer in transfers {
-            if !provider.is_account_registered_below_topoheight(transfer.get_destination(), current_topoheight).await? {
+            if !provider.is_account_registered_at_topoheight(transfer.get_destination(), current_topoheight).await? {
                 new_addresses += 1;
             }
         }

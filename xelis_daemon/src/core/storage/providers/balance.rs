@@ -1,15 +1,17 @@
 use async_trait::async_trait;
 use log::{trace, error};
 use xelis_common::{
-    account::VersionedBalance,
+    account::{AccountSummary, VersionedBalance},
     crypto::{
         Hash,
         PublicKey
     },
     serializer::Serializer
 };
-
-use crate::core::{error::{BlockchainError, DiskContext}, storage::SledStorage};
+use crate::core::{
+    error::{BlockchainError, DiskContext},
+    storage::SledStorage
+};
 use super::AssetProvider;
 
 #[async_trait]
@@ -62,6 +64,10 @@ pub trait BalanceProvider: AssetProvider {
     // Delete the last topoheight for asset and key
     // This will only remove the pointer, not the version itself
     fn delete_last_topoheight_for_balance(&mut self, key: &PublicKey, asset: &Hash) -> Result<(), BlockchainError>;
+
+    // Get the account summary for a key and asset on the specified topoheight range
+    // If None is returned, that means there was no changes that occured in the specified topoheight range
+    async fn get_account_summary_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: u64, max_topoheight: u64) -> Result<Option<AccountSummary>, BlockchainError>;
 }
 
 impl SledStorage {
@@ -300,5 +306,50 @@ impl BalanceProvider for SledStorage {
         let key = self.get_versioned_balance_key(key, asset, topoheight);
         self.versioned_balances.insert(key, balance.to_bytes())?;
         Ok(())
+    }
+
+    async fn get_account_summary_for(&self, key: &PublicKey, asset: &Hash, min_topoheight: u64, max_topoheight: u64) -> Result<Option<AccountSummary>, BlockchainError> {
+        trace!("get account summary {} for {} at maximum topoheight {}", asset, key.as_address(self.is_mainnet()), max_topoheight);
+
+        // first search if we have a valid balance at the maximum topoheight
+        if let Some((topo, version)) = self.get_balance_at_maximum_topoheight(key, asset, max_topoheight).await? {
+            if topo < min_topoheight {
+                trace!("No changes found for {} above min topoheight {}", key.as_address(self.is_mainnet()), min_topoheight);
+                return Ok(None)
+            }
+
+            let mut previous = version.get_previous_topoheight();
+            let has_output = version.contains_output();
+
+            let mut account = AccountSummary {
+                output_version: None,
+                stable_version: version.as_balance(topo)
+            };
+
+            // We have an output in it, we can return the account
+            if has_output {
+                trace!("Stable with output balance found for {} at topoheight {}", key.as_address(self.is_mainnet()), topo);
+                return Ok(Some(account))
+            }
+
+            // We need to search through the whole history to see if we have a balance with output
+            while let Some(topo) = previous {
+                let mut previous_version = self.get_balance_at_exact_topoheight(key, asset, topo).await?;
+                if previous_version.contains_output() {
+                    trace!("Output balance found for {} at topoheight {}", key.as_address(self.is_mainnet()), topo);
+                    previous_version.set_previous_topoheight(None);
+
+                    account.output_version = Some(previous_version.as_balance(topo));
+                    break;
+                }
+
+                previous = previous_version.get_previous_topoheight();
+            }
+
+            return Ok(Some(account))
+        }
+
+        trace!("No balance found for {} at maximum topoheight {}", key.as_address(self.is_mainnet()), max_topoheight);
+        Ok(None)
     }
 }

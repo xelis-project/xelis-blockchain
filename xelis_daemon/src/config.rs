@@ -87,6 +87,12 @@ pub const SIDE_BLOCK_REWARD_MIN_PERCENT: u64 = 5;
 // Emission speed factor for the emission curve
 // It is used to calculate based on the supply the block reward
 pub const EMISSION_SPEED_FACTOR: u64 = 20;
+// 30% of the transaction fee is burned
+// This is to reduce the supply over time
+// and also to prevent spamming the network with low fee transactions
+// or free tx from miners
+// This should be enabled once Smart Contracts are released
+pub const TRANSACTION_FEE_BURN_PERCENT: u64 = 30;
 
 // Developer address for paying dev fees until Smart Contracts integration
 // (testnet/mainnet format is converted lazily later)
@@ -171,11 +177,25 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
 // Hard Forks configured
-pub const HARD_FORKS: [HardFork; 1] = [
+const HARD_FORKS: [HardFork; 1] = [
     HardFork {
         height: 0,
         version: 0,
         changelog: "Initial version",
+    }
+];
+
+// Testnet / Devnet hard forks
+const TESTNET_HARD_FORKS: [HardFork; 2] = [
+    HardFork {
+        height: 0,
+        version: 0,
+        changelog: "Initial version",
+    },
+    HardFork {
+        height: 5,
+        version: 1,
+        changelog: "xelis-hash v2",
     }
 ];
 
@@ -254,5 +274,13 @@ pub const fn get_minimum_difficulty(network: &Network) -> Difficulty {
     match network {
         Network::Mainnet => MAINNET_MINIMUM_DIFFICULTY,
         _ => OTHER_MINIMUM_DIFFICULTY,
+    }
+}
+
+// Get hard forks based on the network
+pub const fn get_hard_forks(network: &Network) -> &[HardFork] {
+    match network {
+        Network::Mainnet => &HARD_FORKS,
+        _ => &TESTNET_HARD_FORKS,
     }
 }

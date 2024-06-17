@@ -53,6 +53,7 @@ use super::{
     TransactionType,
     TransferPayload,
     EXTRA_DATA_LIMIT_SIZE,
+    EXTRA_DATA_LIMIT_SUM_SIZE,
     MAX_TRANSFER_COUNT
 };
 
@@ -456,11 +457,15 @@ impl TransactionBuilder {
                 }
 
                 if let Some(extra_data) = &transfer.extra_data {
-                    extra_data_size += extra_data.size();
+                    let size = extra_data.size();
+                    if size > EXTRA_DATA_LIMIT_SIZE {
+                        return Err(GenerationError::ExtraDataTooLarge);
+                    }
+                    extra_data_size += size;
                 }
             }
 
-            if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
+            if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
                 return Err(GenerationError::ExtraDataTooLarge);
             }
 
@@ -619,8 +624,8 @@ impl TransactionBuilder {
                 })
                 .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
-            if total_cipher_size > EXTRA_DATA_LIMIT_SIZE {
-                return Err(GenerationError::EncryptedExtraDataTooLarge(total_cipher_size, EXTRA_DATA_LIMIT_SIZE));
+            if total_cipher_size > EXTRA_DATA_LIMIT_SUM_SIZE {
+                return Err(GenerationError::EncryptedExtraDataTooLarge(total_cipher_size, EXTRA_DATA_LIMIT_SUM_SIZE));
             }
 
             transfers

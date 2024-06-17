@@ -1,15 +1,13 @@
+mod backend;
+
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     num::NonZeroUsize
 };
 use indexmap::IndexMap;
 use lru::LruCache;
-use sled::{
-    Tree,
-    Db
-};
-use tokio::sync::Mutex;
 use xelis_common::{
+    tokio::sync::Mutex,
     account::CiphertextCache,
     api::{
         query::{
@@ -49,6 +47,7 @@ use crate::{
     },
     error::WalletError
 };
+use self::backend::{Db, Tree};
 use log::{trace, debug, error};
 
 // keys used to retrieve from storage
@@ -383,6 +382,42 @@ impl EncryptedStorage {
         }
 
         Ok(keys)
+    }
+
+    // Count entries from a tree
+    // A query is possible to filter on keys
+    pub fn count_custom_tree_entries(&self, tree: &String, query_key: &Option<Query>, query_value: &Option<Query>) -> Result<usize> {
+        let tree = self.get_custom_tree(tree)?;
+        let count = if query_key.is_some() || query_value.is_some() {
+            let mut count = 0;
+            for res in tree.iter() {
+                let (k, v) = res?;
+                if let Some(query) = query_key {
+                    let decrypted_key = self.cipher.decrypt_value(&k)?;
+                    let key = DataValue::from_bytes(&decrypted_key)?;
+
+                    if !query.verify_value(&key) {
+                        continue;
+                    }
+                }
+
+                if let Some(query) = query_value {
+                    let decrypted_value = self.cipher.decrypt_value(&v)?;
+                    let value = DataElement::from_bytes(&decrypted_value)?;
+
+                    if !query.verify_element(&value) {
+                        continue;
+                    }
+                }
+                count += 1;
+            }
+
+            count
+        } else {
+            tree.len()
+        };
+
+        Ok(count)
     }
 
     // this function is specific because we save the key in encrypted form (and not hashed as others)
@@ -993,7 +1028,7 @@ impl EncryptedStorage {
 
 impl Storage {
     pub fn new(name: String) -> Result<Self> {
-        let db = sled::open(name)?;
+        let db = backend::open(name)?;
 
         Ok(Self {
             db

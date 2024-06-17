@@ -100,7 +100,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         }
 
         // Verify the block version
-        let version = get_version_at_height(header.get_height());
+        let version = get_version_at_height(self.blockchain.get_network(), header.get_height());
         if version != header.get_version() {
             debug!("Block {} has version {} while expected version is {}", hash, header.get_version(), version);
             return Err(BlockchainError::InvalidBlockVersion)

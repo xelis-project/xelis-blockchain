@@ -1,6 +1,6 @@
 [package]
 name = "xelis_common"
-version = "1.12.0"
+version = "1.13.0"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 build = "build.rs"
@@ -20,17 +20,16 @@ zeroize = "1.7.0"
 lazy_static = "1.4.0"
 sha3 = "0.10.8"
 chacha20poly1305 = "0.10.1"
-xelis-hash = { git = "https://github.com/xelis-project/xelis-hash", branch = "master", default-features = false }
+xelis-hash = { git = "https://github.com/xelis-project/xelis-hash", branch = "master" }
 
 thiserror = "1.0.58"
 anyhow = "1.0.81"
 log = "0.4"
 fern = { version = "0.6", features = ["colored", "date-based"] }
 chrono = "0.4.35"
-tokio = { version = "1.36", features = ["macros", "signal", "time", "sync"], optional = true }
 reqwest = { version = "0.11.25", default-features = false, features = ["json"], optional = true }
 clap = { version = "4.5.2", features = ["derive"], optional = true }
-crossterm = "0.27.0"
+crossterm = { version = "0.27.0", optional = true }
 indexmap = { version = "2.2.5", features = ["serde"] }
 actix-rt = { version = "2.9.0", optional = true }
 actix-web = { version = "4", optional = true }
@@ -41,22 +40,35 @@ async-trait = "0.1.77"
 regex = "1"
 # Query system
 serde_regex = "1.1.0"
-# WebSocket clients using tokio
-tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
 # Used for U256
 primitive-types = { version = "0.12.2", features = ["serde"] }
 console-subscriber = { version = "0.2.0", optional = true }
 chacha20 = "0.9.1"
+# WebSocket support
+tokio-tungstenite-wasm = { version = "*", features = ["rustls-tls-webpki-roots"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 win32console = "0.1.5"
+
+# Tokio dependency for WASM
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+tokio_with_wasm = { git = "https://github.com/Slixe/tokio-with-wasm", branch = "main", features = ["macros", "sync", "time", "rt"], optional = true }
+
+# Tokio dependency for non-WASM
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1.36", default-features = false, features = ["macros", "signal", "time", "sync"], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.36", features = ["full"] }
 
 [features]
-json_rpc = ["dep:reqwest"]
-prompt = ["dep:tokio"]
+tokio = ["dep:tokio", "dep:tokio_with_wasm"]
+json_rpc = ["tokio", "dep:reqwest", "dep:futures-util", "dep:tokio-tungstenite-wasm"]
 clap = ["dep:clap"]
-rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "dep:tokio", "dep:reqwest"]
-tracing = ["dep:console-subscriber", "tokio/tracing"]
+prompt = ["clap", "tokio", "dep:crossterm"]
+rpc_server = ["dep:actix-rt", "dep:actix-web", "dep:actix-ws", "dep:futures-util", "tokio", "dep:reqwest"]
+tracing = ["dep:console-subscriber", "tokio", "tokio/tracing"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]

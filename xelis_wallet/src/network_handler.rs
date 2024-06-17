@@ -9,8 +9,13 @@ use std::{
 use thiserror::Error;
 use anyhow::Error;
 use log::{debug, error, trace, warn};
-use tokio::{sync::Mutex, task::JoinHandle, time::sleep};
 use xelis_common::{
+    tokio::{
+        sync::Mutex, task::{JoinHandle, JoinError},
+        time::sleep,
+        select,
+        spawn_task
+    },
     account::CiphertextCache,
     api::{
         daemon::{
@@ -29,7 +34,7 @@ use xelis_common::{
     },
     serializer::Serializer,
     transaction::Role,
-    utils::{sanitize_daemon_address, spawn_task}
+    utils::sanitize_daemon_address
 };
 use crate::{
     config::AUTO_RECONNECT_INTERVAL,
@@ -56,7 +61,7 @@ pub enum NetworkError {
     #[error("network handler is not running")]
     NotRunning,
     #[error(transparent)]
-    TaskError(#[from] tokio::task::JoinError),
+    TaskError(#[from] JoinError),
     #[error(transparent)]
     DaemonAPIError(#[from] Error),
     #[error("Network mismatch")]
@@ -105,7 +110,7 @@ impl NetworkHandler {
         }
 
         if !self.api.is_online() {
-            debug!("API is offline, trying to reconnect");
+            debug!("API is offline, trying to reconnect #1");
             if !self.api.reconnect().await? {
                 error!("Couldn't reconnect to server");
                 return Err(NetworkError::NotRunning)
@@ -132,7 +137,7 @@ impl NetworkHandler {
                     break res;
                 } else {
                     if !zelf.api.is_online() {
-                        debug!("API is offline, trying to reconnect");
+                        debug!("API is offline, trying to reconnect #2");
                         if !zelf.api.reconnect().await? {
                             error!("Couldn't reconnect to server, trying again in {} seconds", AUTO_RECONNECT_INTERVAL);
                             sleep(Duration::from_secs(AUTO_RECONNECT_INTERVAL)).await;
@@ -227,6 +232,7 @@ impl NetworkHandler {
 
                     // Mark it as last coinbase reward topoheight
                     // it is internally checked if its higher or not
+                    debug!("Storing last coinbase reward topoheight {}", topoheight);
                     storage.set_last_coinbase_reward_topoheight(Some(topoheight))?;
 
                     if storage.has_transaction(entry.get_hash())? {
@@ -475,18 +481,22 @@ impl NetworkHandler {
             if let Some(previous) = previous_topoheight {
                 // don't sync already synced blocks
                 if min_topoheight >= previous {
-                    return Ok(())
+                    debug!("Reached minimum topoheight {}, topo: {}", min_topoheight, previous);
+                    break;
                 }
 
                 topoheight = previous;
                 version = self.api.get_balance_at_topoheight(address, asset, previous).await?;
             } else {
-                return Ok(())
+                debug!("Reached the end of the chain at topoheight {}", topoheight);
+                break;
             }
 
             // Only first iteration is the highest one
             highest_version = false;
         }
+
+        Ok(())
     }
 
     // Locate the last topoheight valid for syncing, this support soft forks, DAG reorgs, etc...
@@ -786,16 +796,18 @@ impl NetworkHandler {
                 return Ok(())
             }
         } else {
+            debug!("No event received, verify that we are on the right chain");
             // First, locate the last topoheight valid for syncing
             let sync_back;
             (daemon_topoheight, daemon_block_hash, wallet_topoheight, sync_back) = self.locate_sync_topoheight_and_clean().await?;
             debug!("Daemon topoheight: {}, wallet topoheight: {}, sync back: {}", daemon_topoheight, wallet_topoheight, sync_back);
 
-            // Sync back is requested, sync the head state again
-            if sync_back {
+            sync_new_blocks |= sync_back;
+            // Sync back is not requested, sync the head state
+            if !sync_back {
                 trace!("sync back");
                 // Now sync head state, this will helps us to determinate if we should sync blocks or not
-                sync_new_blocks = self.sync_head_state(&address, None, None, true).await?;
+                sync_new_blocks |= self.sync_head_state(&address, None, None, true).await?;
             }
         }
 
@@ -822,6 +834,7 @@ impl NetworkHandler {
     // Because of potential forks and DAG reorg during attacks,
     // we verify the last valid topoheight where changes happened
     async fn start_syncing(self: &Arc<Self>) -> Result<(), Error> {
+        debug!("Starting syncing");
         // Generate only one time the address
         let address = self.wallet.get_address();
         // Do a first sync to be up-to-date with the daemon
@@ -843,7 +856,7 @@ impl NetworkHandler {
         let mut on_connection_lost = self.api.on_connection_lost().await;
 
         loop {
-            tokio::select! {
+            select! {
                 biased;
                 // Wait on a new block, we don't parse the block directly as it may
                 // have reorg the chain
@@ -921,17 +934,24 @@ impl NetworkHandler {
             let storage = self.wallet.get_storage().read().await;
             storage.get_assets().await?
         };
-
-        // cache for all topoheight we already processed
-        // this will prevent us to request more than one time the same topoheight
-        let mut topoheight_processed = HashSet::new();
-
+        
         // get balance and transactions for each asset
-        let mut highest_nonce = None;
-        for asset in assets {
-            debug!("calling get balances and transactions {}", current_topoheight);
-            if let Err(e) = self.get_balance_and_transactions(&mut topoheight_processed, &address, &asset, current_topoheight, balances, &mut highest_nonce).await {
-                error!("Error while syncing balance for asset {}: {}", asset, e);
+        if self.wallet.get_history_scan() {
+            // cache for all topoheight we already processed
+            // this will prevent us to request more than one time the same topoheight
+            let mut topoheight_processed = HashSet::new();
+            let mut highest_nonce = None;
+            for asset in assets {
+                debug!("calling get balances and transactions {}", current_topoheight);
+                if let Err(e) = self.get_balance_and_transactions(&mut topoheight_processed, &address, &asset, current_topoheight, balances, &mut highest_nonce).await {
+                    error!("Error while syncing balance for asset {}: {}", asset, e);
+                }
+            }
+        } else {
+            // We don't need to scan the history, we can just sync the head state
+            debug!("calling sync head state");
+            if let Err(e) = self.sync_head_state(&self.wallet.get_address(), Some(assets), None, true).await {
+                error!("Error while syncing head state: {}", e);
             }
         }
         Ok(())

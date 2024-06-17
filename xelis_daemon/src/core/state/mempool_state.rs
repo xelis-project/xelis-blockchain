@@ -43,16 +43,19 @@ pub struct MempoolState<'a, S: Storage> {
     accounts: HashMap<&'a PublicKey, Account<'a>>,
     // The current topoheight of the chain
     topoheight: u64,
+    // Block header version
+    block_version: u8,
 }
 
 impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, topoheight: u64) -> Self {
+    pub fn new(mempool: &'a Mempool, storage: &'a S, topoheight: u64, block_version: u8) -> Self {
         Self {
             mempool,
             storage,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
             topoheight,
+            block_version,
         }
     }
 
@@ -254,5 +257,10 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         new_nonce: u64
     ) -> Result<(), BlockchainError> {
         self.internal_update_account_nonce(account, new_nonce).await
+    }
+
+    /// Get the block version
+    fn get_block_version(&self) -> u8 {
+        self.block_version
     }
 }

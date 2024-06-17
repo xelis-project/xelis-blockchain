@@ -5,10 +5,11 @@ use std::{
 use indexmap::IndexSet;
 use log::debug;
 use xelis_common::{
-    account::{BalanceType, CiphertextCache},
+    account::AccountSummary,
     asset::AssetWithData,
     crypto::{
-        Hash, PublicKey
+        Hash,
+        PublicKey
     },
     difficulty::{
         CumulativeDifficulty,
@@ -108,8 +109,8 @@ pub enum StepKind {
     ChainInfo,
     Assets,
     Keys,
-    Balances,
     Nonces,
+    Balances,
     BlocksMetadata
 }
 
@@ -134,8 +135,9 @@ pub enum StepRequest<'a> {
     Assets(u64, u64, Option<u64>),
     // Min topoheight, Max topoheight, Asset, pagination
     Keys(u64, u64, Option<u64>),
-    // Max topoheight, Asset, Accounts
-    Balances(u64, Cow<'a, Hash>, Cow<'a, IndexSet<PublicKey>>),
+    // Request the account summary of a public key
+    // Key, Asset, min topoheight, max topoheight
+    Balances(Cow<'a, IndexSet<PublicKey>>, Cow<'a, Hash>, u64, u64),
     // Max topoheight, Accounts
     Nonces(u64, Cow<'a, IndexSet<PublicKey>>),
     // Request blocks metadata starting topoheight
@@ -148,7 +150,7 @@ impl<'a> StepRequest<'a> {
             Self::ChainInfo(_) => StepKind::ChainInfo,
             Self::Assets(_, _, _) => StepKind::Assets,
             Self::Keys(_, _, _) => StepKind::Keys,
-            Self::Balances(_, _, _) => StepKind::Balances,
+            Self::Balances(_, _, _, _) => StepKind::Balances,
             Self::Nonces(_, _) => StepKind::Nonces,
             Self::BlocksMetadata(_) => StepKind::BlocksMetadata
         }
@@ -159,7 +161,7 @@ impl<'a> StepRequest<'a> {
             Self::ChainInfo(_) => return None,
             Self::Assets(_, topo, _) => topo,
             Self::Keys(_, topo, _) => topo,
-            Self::Balances(topo, _, _) => topo,
+            Self::Balances(_, _, _, topo) => topo,
             Self::Nonces(topo, _) => topo,
             Self::BlocksMetadata(topo) => topo
         })
@@ -220,10 +222,16 @@ impl Serializer for StepRequest<'_> {
                 Self::Keys(min, max, page)
             },
             3 => {
-                let topoheight = reader.read_u64()?;
-                let hash = Cow::<'_, Hash>::read(reader)?;
-                let keys = Cow::<'_, IndexSet<PublicKey>>::read(reader)?;
-                Self::Balances(topoheight, hash, keys)
+                let key = Cow::read(reader)?;
+                let asset = Cow::read(reader)?;
+                let min = reader.read_u64()?;
+                let max = reader.read_u64()?;
+                if min > max {
+                    debug!("Invalid min topoheight in Step Request");
+                    return Err(ReaderError::InvalidValue)
+                }
+
+                Self::Balances(key, asset, min, max)
             },
             4 => {
                 let topoheight = reader.read_u64()?;
@@ -261,11 +269,12 @@ impl Serializer for StepRequest<'_> {
                 writer.write_u64(max);
                 page.write(writer);
             },
-            Self::Balances(topoheight, asset, accounts) => {
+            Self::Balances(key, asset, min, max) => {
                 writer.write_u8(3);
-                writer.write_u64(topoheight);
-                writer.write_hash(asset);
-                accounts.write(writer);
+                key.write(writer);
+                asset.write(writer);
+                writer.write_u64(min);
+                writer.write_u64(max);
             },
             Self::Nonces(topoheight, nonces) => {
                 writer.write_u8(4);
@@ -284,7 +293,7 @@ impl Serializer for StepRequest<'_> {
             Self::ChainInfo(blocks) => 1 + blocks.size(),
             Self::Assets(min, max, page) => min.size() + max.size() + page.size(),
             Self::Keys(min, max, page) => min.size() + max.size() + page.size(),
-            Self::Balances(topoheight, asset, accounts) => topoheight.size() + asset.size() + accounts.size(),
+            Self::Balances(key, asset, min, max) => key.size() + asset.size() + min.size() + max.size(),
             Self::Nonces(topoheight, nonces) => topoheight.size() + nonces.size(),
             Self::BlocksMetadata(topoheight) => topoheight.size()
         };
@@ -301,9 +310,8 @@ pub enum StepResponse {
     Assets(IndexSet<AssetWithData>, Option<u64>),
     // Set of keys, pagination
     Keys(IndexSet<PublicKey>, Option<u64>),
-    // Balances requested (optional because not all accounts may have balances for requested asset)
-    // (CiphertextCache, Option<CiphertextCache>) (balance, output balance)
-    Balances(Vec<Option<(CiphertextCache, Option<CiphertextCache>, BalanceType)>>),
+    // Account summary response
+    Balances(Vec<Option<AccountSummary>>),
     // Nonces for requested accounts
     Nonces(Vec<u64>),
     // top blocks metadata
@@ -391,9 +399,9 @@ impl Serializer for StepResponse {
                 keys.write(writer);
                 page.write(writer);
             },
-            Self::Balances(balances) => {
+            Self::Balances(account) => {
                 writer.write_u8(3);
-                balances.write(writer);
+                account.write(writer);
             },
             Self::Nonces(nonces) => {
                 writer.write_u8(4);
@@ -417,8 +425,8 @@ impl Serializer for StepResponse {
             Self::Keys(keys, page) => {
                 keys.size() + page.size()
             },
-            Self::Balances(balances) => {
-                balances.size()
+            Self::Balances(account) => {
+                account.size()
             },
             Self::Nonces(nonces) => {
                 nonces.size()

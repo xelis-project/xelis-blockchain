@@ -78,12 +78,6 @@ Others objectives in mind are:
 
 - Default RPC Server port is `8081`
 
-## Roadmap
-
-- Include extra fees when sending coins to a not-yet registered address
-- Support of Smart Contracts (xelis-vm)
-- Privacy (through Homomorphic Encryption)
-
 ## BlockDAG
 
 XELIS use a blockDAG with following rules:
@@ -113,8 +107,6 @@ Longest chain is the one selected by nodes. But for tips branches conflicts, cum
 
 Homomorphic Encryption (HE) will allow to add privacy on transactions and accounts by doing computation while staying in encrypted form.
 Each balances, transaction assets values are in encrypted form and nobody can determine the real value of it except involved parties.
-
-**NOTE**: This part is not yet deployed and is under heavy work.
 
 ## Mining
 

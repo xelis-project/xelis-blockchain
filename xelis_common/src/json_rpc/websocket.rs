@@ -1,38 +1,37 @@
 use std::{
-    sync::{
-        atomic::{AtomicUsize, Ordering, AtomicBool},
-        Arc
-    },
+    borrow::Cow,
     collections::HashMap,
     hash::Hash,
     marker::PhantomData,
-    borrow::Cow,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc
+    },
     time::Duration
 };
 use anyhow::Error;
 use futures_util::{
     StreamExt,
-    stream::{SplitSink, SplitStream},
     SinkExt
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Value, json};
-use tokio::{
-    net::TcpStream,
-    sync::{broadcast, oneshot, Mutex},
-    task::JoinHandle,
-    time::{sleep, timeout}
-};
-use tokio_tungstenite::{
+use tokio_tungstenite_wasm::{
     WebSocketStream,
-    MaybeTlsStream,
-    connect_async,
-    tungstenite::Message
+    connect,
+    Message
 };
-use log::{debug, error, trace, warn};
+use log::{debug, error, warn};
 use crate::{
+    tokio::{
+        sync::{broadcast, oneshot, Mutex, mpsc},
+        task::JoinHandle,
+        time::{sleep, timeout},
+        spawn_task,
+        select
+    },
     api::SubscribeParams,
-    utils::{sanitize_daemon_address, spawn_task}
+    utils::sanitize_daemon_address
 };
 
 use super::{JSON_RPC_VERSION, JsonRPCError, JsonRPCResponse, JsonRPCResult};
@@ -77,11 +76,18 @@ impl<T: DeserializeOwned> EventReceiver<T> {
 // it has a tokio task running in background to handle all incoming messages
 pub type WebSocketJsonRPCClient<E> = Arc<WebSocketJsonRPCClientImpl<E>>;
 
+enum InternalMessage {
+    Send(String),
+    Close,
+}
+
 // A JSON-RPC Client over WebSocket protocol to support events
 // It can be used in multi-thread safely because each request/response are linked using the id attribute.
 pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> {
-    ws: Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>,
+    sender: Mutex<mpsc::Sender<InternalMessage>>,
+    // This is the ID for the next request
     count: AtomicUsize,
+    // This contains all pending requests
     requests: Mutex<HashMap<usize, oneshot::Sender<JsonRPCResponse>>>,
     // This contains all id sent to register to a event on daemon
     // It stores the sender channel to propagate the event to apps 
@@ -91,8 +97,8 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + C
     events_to_id: Mutex<HashMap<E, usize>>,
     // websocket server address
     target: String,
-    // auto reconnect duration
-    auto_reconnect: Mutex<Option<Duration>>,
+    // delay auto reconnect duration
+    delay_auto_reconnect: Mutex<Option<Duration>>,
     // is the client online
     online: AtomicBool,
     // This channel is called when the connection is lost
@@ -108,30 +114,25 @@ pub struct WebSocketJsonRPCClientImpl<E: Serialize + Hash + Eq + Send + Sync + C
 pub const DEFAULT_AUTO_RECONNECT: Duration = Duration::from_secs(5);
 
 impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCClientImpl<E> {
-    async fn connect_to(target: &String) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, JsonRPCError> {
-        let (ws, response) = connect_async(target).await?;
-        let status = response.status();
-        if status.is_server_error() || status.is_client_error() {
-            return Err(JsonRPCError::ConnectionError(status.to_string()));
-        }
+    async fn connect_to(target: &String) -> Result<WebSocketStream, JsonRPCError> {
+        let ws = connect(target).await?;
 
         Ok(ws)
     }
 
     pub async fn new(mut target: String) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
         target = sanitize_daemon_address(target.as_str());
-
         let ws = Self::connect_to(&target).await?;
-        
-        let (write, read) = ws.split();
+
+        let (sender, receiver) = mpsc::channel(64);
         let client = Arc::new(WebSocketJsonRPCClientImpl {
-            ws: Mutex::new(write),
+            sender: Mutex::new(sender),
             count: AtomicUsize::new(0),
             requests: Mutex::new(HashMap::new()),
             handler_by_id: Mutex::new(HashMap::new()),
             events_to_id: Mutex::new(HashMap::new()),
             target,
-            auto_reconnect: Mutex::new(Some(DEFAULT_AUTO_RECONNECT)),
+            delay_auto_reconnect: Mutex::new(Some(DEFAULT_AUTO_RECONNECT)),
             online: AtomicBool::new(true),
             offline_channel: Mutex::new(None),
             online_channel: Mutex::new(None),
@@ -139,17 +140,10 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
             timeout_after: Duration::from_secs(5),
         });
 
+        // Start the background task
         {
             let zelf = client.clone();
-            let handle = spawn_task("ws-subscribe-events", async move {
-                if let Err(e) = zelf.read(read).await {
-                    error!("Error in the WebSocket client ioloop: {:?}", e);
-                };
-            });
-
-            // Store the handle
-            let mut lock = client.background_task.lock().await;
-            *lock = Some(handle);
+            zelf.start_background_task(receiver, ws).await?;
         }
 
         Ok(client)
@@ -201,12 +195,12 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
     
     // Should the client try to reconnect to the server if the connection is lost
     pub async fn should_auto_reconnect(&self) -> bool {
-        self.auto_reconnect.lock().await.is_some()
+        self.delay_auto_reconnect.lock().await.is_some()
     }
 
     // Set if the client should try to reconnect to the server if the connection is lost
-    pub async fn set_auto_reconnect(&self, duration: Option<Duration>) {
-        let mut reconnect = self.auto_reconnect.lock().await;
+    pub async fn set_auto_reconnect_delay(&self, duration: Option<Duration>) {
+        let mut reconnect = self.delay_auto_reconnect.lock().await;
         *reconnect = duration;
     }
 
@@ -234,13 +228,12 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
 
     // This will stop the task keeping the connection with the node
     pub async fn disconnect(&self) -> Result<(), Error> {
-        self.set_auto_reconnect(None).await;
-        self.set_online(false);
+        self.set_auto_reconnect_delay(None).await;
+        self.set_online(false).await;
         {
-            let mut ws = self.ws.lock().await;
-            ws.close().await?;
-        }
 
+            self.sender.lock().await.send(InternalMessage::Close).await?;
+        }
         {
             let task = self.background_task.lock().await.take();
             if let Some(task) = task {
@@ -256,102 +249,46 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
     }
 
     // Set the online status
-    fn set_online(&self, online: bool) {
-        self.online.store(online, Ordering::SeqCst);
+    async fn set_online(&self, online: bool) {
+        let old = self.online.swap(online, Ordering::SeqCst);
+        if old != online {
+            if online {
+                self.notify_connection_channel(&self.online_channel).await;
+            } else {
+                self.notify_connection_channel(&self.offline_channel).await;
+            }
+        }
     }
 
     // Reconnect by starting again the background task
     pub async fn reconnect(self: &Arc<Self>) -> Result<bool, Error> {
         if self.is_online() {
+            warn!("Already connected to the server");
             return Ok(false)
         }
 
-        let mut task = self.background_task.lock().await;
-        if let Some(task) = task.take() {
-            warn!("Task was not closed correctly!");
-            task.abort();
-        }
-
+        let ws = Self::connect_to(&self.target).await?;
         {
-            let ws = Self::connect_to(&self.target).await?;
-            let (write, read) = ws.split();
-            {
-                let mut lock = self.ws.lock().await;
-                *lock = write;
+            let mut lock = self.background_task.lock().await;
+            if let Some(handle) = lock.take() {
+                handle.abort();
             }
-
-            let zelf = self.clone();
-            let handle = spawn_task("WS ioloop", async move {
-                if let Err(e) = zelf.read(read).await {
-                    error!("Error in the WebSocket client ioloop: {:?}", e);
-                };
-            });
-            *task = Some(handle);
         }
-        self.set_online(true);
+        {
+            let (sender, receiver) = mpsc::channel(64);
+            let mut lock = self.sender.lock().await;
+            *lock = sender;
+
+            let zelf = Arc::clone(&self);
+            zelf.start_background_task(receiver, ws).await?;
+        }
+
+
+        if let Err(e) = self.resubscribe_events().await {
+            error!("Error while resubscribing to events: {:?}", e);
+        }
 
         Ok(true)
-    }
-
-    // Try to reconnect to the server
-    async fn try_reconnect(self: &Arc<Self>) -> Option<SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>> {
-        trace!("try reconnect");
-        // We are not online anymore
-        self.set_online(false);
-
-        // Notify that we are offline
-        self.notify_connection_channel(&self.offline_channel).await;
-
-        // Check if we should reconnect
-        let mut reconnect = {
-            let reconnect = self.auto_reconnect.lock().await;
-            reconnect.clone()
-        };
-        
-        // Try to reconnect to the server
-        while let Some(duration) = reconnect.as_ref() {
-            sleep(*duration).await;
-            debug!("Trying to reconnect to the server...");
-
-            let ws = match Self::connect_to(&self.target).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    debug!("Error while reconnecting to the server: {:?}", e);
-                    reconnect = {
-                        let reconnect = self.auto_reconnect.lock().await;
-                        reconnect.clone()
-                    };
-                    continue;
-                }
-            };
-
-            // We are connected again, set back everything
-            let (write, read) = ws.split();
-            {
-                let mut ws = self.ws.lock().await;
-                *ws = write;
-            }
-
-            // Register all events again
-            {
-                let client = self.clone();
-                spawn_task("ws-subscribe-events", async move {
-                    if let Err(e) = client.resubscribe_events().await {
-                        error!("Error while resubscribing to events: {:?}", e);
-                    }
-                });
-            }
-
-            // We are online again
-            self.set_online(true);
-
-            // Notify that we are online again
-            self.notify_connection_channel(&self.online_channel).await;
-
-            return Some(read)
-        }
-
-        None
     }
 
     // Clear all pending requests to notifier the caller that the connection is lost
@@ -373,60 +310,127 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
         }
     }
 
-    // Task running in background to handle every messages from the WebSocket server
-    // This includes Events propagated and responses to JSON-RPC requests
-    async fn read(self: Arc<Self>, mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>) -> Result<(), JsonRPCError> {
-        while let Some(res) = read.next().await {
-            let msg = match res {
-                Ok(msg) => msg,
-                Err(e) => {
-                    // Try to reconnect to the server
-                    debug!("Error while reading from the websocket: {:?}", e);
-                    self.clear_requests().await;
-                    if let Some(new_read) = self.try_reconnect().await {
-                        read = new_read;
-                    }
-                    else {
-                        self.clear_events().await;
-                        return Err(JsonRPCError::ConnectionError(e.to_string()));
-                    }
-                    continue;
-                }
-            };
+    async fn start_background_task(self: Arc<Self>, mut receiver: mpsc::Receiver<InternalMessage>, ws: WebSocketStream) -> Result<(), JsonRPCError> {
+        let zelf = Arc::clone(&self);
+        let handle = spawn_task("ws-background-task", async move {
+            let mut ws = Some(ws);
+            while let Some(websocket) = ws.take() {
+                zelf.set_online(true).await;
 
-            match msg {
-                Message::Text(text) => {
-                    let response: JsonRPCResponse = serde_json::from_str(&text)?;
-                    if let Some(id) = response.id {
-                        // send the response to the requester if it matches the ID
+                match zelf.background_task(&mut receiver, websocket).await {
+                    Ok(()) => {
+                        debug!("Closing background task");
                         {
-                            let mut requests = self.requests.lock().await;
-                            if let Some(sender) = requests.remove(&id) {
-                                if let Err(e) = sender.send(response) {
-                                    error!("Error sending response to the request: {:?}", e);
-                                }
-                                continue;
-                            }
+                            let mut lock = zelf.background_task.lock().await;
+                            *lock = None;
                         }
 
-                        // Check if this ID corresponds to a event subscribed
-                        {
-                            let mut handlers = self.handler_by_id.lock().await;
-                            if let Some(sender) = handlers.get_mut(&id) {
-                                // Check that we still have someone who listen it
-                                if sender.receiver_count() > 0 {
-                                    if let Err(e) = sender.send(response.result.unwrap_or_default()) {
-                                        error!("Error sending event to the request: {:?}", e);
+                        // Do a clean up
+                        zelf.clear_requests().await;
+                        zelf.clear_events().await;
+
+                        return;
+                    },
+                    Err(e) => {
+                        error!("Error in the WebSocket client background task: {:?}", e);
+                    }
+                }
+
+                // Clear all pending requests
+                zelf.clear_requests().await;
+
+                zelf.set_online(false).await;
+
+                // retry to connect until we are online or that it got disabled
+                while let Some(auto_reconnect) = { zelf.delay_auto_reconnect.lock().await.as_ref().cloned() } {
+                    debug!("Reconnecting to the server in {} seconds...", auto_reconnect.as_secs());
+                    sleep(auto_reconnect).await;
+
+                    match Self::connect_to(&zelf.target).await {
+                        Ok(websocket) => {
+                            ws = Some(websocket);
+
+                            // Register all events again
+                            if let Err(e) = zelf.resubscribe_events().await {
+                                error!("Error while resubscribing to events: {:?}", e);
+                            }
+
+                            break;
+                        }
+                        Err(e) => {
+                            debug!("Error while reconnecting to the server: {:?}", e);
+                        }
+                    }
+                }
+            }
+
+            zelf.clear_events().await;
+        });
+
+        {
+            let mut lock = self.background_task.lock().await;
+            if let Some(handle) = lock.take() {
+                warn!("Task was still set while starting a new one, aborting it...");
+                handle.abort();
+            }
+
+            *lock = Some(handle);
+        }
+
+        Ok(())        
+    }
+
+    // Background task that keep alive WS connection
+    async fn background_task(self: &Arc<Self>, receiver: &mut mpsc::Receiver<InternalMessage>, ws: WebSocketStream) -> Result<(), JsonRPCError> {
+        let (mut write, mut read) = ws.split();
+        loop {
+            select! {
+                Some(msg) = receiver.recv() => {
+                    match msg {
+                        InternalMessage::Send(text) => {
+                            write.send(Message::Text(text)).await?;
+                        },
+                        InternalMessage::Close => {
+                            write.close().await?;
+                            break;
+                        }
+                    }
+                },
+                Some(res) = read.next() => {
+                    let msg = res?;
+                    match msg {
+                        Message::Text(text) => {
+                            let response: JsonRPCResponse = serde_json::from_str(&text)?;
+                            if let Some(id) = response.id {
+                                // send the response to the requester if it matches the ID
+                                {
+                                    let mut requests = self.requests.lock().await;
+                                    if let Some(sender) = requests.remove(&id) {
+                                        if let Err(e) = sender.send(response) {
+                                            debug!("Error sending response to the request: {:?}", e);
+                                        }
+                                        continue;
+                                    }
+                                }
+        
+                                // Check if this ID corresponds to a event subscribed
+                                {
+                                    let mut handlers = self.handler_by_id.lock().await;
+                                    if let Some(sender) = handlers.get_mut(&id) {
+                                        // Check that we still have someone who listen it
+                                        if let Err(e) = sender.send(response.result.unwrap_or_default()) {
+                                            debug!("Error sending event to the request: {:?}", e);
+                                        }
                                     }
                                 }
                             }
-                        }
+                        },
+                        Message::Close(_) => {
+                            break;
+                        },
+                        _ => {}
                     }
-                },
-                Message::Close(_) => {
-                    break;
-                },
-                _ => {}
+                }
             }
         }
 
@@ -507,14 +511,15 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + 'static> WebSocketJsonRPCC
         Ok(())
     }
 
+    // Send a request to the sender channel that will be sent to the server
     async fn send_message_internal<P: Serialize>(&self, id: Option<usize>, method: &str, params: &P) -> JsonRPCResult<()> {
-        let mut ws = self.ws.lock().await;
-        ws.send(Message::Text(serde_json::to_string(&json!({
+        let sender = self.sender.lock().await;
+        sender.send(InternalMessage::Send(serde_json::to_string(&json!({
             "jsonrpc": JSON_RPC_VERSION,
             "method": method,
             "id": id,
             "params": params
-        }))?)).await?;
+        }))?)).await.map_err(|_| JsonRPCError::SendError)?;
 
         Ok(())
     }

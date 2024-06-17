@@ -1,10 +1,11 @@
 use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
-use tokio_tungstenite::tungstenite::Error as TungsteniteError;
 
 mod http;
 mod websocket;
+
+use tokio_tungstenite_wasm::Error as TungsteniteError;
 
 pub use http::JsonRPCClient;
 pub use websocket::{WebSocketJsonRPCClientImpl, WebSocketJsonRPCClient, EventReceiver};
@@ -72,5 +73,7 @@ pub enum JsonRPCError {
     #[error(transparent)]
     SocketError(#[from] TungsteniteError),
     #[error(transparent)]
-    Any(#[from] anyhow::Error)
+    Any(#[from] anyhow::Error),
+    #[error("Error while sending message")]
+    SendError
 }

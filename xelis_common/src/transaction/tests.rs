@@ -390,6 +390,10 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
     ) -> Result<(), ()> {
         self.accounts.get_mut(account).map(|account| account.nonce = new_nonce).ok_or(())
     }
+
+    fn get_block_version(&self) -> u8 {
+        0
+    }
 }
 
 impl FeeHelper for AccountStateImpl {

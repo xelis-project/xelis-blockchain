@@ -10,7 +10,6 @@ use crate::{
     serializer::{Reader, ReaderError, Serializer, Writer}
 };
 use bulletproofs::RangeProof;
-use log::debug;
 use serde::{Deserialize, Serialize};
 use self::extra_data::UnknownExtraDataFormat;
 
@@ -21,8 +20,11 @@ pub mod extra_data;
 #[cfg(test)]
 mod tests;
 
-// Maximum total size of payload across all transfers per transaction
+// Maximum size of extra data per transfer
 pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
+// Maximum total size of payload across all transfers per transaction
+pub const EXTRA_DATA_LIMIT_SUM_SIZE: usize = EXTRA_DATA_LIMIT_SIZE * 32;
+// Maximum number of transfers per transaction
 pub const MAX_TRANSFER_COUNT: usize = 255;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -404,12 +406,6 @@ impl Serializer for Transaction {
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
         let version = reader.read_u8()?;
-        // At this moment we only support version 0, so we check it here directly
-        if version != 0 {
-            debug!("Expected version 0 got version {version}");
-            return Err(ReaderError::InvalidValue)
-        }
-
         let source = CompressedPublicKey::read(reader)?;
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;

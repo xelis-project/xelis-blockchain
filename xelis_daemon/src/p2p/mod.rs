@@ -24,13 +24,12 @@ use xelis_common::{
     difficulty::CumulativeDifficulty,
     immutable::Immutable,
     serializer::Serializer,
-    thread_pool::ThreadPool,
+    tokio::{ThreadPool, spawn_task},
     time::{
         get_current_time_in_millis,
         get_current_time_in_seconds,
         TimestampMillis
-    },
-    utils::spawn_task
+    }
 };
 use crate::{
     config::{
@@ -938,7 +937,8 @@ impl<S: Storage> P2pServer<S> {
                         false
                     }
                 } else {
-                    if let Err(e) = self.request_sync_chain_for(&peer, &mut last_chain_sync).await {
+                    let previous_err = previous_peer.map(|(_, err)| err).unwrap_or(false);
+                    if let Err(e) = self.request_sync_chain_for(&peer, &mut last_chain_sync, previous_err).await {
                         warn!("Error occured on chain sync with {}: {}", peer, e);
                         true
                     } else {
@@ -1278,7 +1278,8 @@ impl<S: Storage> P2pServer<S> {
 
                     // check that we don't have too many fails
                     // otherwise disconnect peer
-                    if peer.get_fail_count() >= PEER_FAIL_LIMIT {
+                    // Priority nodes are not disconnected
+                    if peer.get_fail_count() >= PEER_FAIL_LIMIT && !peer.is_priority() {
                         warn!("High fail count detected for {}! Closing connection...", peer);
                         if let Err(e) = peer.close_and_temp_ban().await {
                             error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
@@ -1580,7 +1581,7 @@ impl<S: Storage> P2pServer<S> {
                             return Err(P2pError::InvalidPeerlist)
                         }
     
-                        if !self.is_connected_to_addr(addr).await && self.peer_list.has_peer_stored(&addr.ip()).await {
+                        if !self.is_connected_to_addr(addr).await && !self.peer_list.has_peer_stored(&addr.ip()).await {
                             if !self.peer_list.store_peer_address(*addr).await {
                                 debug!("{} already stored in peer list", addr);
                             }
@@ -1966,7 +1967,7 @@ impl<S: Storage> P2pServer<S> {
     // It also contains a CommonPoint which is a block hash point where we have the same topoheight as our peer
     // Based on the lowest height of the chain sent, we may need to rewind some blocks
     // NOTE: Only a priority node can rewind below the stable height 
-    async fn handle_chain_response(&self, peer: &Arc<Peer>, mut response: ChainResponse, requested_max_size: usize) -> Result<(), BlockchainError> {
+    async fn handle_chain_response(&self, peer: &Arc<Peer>, mut response: ChainResponse, requested_max_size: usize, skip_stable_height_check: bool) -> Result<(), BlockchainError> {
         trace!("handle chain response from {}", peer);
         let response_size = response.blocks_size();
 
@@ -1992,7 +1993,7 @@ impl<S: Storage> P2pServer<S> {
             let block_height = storage.get_height_for_block_hash(common_point.get_hash()).await?;
             trace!("block height: {}, stable height: {}, topoheight: {}, hash: {}", block_height, self.blockchain.get_stable_height(), topoheight, common_point.get_hash());
             // We are under the stable height, rewind is necessary
-            let mut count = if lowest_height <= self.blockchain.get_stable_height() {
+            let mut count = if skip_stable_height_check || peer.is_priority() || lowest_height <= self.blockchain.get_stable_height() {
                 let our_topoheight = self.blockchain.get_topo_height();
                 if our_topoheight > topoheight {
                     our_topoheight - topoheight
@@ -2401,7 +2402,7 @@ impl<S: Storage> P2pServer<S> {
                 || topoheight > our_topoheight
                 || topoheight < PRUNE_SAFETY_LIMIT
             {
-                warn!("Invalid begin topoheight (received {}, our is {}, pruned: {}) received from {}", topoheight, our_topoheight, pruned_topoheight, peer);
+                warn!("Invalid begin topoheight (received {}, our is {}, pruned: {}) received from {} on step {:?}", topoheight, our_topoheight, pruned_topoheight, peer, request_kind);
                 return Err(P2pError::InvalidRequestedTopoheight.into())
             }
 
@@ -2436,14 +2437,21 @@ impl<S: Storage> P2pServer<S> {
                 };
                 StepResponse::Assets(assets, page)
             },
-            StepRequest::Balances(topoheight, asset, keys) => {
-                let balances = storage.get_versioned_balances(&asset, keys.iter(), topoheight).await?;
-                StepResponse::Balances(balances.into_iter().map(|v| {
-                    v.map(|v| {
-                        let (balance, output_balance, balance_type, _) = v.consume();
-                        (balance, output_balance, balance_type)
-                    })
-                }).collect())
+            StepRequest::Balances(key, asset, min, max) => {
+                if min > max {
+                    warn!("Invalid range for account balance");
+                    return Err(P2pError::InvalidPacket.into())
+                }
+
+                let mut balances = Vec::with_capacity(MAX_ITEMS_PER_PAGE);
+                for key in key.iter() {
+                    trace!("Requesting balance for {} requested by {} for bootstrap chain", key.as_address(true), peer);
+                    let balance = storage.get_account_summary_for(&key, &asset, min, max).await?;
+                    balances.push(balance);
+                }
+
+                trace!("Sending {} balances to {}", balances.len(), peer);
+                StepResponse::Balances(balances)
             },
             StepRequest::Nonces(topoheight, keys) => {
                 let mut nonces = Vec::with_capacity(keys.len());
@@ -2455,12 +2463,12 @@ impl<S: Storage> P2pServer<S> {
             },
             StepRequest::Keys(min, max, page) => {
                 if min > max {
-                    warn!("Invalid range for assets");
+                    warn!("Invalid range for keys");
                     return Err(P2pError::InvalidPacket.into())
                 }
 
                 let page = page.unwrap_or(0);
-                let keys = storage.get_partial_keys(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
+                let keys = storage.get_registered_keys(MAX_ITEMS_PER_PAGE, page as usize * MAX_ITEMS_PER_PAGE, min, max).await?;
                 let page = if keys.len() == MAX_ITEMS_PER_PAGE {
                     Some(page + 1)
                 } else {
@@ -2645,25 +2653,30 @@ impl<S: Storage> P2pServer<S> {
 
                         // Request every asset balances
                         for asset in assets {
-                            debug!("Request balances for asset {}", asset);
-                            let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(stable_topoheight, Cow::Borrowed(&asset), Cow::Borrowed(&keys))).await? else {
+                            debug!("Requesting balances for asset {} at topo {}", asset, stable_topoheight);
+                            let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(Cow::Borrowed(&keys), Cow::Borrowed(&asset), our_topoheight, stable_topoheight)).await? else {
                                 // shouldn't happen
                                 error!("Received an invalid StepResponse (how ?) while fetching balances");
                                 return Err(P2pError::InvalidPacket.into())
                             };
-    
+
                             // save all balances for this asset
-                            let mut storage = self.blockchain.get_storage().write().await;
                             for (key, balance) in keys.iter().zip(balances) {
                                 // check that the account have balance for this asset
-                                if let Some((balance, output_balance, balance_type)) = balance {
-                                    debug!("Saving balance {:?} for key {} at topoheight {}", balance, key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
-                                    let mut versioned_balance = storage.get_new_versioned_balance(key, &asset, stable_topoheight).await?;
-                                    versioned_balance.set_balance(balance);
-                                    versioned_balance.set_output_balance(output_balance);
-                                    versioned_balance.set_balance_type(balance_type);
-                                    versioned_balance.set_previous_topoheight(None);
-                                    storage.set_last_balance_to(key, &asset, stable_topoheight, &versioned_balance).await?;
+                                if let Some(account) = balance {
+                                    debug!("Saving balance {} summary for {}", asset, key.as_address(self.blockchain.get_network().is_mainnet()));
+                                    let ((stable_topo, stable), output) = account.as_versions();
+                                    let mut storage = self.blockchain.get_storage().write().await;
+                                    storage.set_last_balance_to(key, &asset, stable_topo, &stable).await?;
+
+                                    // save the output balance if it's different from the stable one
+                                    if let Some((topo, output)) = output{
+                                        storage.set_balance_at_topoheight(&asset, topo, key, &output).await?;
+                                    }
+
+                                    // TODO clean up old balances
+                                } else {
+                                    debug!("No balance for key {} at topoheight {}", key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
                                 }
                             }
                         }
@@ -2737,12 +2750,12 @@ impl<S: Storage> P2pServer<S> {
                     let mut storage = self.blockchain.get_storage().write().await;
 
                     // Create a snapshots for all others keys that didn't got updated
-                    storage.create_snapshot_balances_at_topoheight(lowest_topoheight).await?;
+                    // storage.create_snapshot_balances_at_topoheight(lowest_topoheight).await?;
                     storage.create_snapshot_nonces_at_topoheight(lowest_topoheight).await?;
                     storage.create_snapshot_registrations_at_topoheight(lowest_topoheight).await?;
 
                     // Delete all old data
-                    storage.delete_versioned_balances_below_topoheight(lowest_topoheight).await?;
+                    // storage.delete_versioned_balances_below_topoheight(lowest_topoheight).await?;
                     storage.delete_versioned_nonces_below_topoheight(lowest_topoheight).await?;
                     storage.delete_registrations_below_topoheight(lowest_topoheight).await?;
 
@@ -2780,7 +2793,7 @@ impl<S: Storage> P2pServer<S> {
     // we send up to CHAIN_SYNC_REQUEST_MAX_BLOCKS blocks id (combinaison of block hash and topoheight)
     // we add at the end the genesis block to be sure to be on the same chain as others peers
     // its used to find a common point with the peer to which we ask the chain
-    pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>, last_chain_sync: &mut TimestampMillis) -> Result<(), BlockchainError> {
+    pub async fn request_sync_chain_for(&self, peer: &Arc<Peer>, last_chain_sync: &mut TimestampMillis, skip_stable_height_check: bool) -> Result<(), BlockchainError> {
         trace!("Requesting chain from {}", peer);
 
         // This can be configured by the node operator, it will be adjusted between protocol bounds
@@ -2806,7 +2819,7 @@ impl<S: Storage> P2pServer<S> {
         // Update last chain sync time
         *last_chain_sync = get_current_time_in_millis();
 
-        self.handle_chain_response(peer, response, requested_max_size).await
+        self.handle_chain_response(peer, response, requested_max_size, skip_stable_height_check).await
     }
 
     // Clear all p2p connections by kicking peers

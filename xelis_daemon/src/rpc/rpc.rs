@@ -1127,7 +1127,7 @@ async fn get_accounts<S: Storage>(context: &Context, body: Value) -> Result<Valu
 
     let storage = blockchain.get_storage().read().await;
     let mainnet = storage.is_mainnet();
-    let accounts = storage.get_partial_keys(maximum, skip, minimum_topoheight, maximum_topoheight).await
+    let accounts = storage.get_registered_keys(maximum, skip, minimum_topoheight, maximum_topoheight).await
         .context("Error while retrieving accounts")?
         .into_iter().map(|key| key.to_address(mainnet)).collect::<Vec<_>>();
 
@@ -1141,7 +1141,7 @@ async fn is_account_registered<S: Storage>(context: &Context, body: Value) -> Re
     let storage = blockchain.get_storage().read().await;
     let key = params.address.get_public_key();
     let registered = if params.in_stable_height {
-        storage.is_account_registered_below_topoheight(key, blockchain.get_stable_topoheight()).await
+        storage.is_account_registered_at_topoheight(key, blockchain.get_stable_topoheight()).await
             .context("Error while checking if account is registered in stable height")?
     } else {
         storage.is_account_registered(key).await

@@ -8,6 +8,7 @@ pub use self::{
 
 use std::{collections::HashSet, sync::Arc};
 use async_trait::async_trait;
+use indexmap::IndexSet;
 use xelis_common::{
     block::{Block, BlockHeader},
     crypto::Hash,
@@ -109,4 +110,7 @@ pub trait Storage: BlockExecutionOrderProvider + DagOrderProvider + PrunedTopohe
 
     // Stop the storage and wait for it to finish
     async fn stop(&mut self) -> Result<(), BlockchainError>;
+
+    // Get all the unexecuted transactions
+    async fn get_unexecuted_transactions(&self) -> Result<IndexSet<Hash>, BlockchainError>;
 }

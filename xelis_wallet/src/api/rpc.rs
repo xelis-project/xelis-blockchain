@@ -10,6 +10,7 @@ use xelis_common::{
             GetAssetPrecisionParams,
             GetBalanceParams,
             GetMatchingKeysParams,
+            CountMatchingEntriesParams,
             GetTransactionParams,
             GetValueFromKeyParams,
             HasKeyParams,
@@ -77,6 +78,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     // It is restricted in XSWD context (each app access to their own trees), and open to everything in RPC
     // Keys and values can be anything
     handler.register_method("get_matching_keys", async_handler!(get_matching_keys));
+    handler.register_method("count_matching_entries", async_handler!(count_matching_entries));
     handler.register_method("get_value_from_key", async_handler!(get_value_from_key));
     handler.register_method("store", async_handler!(store));
     handler.register_method("delete", async_handler!(delete));
@@ -398,6 +400,17 @@ async fn get_matching_keys(context: &Context, body: Value) -> Result<Value, Inte
     let keys = storage.get_custom_tree_keys(&tree, &params.query)?;
 
     Ok(json!(keys))
+}
+
+// Count all entries available in the selected tree using the Query filter
+async fn count_matching_entries(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: CountMatchingEntriesParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let tree = get_tree_name(&context, params.tree).await?;
+    let storage = wallet.get_storage().read().await;
+    let count = storage.count_custom_tree_entries(&tree, &params.key, &params.value)?;
+
+    Ok(json!(count))
 }
 
 // Retrieve the data from the encrypted storage using its key and tree

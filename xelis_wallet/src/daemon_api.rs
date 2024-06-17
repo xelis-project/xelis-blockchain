@@ -3,8 +3,8 @@ use std::{borrow::Cow, collections::HashSet};
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
-use tokio::sync::broadcast;
 use xelis_common::{
+    tokio::sync::broadcast,
     json_rpc::{
         WebSocketJsonRPCClient,
         WebSocketJsonRPCClientImpl,
@@ -69,6 +69,10 @@ impl DaemonAPI {
             client,
             capacity
         })
+    }
+
+    pub fn get_client(&self) -> &WebSocketJsonRPCClient<NotifyEvent> {
+        &self.client
     }
 
     // is the websocket connection alive
