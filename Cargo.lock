@@ -3589,7 +3589,7 @@ dependencies = [
 [[package]]
 name = "xelis-hash"
 version = "0.1.0"
-source = "git+ssh://git@github.com/xelis-project/xelis-hash-v2.git?branch=master#af7a84103366b78ef0e3f8bb766e7b7b89074cbd"
+source = "git+https://github.com/xelis-project/xelis-hash?branch=master#fe36e5d4ef71d3ab0ba67913ddff9b3c2f7d814d"
 dependencies = [
  "aes",
  "blake3",
