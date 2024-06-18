@@ -1,14 +1,17 @@
 pub mod config;
 
 use std::{
-    time::Duration,
-    sync::atomic::{
-        AtomicU64,
-        Ordering,
-        AtomicUsize,
-        AtomicBool
+    sync::{
+        atomic::{
+            AtomicBool,
+            AtomicU64,
+            AtomicUsize,
+            Ordering
+        },
+        RwLock
     },
-    thread
+    thread,
+    time::Duration
 };
 use crate::config::DEFAULT_DAEMON_ADDRESS;
 use fern::colors::Color;
@@ -152,6 +155,7 @@ static CURRENT_TOPO_HEIGHT: AtomicU64 = AtomicU64::new(0);
 static BLOCKS_FOUND: AtomicUsize = AtomicUsize::new(0);
 static BLOCKS_REJECTED: AtomicUsize = AtomicUsize::new(0);
 static HASHRATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static JOB_ELAPSED: RwLock<Option<Instant>> = RwLock::new(None);
 
 lazy_static! {
     static ref HASHRATE_LAST_TIME: Mutex<Instant> = Mutex::new(Instant::now());
@@ -237,14 +241,9 @@ fn benchmark(threads: usize, iterations: usize, algorithm: Algorithm) {
             worker.set_work(job, algorithm).unwrap();
 
             let handle = thread::spawn(move || {
-                let mut tries = 0;
                 for _ in 0..iterations {
                     let _ = worker.get_pow_hash().unwrap();
                     worker.increase_nonce().unwrap();
-                    if tries % UPDATE_EVERY_NONCE == 0 {
-                        worker.set_timestamp(get_current_time_in_millis()).unwrap();
-                    }
-                    tries += 1;
                 }
             });
             handles.push(handle);
@@ -347,6 +346,7 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
                     info!("New job received: difficulty {} at height {}", format_difficulty(job.difficulty), job.height);
                     let block = MinerWork::from_hex(job.miner_work).context("Error while decoding new job received from daemon")?;
                     CURRENT_TOPO_HEIGHT.store(job.topoheight, Ordering::SeqCst);
+                    JOB_ELAPSED.write().unwrap().replace(Instant::now());
 
                     if let Err(e) = job_sender.send(ThreadNotification::NewJob(job.algorithm, block, job.difficulty, job.height)) {
                         error!("Error while sending new job to threads: {}", e);
@@ -417,6 +417,7 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
                     // set thread id in extra nonce for more work spread between threads
                     // u16 support up to 65535 threads
                     new_job.set_thread_id_u16(id);
+                    let initial_timestamp = new_job.get_timestamp();
                     worker.set_work(new_job, algorithm).unwrap();
 
                     let difficulty_target = match compute_difficulty_target(&expected_difficulty) {
@@ -438,7 +439,11 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
                             if !job_receiver.is_empty() {
                                 continue 'main;
                             }
-                            worker.set_timestamp(get_current_time_in_millis()).unwrap();
+                            if let Ok(instant) = JOB_ELAPSED.read() {
+                                if let Some(instant) = instant.as_ref() {
+                                    worker.set_timestamp(initial_timestamp + instant.elapsed().as_millis() as u64).unwrap();
+                                }
+                            }
                             HASHRATE_COUNTER.fetch_add(UPDATE_EVERY_NONCE as usize, Ordering::SeqCst);
                         }
 
