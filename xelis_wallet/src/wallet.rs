@@ -867,7 +867,9 @@ impl Wallet {
                 storage.delete_unconfirmed_balances().await;
                 storage.clear_tx_cache();
 
-                debug!("Retrieve current wallet nonce");
+                debug!("reconnect API");
+                network_handler.get_api().reconnect().await?;
+                debug!("retrieve current wallet nonce");
                 let nonce_result = match network_handler.get_api()
                     .get_nonce(&self.get_address()).await
                     // User has no transactions/balances yet, set its nonce to 0

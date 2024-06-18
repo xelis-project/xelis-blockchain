@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashSet};
+use std::{borrow::Cow, collections::HashSet, sync::Arc};
 
 use anyhow::Result;
 use serde::Serialize;
@@ -51,7 +51,7 @@ use xelis_common::{
         AssetData
     }
 };
-use log::trace;
+use log::{debug, trace};
 
 pub struct DaemonAPI {
     client: WebSocketJsonRPCClient<NotifyEvent>,
@@ -82,8 +82,21 @@ impl DaemonAPI {
     }
 
     // Disconnect by closing the connection with node RPC
-    pub async fn disconnect(&self) -> Result<()> {
+    // This will only disconnect if there are no more references to the daemon API
+    pub async fn disconnect(self: &Arc<Self>) -> Result<bool> {
         trace!("disconnect");
+        let count = Arc::strong_count(self);
+        if count > 1 {
+            debug!("There are still {} references to the daemon API", count);
+            return Ok(false);
+        }
+        self.client.disconnect().await?;
+        Ok(true)
+    }
+
+    // Disconnect by closing the connection with node RPC
+    pub async fn disconnect_force(&self) -> Result<()> {
+        trace!("disconnect_force");
         self.client.disconnect().await
     }
 
