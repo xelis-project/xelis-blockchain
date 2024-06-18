@@ -196,6 +196,10 @@ impl<'a> MinerWork<'a> {
         }
     }
 
+    pub fn get_timestamp(&self) -> TimestampMillis {
+        self.timestamp
+    }
+
     pub fn from_block(header: BlockHeader) -> Self {
         Self {
             header_work_hash: header.get_work_hash(),

@@ -161,9 +161,6 @@ impl State {
         // enable the raw mode for terminal
         // so we can read each event/action
         let interactive = if allow_interactive { !crossterminal::enable_raw_mode().is_err() } else { false };
-        if interactive {
-            warn!("Non-interactive mode enabled");
-        }
 
         Self {
             prompt: Mutex::new(None),
