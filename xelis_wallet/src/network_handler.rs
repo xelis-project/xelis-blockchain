@@ -379,6 +379,7 @@ impl NetworkHandler {
 
                 // Find the highest nonce
                 if is_owner && our_highest_nonce.map(|n| tx.nonce > n).unwrap_or(true) {
+                    debug!("Found new highest nonce {} in TX {}", tx.nonce, tx.hash);
                     our_highest_nonce = Some(tx.nonce);
                 }
 
@@ -439,8 +440,10 @@ impl NetworkHandler {
                 if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
                     let mut storage = self.wallet.get_storage().write().await;
 
+                    // Set the highest nonce we know
                     if highest_nonce.is_none() {
                         // Get the highest nonce from storage
+                        debug!("Highest nonce is not set, fetching it from storage");
                         *highest_nonce = Some(storage.get_nonce()?);
                     }
 
@@ -633,9 +636,10 @@ impl NetworkHandler {
     async fn sync_head_state(&self, address: &Address, assets: Option<HashSet<Hash>>, nonce: Option<u64>, sync_nonce: bool) -> Result<bool, Error> {
         trace!("syncing head state");
         let new_nonce = if nonce.is_some() {
+            debug!("nonce provided, using it");
             nonce
         } else if sync_nonce {
-            trace!("no nonce provided, fetching it from daemon");
+            debug!("no nonce provided, fetching it from daemon");
             match self.api.get_nonce(&address).await.map(|v| v.version) {
                 Ok(v) => Some(v.get_nonce()),
                 Err(e) => {
