@@ -31,14 +31,38 @@ pub struct Db {
     trees: Mutex<HashMap<IVec, Tree>>
 }
 
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
 #[derive(Debug, Error)]
-#[error("DB Error")]
-pub struct DbError(());
+pub enum DbError {
+    #[error("An error occured on the database")]
+    Poisoned
+}
 
-impl DbError {
-    fn new() -> Self {
-        DbError(())
-    }
+#[cfg(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+))]
+#[derive(Debug, Error)]
+pub enum DbError {
+    #[error("An error occured on the database")]
+    Poisoned,
+    #[error("Cannot access to the window object")]
+    Window,
+    #[error("Cannot access to the local storage object")]
+    LocalStorage,
+    #[error("The local storage object is not available")]
+    NoLocalStorage,
+    #[error("Error while decoding the base64 string")]
+    Base64Decode,
+    #[error("Item not found")]
+    ItemNotFound,
+    #[error("Error while setting the item")]
+    ItemError,
 }
 
 /// Open or create a new memory-backed database.
@@ -55,20 +79,20 @@ pub fn open<S: Into<String>>(name: S) -> Result<Db> {
     ))]
     {
         // Access to the browser local storage
-        let window = web_sys::window().ok_or(DbError::new())?;
+        let window = web_sys::window().ok_or(DbError::Window)?;
         let local_storage = window.local_storage()
-            .map_err(|_| DbError::new())?
-            .ok_or(DbError::new())?;
+            .map_err(|_| DbError::LocalStorage)?
+            .ok_or(DbError::NoLocalStorage)?;
     
         // Check if the database already exists
         let db_name = format!("{}{}", PREFIX_DB_KEY, db.name());
         let item = local_storage.get_item(db_name.as_str())
-            .map_err(|_| DbError::new())?;
+            .map_err(|_| DbError::ItemNotFound)?;
 
         // If the database already exists, populate it
         if let Some(content) = item {
             let decoded = STANDARD.decode(content)
-                .map_err(|_| DbError::new())?;
+                .map_err(|_| DbError::Base64Decode)?;
             db.import(&decoded)?;
         }
     }
@@ -100,7 +124,7 @@ impl Db {
     /// Open or create a new memory-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
     pub fn open_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<Tree> {
-        let mut trees = self.trees.lock().map_err(|_| DbError::new())?;
+        let mut trees = self.trees.lock().map_err(|_| DbError::Poisoned)?;
         let name_ref = name.as_ref();
         match trees.get(name_ref) {
             Some(tree) => Ok(tree.clone()),
@@ -114,7 +138,7 @@ impl Db {
 
     /// Drop a tree from the `Db`, removing its keyspace.
     pub fn drop_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<()> {
-        let mut trees = self.trees.lock().map_err(|_| DbError::new())?;
+        let mut trees = self.trees.lock().map_err(|_| DbError::Poisoned)?;
         let name_ref = name.as_ref();
         match trees.remove(name_ref) {
             Some(_) => Ok(()),
@@ -141,16 +165,16 @@ impl Db {
             target_os = "unknown"
         ))]
         {
-            let window = web_sys::window().ok_or(DbError::new())?;
+            let window = web_sys::window().ok_or(DbError::Window)?;
             let local_storage = window.local_storage()
-                .map_err(|_| DbError::new())?
-                .ok_or(DbError::new())?;
+                .map_err(|_| DbError::LocalStorage)?
+                .ok_or(DbError::NoLocalStorage)?;
     
             let encoded = STANDARD.encode(writer.bytes());
 
             let db_name = format!("{}{}", PREFIX_DB_KEY, self.name());
             local_storage.set_item(db_name.as_str(), encoded.as_str())
-                .map_err(|_| DbError::new())?;
+                .map_err(|_| DbError::ItemError)?;
         }
 
         Ok(total)
@@ -168,7 +192,7 @@ impl Db {
     /// Export the database to a writer.
     fn export(&self, writer: &mut Writer) -> Result<()> {
         let trees = self.trees.lock()
-            .map_err(|_| DbError::new())?;
+            .map_err(|_| DbError::Poisoned)?;
 
         // Write the default tree
         self.default.export(writer)?;
@@ -187,7 +211,7 @@ impl Db {
     /// Populate the database from a reader.
     fn populate(&self, reader: &mut Reader) -> Result<()> {
         let mut trees = self.trees.lock()
-            .map_err(|_| DbError::new())?;
+            .map_err(|_| DbError::Poisoned)?;
 
         // Read the default tree
         self.default.populate(reader)?;
@@ -241,14 +265,14 @@ impl InnerTree {
         K: AsRef<[u8]>,
         V: Into<IVec>,
     {
-        let mut entries = self.entries.lock().map_err(|_| DbError::new())?;
+        let mut entries = self.entries.lock().map_err(|_| DbError::Poisoned)?;
         let old = entries.insert(key.as_ref().to_vec(), value.into());
         Ok(old)
     }
 
     /// Retrieve a value from the `Tree` if it exists.
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        let entries = self.entries.lock().map_err(|_| DbError::new())?;
+        let entries = self.entries.lock().map_err(|_| DbError::Poisoned)?;
         Ok(entries.get(key.as_ref()).cloned())
     }
 
@@ -260,7 +284,7 @@ impl InnerTree {
 
     /// Delete a value, returning the old value if it existed.
     pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<IVec>> {
-        let mut entries = self.entries.lock().map_err(|_| DbError::new())?;
+        let mut entries = self.entries.lock().map_err(|_| DbError::Poisoned)?;
         Ok(entries.remove(key.as_ref()))
     }
 
@@ -278,7 +302,7 @@ impl InnerTree {
 
     /// Clears the `Tree`, removing all values.
     pub fn clear(&self) -> Result<()> {
-        let mut entries = self.entries.lock().map_err(|_| DbError::new())?;
+        let mut entries = self.entries.lock().map_err(|_| DbError::Poisoned)?;
         entries.clear();
         Ok(())
     }
@@ -295,7 +319,7 @@ impl InnerTree {
     /// Internal function to export the tree to a writer.
     fn export(&self, writer: &mut Writer) -> Result<()> {
         let entries = self.entries.lock()
-            .map_err(|_| DbError::new())?;
+            .map_err(|_| DbError::Poisoned)?;
 
         let len = entries.len() as u16;
         writer.write_u16(len);
@@ -310,7 +334,7 @@ impl InnerTree {
     /// Internal function to populate the tree from a reader.
     fn populate(&self, reader: &mut Reader) -> Result<()> {
         let mut entries = self.entries.lock()
-            .map_err(|_| DbError::new())?;
+            .map_err(|_| DbError::Poisoned)?;
 
         let len = reader.read_u16()?;
         for _ in 0..len {
@@ -353,7 +377,7 @@ impl Iterator for Iter {
     fn next(&mut self) -> Option<Self::Item> {
         let entries = match self.tree.entries.lock() {
             Ok(entries) => entries,
-            Err(_) => return Some(Err(DbError::new().into())),
+            Err(_) => return Some(Err(DbError::Poisoned.into())),
         };
 
         let skip = self.skip;
@@ -368,7 +392,7 @@ impl DoubleEndedIterator for Iter {
     fn next_back(&mut self) -> Option<Self::Item> {
         let entries = match self.tree.entries.lock() {
             Ok(entries) => entries,
-            Err(_) => return Some(Err(DbError::new().into())),
+            Err(_) => return Some(Err(DbError::Poisoned.into())),
         };
 
         let skip = self.skip;
