@@ -868,10 +868,16 @@ impl Wallet {
                 storage.clear_tx_cache();
 
                 debug!("Retrieve current wallet nonce");
-                let nonce_result = network_handler.get_api()
+                let nonce_result = match network_handler.get_api()
                     .get_nonce(&self.get_address()).await
                     // User has no transactions/balances yet, set its nonce to 0
-                    .map(|v| v.version.get_nonce()).unwrap_or(0);
+                    .map(|v| v.version.get_nonce()) {
+                    Ok(nonce) => nonce,
+                    Err(e) => {
+                        error!("Error while fetching nonce during rescan, fallback to 0: {}", e);
+                        0
+                    }
+                };
 
                 storage.set_nonce(nonce_result)?;
 
