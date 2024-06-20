@@ -1,10 +1,17 @@
 use anyhow::Result;
 use log::warn;
 use thiserror::Error;
-use xelis_common::serializer::{Reader, Serializer, Writer};
+use xelis_common::serializer::{
+    Reader,
+    ReaderError,
+    Serializer,
+    Writer
+};
 use std::{
+    borrow::Borrow,
     collections::{BTreeMap, HashMap},
     ops::Deref,
+    rc::Rc,
     sync::{Arc, Mutex}
 };
 
@@ -22,8 +29,82 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 ))]
 const PREFIX_DB_KEY: &'static str = "___xelis_db___";
 
-// TODO: maybe use a Rc ?
-type IVec = Vec<u8>;
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct IVec(Rc<Vec<u8>>);
+
+impl IVec {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.0.as_ref().clone()
+    }
+}
+
+impl From<&str> for IVec {
+    fn from(s: &str) -> Self {
+        Self(Rc::new(s.as_bytes().into()))
+    }
+}
+
+impl From<Vec<u8>> for IVec {
+    fn from(v: Vec<u8>) -> Self {
+        Self(Rc::new(v))
+    }
+}
+
+impl From<&[u8]> for IVec {
+    fn from(v: &[u8]) -> Self {
+        Self(Rc::new(v.into()))
+    }
+}
+
+impl<const N: usize> From<&[u8; N]> for IVec {
+    fn from(v: &[u8; N]) -> Self {
+        Self(Rc::new(v.into()))
+    }
+}
+
+impl AsRef<[u8]> for IVec {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+impl Deref for IVec {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
+impl From<IVec> for Vec<u8> {
+    fn from(v: IVec) -> Self {
+        v.0.as_ref().to_vec()
+    }
+}
+
+impl Serializer for IVec {
+    fn write(&self, writer: &mut Writer) {
+        self.0.write(writer);
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok(Self(Rc::new(Vec::read(reader)?)))
+    }
+}
+
+impl Borrow<[u8]> for IVec {
+    fn borrow(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
 
 pub struct Db {
     name: String,
@@ -100,6 +181,8 @@ pub fn open<S: Into<String>>(name: S) -> Result<Db> {
     Ok(db)
 }
 
+// Dead code can be shown as warning because tests are not considered as used code
+#[allow(dead_code)]
 impl Db {
     /// Create a new memory-backed database.
     pub fn new(name: String) -> Self {
@@ -136,7 +219,7 @@ impl Db {
             Some(tree) => Ok(tree.clone()),
             None => {
                 let tree = InnerTree::new(name_ref.into());
-                trees.insert(name.as_ref().to_vec(), tree.clone());
+                trees.insert(name.as_ref().into(), tree.clone());
                 Ok(tree)
             }
         }
@@ -191,7 +274,6 @@ impl Db {
     /// guaranteed that all previous writes will
     /// be recovered if the system crashes. Returns
     /// the number of bytes flushed during this call.
-    #[allow(dead_code)]
     pub async fn flush_async(&self) -> Result<usize> {
         self.flush()
     }
@@ -273,7 +355,7 @@ impl InnerTree {
         V: Into<IVec>,
     {
         let mut entries = self.entries.lock().map_err(|_| DbError::Poisoned)?;
-        let old = entries.insert(key.as_ref().to_vec(), value.into());
+        let old = entries.insert(key.as_ref().into(), value.into());
         Ok(old)
     }
 
@@ -366,14 +448,14 @@ impl Iter {
     /// Iterate over the keys of this Tree
     pub fn keys(
         self,
-    ) -> impl DoubleEndedIterator<Item = Result<IVec>> + Send + Sync {
+    ) -> impl DoubleEndedIterator<Item = Result<IVec>> {
         self.map(|r| r.map(|(k, _v)| k))
     }
 
     /// Iterate over the values of this Tree
     pub fn values(
         self,
-    ) -> impl DoubleEndedIterator<Item = Result<IVec>> + Send + Sync {
+    ) -> impl DoubleEndedIterator<Item = Result<IVec>> {
         self.map(|r| r.map(|(_k, v)| v))
     }
 }
@@ -419,8 +501,8 @@ mod tests {
         let tree = db.open_tree("test").unwrap();
         tree.insert("test", "test").unwrap();
 
-        assert_eq!(tree.get("test").unwrap().unwrap(), b"test");
-        assert_eq!(tree.remove("test").unwrap().unwrap(), b"test");
+        assert_eq!(tree.get("test").unwrap().unwrap(), b"test".into());
+        assert_eq!(tree.remove("test").unwrap().unwrap(), b"test".into());
         assert!(tree.get("test").unwrap().is_none());
         assert!(tree.is_empty());
         assert_eq!(tree.len(), 0);
@@ -437,13 +519,13 @@ mod tests {
 
         tree.insert("a", "b").unwrap();
         let mut iter = tree.iter();
-        assert_eq!(iter.next().unwrap().unwrap(), (b"a".to_vec(), b"b".to_vec()));
+        assert_eq!(iter.next().unwrap().unwrap(), (b"a".into(), b"b".into()));
         assert!(iter.next().is_none());
 
         tree.insert("b", "c").unwrap();
         let mut iter = tree.iter();
-        assert_eq!(iter.next_back().unwrap().unwrap(), (b"b".to_vec(), b"c".to_vec()));
-        assert_eq!(iter.next_back().unwrap().unwrap(), (b"a".to_vec(), b"b".to_vec()));
+        assert_eq!(iter.next_back().unwrap().unwrap(), (b"b".into(), b"c".into()));
+        assert_eq!(iter.next_back().unwrap().unwrap(), (b"a".into(), b"b".into()));
         assert!(iter.next_back().is_none());
 
         db.flush().unwrap();
@@ -469,13 +551,13 @@ mod tests {
         assert_eq!(db.tree_names().len(), 1);
 
         let tree = db.open_tree("test").unwrap();
-        assert_eq!(tree.name(), b"test");
+        assert_eq!(tree.name(), b"test".into());
         assert_eq!(tree.len(), 2);
-        assert_eq!(tree.get("test").unwrap().unwrap(), b"test");
+        assert_eq!(tree.get("test").unwrap().unwrap(), b"test".into());
         assert_eq!(tree.contains_key("xelis").unwrap(), true);
-        assert_eq!(tree.get("xelis").unwrap().unwrap(), b"silex");
+        assert_eq!(tree.get("xelis").unwrap().unwrap(), b"silex".into());
 
-        assert_eq!(db.get("hello").unwrap().unwrap(), b"world");
+        assert_eq!(db.get("hello").unwrap().unwrap(), b"world".into());
         db.flush().unwrap();
 
         db.drop_tree("test").unwrap();
@@ -491,15 +573,15 @@ mod tests {
         tree.insert("c", "333").unwrap();
 
         let mut iter = tree.iter().keys();
-        assert_eq!(iter.next().unwrap().unwrap(), b"a".to_vec());
-        assert_eq!(iter.next().unwrap().unwrap(), b"b".to_vec());
-        assert_eq!(iter.next().unwrap().unwrap(), b"c".to_vec());
+        assert_eq!(iter.next().unwrap().unwrap(), b"a".into());
+        assert_eq!(iter.next().unwrap().unwrap(), b"b".into());
+        assert_eq!(iter.next().unwrap().unwrap(), b"c".into());
         assert!(iter.next().is_none());
 
         let mut iter = tree.iter().values();
-        assert_eq!(iter.next_back().unwrap().unwrap(), b"333".to_vec());
-        assert_eq!(iter.next_back().unwrap().unwrap(), b"666".to_vec());
-        assert_eq!(iter.next_back().unwrap().unwrap(), b"999".to_vec());
+        assert_eq!(iter.next_back().unwrap().unwrap(), b"333".into());
+        assert_eq!(iter.next_back().unwrap().unwrap(), b"666".into());
+        assert_eq!(iter.next_back().unwrap().unwrap(), b"999".into());
 
         assert!(iter.next_back().is_none());
     }
