@@ -37,7 +37,7 @@ impl WorkVariant {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[repr(u8)]
 pub enum Algorithm {
@@ -50,10 +50,32 @@ impl FromStr for Algorithm {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "v1" => Ok(Algorithm::V1),
-            "v2" => Ok(Algorithm::V2),
+            "xel/v1" => Ok(Algorithm::V1),
+            "xel/v2" => Ok(Algorithm::V2),
             _ => Err("invalid algorithm")
         }
+    }
+}
+
+impl ToString for Algorithm {
+    fn to_string(&self) -> String {
+        match self {
+            Algorithm::V1 => "xel/v1".to_string(),
+            Algorithm::V2 => "xel/v2".to_string()
+        }
+    }
+}
+
+impl Serialize for Algorithm {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
+        self.to_string().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Algorithm {
+    fn deserialize<D>(deserializer: D) -> Result<Algorithm, D::Error> where D: serde::Deserializer<'de> {
+        let s = String::deserialize(deserializer)?;
+        Algorithm::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
