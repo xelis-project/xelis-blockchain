@@ -121,6 +121,12 @@ impl Db {
         &self.name
     }
 
+    /// Returns the trees names saved in this Db.
+    pub fn tree_names(&self) -> Vec<IVec> {
+        let trees = self.trees.lock().expect("Poisoned");
+        trees.keys().cloned().collect()
+    }
+
     /// Open or create a new memory-backed Tree with its own keyspace,
     /// accessible from the `Db` via the provided identifier.
     pub fn open_tree<V: AsRef<[u8]>>(&self, name: V) -> Result<Tree> {
@@ -185,6 +191,7 @@ impl Db {
     /// guaranteed that all previous writes will
     /// be recovered if the system crashes. Returns
     /// the number of bytes flushed during this call.
+    #[allow(dead_code)]
     pub async fn flush_async(&self) -> Result<usize> {
         self.flush()
     }
@@ -455,14 +462,45 @@ mod tests {
         db.export(&mut writer).unwrap();
         let bytes = writer.bytes();
 
-        let mut reader = Reader::new(&bytes);
-        db.populate(&mut reader).unwrap();
+        let db = open("test").unwrap();
+        assert_eq!(db.name(), "test");
+        assert!(db.tree_names().is_empty());
+        assert!(db.import(&bytes).is_ok());
+        assert_eq!(db.tree_names().len(), 1);
 
         let tree = db.open_tree("test").unwrap();
+        assert_eq!(tree.name(), b"test");
+        assert_eq!(tree.len(), 2);
         assert_eq!(tree.get("test").unwrap().unwrap(), b"test");
+        assert_eq!(tree.contains_key("xelis").unwrap(), true);
         assert_eq!(tree.get("xelis").unwrap().unwrap(), b"silex");
 
         assert_eq!(db.get("hello").unwrap().unwrap(), b"world");
         db.flush().unwrap();
+
+        db.drop_tree("test").unwrap();
+        assert_eq!(db.tree_names().len(), 0);
+    }
+
+    #[test]
+    fn test_db_iter() {
+        let db = open("test").unwrap();
+        let tree = db.open_tree("test").unwrap();
+        tree.insert("a", "999").unwrap();
+        tree.insert("b", "666").unwrap();
+        tree.insert("c", "333").unwrap();
+
+        let mut iter = tree.iter().keys();
+        assert_eq!(iter.next().unwrap().unwrap(), b"a".to_vec());
+        assert_eq!(iter.next().unwrap().unwrap(), b"b".to_vec());
+        assert_eq!(iter.next().unwrap().unwrap(), b"c".to_vec());
+        assert!(iter.next().is_none());
+
+        let mut iter = tree.iter().values();
+        assert_eq!(iter.next_back().unwrap().unwrap(), b"333".to_vec());
+        assert_eq!(iter.next_back().unwrap().unwrap(), b"666".to_vec());
+        assert_eq!(iter.next_back().unwrap().unwrap(), b"999".to_vec());
+
+        assert!(iter.next_back().is_none());
     }
 }
