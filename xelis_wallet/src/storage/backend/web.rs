@@ -11,7 +11,6 @@ use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashMap},
     ops::Deref,
-    rc::Rc,
     sync::{Arc, Mutex}
 };
 
@@ -30,7 +29,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 const PREFIX_DB_KEY: &'static str = "___xelis_db___";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct IVec(Rc<Vec<u8>>);
+pub struct IVec(Arc<Vec<u8>>);
 
 impl IVec {
     pub fn len(&self) -> usize {
@@ -48,25 +47,25 @@ impl IVec {
 
 impl From<&str> for IVec {
     fn from(s: &str) -> Self {
-        Self(Rc::new(s.as_bytes().into()))
+        Self(Arc::new(s.as_bytes().into()))
     }
 }
 
 impl From<Vec<u8>> for IVec {
     fn from(v: Vec<u8>) -> Self {
-        Self(Rc::new(v))
+        Self(Arc::new(v))
     }
 }
 
 impl From<&[u8]> for IVec {
     fn from(v: &[u8]) -> Self {
-        Self(Rc::new(v.into()))
+        Self(Arc::new(v.into()))
     }
 }
 
 impl<const N: usize> From<&[u8; N]> for IVec {
     fn from(v: &[u8; N]) -> Self {
-        Self(Rc::new(v.into()))
+        Self(Arc::new(v.into()))
     }
 }
 
@@ -96,7 +95,7 @@ impl Serializer for IVec {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self(Rc::new(Vec::read(reader)?)))
+        Ok(Self(Arc::new(Vec::read(reader)?)))
     }
 }
 
