@@ -8,9 +8,8 @@ use super::{PrecomputedTables, PrecomputedTablesShared};
 // Precomputed tables is too heavy to be stored in local Storage, and generating it on the fly would be too slow
 // So we will generate it on the server and store it in a file, and then we will read it from the file
 pub fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(_: Option<String>, _: P, l1: usize) -> Result<PrecomputedTablesShared> {
-    let mut precomputed_tables = PrecomputedTables::new(l1);
     let bytes = include_bytes!("precomputed_tables.bin");
-    precomputed_tables.get_mut().copy_from_slice(bytes);
+    let precomputed_tables = PrecomputedTables::with_bytes(bytes, l1);
     Ok(Arc::new(precomputed_tables))
 }
 

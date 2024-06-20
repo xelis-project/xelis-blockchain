@@ -40,8 +40,30 @@ use xelis_common::crypto::ecdlp;
 #[repr(C, align(32))]
 struct Bytes32Alignment([u8; 32]);
 
+enum Inner {
+    Allocated(Vec<Bytes32Alignment>),
+    Borrowed(&'static [u8]),
+}
+
+impl Inner {
+    fn as_slice(&self, count: usize) -> &[u8] {
+        match self {
+            Inner::Allocated(v) => &bytemuck::cast_slice(v.as_slice())[..count],
+            Inner::Borrowed(v) => v
+        }
+    }
+
+    fn as_mut_slice(&mut self, count: usize) -> &mut [u8] {
+        match self {
+            Inner::Allocated(v) => &mut bytemuck::cast_slice_mut(v.as_mut_slice())[..count],
+            Inner::Borrowed(_) => panic!("Cannot get mutable reference to borrowed data"),
+        }
+    }
+}
+
+
 pub struct PrecomputedTables {
-    bytes: Vec<Bytes32Alignment>,
+    inner: Inner,
     l1: usize,
     bytes_count: usize,
 }
@@ -61,18 +83,26 @@ impl PrecomputedTables {
         let bytes = vec![Bytes32Alignment([0; 32]); n];
 
         Self {
-            bytes,
+            inner: Inner::Allocated(bytes),
             l1,
             bytes_count
         }
     }
 
+    pub fn with_bytes(bytes: &'static [u8], l1: usize) -> Self {
+        Self {
+            inner: Inner::Borrowed(bytes),
+            l1,
+            bytes_count: bytes.len()
+        }
+    }
+
     pub fn get<'a>(&'a self) -> &'a [u8] {
-       &bytemuck::cast_slice(self.bytes.as_slice())[..self.bytes_count]
+      self.inner.as_slice(self.bytes_count)
     }
 
     pub fn get_mut<'a>(&'a mut self) -> &'a mut [u8] {
-        &mut bytemuck::cast_slice_mut(self.bytes.as_mut_slice())[..self.bytes_count]
+        self.inner.as_mut_slice(self.bytes_count)
     }
 
     pub fn l1(&self) -> usize {
