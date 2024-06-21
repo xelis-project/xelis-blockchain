@@ -330,7 +330,7 @@ impl EncryptedStorage {
             }
 
             if let Some(query) = query_value.as_ref() {
-                let decrypted = self.cipher.decrypt_value(&k)?;
+                let decrypted = self.cipher.decrypt_value(&v)?;
                 let v = DataElement::from_bytes(&decrypted)?;
                 if !query.verify_element(&v) {
                     continue;
