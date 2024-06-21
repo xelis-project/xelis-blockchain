@@ -106,11 +106,18 @@ impl Query {
     pub fn verify_element(&self, element: &DataElement) -> bool {
         match self {
             Self::Element(query) => query.verify(element),
-            Self::Value(query) => if let DataElement::Value(value) = element {
-                query.verify(value)
-            } else {
-                false
-            },
+            Self::Value(query) => match element {
+                DataElement::Value(value) => query.verify(value),
+                DataElement::Array(array) => {
+                    for element in array {
+                        if self.verify_element(element) {
+                            return true
+                        }
+                    }
+                    false
+                },
+                _ => false
+            }
             Self::Not(op) => !op.verify_element(element),
             Self::Or(operations) => {
                 for op in operations {
@@ -319,6 +326,24 @@ mod tests {
 
         let query = QueryElement::Type(ElementType::Fields);
         assert!(query.verify(&DataElement::Fields(fields)));
+
+        let data = vec!["Hello", "World", "!"].into();
+        let query = QueryElement::Type(ElementType::Array);
+        assert!(query.verify(&data));
+
+        assert!(Query::Value(QueryValue::ContainsValue("!".into())).verify_element(&data));
+
+        assert!(Query::Or(vec![
+            Query::Value(QueryValue::ContainsValue("Slixe".into())),
+            Query::Value(QueryValue::ContainsValue("XEL".into())),
+            Query::Value(QueryValue::ContainsValue("!".into())),
+        ]).verify_element(&data));
+
+        assert!(!Query::And(vec![
+            Query::Value(QueryValue::ContainsValue("Slixe".into())),
+            Query::Value(QueryValue::ContainsValue("XEL".into())),
+            Query::Value(QueryValue::ContainsValue("!".into())),
+        ]).verify_element(&data));
     }
 
     #[test]

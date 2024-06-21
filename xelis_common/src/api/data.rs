@@ -586,6 +586,25 @@ impl_data_value_vec!(
     (Blob, Blob)
 );
 
+// Special case
+impl From<&str> for DataValue {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
+    }
+}
+
+impl From<&str> for DataElement {
+    fn from(value: &str) -> Self {
+        DataElement::Value(value.into())
+    }
+}
+
+impl From<Vec<&str>> for DataElement {
+    fn from(value: Vec<&str>) -> Self {
+        Self::Array(value.into_iter().map(|v| v.into()).collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
