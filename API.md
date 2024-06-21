@@ -8307,3 +8307,216 @@ No parameter
 	"result": true
 }
 ```
+
+### Storage
+
+XELIS Wallet has the ability to have a built-in encrypted DB that can be used to store / fetch entries easily.
+This can be really helpful for small services / applications that don't to setup a whole database system.
+
+It is a key / value DB with support of multiples Trees, everything is stored in encrypted form on the disk.
+
+You can either access it directly through Rust code, or through the following JSON-RPC methods.
+
+Every types are allowed and are automatically serialized.
+
+A query system is available to make advanced filter over encrypted keys and values from DB.
+This feature is planned to be improved in future. For now, the follow are implemented:
+- Filter over numbers values (`>=`, `>`, `<`, `<=`, `==`).
+- Regex over stringified values
+- `Is Of Type` (built-in types are `bool`, `string`, `u8`, `u16`, `u32`, `u64`, `u128`, `hash`, `blob`)
+- `Starts with`
+- `Ends With`
+- `Contains Value`
+- `Equal to`
+
+Those filters can be used together or alone, using the `Not`, `And`, `Or` operations.
+
+If key or value is a map or an array, you can also do filter on them:
+- `Has Key` (with expected key value and an optional query on the value if present)
+- `At Key` (same as above but query is mandatory)
+- `Len` (check the map/array size using a `query number`)
+- `Contains Element` (check if the array contains the requested element)
+- `At Position` (check at array index if the value match using a query)
+- `Type` (check which kind of type it is)
+
+Please note that these functionalities are also available from XSWD calls, which mean, any accepted Application through XSWD can have its own DB like a local storage on web JavaScript.
+
+This query system will be used in daemon also once Smart Contracts are deployed to easily search entries in the Smart Contract database.
+
+#### Store
+Store a new key / value entry in the requested Tree.
+
+##### Method `store`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "store",
+    "id": 1,
+    "params": {
+        "tree": "test",
+        "key": "my_list",
+        "value": ["hello", " ", "world", "!"]
+    }
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+#### Delete
+Delete a key / value entry in the requested Tree.
+
+##### Method `delete`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "delete",
+    "id": 1,
+    "params": {
+        "tree": "test",
+        "key": "my_list"
+    }
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+#### Has Key
+Verify if the key is present in the requested Tree.
+
+##### Method `has_key`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "has_key",
+    "id": 1,
+    "params": {
+        "tree": "test",
+        "key": "my_list"
+    }
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+#### Get Value From Key
+Get a value using its key in the requested Tree.
+
+##### Method `get_value_from_key`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_value_from_key",
+    "id": 1,
+    "params": {
+        "tree": "test",
+        "key": "my_list"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        "hello",
+        " ",
+        "world",
+        "!"
+    ]
+}
+```
+
+#### Query DB
+Query the DB in the requested Tree with filters.
+
+##### Method `query_db`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "query_db",
+    "id": 1,
+    "params": {
+        "tree": "test",
+        "value": {
+            "or": [
+                {
+                    "equal": "welcome"
+                },
+                {
+                    "equal": "test"
+                },
+                {
+                    "equal": "!"
+                }
+            ]
+        }
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "entries": {
+            "my_list": [
+                "hello",
+                " ",
+                "world",
+                "!"
+            ]
+        },
+        "next": null
+    }
+}
+```
