@@ -35,6 +35,7 @@ use xelis_common::{
         },
         LogLevel,
         Prompt,
+        ModuleConfig,
         PromptError
     },
     serializer::Serializer,
@@ -136,6 +137,9 @@ pub struct Config {
     /// It must end with a / to be a valid folder.
     #[clap(long, default_value_t = String::from("logs/"))]
     logs_path: String,
+    /// Module configuration for logs
+    #[clap(long)]
+    logs_modules: Vec<ModuleConfig>,
     /// Set the path for wallet storage to open/create a wallet at this location
     #[clap(long)]
     wallet_path: Option<String>,
@@ -186,7 +190,7 @@ impl ecdlp::ProgressTableGenerationReportFunction for LogProgressTableGeneration
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules)?;
 
     #[cfg(feature = "api_server")]
     {
