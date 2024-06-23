@@ -1306,6 +1306,9 @@ impl<S: Storage> P2pServer<S> {
                 trace!("Handle connection write side task for {} has been started", addr);
                 if let Err(e) = zelf.handle_connection_write_side(&peer, &mut rx).await {
                     debug!("Error while writing to {}: {}", peer, e);
+                    if let Err(e2) = peer.close(true, true).await {
+                        warn!("Error while closing {} due to error {} from write side: {}", peer, e, e2);
+                    }
                 }
 
                 peer.set_write_task_state(TaskState::Exiting).await;
@@ -1343,9 +1346,10 @@ impl<S: Storage> P2pServer<S> {
                 // Verify that the connection is closed
                 // Write task should be responsible for closing the connection
                 if !peer.get_connection().is_closed() {
-                    warn!("Connection with {} has been closed, closing it from read task...", addr);
-                    if let Err(e) = peer.close(true, true).await {
-                        warn!("Error while closing {} from read side: {}", peer, e);
+                    // Write side is maybe still running, lets notify it
+                    warn!("Read side notify exit receivers for {}", addr);
+                    if let Err(e) = peer.signal_exit().await {
+                        warn!("Error while notifying exit receivers for {}: {}", addr, e);
                     }
                 }
                 peer.set_read_task_state(TaskState::Finished).await;
