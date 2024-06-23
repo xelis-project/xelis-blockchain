@@ -116,6 +116,7 @@ pub struct NodeConfig {
     #[clap(long, default_value_t = String::from("logs/"))]
     logs_path: String,
     /// Module configuration for logs
+    #[clap(long)]
     logs_modules: Vec<ModuleConfig>,
     /// Network selected for chain
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
