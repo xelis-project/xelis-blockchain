@@ -56,7 +56,8 @@ use xelis_common::{
         command::CommandManager,
         LogLevel,
         Prompt,
-        ShareablePrompt
+        ShareablePrompt,
+        ModuleConfig
     },
     serializer::Serializer,
     time::get_current_time_in_millis,
@@ -126,13 +127,15 @@ pub struct MinerConfig {
     /// It must end with a / to be a valid folder.
     #[clap(long, default_value_t = String::from("logs/"))]
     logs_path: String,
+    /// Module configuration for logs
+    logs_modules: Vec<ModuleConfig>,
     /// Numbers of threads to use (at least 1, max: 65535)
     /// By default, this will try to detect the number of threads available on your CPU.
     #[clap(short, long)]
     num_threads: Option<u16>,
     /// Worker name to be displayed on daemon side
     #[clap(short, long, default_value_t = String::from("default"))]
-    worker: String
+    worker: String,
 }
 
 #[derive(Clone)]
@@ -167,7 +170,7 @@ const UPDATE_EVERY_NONCE: u64 = 10;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let config: MinerConfig = MinerConfig::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules)?;
 
     let detected_threads = match thread::available_parallelism() {
         Ok(value) => value.get() as u16,

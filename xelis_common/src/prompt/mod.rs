@@ -846,18 +846,17 @@ impl Prompt {
         }
 
         // Default log level modules
-        if module_logs.is_empty() {
-            base = base.level_for("sled", log::LevelFilter::Warn)
-                .level_for("actix_server", log::LevelFilter::Warn)
-                .level_for("actix_web", log::LevelFilter::Off)
-                .level_for("actix_http", log::LevelFilter::Off)
-                .level_for("tracing", log::LevelFilter::Off)
-                .level_for("runtime", log::LevelFilter::Off)
-                .level_for("tokio", log::LevelFilter::Off)
-                .level_for("mio", log::LevelFilter::Warn)
-                .level_for("tokio_tungstenite", log::LevelFilter::Warn)
-                .level_for("tungstenite", log::LevelFilter::Warn);
-        }
+        // It can be overriden by the user below
+        base = base.level_for("sled", log::LevelFilter::Warn)
+            .level_for("actix_server", log::LevelFilter::Warn)
+            .level_for("actix_web", log::LevelFilter::Off)
+            .level_for("actix_http", log::LevelFilter::Off)
+            .level_for("tracing", log::LevelFilter::Off)
+            .level_for("runtime", log::LevelFilter::Off)
+            .level_for("tokio", log::LevelFilter::Off)
+            .level_for("mio", log::LevelFilter::Warn)
+            .level_for("tokio_tungstenite", log::LevelFilter::Warn)
+            .level_for("tungstenite", log::LevelFilter::Warn);
 
         for m in module_logs {
             base = base.level_for(m.module, m.level.into());
