@@ -36,6 +36,7 @@ use xelis_common::{
             ArgType
         },
         LogLevel,
+        ModuleConfig,
         ShareablePrompt
     },
     rpc_server::WebSocketServerHandler,
@@ -114,6 +115,8 @@ pub struct NodeConfig {
     /// It must end with a / to be a valid folder.
     #[clap(long, default_value_t = String::from("logs/"))]
     logs_path: String,
+    /// Module configuration for logs
+    logs_modules: Vec<ModuleConfig>,
     /// Network selected for chain
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
     network: Network
@@ -125,7 +128,7 @@ const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_P
 async fn main() -> Result<()> {
     let mut config: NodeConfig = NodeConfig::parse();
 
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules)?;
     info!("XELIS Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
 
