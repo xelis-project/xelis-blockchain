@@ -60,6 +60,26 @@ pub enum LogLevel {
     Trace
 }
 
+#[derive(Debug, Clone)]
+pub struct ModuleConfig {
+    pub module: String,
+    pub level: LogLevel
+}
+
+impl FromStr for ModuleConfig {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut parts = s.split(':');
+        let module = parts.next().ok_or("Invalid module")?.to_string();
+        let level = parts.next().ok_or("Invalid level")?.parse()?;
+        Ok(Self {
+            module,
+            level
+        })
+    }
+}
+
 impl From<LogLevel> for LevelFilter {
     fn from(value: LogLevel) -> Self {
         match value {
@@ -451,7 +471,16 @@ type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 type AsyncF<'a, T1, T2, R> = Box<dyn Fn(&'a T1, T2) -> LocalBoxFuture<'a, R> + 'a>;
 
 impl Prompt {
-    pub fn new(level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool, disable_file_log_date_based: bool, disable_colors: bool, interactive: bool) -> Result<ShareablePrompt, PromptError> {
+    pub fn new(
+        level: LogLevel,
+        dir_path: &String,
+        filename_log: &String,
+        disable_file_logging: bool,
+        disable_file_log_date_based: bool,
+        disable_colors: bool,
+        interactive: bool,
+        module_logs: Vec<ModuleConfig>
+    ) -> Result<ShareablePrompt, PromptError> {
         let (read_input_sender, read_input_receiver) = mpsc::channel(1);
         let prompt = Self {
             state: Arc::new(State::new(interactive)),
@@ -460,7 +489,7 @@ impl Prompt {
             read_input_sender,
             disable_colors
         };
-        prompt.setup_logger(level, dir_path, filename_log, disable_file_logging, disable_file_log_date_based)?;
+        prompt.setup_logger(level, dir_path, filename_log, disable_file_logging, disable_file_log_date_based, module_logs)?;
 
         #[cfg(target_os = "windows")]
         {
@@ -724,7 +753,15 @@ impl Prompt {
     }
 
     // configure fern and print prompt message after each new output
-    fn setup_logger(&self, level: LogLevel, dir_path: &String, filename_log: &String, disable_file_logging: bool, disable_file_log_date_based: bool) -> Result<(), fern::InitError> {
+    fn setup_logger(
+        &self,
+        level: LogLevel,
+        dir_path: &String,
+        filename_log: &String,
+        disable_file_logging: bool,
+        disable_file_log_date_based: bool,
+        module_logs: Vec<ModuleConfig>
+    ) -> Result<(), fern::InitError> {
         let colors = ColoredLevelConfig::new()
             .debug(Color::Green)
             .info(Color::Cyan)
@@ -808,17 +845,25 @@ impl Prompt {
             base = base.chain(file_log);
         }
 
-        base.level_for("sled", log::LevelFilter::Warn)
-        .level_for("actix_server", log::LevelFilter::Warn)
-        .level_for("actix_web", log::LevelFilter::Off)
-        .level_for("actix_http", log::LevelFilter::Off)
-        .level_for("tracing", log::LevelFilter::Off)
-        .level_for("runtime", log::LevelFilter::Off)
-        .level_for("tokio", log::LevelFilter::Off)
-        .level_for("mio", log::LevelFilter::Warn)
-        .level_for("tokio_tungstenite", log::LevelFilter::Warn)
-        .level_for("tungstenite", log::LevelFilter::Warn)
-        .apply()?;
+        // Default log level modules
+        if module_logs.is_empty() {
+            base = base.level_for("sled", log::LevelFilter::Warn)
+                .level_for("actix_server", log::LevelFilter::Warn)
+                .level_for("actix_web", log::LevelFilter::Off)
+                .level_for("actix_http", log::LevelFilter::Off)
+                .level_for("tracing", log::LevelFilter::Off)
+                .level_for("runtime", log::LevelFilter::Off)
+                .level_for("tokio", log::LevelFilter::Off)
+                .level_for("mio", log::LevelFilter::Warn)
+                .level_for("tokio_tungstenite", log::LevelFilter::Warn)
+                .level_for("tungstenite", log::LevelFilter::Warn);
+        }
+
+        for m in module_logs {
+            base = base.level_for(m.module, m.level.into());
+        }
+
+        base.apply()?;
 
         Ok(())
     }
