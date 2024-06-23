@@ -70,7 +70,7 @@ impl FromStr for ModuleConfig {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts = s.split(':');
+        let mut parts = s.split('=');
         let module = parts.next().ok_or("Invalid module")?.to_string();
         let level = parts.next().ok_or("Invalid level")?.parse()?;
         Ok(Self {
