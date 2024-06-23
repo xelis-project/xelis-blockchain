@@ -1351,29 +1351,30 @@ impl<S: Storage> P2pServer<S> {
                 trace!("Handle connection read side task for {} has been started", addr);
                 if let Err(e) = zelf.handle_connection_read_side(&peer, write_task).await {
                     debug!("Error while running read part from peer {}: {}", peer, e);
-                }
 
-                peer.set_read_task_state(TaskState::Exiting).await;
+                    peer.set_read_task_state(TaskState::Exiting).await;
 
-                // Verify that the connection is closed
-                // Write task should be responsible for closing the connection
-                if write_tx.send(()).is_err() {
-                    warn!("Error while sending exit signal to write task for {}", peer);
-                    // Task is maybe closed
-                    // Close the peer if not already closed
-                    if !peer.get_connection().is_closed() {
-                        warn!("Closing connection with {} from write task", addr);
-                        if let Err(e) = peer.get_connection().close().await {
-                            warn!("Error while closing connection with {} from write task: {}", addr, e);
+                    // Verify that the connection is closed
+                    // Write task should be responsible for closing the connection
+                    if write_tx.send(()).is_err() {
+                        warn!("Error while sending exit signal to write task for {}", peer);
+                        // Task is maybe closed
+                        // Close the peer if not already closed
+                        if !peer.get_connection().is_closed() {
+                            warn!("Closing connection with {} from write task", addr);
+                            if let Err(e) = peer.get_connection().close().await {
+                                warn!("Error while closing connection with {} from write task: {}", addr, e);
+                            }
+                        }
+    
+                        if zelf.peer_list.has_peer(&peer.get_id()).await {
+                            if let Err(e) = zelf.peer_list.remove_peer(peer.get_id(), true).await {
+                                warn!("Error while removing peer {} from peer list: {}", peer, e);
+                            }
                         }
                     }
-
-                    if zelf.peer_list.has_peer(&peer.get_id()).await {
-                        if let Err(e) = zelf.peer_list.remove_peer(peer.get_id(), true).await {
-                            warn!("Error while removing peer {} from peer list: {}", peer, e);
-                        }
-                    }
                 }
+
                 peer.set_read_task_state(TaskState::Finished).await;
 
                 trace!("Handle connection read side task for {} has been finished", addr);
