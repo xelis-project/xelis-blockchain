@@ -128,6 +128,7 @@ pub struct MinerConfig {
     #[clap(long, default_value_t = String::from("logs/"))]
     logs_path: String,
     /// Module configuration for logs
+    #[clap(long)]
     logs_modules: Vec<ModuleConfig>,
     /// Numbers of threads to use (at least 1, max: 65535)
     /// By default, this will try to detect the number of threads available on your CPU.
