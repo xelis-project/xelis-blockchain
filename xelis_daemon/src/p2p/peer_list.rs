@@ -4,7 +4,6 @@ use crate::{
         PEER_FAIL_LIMIT,
         PEER_FAIL_TO_CONNECT_LIMIT,
         PEER_TEMP_BAN_TIME_ON_CONNECT,
-        PEER_TIMEOUT_DISCONNECT
     },
     p2p::packet::peer_disconnected::PacketPeerDisconnected
 };
@@ -17,7 +16,7 @@ use std::{
 };
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
-use tokio::{sync::{mpsc::Sender, RwLock}, time::timeout};
+use tokio::sync::{mpsc::Sender, RwLock};
 use xelis_common::{
     serializer::Serializer,
     time::{TimestampSeconds, get_current_time_in_seconds},
@@ -275,10 +274,8 @@ impl PeerList {
         for (_, peer) in peers {
             debug!("Closing {}", peer);
 
-            match timeout(Duration::from_secs(PEER_TIMEOUT_DISCONNECT), peer.close(true, false)).await {
-                Err(e) => debug!("Error while trying to close peer {}, deadline elapsed: {}", peer.get_connection().get_address(), e),
-                Ok(Err(e)) => debug!("Error while trying to close peer {}: {}", peer.get_connection().get_address(), e),
-                Ok(Ok(())) => debug!("Peer {} closed", peer.get_connection().get_address())
+            if let Err(e) = peer.signal_exit().await {
+                error!("Error while trying to signal exit to peer {}: {}", peer, e);
             }
         }
 
@@ -432,7 +429,7 @@ impl PeerList {
         };
 
         if let Some(peer) = potential_peer {
-            if let Err(e) = peer.close(true, true).await {
+            if let Err(e) = peer.signal_exit().await {
                 error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
             }
         }

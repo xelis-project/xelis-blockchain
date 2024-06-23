@@ -397,7 +397,7 @@ async fn kick_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManag
             };
 
             if let Some(peer) = peer {
-                peer.close(true, true).await.context("Error while closing peer connection")?;
+                peer.signal_exit().await.context("Error while closing peer connection")?;
                 manager.message(format!("Peer {} has been kicked", addr));
             } else {
                 manager.error(format!("Peer {} not found", addr));

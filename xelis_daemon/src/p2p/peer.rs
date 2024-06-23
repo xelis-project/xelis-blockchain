@@ -592,6 +592,7 @@ impl Peer {
     }
 
     // Signal the exit of the peer to the tasks
+    // This is listened by write task to close the connection
     pub async fn signal_exit(&self) -> Result<(), P2pError> {
         self.exit_channel.send(())
             .map_err(|e| P2pError::SendError(e.to_string()))?;
@@ -600,23 +601,16 @@ impl Peer {
     }
 
     // Close the peer connection and remove it from the peer list
-    pub async fn close(&self, notify: bool, delete: bool) -> Result<(), P2pError> {
-        trace!("Closing connection with {}", self);
+    pub async fn close(&self, delete: bool) -> Result<(), P2pError> {
+        trace!("Closing connection internal with {}", self);
+        if !self.get_connection().is_closed() {
+            self.get_connection().close().await?;
+        }
 
-        self.get_connection().close().await?;
-        
-        // Remove this peer from peer list
         if delete {
-            trace!("closing peer {}", self);
+            trace!("Deleting peer {} from peerlist", self);
             self.peer_list.remove_peer(self.get_id(), true).await?;
         }
-
-        // Notify the writer task to exit
-        if notify {
-            trace!("Notifying exit channel for {}", self);
-            self.signal_exit().await?;
-        }
-
         Ok(())
     }
 

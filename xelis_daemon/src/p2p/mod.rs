@@ -95,6 +95,7 @@ use tokio::{
             Receiver,
             Sender
         },
+        oneshot,
         Mutex
     },
     task::JoinHandle,
@@ -1208,16 +1209,21 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // this function handle the logic to send all packets to the peer
-    async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut Rx) -> Result<(), P2pError> {
+    async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut Rx, mut task_rx: oneshot::Receiver<()>) -> Result<(), P2pError> {
         let mut server_exit = self.exit_sender.subscribe();
         let mut peer_exit = peer.get_exit_receiver();
         let mut interval = interval(Duration::from_secs(P2P_HEARTBEAT_INTERVAL));
         loop {
             select! {
                 biased;
+                _ = &mut task_rx => {
+                    trace!("Exit message received from read task for peer {}", peer);
+                    peer.close(true).await?;
+                    break;
+                },
                 _ = server_exit.recv() => {
-                    trace!("Exit message received for peer {}", peer);
-                    peer.close(true, true).await?;
+                    trace!("Exit message from server received for peer {}", peer);
+                    peer.close(true).await?;
                     break;
                 },
                 _ = peer_exit.recv() => {
@@ -1231,12 +1237,13 @@ impl<S: Storage> P2pServer<S> {
                     let last_ping = peer.get_last_ping();
                     if last_ping != 0 && get_current_time_in_seconds() - last_ping > P2P_PING_TIMEOUT {
                         debug!("{} has not sent a ping packet for {} seconds, closing connection...", peer, P2P_PING_TIMEOUT);
-                        peer.close(true, true).await?;
+                        peer.close(true).await?;
                         break;
                     }
 
                     if peer.get_connection().is_closed() {
                         debug!("{} has closed the connection, stopping...", peer);
+                        peer.close(true).await?;
                         break;
                     }
                 },
@@ -1253,7 +1260,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // This function is a separated task with its own buffer (1kB) to read and handle every packets from the peer sequentially
-    async fn handle_connection_read_side(self: Arc<Self>, peer: &Arc<Peer>, mut write_task: JoinHandle<()>) -> Result<(), P2pError> {
+    async fn handle_connection_read_side(self: &Arc<Self>, peer: &Arc<Peer>, mut write_task: JoinHandle<()>) -> Result<(), P2pError> {
         // allocate the unique buffer for this connection
         let mut buf = [0u8; 1024];
         let mut server_exit = self.exit_sender.subscribe();
@@ -1296,6 +1303,8 @@ impl<S: Storage> P2pServer<S> {
     // so we can do both at the same time without blocking / waiting on other part when important traffic
     async fn handle_connection(self: &Arc<Self>, peer: Arc<Peer>, mut rx: Rx) -> Result<(), P2pError> {
         // task for writing to peer
+
+        let (write_tx, write_rx) = oneshot::channel();
         let write_task = {
             let zelf = Arc::clone(self);
             let peer = Arc::clone(&peer);
@@ -1304,11 +1313,8 @@ impl<S: Storage> P2pServer<S> {
 
                 let addr = *peer.get_connection().get_address();
                 trace!("Handle connection write side task for {} has been started", addr);
-                if let Err(e) = zelf.handle_connection_write_side(&peer, &mut rx).await {
+                if let Err(e) = zelf.handle_connection_write_side(&peer, &mut rx, write_rx).await {
                     debug!("Error while writing to {}: {}", peer, e);
-                    if let Err(e2) = peer.close(true, true).await {
-                        warn!("Error while closing {} due to error {} from write side: {}", peer, e, e2);
-                    }
                 }
 
                 peer.set_write_task_state(TaskState::Exiting).await;
@@ -1316,8 +1322,14 @@ impl<S: Storage> P2pServer<S> {
                 // Close the peer if not already closed
                 if !peer.get_connection().is_closed() {
                     warn!("Closing connection with {} from write task", addr);
-                    if let Err(e) = peer.close(true, true).await {
-                        warn!("Error while closing {} from write side: {}", peer, e);
+                    if let Err(e) = peer.get_connection().close().await {
+                        warn!("Error while closing connection with {} from write task: {}", addr, e);
+                    }
+                }
+
+                if zelf.peer_list.has_peer(&peer.get_id()).await {
+                    if let Err(e) = zelf.peer_list.remove_peer(peer.get_id(), true).await {
+                        warn!("Error while removing peer {} from peer list: {}", peer, e);
                     }
                 }
 
@@ -1345,11 +1357,21 @@ impl<S: Storage> P2pServer<S> {
 
                 // Verify that the connection is closed
                 // Write task should be responsible for closing the connection
-                if !peer.get_connection().is_closed() {
-                    // Write side is maybe still running, lets notify it
-                    warn!("Read side notify exit receivers for {}", addr);
-                    if let Err(e) = peer.signal_exit().await {
-                        warn!("Error while notifying exit receivers for {}: {}", addr, e);
+                if write_tx.send(()).is_err() {
+                    warn!("Error while sending exit signal to write task for {}", peer);
+                    // Task is maybe closed
+                    // Close the peer if not already closed
+                    if !peer.get_connection().is_closed() {
+                        warn!("Closing connection with {} from write task", addr);
+                        if let Err(e) = peer.get_connection().close().await {
+                            warn!("Error while closing connection with {} from write task: {}", addr, e);
+                        }
+                    }
+
+                    if zelf.peer_list.has_peer(&peer.get_id()).await {
+                        if let Err(e) = zelf.peer_list.remove_peer(peer.get_id(), true).await {
+                            warn!("Error while removing peer {} from peer list: {}", peer, e);
+                        }
                     }
                 }
                 peer.set_read_task_state(TaskState::Finished).await;
