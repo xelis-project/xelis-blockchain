@@ -40,7 +40,7 @@ use crate::{
         CHAIN_SYNC_TOP_BLOCKS, MILLIS_PER_SECOND, NETWORK_ID, P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY,
         P2P_EXTEND_PEERLIST_DELAY, P2P_PING_DELAY, P2P_PING_PEER_LIST_DELAY, P2P_PING_PEER_LIST_LIMIT,
         PEER_FAIL_LIMIT, PEER_MAX_PACKET_SIZE, PEER_TIMEOUT_INIT_CONNECTION, PEER_TIMEOUT_INIT_OUTGOING_CONNECTION,
-        PRUNE_SAFETY_LIMIT, STABLE_LIMIT, P2P_PING_TIMEOUT, P2P_HEARTBEAT_INTERVAL, PEER_SEND_BYTES_TIMEOUT
+        PRUNE_SAFETY_LIMIT, STABLE_LIMIT, P2P_PING_TIMEOUT, P2P_HEARTBEAT_INTERVAL
     },
     core::{
         blockchain::Blockchain,
@@ -1216,19 +1216,17 @@ impl<S: Storage> P2pServer<S> {
         loop {
             select! {
                 biased;
+                // exit message from the read task
                 _ = &mut task_rx => {
                     trace!("Exit message received from read task for peer {}", peer);
-                    peer.close(true).await?;
                     break;
                 },
                 _ = server_exit.recv() => {
                     trace!("Exit message from server received for peer {}", peer);
-                    peer.close(true).await?;
                     break;
                 },
                 _ = peer_exit.recv() => {
                     debug!("Peer {} has exited, stopping...", peer);
-                    peer.get_connection().close().await?;
                     break;
                 },
                 _ = interval.tick() => {
@@ -1237,13 +1235,6 @@ impl<S: Storage> P2pServer<S> {
                     let last_ping = peer.get_last_ping();
                     if last_ping != 0 && get_current_time_in_seconds() - last_ping > P2P_PING_TIMEOUT {
                         debug!("{} has not sent a ping packet for {} seconds, closing connection...", peer, P2P_PING_TIMEOUT);
-                        peer.close(true).await?;
-                        break;
-                    }
-
-                    if peer.get_connection().is_closed() {
-                        debug!("{} has closed the connection, stopping...", peer);
-                        peer.close(true).await?;
                         break;
                     }
                 },
@@ -1251,7 +1242,7 @@ impl<S: Storage> P2pServer<S> {
                 Some(bytes) = rx.recv() => {
                     // there is a overhead of 4 for each packet (packet size u32 4 bytes, packet id u8 is counted in the packet size)
                     trace!("Sending packet with ID {}, size sent: {}, real size: {}", bytes[4], u32::from_be_bytes(bytes[0..4].try_into()?), bytes.len());
-                    timeout(Duration::from_millis(PEER_SEND_BYTES_TIMEOUT), peer.get_connection().send_bytes(&bytes)).await??;
+                    peer.get_connection().send_bytes(&bytes).await?;
                     trace!("data sucessfully sent!");
                 }
             }
@@ -1323,6 +1314,10 @@ impl<S: Storage> P2pServer<S> {
                 // clean shutdown
                 rx.close();
 
+                if let Err(e) = peer.close().await {
+                    debug!("Error while closing connection for {} from write task: {}", peer, e);
+                }
+
                 peer.set_write_task_state(TaskState::Finished).await;
                 trace!("Handle connection read side task for {} has been finished", addr);
             })
@@ -1344,21 +1339,7 @@ impl<S: Storage> P2pServer<S> {
                     // Verify that the connection is closed
                     // Write task should be responsible for closing the connection
                     if write_tx.send(()).is_err() {
-                        warn!("Error while sending exit signal to write task for {}", peer);
-                        // Task is maybe closed
-                        // Close the peer if not already closed
-                        if !peer.get_connection().is_closed() {
-                            warn!("Closing connection with {} from read task", addr);
-                            if let Err(e) = peer.get_connection().close().await {
-                                warn!("Error while closing connection with {} from read task: {}", addr, e);
-                            }
-                        }
-    
-                        if zelf.peer_list.has_peer(&peer.get_id()).await {
-                            if let Err(e) = zelf.peer_list.remove_peer(peer.get_id(), true).await {
-                                warn!("Error while removing peer {} from peer list: {}", peer, e);
-                            }
-                        }
+                        debug!("Write task has already exited, closing connection for {}", peer);
                     }
                 }
 

@@ -601,16 +601,13 @@ impl Peer {
     }
 
     // Close the peer connection and remove it from the peer list
-    pub async fn close(&self, delete: bool) -> Result<(), P2pError> {
+    pub async fn close(&self) -> Result<(), P2pError> {
         trace!("Closing connection internal with {}", self);
-        if !self.get_connection().is_closed() {
-            self.get_connection().close().await?;
-        }
+        self.get_connection().close().await?;
 
-        if delete {
-            trace!("Deleting peer {} from peerlist", self);
-            self.peer_list.remove_peer(self.get_id(), true).await?;
-        }
+        trace!("Deleting peer {} from peerlist", self);
+        self.peer_list.remove_peer(self.get_id(), true).await?;
+
         Ok(())
     }
 

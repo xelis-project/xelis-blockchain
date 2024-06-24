@@ -1,4 +1,4 @@
-use crate::config::{PEER_TIMEOUT_DISCONNECT, PEER_TIMEOUT_INIT_CONNECTION};
+use crate::config::{PEER_TIMEOUT_DISCONNECT, PEER_TIMEOUT_INIT_CONNECTION, PEER_SEND_BYTES_TIMEOUT};
 use super::{
     encryption::Encryption,
     error::P2pError,
@@ -205,9 +205,28 @@ impl Connection {
 
         Ok(())
     }
+
+    // Send bytes to the tcp stream with a timeout
+    // if an error occurs, the connection is closed
+    pub async fn send_bytes(&self, packet: &[u8]) -> P2pResult<()> {
+        match timeout(Duration::from_millis(PEER_SEND_BYTES_TIMEOUT), self.send_bytes_internal(packet)).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                debug!("Failed to send bytes to {}: {}", self.get_address(), e);
+                self.closed.store(true, Ordering::SeqCst);
+                Err(e.into())
+            }
+            Err(e) => {
+                debug!("Failed to send bytes in requested time to {}: {}", self.get_address(), e);
+                self.closed.store(true, Ordering::SeqCst);
+                Err(e.into())
+            }
+        }
+    }
+
     // Send bytes to the peer
     // Encrypt must be used all time starting handshake
-    pub async fn send_bytes(&self, packet: &[u8]) -> P2pResult<()> {
+    async fn send_bytes_internal(&self, packet: &[u8]) -> P2pResult<()> {
         trace!("Sending {} bytes to {}", packet.len(), self.get_address());
         let mut stream = self.write.lock().await;
 
@@ -334,6 +353,8 @@ impl Connection {
             let result = stream.read(&mut buf[read..]).await?;
             match result {
                 0 => {
+                    debug!("Connection with {} closed", self.addr);
+                    self.closed.store(true, Ordering::SeqCst);
                     return Err(P2pError::Disconnected);
                 }
                 n => {
@@ -350,7 +371,10 @@ impl Connection {
     // This must be called only from the write connection task
     pub async fn close(&self) -> P2pResult<()> {
         trace!("Closing internal connection with {}", self.addr);
-        self.closed.store(true, Ordering::SeqCst);
+        if self.closed.swap(true, Ordering::SeqCst) {
+            debug!("Connection with {} already closed", self.addr);
+            return Ok(());
+        }
 
         // sometimes the peer is not removed on other peer side
         let mut stream = self.write.lock().await;
