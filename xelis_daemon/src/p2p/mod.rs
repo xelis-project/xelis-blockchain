@@ -20,7 +20,7 @@ use xelis_common::{
     },
     block::{Block, BlockHeader},
     config::{TIPS_LIMIT, VERSION},
-    crypto::{Hash, Hashable},
+    crypto::{Hash, Hashable, PublicKey},
     difficulty::CumulativeDifficulty,
     immutable::Immutable,
     serializer::Serializer,
@@ -2526,6 +2526,77 @@ impl<S: Storage> P2pServer<S> {
         Ok(blocks)
     }
 
+
+    // Update all keys using bootstrap request
+    // This will fetch the nonce and associated balance for each asset
+    async fn update_bootstrap_keys(&self, peer: &Arc<Peer>, keys: &IndexSet<PublicKey>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+        if keys.is_empty() {
+            warn!("No keys to update");
+            return Ok(())
+        }
+
+        let StepResponse::Nonces(nonces) = peer.request_boostrap_chain(StepRequest::Nonces(stable_topoheight, Cow::Borrowed(&keys))).await? else {
+            // shouldn't happen
+            error!("Received an invalid StepResponse (how ?) while fetching nonces");
+            return Err(P2pError::InvalidPacket.into())
+        };
+
+        {
+            let mut storage = self.blockchain.get_storage().write().await;
+            // save all nonces
+            for (key, nonce) in keys.iter().zip(nonces) {
+                debug!("Saving nonce {} for {}", nonce, key.as_address(self.blockchain.get_network().is_mainnet()));
+                storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, None)).await?;
+                storage.set_account_registration_topoheight(key, stable_topoheight).await?;
+            }
+        }
+
+        let mut page = 0;
+        loop {
+            // Retrieve chunked assets
+            let assets = {
+                let storage = self.blockchain.get_storage().read().await;
+                let assets = storage.get_chunked_assets(MAX_ITEMS_PER_PAGE, page * MAX_ITEMS_PER_PAGE).await?;
+                if assets.is_empty() {
+                    break;
+                }
+                page += 1;
+                assets
+            };
+
+            // Request every asset balances
+            for asset in assets {
+                debug!("Requesting balances for asset {} at topo {}", asset, stable_topoheight);
+                let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(Cow::Borrowed(&keys), Cow::Borrowed(&asset), our_topoheight, stable_topoheight)).await? else {
+                    // shouldn't happen
+                    error!("Received an invalid StepResponse (how ?) while fetching balances");
+                    return Err(P2pError::InvalidPacket.into())
+                };
+
+                // save all balances for this asset
+                for (key, balance) in keys.iter().zip(balances) {
+                    // check that the account have balance for this asset
+                    if let Some(account) = balance {
+                        debug!("Saving balance {} summary for {}", asset, key.as_address(self.blockchain.get_network().is_mainnet()));
+                        let ((stable_topo, stable), output) = account.as_versions();
+                        let mut storage = self.blockchain.get_storage().write().await;
+                        storage.set_last_balance_to(key, &asset, stable_topo, &stable).await?;
+
+                        // save the output balance if it's different from the stable one
+                        if let Some((topo, output)) = output{
+                            storage.set_balance_at_topoheight(&asset, topo, key, &output).await?;
+                        }
+
+                        // TODO clean up old balances
+                    } else {
+                        debug!("No balance for key {} at topoheight {}", key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
     // first, retrieve chain info of selected peer
     // We retrieve all assets through pagination,
     // then we fetch all keys with its nonces and its balances (also through pagination)
@@ -2599,16 +2670,48 @@ impl<S: Storage> P2pServer<S> {
                 },
                 // fetch all assets from peer
                 StepResponse::Assets(assets, next_page) => {
-                    let mut storage = self.blockchain.get_storage().write().await;
-                    for asset in assets {
-                        let (asset, data) = asset.consume();
-                        debug!("Saving asset {} at topoheight {}", asset, stable_topoheight);
-                        storage.add_asset(&asset, data).await?;
+                    {
+                        let mut storage = self.blockchain.get_storage().write().await;
+                        for asset in assets {
+                            let (asset, data) = asset.consume();
+                            debug!("Saving asset {} at topoheight {}", asset, stable_topoheight);
+                            storage.add_asset(&asset, data).await?;
+                        }
                     }
 
                     if next_page.is_some() {
                         Some(StepRequest::Assets(our_topoheight, stable_topoheight, next_page))
                     } else {
+                        // We must handle all stored keys before extending our ledger
+                        let mut minimum_topoheight = 0;
+                        loop {
+
+                            let keys = {
+                                let storage = self.blockchain.get_storage().read().await;
+                                let keys = storage.get_registered_keys(MAX_ITEMS_PER_PAGE, 0, minimum_topoheight, our_topoheight).await?;
+
+                                // Because the keys are sorted by topoheight, we can get the minimum topoheight
+                                // of the last key to avoid fetching the same keys again
+                                // We could use skip, but because update_bootstrap_keys can reorganize the keys,
+                                // we may miss some
+                                // This solution may also duplicate some keys
+                                // We could do it in one request and store in memory all keys,
+                                // but think about future and dozen of millions of accounts, in memory :)
+                                if let Some(key) = keys.last() {
+                                    minimum_topoheight = storage.get_account_registration_topoheight(key).await?;
+                                } else {
+                                    break;
+                                }
+
+                                keys
+                            };
+
+                            self.update_bootstrap_keys(peer, &keys, our_topoheight, stable_topoheight).await?;
+                            if keys.len() < MAX_ITEMS_PER_PAGE {
+                                break;
+                            }
+                        }
+
                         // Go to next step
                         Some(StepRequest::Keys(our_topoheight, stable_topoheight, None))
                     }
@@ -2616,65 +2719,7 @@ impl<S: Storage> P2pServer<S> {
                 // fetch all new accounts
                 StepResponse::Keys(keys, next_page) => {
                     debug!("Requesting nonces for keys");
-                    let StepResponse::Nonces(nonces) = peer.request_boostrap_chain(StepRequest::Nonces(stable_topoheight, Cow::Borrowed(&keys))).await? else {
-                        // shouldn't happen
-                        error!("Received an invalid StepResponse (how ?) while fetching nonces");
-                        return Err(P2pError::InvalidPacket.into())
-                    };
-
-                    {
-                        let mut storage = self.blockchain.get_storage().write().await;
-                        // save all nonces
-                        for (key, nonce) in keys.iter().zip(nonces) {
-                            debug!("Saving nonce {} for {}", nonce, key.as_address(self.blockchain.get_network().is_mainnet()));
-                            storage.set_last_nonce_to(key, stable_topoheight, &VersionedNonce::new(nonce, None)).await?;
-                            storage.set_account_registration_topoheight(key, stable_topoheight).await?;
-                        }
-                    }
-
-                    let mut page = 0;
-                    loop {
-                        // Retrieve chunked assets
-                        let assets = {
-                            let storage = self.blockchain.get_storage().read().await;
-                            let assets = storage.get_chunked_assets(MAX_ITEMS_PER_PAGE, page * MAX_ITEMS_PER_PAGE).await?;
-                            if assets.is_empty() {
-                                break
-                            }
-                            page += 1;
-                            assets
-                        };
-
-                        // Request every asset balances
-                        for asset in assets {
-                            debug!("Requesting balances for asset {} at topo {}", asset, stable_topoheight);
-                            let StepResponse::Balances(balances) = peer.request_boostrap_chain(StepRequest::Balances(Cow::Borrowed(&keys), Cow::Borrowed(&asset), our_topoheight, stable_topoheight)).await? else {
-                                // shouldn't happen
-                                error!("Received an invalid StepResponse (how ?) while fetching balances");
-                                return Err(P2pError::InvalidPacket.into())
-                            };
-
-                            // save all balances for this asset
-                            for (key, balance) in keys.iter().zip(balances) {
-                                // check that the account have balance for this asset
-                                if let Some(account) = balance {
-                                    debug!("Saving balance {} summary for {}", asset, key.as_address(self.blockchain.get_network().is_mainnet()));
-                                    let ((stable_topo, stable), output) = account.as_versions();
-                                    let mut storage = self.blockchain.get_storage().write().await;
-                                    storage.set_last_balance_to(key, &asset, stable_topo, &stable).await?;
-
-                                    // save the output balance if it's different from the stable one
-                                    if let Some((topo, output)) = output{
-                                        storage.set_balance_at_topoheight(&asset, topo, key, &output).await?;
-                                    }
-
-                                    // TODO clean up old balances
-                                } else {
-                                    debug!("No balance for key {} at topoheight {}", key.as_address(self.blockchain.get_network().is_mainnet()), stable_topoheight);
-                                }
-                            }
-                        }
-                    }
+                    self.update_bootstrap_keys(peer, &keys, our_topoheight, stable_topoheight).await?;                    
 
                     if next_page.is_some() {
                         Some(StepRequest::Keys(our_topoheight, stable_topoheight, next_page))

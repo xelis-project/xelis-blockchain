@@ -25,7 +25,6 @@ pub trait AccountProvider {
     // Get registered accounts supporting pagination and filtering by topoheight
     // Returned keys must have a nonce or a balance updated in the range given
     async fn get_registered_keys(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<PublicKey>, BlockchainError>;
-
 }
 
 fn prefixed_db_key(topoheight: u64, key: &PublicKey) -> [u8; 40] {
@@ -85,29 +84,28 @@ impl AccountProvider for SledStorage {
         Ok(())
     }
 
-
     // Get all keys that got registered in the range given
     async fn get_registered_keys(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<PublicKey>, BlockchainError> {
         trace!("get partial keys, maximum: {}, skip: {}, minimum_topoheight: {}, maximum_topoheight: {}", maximum, skip, minimum_topoheight, maximum_topoheight);
 
         let mut keys: IndexSet<PublicKey> = IndexSet::new();
         let mut skip_count = 0;
-        for el in self.registrations.iter() {
-            let (key, value) = el?;
-            let topo = u64::from_bytes(&value)?;
-            
+        for el in self.registrations_prefixed.iter().keys() {
+            let key = el?;
+            let topo = u64::from_bytes(&key[0..8])?;
+
             // Skip if not in range
             if topo < minimum_topoheight || topo > maximum_topoheight {
                 continue;
             }
-            
+
             // Skip if asked
             if skip_count < skip {
                 skip_count += 1;
                 continue;
             }
 
-            keys.insert(PublicKey::from_bytes(&key)?);
+            keys.insert(PublicKey::from_bytes(&key[8..40])?);
             if keys.len() >= maximum {
                 break;
             }
