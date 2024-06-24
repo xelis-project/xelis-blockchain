@@ -1291,6 +1291,7 @@ impl<S: Storage> P2pServer<S> {
                         if let Err(e) = peer.close_and_temp_ban().await {
                             error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
                         }
+                        break;
                     }
                 }
             }
@@ -1318,20 +1319,6 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 peer.set_write_task_state(TaskState::Exiting).await;
-
-                // Close the peer if not already closed
-                if !peer.get_connection().is_closed() {
-                    debug!("Closing connection with {} from write task", addr);
-                    if let Err(e) = peer.get_connection().close().await {
-                        debug!("Error while closing connection with {} from write task: {}", addr, e);
-                    }
-                }
-
-                if zelf.peer_list.has_peer(&peer.get_id()).await {
-                    if let Err(e) = zelf.peer_list.remove_peer(peer.get_id(), true).await {
-                        warn!("Error while removing peer {} from peer list: {}", peer, e);
-                    }
-                }
 
                 // clean shutdown
                 rx.close();
