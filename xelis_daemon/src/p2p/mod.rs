@@ -1319,7 +1319,7 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 peer.set_write_task_state(TaskState::Finished).await;
-                trace!("Handle connection read side task for {} has been finished", addr);
+                debug!("Handle connection read side task for {} has been finished", addr);
             })
         };
 
@@ -1345,7 +1345,7 @@ impl<S: Storage> P2pServer<S> {
 
                 peer.set_read_task_state(TaskState::Finished).await;
 
-                trace!("Handle connection read side task for {} has been finished", addr);
+                debug!("Handle connection read side task for {} has been finished", addr);
             });
         }
 

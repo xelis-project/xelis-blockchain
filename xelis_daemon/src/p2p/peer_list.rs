@@ -275,7 +275,7 @@ impl PeerList {
             debug!("Closing {}", peer);
 
             if let Err(e) = peer.signal_exit().await {
-                error!("Error while trying to signal exit to peer {}: {}", peer, e);
+                error!("Error while trying to signal exit to {}: {}", peer, e);
             }
         }
 

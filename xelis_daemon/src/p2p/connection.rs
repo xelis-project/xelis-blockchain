@@ -345,18 +345,14 @@ impl Connection {
     // this function will wait until something is sent to the socket if it's in blocking mode
     // this return the size of data read & set in the buffer.
     // used to only lock one time the stream and read on it
-    async fn read_bytes_from_stream(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<usize> {
+    async fn read_bytes_from_stream_internal(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<usize> {
         let mut read = 0;
         let buf_len = buf.len();
         // Packet may have been fragmented, try to read it completely
         while read < buf_len {
             let result = stream.read(&mut buf[read..]).await?;
             match result {
-                0 => {
-                    debug!("Connection with {} closed", self.addr);
-                    self.closed.store(true, Ordering::SeqCst);
-                    return Err(P2pError::Disconnected);
-                }
+                0 => return Err(P2pError::Disconnected),
                 n => {
                     read += n;
                 }
@@ -365,6 +361,21 @@ impl Connection {
         self.bytes_in.fetch_add(read, Ordering::Relaxed);
 
         Ok(read)
+    }
+
+    // this function will wait until something is sent to the socket if it's in blocking mode
+    // this return the size of data read & set in the buffer.
+    // used to only lock one time the stream and read on it
+    // on any error, it will considered as disconnected
+    async fn read_bytes_from_stream(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<usize> {
+        match self.read_bytes_from_stream_internal(stream, buf).await {
+            Ok(read) => Ok(read),
+            Err(e) => {
+                debug!("Failed to read bytes from {}: {}", self.get_address(), e);
+                self.closed.store(true, Ordering::SeqCst);
+                Err(e)
+            }
+        }
     }
 
     // Close internal close directly the stream
