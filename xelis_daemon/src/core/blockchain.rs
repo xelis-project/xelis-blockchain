@@ -1593,6 +1593,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("Block {} is already in chain!", block_hash);
             return Err(BlockchainError::AlreadyInChain)
         }
+        debug!("Block {} is not in chain, processing it", block_hash);
 
         let current_timestamp = get_current_time_in_millis(); 
         if block.get_timestamp() > current_timestamp + TIMESTAMP_IN_FUTURE_LIMIT { // accept 2s in future
