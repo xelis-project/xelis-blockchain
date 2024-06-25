@@ -219,6 +219,11 @@ impl Transaction {
         &self.source_commitments
     }
 
+    // Get the used assets
+    pub fn get_assets(&self) -> impl Iterator<Item = &Hash> {
+        self.source_commitments.iter().map(|c| &c.asset)
+    }
+
     // Get the range proof
     pub fn get_range_proof(&self) -> &RangeProof {
         &self.range_proof
