@@ -12,7 +12,7 @@ use crate::core::{
     storage::{sled::ACCOUNTS_COUNT, SledStorage},
 };
 
-use super::{AssetProvider, BalanceProvider};
+use super::{AssetProvider, BalanceProvider, NetworkProvider};
 
 #[async_trait]
 pub trait NonceProvider: BalanceProvider {

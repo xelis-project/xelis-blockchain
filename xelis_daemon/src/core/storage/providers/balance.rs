@@ -12,10 +12,10 @@ use crate::core::{
     error::{BlockchainError, DiskContext},
     storage::SledStorage
 };
-use super::AssetProvider;
+use super::{NetworkProvider, AssetProvider};
 
 #[async_trait]
-pub trait BalanceProvider: AssetProvider {
+pub trait BalanceProvider: AssetProvider + NetworkProvider {
     // Check if a balance exists for asset and key
     async fn has_balance_for(&self, key: &PublicKey, asset: &Hash) -> Result<bool, BlockchainError>;
 

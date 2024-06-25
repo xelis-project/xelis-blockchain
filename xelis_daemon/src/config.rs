@@ -6,6 +6,7 @@ use xelis_common::{
         Hash,
         PublicKey
     },
+    block::BlockVersion,
     difficulty::Difficulty,
     network::Network,
     time::TimestampSeconds,
@@ -180,7 +181,7 @@ pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 const HARD_FORKS: [HardFork; 1] = [
     HardFork {
         height: 0,
-        version: 0,
+        version: BlockVersion::V0,
         changelog: "Initial version",
     }
 ];
@@ -189,12 +190,12 @@ const HARD_FORKS: [HardFork; 1] = [
 const TESTNET_HARD_FORKS: [HardFork; 2] = [
     HardFork {
         height: 0,
-        version: 0,
+        version: BlockVersion::V0,
         changelog: "Initial version",
     },
     HardFork {
         height: 5,
-        version: 1,
+        version: BlockVersion::V1,
         changelog: "xelis-hash v2",
     }
 ];

@@ -12,7 +12,6 @@ use indexmap::IndexSet;
 use xelis_common::{
     block::{Block, BlockHeader},
     crypto::Hash,
-    network::Network,
     transaction::Transaction,
 };
 use crate::core::error::BlockchainError;
@@ -21,10 +20,7 @@ use crate::core::error::BlockchainError;
 pub type Tips = HashSet<Hash>;
 
 #[async_trait]
-pub trait Storage: BlockExecutionOrderProvider + DagOrderProvider + PrunedTopoheightProvider + NonceProvider + AccountProvider + ClientProtocolProvider + BlockDagProvider + MerkleHashProvider + Sync + Send + 'static {
-    // Is the chain running on mainnet
-    fn is_mainnet(&self) -> bool;
-
+pub trait Storage: BlockExecutionOrderProvider + DagOrderProvider + PrunedTopoheightProvider + NonceProvider + AccountProvider + ClientProtocolProvider + BlockDagProvider + MerkleHashProvider + NetworkProvider + Sync + Send + 'static {
     // Clear caches if exists
     async fn clear_caches(&mut self) -> Result<(), BlockchainError>;
 
@@ -65,15 +61,6 @@ pub trait Storage: BlockExecutionOrderProvider + DagOrderProvider + PrunedTopohe
 
     // same as above but for registrations
     async fn create_snapshot_registrations_at_topoheight(&mut self, topoheight: u64) -> Result<(), BlockchainError>;
-
-    // Get the network on which the chain is running
-    fn get_network(&self) -> Result<Network, BlockchainError>;
-
-    // Verify if we already marked this chain as having a network
-    fn has_network(&self) -> Result<bool, BlockchainError>;
-
-    // Set the network on which the chain is running
-    fn set_network(&mut self, network: &Network) -> Result<(), BlockchainError>;
 
     // Count is the number of blocks (topoheight) to rewind
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64, stable_height: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError>;

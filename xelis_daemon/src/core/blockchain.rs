@@ -20,6 +20,7 @@ use xelis_common::{
     block::{
         Block,
         BlockHeader,
+        BlockVersion,
         EXTRA_NONCE_SIZE
     },
     config::{
@@ -498,7 +499,7 @@ impl<S: Storage> Blockchain<S> {
         } else {
             warn!("No genesis block found!");
             info!("Generating a new genesis block...");
-            let header = BlockHeader::new(0, 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
+            let header = BlockHeader::new(BlockVersion::V0, 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
             let block = Block::new(Immutable::Owned(header), Vec::new());
             let block_hash = block.hash();
             info!("Genesis generated: {} with {:?} {}", block.to_hex(), block_hash, block_hash);
@@ -1318,6 +1319,7 @@ impl<S: Storage> Blockchain<S> {
                 return Err(BlockchainError::TxAlreadyInBlockchain(hash))
             }
 
+            let stable_topoheight = self.get_stable_topoheight();
             let current_topoheight = self.get_topo_height();
             // get the highest nonce available
             // if presents, it means we have at least one tx from this owner in mempool
@@ -1336,7 +1338,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             let version = get_version_at_height(self.get_network(), self.get_height());
-            mempool.add_tx(storage, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
+            mempool.add_tx(storage, stable_topoheight, current_topoheight, hash.clone(), tx.clone(), tx_size, version).await?;
         }
 
         if broadcast {
@@ -1513,9 +1515,10 @@ impl<S: Storage> Blockchain<S> {
         let mut total_txs_size = 0;
 
         // data used to verify txs
+        let stable_topoheight = self.get_stable_topoheight();
         let topoheight = self.get_topo_height();
         trace!("build chain state for block template");
-        let mut chain_state = ChainState::new(storage, topoheight, block.get_version());
+        let mut chain_state = ChainState::new(storage, stable_topoheight, topoheight, block.get_version());
 
         let mut failed_sources = HashSet::new();
         while let Some(TxSelectorEntry { size, hash, tx }) = tx_selector.next() {
@@ -1717,7 +1720,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("verifying {} TXs in block {}", txs_len, block_hash);
-            let mut chain_state = ChainState::new(storage, current_topoheight, version);
+            let mut chain_state = ChainState::new(storage, self.get_stable_topoheight(), current_topoheight, version);
             // Cache to retrieve only one time all TXs hashes until stable height
             let mut all_parents_txs: Option<HashSet<Hash>> = None;
             let mut batch = Vec::with_capacity(block.get_txs_count());
@@ -1967,7 +1970,7 @@ impl<S: Storage> Blockchain<S> {
                 let mut total_fees = 0;
                 // Chain State used for the verification
                 trace!("building chain state to execute TXs in block {}", block_hash);
-                let mut chain_state = ApplicableChainState::new(storage, highest_topo, version);
+                let mut chain_state = ApplicableChainState::new(storage, base_topo_height, highest_topo, version);
 
                 // compute rewards & execute txs
                 for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
@@ -2124,6 +2127,7 @@ impl<S: Storage> Blockchain<S> {
         // update stable height and difficulty in cache
         {
             let (stable_hash, stable_height) = self.find_common_base::<S, _>(&storage, &tips).await?;
+            debug_assert_eq!(stable_height, base_height);
             if should_track_events.contains(&NotifyEvent::StableHeightChanged) {
                 // detect the change in stable height
                 let previous_stable_height = self.get_stable_height();
@@ -2138,6 +2142,7 @@ impl<S: Storage> Blockchain<S> {
 
             // Search the topoheight of the stable block
             let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
+            assert_eq!(stable_topoheight, base_topo_height);
             if should_track_events.contains(&NotifyEvent::StableTopoHeightChanged) {
                 // detect the change in stable topoheight
                 let previous_stable_topoheight = self.get_stable_topoheight();
@@ -2168,7 +2173,7 @@ impl<S: Storage> Blockchain<S> {
             let mut mempool = self.mempool.write().await;
             debug!("mempool write mode ok");
             let version = get_version_at_height(self.get_network(), current_height);
-            mempool.clean_up(&*storage, highest_topo, version).await
+            mempool.clean_up(&*storage, base_topo_height, highest_topo, version).await
         } else {
             Vec::new()
         };
@@ -2567,7 +2572,7 @@ impl<S: Storage> Blockchain<S> {
 
 // Estimate the required fees for a transaction
 // For V1, new keys are only counted one time for creation fee instead of N transfers to it
-pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: u64, tx: &Transaction, version: u8) -> Result<u64, BlockchainError> {
+pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: u64, tx: &Transaction, version: BlockVersion) -> Result<u64, BlockchainError> {
     let mut output_count = 0;
     let mut new_addresses = 0;
     let mut processed_keys = HashSet::new();
@@ -2575,7 +2580,7 @@ pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current
         output_count = transfers.len();
         for transfer in transfers {
             if !provider.is_account_registered_at_topoheight(transfer.get_destination(), current_topoheight).await? {
-                if version == 0 || !processed_keys.contains(&transfer.get_destination()) {
+                if version == BlockVersion::V0 || !processed_keys.contains(&transfer.get_destination()) {
                     new_addresses += 1;
                     processed_keys.insert(transfer.get_destination());
                 }

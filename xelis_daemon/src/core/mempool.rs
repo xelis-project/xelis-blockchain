@@ -20,7 +20,8 @@ use xelis_common::{
         Hash,
         PublicKey
     },
-    transaction::Transaction
+    transaction::Transaction,
+    block::BlockVersion
 };
 
 // Wrap a TX with its hash and size in bytes for faster access
@@ -70,8 +71,8 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub async fn add_tx<S: Storage>(&mut self, storage: &S, topoheight: u64, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: u8) -> Result<(), BlockchainError> {
-        let mut state = MempoolState::new(&self, storage, topoheight, block_version);
+    pub async fn add_tx<S: Storage>(&mut self, storage: &S, stable_topoheight: u64, topoheight: u64, hash: Hash, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
+        let mut state = MempoolState::new(&self, storage, stable_topoheight, topoheight, block_version);
         tx.verify(&mut state).await?;
 
         let balances = state.get_sender_balances(tx.get_source())
@@ -280,7 +281,7 @@ impl Mempool {
     // Because of DAG reorg, we can't only check updated keys from new block,
     // as a block could be orphaned and the nonce order would change
     // So we need to check all keys from mempool and compare it from storage
-    pub async fn clean_up<S: Storage>(&mut self, storage: &S, topoheight: u64, block_version: u8) -> Vec<(Arc<Hash>, SortedTx)> {
+    pub async fn clean_up<S: Storage>(&mut self, storage: &S, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Vec<(Arc<Hash>, SortedTx)> {
         trace!("Cleaning up mempool...");
 
         // All deleted sorted txs with their hashes
@@ -411,7 +412,7 @@ impl Mempool {
                         // NOTE: this can be revert easily in case we are deleting valid TXs also,
                         // But will be slower during high traffic
                         debug!("Verifying TXs ({}) for sender {} at topoheight {}", txs_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<String>>().join(", "), key.as_address(self.mainnet), topoheight);
-                        let mut state = MempoolState::new(&self, storage, topoheight, block_version);
+                        let mut state = MempoolState::new(&self, storage, stable_topoheight, topoheight, block_version);
                         if let Err(e) = Transaction::verify_batch(txs.as_slice(), &mut state).await {
                             warn!("Error while verifying TXs for sender {}: {}", key.as_address(self.mainnet), e);
                             for (hash, tx) in txs_hashes.iter().zip(txs) {

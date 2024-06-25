@@ -1,5 +1,10 @@
 use log::trace;
-use xelis_common::{difficulty::Difficulty, time::TimestampMillis, varuint::VarUint};
+use xelis_common::{
+    difficulty::Difficulty,
+    time::TimestampMillis,
+    varuint::VarUint,
+    block::BlockVersion
+};
 
 mod v1;
 mod v2;
@@ -41,22 +46,20 @@ fn kalman_filter(z: VarUint, x_est_prev: VarUint, p_prev: VarUint, shift: u64, l
 // Calculate the required difficulty for the next block based on the solve time of the previous block
 // We are using a Kalman filter to estimate the hashrate and adjust the difficulty
 // This function will determine which algorithm to use based on the version
-pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: TimestampMillis, previous_difficulty: Difficulty, p: VarUint, minimum_difficulty: Difficulty, version: u8) -> (Difficulty, VarUint) {
+pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: TimestampMillis, previous_difficulty: Difficulty, p: VarUint, minimum_difficulty: Difficulty, version: BlockVersion) -> (Difficulty, VarUint) {
     let solve_time = (timestamp - parent_timestamp).max(1);
 
     match version {
-        0 => v1::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty),
-        1 => v2::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty),
-        _ => unreachable!("Unknown difficulty version: {}", version)
+        BlockVersion::V0 => v1::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty),
+        BlockVersion::V1 => v2::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty),
     }
 }
 
 // Get the process noise covariance based on the version
 // It is used by first blocks on a new version
-pub fn get_covariance_p(version: u8) -> VarUint {
+pub fn get_covariance_p(version: BlockVersion) -> VarUint {
     match version {
-        0 => v1::P,
-        1 => v2::P,
-        _ => unreachable!("Unknown difficulty version: {}", version)
+        BlockVersion::V0 => v1::P,
+        BlockVersion::V1 => v2::P
     }
 }

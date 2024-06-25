@@ -1,6 +1,7 @@
 use std::collections::{hash_map::Entry, HashMap};
 use async_trait::async_trait;
 use xelis_common::{
+    block::BlockVersion,
     crypto::{
         elgamal::Ciphertext,
         Hash,
@@ -38,19 +39,22 @@ pub struct MempoolState<'a, S: Storage> {
     // Sender accounts
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
+    // The current stable topoheight of the chain
+    stable_topoheight: u64,
     // The current topoheight of the chain
     topoheight: u64,
     // Block header version
-    block_version: u8,
+    block_version: BlockVersion,
 }
 
 impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, topoheight: u64, block_version: u8) -> Self {
+    pub fn new(mempool: &'a Mempool, storage: &'a S, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Self {
         Self {
             mempool,
             storage,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
+            stable_topoheight,
             topoheight,
             block_version,
         }
@@ -181,7 +185,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(self.storage, tx, self.topoheight, self.get_block_version()).await
+        super::pre_verify_tx(self.storage, tx, self.stable_topoheight, self.topoheight, self.get_block_version()).await
     }
 
     /// Get the balance ciphertext for a receiver account
@@ -232,7 +236,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     }
 
     /// Get the block version
-    fn get_block_version(&self) -> u8 {
+    fn get_block_version(&self) -> BlockVersion {
         self.block_version
     }
 }

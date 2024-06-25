@@ -14,6 +14,7 @@ use xelis_common::{
         Hash,
         PublicKey
     },
+    block::BlockVersion,
     transaction::{
         verify::BlockchainVerificationState,
         Reference,
@@ -134,10 +135,12 @@ pub struct ChainState<'a, S: Storage> {
     // Sender accounts
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
+    // Current stable topoheight of the snapshot
+    stable_topoheight: u64,
     // Current topoheight of the snapshot
     topoheight: u64,
     // Block header version
-    block_version: u8,
+    block_version: BlockVersion,
 }
 
 // Chain State that can be applied to the mutable storage
@@ -172,9 +175,9 @@ impl<'a, S: Storage> AsMut<ChainState<'a, S>> for ApplicableChainState<'a, S> {
 }
 
 impl<'a, S: Storage> ApplicableChainState<'a, S> {
-    pub fn new(storage: &'a mut S, topoheight: u64, block_version: u8) -> Self {
+    pub fn new(storage: &'a mut S, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Self {
         Self {
-            inner: ChainState::with(StorageReference::Mutable(storage), topoheight, block_version)
+            inner: ChainState::with(StorageReference::Mutable(storage), stable_topoheight, topoheight, block_version)
         }
     }
 
@@ -253,7 +256,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                             trace!("{} has no balance for {} at topoheight {}, substract output sum", key.as_address(self.inner.storage.is_mainnet()), asset, self.inner.topoheight);
                             *new_version.get_mut_balance().computable()? -= output_sum;
 
-                            if self.inner.block_version == 0 {
+                            if self.inner.block_version == BlockVersion::V0 {
                                 new_version.set_balance_type(BalanceType::Output);
                             } else {
                                 // Report the output balance to the next topoheight
@@ -307,18 +310,19 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 }
 
 impl<'a, S: Storage> ChainState<'a, S> {
-    fn with(storage: StorageReference<'a, S>, topoheight: u64, block_version: u8) -> Self {
+    fn with(storage: StorageReference<'a, S>, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Self {
         Self {
             storage,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
+            stable_topoheight,
             topoheight,
             block_version
         }
     }
 
-    pub fn new(storage: &'a S, topoheight: u64, block_version: u8) -> Self {
-        Self::with(StorageReference::Immutable(storage), topoheight, block_version)
+    pub fn new(storage: &'a S, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Self {
+        Self::with(StorageReference::Immutable(storage), stable_topoheight, topoheight, block_version)
     }
 
     // Get the storage used by the chain state
@@ -457,7 +461,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(self.storage.as_ref(), tx, self.topoheight, self.get_block_version()).await
+        super::pre_verify_tx(self.storage.as_ref(), tx, self.stable_topoheight, self.topoheight, self.get_block_version()).await
     }
 
     /// Get the balance ciphertext for a receiver account
@@ -508,7 +512,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
     }
 
     /// Get the block version
-    fn get_block_version(&self) -> u8 {
+    fn get_block_version(&self) -> BlockVersion {
         self.block_version
     }
 } 

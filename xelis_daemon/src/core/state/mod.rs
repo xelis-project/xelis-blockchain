@@ -13,17 +13,18 @@ use xelis_common::{
     account::VersionedBalance,
     crypto::{Hash, PublicKey},
     transaction::{Reference, Transaction},
+    block::BlockVersion,
     utils::format_xelis
 };
 use super::{
     blockchain,
     error::BlockchainError,
-    storage::{AccountProvider, Storage}
+    storage::{AccountProvider, BalanceProvider, DagOrderProvider}
 };
 
 // Verify a transaction before adding it to mempool/chain state
 // We only verify the reference and the required fees
-pub (super) async fn pre_verify_tx<P: AccountProvider>(provider: &P, tx: &Transaction, topoheight: u64, block_version: u8) -> Result<(), BlockchainError> {
+pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provider: &P, tx: &Transaction, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Result<(), BlockchainError> {
     if tx.get_version() != 0 {
         debug!("Invalid version: {}", tx.get_version());
         return Err(BlockchainError::InvalidTxVersion);
@@ -42,6 +43,22 @@ pub (super) async fn pre_verify_tx<P: AccountProvider>(provider: &P, tx: &Transa
         return Err(BlockchainError::InvalidReferenceTopoheight);
     }
 
+    // Reference is in stable topoheight
+    // for fast synced nodes, we must ensure that the TX is using the latest version available
+    if block_version != BlockVersion::V0 && reference.topoheight <= stable_topoheight {
+        for asset in tx.get_assets() {
+            if let Some((topo, _)) = provider.get_balance_at_maximum_topoheight(tx.get_source(), asset, stable_topoheight).await? {
+                if topo > reference.topoheight {
+                    debug!("Invalid reference: last stable balance for asset {} is at topoheight {} (stable topoheight is {}) while reference is {}", asset, topo, stable_topoheight, reference.topoheight);
+                    return Err(BlockchainError::InvalidReferenceTopoheight);
+                }
+            } else {
+                debug!("Invalid reference: no balance found for asset {} at stable topoheight {}", asset, stable_topoheight);
+                return Err(BlockchainError::NoStableReferenceFound);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -51,7 +68,7 @@ pub (super) async fn pre_verify_tx<P: AccountProvider>(provider: &P, tx: &Transa
 // - If we should use the output balance for verification
 // - is it a new version created
 // - Versioned Balance to use for verification
-pub (super) async fn search_versioned_balance_for_reference<S: Storage>(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: u64, reference: &Reference) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
+pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider + BalanceProvider>(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: u64, reference: &Reference) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
     trace!("search versioned balance for {} at topoheight {}, reference: {}", key.as_address(storage.is_mainnet()), current_topoheight, reference.topoheight);
     // Scenario A
     // TX A has reference topo 1000
