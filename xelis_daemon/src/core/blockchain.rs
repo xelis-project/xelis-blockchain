@@ -2565,16 +2565,20 @@ impl<S: Storage> Blockchain<S> {
     }
 }
 
-
 // Estimate the required fees for a transaction
-pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: u64, tx: &Transaction) -> Result<u64, BlockchainError> {
+// For V1, new keys are only counted one time for creation fee instead of N transfers to it
+pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: u64, tx: &Transaction, version: u8) -> Result<u64, BlockchainError> {
     let mut output_count = 0;
     let mut new_addresses = 0;
+    let mut processed_keys = HashSet::new();
     if let TransactionType::Transfers(transfers) = tx.get_data() {
         output_count = transfers.len();
         for transfer in transfers {
             if !provider.is_account_registered_at_topoheight(transfer.get_destination(), current_topoheight).await? {
-                new_addresses += 1;
+                if version == 0 || !processed_keys.contains(&transfer.get_destination()) {
+                    new_addresses += 1;
+                    processed_keys.insert(transfer.get_destination());
+                }
             }
         }
     }
