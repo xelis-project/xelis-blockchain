@@ -1,12 +1,49 @@
 mod mempool_state;
 mod chain_state;
 
-use log::{trace, debug};
 pub use mempool_state::MempoolState;
-pub use chain_state::{ChainState, ApplicableChainState, StorageReference};
-use xelis_common::{account::VersionedBalance, crypto::{Hash, PublicKey}, transaction::Reference};
+pub use chain_state::{
+    ChainState,
+    ApplicableChainState,
+    StorageReference
+};
 
-use super::{error::BlockchainError, storage::Storage};
+use log::{trace, debug};
+use xelis_common::{
+    account::VersionedBalance,
+    crypto::{Hash, PublicKey},
+    transaction::{Reference, Transaction},
+    utils::format_xelis
+};
+use super::{
+    blockchain,
+    error::BlockchainError,
+    storage::{AccountProvider, Storage}
+};
+
+// Verify a transaction before adding it to mempool/chain state
+// We only verify the reference and the required fees
+pub (super) async fn pre_verify_tx<P: AccountProvider>(provider: &P, tx: &Transaction, topoheight: u64) -> Result<(), BlockchainError> {
+    if tx.get_version() != 0 {
+        debug!("Invalid version: {}", tx.get_version());
+        return Err(BlockchainError::InvalidTxVersion);
+    }
+
+    let required_fees = blockchain::estimate_required_tx_fees(provider, topoheight, tx).await?;
+    if required_fees > tx.get_fee() {
+        debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
+        return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));
+    }
+
+    let reference = tx.get_reference();
+    // Verify that it is not a fake topoheight
+    if topoheight < reference.topoheight {
+        debug!("Invalid reference: topoheight {} is higher than chain {}", reference.topoheight, topoheight);
+        return Err(BlockchainError::InvalidReferenceTopoheight);
+    }
+
+    Ok(())
+}
 
 // Create a sender echange
 // This is where the magic happens to fix front running problems

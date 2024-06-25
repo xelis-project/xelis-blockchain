@@ -12,7 +12,6 @@ use xelis_common::{
     crypto::{
         elgamal::Ciphertext,
         Hash,
-        Hashable,
         PublicKey
     },
     transaction::{
@@ -23,7 +22,6 @@ use xelis_common::{
     utils::format_xelis
 };
 use crate::core::{
-    blockchain,
     error::BlockchainError,
     storage::Storage
 };
@@ -459,38 +457,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        // Check the version
-        if tx.get_version() != 0 {
-            debug!("Invalid version for tx {}: {}", tx.hash(), tx.get_version());
-            return Err(BlockchainError::InvalidTxVersion);
-        }
-
-        // Verified that minimal fees are set
-        let required_fees = blockchain::estimate_required_tx_fees(self.get_storage(), self.topoheight, tx).await?;
-        if required_fees > tx.get_fee() {
-            debug!("Invalid fees for tx {}: {} required, {} provided", tx.hash(), format_xelis(required_fees), format_xelis(tx.get_fee()));
-            return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));
-        }
-
-        let reference = tx.get_reference();
-        // Verify that the block he is built upon exists
-        // if !self.storage.has_block_with_hash(&reference.hash).await? || !self.storage.is_block_topological_ordered(&reference.hash).await {
-        //     debug!("TX {} reference {} was not found in storage, checking if its below pruned topoheight", tx.hash(), reference.hash);
-        //     let pruned_topoheight = self.storage.get_pruned_topoheight().await?
-        //         .unwrap_or(0);
-        //     if pruned_topoheight < reference.topoheight {
-        //         debug!("Invalid reference for tx {}: block {} not found", tx.hash(), reference.hash);
-        //         return Err(BlockchainError::InvalidReferenceHash);
-        //     }
-        // }
-
-        // Verify that it is not a fake topoheight
-        if self.topoheight < reference.topoheight {
-            debug!("Invalid reference for tx {}: topoheight {} is higher than chain {}", tx.hash(), reference.topoheight, self.topoheight);
-            return Err(BlockchainError::InvalidReferenceTopoheight);
-        }
-
-        Ok(())
+        super::pre_verify_tx(self.storage.as_ref(), tx, self.topoheight).await
     }
 
     /// Get the balance ciphertext for a receiver account

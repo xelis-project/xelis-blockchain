@@ -1,6 +1,5 @@
 use std::collections::{hash_map::Entry, HashMap};
 use async_trait::async_trait;
-use log::debug;
 use xelis_common::{
     crypto::{
         elgamal::Ciphertext,
@@ -11,11 +10,9 @@ use xelis_common::{
         verify::BlockchainVerificationState,
         Reference,
         Transaction
-    },
-    utils::format_xelis
+    }
 };
 use crate::core::{
-    blockchain,
     error::BlockchainError,
     mempool::Mempool,
     storage::Storage
@@ -184,32 +181,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        // Check the version
-        if tx.get_version() != 0 {
-            debug!("Invalid version: {}", tx.get_version());
-            return Err(BlockchainError::InvalidTxVersion);
-        }
-
-        let required_fees = blockchain::estimate_required_tx_fees(self.storage, self.topoheight, tx).await?;
-        if required_fees > tx.get_fee() {
-            debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
-            return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));
-        }
-
-        let reference = tx.get_reference();
-        // Verify that the block he is built upon exists
-        // if !self.storage.has_block_with_hash(&reference.hash).await? || !self.storage.is_block_topological_ordered(&reference.hash).await {
-        //     debug!("Invalid reference: block {} not found", reference.hash);
-        //     return Err(BlockchainError::InvalidReferenceHash);
-        // }
-
-        // Verify that it is not a fake topoheight
-        if self.topoheight < reference.topoheight {
-            debug!("Invalid reference: topoheight {} is higher than chain {}", reference.topoheight, self.topoheight);
-            return Err(BlockchainError::InvalidReferenceTopoheight);
-        }
-
-        Ok(())
+        super::pre_verify_tx(self.storage, tx, self.topoheight).await
     }
 
     /// Get the balance ciphertext for a receiver account
