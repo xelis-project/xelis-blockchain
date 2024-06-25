@@ -1,8 +1,41 @@
 use bulletproofs::RangeProof;
-use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, RistrettoPoint, Scalar};
+use curve25519_dalek::{
+    ristretto::CompressedRistretto,
+    traits::Identity,
+    RistrettoPoint,
+    Scalar
+};
 use log::{debug, trace};
 use merlin::Transcript;
-use crate::{config::XELIS_ASSET, crypto::{elgamal::{Ciphertext, CompressedPublicKey, DecompressionError, DecryptHandle, PedersenCommitment}, proofs::{BatchCollector, ProofVerificationError, BP_GENS, BULLET_PROOF_SIZE, PC_GENS}, Hash, ProtocolTranscript, SIGNATURE_SIZE}, serializer::Serializer, transaction::{EXTRA_DATA_LIMIT_SIZE, EXTRA_DATA_LIMIT_SUM_SIZE, MAX_TRANSFER_COUNT}};
+use crate::{
+    config::XELIS_ASSET,
+    crypto::{
+        elgamal::{
+            Ciphertext,
+            CompressedPublicKey,
+            DecompressionError,
+            DecryptHandle,
+            PedersenCommitment
+        },
+        proofs::{
+            BatchCollector,
+            ProofVerificationError,
+            BP_GENS,
+            BULLET_PROOF_SIZE,
+            PC_GENS
+        },
+        Hash,
+        ProtocolTranscript,
+        SIGNATURE_SIZE
+    },
+    serializer::Serializer,
+    transaction::{
+        EXTRA_DATA_LIMIT_SIZE,
+        EXTRA_DATA_LIMIT_SUM_SIZE,
+        MAX_TRANSFER_COUNT
+    },
+    block::BlockVersion
+};
 use super::{Reference, Role, Transaction, TransactionType, TransferPayload};
 use thiserror::Error;
 use std::iter;
@@ -61,7 +94,7 @@ pub trait BlockchainVerificationState<'a, E> {
     ) -> Result<(), E>;
 
     /// Get the block version in which TX is executed
-    fn get_block_version(&self) -> u8;
+    fn get_block_version(&self) -> BlockVersion;
 }
 
 #[derive(Error, Debug, Clone)]
@@ -249,7 +282,7 @@ impl Transaction {
             }
 
             // TODO: this is temporary until the hardfork has passed
-            let max_size = if state.get_block_version() == 0 {
+            let max_size = if state.get_block_version() == BlockVersion::V0 {
                 EXTRA_DATA_LIMIT_SIZE
             } else {
                 EXTRA_DATA_LIMIT_SUM_SIZE

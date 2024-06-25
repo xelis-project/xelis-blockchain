@@ -13,7 +13,7 @@ use serde::{
 };
 use crate::{
     account::{CiphertextCache, VersionedBalance, VersionedNonce},
-    block::{EXTRA_NONCE_SIZE, Algorithm},
+    block::{Algorithm, BlockVersion, EXTRA_NONCE_SIZE},
     crypto::{Address, Hash},
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
@@ -60,7 +60,7 @@ pub struct RPCBlockResponse<'a> {
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
     pub total_fees: Option<u64>,
     pub total_size_in_bytes: usize,
-    pub version: u8,
+    pub version: BlockVersion,
     pub tips: Cow<'a, IndexSet<Hash>>,
     pub timestamp: TimestampMillis,
     pub height: u64,
@@ -469,7 +469,7 @@ pub struct HardFork {
     // block height to start hard fork
     pub height: u64,
     // Block version to use
-    pub version: u8,
+    pub version: BlockVersion,
     // All the changes that will be applied
     pub changelog: &'static str
 }

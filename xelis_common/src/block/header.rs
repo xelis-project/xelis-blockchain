@@ -3,7 +3,7 @@ use indexmap::IndexSet;
 use serde::Deserialize;
 use log::debug;
 use crate::{
-    block::{BLOCK_WORK_SIZE, HEADER_WORK_SIZE},
+    block::{BLOCK_WORK_SIZE, HEADER_WORK_SIZE, BlockVersion},
     config::TIPS_LIMIT,
     crypto::{
         elgamal::CompressedPublicKey,
@@ -36,7 +36,7 @@ pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserializer: D
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct BlockHeader {
     // Version of the block
-    pub version: u8,
+    pub version: BlockVersion,
     // All TIPS of the block (previous hashes of the block)
     pub tips: IndexSet<Hash>,
     // Timestamp in milliseconds
@@ -59,7 +59,7 @@ pub struct BlockHeader {
 }
 
 impl BlockHeader {
-    pub fn new(version: u8, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
+    pub fn new(version: BlockVersion, height: u64, timestamp: TimestampMillis, tips: IndexSet<Hash>, extra_nonce: [u8; EXTRA_NONCE_SIZE], miner: CompressedPublicKey, txs_hashes: IndexSet<Hash>) -> Self {
         BlockHeader {
             version,
             height,
@@ -81,7 +81,7 @@ impl BlockHeader {
         self.extra_nonce = extra_nonce;
     }
 
-    pub fn get_version(&self) -> u8 {
+    pub fn get_version(&self) -> BlockVersion {
         self.version
     }
 
@@ -156,7 +156,7 @@ impl BlockHeader {
     pub fn get_work(&self) -> Vec<u8> {
         let mut bytes: Vec<u8> = Vec::with_capacity(HEADER_WORK_SIZE);
 
-        bytes.push(self.version); // 1
+        bytes.extend(self.version.to_bytes()); // 1
         bytes.extend(&self.height.to_be_bytes()); // 1 + 8 = 9
         bytes.extend(self.get_tips_hash().as_bytes()); // 9 + 32 = 41
         bytes.extend(self.get_txs_hash().as_bytes()); // 41 + 32 = 73
@@ -197,7 +197,7 @@ impl BlockHeader {
 
 impl Serializer for BlockHeader {
     fn write(&self, writer: &mut Writer) {
-        writer.write_u8(self.version); // 1
+        self.version.write(writer); // 1
         writer.write_u64(&self.height); // 1 + 8 = 9
         writer.write_u64(&self.timestamp); // 9 + 8 = 17
         writer.write_u64(&self.nonce); // 17 + 8 = 25
@@ -216,7 +216,7 @@ impl Serializer for BlockHeader {
     }
 
     fn read(reader: &mut Reader) -> Result<BlockHeader, ReaderError> {
-        let version = reader.read_u8()?;
+        let version = BlockVersion::read(reader)?;
         let height = reader.read_u64()?;
         let timestamp = reader.read_u64()?;
         let nonce = reader.read_u64()?;
@@ -297,7 +297,7 @@ impl Display for BlockHeader {
 #[cfg(test)]
 mod tests {
     use indexmap::IndexSet;
-    use crate::{crypto::{Hash, Hashable, KeyPair}, serializer::Serializer};
+    use crate::{block::BlockVersion, crypto::{Hash, Hashable, KeyPair}, serializer::Serializer};
     use super::BlockHeader;
 
     #[test]
@@ -306,7 +306,7 @@ mod tests {
         tips.insert(Hash::zero());
 
         let miner = KeyPair::new().get_public_key().compress();
-        let header = BlockHeader::new(0, 0, 0, tips, [0u8; 32], miner, IndexSet::new());
+        let header = BlockHeader::new(BlockVersion::V0, 0, 0, tips, [0u8; 32], miner, IndexSet::new());
 
         let serialized = header.to_bytes();
         assert!(serialized.len() == header.size());

@@ -12,7 +12,8 @@ use crate::{
         PublicKey
     },
     serializer::Serializer,
-    transaction::{TransactionType, MAX_TRANSFER_COUNT}
+    transaction::{TransactionType, MAX_TRANSFER_COUNT},
+    block::BlockVersion
 };
 use super::{
     extra_data::{
@@ -391,8 +392,8 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
         self.accounts.get_mut(account).map(|account| account.nonce = new_nonce).ok_or(())
     }
 
-    fn get_block_version(&self) -> u8 {
-        0
+    fn get_block_version(&self) -> BlockVersion {
+        BlockVersion::V0
     }
 }
 
