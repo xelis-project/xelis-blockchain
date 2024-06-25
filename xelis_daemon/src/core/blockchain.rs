@@ -2126,30 +2126,25 @@ impl<S: Storage> Blockchain<S> {
 
         // update stable height and difficulty in cache
         {
-            let (stable_hash, stable_height) = self.find_common_base::<S, _>(&storage, &tips).await?;
-            debug_assert_eq!(stable_height, base_height);
             if should_track_events.contains(&NotifyEvent::StableHeightChanged) {
                 // detect the change in stable height
                 let previous_stable_height = self.get_stable_height();
-                if stable_height != previous_stable_height {
+                if base_height != previous_stable_height {
                     let value = json!(StableHeightChangedEvent {
                         previous_stable_height,
-                        new_stable_height: stable_height
+                        new_stable_height: base_height
                     });
                     events.entry(NotifyEvent::StableHeightChanged).or_insert_with(Vec::new).push(value);
                 }
             }
 
-            // Search the topoheight of the stable block
-            let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
-            assert_eq!(stable_topoheight, base_topo_height);
             if should_track_events.contains(&NotifyEvent::StableTopoHeightChanged) {
                 // detect the change in stable topoheight
                 let previous_stable_topoheight = self.get_stable_topoheight();
-                if stable_topoheight != previous_stable_topoheight {
+                if base_topo_height != previous_stable_topoheight {
                     let value = json!(StableTopoHeightChangedEvent {
                         previous_stable_topoheight,
-                        new_stable_topoheight: stable_topoheight
+                        new_stable_topoheight: base_topo_height
                     });
                     events.entry(NotifyEvent::StableTopoHeightChanged).or_insert_with(Vec::new).push(value);
                 }
@@ -2157,7 +2152,7 @@ impl<S: Storage> Blockchain<S> {
 
             // Update caches
             self.stable_height.store(stable_height, Ordering::SeqCst);
-            self.stable_topoheight.store(stable_topoheight, Ordering::SeqCst);
+            self.stable_topoheight.store(base_topo_height, Ordering::SeqCst);
 
             trace!("update difficulty in cache");
             let (difficulty, _) = self.get_difficulty_at_tips(storage, tips.iter()).await?;
