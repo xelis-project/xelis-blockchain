@@ -572,7 +572,7 @@ impl Wallet {
 
     // Wallet has to be under a Arc to be shared to the spawn_blocking function
     pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext) -> Result<u64, WalletError> {
-        trace!("decrypt ciphertext");
+        trace!("decrypt ciphertext with a spawn blocking task");
         let account = Arc::clone(&self.inner);
         spawn_blocking(move || account.decrypt_ciphertext(&ciphertext)).await.context("Error while decrypting ciphertext")?
     }

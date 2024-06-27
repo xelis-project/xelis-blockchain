@@ -205,6 +205,7 @@ impl EncryptedStorage {
 
     // Key must be hashed or encrypted before calling this function
     fn internal_load<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
+        trace!("internal load");
         let data = tree.get(key)?.context(format!("load from disk: tree = {:?}, key = {}", tree.name(), String::from_utf8_lossy(key)))?;
         let bytes = self.cipher.decrypt_value(&data).context("Error while decrypting value from disk")?;
         let mut reader = Reader::new(&bytes);
@@ -213,12 +214,14 @@ impl EncryptedStorage {
 
     // load from disk using a hashed key, decrypt the value and deserialize it
     fn load_from_disk<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
+        trace!("load from disk");
         let hashed_key = self.cipher.hash_key(key);
         self.internal_load(tree, &hashed_key)
     }
 
     // Because we can't predict the nonce used for encryption, we make it determistic
     fn create_encrypted_key(&self, key: &[u8]) -> Result<Vec<u8>> {
+        trace!("create encrypted key");
         // the hashed key is salted so its unique and can't be recover/bruteforced
         let hashed_key = self.cipher.hash_key(key);
 
@@ -232,6 +235,7 @@ impl EncryptedStorage {
 
     // load from disk using an encrypted key, decrypt the value and deserialize it
     fn load_from_disk_with_encrypted_key<V: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<V> {
+        trace!("load from disk with encrypted key");
         let encrypted_key = self.create_encrypted_key(key)?;
         self.internal_load(tree, &encrypted_key)
     }
@@ -239,6 +243,7 @@ impl EncryptedStorage {
     // Encrypt key, encrypt data and then save to disk
     // We encrypt instead of hashing to be able to retrieve the key
     fn save_to_disk_with_encrypted_key(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
+        trace!("save to disk with encrypted key");
         let encrypted_key = self.create_encrypted_key(key)?;
         let encrypted_value = self.cipher.encrypt_value(value)?;
         tree.insert(encrypted_key, encrypted_value)?;
@@ -247,6 +252,7 @@ impl EncryptedStorage {
 
     // hash key, encrypt data and then save to disk 
     fn save_to_disk(&self, tree: &Tree, key: &[u8], value: &[u8]) -> Result<()> {
+        trace!("save to disk");
         let hashed_key = self.cipher.hash_key(key);
         tree.insert(hashed_key, self.cipher.encrypt_value(value)?)?;
         Ok(())
@@ -254,6 +260,7 @@ impl EncryptedStorage {
 
     // hash key, encrypt data and then save to disk 
     fn delete_from_disk(&self, tree: &Tree, key: &[u8]) -> Result<()> {
+        trace!("delete from disk");
         let hashed_key = self.cipher.hash_key(key);
         tree.remove(hashed_key)?;
         Ok(())
@@ -261,6 +268,7 @@ impl EncryptedStorage {
 
     // hash key, encrypt data and then save to disk 
     fn delete_from_disk_with_encrypted_key(&self, tree: &Tree, key: &[u8]) -> Result<()> {
+        trace!("delete from disk with encrypted key");
         let encrypted_key = self.create_encrypted_key(key)?;
         tree.remove(encrypted_key)?;
         Ok(())
@@ -268,18 +276,21 @@ impl EncryptedStorage {
 
     // Search if the data is present in the tree using hashed key
     fn contains_data(&self, tree: &Tree, key: &[u8]) -> Result<bool> {
+        trace!("contains data");
         let hashed_key = self.cipher.hash_key(key);
         Ok(tree.contains_key(hashed_key)?)
     }
 
     // Encrypt instead of hash the key to recover it later
     fn contains_encrypted_data(&self, tree: &Tree, key: &[u8]) -> Result<bool> {
+        trace!("contains encrypted data");
         let encrypted_key = self.create_encrypted_key(key)?;
         Ok(tree.contains_key(encrypted_key)?)
     }
 
     // Open the named tree
     fn get_custom_tree(&self, name: impl Into<String>) -> Result<Tree> {
+        trace!("get custom tree");
         let hash = self.cipher.hash_key(format!("custom_{}", name.into()));
         let tree = self.inner.db.open_tree(&hash)?;
         Ok(tree)
@@ -287,6 +298,7 @@ impl EncryptedStorage {
 
     // Store a custom serializable data 
     pub fn set_custom_data(&mut self, tree: impl Into<String>, key: &DataValue, value: &DataElement) -> Result<()> {
+        trace!("set custom data");
         let tree = self.get_custom_tree(tree)?;
         self.save_to_disk_with_encrypted_key(&tree, &key.to_bytes(), &value.to_bytes())?;
         Ok(())
@@ -294,6 +306,7 @@ impl EncryptedStorage {
 
     // Delete a custom data using its key 
     pub fn delete_custom_data(&mut self, tree: impl Into<String>, key: &DataValue) -> Result<()> {
+        trace!("delete custom data");
         let tree = self.get_custom_tree(tree)?;
         self.delete_from_disk_with_encrypted_key(&tree, &key.to_bytes())?;
         Ok(())
@@ -301,12 +314,14 @@ impl EncryptedStorage {
 
     // Retrieve a custom data in the selected format
     pub fn get_custom_data(&self, tree: impl Into<String>, key: &DataValue) -> Result<DataElement> {
+        trace!("get custom data");
         let tree = self.get_custom_tree(tree)?;
         self.load_from_disk_with_encrypted_key(&tree, &key.to_bytes())
     }
 
     // Verify if the key is present in the DB
     pub fn has_custom_data(&self, tree: impl Into<String>, key: &DataValue) -> Result<bool> {
+        trace!("has custom data");
         let tree = self.get_custom_tree(tree)?;
         self.contains_encrypted_data(&tree, &key.to_bytes())
     }
@@ -314,6 +329,7 @@ impl EncryptedStorage {
     // Search all entries with requested query_key/query_value
     // It has to go through the whole tree elements, decrypt each key/value and verify them against the query filter set
     pub fn query_db(&self, tree: impl Into<String>, query_key: Option<Query>, query_value: Option<Query>, return_on_first: bool) -> Result<QueryResult> {
+        trace!("query db");
         let tree = self.get_custom_tree(tree)?;
         let mut entries: IndexMap<DataValue, DataElement> = IndexMap::new();
         for res in tree.iter() {
@@ -367,6 +383,7 @@ impl EncryptedStorage {
 
     // Get all keys from the custom
     pub fn get_custom_tree_keys(&self, tree: &String, query: &Option<Query>) -> Result<Vec<DataValue>> {
+        trace!("get custom tree keys");
         let tree = self.get_custom_tree(tree)?;
         let mut keys = Vec::new();
         for e in tree.iter() {
@@ -387,6 +404,7 @@ impl EncryptedStorage {
     // Count entries from a tree
     // A query is possible to filter on keys
     pub fn count_custom_tree_entries(&self, tree: &String, query_key: &Option<Query>, query_value: &Option<Query>) -> Result<usize> {
+        trace!("count custom tree entries");
         let tree = self.get_custom_tree(tree)?;
         let count = if query_key.is_some() || query_value.is_some() {
             let mut count = 0;
@@ -423,6 +441,7 @@ impl EncryptedStorage {
     // this function is specific because we save the key in encrypted form (and not hashed as others)
     // returns all saved assets
     pub async fn get_assets(&self) -> Result<HashSet<Hash>> {
+        trace!("get assets");
         let mut cache = self.assets_cache.lock().await;
 
         if cache.len() == self.assets.len() {
@@ -453,6 +472,7 @@ impl EncryptedStorage {
 
     // Retrieve all assets with their decimals
     pub async fn get_assets_with_decimals(&self) -> Result<Vec<(Hash, u8)>> {
+        trace!("get assets with decimals");
         let mut cache = self.assets_cache.lock().await;
         if cache.len() == self.assets.len() {
             return Ok(cache.iter().map(|(k, v)| (k.clone(), *v)).collect());
@@ -479,6 +499,7 @@ impl EncryptedStorage {
 
     // Check if the asset is already registered
     pub async fn contains_asset(&self, asset: &Hash) -> Result<bool> {
+        trace!("contains asset");
         {
             let cache = self.assets_cache.lock().await;
             if cache.contains(asset) {
@@ -491,6 +512,7 @@ impl EncryptedStorage {
 
     // save asset with its corresponding decimals
     pub async fn add_asset(&mut self, asset: &Hash, decimals: u8) -> Result<()> {
+        trace!("add asset");
         if self.contains_asset(asset).await? {
             return Err(WalletError::AssetAlreadyRegistered.into());
         }
@@ -504,11 +526,13 @@ impl EncryptedStorage {
 
     // Retrieve the stored decimals for this asset for better display
     pub fn get_asset_decimals(&self, asset: &Hash) -> Result<u8> {
+        trace!("get asset decimals");
         self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())
     }
 
     // Retrieve the plaintext balance for this asset
     pub async fn get_plaintext_balance_for(&self, asset: &Hash) -> Result<u64> {
+        trace!("get plaintext balance for {}", asset);
         let mut cache = self.balances_cache.lock().await;
         if let Some(balance) = cache.get(asset) {
             return Ok(balance.amount);
@@ -523,6 +547,7 @@ impl EncryptedStorage {
 
     // Retrieve the balance for this asset
     pub async fn get_balance_for(&self, asset: &Hash) -> Result<Balance> {
+        trace!("get balance for {}", asset);
         let mut cache = self.balances_cache.lock().await;
         if let Some(balance) = cache.get(asset) {
             return Ok(balance.clone());
@@ -555,6 +580,7 @@ impl EncryptedStorage {
 
     // Retrieve the unconfirmed balance decoded for this asset if present
     pub async fn get_unconfirmed_balance_decoded_for(&self, asset: &Hash, compressed_ct: &CompressedCiphertext) -> Result<Option<u64>> {
+        trace!("get unconfirmed balance decoded for {}", asset);
         let mut cache = self.unconfirmed_balances_cache.lock().await;
         if let Some(balances) = cache.get_mut(asset) {
             for balance in balances.iter_mut() {
@@ -579,6 +605,7 @@ impl EncryptedStorage {
 
     // Determine if we have any balance stored
     pub async fn has_any_balance(&self) -> Result<bool> {
+        trace!("has any balance");
         let cache = self.balances_cache.lock().await;
         if !cache.is_empty() {
             return Ok(true);
@@ -589,6 +616,7 @@ impl EncryptedStorage {
 
     // Determine if we have a balance for this asset
     pub async fn has_balance_for(&self, asset: &Hash) -> Result<bool> {
+        trace!("has balance for {}", asset);
         let cache = self.balances_cache.lock().await;
         if cache.contains(asset) {
             return Ok(true);
@@ -599,6 +627,7 @@ impl EncryptedStorage {
 
     // Set the balance for this asset
     pub async fn set_balance_for(&mut self, asset: &Hash, mut balance: Balance) -> Result<()> {
+        trace!("set balance for {}", asset);
         // Clear the cache of all outdated balances
         // for this, we simply go through all versions available and delete them all until we find the one we are looking for
         // The unconfirmed balances cache may not work during front running
@@ -644,17 +673,20 @@ impl EncryptedStorage {
 
     // Retrieve a transaction saved in wallet using its hash
     pub fn get_transaction(&self, hash: &Hash) -> Result<TransactionEntry> {
+        trace!("get transaction {}", hash);
         self.load_from_disk(&self.transactions, hash.as_bytes())
     }
 
     // read whole disk and returns all transactions
     pub fn get_transactions(&self) -> Result<Vec<TransactionEntry>> {
+        trace!("get transactions");
         self.get_filtered_transactions(None, None, None, true, true, true, true, None)
     }
 
     // delete all transactions above the specified topoheight
     // This will go through each transaction, deserialize it, check topoheight, and delete it if required
     pub fn delete_transactions_above_topoheight(&mut self, topoheight: u64) -> Result<()> {
+        trace!("delete transactions above topoheight {}", topoheight);
         for el in self.transactions.iter().values() {
             let value = el?;
             let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
@@ -670,6 +702,7 @@ impl EncryptedStorage {
     // This will go through each transaction, deserialize it, check topoheight, and delete it if required
     // Maybe we can optimize it by keeping a lookuptable of topoheight -> txs ?
     pub fn delete_transactions_at_topoheight(&mut self, topoheight: u64) -> Result<()> {
+        trace!("delete transactions at topoheight {}", topoheight);
         for el in self.transactions.iter().values() {
             let value = el?;
             let entry = TransactionEntry::from_bytes(&self.cipher.decrypt_value(&value)?)?;
@@ -683,6 +716,7 @@ impl EncryptedStorage {
 
     // Filter when the data is deserialized to not load all transactions in memory
     pub fn get_filtered_transactions(&self, address: Option<&PublicKey>, min_topoheight: Option<u64>, max_topoheight: Option<u64>, accept_incoming: bool, accept_outgoing: bool, accept_coinbase: bool, accept_burn: bool, query: Option<&Query>) -> Result<Vec<TransactionEntry>> {
+        trace!("get filtered transactions");
         let mut transactions = Vec::new();
         for el in self.transactions.iter().values() {
             let value = el?;
@@ -753,18 +787,21 @@ impl EncryptedStorage {
 
     // Delete a transaction saved in wallet using its hash
     pub fn delete_transaction(&mut self, hash: &Hash) -> Result<()> {
+        trace!("delete transaction {}", hash);
         self.transactions.remove(self.cipher.hash_key(hash.as_bytes()))?;
         Ok(())
     }
 
     // Delete all transactions from this wallet
     pub fn delete_transactions(&mut self) -> Result<()> {
+        trace!("delete transactions");
         self.transactions.clear()?;
         Ok(())
     }
 
     // Delete all balances from this wallet
     pub async fn delete_balances(&mut self) -> Result<()> {
+        trace!("delete balances");
         self.balances.clear()?;
         self.delete_unconfirmed_balances().await;
         self.balances_cache.lock().await.clear();
@@ -786,6 +823,7 @@ impl EncryptedStorage {
 
     // Delete all assets from this wallet
     pub async fn delete_assets(&mut self) -> Result<()> {
+        trace!("delete assets");
         self.assets.clear()?;
         self.assets_cache.lock().await.clear();
         Ok(())
