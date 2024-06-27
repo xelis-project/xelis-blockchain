@@ -506,7 +506,7 @@ impl NetworkHandler {
     // Balances and nonce may be outdated, but we will sync them later
     // All transactions / changes above the last valid topoheight will be deleted
     // Returns daemon topoheight along wallet stable topoheight and if back sync is needed
-    async fn locate_sync_topoheight_and_clean(&self) -> Result<(u64, Hash, u64, bool), NetworkError> {
+    async fn locate_sync_topoheight_and_clean(&self) -> Result<(u64, Hash, u64), NetworkError> {
         trace!("locating sync topoheight and cleaning");
         let info = self.api.get_info().await?;
         let daemon_topoheight = info.topoheight;
@@ -534,13 +534,13 @@ impl NetworkHandler {
                 // Check if its the top
                 if daemon_topoheight == synced_topoheight && daemon_block_hash == top_block_hash {
                     // No need to sync back, we are already synced
-                    return Ok((daemon_topoheight, daemon_block_hash, synced_topoheight, false))
+                    return Ok((daemon_topoheight, daemon_block_hash, synced_topoheight))
                 }
 
                 // Verify we are not above the daemon chain
                 if synced_topoheight > daemon_topoheight {
                     warn!("We are above the daemon chain, we should sync from scratch");
-                    return Ok((daemon_topoheight, daemon_block_hash, 0, true))
+                    return Ok((daemon_topoheight, daemon_block_hash, 0))
                 }
 
                 if synced_topoheight > pruned_topoheight {
@@ -549,7 +549,7 @@ impl NetworkHandler {
                     let block_hash = header.hash.into_owned();
                     if block_hash == top_block_hash {
                         // topoheight and block hash are equal, we are still on right chain
-                        return Ok((daemon_topoheight, daemon_block_hash, synced_topoheight, false))
+                        return Ok((daemon_topoheight, daemon_block_hash, synced_topoheight))
                     }
                 }
 
@@ -626,7 +626,7 @@ impl NetworkHandler {
             self.wallet.propagate_event(Event::Rescan { start_topoheight: maximum }).await;   
         }
 
-        Ok((daemon_topoheight, daemon_block_hash, maximum, true))
+        Ok((daemon_topoheight, daemon_block_hash, maximum))
     }
 
     // Sync the latest version of our balances and nonces and determine if we should parse all blocks
@@ -802,17 +802,12 @@ impl NetworkHandler {
         } else {
             debug!("No event received, verify that we are on the right chain");
             // First, locate the last topoheight valid for syncing
-            let sync_back;
-            (daemon_topoheight, daemon_block_hash, wallet_topoheight, sync_back) = self.locate_sync_topoheight_and_clean().await?;
-            debug!("Daemon topoheight: {}, wallet topoheight: {}, sync back: {}", daemon_topoheight, wallet_topoheight, sync_back);
+            (daemon_topoheight, daemon_block_hash, wallet_topoheight) = self.locate_sync_topoheight_and_clean().await?;
+            debug!("Daemon topoheight: {}, wallet topoheight: {}", daemon_topoheight, wallet_topoheight);
 
-            sync_new_blocks |= sync_back;
-            // Sync back is not requested, sync the head state
-            if !sync_back {
-                trace!("sync back");
-                // Now sync head state, this will helps us to determinate if we should sync blocks or not
-                sync_new_blocks |= self.sync_head_state(&address, None, None, true).await?;
-            }
+            trace!("sync head state");
+            // Now sync head state, this will helps us to determinate if we should sync blocks or not
+            sync_new_blocks |= self.sync_head_state(&address, None, None, true).await?;
         }
 
         // we have something that changed, sync transactions
@@ -941,6 +936,7 @@ impl NetworkHandler {
         
         // get balance and transactions for each asset
         if self.wallet.get_history_scan() {
+            debug!("Scanning history for each asset");
             // cache for all topoheight we already processed
             // this will prevent us to request more than one time the same topoheight
             let mut topoheight_processed = HashSet::new();
