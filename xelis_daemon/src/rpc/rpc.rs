@@ -1229,8 +1229,13 @@ async fn get_difficulty<S: Storage>(context: &Context, body: Value) -> Result<Va
     }))
 }
 
-async fn validate_address<S: Storage>(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
+async fn validate_address<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: ValidateAddressParams = parse_params(body)?;
+
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    if params.address.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(InternalRpcError::InvalidParamsAny(BlockchainError::InvalidNetwork.into()))
+    }
 
     Ok(json!(ValidateAddressResult {
         is_valid: (params.address.is_normal() || (!params.address.is_normal() && params.allow_integrated))
