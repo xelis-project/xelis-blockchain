@@ -2,17 +2,14 @@ use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use anyhow::{Error, Context};
 use serde::Serialize;
 use xelis_common::{
-    tokio::{
-        sync::{
-            broadcast::{
-                Sender as BroadcastSender,
-                Receiver as BroadcastReceiver
-            },
-            Mutex,
-            RwLock,
-            broadcast,
+    tokio::sync::{
+        broadcast::{
+            Sender as BroadcastSender,
+            Receiver as BroadcastReceiver
         },
-        task::spawn_blocking
+        Mutex,
+        RwLock,
+        broadcast,
     },
     api::{
         wallet::{
@@ -120,6 +117,13 @@ use {
         crypto::elgamal::PublicKey as DecompressedPublicKey
     }
 };
+
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
+use xelis_common::tokio::task::spawn_blocking;
 
 #[derive(Serialize, Clone)]
 #[serde(untagged)]
@@ -572,9 +576,26 @@ impl Wallet {
 
     // Wallet has to be under a Arc to be shared to the spawn_blocking function
     pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext) -> Result<u64, WalletError> {
-        trace!("decrypt ciphertext with a spawn blocking task");
-        let account = Arc::clone(&self.inner);
-        spawn_blocking(move || account.decrypt_ciphertext(&ciphertext)).await.context("Error while decrypting ciphertext")?
+        // TODO: is it still useful to spawn a task for that ?
+        #[cfg(not(all(
+            target_arch = "wasm32",
+            target_vendor = "unknown",
+            target_os = "unknown"
+        )))]
+        {
+            trace!("decrypt ciphertext with a spawn blocking task");
+            let account = Arc::clone(&self.inner);
+            spawn_blocking(move || account.decrypt_ciphertext(&ciphertext)).await.context("Error while decrypting ciphertext")?
+        }
+        #[cfg(all(
+            target_arch = "wasm32",
+            target_vendor = "unknown",
+            target_os = "unknown"
+        ))]
+        {
+            trace!("decrypt ciphertext without spawn blocking task");
+            self.inner.decrypt_ciphertext(&ciphertext)
+        }
     }
 
     // Decrypt the extra data from a transfer
