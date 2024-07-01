@@ -36,6 +36,7 @@ use xelis_common::{
             TransactionBuilder,
             TransactionTypeBuilder
         },
+        TxVersion,
         extra_data::UnknownExtraDataFormat,
         Reference,
         Role,
@@ -726,7 +727,7 @@ impl Wallet {
         self.add_registered_keys_for_fees_estimation(state.as_mut(), &fee, &transaction_type).await?;
 
         // Create the transaction builder
-        let builder = TransactionBuilder::new(0, self.get_public_key().clone(), transaction_type, fee);
+        let builder = TransactionBuilder::new(TxVersion::V0, self.get_public_key().clone(), transaction_type, fee);
 
         // Build the final transaction
         let transaction = builder.build(&mut state, &self.inner.keypair)
@@ -800,7 +801,7 @@ impl Wallet {
         #[cfg(feature = "network_handler")]
         self.add_registered_keys_for_fees_estimation(&mut state, &FeeBuilder::default(), &tx_type).await?;
 
-        let builder = TransactionBuilder::new(0, self.get_public_key().clone(), tx_type, FeeBuilder::default());
+        let builder = TransactionBuilder::new(TxVersion::V0, self.get_public_key().clone(), tx_type, FeeBuilder::default());
         let estimated_fees = builder.estimate_fees(&mut state)
             .map_err(|e| WalletError::Any(e.into()))?;
 
