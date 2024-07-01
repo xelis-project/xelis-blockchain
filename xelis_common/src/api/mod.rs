@@ -15,6 +15,7 @@ use crate::{
         Hash,
         Signature
     },
+    serializer::Serializer,
     transaction::{
         extra_data::UnknownExtraDataFormat,
         BurnPayload,
@@ -138,6 +139,8 @@ pub struct RPCTransaction<'a> {
     pub reference: Cow<'a, Reference>,
     /// Signature of the transaction
     pub signature: Cow<'a, Signature>,
+    /// TX size in bytes
+    pub size: usize
 }
 
 impl<'a> RPCTransaction<'a> {
@@ -153,6 +156,7 @@ impl<'a> RPCTransaction<'a> {
             range_proof: Cow::Borrowed(tx.get_range_proof()),
             reference: Cow::Borrowed(tx.get_reference()),
             signature: Cow::Borrowed(tx.get_signature()),
+            size: tx.size()
         }
     }
 }
