@@ -23,7 +23,6 @@ use xelis_common::{
     api::{
         daemon::*,
         RPCTransaction,
-        RPCTransactionType as RPCTransactionType,
         SplitAddressParams,
         SplitAddressResult,
     },
@@ -116,20 +115,10 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
     let mainnet = blockchain.get_network().is_mainnet();
     let header = block.get_header();
     let transactions = block.get_transactions()
-        .iter().zip(block.get_txs_hashes()).map(|(tx, hash)| {
-            RPCTransaction {
-                hash: Cow::Borrowed(hash),
-                version: tx.get_version(),
-                source: tx.get_source().as_address(mainnet),
-                data: RPCTransactionType::from_type(tx.get_data(), mainnet),
-                fee: tx.get_fee(),
-                nonce: tx.get_nonce(),
-                source_commitments: Cow::Borrowed(tx.get_source_commitments()),
-                range_proof: Cow::Borrowed(tx.get_range_proof()),
-                reference: Cow::Borrowed(tx.get_reference()),
-                signature: Cow::Borrowed(tx.get_signature()),
-            }
-        }).collect::<Vec<RPCTransaction<'_>>>();
+        .iter()
+        .zip(block.get_txs_hashes())
+        .map(|(tx, hash)| RPCTransaction::from_tx(tx, hash, mainnet))
+        .collect::<Vec<RPCTransaction<'_>>>();
 
     let (dev_reward, miner_reward) = get_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
         (Some(dev_reward), Some(miner_reward))
