@@ -1,7 +1,6 @@
 use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
-use indexmap::IndexSet;
 use log::{trace, error};
 use xelis_common::{
     account::VersionedNonce,
@@ -13,7 +12,7 @@ use crate::core::{
     storage::{sled::ACCOUNTS_COUNT, SledStorage},
 };
 
-use super::{AssetProvider, BalanceProvider};
+use super::{AssetProvider, BalanceProvider, NetworkProvider};
 
 #[async_trait]
 pub trait NonceProvider: BalanceProvider {
@@ -25,10 +24,6 @@ pub trait NonceProvider: BalanceProvider {
 
     // Check if the account has a nonce at a specific topoheight
     async fn has_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: u64) -> Result<bool, BlockchainError>;
-
-    // Get registered accounts supporting pagination and filtering by topoheight
-    // Returned keys must have a nonce or a balance updated in the range given
-    async fn get_partial_keys(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<PublicKey>, BlockchainError>;
 
     // Get the last topoheigh that the account has a nonce
     async fn get_last_topoheight_for_nonce(&self, key: &PublicKey) -> Result<u64, BlockchainError>;
@@ -117,33 +112,6 @@ impl NonceProvider for SledStorage {
         trace!("has nonce {} at topoheight {}", key.as_address(self.is_mainnet()), topoheight);
         let key = self.get_versioned_nonce_key(key, topoheight);
         self.contains_data::<_, ()>(&self.versioned_nonces, &None, &key).await
-    }
-
-    // Get all keys that got a changes in their balances/nonces in the range given
-    async fn get_partial_keys(&self, maximum: usize, skip: usize, minimum_topoheight: u64, maximum_topoheight: u64) -> Result<IndexSet<PublicKey>, BlockchainError> {
-        trace!("get partial keys, maximum: {}, skip: {}, minimum_topoheight: {}, maximum_topoheight: {}", maximum, skip, minimum_topoheight, maximum_topoheight);
-
-        let mut keys: IndexSet<PublicKey> = IndexSet::new();
-        let mut skip_count = 0;
-        for el in self.nonces.iter().keys() {
-            let key = el?;
-            let pkey = PublicKey::from_bytes(&key)?;
-
-            // check that we have a nonce before the maximum topoheight
-            if self.has_key_updated_in_range(&pkey, minimum_topoheight, maximum_topoheight).await? {
-                if skip_count < skip {
-                    skip_count += 1;
-                } else {
-                    keys.insert(pkey);
-
-                    if keys.len() == maximum {
-                        break;
-                    }
-                }
-            }
-        }
-
-        Ok(keys)
     }
 
     async fn get_last_nonce(&self, key: &PublicKey) -> Result<(u64, VersionedNonce), BlockchainError> {

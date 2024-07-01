@@ -36,6 +36,7 @@ use super::{
     ClientProtocolProvider,
     TransactionProvider,
     BlockProvider,
+    NetworkProvider,
     Storage,
     Tips
 };
@@ -44,7 +45,7 @@ use super::{
 const TIPS: &[u8; 4] = b"TIPS";
 const TOP_TOPO_HEIGHT: &[u8; 4] = b"TOPO";
 const TOP_HEIGHT: &[u8; 4] = b"TOPH";
-const NETWORK: &[u8] = b"NET";
+pub (super) const NETWORK: &[u8] = b"NET";
 pub(super) const PRUNED_TOPOHEIGHT: &[u8; 4] = b"PRUN";
 // Counters (prevent to perform a O(n))
 pub(super) const ACCOUNTS_COUNT: &[u8; 4] = b"CACC";
@@ -55,7 +56,7 @@ pub(super) const BLOCKS_EXECUTION_ORDER_COUNT: &[u8; 4] = b"EBLK";
 
 pub struct SledStorage {
     // Network used by the storage
-    network: Network,
+    pub(super) network: Network,
     // All trees used to store data
     // all txs stored on disk
     pub(super) transactions: Tree,
@@ -253,10 +254,6 @@ impl SledStorage {
         Ok(storage)
     }
 
-    pub fn is_mainnet(&self) -> bool {
-        self.network.is_mainnet()
-    }
-
     pub(super) fn load_optional_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
         match tree.get(key)? {
             Some(bytes) => {
@@ -394,10 +391,6 @@ impl SledStorage {
 
 #[async_trait]
 impl Storage for SledStorage {
-    fn is_mainnet(&self) -> bool {
-        self.network.is_mainnet()
-    }
-
     async fn clear_caches(&mut self) -> Result<(), BlockchainError> {
         if let Some(cache) = self.transactions_cache.as_ref() {
             let mut cache = cache.lock().await;
@@ -453,6 +446,10 @@ impl Storage for SledStorage {
 
         // delete topoheight<->hash pointers
         let hash = self.delete_cacheable_data(&self.hash_at_topo, &self.hash_at_topo_cache, &topoheight).await?;
+
+        trace!("Deleting block execution order");
+        self.delete_data::<_, u64>(&self.blocks_execution_order, &None, &hash).await?;
+
         trace!("Hash is {hash} at topo {topoheight}");
 
         self.delete_cacheable_data::<Hash, u64>(&self.topo_by_hash, &self.topo_by_hash_cache, &hash).await?;
@@ -768,22 +765,6 @@ impl Storage for SledStorage {
         Ok(())
     }
 
-    fn get_network(&self) -> Result<Network, BlockchainError> {
-        trace!("get network");
-        Ok(self.network)
-    }
-
-    fn set_network(&mut self, network: &Network) -> Result<(), BlockchainError> {
-        trace!("set network to {}", network);
-        self.extra.insert(NETWORK, network.to_bytes())?;
-        Ok(())
-    }
-
-    fn has_network(&self) -> Result<bool, BlockchainError> {
-        trace!("has network");
-        Ok(self.extra.contains_key(NETWORK)?)
-    }
-
     async fn pop_blocks(&mut self, mut height: u64, mut topoheight: u64, count: u64, stable_topo_height: u64) -> Result<(u64, u64, Vec<(Hash, Arc<Transaction>)>), BlockchainError> {
         trace!("pop blocks from height: {}, topoheight: {}, count: {}", height, topoheight, count);
         if topoheight < count as u64 { // also prevent removing genesis block
@@ -1067,5 +1048,19 @@ impl Storage for SledStorage {
         self.db.flush_async().await?;
         info!("Sled database flushed");
         Ok(())
+    }
+
+    async fn get_unexecuted_transactions(&self) -> Result<IndexSet<Hash>, BlockchainError> {
+        trace!("get unexecuted transactions");
+        let mut txs = IndexSet::new();
+        for el in self.transactions.iter().keys() {
+            let key = el?;
+            let tx_hash = Hash::from_bytes(&key)?;
+            if !self.is_tx_executed_in_a_block(&tx_hash)? {
+                txs.insert(tx_hash);
+            }
+        }
+
+        Ok(txs)
     }
 }

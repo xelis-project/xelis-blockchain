@@ -6,8 +6,11 @@ use actix_web_httpauth::{
 };
 use anyhow::Result;
 use log::{info, warn};
-use tokio::sync::Mutex;
 use xelis_common::{
+    tokio::{
+        spawn_task,
+        sync::Mutex
+    },
     api::wallet::NotifyEvent,
     config,
     rpc_server::{
@@ -21,8 +24,7 @@ use xelis_common::{
         RPCHandler,
         RPCServerHandler,
         WebSocketServerHandler
-    },
-    utils::spawn_task
+    }
 };
 use actix_web::{
     get,

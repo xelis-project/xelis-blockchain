@@ -36,6 +36,7 @@ use xelis_common::{
             ArgType
         },
         LogLevel,
+        ModuleConfig,
         ShareablePrompt
     },
     rpc_server::WebSocketServerHandler,
@@ -114,6 +115,9 @@ pub struct NodeConfig {
     /// It must end with a / to be a valid folder.
     #[clap(long, default_value_t = String::from("logs/"))]
     logs_path: String,
+    /// Module configuration for logs
+    #[clap(long)]
+    logs_modules: Vec<ModuleConfig>,
     /// Network selected for chain
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
     network: Network
@@ -125,7 +129,7 @@ const BLOCK_TIME: Difficulty = Difficulty::from_u64(BLOCK_TIME_MILLIS / MILLIS_P
 async fn main() -> Result<()> {
     let mut config: NodeConfig = NodeConfig::parse();
 
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules)?;
     info!("XELIS Blockchain running version: {}", VERSION);
     info!("----------------------------------------------");
 
@@ -192,7 +196,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
     command_manager.add_command(Command::new("p2p_outgoing_connections", "Accept/refuse to connect to outgoing nodes", CommandHandler::Async(async_handler!(p2p_outgoing_connections::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
-
+    command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -368,6 +372,19 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     Ok(())
 }
 
+// This is a debug command to see all unexecuted transactions in the chain that can happen due to DAG reorgs
+async fn list_unexecuted_transactions<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+    let unexecuted = storage.get_unexecuted_transactions().await.context("Error while retrieving unexecuted transactions")?;
+    manager.message(format!("Unexecuted transactions ({}):", unexecuted.len()));
+    for tx in unexecuted {
+        manager.message(format!("- {}", tx));
+    }
+    Ok(())
+}
+
 async fn kick_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
@@ -380,7 +397,7 @@ async fn kick_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManag
             };
 
             if let Some(peer) = peer {
-                peer.close().await.context("Error while closing peer connection")?;
+                peer.signal_exit().await.context("Error while closing peer connection")?;
                 manager.message(format!("Peer {} has been kicked", addr));
             } else {
                 manager.error(format!("Peer {} not found", addr));

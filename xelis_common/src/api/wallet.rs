@@ -123,6 +123,13 @@ pub struct GetMatchingKeysParams {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct CountMatchingEntriesParams {
+    pub tree: String,
+    pub key: Option<Query>,
+    pub value: Option<Query>
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct StoreParams {
     pub tree: String,
     pub key: DataValue,
@@ -223,4 +230,15 @@ pub struct TransactionEntry {
     pub topoheight: u64,
     #[serde(flatten)]
     pub entry: EntryType,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EstimateExtraDataSizeParams {
+    pub destinations: Vec<Address>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EstimateExtraDataSizeResult {
+    // Integrated data size
+    pub size: usize,
 }

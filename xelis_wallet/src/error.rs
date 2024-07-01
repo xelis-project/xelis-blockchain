@@ -1,12 +1,15 @@
 use thiserror::Error;
 use chacha20poly1305::Error as CryptoError;
+#[cfg(feature = "network_handler")]
 use super::network_handler::NetworkError;
 use xelis_common::{
     crypto::Hash,
-    rpc_server::InternalRpcError,
     transaction::extra_data::CipherFormatError,
     utils::{format_coin, format_xelis}
 };
+#[cfg(feature = "api_server")]
+use xelis_common::rpc_server::InternalRpcError;
+
 use anyhow::Error;
 
 #[repr(usize)]
@@ -74,6 +77,7 @@ pub enum WalletError {
     EmptyName,
     #[error("No handler available for this request")]
     NoHandlerAvailable,
+    #[cfg(feature = "network_handler")]
     #[error(transparent)]
     NetworkError(#[from] NetworkError),
     #[error("Balance for asset {} was not found", _0)]
@@ -82,6 +86,8 @@ pub enum WalletError {
     CiphertextDecode,
     #[error(transparent)]
     AEADCipherFormatError(#[from] CipherFormatError),
+    #[error("No network handler available")]
+    NoNetworkHandler
 }
 
 impl WalletError {
@@ -91,6 +97,7 @@ impl WalletError {
     }
 }
 
+#[cfg(feature = "api_server")]
 impl From<WalletError> for InternalRpcError {
     fn from(e: WalletError) -> Self {
         let id = unsafe { e.id() };

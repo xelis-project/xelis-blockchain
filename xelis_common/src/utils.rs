@@ -1,11 +1,4 @@
-use tokio::task::JoinHandle;
-#[cfg(all(tokio_unstable, feature = "tracing"))]
-use tokio::task::Builder;
-use std::{
-    net::SocketAddr,
-    future::Future,
-};
-use log::trace;
+use std::net::SocketAddr;
 use crate::{
     config::{
         COIN_DECIMALS,
@@ -133,30 +126,18 @@ pub fn sanitize_daemon_address(target: &str) -> String {
     target
 }
 
-// Spawn a new task with a name
-// If the tokio_unstable feature is enabled, the task will be named
-#[inline(always)]
-pub fn spawn_task<Fut, S: Into<String>>(name: S, future: Fut) -> JoinHandle<Fut::Output>
-where
-    Fut: Future + Send + 'static,
-    Fut::Output: Send + 'static,
-{
-    let name_str = name.into();
-    trace!("Spawning task: {}", name_str);
-    #[cfg(all(tokio_unstable, feature = "tracing"))]
-    {
-        let name = name_str.as_str();
-        Builder::new().name(name).spawn(future).expect(name)
-    }
-    #[cfg(not(all(tokio_unstable, feature = "tracing")))]
-    {
-        tokio::spawn(future)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::COIN_VALUE;
+
+    #[test]
+    fn test_xelis_format() {
+        assert_eq!(format_xelis(FEE_PER_ACCOUNT_CREATION), "0.00100000");
+        assert_eq!(format_xelis(FEE_PER_KB), "0.00010000");
+        assert_eq!(format_xelis(FEE_PER_TRANSFER), "0.00005000");
+        assert_eq!(format_xelis(COIN_VALUE), "1.00000000");
+    }
 
     #[test]
     fn test_difficulty_format_zero() {

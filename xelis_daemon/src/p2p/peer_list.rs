@@ -4,7 +4,6 @@ use crate::{
         PEER_FAIL_LIMIT,
         PEER_FAIL_TO_CONNECT_LIMIT,
         PEER_TEMP_BAN_TIME_ON_CONNECT,
-        PEER_TIMEOUT_DISCONNECT
     },
     p2p::packet::peer_disconnected::PacketPeerDisconnected
 };
@@ -17,12 +16,11 @@ use std::{
 };
 use humantime::format_duration;
 use serde::{Serialize, Deserialize};
-use tokio::{sync::{mpsc::Sender, RwLock}, time::timeout};
+use tokio::sync::{mpsc::Sender, RwLock};
 use xelis_common::{
     serializer::Serializer,
     time::{TimestampSeconds, get_current_time_in_seconds},
-    api::daemon::Direction,
-    utils::spawn_task
+    api::daemon::Direction
 };
 use std::sync::Arc;
 use bytes::Bytes;
@@ -150,7 +148,7 @@ impl PeerList {
 
     // Remove a peer from the list
     // We will notify all peers that have this peer in common
-    pub async fn remove_peer(&self, peer_id: u64) -> Result<(), P2pError> {
+    pub async fn remove_peer(&self, peer_id: u64, notify: bool) -> Result<(), P2pError> {
         let (peer, peers) = {
             let mut peers = self.peers.write().await;
             let peer = peers.remove(&peer_id).ok_or(P2pError::PeerNotFoundById(peer_id))?;
@@ -159,7 +157,7 @@ impl PeerList {
         };
  
         // If peer allows us to share it, we have to notify all peers that have this peer in common
-        if peer.sharable() {
+        if notify && peer.sharable() {
             // now remove this peer from all peers that tracked it
             let addr = peer.get_outgoing_address();
             let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
@@ -271,20 +269,14 @@ impl PeerList {
             let mut peers = self.peers.write().await;
             peers.drain().collect::<Vec<(u64, Arc<Peer>)>>()
         };
+
         info!("Closing {} peers", peers.len());
         for (_, peer) in peers {
             debug!("Closing {}", peer);
-            spawn_task(format!("p2p-disconnect-{}", peer.get_connection().get_address()), async move {
-                if let Err(e) = peer.signal_exit().await {
-                    debug!("Error while trying to signal exit to {}: {}", peer, e);
-                }
 
-                match timeout(Duration::from_secs(PEER_TIMEOUT_DISCONNECT), peer.close_internal()).await {
-                    Err(e) => debug!("Error while trying to close peer {}, deadline elapsed: {}", peer.get_connection().get_address(), e),
-                    Ok(Err(e)) => debug!("Error while trying to close peer {}: {}", peer.get_connection().get_address(), e),
-                    Ok(Ok(())) => debug!("Peer {} closed", peer.get_connection().get_address())
-                }
-            });
+            if let Err(e) = peer.signal_exit().await {
+                error!("Error while trying to signal exit to {}: {}", peer, e);
+            }
         }
 
         let stored_peers = self.stored_peers.read().await;
@@ -437,7 +429,7 @@ impl PeerList {
         };
 
         if let Some(peer) = potential_peer {
-            if let Err(e) = peer.close_internal().await {
+            if let Err(e) = peer.signal_exit().await {
                 error!("Error while trying to close peer {} for being blacklisted: {}", peer.get_connection().get_address(), e);
             }
         }
@@ -451,7 +443,7 @@ impl PeerList {
             error!("Error while trying to close {} for being temp banned: {}", peer, e);
         }
 
-        if let Err(e) = self.remove_peer(peer.get_id()).await {
+        if let Err(e) = self.remove_peer(peer.get_id(), true).await {
             error!("Error while removing peer from peerlist for being temp banned: {}", e);
         }
     }

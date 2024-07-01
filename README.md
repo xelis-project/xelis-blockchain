@@ -62,7 +62,7 @@ Others objectives in mind are:
 
 - Expected Block Time is `15` seconds
 - Address prefix is `xel` on mainnet and `xet` for testnet/devnet
-- Transaction fee is `0.01000` XEL per KB
+- Transaction fee is based on various parameters (fee is `0.0001` XEL per KB, `0.001` XEL per account creation, `0.00005` XEL per transfer)
 - Up to `8` decimals
 - Maximum supply: `18.4` millions
 - Maximum block size: `1.25` MB
@@ -77,12 +77,6 @@ Others objectives in mind are:
 ### Wallet
 
 - Default RPC Server port is `8081`
-
-## Roadmap
-
-- Include extra fees when sending coins to a not-yet registered address
-- Support of Smart Contracts (xelis-vm)
-- Privacy (through Homomorphic Encryption)
 
 ## BlockDAG
 
@@ -113,8 +107,6 @@ Longest chain is the one selected by nodes. But for tips branches conflicts, cum
 
 Homomorphic Encryption (HE) will allow to add privacy on transactions and accounts by doing computation while staying in encrypted form.
 Each balances, transaction assets values are in encrypted form and nobody can determine the real value of it except involved parties.
-
-**NOTE**: This part is not yet deployed and is under heavy work.
 
 ## Mining
 
@@ -530,8 +522,10 @@ To build a release (optimized) version:
 `cargo build --release`
 
 ### Build from workspace
-To build a version from workspace (parent folder) directly, use the option `--bin` with `xelis_daemon`, `xelis_miner` or `xelis_wallet` as value.
+To build a specific binary from workspace (parent folder) directly, use the option `--bin` with `xelis_daemon`, `xelis_miner` or `xelis_wallet` as value.
 Example: `cargo build --release --bin xelis_miner`
+
+To build all at once just use `cargo build --release`
 
 You can also build a debug version (just remove `--release` option) or run it directly from cargo:
 `cargo run`
@@ -543,11 +537,9 @@ To build using Docker, use the following command, using the `app` build argument
 ## Funding
 
 XELIS is a community driven project and is not funded by any company or organization.
-To helps the development, the success and provide a better support of XELIS, we set a dev fee percentage starting at 15% on block reward.
+To helps the development, the success and provide a better support of XELIS, we set a dev fee percentage starting at 10% on block reward.
 
 Current dev fee curve is as following:
 
-- 15% from block 0 to 1 250 000 (expected time is ~6 months with side blocks from blockDAG)
-- 10% from block 1 250 001 to 3 000 000 (expected time is another ~6 months with side blocks from blockDAG and network growing)
-- 5% from 3 000 001 until the project being developed and stable enough to reduce it.
-- 
+- 10% from block 0 to 3,250,000 (expected time is ~1.5 years with BlockDAG).
+- 5% from 3,250,001 until the project being developed is stable on major facets of the ecosystem in order to reduce it.

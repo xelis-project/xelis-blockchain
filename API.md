@@ -390,7 +390,7 @@ No parameters
 #### Get Stable Height
 Retrieve current stable height of the chain.
 
-##### Method `get_stableheight`
+##### Method `get_stable_height`
 
 ##### Parameters
 No parameters
@@ -399,7 +399,7 @@ No parameters
 ```json
 {
 	"jsonrpc": "2.0",
-	"method": "get_stableheight",
+	"method": "get_stable_height",
 	"id": 1
 }
 ```
@@ -410,6 +410,32 @@ No parameters
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": 15
+}
+```
+
+#### Get Stable TopoHeight
+Retrieve current stable topoheight of the chain.
+
+##### Method `get_stable_topoheight`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "get_stable_topoheight",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": 18
 }
 ```
 
@@ -609,8 +635,9 @@ Block Header can be serialized/deserialized using following order on byte array:
 }
 ```
 
-#### Create Miner Work
-Create a work for miner based on a block template set in parameter.
+#### Get Miner Work
+Get a miner work based on a block template set in parameter.
+It is working the same as GetWork Server
 
 A `MinerWork` struct is created from the block header work hash which represent the immutable part.
 
@@ -620,7 +647,11 @@ For the mutable part that can be updated by the miner we have the following fiel
 - miner key (32 bytes)
 - extra nonce (32 bytes)
 
-##### Method `create_miner_work`
+NOTE: `topoheight` field is only the current node topoheight, it is included for visual only.
+
+Due to DAG, you are not mining on a topoheight (which is set later dynamically by DAG order) but on a height.
+
+##### Method `get_miner_work`
 
 ##### Parameters
 |   Name   |      Type     | Required |                               Note                              |
@@ -631,24 +662,28 @@ For the mutable part that can be updated by the miner we have the following fiel
 ##### Request
 ```json
 {
-	"jsonrpc": "2.0",
-	"method": "create_miner_work",
-	"id": 1,
-	"params": {
-		"template": "00000000000000c19a0000018f2c14497300000000000000005dc86515e4adbb394b11dcdd25efcb78a08729b6230065dbb9a3c85f960af89901a0ea4d7c7dee70a12b14e95c1385e06ecd6a14e1a63a8302ce3c1e4dd7994c2f00006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66",
-		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk"
-	}
+    "jsonrpc": "2.0",
+    "method": "get_miner_work",
+    "id": 1,
+    "params": {
+        "template": "010000000000000054000001903764c5a70000000000000000f9ad5aa02ac0f78cad0f7c7f45c0af76c7908c2af490f4c23a32c96b8a336cc1019a687b66ed4e0bde3aea9f0d621a0df6cd751275748dccdd3c61578964ee602c00007e97ae5c4541acf3a43bd5789beda45586e28c427333373f96c2dc23fca46753",
+        "address": "xet:06t6uhz9gxk08fpm64ufhmdy2krw9rzzwvenw0ukctwz8l9yvafsqdltctp"
+    }
 }
 ```
 
 ##### Response
 ```json
 {
-	"id": 1,
-	"jsonrpc": "2.0",
-	"result": {
-		"miner_work": "dd7cbd9dbb0854a66c455963050e5cf7fb22f3c4ba5d4a26d142d80ba70418cc0000018f2c14497300000000000000005dc86515e4adbb394b11dcdd25efcb78a08729b6230065dbb9a3c85f960af8996423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66"
-	}
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "algorithm": "xel/v2",
+        "difficulty": "107445",
+        "height": 84,
+        "miner_work": "e306a56d779b2cc9dc3b117eda5e02804c49a7ca3f2075b1c2a4ea870c92c0df000001903764c5a70000000000000000f9ad5aa02ac0f78cad0f7c7f45c0af76c7908c2af490f4c23a32c96b8a336cc17e97ae5c4541acf3a43bd5789beda45586e28c427333373f96c2dc23fca46753",
+        "topoheight": 83
+    }
 }
 ```
 
@@ -1023,8 +1058,6 @@ NOTE: `topoheight` field isn't returned because you're requesting an exact topoh
 #### Get Balance
 Get up-to-date asset's balance for a specific address
 
-NOTE: Balance is returned in atomic units
-
 ##### Method `get_balance`
 
 ##### Parameters
@@ -1133,6 +1166,124 @@ NOTE: Balance is returned in atomic units
 ```
 NOTE: `balance_type` values are: `input`, `output` or `both`.
 This determine what changes happened on the encrypted balance.
+
+#### Get Stable Balance
+Same as `get_balance`, Get up-to-date asset's balance for a specific address.
+
+The only difference is its searching first for:
+- the latest balance with a output included (even in in unstable height)
+- If not found, the latest available balance in stable height.
+
+This difference is made so that ZK Proofs are less likely to be invalidated.
+The reference (block hash, topoheight) is also included in the response.
+
+##### Method `get_stable_balance`
+
+##### Parameters
+|   Name  |   Type  | Required |                Note               |
+|:-------:|:-------:|:--------:|:---------------------------------:|
+| address | Address | Required | Valid address registered on chain |
+|  asset  |   Hash  | Required |    Asset ID registered on chain   |
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"id": 1,
+	"method": "get_stable_balance",
+	"params": {
+		"address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+		"asset": "0000000000000000000000000000000000000000000000000000000000000000"
+	}
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"stable_topoheight": 21337,
+		"stable_block_hash": "3a4584239039a9024e205c18a2f81b9f5d1eaa8a8e22a3e384aeada1124590f3",
+		"version": {
+			"balance_type": "input",
+			"final_balance": {
+				"commitment": [
+					22,
+					183,
+					144,
+					165,
+					136,
+					210,
+					70,
+					241,
+					198,
+					222,
+					153,
+					185,
+					106,
+					129,
+					206,
+					59,
+					87,
+					170,
+					84,
+					46,
+					92,
+					255,
+					123,
+					37,
+					13,
+					46,
+					151,
+					145,
+					178,
+					174,
+					229,
+					112
+				],
+				"handle": [
+					178,
+					229,
+					67,
+					191,
+					17,
+					36,
+					76,
+					48,
+					173,
+					11,
+					225,
+					181,
+					151,
+					61,
+					47,
+					241,
+					96,
+					181,
+					250,
+					151,
+					110,
+					224,
+					65,
+					49,
+					211,
+					10,
+					25,
+					33,
+					120,
+					110,
+					103,
+					10
+				]
+			},
+			"output_balance": null,
+			"previous_topoheight": 11982
+		}
+	}
+}
+```
 
 #### Has Balance
 Verify if address has a balance on-chain registered for requested asset.
@@ -1611,7 +1762,7 @@ Submit a transaction in hex format to daemon mempool.
 ##### Parameters
 | Name |  Type  | Required |            Note           |
 |:----:|:------:|:--------:|:-------------------------:|
-|  hex | String | Required | Transaction in HEX format |
+|  data | String | Required | Transaction in HEX format |
 
 ##### Request
 ```json
@@ -8154,5 +8305,218 @@ No parameter
 	"id": 1,
 	"jsonrpc": "2.0",
 	"result": true
+}
+```
+
+### Storage
+
+XELIS Wallet has the ability to have a built-in encrypted DB that can be used to store / fetch entries easily.
+This can be really helpful for small services / applications that don't to setup a whole database system.
+
+It is a key / value DB with support of multiples Trees, everything is stored in encrypted form on the disk.
+
+You can either access it directly through Rust code, or through the following JSON-RPC methods.
+
+Every types are allowed and are automatically serialized.
+
+A query system is available to make advanced filter over encrypted keys and values from DB.
+This feature is planned to be improved in future. For now, the follow are implemented:
+- Filter over numbers values (`>=`, `>`, `<`, `<=`, `==`).
+- Regex over stringified values
+- `Is Of Type` (built-in types are `bool`, `string`, `u8`, `u16`, `u32`, `u64`, `u128`, `hash`, `blob`)
+- `Starts with`
+- `Ends With`
+- `Contains Value`
+- `Equal to`
+
+Those filters can be used together or alone, using the `Not`, `And`, `Or` operations.
+
+If key or value is a map or an array, you can also do filter on them:
+- `Has Key` (with expected key value and an optional query on the value if present)
+- `At Key` (same as above but query is mandatory)
+- `Len` (check the map/array size using a `query number`)
+- `Contains Element` (check if the array contains the requested element)
+- `At Position` (check at array index if the value match using a query)
+- `Type` (check which kind of type it is)
+
+Please note that these functionalities are also available from XSWD calls, which mean, any accepted Application through XSWD can have its own DB like a local storage on web JavaScript.
+
+This query system will be used in daemon also once Smart Contracts are deployed to easily search entries in the Smart Contract database.
+
+#### Store
+Store a new key / value entry in the requested Tree.
+
+##### Method `store`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "store",
+    "id": 1,
+    "params": {
+        "tree": "test",
+        "key": "my_list",
+        "value": ["hello", " ", "world", "!"]
+    }
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+#### Delete
+Delete a key / value entry in the requested Tree.
+
+##### Method `delete`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "delete",
+    "id": 1,
+    "params": {
+        "tree": "test",
+        "key": "my_list"
+    }
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+#### Has Key
+Verify if the key is present in the requested Tree.
+
+##### Method `has_key`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "has_key",
+    "id": 1,
+    "params": {
+        "tree": "test",
+        "key": "my_list"
+    }
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
+#### Get Value From Key
+Get a value using its key in the requested Tree.
+
+##### Method `get_value_from_key`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_value_from_key",
+    "id": 1,
+    "params": {
+        "tree": "test",
+        "key": "my_list"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        "hello",
+        " ",
+        "world",
+        "!"
+    ]
+}
+```
+
+#### Query DB
+Query the DB in the requested Tree with filters.
+
+##### Method `query_db`
+
+##### Parameters
+TODO
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "query_db",
+    "id": 1,
+    "params": {
+        "tree": "test",
+        "value": {
+            "or": [
+                {
+                    "equal": "welcome"
+                },
+                {
+                    "equal": "test"
+                },
+                {
+                    "equal": "!"
+                }
+            ]
+        }
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "entries": {
+            "my_list": [
+                "hello",
+                " ",
+                "world",
+                "!"
+            ]
+        },
+        "next": null
+    }
 }
 ```

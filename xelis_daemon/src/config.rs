@@ -1,11 +1,12 @@
 use lazy_static::lazy_static;
 use xelis_common::{
-    api::daemon::DevFeeThreshold,
+    api::daemon::{DevFeeThreshold, HardFork},
     crypto::{
         Address,
         Hash,
         PublicKey
     },
+    block::BlockVersion,
     difficulty::Difficulty,
     network::Network,
     time::TimestampSeconds,
@@ -87,6 +88,12 @@ pub const SIDE_BLOCK_REWARD_MIN_PERCENT: u64 = 5;
 // Emission speed factor for the emission curve
 // It is used to calculate based on the supply the block reward
 pub const EMISSION_SPEED_FACTOR: u64 = 20;
+// 30% of the transaction fee is burned
+// This is to reduce the supply over time
+// and also to prevent spamming the network with low fee transactions
+// or free tx from miners
+// This should be enabled once Smart Contracts are released
+pub const TRANSACTION_FEE_BURN_PERCENT: u64 = 30;
 
 // Developer address for paying dev fees until Smart Contracts integration
 // (testnet/mainnet format is converted lazily later)
@@ -170,40 +177,33 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 // Millis
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
-// Genesis block to have the same starting point for every nodes
-// Genesis block in hexadecimal format
-const MAINNET_GENESIS_BLOCK: &str = "0000000000000000000000018efc057580000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
-const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018f116b47cf000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
-
-// Genesis block getter
-// This is necessary to prevent having the same Genesis Block for differents network
-// Dev returns none to generate a new genesis block each time it starts a chain
-pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
-    match network {
-        Network::Mainnet => Some(MAINNET_GENESIS_BLOCK),
-        Network::Testnet => Some(TESTNET_GENESIS_BLOCK),
-        Network::Dev => None
+// Hard Forks configured
+const HARD_FORKS: [HardFork; 2] = [
+    HardFork {
+        height: 0,
+        version: BlockVersion::V0,
+        changelog: "Initial version",
+    },
+    HardFork {
+        height: 434_100, // Expected date: 10/07/2024 12am UTC
+        version: BlockVersion::V1,
+        changelog: "xelis-hash v2",
     }
-}
+];
 
-lazy_static! {
-    // Developer public key is lazily converted from address to support any network
-    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
-}
-
-// Genesis block hash for both networks
-// It must be the same as the hash of the genesis block
-const MAINNET_GENESIS_BLOCK_HASH: Hash = Hash::new([175, 118, 37, 203, 175, 200, 25, 148, 9, 202, 29, 120, 93, 128, 36, 209, 146, 193, 217, 36, 61, 51, 24, 194, 114, 113, 121, 208, 237, 163, 27, 55]);
-const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([171, 50, 219, 186, 28, 164, 189, 225, 197, 167, 187, 143, 213, 59, 217, 238, 51, 242, 133, 181, 188, 235, 151, 50, 110, 33, 185, 188, 100, 146, 23, 132]);
-
-// Genesis block hash based on network selected
-pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
-    match network {
-        Network::Mainnet => &MAINNET_GENESIS_BLOCK_HASH,
-        Network::Testnet => &TESTNET_GENESIS_BLOCK_HASH,
-        Network::Dev => panic!("Dev network has no fix genesis block hash"),
+// Testnet / Devnet hard forks
+const TESTNET_HARD_FORKS: [HardFork; 2] = [
+    HardFork {
+        height: 0,
+        version: BlockVersion::V0,
+        changelog: "Initial version",
+    },
+    HardFork {
+        height: 5,
+        version: BlockVersion::V1,
+        changelog: "xelis-hash v2",
     }
-}
+];
 
 // Mainnet seed nodes
 const MAINNET_SEED_NODES: [&str; 7] = [
@@ -229,6 +229,41 @@ const TESTNET_SEED_NODES: [&str; 1] = [
     "74.208.251.149:2125",
 ];
 
+// Genesis block to have the same starting point for every nodes
+// Genesis block in hexadecimal format
+const MAINNET_GENESIS_BLOCK: &str = "0000000000000000000000018efc057580000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
+const TESTNET_GENESIS_BLOCK: &str = "0000000000000000000000018f116b47cf000000000000000000000000000000000000000000000000000000000000000000000000000000000000006423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66";
+
+// Genesis block hash for both networks
+// It must be the same as the hash of the genesis block
+const MAINNET_GENESIS_BLOCK_HASH: Hash = Hash::new([175, 118, 37, 203, 175, 200, 25, 148, 9, 202, 29, 120, 93, 128, 36, 209, 146, 193, 217, 36, 61, 51, 24, 194, 114, 113, 121, 208, 237, 163, 27, 55]);
+const TESTNET_GENESIS_BLOCK_HASH: Hash = Hash::new([171, 50, 219, 186, 28, 164, 189, 225, 197, 167, 187, 143, 213, 59, 217, 238, 51, 242, 133, 181, 188, 235, 151, 50, 110, 33, 185, 188, 100, 146, 23, 132]);
+
+// Genesis block getter
+// This is necessary to prevent having the same Genesis Block for differents network
+// Dev returns none to generate a new genesis block each time it starts a chain
+pub fn get_hex_genesis_block(network: &Network) -> Option<&str> {
+    match network {
+        Network::Mainnet => Some(MAINNET_GENESIS_BLOCK),
+        Network::Testnet => Some(TESTNET_GENESIS_BLOCK),
+        Network::Dev => None
+    }
+}
+
+lazy_static! {
+    // Developer public key is lazily converted from address to support any network
+    pub static ref DEV_PUBLIC_KEY: PublicKey = Address::from_string(&DEV_ADDRESS.to_owned()).unwrap().to_public_key();
+}
+
+// Genesis block hash based on network selected
+pub fn get_genesis_block_hash(network: &Network) -> &'static Hash {
+    match network {
+        Network::Mainnet => &MAINNET_GENESIS_BLOCK_HASH,
+        Network::Testnet => &TESTNET_GENESIS_BLOCK_HASH,
+        Network::Dev => panic!("Dev network has no fix genesis block hash"),
+    }
+}
+
 // Get seed nodes based on the network used
 pub const fn get_seed_nodes(network: &Network) -> &[&str] {
     match network {
@@ -245,5 +280,13 @@ pub const fn get_minimum_difficulty(network: &Network) -> Difficulty {
     match network {
         Network::Mainnet => MAINNET_MINIMUM_DIFFICULTY,
         _ => OTHER_MINIMUM_DIFFICULTY,
+    }
+}
+
+// Get hard forks based on the network
+pub const fn get_hard_forks(network: &Network) -> &[HardFork] {
+    match network {
+        Network::Mainnet => &HARD_FORKS,
+        _ => &TESTNET_HARD_FORKS,
     }
 }

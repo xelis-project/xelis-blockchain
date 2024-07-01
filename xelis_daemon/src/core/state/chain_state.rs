@@ -12,9 +12,9 @@ use xelis_common::{
     crypto::{
         elgamal::Ciphertext,
         Hash,
-        Hashable,
         PublicKey
     },
+    block::BlockVersion,
     transaction::{
         verify::BlockchainVerificationState,
         Reference,
@@ -23,7 +23,6 @@ use xelis_common::{
     utils::format_xelis
 };
 use crate::core::{
-    blockchain,
     error::BlockchainError,
     storage::Storage
 };
@@ -136,8 +135,12 @@ pub struct ChainState<'a, S: Storage> {
     // Sender accounts
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
+    // Current stable topoheight of the snapshot
+    stable_topoheight: u64,
     // Current topoheight of the snapshot
-    topoheight: u64
+    topoheight: u64,
+    // Block header version
+    block_version: BlockVersion,
 }
 
 // Chain State that can be applied to the mutable storage
@@ -172,9 +175,9 @@ impl<'a, S: Storage> AsMut<ChainState<'a, S>> for ApplicableChainState<'a, S> {
 }
 
 impl<'a, S: Storage> ApplicableChainState<'a, S> {
-    pub fn new(storage: &'a mut S, topoheight: u64) -> Self {
+    pub fn new(storage: &'a mut S, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Self {
         Self {
-            inner: ChainState::with(StorageReference::Mutable(storage), topoheight)
+            inner: ChainState::with(StorageReference::Mutable(storage), stable_topoheight, topoheight, block_version)
         }
     }
 
@@ -200,7 +203,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             // But Bob built its ZK Proof with the balance before Alice's transaction
             for (asset, echange) in account.assets.drain() {
                 trace!("{} {} updated for {} at topoheight {}", echange.version, asset, key.as_address(self.inner.storage.is_mainnet()), self.inner.topoheight);
-                let Echange { version, output_sum, output_balance_used, new_version, .. } = echange;
+                let Echange { mut version, output_sum, output_balance_used, new_version, .. } = echange;
                 trace!("sender output sum: {:?}", output_sum.compress());
                 match balances.entry(asset) {
                     Entry::Occupied(mut o) => {
@@ -245,21 +248,36 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
                         // We have no incoming update for this key
                         // Select the right final version
                         // For that, we must check if we used the output balance and/or if we are not on the last version 
-                        let mut version = if output_balance_used || !new_version {
+                        let version = if output_balance_used || !new_version {
                             // We must fetch again the version to sum it with the output
                             // This is necessary to build the final balance
-                            let mut version = self.inner.storage.get_new_versioned_balance(key, asset, self.inner.topoheight).await?;
+                            let mut new_version = self.inner.storage.get_new_versioned_balance(key, asset, self.inner.topoheight).await?;
                             // Substract the output sum
                             trace!("{} has no balance for {} at topoheight {}, substract output sum", key.as_address(self.inner.storage.is_mainnet()), asset, self.inner.topoheight);
-                            *version.get_mut_balance().computable()? -= output_sum;
-                            version
+                            *new_version.get_mut_balance().computable()? -= output_sum;
+
+                            if self.inner.block_version == BlockVersion::V0 {
+                                new_version.set_balance_type(BalanceType::Output);
+                            } else {
+                                // Report the output balance to the next topoheight
+                                // So the edge case where:
+                                // Balance at topo 1000 is referenced
+                                // Balance updated at topo 1001 as input
+                                // TX A is built with reference 1000 but executed at topo 1002
+                                // TX B reference 1000 but output balance is at topo 1002 and it include the final balance of (TX A + input at 1001)
+                                // So we report the output balance for next TX verification
+                                new_version.set_output_balance(Some(version.take_balance_with(output_balance_used)));
+                                new_version.set_balance_type(BalanceType::Both);
+                            }
+
+                            new_version
                         } else {
                             // Version was based on final balance, all good, nothing to do
+                            version.set_balance_type(BalanceType::Output);
                             version
                         };
 
                         // We have some output, mark it
-                        version.set_balance_type(BalanceType::Output);
 
                         e.insert(version);
                     }
@@ -282,7 +300,7 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
             }
 
             // Mark it as registered at this topoheight
-            if !self.inner.storage.is_account_registered_below_topoheight(account, self.inner.topoheight).await? {
+            if !self.inner.storage.is_account_registered_at_topoheight(account, self.inner.topoheight).await? {
                 self.inner.storage.set_account_registration_topoheight(account, self.inner.topoheight).await?;
             }
         }
@@ -292,17 +310,19 @@ impl<'a, S: Storage> ApplicableChainState<'a, S> {
 }
 
 impl<'a, S: Storage> ChainState<'a, S> {
-    fn with(storage: StorageReference<'a, S>, topoheight: u64) -> Self {
+    fn with(storage: StorageReference<'a, S>, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Self {
         Self {
             storage,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
-            topoheight
+            stable_topoheight,
+            topoheight,
+            block_version
         }
     }
 
-    pub fn new(storage: &'a S, topoheight: u64) -> Self {
-        Self::with(StorageReference::Immutable(storage), topoheight)
+    pub fn new(storage: &'a S, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Self {
+        Self::with(StorageReference::Immutable(storage), stable_topoheight, topoheight, block_version)
     }
 
     // Get the storage used by the chain state
@@ -441,38 +461,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        // Check the version
-        if tx.get_version() != 0 {
-            debug!("Invalid version for tx {}: {}", tx.hash(), tx.get_version());
-            return Err(BlockchainError::InvalidTxVersion);
-        }
-
-        // Verified that minimal fees are set
-        let required_fees = blockchain::estimate_required_tx_fees(self.get_storage(), self.topoheight, tx).await?;
-        if required_fees > tx.get_fee() {
-            debug!("Invalid fees for tx {}: {} required, {} provided", tx.hash(), format_xelis(required_fees), format_xelis(tx.get_fee()));
-            return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));
-        }
-
-        let reference = tx.get_reference();
-        // Verify that the block he is built upon exists
-        // if !self.storage.has_block_with_hash(&reference.hash).await? || !self.storage.is_block_topological_ordered(&reference.hash).await {
-        //     debug!("TX {} reference {} was not found in storage, checking if its below pruned topoheight", tx.hash(), reference.hash);
-        //     let pruned_topoheight = self.storage.get_pruned_topoheight().await?
-        //         .unwrap_or(0);
-        //     if pruned_topoheight < reference.topoheight {
-        //         debug!("Invalid reference for tx {}: block {} not found", tx.hash(), reference.hash);
-        //         return Err(BlockchainError::InvalidReferenceHash);
-        //     }
-        // }
-
-        // Verify that it is not a fake topoheight
-        if self.topoheight < reference.topoheight {
-            debug!("Invalid reference for tx {}: topoheight {} is higher than chain {}", tx.hash(), reference.topoheight, self.topoheight);
-            return Err(BlockchainError::InvalidReferenceTopoheight);
-        }
-
-        Ok(())
+        super::pre_verify_tx(self.storage.as_ref(), tx, self.stable_topoheight, self.topoheight, self.get_block_version()).await
     }
 
     /// Get the balance ciphertext for a receiver account
@@ -520,5 +509,10 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for ChainS
         new_nonce: u64
     ) -> Result<(), BlockchainError> {
         self.internal_update_account_nonce(account, new_nonce).await
+    }
+
+    /// Get the block version
+    fn get_block_version(&self) -> BlockVersion {
+        self.block_version
     }
 } 

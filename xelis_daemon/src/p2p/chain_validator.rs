@@ -17,6 +17,7 @@ use crate::core::{
     blockchain::Blockchain,
     blockdag,
     error::BlockchainError,
+    hard_fork::{get_pow_algorithm_for_version, get_version_at_height},
     storage::{
         BlocksAtHeightProvider,
         DagOrderProvider,
@@ -98,9 +99,23 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             return Err(BlockchainError::AlreadyInChain)
         }
 
+        // Verify the block version
+        let version = get_version_at_height(self.blockchain.get_network(), header.get_height());
+        if version != header.get_version() {
+            debug!("Block {} has version {} while expected version is {}", hash, header.get_version(), version);
+            return Err(BlockchainError::InvalidBlockVersion)
+        }
+
+        // Verify the block height by tips
+        let height_at_tips = blockdag::calculate_height_at_tips(self, header.get_tips().iter()).await?;
+        if height_at_tips != header.get_height() {
+            debug!("Block {} has height {} while expected height is {}", hash, header.get_height(), height_at_tips);
+            return Err(BlockchainError::InvalidBlockHeight(height_at_tips, header.get_height()))
+        }
+
         let tips = header.get_tips();
         let tips_count = tips.len();
-        
+
         // verify tips count
         if tips_count == 0 || tips_count > TIPS_LIMIT {
             debug!("Block {} contains {} tips while only {} is accepted", hash, tips_count, TIPS_LIMIT);
@@ -127,7 +142,8 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             }
         }
 
-        let pow_hash = header.get_pow_hash()?;
+        let algorithm = get_pow_algorithm_for_version(version);
+        let pow_hash = header.get_pow_hash(algorithm)?;
         trace!("POW hash: {}", pow_hash);
         let (difficulty, p) = self.blockchain.verify_proof_of_work(self, &pow_hash, tips.iter()).await?;
 

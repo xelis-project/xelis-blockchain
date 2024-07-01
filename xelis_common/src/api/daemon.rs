@@ -4,10 +4,16 @@ use std::{
     net::SocketAddr
 };
 use indexmap::IndexSet;
-use serde::{Deserialize, Serialize, Serializer, Deserializer, de::Error};
+use serde::{
+    Deserialize,
+    Serialize,
+    Serializer,
+    Deserializer,
+    de::Error
+};
 use crate::{
     account::{CiphertextCache, VersionedBalance, VersionedNonce},
-    block::EXTRA_NONCE_SIZE,
+    block::{Algorithm, BlockVersion, EXTRA_NONCE_SIZE},
     crypto::{Address, Hash},
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
@@ -54,7 +60,7 @@ pub struct RPCBlockResponse<'a> {
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
     pub total_fees: Option<u64>,
     pub total_size_in_bytes: usize,
-    pub version: u8,
+    pub version: BlockVersion,
     pub tips: Cow<'a, IndexSet<Hash>>,
     pub timestamp: TimestampMillis,
     pub height: u64,
@@ -104,17 +110,11 @@ pub struct GetBlockTemplateParams<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct CreateMinerWorkParams<'a> {
+pub struct GetMinerWorkParams<'a> {
     // Block Template in hexadecimal format
     pub template: Cow<'a, String>,
     // Address of the miner, if empty, it will use the address from template
     pub address: Option<Cow<'a, Address>>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct CreateMinerWorkResult {
-    // MinerWork struct in hexadecimal format
-    pub miner_work: String
 }
 
 #[derive(Serialize, Deserialize)]
@@ -132,15 +132,17 @@ pub struct GetBlockTemplateResult {
 
 #[derive(Serialize, Deserialize, PartialEq)]
 pub struct GetMinerWorkResult {
+    // algorithm to use
+    pub algorithm: Algorithm,
     // template is miner job in hex format
-    pub template: String,
+    pub miner_work: String,
     // block height
     pub height: u64,
+    // difficulty required for valid block POW
+    pub difficulty: Difficulty,
     // topoheight of the daemon
     // this is for visual purposes only
     pub topoheight: u64,
-    // difficulty required for valid block POW
-    pub difficulty: Difficulty
 }
 
 #[derive(Serialize, Deserialize)]
@@ -219,6 +221,13 @@ pub struct HasNonceResult {
 pub struct GetBalanceResult {
     pub version: VersionedBalance,
     pub topoheight: u64
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetStableBalanceResult {
+    pub version: VersionedBalance,
+    pub stable_topoheight: u64,
+    pub stable_block_hash: Hash 
 }
 
 #[derive(Serialize, Deserialize)]
@@ -455,6 +464,16 @@ pub struct DevFeeThreshold {
     pub fee_percentage: u64
 }
 
+// Struct to define hard fork
+pub struct HardFork {
+    // block height to start hard fork
+    pub height: u64,
+    // Block version to use
+    pub version: BlockVersion,
+    // All the changes that will be applied
+    pub changelog: &'static str
+}
+
 // Struct to returns the size of the blockchain on disk
 #[derive(Serialize, Deserialize)]
 pub struct SizeOnDiskResult {
@@ -530,6 +549,9 @@ pub enum NotifyEvent {
     // When stable height has changed (different than the previous one)
     // it contains StableHeightChangedEvent struct as value
     StableHeightChanged,
+    // When stable topoheight has changed (different than the previous one)
+    // it contains StableTopoHeightChangedEvent struct as value
+    StableTopoHeightChanged,
     // When a transaction that was executed in a block is not reintroduced in mempool
     // It contains TransactionOrphanedEvent as value
     TransactionOrphaned,
@@ -590,6 +612,14 @@ pub struct StableHeightChangedEvent {
     pub previous_stable_height: u64,
     pub new_stable_height: u64
 }
+
+// Value of NotifyEvent::StableTopoHeightChanged
+#[derive(Serialize, Deserialize)]
+pub struct StableTopoHeightChangedEvent {
+    pub previous_stable_topoheight: u64,
+    pub new_stable_topoheight: u64
+}
+
 
 // Value of NotifyEvent::TransactionAddedInMempool
 pub type TransactionAddedInMempoolEvent = TransactionResponse<'static>;

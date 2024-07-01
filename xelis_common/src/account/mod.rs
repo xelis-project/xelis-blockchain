@@ -1,15 +1,27 @@
 mod balance;
 mod nonce;
 
-use std::borrow::Cow;
-use std::fmt::{self, Display, Formatter};
-
-pub use balance::{VersionedBalance, BalanceType};
+use std::{
+    borrow::Cow,
+    fmt::{self, Display, Formatter}
+};
+pub use balance::{VersionedBalance, BalanceType, AccountSummary, Balance};
 pub use nonce::VersionedNonce;
 use serde::{Serialize, Deserialize};
-use crate::crypto::elgamal::{Ciphertext, CompressedCiphertext, DecompressionError, RISTRETTO_COMPRESSED_SIZE};
-
-use crate::serializer::{Reader, ReaderError, Serializer, Writer};
+use crate::{
+        crypto::elgamal::{
+        Ciphertext,
+        CompressedCiphertext,
+        DecompressionError,
+        RISTRETTO_COMPRESSED_SIZE
+    },
+    serializer::{
+        Reader,
+        ReaderError,
+        Serializer,
+        Writer
+    }
+};
 
 // Represents a Ciphertext that can be lazily decompressed and compressed
 #[derive(Clone, Debug)]

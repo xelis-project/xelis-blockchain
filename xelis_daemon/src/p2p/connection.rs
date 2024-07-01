@@ -1,4 +1,4 @@
-use crate::config::{PEER_TIMEOUT_DISCONNECT, PEER_TIMEOUT_INIT_CONNECTION};
+use crate::config::{PEER_TIMEOUT_DISCONNECT, PEER_TIMEOUT_INIT_CONNECTION, PEER_SEND_BYTES_TIMEOUT};
 use super::{
     encryption::Encryption,
     error::P2pError,
@@ -205,9 +205,28 @@ impl Connection {
 
         Ok(())
     }
+
+    // Send bytes to the tcp stream with a timeout
+    // if an error occurs, the connection is closed
+    pub async fn send_bytes(&self, packet: &[u8]) -> P2pResult<()> {
+        match timeout(Duration::from_millis(PEER_SEND_BYTES_TIMEOUT), self.send_bytes_internal(packet)).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                debug!("Failed to send bytes to {}: {}", self.get_address(), e);
+                self.closed.store(true, Ordering::SeqCst);
+                Err(e.into())
+            }
+            Err(e) => {
+                debug!("Failed to send bytes in requested time to {}: {}", self.get_address(), e);
+                self.closed.store(true, Ordering::SeqCst);
+                Err(e.into())
+            }
+        }
+    }
+
     // Send bytes to the peer
     // Encrypt must be used all time starting handshake
-    pub async fn send_bytes(&self, packet: &[u8]) -> P2pResult<()> {
+    async fn send_bytes_internal(&self, packet: &[u8]) -> P2pResult<()> {
         trace!("Sending {} bytes to {}", packet.len(), self.get_address());
         let mut stream = self.write.lock().await;
 
@@ -326,16 +345,14 @@ impl Connection {
     // this function will wait until something is sent to the socket if it's in blocking mode
     // this return the size of data read & set in the buffer.
     // used to only lock one time the stream and read on it
-    async fn read_bytes_from_stream(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<usize> {
+    async fn read_bytes_from_stream_internal(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<usize> {
         let mut read = 0;
         let buf_len = buf.len();
         // Packet may have been fragmented, try to read it completely
         while read < buf_len {
             let result = stream.read(&mut buf[read..]).await?;
             match result {
-                0 => {
-                    return Err(P2pError::Disconnected);
-                }
+                0 => return Err(P2pError::Disconnected),
                 n => {
                     read += n;
                 }
@@ -346,11 +363,29 @@ impl Connection {
         Ok(read)
     }
 
+    // this function will wait until something is sent to the socket if it's in blocking mode
+    // this return the size of data read & set in the buffer.
+    // used to only lock one time the stream and read on it
+    // on any error, it will considered as disconnected
+    async fn read_bytes_from_stream(&self, stream: &mut OwnedReadHalf, buf: &mut [u8]) -> P2pResult<usize> {
+        match self.read_bytes_from_stream_internal(stream, buf).await {
+            Ok(read) => Ok(read),
+            Err(e) => {
+                debug!("Failed to read bytes from {}: {}", self.get_address(), e);
+                self.closed.store(true, Ordering::SeqCst);
+                Err(e)
+            }
+        }
+    }
+
     // Close internal close directly the stream
     // This must be called only from the write connection task
     pub async fn close(&self) -> P2pResult<()> {
         trace!("Closing internal connection with {}", self.addr);
-        self.closed.store(true, Ordering::SeqCst);
+        if self.closed.swap(true, Ordering::SeqCst) {
+            debug!("Connection with {} already closed", self.addr);
+            return Ok(());
+        }
 
         // sometimes the peer is not removed on other peer side
         let mut stream = self.write.lock().await;

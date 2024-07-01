@@ -584,13 +584,15 @@ impl Peer {
                 debug!("{} is a priority peer, closing only", self);
             }
     
-            self.peer_list.remove_peer(self.get_id()).await?;
+            self.peer_list.remove_peer(self.get_id(), true).await?;
         }
         res?;
         
         Ok(())
     }
 
+    // Signal the exit of the peer to the tasks
+    // This is listened by write task to close the connection
     pub async fn signal_exit(&self) -> Result<(), P2pError> {
         self.exit_channel.send(())
             .map_err(|e| P2pError::SendError(e.to_string()))?;
@@ -600,30 +602,13 @@ impl Peer {
 
     // Close the peer connection and remove it from the peer list
     pub async fn close(&self) -> Result<(), P2pError> {
-        trace!("Closing connection with {}", self);
+        trace!("Closing connection internal with {}", self);
+        let res = self.get_connection().close().await;
 
-        // Remove this peer from peer list
-        let res = self.peer_list.remove_peer(self.get_id()).await;
+        trace!("Deleting peer {} from peerlist", self);
+        self.peer_list.remove_peer(self.get_id(), true).await?;
 
-        // Notify the writer task to exit
-        self.signal_exit().await?;
-
-        res
-    }
-
-    // Close the peer connection and remove it from the peer list
-    pub async fn close_internal(&self) -> Result<(), P2pError> {
-        trace!("Closing internal connection with {}", self);
-        let res_notify = self.exit_channel.send(()).map_err(|e| P2pError::SendError(e.to_string()));
-
-        if !self.get_connection().is_closed() {            
-            let res = self.peer_list.remove_peer(self.get_id()).await;
-            self.get_connection().close().await?;
-            res?;
-        }
-
-        res_notify?;
-
+        res?;
         Ok(())
     }
 

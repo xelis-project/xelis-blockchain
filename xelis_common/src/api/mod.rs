@@ -15,6 +15,7 @@ use crate::{
         Hash,
         Signature
     },
+    serializer::Serializer,
     transaction::{
         extra_data::UnknownExtraDataFormat,
         BurnPayload,
@@ -22,7 +23,8 @@ use crate::{
         SourceCommitment,
         Transaction,
         TransactionType,
-        TransferPayload
+        TransferPayload,
+        TxVersion
     }
 };
 pub use data::*;
@@ -120,7 +122,7 @@ impl From<RPCTransactionType<'_>> for TransactionType {
 pub struct RPCTransaction<'a> {
     pub hash: Cow<'a, Hash>,
     /// Version of the transaction
-    pub version: u8,
+    pub version: TxVersion,
     // Source of the transaction
     pub source: Address,
     /// Type of the transaction
@@ -138,6 +140,8 @@ pub struct RPCTransaction<'a> {
     pub reference: Cow<'a, Reference>,
     /// Signature of the transaction
     pub signature: Cow<'a, Signature>,
+    /// TX size in bytes
+    pub size: usize
 }
 
 impl<'a> RPCTransaction<'a> {
@@ -153,6 +157,7 @@ impl<'a> RPCTransaction<'a> {
             range_proof: Cow::Borrowed(tx.get_range_proof()),
             reference: Cow::Borrowed(tx.get_reference()),
             signature: Cow::Borrowed(tx.get_signature()),
+            size: tx.size()
         }
     }
 }
@@ -187,5 +192,7 @@ pub struct SplitAddressResult {
     // Normal address
     pub address: Address,
     // Encoded data from address
-    pub integrated_data: DataElement
+    pub integrated_data: DataElement,
+    // Integrated data size
+    pub size: usize
 }

@@ -135,6 +135,14 @@ impl ExtraData {
         }
     }
 
+    // Estimate the final size for the extra data based on the plaintext format
+    pub fn estimate_size(data: &DataElement) -> usize {
+        let cipher: UnknownExtraDataFormat = Cipher(data.to_bytes()).into();
+        // 2 bytes of additional overhead because the extra data store
+        // the cipher size again 
+        2 + cipher.size() + (RISTRETTO_COMPRESSED_SIZE * 2)
+    }
+
     // Get the compressed handle based on its role
     fn get_handle(&self, role: Role) -> &CompressedHandle {
         match role {
@@ -294,6 +302,10 @@ impl Serializer for UnknownExtraDataFormat {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(Self(Vec::read(reader)?))
     }
+
+    fn size(&self) -> usize {
+        self.0.size()
+    }
 }
 
 impl Serializer for AEADCipher {
@@ -304,6 +316,10 @@ impl Serializer for AEADCipher {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(Self(Vec::read(reader)?))
     }
+
+    fn size(&self) -> usize {
+        self.0.size()
+    }
 }
 
 impl Serializer for Cipher {
@@ -313,6 +329,10 @@ impl Serializer for Cipher {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(Self(Vec::read(reader)?))
+    }
+
+    fn size(&self) -> usize {
+        self.0.size()
     }
 }
 
@@ -349,5 +369,16 @@ mod tests {
         // Decrypt for bob
         let decrypted = extra_data.decrypt(bob.get_private_key(), Role::Receiver).unwrap();
         assert_eq!(decrypted.0, bytes);
+    }
+
+    #[test]
+    fn test_estimate_extra_data_size() {
+        let alice = KeyPair::new();
+        let bob = KeyPair::new();
+
+        let data = 1234567890u64.into();
+        let size = ExtraData::estimate_size(&data);
+        let encrypted = ExtraData::new(PlaintextData(data.to_bytes()), alice.get_public_key(), bob.get_public_key()).to_bytes();
+        assert_eq!(size, encrypted.size());
     }
 }

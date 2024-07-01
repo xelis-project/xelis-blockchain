@@ -1,8 +1,42 @@
 use bulletproofs::RangeProof;
-use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity, RistrettoPoint, Scalar};
+use curve25519_dalek::{
+    ristretto::CompressedRistretto,
+    traits::Identity,
+    RistrettoPoint,
+    Scalar
+};
 use log::{debug, trace};
 use merlin::Transcript;
-use crate::{config::XELIS_ASSET, crypto::{elgamal::{Ciphertext, CompressedPublicKey, DecompressionError, DecryptHandle, PedersenCommitment}, proofs::{BatchCollector, ProofVerificationError, BP_GENS, BULLET_PROOF_SIZE, PC_GENS}, Hash, ProtocolTranscript, SIGNATURE_SIZE}, serializer::Serializer, transaction::{EXTRA_DATA_LIMIT_SIZE, MAX_TRANSFER_COUNT}};
+use crate::{
+    config::XELIS_ASSET,
+    crypto::{
+        elgamal::{
+            Ciphertext,
+            CompressedPublicKey,
+            DecompressionError,
+            DecryptHandle,
+            PedersenCommitment
+        },
+        proofs::{
+            BatchCollector,
+            ProofVerificationError,
+            BP_GENS,
+            BULLET_PROOF_SIZE,
+            PC_GENS
+        },
+        Hash,
+        ProtocolTranscript,
+        SIGNATURE_SIZE
+    },
+    serializer::Serializer,
+    transaction::{
+        TxVersion,
+        EXTRA_DATA_LIMIT_SIZE,
+        EXTRA_DATA_LIMIT_SUM_SIZE,
+        MAX_TRANSFER_COUNT
+    },
+    block::BlockVersion
+};
 use super::{Reference, Role, Transaction, TransactionType, TransferPayload};
 use thiserror::Error;
 use std::iter;
@@ -59,6 +93,9 @@ pub trait BlockchainVerificationState<'a, E> {
         account: &'a CompressedPublicKey,
         new_nonce: u64
     ) -> Result<(), E>;
+
+    /// Get the block version in which TX is executed
+    fn get_block_version(&self) -> BlockVersion;
 }
 
 #[derive(Error, Debug, Clone)]
@@ -73,6 +110,14 @@ pub enum VerificationError<T> {
     InvalidSignature,
     #[error("Proof verification error: {0}")]
     Proof(#[from] ProofVerificationError),
+    #[error("Extra Data is too big in transfer")]
+    TransferExtraDataSize,
+    #[error("Extra Data is too big in transaction")]
+    TransactionExtraDataSize,
+    #[error("Transfer count is invalid")]
+    TransferCount,
+    #[error("Invalid commitments assets")]
+    Commitments,
 }
 
 struct DecompressedTransferCt {
@@ -134,7 +179,7 @@ impl Transaction {
     }
 
     pub(crate) fn prepare_transcript(
-        version: u8,
+        version: TxVersion,
         source_pubkey: &CompressedPublicKey,
         fee: u64,
         nonce: u64,
@@ -211,13 +256,13 @@ impl Transaction {
 
         if !self.verify_commitment_assets() {
             debug!("Invalid commitment assets");
-            return Err(VerificationError::Proof(ProofVerificationError::Format));
+            return Err(VerificationError::Commitments);
         }
 
         let transfers_decompressed = if let TransactionType::Transfers(transfers) = &self.data {
             if transfers.len() > MAX_TRANSFER_COUNT || transfers.is_empty() {
                 debug!("incorrect transfers size: {}", transfers.len());
-                return Err(VerificationError::Proof(ProofVerificationError::Format));
+                return Err(VerificationError::TransferCount);
             }
 
             let mut extra_data_size = 0;
@@ -229,13 +274,24 @@ impl Transaction {
                 }
 
                 if let Some(extra_data) = transfer.extra_data.as_ref() {
-                    extra_data_size += extra_data.size();
+                    let size = extra_data.size();
+                    if size > EXTRA_DATA_LIMIT_SIZE {
+                        return Err(VerificationError::TransferExtraDataSize);
+                    }
+                    extra_data_size += size;
                 }
             }
 
-            if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
-                debug!("extra data size is too large");
-                return Err(VerificationError::Proof(ProofVerificationError::Format));
+            // TODO: this is temporary until the hardfork has passed
+            let max_size = if state.get_block_version() == BlockVersion::V0 {
+                EXTRA_DATA_LIMIT_SIZE
+            } else {
+                EXTRA_DATA_LIMIT_SUM_SIZE
+            };
+
+            // Check the sum of extra data size
+            if extra_data_size > max_size {
+                return Err(VerificationError::TransactionExtraDataSize);
             }
 
             transfers

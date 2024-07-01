@@ -10,19 +10,24 @@ use crate::{
     serializer::{Reader, ReaderError, Serializer, Writer}
 };
 use bulletproofs::RangeProof;
-use log::debug;
 use serde::{Deserialize, Serialize};
 use self::extra_data::UnknownExtraDataFormat;
 
 pub mod builder;
 pub mod verify;
 pub mod extra_data;
+mod version;
+
+pub use version::TxVersion;
 
 #[cfg(test)]
 mod tests;
 
-// Maximum total size of payload across all transfers per transaction
+// Maximum size of extra data per transfer
 pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
+// Maximum total size of payload across all transfers per transaction
+pub const EXTRA_DATA_LIMIT_SUM_SIZE: usize = EXTRA_DATA_LIMIT_SIZE * 32;
+// Maximum number of transfers per transaction
 pub const MAX_TRANSFER_COUNT: usize = 255;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -88,7 +93,7 @@ pub enum TransactionType {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Transaction {
     /// Version of the transaction
-    version: u8,
+    version: TxVersion,
     // Source of the transaction
     source: CompressedPublicKey,
     /// Type of the transaction
@@ -175,7 +180,7 @@ impl TransferPayload {
 impl Transaction {
     pub fn new(source: CompressedPublicKey, data: TransactionType, fee: u64, nonce: u64, source_commitments: Vec<SourceCommitment>, range_proof: RangeProof, reference: Reference, signature: Signature) -> Self {
         Transaction {
-            version: 0,
+            version: TxVersion::V0,
             source,
             data,
             fee,
@@ -188,7 +193,7 @@ impl Transaction {
     }
 
     // Get the transaction version
-    pub fn get_version(&self) -> u8 {
+    pub fn get_version(&self) -> TxVersion {
         self.version
     }
 
@@ -215,6 +220,11 @@ impl Transaction {
     // Get the source commitments
     pub fn get_source_commitments(&self) -> &Vec<SourceCommitment> {
         &self.source_commitments
+    }
+
+    // Get the used assets
+    pub fn get_assets(&self) -> impl Iterator<Item = &Hash> {
+        self.source_commitments.iter().map(|c| &c.asset)
     }
 
     // Get the range proof
@@ -403,13 +413,7 @@ impl Serializer for Transaction {
     }
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
-        let version = reader.read_u8()?;
-        // At this moment we only support version 0, so we check it here directly
-        if version != 0 {
-            debug!("Expected version 0 got version {version}");
-            return Err(ReaderError::InvalidValue)
-        }
-
+        let version = TxVersion::read(reader)?;
         let source = CompressedPublicKey::read(reader)?;
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;
