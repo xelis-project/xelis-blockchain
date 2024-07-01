@@ -16,6 +16,9 @@ use self::extra_data::UnknownExtraDataFormat;
 pub mod builder;
 pub mod verify;
 pub mod extra_data;
+mod version;
+
+pub use version::TxVersion;
 
 #[cfg(test)]
 mod tests;
@@ -90,7 +93,7 @@ pub enum TransactionType {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Transaction {
     /// Version of the transaction
-    version: u8,
+    version: TxVersion,
     // Source of the transaction
     source: CompressedPublicKey,
     /// Type of the transaction
@@ -177,7 +180,7 @@ impl TransferPayload {
 impl Transaction {
     pub fn new(source: CompressedPublicKey, data: TransactionType, fee: u64, nonce: u64, source_commitments: Vec<SourceCommitment>, range_proof: RangeProof, reference: Reference, signature: Signature) -> Self {
         Transaction {
-            version: 0,
+            version: TxVersion::V0,
             source,
             data,
             fee,
@@ -190,7 +193,7 @@ impl Transaction {
     }
 
     // Get the transaction version
-    pub fn get_version(&self) -> u8 {
+    pub fn get_version(&self) -> TxVersion {
         self.version
     }
 
@@ -410,7 +413,7 @@ impl Serializer for Transaction {
     }
 
     fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
-        let version = reader.read_u8()?;
+        let version = TxVersion::read(reader)?;
         let source = CompressedPublicKey::read(reader)?;
         let data = TransactionType::read(reader)?;
         let fee = reader.read_u64()?;

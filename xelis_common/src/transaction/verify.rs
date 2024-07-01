@@ -30,6 +30,7 @@ use crate::{
     },
     serializer::Serializer,
     transaction::{
+        TxVersion,
         EXTRA_DATA_LIMIT_SIZE,
         EXTRA_DATA_LIMIT_SUM_SIZE,
         MAX_TRANSFER_COUNT
@@ -178,7 +179,7 @@ impl Transaction {
     }
 
     pub(crate) fn prepare_transcript(
-        version: u8,
+        version: TxVersion,
         source_pubkey: &CompressedPublicKey,
         fee: u64,
         nonce: u64,

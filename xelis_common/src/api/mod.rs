@@ -23,7 +23,8 @@ use crate::{
         SourceCommitment,
         Transaction,
         TransactionType,
-        TransferPayload
+        TransferPayload,
+        TxVersion
     }
 };
 pub use data::*;
@@ -121,7 +122,7 @@ impl From<RPCTransactionType<'_>> for TransactionType {
 pub struct RPCTransaction<'a> {
     pub hash: Cow<'a, Hash>,
     /// Version of the transaction
-    pub version: u8,
+    pub version: TxVersion,
     // Source of the transaction
     pub source: Address,
     /// Type of the transaction

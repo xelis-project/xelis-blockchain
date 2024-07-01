@@ -52,6 +52,7 @@ use super::{
     Transaction,
     TransactionType,
     TransferPayload,
+    TxVersion,
     EXTRA_DATA_LIMIT_SIZE,
     EXTRA_DATA_LIMIT_SUM_SIZE,
     MAX_TRANSFER_COUNT
@@ -150,7 +151,7 @@ pub struct TransferBuilder {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TransactionBuilder {
-    version: u8,
+    version: TxVersion,
     source: CompressedPublicKey,
     data: TransactionTypeBuilder,
     fee_builder: FeeBuilder
@@ -220,7 +221,7 @@ impl TransactionTypeBuilder {
 // Used to build the final transaction
 // by signing it
 struct TransactionSigner {
-    version: u8,
+    version: TxVersion,
     source: CompressedPublicKey,
     data: TransactionType,
     fee: u64,
@@ -250,7 +251,7 @@ impl TransactionSigner {
 }
 
 impl TransactionBuilder {
-    pub fn new(version: u8, source: CompressedPublicKey, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
+    pub fn new(version: TxVersion, source: CompressedPublicKey, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
         Self {
             version,
             source,
