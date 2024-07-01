@@ -21,11 +21,11 @@ use super::{
     error::BlockchainError,
     storage::{AccountProvider, BalanceProvider, DagOrderProvider}
 };
-use crate::config::PRUNE_SAFETY_LIMIT;
 
 // Verify a transaction before adding it to mempool/chain state
 // We only verify the reference and the required fees
 pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provider: &P, tx: &Transaction, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Result<(), BlockchainError> {
+    debug!("Pre-verify TX at topoheight {} and stable topoheight {}", topoheight, stable_topoheight);
     if tx.get_version() != 0 {
         debug!("Invalid version: {}", tx.get_version());
         return Err(BlockchainError::InvalidTxVersion);
@@ -42,33 +42,6 @@ pub (super) async fn pre_verify_tx<P: AccountProvider + BalanceProvider>(provide
     if topoheight < reference.topoheight {
         debug!("Invalid reference: topoheight {} is higher than chain {}", reference.topoheight, topoheight);
         return Err(BlockchainError::InvalidReferenceTopoheight);
-    }
-
-    // Reference is in stable topoheight
-    // for fast synced nodes, we must ensure that the TX is using the latest version available
-    // Problem is, this give a way to front running attacks as the TX would be forced to use the latest stable version
-    // and this give a short lifetime to the TX. What we can do to increase the lifetime of the tx,
-    // is to check that the reference is not too old
-    // So, stable topoheight = 1000, topoheight = 1010, reference = 990
-    // Alice has a balance at 800 and 950 respectively. We can't use the balance at 800 because it is too old
-    // Reference at 990 is valid, but if it was 800, we must reject the TX
-    // TX lifetime is PRUNE_SAFETY_LIMIT + STABLE_LIMIT, which is equal to (at least) 88 blocks.
-    if block_version != BlockVersion::V0 && stable_topoheight >= PRUNE_SAFETY_LIMIT {
-        let safety_stable_topoheight = stable_topoheight - PRUNE_SAFETY_LIMIT;
-        if reference.topoheight <= safety_stable_topoheight {
-            for asset in tx.get_assets() {
-                if let Some((topo, _)) = provider.get_usable_balance_at_maximum_topoheight(tx.get_source(), asset, safety_stable_topoheight, topoheight).await? {
-                    // We have a more recent version than the referenced one
-                    if topo > reference.topoheight {
-                        debug!("Invalid reference: last stable balance for asset {} is at topoheight {} (stable topoheight is {}) while reference is {}", asset, topo, stable_topoheight, reference.topoheight);
-                        return Err(BlockchainError::InvalidReferenceTopoheight);
-                    }
-                } else {
-                    debug!("Invalid reference: no usable balance found for asset {} at stable topoheight {}", asset, stable_topoheight);
-                    return Err(BlockchainError::NoStableReferenceFound);
-                }
-            }
-        }
     }
 
     Ok(())
