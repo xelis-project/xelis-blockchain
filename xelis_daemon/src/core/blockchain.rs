@@ -2151,7 +2151,7 @@ impl<S: Storage> Blockchain<S> {
             }
 
             // Update caches
-            self.stable_height.store(stable_height, Ordering::SeqCst);
+            self.stable_height.store(base_height, Ordering::SeqCst);
             self.stable_topoheight.store(base_topo_height, Ordering::SeqCst);
 
             trace!("update difficulty in cache");
