@@ -395,8 +395,9 @@ async fn get_block_template<S: Storage>(context: &Context, body: Value) -> Resul
     let block = blockchain.get_block_template_for_storage(&storage, params.address.into_owned().to_public_key()).await.context("Error while retrieving block template")?;
     let (difficulty, _) = blockchain.get_difficulty_at_tips(&*storage, block.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
     let height = block.height;
+    let algorithm = get_pow_algorithm_for_version(block.version);
     let topoheight = blockchain.get_topo_height();
-    Ok(json!(GetBlockTemplateResult { template: block.to_hex(), height, topoheight, difficulty }))
+    Ok(json!(GetBlockTemplateResult { template: block.to_hex(), algorithm, height, topoheight, difficulty }))
 }
 
 async fn get_miner_work<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
