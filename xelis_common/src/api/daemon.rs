@@ -122,6 +122,8 @@ pub struct GetBlockTemplateResult {
     // block_template is Block Header in hexadecimal format
     // miner jobs can be created from it
     pub template: String,
+    // Algorithm to use for the POW challenge
+    pub algorithm: Algorithm,
     // Blockchain height
     pub height: u64,
     // Topoheight of the daemon

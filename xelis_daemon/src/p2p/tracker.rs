@@ -553,7 +553,10 @@ impl ObjectTracker {
             let packet = Bytes::from(Packet::ObjectRequest(Cow::Borrowed(request.get_object())).to_bytes());
             // send the packet to the Peer
             let peer = request.get_peer();
-            if let Err(e) = peer.send_bytes(packet).await {
+            if peer.get_connection().is_closed() {
+                warn!("Peer {} is disconnected but still has a pending request object {}", peer, request_hash);
+                Some((peer.get_id(), request.get_group_id().map(|v| (v, P2pError::Disconnected))))
+            } else if let Err(e) = peer.send_bytes(packet).await {
                 warn!("Error while requesting object {} using Object Tracker: {}", request_hash, e);
                 Some((peer.get_id(), request.get_group_id().map(|v| (v, e))))
             } else {
