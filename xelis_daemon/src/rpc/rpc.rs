@@ -1,5 +1,6 @@
 use crate::{
     config::{
+        get_hard_forks as get_configured_hard_forks,
         BLOCK_TIME_MILLIS,
         DEV_FEES,
         DEV_PUBLIC_KEY
@@ -268,6 +269,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method("get_stableheight", async_handler!(get_stable_height::<S>));
     handler.register_method("get_stable_height", async_handler!(get_stable_height::<S>));
     handler.register_method("get_stable_topoheight", async_handler!(get_stable_topoheight::<S>));
+    handler.register_method("get_hard_forks", async_handler!(get_hard_forks::<S>));
 
     handler.register_method("get_block_at_topoheight", async_handler!(get_block_at_topoheight::<S>));
     handler.register_method("get_blocks_at_height", async_handler!(get_blocks_at_height::<S>));
@@ -356,6 +358,17 @@ async fn get_stable_topoheight<S: Storage>(context: &Context, body: Value) -> Re
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     Ok(json!(blockchain.get_stable_topoheight()))
 }
+
+async fn get_hard_forks<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    if body != Value::Null {
+        return Err(InternalRpcError::UnexpectedParams)
+    }
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let hard_forks = get_configured_hard_forks(blockchain.get_network());
+
+    Ok(json!(hard_forks))
+}
+
 
 async fn get_block_at_topoheight<S: Storage>(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
     let params: GetBlockAtTopoHeightParams = parse_params(body)?;
