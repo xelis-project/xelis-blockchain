@@ -467,6 +467,7 @@ pub struct DevFeeThreshold {
 }
 
 // Struct to define hard fork
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct HardFork {
     // block height to start hard fork
     pub height: u64,
