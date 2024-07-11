@@ -255,7 +255,9 @@ pub async fn get_peer_entry(peer: &Peer) -> PeerEntry {
         peers: Cow::Owned(peers),
         pruned_topoheight: peer.get_pruned_topoheight(),
         cumulative_difficulty: Cow::Owned(cumulative_difficulty),
-        connected_on: peer.get_connection().connected_on()
+        connected_on: peer.get_connection().connected_on(),
+        bytes_recv: peer.get_connection().bytes_in(),
+        bytes_sent: peer.get_connection().bytes_out(),
     }
 }
 
