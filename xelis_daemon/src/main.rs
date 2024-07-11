@@ -65,7 +65,13 @@ use crate::{
         MILLIS_PER_SECOND
     }
 };
-use core::blockdag;
+use core::{
+    blockdag,
+    hard_fork::{
+        get_pow_algorithm_for_version,
+        get_version_at_height
+    }
+};
 use std::{
     fs::File,
     io::Write,
@@ -624,6 +630,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let blocks_count = storage.count_blocks().await.context("Error while counting blocks")?;
     let assets = storage.count_assets().await.context("Error while counting assets")?;
     let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?;
+    let version = get_version_at_height(blockchain.get_network(), height);
 
     manager.message(format!("Height: {}", height));
     manager.message(format!("Stable Height: {}", stableheight));
@@ -637,6 +644,8 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Current Supply: {} XELIS", format_xelis(supply)));
     manager.message(format!("Current Block Reward: {} XELIS", format_xelis(get_block_reward(supply))));
     manager.message(format!("Stored accounts/transactions/blocks/assets: {}/{}/{}/{}", accounts_count, transactions_count, blocks_count, assets));
+    manager.message(format!("Block Version: {}", version));
+    manager.message(format!("POW Algorithm: {}", get_pow_algorithm_for_version(version)));
 
     manager.message(format!("Tips ({}):", tips.len()));
     for hash in tips {
