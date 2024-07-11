@@ -30,6 +30,9 @@ pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeig
 
     // Save a new block with its transactions and difficulty
     async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &Vec<Immutable<Transaction>>, difficulty: Difficulty, p: VarUint, hash: Hash) -> Result<(), BlockchainError>;
+
+    // Delete a block using its hash
+    async fn delete_block_with_hash(&mut self, hash: &Hash) -> Result<Block, BlockchainError>;
 }
 
 impl SledStorage {
@@ -105,6 +108,33 @@ impl BlockProvider for SledStorage {
         }
 
         let block = Block::new(Immutable::Arc(block), transactions);
+        Ok(block)
+    }
+
+    async fn delete_block_with_hash(&mut self, hash: &Hash) -> Result<Block, BlockchainError> {
+        debug!("Deleting block with hash: {}", hash);
+
+        // Delete block header
+        let header = self.delete_arc_cacheable_data(&self.blocks, &self.blocks_cache, &hash).await?;
+
+        // Decrease blocks count
+        self.store_blocks_count(self.count_blocks().await? - 1)?;
+
+        // Delete difficulty
+        self.difficulty.remove(hash.as_bytes())?;
+        // Delete P
+        self.difficulty_covariance.remove(hash.as_bytes())?;
+
+        self.remove_block_hash_at_height(&hash, header.get_height()).await?;
+
+        let mut transactions = Vec::new();
+        for tx in header.get_transactions() {
+            let transaction = self.get_transaction(&tx).await?;
+            transactions.push(Immutable::Arc(transaction));
+        }
+
+        let block = Block::new(Immutable::Arc(header), transactions);
+
         Ok(block)
     }
 }

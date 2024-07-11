@@ -2164,7 +2164,30 @@ impl<S: Storage> P2pServer<S> {
                     }
                     total_requested += 1;
                 } else {
-                    trace!("Block {} is already in chain, skipping it", hash);
+                    trace!("Block {} is already in chain, verify if its in DAG", hash);
+
+                    let block = {
+                        let mut storage = self.blockchain.get_storage().write().await;
+                        if !storage.is_block_topological_ordered(&hash).await {
+                            match storage.delete_block_with_hash(&hash).await {
+                                Ok(block) => Some(block),
+                                Err(e) => {
+                                    // This shouldn't happen, but in case
+                                    error!("Error while deleting block {} from storage to re-execute it for chain sync: {}", hash, e);
+                                    continue;
+                                }
+                            }
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(block) = block {
+                        warn!("Block {} is already in chain but not in DAG, re-executing it", hash);
+                        self.blockchain.add_new_block(block, false, false).await?;
+                    } else {
+                        trace!("Block {} is already in DAG, skipping it", hash);
+                    }
                 }
             }
 
