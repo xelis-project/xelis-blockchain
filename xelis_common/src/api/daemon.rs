@@ -334,7 +334,9 @@ pub struct PeerEntry<'a> {
     pub pruned_topoheight: Option<u64>,
     pub peers: Cow<'a, HashMap<SocketAddr, Direction>>,
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
-    pub connected_on: TimestampSeconds
+    pub connected_on: TimestampSeconds,
+    pub bytes_sent: usize,
+    pub bytes_recv: usize,
 }
 
 #[derive(Serialize, Deserialize)]
