@@ -1,3 +1,4 @@
+use core::fmt;
 use std::{borrow::Cow, str::FromStr};
 use log::debug;
 use serde::{Deserialize, Serialize};
@@ -57,15 +58,6 @@ impl FromStr for Algorithm {
     }
 }
 
-impl ToString for Algorithm {
-    fn to_string(&self) -> String {
-        match self {
-            Algorithm::V1 => "xel/v1".to_string(),
-            Algorithm::V2 => "xel/v2".to_string()
-        }
-    }
-}
-
 impl Serialize for Algorithm {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
         self.to_string().serialize(serializer)
@@ -76,6 +68,15 @@ impl<'de> Deserialize<'de> for Algorithm {
     fn deserialize<D>(deserializer: D) -> Result<Algorithm, D::Error> where D: serde::Deserializer<'de> {
         let s = String::deserialize(deserializer)?;
         Algorithm::from_str(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl fmt::Display for Algorithm {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", match self {
+            Algorithm::V1 => "xel/v1",
+            Algorithm::V2 => "xel/v2"
+        })
     }
 }
 
