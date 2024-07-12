@@ -1909,7 +1909,7 @@ impl<S: Storage> P2pServer<S> {
                     let version = get_version_at_height(self.blockchain.get_network(), height);
                     // Due to the TX being orphaned, some TXs may be in the wrong order in V1
                     // It has been sorted in V2 and should not happen anymore
-                    if version == BlockVersion::V1 && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
+                    if version == BlockVersion::V0 && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
                         if self.blockchain.is_side_block_internal(&*storage, &hash, top_topoheight).await? {
                             let position = storage.get_block_position_in_order(&hash).await?;
                             let previous_position = storage.get_block_position_in_order(&previous_hash).await?;

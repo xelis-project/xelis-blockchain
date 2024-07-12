@@ -203,6 +203,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("p2p_outgoing_connections", "Accept/refuse to connect to outgoing nodes", CommandHandler::Async(async_handler!(p2p_outgoing_connections::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
+    command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
 
     // Don't keep the lock for ever
     let (p2p, getwork) = {
@@ -388,6 +389,23 @@ async fn list_unexecuted_transactions<S: Storage>(manager: &CommandManager, _: A
     for tx in unexecuted {
         manager.message(format!("- {}", tx));
     }
+    Ok(())
+}
+
+async fn swap_blocks_executions_positions<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let prompt = manager.get_prompt();
+    let mut storage = blockchain.get_storage().write().await;
+
+    let left = prompt.read_hash("Hash 1: ").await
+        .context("Error while reading hash 1")?;
+    let right = prompt.read_hash("Hash 2: ").await
+        .context("Error while reading hash 2")?;
+
+    storage.swap_blocks_executions_positions(&left, &right).await
+        .context("Swap blocks executions positions")?;
+
     Ok(())
 }
 
