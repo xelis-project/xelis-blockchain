@@ -179,6 +179,12 @@ impl CommandManager {
         Ok(())
     }
 
+    pub fn remove_from_context<T: Send + Sync + 'static>(&self) -> Result<(), CommandError> {
+        let mut context = self.context.lock()?;
+        context.remove::<T>();
+        Ok(())
+    }
+
     pub fn get_context(&self) -> &Mutex<Context> {
         &self.context
     }
@@ -190,6 +196,12 @@ impl CommandManager {
     pub fn add_command(&self, command: Command) -> Result<(), CommandError> {
         let mut commands = self.commands.lock()?;
         commands.push(Rc::new(command));
+        Ok(())
+    }
+
+    pub fn remove_all_commands(&self) -> Result<(), CommandError> {
+        let mut commands = self.commands.lock()?;
+        commands.clear();
         Ok(())
     }
 

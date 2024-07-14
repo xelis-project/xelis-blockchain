@@ -35,6 +35,10 @@ impl Context {
         self.values.insert(TypeId::of::<T>(), Box::new(data));
     }
 
+    pub fn remove<T: 'static>(&mut self) {
+        self.values.remove(&TypeId::of::<T>());
+    }
+
     pub fn has<T: 'static>(&self) -> bool {
         self.values.contains_key(&TypeId::of::<T>())
     }
