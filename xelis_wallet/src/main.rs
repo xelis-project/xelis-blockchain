@@ -240,12 +240,7 @@ async fn main() -> Result<()> {
         apply_config(&wallet, #[cfg(feature = "api_server")] &prompt).await;
         setup_wallet_command_manager(wallet, &command_manager).await?;
     } else {
-        command_manager.add_command(Command::new("open", "Open a wallet", CommandHandler::Async(async_handler!(open_wallet))))?;
-        command_manager.add_command(Command::new("create", "Create a new wallet", CommandHandler::Async(async_handler!(create_wallet))))?;
-        command_manager.add_command(Command::new("recover", "Recover a wallet using a seed", CommandHandler::Async(async_handler!(recover_wallet))))?;
-
-        // Display available commands
-        command_manager.display_commands()?;
+        register_default_commands(&command_manager).await?;
     }
 
     if let Err(e) = prompt.start(Duration::from_millis(1000), Box::new(async_handler!(prompt_message_builder)), Some(&command_manager)).await {
@@ -257,6 +252,17 @@ async fn main() -> Result<()> {
             wallet.close().await;
         }
     }
+
+    Ok(())
+}
+
+async fn register_default_commands(manager: &CommandManager) -> Result<(), CommandError> {
+    manager.add_command(Command::new("open", "Open a wallet", CommandHandler::Async(async_handler!(open_wallet))))?;
+    manager.add_command(Command::new("create", "Create a new wallet", CommandHandler::Async(async_handler!(create_wallet))))?;
+    manager.add_command(Command::new("recover", "Recover a wallet using a seed", CommandHandler::Async(async_handler!(recover_wallet))))?;
+
+    // Display available commands
+    manager.display_commands()?;
 
     Ok(())
 }
@@ -399,6 +405,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     command_manager.add_command(Command::with_optional_arguments("seed", "Show seed of selected language", vec![Arg::new("language", ArgType::Number)], CommandHandler::Async(async_handler!(seed))))?;
     command_manager.add_command(Command::new("nonce", "Show current nonce", CommandHandler::Async(async_handler!(nonce))))?;
     command_manager.add_command(Command::new("set_nonce", "Set new nonce", CommandHandler::Async(async_handler!(set_nonce))))?;
+    command_manager.add_command(Command::new("logout", "Logout from existing wallet", CommandHandler::Async(async_handler!(logout))))?;
 
     #[cfg(feature = "network_handler")]
     {
@@ -965,6 +972,22 @@ async fn set_nonce(manager: &CommandManager, _: ArgumentManager) -> Result<(), C
     storage.clear_tx_cache();
 
     manager.message(format!("New nonce is: {}", value));
+    Ok(())
+}
+
+async fn logout(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    {
+        let context = manager.get_context().lock()?;
+        let wallet: &Arc<Wallet> = context.get()?;
+        wallet.close().await;
+    }
+
+    manager.remove_all_commands().context("Error while removing all commands")?;
+    manager.remove_from_context::<Arc<Wallet>>()?;
+
+    register_default_commands(manager).await?;
+    manager.message("Wallet has been closed");
+
     Ok(())
 }
 
