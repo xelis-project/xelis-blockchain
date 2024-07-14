@@ -217,8 +217,6 @@ async fn main() -> Result<()> {
     let command_manager = CommandManager::new(prompt.clone());
     command_manager.store_in_context(config.network)?;
 
-    command_manager.register_default_commands()?;
-
     if let Some(path) = config.wallet_path {
         // read password from option or ask him
         let password = if let Some(password) = config.password {
@@ -236,6 +234,8 @@ async fn main() -> Result<()> {
             info!("Creating a new wallet at {}", path);
             Wallet::create(path, password, config.seed, config.network, precomputed_tables)?
         };
+
+        command_manager.register_default_commands()?;
 
         apply_config(&wallet, #[cfg(feature = "api_server")] &prompt).await;
         setup_wallet_command_manager(wallet, &command_manager).await?;
@@ -261,6 +261,7 @@ async fn register_default_commands(manager: &CommandManager) -> Result<(), Comma
     manager.add_command(Command::new("create", "Create a new wallet", CommandHandler::Async(async_handler!(create_wallet))))?;
     manager.add_command(Command::new("recover", "Recover a wallet using a seed", CommandHandler::Async(async_handler!(recover_wallet))))?;
 
+    manager.register_default_commands()?;
     // Display available commands
     manager.display_commands()?;
 
