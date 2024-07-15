@@ -776,7 +776,7 @@ impl NetworkHandler {
             if let Some(topoheight) = block.topoheight {
                 let block_hash = block.hash.as_ref().clone();
                 if let Some((assets, mut nonce)) = self.process_block(address, block, topoheight).await? {
-                    trace!("We must sync head state");
+                    debug!("We must sync head state, assets: {}, nonce: {:?}", assets.iter().map(|a| a.to_string()).collect::<Vec<String>>().join(", "), nonce);
                     {
                         let storage = self.wallet.get_storage().read().await;
                         // Verify that its a higher nonce than our locally stored
@@ -784,6 +784,7 @@ impl NetworkHandler {
                         // Our we couldn't submit new txs before they get removed from mempool
                         let stored_nonce = storage.get_nonce().unwrap_or(0);
                         if nonce.is_some_and(|n| n <= stored_nonce) {
+                            debug!("Nonce {:?} is lower or equal to stored nonce {}, skipping it", nonce, stored_nonce);
                             nonce = None;
                         }
                     }
