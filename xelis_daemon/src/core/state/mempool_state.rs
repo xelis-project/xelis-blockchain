@@ -1,7 +1,7 @@
 use std::collections::{hash_map::Entry, HashMap};
 use async_trait::async_trait;
-use log::debug;
 use xelis_common::{
+    block::BlockVersion,
     crypto::{
         elgamal::Ciphertext,
         Hash,
@@ -11,11 +11,9 @@ use xelis_common::{
         verify::BlockchainVerificationState,
         Reference,
         Transaction
-    },
-    utils::format_xelis
+    }
 };
 use crate::core::{
-    blockchain,
     error::BlockchainError,
     mempool::Mempool,
     storage::Storage
@@ -41,18 +39,24 @@ pub struct MempoolState<'a, S: Storage> {
     // Sender accounts
     // This is used to verify ZK Proofs and store/update nonces
     accounts: HashMap<&'a PublicKey, Account<'a>>,
+    // The current stable topoheight of the chain
+    stable_topoheight: u64,
     // The current topoheight of the chain
     topoheight: u64,
+    // Block header version
+    block_version: BlockVersion,
 }
 
 impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, topoheight: u64) -> Self {
+    pub fn new(mempool: &'a Mempool, storage: &'a S, stable_topoheight: u64, topoheight: u64, block_version: BlockVersion) -> Self {
         Self {
             mempool,
             storage,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
+            stable_topoheight,
             topoheight,
+            block_version,
         }
     }
 
@@ -181,32 +185,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        // Check the version
-        if tx.get_version() != 0 {
-            debug!("Invalid version: {}", tx.get_version());
-            return Err(BlockchainError::InvalidTxVersion);
-        }
-
-        let required_fees = blockchain::estimate_required_tx_fees(self.storage, self.topoheight, tx).await?;
-        if required_fees > tx.get_fee() {
-            debug!("Invalid fees: {} required, {} provided", format_xelis(required_fees), format_xelis(tx.get_fee()));
-            return Err(BlockchainError::InvalidTxFee(required_fees, tx.get_fee()));
-        }
-
-        let reference = tx.get_reference();
-        // Verify that the block he is built upon exists
-        // if !self.storage.has_block_with_hash(&reference.hash).await? || !self.storage.is_block_topological_ordered(&reference.hash).await {
-        //     debug!("Invalid reference: block {} not found", reference.hash);
-        //     return Err(BlockchainError::InvalidReferenceHash);
-        // }
-
-        // Verify that it is not a fake topoheight
-        if self.topoheight < reference.topoheight {
-            debug!("Invalid reference: topoheight {} is higher than chain {}", reference.topoheight, self.topoheight);
-            return Err(BlockchainError::InvalidReferenceTopoheight);
-        }
-
-        Ok(())
+        super::pre_verify_tx(self.storage, tx, self.stable_topoheight, self.topoheight, self.get_block_version()).await
     }
 
     /// Get the balance ciphertext for a receiver account
@@ -254,5 +233,10 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         new_nonce: u64
     ) -> Result<(), BlockchainError> {
         self.internal_update_account_nonce(account, new_nonce).await
+    }
+
+    /// Get the block version
+    fn get_block_version(&self) -> BlockVersion {
+        self.block_version
     }
 }

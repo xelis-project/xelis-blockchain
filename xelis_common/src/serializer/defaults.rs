@@ -293,11 +293,7 @@ impl<T: Serializer> Serializer for Vec<T> {
     }
 
     fn size(&self) -> usize {
-        match self.first() {
-            Some(first) => 2 + self.len() * first.size(),
-            // If the vector is empty, we still need to write the size (u16)
-            None => 2
-        }
+        2 + self.iter().map(|el| el.size()).sum::<usize>()
     }
 }
 
@@ -330,7 +326,6 @@ impl Serializer for bool {
         1
     }
 }
-
 
 // Supports up to 2^16 elements
 impl<K: Serializer + Eq + StdHash, V: Serializer + Eq + StdHash> Serializer for HashMap<K, V> {

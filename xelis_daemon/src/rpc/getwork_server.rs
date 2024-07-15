@@ -60,11 +60,12 @@ use xelis_common::{
         get_current_time_in_millis,
         TimestampMillis
     },
-    utils::spawn_task
+    tokio::spawn_task
 };
 use crate::{
     core::{
         blockchain::Blockchain,
+        hard_fork::get_pow_algorithm_for_version,
         storage::Storage
     },
     config::{
@@ -247,10 +248,10 @@ impl<S: Storage> GetWorkServer<S> {
     // then, send it
     async fn send_new_job(self: Arc<Self>, addr: Addr<GetWorkWebSocketHandler<S>>, key: PublicKey) -> Result<(), InternalRpcError> {
         debug!("Sending new job to miner");
-        let (mut job, height, difficulty) = {
+        let (mut job, version, height, difficulty) = {
             let mut hash = self.last_header_hash.lock().await;
             let mut mining_jobs = self.mining_jobs.lock().await;
-            let (job, height, difficulty);
+            let (version, job, height, difficulty);
             // if we have a job in cache, and we are rate limited, we can send it
             // otherwise, we generate a new job
             if let Some(hash) = hash.as_ref().filter(|_| self.is_rate_limited().0) {
@@ -259,7 +260,8 @@ impl<S: Storage> GetWorkServer<S> {
                     InternalRpcError::InternalError("No mining job found")
                 })?;
                 job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
-                height = header.height;
+                height = header.get_height();
+                version = header.get_version();
                 difficulty = *diff;
             } else {
                 // generate a mining job
@@ -268,7 +270,8 @@ impl<S: Storage> GetWorkServer<S> {
                 (difficulty, _) = self.blockchain.get_difficulty_at_tips(&*storage, header.get_tips().iter()).await.context("Error while retrieving difficulty at tips")?;
 
                 job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
-                height = header.height;
+                height = header.get_height();
+                version = header.get_version();
 
                 // save the mining job, and set it as last job
                 let header_work_hash = job.get_header_work_hash();
@@ -276,16 +279,18 @@ impl<S: Storage> GetWorkServer<S> {
                 mining_jobs.put(header_work_hash.clone(), (header, difficulty));
             }
 
-            (job, height, difficulty)
+            (job, version, height, difficulty)
         };
 
         // set miner key and random extra nonce
         job.set_miner(Cow::Owned(key));
         OsRng.fill_bytes(job.get_extra_nonce());
 
+        // get the algorithm for the current version
+        let algorithm = get_pow_algorithm_for_version(version);
         let topoheight = self.blockchain.get_topo_height();
         debug!("Sending job to new miner");
-        addr.send(Response::NewJob(GetMinerWorkResult { template: job.to_hex(), height, topoheight, difficulty })).await.context("error while sending block template")??;
+        addr.send(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: job.to_hex(), height, topoheight, difficulty })).await.context("error while sending block template")??;
         Ok(())
     }
 
@@ -465,7 +470,8 @@ impl<S: Storage> GetWorkServer<S> {
         };
 
         let mut job = MinerWork::new(header.get_work_hash(), header.timestamp);
-        let height = header.height;
+        let height = header.get_height();
+        let version = header.get_version();
 
         // save the header used for job in cache
         {
@@ -480,7 +486,12 @@ impl<S: Storage> GetWorkServer<S> {
         let mut miners = self.miners.lock().await;
         miners.retain(|addr, _| addr.connected());
 
+        // get the algorithm for the current version
+        let algorithm = get_pow_algorithm_for_version(version);
+        // Also send the node topoheight to miners
+        // This is for visual purposes only
         let topoheight = self.blockchain.get_topo_height();
+
         for (addr, miner) in miners.iter() {
             debug!("Notifying {} for new job", miner);
             let addr = addr.clone();
@@ -492,7 +503,7 @@ impl<S: Storage> GetWorkServer<S> {
             // New task for each miner in case a miner is slow
             // we don't want to wait for him
             spawn_task("getwork-notify-new-job", async move {
-                match addr.send(Response::NewJob(GetMinerWorkResult { template, height, topoheight, difficulty })).await {
+                match addr.send(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: template, height, topoheight, difficulty })).await {
                     Ok(request) => {
                         if let Err(e) = request {
                             warn!("Error while sending new job to addr {:?}: {}", addr, e);

@@ -5,8 +5,8 @@ pub const XELIS_ASSET: Hash = Hash::zero();
 
 // 0.00010000 XEL per KB
 pub const FEE_PER_KB: u64 = 10000;
-// 0.0100000 XEL per account creation
-// User can create an account with 0.01 XEL
+// 0.00100000 XEL per account creation
+// User can create an account with 0.001 XEL
 // Or can mine a block to be registered for free
 pub const FEE_PER_ACCOUNT_CREATION: u64 = 100000;
 // 0.00005000 XEL per KB

@@ -5,7 +5,7 @@ use indexmap::IndexSet;
 use xelis_common::{crypto::Hash, serializer::Serializer};
 use crate::core::{
     error::{BlockchainError, DiskContext},
-    storage::SledStorage
+    storage::{sled::BLOCKS_EXECUTION_ORDER_COUNT, SledStorage}
 };
 
 // This provider tracks the order in which blocks are added in the chain.
@@ -58,6 +58,7 @@ impl BlockExecutionOrderProvider for SledStorage {
     async fn add_block_execution_to_order(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
         let position = self.blocks_execution_count.fetch_add(1, Ordering::SeqCst);
         self.blocks_execution_order.insert(hash.to_bytes(), position.to_bytes())?;
+        self.extra.insert(BLOCKS_EXECUTION_ORDER_COUNT, &position.to_be_bytes())?;
         Ok(())
     }
 

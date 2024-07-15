@@ -52,7 +52,9 @@ use super::{
     Transaction,
     TransactionType,
     TransferPayload,
+    TxVersion,
     EXTRA_DATA_LIMIT_SIZE,
+    EXTRA_DATA_LIMIT_SUM_SIZE,
     MAX_TRANSFER_COUNT
 };
 
@@ -68,8 +70,8 @@ pub enum GenerationError<T> {
     SenderIsReceiver,
     #[error("Extra data too large")]
     ExtraDataTooLarge,
-    #[error("Encrypted extra data is too large")]
-    EncryptedExtraDataTooLarge,
+    #[error("Encrypted extra data is too large, we got {0} bytes, limit is {1} bytes")]
+    EncryptedExtraDataTooLarge(usize, usize),
     #[error("Address is not on the same network as us")]
     InvalidNetwork,
     #[error("Extra data was provied with an integrated address")]
@@ -149,7 +151,7 @@ pub struct TransferBuilder {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TransactionBuilder {
-    version: u8,
+    version: TxVersion,
     source: CompressedPublicKey,
     data: TransactionTypeBuilder,
     fee_builder: FeeBuilder
@@ -219,7 +221,7 @@ impl TransactionTypeBuilder {
 // Used to build the final transaction
 // by signing it
 struct TransactionSigner {
-    version: u8,
+    version: TxVersion,
     source: CompressedPublicKey,
     data: TransactionType,
     fee: u64,
@@ -249,7 +251,7 @@ impl TransactionSigner {
 }
 
 impl TransactionBuilder {
-    pub fn new(version: u8, source: CompressedPublicKey, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
+    pub fn new(version: TxVersion, source: CompressedPublicKey, data: TransactionTypeBuilder, fee_builder: FeeBuilder) -> Self {
         Self {
             version,
             source,
@@ -302,7 +304,7 @@ impl TransactionBuilder {
                         // 2 represents u16 length of UnknownExtraDataFormat
                         // We have both length has we move one in the other
                         // This mean new ExtraData version has 2 + 2 + 32 (sender) + 32 (receiver) bytes of overhead.
-                        size += 2 + 2 + (RISTRETTO_COMPRESSED_SIZE * 2) + extra_data.size();
+                        size += ExtraData::estimate_size(extra_data);
                     }
                 }
                 transfers.len()
@@ -456,11 +458,15 @@ impl TransactionBuilder {
                 }
 
                 if let Some(extra_data) = &transfer.extra_data {
-                    extra_data_size += extra_data.size();
+                    let size = extra_data.size();
+                    if size > EXTRA_DATA_LIMIT_SIZE {
+                        return Err(GenerationError::ExtraDataTooLarge);
+                    }
+                    extra_data_size += size;
                 }
             }
 
-            if extra_data_size > EXTRA_DATA_LIMIT_SIZE {
+            if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
                 return Err(GenerationError::ExtraDataTooLarge);
             }
 
@@ -597,7 +603,7 @@ impl TransactionBuilder {
                         let cipher = ExtraData::new(PlaintextData(bytes), source_keypair.get_public_key(), &transfer.destination);
                         let cipher_size = cipher.size();
                         if cipher_size > EXTRA_DATA_LIMIT_SIZE {
-                            return Err(GenerationError::EncryptedExtraDataTooLarge);
+                            return Err(GenerationError::EncryptedExtraDataTooLarge(cipher_size, EXTRA_DATA_LIMIT_SIZE));
                         }
 
                         total_cipher_size += cipher_size;
@@ -619,8 +625,8 @@ impl TransactionBuilder {
                 })
                 .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
 
-            if total_cipher_size > EXTRA_DATA_LIMIT_SIZE {
-                return Err(GenerationError::EncryptedExtraDataTooLarge);
+            if total_cipher_size > EXTRA_DATA_LIMIT_SUM_SIZE {
+                return Err(GenerationError::EncryptedExtraDataTooLarge(total_cipher_size, EXTRA_DATA_LIMIT_SUM_SIZE));
             }
 
             transfers

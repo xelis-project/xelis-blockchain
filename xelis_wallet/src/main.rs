@@ -35,6 +35,7 @@ use xelis_common::{
         },
         LogLevel,
         Prompt,
+        ModuleConfig,
         PromptError
     },
     serializer::Serializer,
@@ -48,12 +49,13 @@ use xelis_common::{
         format_xelis
     }
 };
-#[cfg(feature = "api_server")]
-use xelis_common::utils::spawn_task;
 use xelis_wallet::{
     wallet::Wallet,
-    config::{DEFAULT_DAEMON_ADDRESS, DIR_PATH}
+    config::DIR_PATH
 };
+
+#[cfg(feature = "network_handler")]
+use xelis_wallet::config::DEFAULT_DAEMON_ADDRESS;
 
 #[cfg(feature = "api_server")]
 use {
@@ -67,10 +69,13 @@ use {
     },
     xelis_common::{
         rpc_server::RpcRequest,
-        prompt::ShareablePrompt
+        prompt::ShareablePrompt,
+        tokio::{
+            spawn_task,
+            sync::mpsc::UnboundedReceiver
+        }
     },
     anyhow::Error,
-    tokio::sync::mpsc::UnboundedReceiver
 };
 
 // This struct is used to configure the RPC Server
@@ -95,9 +100,11 @@ pub struct RPCConfig {
 #[command(styles = xelis_common::get_cli_styles())]
 pub struct Config {
     /// Daemon address to use
+    #[cfg(feature = "network_handler")]
     #[clap(long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
     daemon_address: String,
     /// Disable online mode
+    #[cfg(feature = "network_handler")]
     #[clap(long)]
     offline_mode: bool,
     /// Set log level
@@ -130,6 +137,9 @@ pub struct Config {
     /// It must end with a / to be a valid folder.
     #[clap(long, default_value_t = String::from("logs/"))]
     logs_path: String,
+    /// Module configuration for logs
+    #[clap(long)]
+    logs_modules: Vec<ModuleConfig>,
     /// Set the path for wallet storage to open/create a wallet at this location
     #[clap(long)]
     wallet_path: Option<String>,
@@ -154,7 +164,17 @@ pub struct Config {
     /// XSWD Server configuration
     #[cfg(feature = "api_server")]
     #[clap(long)]
-    enable_xswd: bool
+    enable_xswd: bool,
+    /// Disable the history scan
+    /// This will prevent syncing old TXs/blocks
+    /// Only blocks / transactions caught by the network handler will be stored, not the old ones
+    #[clap(long)]
+    disable_history_scan: bool,
+    /// Force the wallet to use a stable balance only during transactions creation.
+    /// This will prevent the wallet to use unstable balance and prevent any orphaned transaction due to DAG reorg.
+    /// This is only working if the wallet is in online mode.
+    #[clap(long)]
+    force_stable_balance: bool
 }
 
 /// This struct is used to log the progress of the table generation
@@ -170,7 +190,7 @@ impl ecdlp::ProgressTableGenerationReportFunction for LogProgressTableGeneration
 #[tokio::main]
 async fn main() -> Result<()> {
     let config: Config = Config::parse();
-    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode)?;
+    let prompt = Prompt::new(config.log_level, &config.logs_path, &config.filename_log, config.disable_file_logging, config.disable_file_log_date_based, config.disable_log_color, !config.disable_interactive_mode, config.logs_modules)?;
 
     #[cfg(feature = "api_server")]
     {
@@ -314,6 +334,7 @@ async fn xswd_handle_request_permission(prompt: &ShareablePrompt, app_state: App
 async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] prompt: &ShareablePrompt) {
     let config: Config = Config::parse();
 
+    #[cfg(feature = "network_handler")]
     if !config.offline_mode {
         info!("Trying to connect to daemon at '{}'", config.daemon_address);
         if let Err(e) = wallet.set_online_mode(&config.daemon_address, true).await {
@@ -323,6 +344,8 @@ async fn apply_config(wallet: &Arc<Wallet>, #[cfg(feature = "api_server")] promp
             info!("Online mode enabled");
         }
     }
+
+    wallet.set_history_scan(!config.disable_history_scan);
 
     #[cfg(feature = "api_server")]
     {
@@ -373,12 +396,16 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
     command_manager.add_command(Command::new("display_address", "Show your wallet address", CommandHandler::Async(async_handler!(display_address))))?;
     command_manager.add_command(Command::with_optional_arguments("balance", "List all non-zero balances or show the selected one", vec![Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(balance))))?;
     command_manager.add_command(Command::with_optional_arguments("history", "Show all your transactions", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(history))))?;
-    command_manager.add_command(Command::with_optional_arguments("online_mode", "Set your wallet in online mode", vec![Arg::new("daemon_address", ArgType::String)], CommandHandler::Async(async_handler!(online_mode))))?;
-    command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", CommandHandler::Async(async_handler!(offline_mode))))?;
-    command_manager.add_command(Command::with_optional_arguments("rescan", "Rescan balance and transactions", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(rescan))))?;
     command_manager.add_command(Command::with_optional_arguments("seed", "Show seed of selected language", vec![Arg::new("language", ArgType::Number)], CommandHandler::Async(async_handler!(seed))))?;
     command_manager.add_command(Command::new("nonce", "Show current nonce", CommandHandler::Async(async_handler!(nonce))))?;
     command_manager.add_command(Command::new("set_nonce", "Set new nonce", CommandHandler::Async(async_handler!(set_nonce))))?;
+
+    #[cfg(feature = "network_handler")]
+    {
+        command_manager.add_command(Command::with_optional_arguments("online_mode", "Set your wallet in online mode", vec![Arg::new("daemon_address", ArgType::String)], CommandHandler::Async(async_handler!(online_mode))))?;
+        command_manager.add_command(Command::new("offline_mode", "Set your wallet in offline mode", CommandHandler::Async(async_handler!(offline_mode))))?;
+        command_manager.add_command(Command::with_optional_arguments("rescan", "Rescan balance and transactions", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(rescan))))?;
+    }
 
     #[cfg(feature = "api_server")]
     {
@@ -840,6 +867,7 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
 }
 
 // Set your wallet in online mode
+#[cfg(feature = "network_handler")]
 async fn online_mode(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
@@ -859,6 +887,7 @@ async fn online_mode(manager: &CommandManager, mut arguments: ArgumentManager) -
 }
 
 // Set your wallet in offline mode
+#[cfg(feature = "network_handler")]
 async fn offline_mode(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
@@ -872,6 +901,7 @@ async fn offline_mode(manager: &CommandManager, _: ArgumentManager) -> Result<()
 }
 
 // Show current wallet address
+#[cfg(feature = "network_handler")]
 async fn rescan(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
@@ -991,6 +1021,11 @@ async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager, tx: Transaction
         if let Err(e) = wallet.submit_transaction(&tx).await {
             manager.error(format!("Couldn't submit transaction: {}", e));
             manager.error("You can try to rescan your balance with the command 'rescan'");
+
+            // Maybe cache is corrupted, clear it
+            let mut storage = wallet.get_storage().write().await;
+            storage.clear_tx_cache();
+            storage.delete_unconfirmed_balances().await;
         } else {
             manager.message("Transaction submitted successfully!");
         }

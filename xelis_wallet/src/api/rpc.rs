@@ -10,6 +10,7 @@ use xelis_common::{
             GetAssetPrecisionParams,
             GetBalanceParams,
             GetMatchingKeysParams,
+            CountMatchingEntriesParams,
             GetTransactionParams,
             GetValueFromKeyParams,
             HasKeyParams,
@@ -19,6 +20,8 @@ use xelis_common::{
             StoreParams,
             TransactionResponse,
             SetOnlineModeParams,
+            EstimateExtraDataSizeParams,
+            EstimateExtraDataSizeResult,
         },
         SplitAddressParams,
         SplitAddressResult,
@@ -36,7 +39,7 @@ use xelis_common::{
         RPCHandler
     },
     serializer::Serializer,
-    transaction::builder::FeeBuilder
+    transaction::{builder::FeeBuilder, extra_data::ExtraData}
 };
 use serde_json::{Value, json};
 use crate::{
@@ -68,12 +71,14 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method("set_offline_mode", async_handler!(set_offline_mode));
     handler.register_method("sign_data", async_handler!(sign_data));
     handler.register_method("estimate_fees", async_handler!(estimate_fees));
+    handler.register_method("estimate_extra_data_size", async_handler!(estimate_extra_data_size));
 
     // These functions allow to have an encrypted DB directly in the wallet storage
     // You can retrieve keys, values, have differents trees, and store values
     // It is restricted in XSWD context (each app access to their own trees), and open to everything in RPC
     // Keys and values can be anything
     handler.register_method("get_matching_keys", async_handler!(get_matching_keys));
+    handler.register_method("count_matching_entries", async_handler!(count_matching_entries));
     handler.register_method("get_value_from_key", async_handler!(get_value_from_key));
     handler.register_method("store", async_handler!(store));
     handler.register_method("delete", async_handler!(delete));
@@ -145,10 +150,28 @@ async fn split_address(_: &Context, body: Value) -> Result<Value, InternalRpcErr
 
     let (data, address) = address.extract_data();
     let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address"))?;
+    let size = integrated_data.size();
 
     Ok(json!(SplitAddressResult {
         address,
-        integrated_data
+        integrated_data,
+        size
+    }))
+}
+
+// Estimate the extra data size for a list of destinations
+async fn estimate_extra_data_size(_: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: EstimateExtraDataSizeParams = parse_params(body)?;
+
+    let mut size = 0;
+    for data in &params.destinations {
+        if let Some(extra_data) = data.get_extra_data() {
+            size += ExtraData::estimate_size(extra_data)
+        }
+    }
+
+    Ok(json!(EstimateExtraDataSizeResult {
+        size
     }))
 }
 
@@ -241,8 +264,9 @@ async fn build_transaction(context: &Context, body: Value) -> Result<Value, Inte
     // if requested, broadcast the TX ourself
     if params.broadcast {
         if let Err(e) = wallet.submit_transaction(&tx).await {
-            warn!("Clearing Tx cache because of broadcasting error: {}", e);
+            warn!("Clearing Tx cache & unconfirmed balances because of broadcasting error: {}", e);
             storage.clear_tx_cache();
+            storage.delete_unconfirmed_balances().await;
             return Err(e.into());
         }
     }
@@ -376,6 +400,17 @@ async fn get_matching_keys(context: &Context, body: Value) -> Result<Value, Inte
     let keys = storage.get_custom_tree_keys(&tree, &params.query)?;
 
     Ok(json!(keys))
+}
+
+// Count all entries available in the selected tree using the Query filter
+async fn count_matching_entries(context: &Context, body: Value) -> Result<Value, InternalRpcError> {
+    let params: CountMatchingEntriesParams = parse_params(body)?;
+    let wallet: &Arc<Wallet> = context.get()?;
+    let tree = get_tree_name(&context, params.tree).await?;
+    let storage = wallet.get_storage().read().await;
+    let count = storage.count_custom_tree_entries(&tree, &params.key, &params.value)?;
+
+    Ok(json!(count))
 }
 
 // Retrieve the data from the encrypted storage using its key and tree

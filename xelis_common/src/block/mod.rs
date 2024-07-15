@@ -1,10 +1,12 @@
 mod header;
 mod block;
 mod miner;
+mod version;
 
 pub use header::BlockHeader;
 pub use block::Block;
-pub use miner::MinerWork;
+pub use miner::{MinerWork, Worker, Algorithm};
+pub use version::BlockVersion;
 
 use crate::crypto::{Hash, HASH_SIZE};
 

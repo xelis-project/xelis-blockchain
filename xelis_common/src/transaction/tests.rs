@@ -12,7 +12,8 @@ use crate::{
         PublicKey
     },
     serializer::Serializer,
-    transaction::{TransactionType, MAX_TRANSFER_COUNT}
+    transaction::{TransactionType, TxVersion, MAX_TRANSFER_COUNT},
+    block::BlockVersion
 };
 use super::{
     extra_data::{
@@ -102,7 +103,7 @@ fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data
     }]);
 
 
-    let builder = TransactionBuilder::new(0, account.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
+    let builder = TransactionBuilder::new(TxVersion::V0, account.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
     let estimated_size = builder.estimate_size();
     let tx = builder.build(&mut state, &account.keypair).unwrap();
     assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
@@ -225,7 +226,7 @@ async fn test_burn_tx_verify() {
             amount: 50 * COIN_VALUE,
             asset: XELIS_ASSET,
         });
-        let builder = TransactionBuilder::new(0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
+        let builder = TransactionBuilder::new(TxVersion::V0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert!(estimated_size == tx.size());
@@ -293,7 +294,7 @@ async fn test_max_transfers() {
         };
     
         let data = TransactionTypeBuilder::Transfers(transfers);
-        let builder = TransactionBuilder::new(0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
+        let builder = TransactionBuilder::new(TxVersion::V0, alice.keypair.get_public_key().compress(), data, FeeBuilder::Multiplier(1f64));
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert!(estimated_size == tx.size());
@@ -389,6 +390,10 @@ impl<'a> BlockchainVerificationState<'a, ()> for ChainState {
         new_nonce: u64
     ) -> Result<(), ()> {
         self.accounts.get_mut(account).map(|account| account.nonce = new_nonce).ok_or(())
+    }
+
+    fn get_block_version(&self) -> BlockVersion {
+        BlockVersion::V0
     }
 }
 

@@ -1,21 +1,16 @@
-use std::{
-    collections::HashSet,
-    fs::{create_dir_all, File},
-    io::{Read, Write},
-    path::Path,
-    sync::Arc
-};
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use anyhow::{Error, Context};
 use serde::Serialize;
-use tokio::sync::{
-    broadcast::{
-        Sender as BroadcastSender,
-        Receiver as BroadcastReceiver
-    },
-    Mutex,
-    RwLock
-};
 use xelis_common::{
+    tokio::sync::{
+        broadcast::{
+            Sender as BroadcastSender,
+            Receiver as BroadcastReceiver
+        },
+        Mutex,
+        RwLock,
+        broadcast,
+    },
     api::{
         wallet::{
             BalanceChanged,
@@ -27,7 +22,7 @@ use xelis_common::{
     asset::AssetWithData,
     crypto::{
         ecdlp::{self, ECDLPTablesFileView},
-        elgamal::{Ciphertext, DecryptHandle, PublicKey as DecompressedPublicKey},
+        elgamal::{Ciphertext, DecryptHandle},
         Address,
         Hashable,
         KeyPair,
@@ -41,6 +36,7 @@ use xelis_common::{
             TransactionBuilder,
             TransactionTypeBuilder
         },
+        TxVersion,
         extra_data::UnknownExtraDataFormat,
         Reference,
         Role,
@@ -54,13 +50,9 @@ use crate::{
         PASSWORD_HASH_SIZE,
         SALT_SIZE
     },
-    daemon_api::DaemonAPI,
     error::WalletError,
     mnemonics,
-    network_handler::{
-        NetworkHandler,
-        SharedNetworkHandler
-    },
+    precomputed_tables::{self, PrecomputedTablesShared},
     storage::{
         EncryptedStorage,
         Storage
@@ -70,13 +62,25 @@ use crate::{
         TransactionBuilderState
     }
 };
-use chacha20poly1305::aead::OsRng;
-use rand::RngCore;
+#[cfg(feature = "network_handler")]
+use {
+    std::collections::HashSet,
+    log::warn,
+    crate::{
+        network_handler::{
+            NetworkHandler,
+            SharedNetworkHandler
+        },
+        daemon_api::DaemonAPI,
+        storage::Balance,
+    },
+    xelis_common::config::XELIS_ASSET,
+};
+use rand::{rngs::OsRng, RngCore};
 use log::{
     trace,
     debug,
     error,
-    info
 };
 
 #[cfg(feature = "api_server")]
@@ -95,18 +99,32 @@ use {
         PermissionRequest,
         XSWDPermissionHandler
     },
-    xelis_common::rpc_server::{
-        RPCHandler,
-        RpcRequest,
-        InternalRpcError,
-        RpcResponseError,
-        JSON_RPC_VERSION
-    },
-    tokio::sync::{
-        mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel},
-        oneshot::{Sender as OneshotSender, channel}
+    xelis_common::{
+        rpc_server::{
+            RPCHandler,
+            RpcRequest,
+            InternalRpcError,
+            RpcResponseError,
+            JSON_RPC_VERSION
+        },
+        tokio::sync::{
+            mpsc::{
+                UnboundedSender,
+                UnboundedReceiver,
+                unbounded_channel
+            },
+            oneshot,
+        },
+        crypto::elgamal::PublicKey as DecompressedPublicKey
     }
 };
+
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
+use xelis_common::tokio::task::spawn_blocking;
 
 #[derive(Serialize, Clone)]
 #[serde(untagged)]
@@ -152,66 +170,14 @@ impl Event {
 
 }
 
-// This is a 32 bytes aligned struct
-// It is necessary for the precomputed tables points
-#[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone)]
-#[repr(C, align(32))]
-struct Bytes32Alignment([u8; 32]);
-
-pub struct PrecomputedTables {
-    bytes: Vec<Bytes32Alignment>,
-    l1: usize,
-    bytes_count: usize,
-}
-
-// Allows to be used in several wallets at the same time
-pub type PrecomputedTablesShared = Arc<PrecomputedTables>;
-
-impl PrecomputedTables {
-    pub fn new(l1: usize) -> Self {
-        let bytes_count = ecdlp::table_generation::table_file_len(l1);
-        debug!("Precomputed tables size: {} bytes", bytes_count);
-        let mut n = bytes_count / 32;
-        if bytes_count % 32 != 0 {
-            n += 1;
-        }
-
-        let bytes = vec![Bytes32Alignment([0; 32]); n];
-
-        Self {
-            bytes,
-            l1,
-            bytes_count
-        }
-    }
-
-    pub fn get<'a>(&'a self) -> &'a [u8] {
-       &bytemuck::cast_slice(self.bytes.as_slice())[..self.bytes_count]
-    }
-
-    pub fn get_mut<'a>(&'a mut self) -> &'a mut [u8] {
-        &mut bytemuck::cast_slice_mut(self.bytes.as_mut_slice())[..self.bytes_count]
-    }
-
-    pub fn l1(&self) -> usize {
-        self.l1
-    }
-
-    pub fn bytes_count(&self) -> usize {
-        self.bytes_count
-    }
-}
-
-pub const PRECOMPUTED_TABLES_L1: usize = 26;
-
 pub struct Wallet {
     // Encrypted Wallet Storage
     storage: RwLock<EncryptedStorage>,
-    // Private & Public key linked for this wallet
-    keypair: KeyPair,
-    // Compressed public key
-    public_key: PublicKey,
+    // Inner account with keys and precomputed tables
+    // so it can be shared to another thread for decrypting ciphertexts
+    inner: Arc<InnerAccount>,
     // network handler for online mode to keep wallet synced
+    #[cfg(feature = "network_handler")]
     network_handler: Mutex<Option<SharedNetworkHandler>>,
     // network on which we are connected
     network: Network,
@@ -223,8 +189,38 @@ pub struct Wallet {
     xswd_channel: RwLock<Option<UnboundedSender<XSWDEvent>>>,
     // Event broadcaster
     event_broadcaster: Mutex<Option<BroadcastSender<Event>>>,
+    // If the wallet should scan also blocks and transactions history
+    // Set to true by default
+    history_scan: AtomicBool,
+    // flag to prioritize the usage of stable balance version when its online
+    force_stable_balance: AtomicBool,
+}
+
+struct InnerAccount {
     // Precomputed tables byte array
-    precomputed_tables: PrecomputedTablesShared
+    precomputed_tables: PrecomputedTablesShared,
+    // Private & Public key linked for this wallet
+    keypair: KeyPair,
+    // Compressed public key
+    public_key: PublicKey,
+}
+
+impl InnerAccount {
+    fn new(precomputed_tables: PrecomputedTablesShared, keypair: KeyPair) -> Arc<Self> {
+        Arc::new(Self {
+            precomputed_tables,
+            public_key: keypair.get_public_key().compress(),
+            keypair,
+        })
+    }
+
+    pub fn decrypt_ciphertext(&self, ciphertext: &Ciphertext) -> Result<u64, WalletError> {
+        trace!("decrypt ciphertext");
+        let view = ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get());
+        self.keypair.get_private_key()
+            .decrypt(&view, &ciphertext)
+            .ok_or(WalletError::CiphertextDecode)
+    }
 }
 
 pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
@@ -233,41 +229,19 @@ pub fn hash_password(password: String, salt: &[u8]) -> Result<[u8; PASSWORD_HASH
     Ok(output)
 }
 
+const PRECOMPUTED_TABLES_L1: usize = 26;
+
 impl Wallet {
-    // This will read from file if exists, or generate and store it in file
-    // This must be call only one time, and can be cloned to be shared through differents wallets
+    // Read or generate precomputed tables based on the path and platform architecture
     pub fn read_or_generate_precomputed_tables<P: ecdlp::ProgressTableGenerationReportFunction>(path: Option<String>, progress_report: P) -> Result<PrecomputedTablesShared, Error> {
-        const N: usize = PRECOMPUTED_TABLES_L1;
-        let mut precomputed_tables = PrecomputedTables::new(N);
-
-        if let Some(path) = path.as_ref() {
-            let path = Path::new(&path);
-            if !path.exists() {
-                create_dir_all(path)?;
-            }
-        }
-        let path = path.unwrap_or_default();
-
-        // Try to read from file
-        if let Ok(mut file) = File::open(format!("{path}precomputed_tables_{N}.bin")) {
-            info!("Reading precomputed tables from file");
-            file.read_exact(precomputed_tables.get_mut())?;
-        } else {
-            // File does not exists, generate and store it
-            info!("Generating precomputed tables");
-            ecdlp::table_generation::create_table_file_with_progress_report(N, precomputed_tables.get_mut(), progress_report)?;
-            File::create(format!("{path}precomputed_tables_{N}.bin"))?.write_all(precomputed_tables.get())?;
-        }
-
-        Ok(Arc::new(precomputed_tables))
+        precomputed_tables::read_or_generate_precomputed_tables(path, progress_report, PRECOMPUTED_TABLES_L1)
     }
 
     // Create a new wallet with the specificed storage, keypair and its network
     fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared) -> Arc<Self> {
         let zelf = Self {
             storage: RwLock::new(storage),
-            public_key: keypair.get_public_key().compress(),
-            keypair,
+            #[cfg(feature = "network_handler")]
             network_handler: Mutex::new(None),
             network,
             #[cfg(feature = "api_server")]
@@ -275,7 +249,9 @@ impl Wallet {
             #[cfg(feature = "api_server")]
             xswd_channel: RwLock::new(None),
             event_broadcaster: Mutex::new(None),
-            precomputed_tables
+            history_scan: AtomicBool::new(true),
+            force_stable_balance: AtomicBool::new(false),
+            inner: InnerAccount::new(precomputed_tables, keypair)
         };
 
         Arc::new(zelf)
@@ -410,6 +386,7 @@ impl Wallet {
         }
 
         // Stop gracefully the network handler
+        #[cfg(feature = "network_handler")]
         {
             let mut lock = self.network_handler.lock().await;
             if let Some(handler) = lock.take() {
@@ -428,6 +405,27 @@ impl Wallet {
         // Close the event broadcaster
         // So all subscribers will be notified
         self.close_events_channel().await;
+    }
+
+    // Disable/enable the history scan
+    // This is used by the network handler to avoid scanning history if requested
+    pub fn set_history_scan(&self, value: bool) {
+        self.history_scan.store(value, Ordering::SeqCst);
+    }
+
+    // Get the history scan flag
+    pub fn get_history_scan(&self) -> bool {
+        self.history_scan.load(Ordering::SeqCst)
+    }
+
+    // Disable/enable the stable balance flag
+    pub fn set_stable_balance(&self, value: bool) {
+        self.force_stable_balance.store(value, Ordering::SeqCst);
+    }
+
+    // Get the stable balance flag
+    pub fn get_stable_balance(&self) -> bool {
+        self.force_stable_balance.load(Ordering::SeqCst)
     }
 
     // Propagate a new event to registered listeners
@@ -460,7 +458,7 @@ impl Wallet {
         match broadcaster.as_ref() {
             Some(broadcaster) => broadcaster.subscribe(),
             None => {
-                let (sender, receiver) = tokio::sync::broadcast::channel(10);
+                let (sender, receiver) = broadcast::channel(10);
                 *broadcaster = Some(sender);
                 receiver
             }
@@ -578,20 +576,33 @@ impl Wallet {
     }
 
     // Wallet has to be under a Arc to be shared to the spawn_blocking function
-    pub async fn decrypt_ciphertext(self: Arc<Self>, ciphertext: Ciphertext) -> Result<u64, WalletError> {
-        trace!("decrypt ciphertext");
-        tokio::task::spawn_blocking(move || {
-            let view = ECDLPTablesFileView::<PRECOMPUTED_TABLES_L1>::from_bytes(self.precomputed_tables.get());
-            self.keypair.get_private_key()
-                .decrypt(&view, &ciphertext)
-                .ok_or(WalletError::CiphertextDecode)
-        }).await.context("Error while decrypting ciphertext")?
+    pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext) -> Result<u64, WalletError> {
+        // TODO: is it still useful to spawn a task for that ?
+        #[cfg(not(all(
+            target_arch = "wasm32",
+            target_vendor = "unknown",
+            target_os = "unknown"
+        )))]
+        {
+            trace!("decrypt ciphertext with a spawn blocking task");
+            let account = Arc::clone(&self.inner);
+            spawn_blocking(move || account.decrypt_ciphertext(&ciphertext)).await.context("Error while decrypting ciphertext")?
+        }
+        #[cfg(all(
+            target_arch = "wasm32",
+            target_vendor = "unknown",
+            target_os = "unknown"
+        ))]
+        {
+            trace!("decrypt ciphertext without spawn blocking task");
+            self.inner.decrypt_ciphertext(&ciphertext)
+        }
     }
 
     // Decrypt the extra data from a transfer
     pub fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: &DecryptHandle, role: Role) -> Result<DataElement, WalletError> {
         trace!("decrypt extra data");
-        cipher.decrypt(&self.keypair.get_private_key(), handle, role).map_err(|_| WalletError::CiphertextDecode)
+        cipher.decrypt(&self.inner.keypair.get_private_key(), handle, role).map_err(|_| WalletError::CiphertextDecode)
     }
 
     // Create a transaction with the given transaction type and fee
@@ -610,6 +621,7 @@ impl Wallet {
     // also check that we have enough funds for the transaction
     // This will returns the transaction builder state along the transaction
     // You must handle "apply changes" to the storage
+    // Warning: this is locking the network handler to access to the daemon api
     pub async fn create_transaction_with_storage(&self, storage: &EncryptedStorage, transaction_type: TransactionTypeBuilder, fee: FeeBuilder) -> Result<(TransactionBuilderState, Transaction), WalletError> {
         trace!("create transaction with storage");
         let nonce = storage.get_unconfirmed_nonce();
@@ -617,8 +629,71 @@ impl Wallet {
         // Build the state for the builder
         let used_assets = transaction_type.used_assets();
 
-        let reference = if let Some(cache) = storage.get_tx_cache() {
-            cache.reference.clone()
+        let mut reference = None;
+         if let Some(cache) = storage.get_tx_cache() {
+            reference = Some(cache.reference.clone());
+        }
+
+        // Used to inject it in the state
+        // So once the state is applied, we verify if the last coinbase reward topoheight is still valid
+        #[cfg(feature = "network_handler")]
+        let mut daemon_stable_topoheight = None;
+        #[cfg(not(feature = "network_handler"))]
+        let daemon_stable_topoheight = None;
+
+        // Lets prevent any front running due to mining
+        #[cfg(feature = "network_handler")]
+        {
+            let force_stable_balance = self.get_stable_balance();
+            if (reference.is_none() && used_assets.contains(&XELIS_ASSET)) || force_stable_balance {
+                // debug!("Wallet got a coinbase reward at topoheight: {}, verify that its not unstable", topoheight);
+                if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
+                    // Last mining reward is above stable topoheight, this may increase orphans rate
+                    // To avoid this, we will use the last balance version in stable topoheight as reference
+                    let use_stable_balance = if let Some(topoheight) = storage.get_last_coinbase_reward_topoheight() {
+                        let stable_topoheight = network_handler.get_api().get_stable_topoheight().await?;
+                        daemon_stable_topoheight = Some(stable_topoheight);
+                        debug!("stable topoheight: {}, topoheight: {}", stable_topoheight, topoheight);
+                        topoheight > stable_topoheight
+                    } else {
+                        force_stable_balance
+                    };
+    
+                    if use_stable_balance {
+                        warn!("Using stable balance for TX creation");
+                        let address = self.get_address();
+                        for asset in &used_assets {
+                            debug!("Searching stable balance for asset {}", asset);
+                            let stable_point = network_handler.get_api().get_stable_balance(&address, &asset).await?;
+        
+                            // Store the stable balance version into unconfirmed balance
+                            // So it will be fetch later by state
+                            let mut ciphertext = stable_point.version.take_balance();
+                            debug!("decrypting stable balance for asset {}", asset);
+                            let amount = self.inner.decrypt_ciphertext(ciphertext.decompressed().map_err(|_| WalletError::CiphertextDecode)?)?;
+                            let balance = Balance {
+                                amount,
+                                ciphertext
+                            };
+        
+                            storage.set_unconfirmed_balance_for(asset.clone(), balance).await?;
+                            // Build the stable reference
+                            // We need to find the highest stable point
+                            if reference.is_none() || reference.as_ref().is_some_and(|r| r.topoheight < stable_point.stable_topoheight) {
+                                reference = Some(Reference {
+                                    topoheight: stable_point.stable_topoheight,
+                                    hash: stable_point.stable_block_hash
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Get the final reference to use
+        let reference = if let Some(reference) = reference {
+            reference
         } else {
             Reference {
                 topoheight: storage.get_synced_topoheight()?,
@@ -633,6 +708,10 @@ impl Wallet {
             nonce
         );
 
+        if let Some(topoheight) = daemon_stable_topoheight {
+            state.set_stable_topoheight(topoheight);
+        }
+
         // Get all balances used
         for asset in used_assets {
             trace!("Checking balance for asset {}", asset);
@@ -644,13 +723,14 @@ impl Wallet {
             state.add_balance(asset, balance);
         }
 
+        #[cfg(feature = "network_handler")]
         self.add_registered_keys_for_fees_estimation(state.as_mut(), &fee, &transaction_type).await?;
 
         // Create the transaction builder
-        let builder = TransactionBuilder::new(0, self.public_key.clone(), transaction_type, fee);
+        let builder = TransactionBuilder::new(TxVersion::V0, self.get_public_key().clone(), transaction_type, fee);
 
         // Build the final transaction
-        let transaction = builder.build(&mut state, &self.keypair)
+        let transaction = builder.build(&mut state, &self.inner.keypair)
             .map_err(|e| WalletError::Any(e.into()))?;
 
         let tx_hash = transaction.hash();
@@ -664,17 +744,20 @@ impl Wallet {
     // It will increase the local nonce by 1 if the TX is accepted by the daemon
     // returns error if the wallet is in offline mode or if the TX is rejected
     pub async fn submit_transaction(&self, transaction: &Transaction) -> Result<(), WalletError> {
-        trace!("submit transaction");
-        let network_handler = self.network_handler.lock().await;
-        if let Some(network_handler) = network_handler.as_ref() {
-            network_handler.get_api().submit_transaction(transaction).await?;
-            Ok(())
-        } else {
-            Err(WalletError::NotOnlineMode)
+        trace!("submit transaction {}", transaction.hash());
+        #[cfg(feature = "network_handler")]
+        {
+            let network_handler = self.network_handler.lock().await;
+            if let Some(network_handler) = network_handler.as_ref() {
+                network_handler.get_api().submit_transaction(transaction).await?;
+                return Ok(())
+            }
         }
+        Err(WalletError::NotOnlineMode)
     }
 
     // Search if possible all registered keys for the transaction type
+    #[cfg(feature = "network_handler")]
     pub async fn add_registered_keys_for_fees_estimation(&self, state: &mut EstimateFeesState, fee: &FeeBuilder, transaction_type: &TransactionTypeBuilder) -> Result<(), WalletError> {
         trace!("add registered keys for fees estimation");
         if let FeeBuilder::Multiplier(_) = fee {
@@ -715,9 +798,10 @@ impl Wallet {
         trace!("estimate fees");
         let mut state = EstimateFeesState::new();
 
+        #[cfg(feature = "network_handler")]
         self.add_registered_keys_for_fees_estimation(&mut state, &FeeBuilder::default(), &tx_type).await?;
 
-        let builder = TransactionBuilder::new(0, self.public_key.clone(), tx_type, FeeBuilder::default());
+        let builder = TransactionBuilder::new(TxVersion::V0, self.get_public_key().clone(), tx_type, FeeBuilder::default());
         let estimated_fees = builder.estimate_fees(&mut state)
             .map_err(|e| WalletError::Any(e.into()))?;
 
@@ -725,8 +809,9 @@ impl Wallet {
     }
 
     // set wallet in online mode: start a communication task which will keep the wallet synced
+    #[cfg(feature = "network_handler")]
     pub async fn set_online_mode(self: &Arc<Self>, daemon_address: &String, auto_reconnect: bool) -> Result<(), WalletError> {
-        trace!("Set online mode");
+        trace!("Set online mode to daemon {} with auto reconnect set to {}", daemon_address, auto_reconnect);
         if self.is_online().await {
             // user have to set in offline mode himself first
             return Err(WalletError::AlreadyOnlineMode)
@@ -737,14 +822,14 @@ impl Wallet {
         // start the task
         network_handler.start(auto_reconnect).await?;
         *self.network_handler.lock().await = Some(network_handler);
-
         Ok(())
     }
 
     // set the wallet in online mode using a shared daemon API
     // this allows to share the same connection/Daemon API across several wallets to save resources
+    #[cfg(feature = "network_handler")]
     pub async fn set_online_mode_with_api(self: &Arc<Self>, daemon_api: Arc<DaemonAPI>, auto_reconnect: bool) -> Result<(), WalletError> {
-        trace!("Set online mode with API");
+        trace!("Set online mode with API with auto reconnect set to {}", auto_reconnect);
         if self.is_online().await {
             // user have to set in offline mode himself first
             return Err(WalletError::AlreadyOnlineMode)
@@ -755,13 +840,14 @@ impl Wallet {
         // start the task
         network_handler.start(auto_reconnect).await?;
         *self.network_handler.lock().await = Some(network_handler);
-
         Ok(())
     }
 
     // set wallet in offline mode: stop communication task if exists
+    #[cfg(feature = "network_handler")]
     pub async fn set_offline_mode(&self) -> Result<(), WalletError> {
         trace!("Set offline mode");
+
         let mut handler = self.network_handler.lock().await;
         if let Some(network_handler) = handler.take() {
             network_handler.stop().await?;
@@ -775,6 +861,7 @@ impl Wallet {
     // rescan the wallet from the given topoheight
     // that will delete all transactions above the given topoheight and all balances
     // then it will re-fetch all transactions and balances from daemon
+    #[cfg(feature = "network_handler")]
     pub async fn rescan(&self, topoheight: u64, auto_reconnect: bool) -> Result<(), WalletError> {
         trace!("Rescan wallet from topoheight {}", topoheight);
         if !self.is_online().await {
@@ -799,16 +886,11 @@ impl Wallet {
                 storage.delete_balances().await?;
                 storage.delete_assets().await?;
                 // unconfirmed balances are going to be outdated, we delete them
-                storage.delete_unconfirmed_balances().await?;
+                storage.delete_unconfirmed_balances().await;
                 storage.clear_tx_cache();
 
-                debug!("Retrieve current wallet nonce");
-                let nonce_result = network_handler.get_api()
-                    .get_nonce(&self.get_address()).await
-                    // User has no transactions/balances yet, set its nonce to 0
-                    .map(|v| v.version.get_nonce()).unwrap_or(0);
-
-                storage.set_nonce(nonce_result)?;
+                debug!("reconnect API");
+                network_handler.get_api().reconnect().await?;
 
                 if topoheight == 0 {
                     debug!("Deleting all transactions for full rescan");
@@ -829,42 +911,44 @@ impl Wallet {
 
     // Check if the wallet is in online mode
     pub async fn is_online(&self) -> bool {
+        #[cfg(feature = "network_handler")]
         if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
-            network_handler.is_running().await
-        } else {
-            false
+            return network_handler.is_running().await
         }
+
+        false
     }
 
     // this function allow to user to get the network handler in case in want to stay in online mode
     // but want to pause / resume the syncing task through start/stop functions from it
+    #[cfg(feature = "network_handler")]
     pub async fn get_network_handler(&self) -> &Mutex<Option<Arc<NetworkHandler>>> {
         &self.network_handler
     }
 
     // Create a signature of the given data
     pub fn sign_data(&self, data: &[u8]) -> Signature {
-        self.keypair.sign(data)
+        self.inner.keypair.sign(data)
     }
 
     // Get the public key of the wallet
     pub fn get_public_key(&self) -> &PublicKey {
-        &self.public_key
+        &self.inner.public_key
     }
 
     // Get the address of the wallet using its network used
     pub fn get_address(&self) -> Address {
-        self.keypair.get_public_key().to_address(self.get_network().is_mainnet())
+        self.get_public_key().clone().to_address(self.get_network().is_mainnet())
     }
 
     // Get the address with integrated data and using its network used
     pub fn get_address_with(&self, data: DataElement) -> Address {
-        self.keypair.get_public_key().to_address_with(self.get_network().is_mainnet(), data)
+        self.get_public_key().clone().to_address_with(self.get_network().is_mainnet(), data)
     }
 
     // Returns the seed using the language index provided
     pub fn get_seed(&self, language_index: usize) -> Result<String, Error> {
-        let words = mnemonics::key_to_words(self.keypair.get_private_key(), language_index)?;
+        let words = mnemonics::key_to_words(self.inner.keypair.get_private_key(), language_index)?;
         Ok(words.join(" "))
     }
 
@@ -888,10 +972,10 @@ impl Wallet {
 
 #[cfg(feature = "api_server")]
 pub enum XSWDEvent {
-    RequestPermission(AppStateShared, RpcRequest, OneshotSender<Result<PermissionResult, Error>>),
+    RequestPermission(AppStateShared, RpcRequest, oneshot::Sender<Result<PermissionResult, Error>>),
     // bool represents if it was signed or not
-    RequestApplication(AppStateShared, bool, OneshotSender<Result<PermissionResult, Error>>),
-    CancelRequest(AppStateShared, OneshotSender<Result<(), Error>>)
+    RequestApplication(AppStateShared, bool, oneshot::Sender<Result<PermissionResult, Error>>),
+    CancelRequest(AppStateShared, oneshot::Sender<Result<(), Error>>)
 }
 
 #[cfg(feature = "api_server")]
@@ -902,7 +986,7 @@ impl XSWDPermissionHandler for Arc<Wallet> {
             // no other way ?
             let app_state = app_state.clone();
             // create a callback channel to receive the answer
-            let (callback, receiver) = channel();
+            let (callback, receiver) = oneshot::channel();
             let event = match request {
                 PermissionRequest::Application(signed) => XSWDEvent::RequestApplication(app_state, signed, callback),
                 PermissionRequest::Request(request) => XSWDEvent::RequestPermission(app_state, request.clone(), callback)
@@ -922,7 +1006,7 @@ impl XSWDPermissionHandler for Arc<Wallet> {
     // the one who has the lock is the one who is requesting so we don't need to check and can cancel directly
     async fn cancel_request_permission(&self, app: &AppStateShared) -> Result<(), Error> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
-            let (callback, receiver) = channel();
+            let (callback, receiver) = oneshot::channel();
             // Send XSWD Message
             sender.send(XSWDEvent::CancelRequest(app.clone(), callback))?;
 
@@ -934,7 +1018,7 @@ impl XSWDPermissionHandler for Arc<Wallet> {
     }
 
     async fn get_public_key(&self) -> Result<&DecompressedPublicKey, Error> {
-        Ok(self.keypair.get_public_key())
+        Ok(self.inner.keypair.get_public_key())
     }
 }
 
