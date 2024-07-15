@@ -1793,9 +1793,11 @@ impl<S: Storage> Blockchain<S> {
                 batch.push(tx);
             }
 
-            debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|v| v.hash().to_string()).collect::<Vec<String>>().join(","), block_hash);
-            // Verify all valid transactions in one batch
-            Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
+            if !batch.is_empty() {
+                debug!("proof verifications of TXs ({}) in block {}", batch.iter().map(|v| v.hash().to_string()).collect::<Vec<String>>().join(","), block_hash);
+                // Verify all valid transactions in one batch
+                Transaction::verify_batch(batch.as_slice(), &mut chain_state).await?;
+            }
         }
 
         // Save transactions & block
