@@ -401,6 +401,7 @@ impl NetworkHandler {
         }
 
         if !changes_stored || assets_changed.is_empty() {
+            debug!("No changes found in block {} at topoheight {}, assets: {}, changes stored: {}", block_hash, topoheight, assets_changed.len(), changes_stored);
             Ok(None)
         } else {
             // Increase by one to get the new nonce
