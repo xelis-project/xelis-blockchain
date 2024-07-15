@@ -385,6 +385,12 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         for tx_hash in header.get_transactions() {
             if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo).context("Error while checking if tx is executed in block")? {
                 let transaction = storage.get_transaction(tx_hash).await.context("Error while retrieving transaction")?;
+
+                if !storage.has_nonce_at_exact_topoheight(transaction.get_source(), topo).await.context("Error while checking the tx source nonce version")? {
+                    manager.error(format!("No nonce version found for source {} at topoheight {}", transaction.get_source().as_address(blockchain.get_network().is_mainnet()), topo));
+                    return Ok(())
+                }
+
                 for asset in transaction.get_assets() {
                     if !storage.has_balance_at_exact_topoheight(transaction.get_source(), asset, topo).await.context("Error while checking the tx source balance version")? {
                         manager.error(format!("No balance version found for source {} at topoheight {}", transaction.get_source().as_address(blockchain.get_network().is_mainnet()), topo));
