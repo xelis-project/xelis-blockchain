@@ -348,6 +348,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         blockchain.get_topo_height()
     };
 
+    info!("Verifying chain supply from {} until topoheight {}", pruned_topoheight, topoheight);
     for topo in pruned_topoheight..=topoheight {
         let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
         let block_reward = if pruned_topoheight == 0 || topo - pruned_topoheight > STABLE_LIMIT {
@@ -372,6 +373,25 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         if supply != expected_supply {
             manager.error(format!("Error for block {} at topoheight {}, expected {} found {}", hash_at_topo, topo, expected_supply, supply));
             return Ok(())
+        }
+
+        // Verify that we have a balance for each account updated
+        let header = storage.get_block_header_by_hash(&hash_at_topo).await.context("Error while retrieving block header")?;
+        if !storage.has_balance_at_exact_topoheight(header.get_miner(), &XELIS_ASSET, topo).await.context("Error while checking the miner balance version")? {
+            manager.error(format!("No balance version found for miner {} at topoheight {} for block {}", header.get_miner().as_address(blockchain.get_network().is_mainnet()), topo, hash_at_topo));
+            return Ok(())
+        }
+
+        for tx_hash in header.get_transactions() {
+            if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo).context("Error while checking if tx is executed in block")? {
+                let transaction = storage.get_transaction(tx_hash).await.context("Error while retrieving transaction")?;
+                for asset in transaction.get_assets() {
+                    if !storage.has_balance_at_exact_topoheight(transaction.get_source(), asset, topo).await.context("Error while checking the tx source balance version")? {
+                        manager.error(format!("No balance version found for source {} at topoheight {}", transaction.get_source().as_address(blockchain.get_network().is_mainnet()), topo));
+                        return Ok(())
+                    }
+                }
+            }
         }
     }
     manager.message("Supply is valid");
