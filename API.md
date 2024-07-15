@@ -8156,6 +8156,32 @@ When it's not provided, Fee Builder is set by default to multiplier 1 to pay wha
 }
 ```
 
+#### Clear TX Cache
+In case of a failure while broadcasting a TX from this wallet by yourself, you can erase the TX cache stored in the wallet.
+
+##### Method `clear_tx_cache`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+	"jsonrpc": "2.0",
+	"method": "clear_tx_cache",
+	"id": 1
+}
+```
+
+##### Response
+```json
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": true
+}
+```
+
 #### List Transactions
 Search transactions based on various parameters.
 By default it accepts every TXs.
