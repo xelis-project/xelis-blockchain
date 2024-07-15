@@ -198,7 +198,10 @@ pub struct Config {
     pub disable_p2p_outgoing_connections: bool,
     /// Limit of concurrent tasks accepting new incoming connections.
     #[clap(long, default_value_t = P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT)]
-    pub p2p_concurrency_task_count_limit: usize
+    pub p2p_concurrency_task_count_limit: usize,
+    /// Skip the TXs verification when building a block template.
+    #[clap(long)]
+    pub skip_block_template_txs_verification: bool
 }
 
 pub struct Blockchain<S: Storage> {
@@ -226,6 +229,8 @@ pub struct Blockchain<S: Storage> {
     simulator: Option<Simulator>,
     // if we should skip PoW verification
     skip_pow_verification: bool,
+    // Should we skip block template TXs verification
+    skip_block_template_txs_verification: bool,
     // current network type on which one we're using/connected to
     network: Network,
     // this cache is used to avoid to recompute the common base for each block and is mandatory
@@ -298,7 +303,8 @@ impl<S: Storage> Blockchain<S> {
             tip_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
             full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1024).unwrap())),
-            auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks
+            auto_prune_keep_n_blocks: config.auto_prune_keep_n_blocks,
+            skip_block_template_txs_verification: config.skip_block_template_txs_verification
         };
 
         // include genesis block
@@ -1526,24 +1532,28 @@ impl<S: Storage> Blockchain<S> {
                 break;
             }
 
-            // Check if the TX is valid for this potential block
-            trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_source().as_address(self.network.is_mainnet()));
-            let source = tx.get_source();
-            if failed_sources.contains(&source) {
-                debug!("Skipping TX {} because its source has failed before", hash);
-                continue;
+            if !self.skip_block_template_txs_verification {
+                // Check if the TX is valid for this potential block
+                trace!("Checking TX {} with nonce {}, {}", hash, tx.get_nonce(), tx.get_source().as_address(self.network.is_mainnet()));
+
+                let source = tx.get_source();
+                if failed_sources.contains(&source) {
+                    debug!("Skipping TX {} because its source has failed before", hash);
+                    continue;
+                }
+
+                if let Err(e) = tx.verify(&mut chain_state).await {
+                    warn!("TX {} ({}) is not valid for mining: {}", hash, source.as_address(self.network.is_mainnet()), e);
+                    failed_sources.insert(source);
+                    continue;
+                }
             }
 
-            if let Err(e) = tx.verify(&mut chain_state).await {
-                warn!("TX {} ({}) is not valid for mining: {}", hash, source.as_address(self.network.is_mainnet()), e);
-                failed_sources.insert(source);
-            } else {
-                trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()));
-                // TODO no clone
-                block.txs_hashes.insert(hash.as_ref().clone());
-                block_size += HASH_SIZE; // add the hash size
-                total_txs_size += size;
-            }
+            trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()));
+            // TODO no clone
+            block.txs_hashes.insert(hash.as_ref().clone());
+            block_size += HASH_SIZE; // add the hash size
+            total_txs_size += size;
         }
 
         Ok(block)
