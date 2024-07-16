@@ -567,10 +567,7 @@ impl EncryptedStorage {
         if let Some(balances) = cache.get(asset) {
             // get the latest unconfirmed balance
             if let Some(balance) = balances.back() {
-                return Ok((Balance {
-                    amount: balance.amount,
-                    ciphertext: balance.ciphertext.clone()
-                }, true));
+                return Ok((balance.clone(), true));
             }
         }
 

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use log::debug;
 use xelis_common::{
     account::CiphertextCache,
     crypto::{elgamal::Ciphertext, Hash, PublicKey},
@@ -95,6 +96,7 @@ impl TransactionBuilderState {
     pub async fn apply_changes(&mut self, storage: &mut EncryptedStorage) -> Result<(), WalletError> {
         let last_tx_hash_created = self.tx_hash_built.take().ok_or(WalletError::TxNotBuilt)?;
         for (asset, balance) in self.balances.drain() {
+            debug!("Setting balance for asset {} to {} ({})", asset, balance.amount, balance.ciphertext);
             storage.set_unconfirmed_balance_for(asset, balance).await?;
         }
 
