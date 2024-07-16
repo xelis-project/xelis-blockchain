@@ -207,7 +207,9 @@ pub enum EntryType {
     },
     Burn {
         asset: Hash,
-        amount: u64
+        amount: u64,
+        fee: u64,
+        nonce: u64
     },
     Incoming {
         from: Address,
