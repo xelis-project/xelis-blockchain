@@ -275,7 +275,7 @@ impl NetworkHandler {
                         }
 
                         assets_changed.insert(payload.asset.clone());
-                        Some(EntryData::Burn { asset: payload.asset, amount: payload.amount })
+                        Some(EntryData::Burn { asset: payload.asset, amount: payload.amount, fee: tx.fee, nonce: tx.nonce })
                     } else {
                         None
                     }
