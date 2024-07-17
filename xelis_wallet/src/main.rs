@@ -705,8 +705,13 @@ async fn transfer(manager: &CommandManager, _: ArgumentManager) -> Result<(), Co
         asset,
         extra_data: None
     };
-    let tx = wallet.create_transaction(TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default()).await
-        .context("Error while creating transaction")?;
+    let tx = match wallet.create_transaction(TransactionTypeBuilder::Transfers(vec![transfer]), FeeBuilder::default()).await {
+        Ok(tx) => tx,
+        Err(e) => {
+            manager.error(&format!("Error while creating transaction: {}", e));
+            return Ok(())
+        }
+    };
 
     broadcast_tx(wallet, manager, tx).await;
     Ok(())
