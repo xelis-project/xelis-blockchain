@@ -163,7 +163,6 @@ static HASHRATE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static HASHRATE: AtomicU64 = AtomicU64::new(0);
 static JOB_ELAPSED: RwLock<Option<Instant>> = RwLock::new(None);
 
-
 lazy_static! {
     static ref HASHRATE_LAST_TIME: Mutex<Instant> = Mutex::new(Instant::now());
 }
