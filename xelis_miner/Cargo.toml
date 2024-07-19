@@ -21,3 +21,7 @@ tokio = { version = "1.36", features = ["rt"] }
 anyhow = "1"
 fern = { version = "0.6", features = ["colored"] }
 rand = "0.8.4"
+
+[features]
+default = ["api_stats"]
+api_stats = []
