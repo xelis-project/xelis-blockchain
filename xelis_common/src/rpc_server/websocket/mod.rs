@@ -66,7 +66,7 @@ pub enum WebSocketError {
     SessionClosed(#[from] actix_ws::Closed),
     #[error("this session was already closed")]
     SessionAlreadyClosed,
-    #[error("error while sending message")]
+    #[error("error while sending message, channel is closed")]
     ChannelClosed,
     #[error(transparent)]
     Elapsed(#[from] Elapsed),
