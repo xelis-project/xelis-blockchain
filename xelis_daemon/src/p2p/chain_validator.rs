@@ -33,7 +33,7 @@ use log::{debug, trace};
 struct BlockData {
     header: Arc<BlockHeader>,
     difficulty: Difficulty,
-    cumulative_difficulty: CumulativeDifficulty,
+    cumulative_difficulty: Option<CumulativeDifficulty>,
     p: VarUint
 }
 
@@ -81,7 +81,8 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     // Retrieve the cumulative difficulty of the chain validator
     // It is the cumulative difficulty of the last block added
     pub fn get_chain_cumulative_difficulty(&self) -> Option<&CumulativeDifficulty> {
-        self.blocks.last().map(|(_, data)| &data.cumulative_difficulty)
+        let (_, data) = self.blocks.last()?;
+        data.cumulative_difficulty.as_ref()
     }
 
     // validate the basic chain structure
@@ -150,13 +151,19 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         // Find the common base between the block and the current blockchain
         let (base, base_height) = self.blockchain.find_common_base(self, header.get_tips()).await?;
 
-        // Find the cumulative difficulty for this block
-        let (_, cumulative_difficulty) = self.blockchain.find_tip_work_score(self, &hash, &base, base_height).await?;
+        trace!("Common base: {} at height {} and hash {}", base, base_height, hash);
+
 
         // Store the block in both maps
         // One is for blocks at height and the other is for the block data
         self.blocks_at_height.entry(header.get_height()).or_insert_with(IndexSet::new).insert(hash.clone());
-        self.blocks.insert(hash, BlockData { header: Arc::new(header), difficulty, cumulative_difficulty, p });
+        self.blocks.insert(hash.clone(), BlockData { header: Arc::new(header), difficulty, cumulative_difficulty: None, p });
+
+        // Find the cumulative difficulty for this block
+        let (_, cumulative_difficulty) = self.blockchain.find_tip_work_score(self, &hash, &base, base_height).await?;
+
+        let entry = self.blocks.get_mut(&hash).ok_or_else(|| BlockchainError::Unknown)?;
+        entry.cumulative_difficulty = Some(cumulative_difficulty);
 
         Ok(())
     }
@@ -198,7 +205,9 @@ impl<S: Storage> DifficultyProvider for ChainValidator<'_, S> {
 
     async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError> {
         if let Some(data) = self.blocks.get(hash) {
-            return Ok(data.cumulative_difficulty)
+            if let Some(cumulative_difficulty) = data.cumulative_difficulty {
+                return Ok(cumulative_difficulty)
+            }
         }
 
         let storage = self.blockchain.get_storage().read().await;
