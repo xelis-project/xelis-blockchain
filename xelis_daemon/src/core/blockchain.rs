@@ -1058,10 +1058,10 @@ impl<S: Storage> Blockchain<S> {
             return Ok(value.clone())
         }
 
-        let block = provider.get_block_header_by_hash(hash).await?;
+        let tips = provider.get_past_blocks_for_block_hash(hash).await?;
         let mut map: HashMap<Hash, CumulativeDifficulty> = HashMap::new();
         let base_topoheight = provider.get_topo_height_for_hash(base).await?;
-        for hash in block.get_tips() {
+        for hash in tips.iter() {
             if !map.contains_key(hash) {
                 let is_ordered = provider.is_block_topological_ordered(hash).await;
                 if !is_ordered || (is_ordered && provider.get_topo_height_for_hash(hash).await? >= base_topoheight) {
@@ -1814,7 +1814,9 @@ impl<S: Storage> Blockchain<S> {
             let cumulative_difficulty: CumulativeDifficulty = if tips_count == 0 {
                 GENESIS_BLOCK_DIFFICULTY.into()
             } else {
+                debug!("Computing cumulative difficulty for block {}", block_hash);
                 let (base, base_height) = self.find_common_base(storage, block.get_tips()).await?;
+                debug!("Common base found: {}, height: {}", base, base_height);
                 let (_, cumulative_difficulty) = self.find_tip_work_score::<S>(&storage, &block_hash, &base, base_height).await?;
                 cumulative_difficulty
             };
@@ -1831,6 +1833,7 @@ impl<S: Storage> Blockchain<S> {
         debug!("New tips: {}", tips.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
 
         let (base_hash, base_height) = self.find_common_base(storage, &tips).await?;
+        debug!("New base hash: {}, height: {}", base_hash, base_height);
         let best_tip = self.find_best_tip(storage, &tips, &base_hash, base_height).await?;
         debug!("Best tip selected: {}", best_tip);
 
