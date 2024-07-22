@@ -121,7 +121,7 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
         .map(|(tx, hash)| RPCTransaction::from_tx(tx, hash, mainnet))
         .collect::<Vec<RPCTransaction<'_>>>();
 
-    let (dev_reward, miner_reward) = get_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
+    let (dev_reward, miner_reward) = get_optional_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
         (Some(dev_reward), Some(miner_reward))
     }).unwrap_or((None, None));
 
@@ -149,13 +149,19 @@ pub async fn get_block_response<S: Storage>(blockchain: &Blockchain<S>, storage:
     }))
 }
 
-fn get_block_rewards(height: u64, reward: Option<u64>) -> Option<(u64, u64)> {
-    if let Some(reward) = reward {
-        let dev_fee_percentage = get_block_dev_fee(height);
-        let dev_reward = reward * dev_fee_percentage / 100;
-        let miner_reward = reward - dev_reward;
+// Get block rewards based on height and reward
+fn get_block_rewards(height: u64, reward: u64) -> (u64, u64) {
+    let dev_fee_percentage = get_block_dev_fee(height);
+    let dev_reward = reward * dev_fee_percentage / 100;
+    let miner_reward = reward - dev_reward;
 
-        Some((dev_reward, miner_reward))
+    (dev_reward, miner_reward)
+}
+
+// Get optional block rewards based on height and reward
+fn get_optional_block_rewards(height: u64, reward: Option<u64>) -> Option<(u64, u64)> {
+    if let Some(reward) = reward {
+        Some(get_block_rewards(height, reward))
     } else {
         None
     }
@@ -182,7 +188,7 @@ pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>,
         }
 
         let mainnet = blockchain.get_network().is_mainnet();
-        let (dev_reward, miner_reward) = get_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
+        let (dev_reward, miner_reward) = get_optional_block_rewards(header.get_height(), reward).map(|(dev_reward, miner_reward)| {
             (Some(dev_reward), Some(miner_reward))
         }).unwrap_or((None, None));
 
@@ -546,7 +552,7 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
     let difficulty = blockchain.get_difficulty().await;
     let block_time_target = BLOCK_TIME_MILLIS;
     let block_reward = get_block_reward(circulating_supply);
-    let (dev_reward, miner_reward) = get_block_rewards(height, Some(block_reward)).unwrap();
+    let (dev_reward, miner_reward) = get_block_rewards(height, block_reward);
     let mempool_size = blockchain.get_mempool_size().await;
     let version = VERSION.into();
     let network = *blockchain.get_network();
