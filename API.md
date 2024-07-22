@@ -251,6 +251,8 @@ No parameters
 	"result": {
 		"average_block_time": 16494,
 		"block_reward": 145979248,
+		"miner_reward": 1313813232,
+		"dev_reward": 14597924,
 		"block_time_target": 15000,
 		"circulating_supply": 3155962164200,
 		"difficulty": "62283705000",

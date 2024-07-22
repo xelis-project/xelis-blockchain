@@ -250,6 +250,8 @@ pub struct GetInfoResult {
     // Average block time of last 50 blocks
     pub average_block_time: u64,
     pub block_reward: u64,
+    pub dev_reward: u64,
+    pub miner_reward: u64,
     // count how many transactions are present in mempool
     pub mempool_size: usize,
     // software version on which the daemon is running

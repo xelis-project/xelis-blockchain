@@ -546,6 +546,7 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
     let difficulty = blockchain.get_difficulty().await;
     let block_time_target = BLOCK_TIME_MILLIS;
     let block_reward = get_block_reward(circulating_supply);
+    let (dev_reward, miner_reward) = get_block_rewards(height, Some(block_reward)).unwrap();
     let mempool_size = blockchain.get_mempool_size().await;
     let version = VERSION.into();
     let network = *blockchain.get_network();
@@ -562,6 +563,8 @@ async fn get_info<S: Storage>(context: &Context, body: Value) -> Result<Value, I
         block_time_target,
         average_block_time,
         block_reward,
+        dev_reward,
+        miner_reward,
         mempool_size,
         version,
         network
